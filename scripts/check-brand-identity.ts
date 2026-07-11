@@ -72,6 +72,14 @@ export interface BrandIdentityBinaryFile {
   readonly contents: Uint8Array;
 }
 
+const requiredLitRevPackagingText = new Map<string, readonly string[]>([
+  ["apps/desktop/package.json", ['"productName": "LitRev"']],
+  [
+    "scripts/build-desktop-artifact.ts",
+    ['name: "litrev-desktop"', 'description: "LitRev desktop build"', 'author: "Yaacov Corcos"'],
+  ],
+]);
+
 function containsForbiddenIdentity(value: string): boolean {
   return forbiddenPatterns.some((pattern) => pattern.test(value));
 }
@@ -120,6 +128,31 @@ export function findVisualBrandAssetViolations(
   return violations;
 }
 
+export function findLitRevPackagingViolations(
+  files: readonly BrandIdentityFile[],
+  requirements: ReadonlyMap<string, readonly string[]> = requiredLitRevPackagingText,
+): BrandIdentityViolation[] {
+  const filesByPath = new Map(files.map((file) => [file.path, file.contents]));
+  const violations: BrandIdentityViolation[] = [];
+  for (const [path, requiredText] of requirements) {
+    const contents = filesByPath.get(path);
+    if (contents === undefined) {
+      violations.push({ path, line: null, text: "Required LitRev packaging source is missing." });
+      continue;
+    }
+    for (const text of requiredText) {
+      if (!contents.includes(text)) {
+        violations.push({
+          path,
+          line: null,
+          text: `Required LitRev packaging identity is missing: ${text}`,
+        });
+      }
+    }
+  }
+  return violations;
+}
+
 function readTrackedFiles(): BrandIdentityBinaryFile[] {
   const paths = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" })
     .split("\0")
@@ -135,6 +168,7 @@ function main(): void {
   }));
   const violations = [
     ...findBrandIdentityViolations(searchableFiles),
+    ...findLitRevPackagingViolations(searchableFiles),
     ...findVisualBrandAssetViolations(trackedFiles),
   ];
   if (violations.length === 0) {

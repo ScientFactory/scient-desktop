@@ -67,6 +67,13 @@ export function shouldFetchUpstream(args: readonly string[]): boolean {
   return !args.includes("--no-fetch");
 }
 
+export function assertCurrentUpstream(behind: string, args: readonly string[]): void {
+  if (behind === "0" || args.includes("--allow-behind")) return;
+  throw new Error(
+    `Owned Synara is ${behind} commit(s) behind ${UPSTREAM_BRANCH}. Reconcile upstream before acceptance, or use --allow-behind only for diagnostics.`,
+  );
+}
+
 function assertGitHubRemote(label: string, remote: string, expectedRepository: string): void {
   const actualRepository = githubRepositoryFromRemote(remote);
   if (actualRepository !== expectedRepository.toLowerCase()) {
@@ -104,22 +111,31 @@ function main(): void {
     );
   }
 
-  const fetched = shouldFetchUpstream(process.argv.slice(2));
+  const args = process.argv.slice(2);
+  const fetched = shouldFetchUpstream(args);
   if (fetched) {
     runVisible("git", ["fetch", "--prune", "upstream"]);
   }
   run("git", ["rev-parse", "--verify", UPSTREAM_BRANCH]);
+
+  const [ahead = "unknown", behind = "unknown"] = run("git", [
+    "rev-list",
+    "--left-right",
+    "--count",
+    `HEAD...${UPSTREAM_BRANCH}`,
+  ]).split(/\s+/);
+  assertCurrentUpstream(behind, args);
 
   if (LITREV_APP_NAME !== "LitRev" || LITREV_DESKTOP_ORIGIN !== "litrev://app") {
     throw new Error("LitRev desktop identity invariant failed.");
   }
   if (LITREV_DESKTOP_UPDATES_ENABLED) {
     throw new Error(
-      "Automatic updates must remain disabled until a LitRev-owned feed is approved.",
+      "Automatic updates must remain disabled until client update support is explicitly enabled in a reviewed code change and a LitRev-owned feed is approved.",
     );
   }
 
-  const sourceChecks = process.argv.includes("--checks");
+  const sourceChecks = args.includes("--checks");
   if (sourceChecks) {
     for (const args of [
       ["run", "brand:check"],
@@ -138,13 +154,6 @@ function main(): void {
   if (finalStatus !== initialStatus) {
     throw new Error("Verification changed tracked or untracked source files.");
   }
-
-  const [ahead = "unknown", behind = "unknown"] = run("git", [
-    "rev-list",
-    "--left-right",
-    "--count",
-    `HEAD...${UPSTREAM_BRANCH}`,
-  ]).split(/\s+/);
 
   console.log(
     JSON.stringify(

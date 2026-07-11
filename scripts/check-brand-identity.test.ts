@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   findBrandIdentityViolations,
+  findLitRevPackagingViolations,
   findVisualBrandAssetViolations,
 } from "./check-brand-identity";
 
@@ -59,5 +60,28 @@ describe("brand identity guard", () => {
       ),
     ).toHaveLength(1);
     expect(findVisualBrandAssetViolations([], approvedDigests)).toHaveLength(1);
+  });
+
+  it("requires LitRev identity in distributable package metadata", () => {
+    const requirements = new Map([
+      ["package.json", ['name: "litrev-desktop"', 'description: "LitRev desktop build"']],
+    ]);
+    expect(
+      findLitRevPackagingViolations(
+        [{ path: "package.json", contents: 'name: "litrev-desktop"' }],
+        requirements,
+      ),
+    ).toHaveLength(1);
+    expect(
+      findLitRevPackagingViolations(
+        [
+          {
+            path: "package.json",
+            contents: 'name: "litrev-desktop"\ndescription: "LitRev desktop build"',
+          },
+        ],
+        requirements,
+      ),
+    ).toEqual([]);
   });
 });

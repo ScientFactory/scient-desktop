@@ -728,13 +728,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(stageResourcesDir, path.join(stageAppDir, "apps/desktop/prod-resources"));
 
   const stagePackageJson: StagePackageJson = {
-    name: "synara-desktop",
+    name: "litrev-desktop",
     version: appVersion,
     buildVersion: appVersion,
     synaraCommitHash: commitHash,
     private: true,
-    description: "Synara desktop build",
-    author: "Emanuele Di Pietro",
+    description: "LitRev desktop build",
+    author: "Yaacov Corcos",
     main: "apps/desktop/dist-electron/main.js",
     build: yield* createBuildConfig(
       options.platform,

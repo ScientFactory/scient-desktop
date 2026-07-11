@@ -1170,7 +1170,7 @@ function hasConfiguredUpdateFeed(): boolean {
 
 function resolveAutoUpdateDisabledReason(): string | null {
   if (!LITREV_DESKTOP_UPDATES_ENABLED) {
-    return "Updates are disabled until a LitRev-owned release feed is configured.";
+    return "Updates are disabled until client update support is explicitly enabled and a LitRev-owned release feed is approved.";
   }
   return getAutoUpdateDisabledReason({
     isDevelopment,

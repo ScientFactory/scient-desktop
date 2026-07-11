@@ -1,6 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { githubRepositoryFromRemote, shouldFetchUpstream } from "./litrev-upstream-check.ts";
+import {
+  assertCurrentUpstream,
+  githubRepositoryFromRemote,
+  shouldFetchUpstream,
+} from "./litrev-upstream-check.ts";
 
 describe("litrev upstream source check", () => {
   it("accepts equivalent GitHub SSH and HTTPS remote forms", () => {
@@ -28,5 +32,11 @@ describe("litrev upstream source check", () => {
     assert.equal(shouldFetchUpstream([]), true);
     assert.equal(shouldFetchUpstream(["--checks"]), true);
     assert.equal(shouldFetchUpstream(["--no-fetch"]), false);
+  });
+
+  it("rejects a behind fork unless diagnostic mode is explicit", () => {
+    assert.doesNotThrow(() => assertCurrentUpstream("0", []));
+    assert.throws(() => assertCurrentUpstream("2", []), /2 commit\(s\) behind upstream\/main/);
+    assert.doesNotThrow(() => assertCurrentUpstream("2", ["--allow-behind"]));
   });
 });

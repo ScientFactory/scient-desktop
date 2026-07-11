@@ -10,6 +10,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  LITREV_DESKTOP_UPDATES_ENABLED,
   LITREV_DESKTOP_UPDATE_CHANNEL,
   LITREV_PRODUCTION_BUNDLE_ID,
 } from "@synara/shared/desktopIdentity";
@@ -114,6 +115,11 @@ function verifyCanonicalIdentity(): void {
   }
   if (LITREV_DESKTOP_UPDATE_CHANNEL !== "litrev") {
     throw new Error(`Unexpected desktop update channel: ${LITREV_DESKTOP_UPDATE_CHANNEL}.`);
+  }
+  if (LITREV_DESKTOP_UPDATES_ENABLED) {
+    throw new Error(
+      "Release publication must not implicitly enable desktop clients; a reviewed code change is required.",
+    );
   }
 
   const releasePolicy = readReleaseUpdatePolicyConfig(repoRoot);
