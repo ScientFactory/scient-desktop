@@ -7,8 +7,8 @@ import {
   type OrchestrationThread,
   type ServerConfig,
   type ServerProviderStatus,
-} from "@t3tools/contracts";
-import { defaultTerminalTitleForCliKind } from "@t3tools/shared/terminalThreads";
+} from "@synara/contracts";
+import { defaultTerminalTitleForCliKind } from "@synara/shared/terminalThreads";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -93,6 +93,7 @@ import {
 import {
   getGitInvalidationThreadIdForEvent,
   getProjectFileInvalidationThreadIdForEvent,
+  getStudioOutputInvalidationThreadIdForEvent,
   resolveGitInvalidationCwdForThreadId,
   shouldInvalidateGitQueriesForEvent,
   shouldInvalidateProviderQueriesForEvent,
@@ -190,6 +191,7 @@ function RootRouteView() {
         <AnchoredToastProvider>
           <GitProgressToastPreviewDev />
           <EventRouter />
+          <ProviderStatusRefreshCoordinator />
           <GlobalShortcutsDialog />
           <GlobalWhatsNewSurface />
           <TaskCompletionNotifications />
@@ -210,31 +212,53 @@ function GitProgressToastPreviewDev() {
   return null;
 }
 
+function ProviderStatusRefreshCoordinator() {
+  const { settings } = useAppSettings();
+  const serverSettingsQuery = useQuery(serverSettingsQueryOptions());
+  const providerUpdateChecksEnabled =
+    serverSettingsQuery.data !== undefined && settings.enableProviderUpdateChecks;
+
+  useProviderAuthRefreshOnFocus();
+  // Provider latest-version checks are slow/network-backed, so keep this cadence
+  // coarse while still honoring the automatic update-check setting.
+  useProviderStatusRefresh({
+    enabled: providerUpdateChecksEnabled,
+    initialDelayMs: PROVIDER_UPDATE_INITIAL_REFRESH_DELAY_MS,
+    intervalMs: PROVIDER_UPDATE_REFRESH_INTERVAL_MS,
+  });
+
+  return null;
+}
+
 function ProviderUpdateNotifications() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { settings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const serverSettingsQuery = useQuery(serverSettingsQueryOptions());
+  const providerUpdateServerSettings = useMemo(
+    () =>
+      serverSettingsQuery.data
+        ? {
+            ...serverSettingsQuery.data,
+            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+          }
+        : null,
+    [serverSettingsQuery.data, settings.enableProviderUpdateChecks],
+  );
   const [isUpdatingAll, setIsUpdatingAll] = useState(false);
   const activeToastRef = useRef<ActiveProviderUpdateToast | null>(null);
   const isUpdatingAllRef = useRef(false);
   const progressToastDismissedRef = useRef(false);
-  // Provider latest-version checks are slow/network-backed, so keep this much
-  // coarser than auth focus refreshes while still avoiding manual-only refreshes.
-  useProviderStatusRefresh({
-    initialDelayMs: PROVIDER_UPDATE_INITIAL_REFRESH_DELAY_MS,
-    intervalMs: PROVIDER_UPDATE_REFRESH_INTERVAL_MS,
-  });
   const outdatedProviders = useMemo(
     () =>
       getVisibleProviderUpdateStatuses({
         providers: serverConfigQuery.data?.providers ?? [],
         hiddenProviders: settings.hiddenProviders,
-        serverSettings: serverSettingsQuery.data ?? null,
+        serverSettings: providerUpdateServerSettings,
         oneClickOnly: true,
       }),
-    [serverConfigQuery.data?.providers, serverSettingsQuery.data, settings.hiddenProviders],
+    [providerUpdateServerSettings, serverConfigQuery.data?.providers, settings.hiddenProviders],
   );
   const oneClickProviders = useMemo(
     () => outdatedProviders.filter((provider) => !isProviderUpdateActive(provider)),
@@ -570,9 +594,7 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
       </div>
 
       <section className="relative w-full max-w-xl rounded-2xl border border-border/80 bg-card/90 p-6 shadow-2xl shadow-black/20 backdrop-blur-md sm:p-8">
-        <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
-          {APP_DISPLAY_NAME}
-        </p>
+        <p className="text-[11px] font-semibold text-muted-foreground">{APP_DISPLAY_NAME}</p>
         <h1 className="mt-3 text-2xl font-semibold sm:text-3xl">Something went wrong.</h1>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{message}</p>
 
@@ -821,6 +843,7 @@ function EventRouter() {
     let needsBroadGitInvalidation = false;
     let pendingGitInvalidationThreadIds = new Set<ThreadId>();
     let pendingProjectFileInvalidationThreadIds = new Set<ThreadId>();
+    let pendingStudioOutputInvalidationThreadIds = new Set<ThreadId>();
     let pendingDomainEvents: OrchestrationEvent[] = [];
     const immediatelyFlushedAssistantMessageIds = new Set<string>();
     let providerDiscoveryInvalidationFingerprint: string | null = null;
@@ -1021,6 +1044,15 @@ function EventRouter() {
           void queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
         }
       }
+      if (pendingStudioOutputInvalidationThreadIds.size > 0) {
+        // File-change activities cover non-Git Studio chats; finalized checkpoints cover Git.
+        for (const threadId of pendingStudioOutputInvalidationThreadIds) {
+          void queryClient.invalidateQueries({
+            queryKey: serverQueryKeys.studioThreadOutputs(threadId),
+          });
+        }
+        pendingStudioOutputInvalidationThreadIds = new Set();
+      }
       if (needsBroadGitInvalidation) {
         needsBroadGitInvalidation = false;
         pendingGitInvalidationThreadIds = new Set();
@@ -1054,6 +1086,10 @@ function EventRouter() {
       const projectFileThreadId = getProjectFileInvalidationThreadIdForEvent(event);
       if (projectFileThreadId) {
         pendingProjectFileInvalidationThreadIds.add(projectFileThreadId);
+      }
+      const studioOutputThreadId = getStudioOutputInvalidationThreadIdForEvent(event);
+      if (studioOutputThreadId) {
+        pendingStudioOutputInvalidationThreadIds.add(studioOutputThreadId);
       }
       if (shouldInvalidateGitQueriesForEvent(event)) {
         const threadId = getGitInvalidationThreadIdForEvent(event);
@@ -1238,6 +1274,7 @@ function EventRouter() {
         setServerWorkspacePaths({
           homeDir: payload.homeDir,
           chatWorkspaceRoot: payload.chatWorkspaceRoot,
+          studioWorkspaceRoot: payload.studioWorkspaceRoot,
         });
         await ensureScopedSubscriptions();
         if (disposed) {
@@ -1380,6 +1417,7 @@ function EventRouter() {
       needsProviderInvalidation = false;
       needsBroadGitInvalidation = false;
       pendingGitInvalidationThreadIds = new Set();
+      pendingStudioOutputInvalidationThreadIds = new Set();
       domainEventFlushThrottler.cancel();
       reconcileThreadSubscriptionsRef.current = null;
       void api.orchestration.unsubscribeShell().catch(() => undefined);
@@ -1417,10 +1455,6 @@ function EventRouter() {
     }
     void reconcile(subscribedThreadIds);
   }, [subscribedThreadIds]);
-
-  // Account changes made outside the app reflect without a restart by
-  // re-probing provider auth when the window regains focus (see hook).
-  useProviderAuthRefreshOnFocus();
 
   return null;
 }

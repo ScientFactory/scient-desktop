@@ -11,8 +11,8 @@ import {
   type ProviderKind,
   type ResolvedKeybindingsConfig,
   type ThreadId,
-} from "@t3tools/contracts";
-import { isGenericChatThreadTitle } from "@t3tools/shared/chatThreads";
+} from "@synara/contracts";
+import { isGenericChatThreadTitle } from "@synara/shared/chatThreads";
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FiGitBranch } from "react-icons/fi";
 import { HiMiniArrowsPointingOut } from "react-icons/hi2";
@@ -58,7 +58,6 @@ import {
   type EditorRailChatTabSnapshot,
 } from "../../editorViewState";
 import { cn } from "~/lib/utils";
-import { useIsDisposableThread } from "~/hooks/useIsDisposableThread";
 import { useOpenFavoriteEditorShortcut } from "~/hooks/useOpenFavoriteEditorShortcut";
 import type { RepoDiffTotals } from "~/hooks/useRepoDiffTotals";
 import { ProviderIcon } from "../ProviderIcon";
@@ -106,7 +105,7 @@ interface ChatHeaderProps {
   diffDisabledReason?: string | null;
   surfaceMode?: "single" | "split";
   isSidechat?: boolean;
-  // When provided (and the thread is not disposable), the header collapses the
+  // When provided, the header collapses the
   // Open-in-editor + git-actions + diff-toggle cluster into one Environment button that
   // drives the Environment panel; otherwise the legacy cluster is rendered.
   environment?: EnvironmentToggleState | null;
@@ -406,7 +405,7 @@ function EditorRailTabs(props: {
               <span>New chat</span>
             </MenuItem>
             <MenuItem onClick={newTerminalTab}>
-              <TerminalIcon className="size-3.5 shrink-0 text-[var(--color-text-accent)]" />
+              <TerminalIcon className="size-3.5 shrink-0 text-muted-foreground" />
               <span>New terminal</span>
             </MenuItem>
           </ComposerPickerMenuPopup>
@@ -524,13 +523,11 @@ export const ChatHeader = memo(function ChatHeader({
   const { isMobile, state } = useSidebar();
   const headerRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
-  const [openAddActionNonce, setOpenAddActionNonce] = useState(0);
   const {
     additions: diffAdditions,
     deletions: diffDeletions,
     hasChanges: showDiffTotals,
   } = diffTotals;
-  const isDisposableThread = useIsDisposableThread(activeThreadId);
 
   // Own the open-favorite editor shortcut here so it survives regardless of which editor UI
   // is mounted (the legacy Open-in button, the Environment panel's Editor section, or
@@ -539,7 +536,7 @@ export const ChatHeader = memo(function ChatHeader({
     keybindings,
     availableEditors,
     openInTarget,
-    enabled: !isDisposableThread && Boolean(activeProjectName),
+    enabled: Boolean(activeProjectName),
   });
 
   const isSplitPane = surfaceMode === "split";
@@ -679,7 +676,7 @@ export const ChatHeader = memo(function ChatHeader({
                   </span>
                 )}
                 <h2
-                  className="max-w-[clamp(12rem,42vw,36rem)] truncate text-sm font-medium text-foreground"
+                  className="max-w-[clamp(12rem,42vw,36rem)] truncate font-system-ui text-[length:var(--app-font-size-ui,12px)] font-normal text-foreground"
                   title={activeThreadTitle}
                   onDoubleClick={() => onRenameThread()}
                 >
@@ -745,10 +742,10 @@ export const ChatHeader = memo(function ChatHeader({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2 [-webkit-app-region:no-drag]">
-        {!isDisposableThread && !hideHandoffControls && !environment ? (
+        {!hideHandoffControls && !environment ? (
           <ProviderUsageMenuControl provider={activeProvider} />
         ) : null}
-        {!isDisposableThread && !hideHandoffControls ? (
+        {!hideHandoffControls ? (
           <Menu modal={false}>
             <Tooltip>
               <TooltipTrigger
@@ -781,14 +778,12 @@ export const ChatHeader = memo(function ChatHeader({
             </ComposerPickerMenuPopup>
           </Menu>
         ) : null}
-        {/* Keep the shared project-action dialog mounted for the Open-in picker while
-            preserving the header's quick run button for saved project scripts. */}
-        {!isDisposableThread && activeProjectScripts ? (
+        {activeProjectScripts ? (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
             keybindings={keybindings}
             preferredScriptId={preferredScriptId}
-            openAddActionNonce={openAddActionNonce}
+            hideInlineLabel={compact}
             onRunScript={onRunProjectScript}
             onAddScript={onAddProjectScript}
             onUpdateScript={onUpdateProjectScript}
@@ -796,7 +791,7 @@ export const ChatHeader = memo(function ChatHeader({
           />
         ) : null}
 
-        {!isDisposableThread && inlineChatLayoutAction ? (
+        {inlineChatLayoutAction ? (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -814,7 +809,7 @@ export const ChatHeader = memo(function ChatHeader({
         ) : null}
 
         {/* Change thread stays as a standalone control (split/sidechat only). */}
-        {!isDisposableThread && changeThreadAction ? (
+        {changeThreadAction ? (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -834,8 +829,8 @@ export const ChatHeader = memo(function ChatHeader({
         {/* Environment: one button consolidating Open-in-editor and git actions into the
             Environment panel. The right-side diff toggle stays beside it so the familiar
             "open the diff on the right" control is preserved. Falls back to the legacy split
-            controls for disposable threads (which never surface the panel). */}
-        {environment && !isDisposableThread ? (
+            controls when no environment is resolved. */}
+        {environment ? (
           <>
             <EnvironmentToggle environment={environment} />
             {diffToggleControl}
@@ -843,19 +838,16 @@ export const ChatHeader = memo(function ChatHeader({
         ) : (
           <>
             {/* Open in editor: dedicated split-button with an editor switcher; the project
-                "Add action" entry lives at the bottom of that same menu. */}
-            {!isDisposableThread && activeProjectName ? (
+                action control now lives beside Hand off as its own project command surface. */}
+            {activeProjectName ? (
               <OpenInPicker
                 keybindings={keybindings}
                 availableEditors={availableEditors}
                 openInTarget={openInTarget}
-                {...(activeProjectScripts
-                  ? { onAddAction: () => setOpenAddActionNonce((current) => current + 1) }
-                  : {})}
               />
             ) : null}
 
-            {!isDisposableThread && activeProjectName && showGitActions ? (
+            {activeProjectName && showGitActions ? (
               <GitActionsControl
                 gitCwd={gitCwd}
                 activeThreadId={activeThreadId}

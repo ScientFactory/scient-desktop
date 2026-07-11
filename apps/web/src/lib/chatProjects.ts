@@ -2,17 +2,103 @@
 // Purpose: Reuse one hidden home-scoped chat project as the backing container for chat rows.
 // Layer: Web orchestration helper
 
-import { type ProjectId } from "@t3tools/contracts";
-import { isWorkspaceRootWithin, workspaceRootsEqual } from "@t3tools/shared/threadWorkspace";
+import { type ProjectId } from "@synara/contracts";
+import { isWorkspaceRootWithin, workspaceRootsEqual } from "@synara/shared/threadWorkspace";
 import type { Project } from "../types";
 import { readNativeApi } from "../nativeApi";
 import { useStore } from "../store";
 import { getThreadFromState } from "../threadDerivation";
+import {
+  extractDuplicateProjectCreateProjectId,
+  findContainerCandidateById,
+  isDuplicateProjectCreateError,
+  resolveContainerCandidateCwd,
+} from "./projectCreateRecovery";
+import {
+  PROJECT_SNAPSHOT_HYDRATION_TIMEOUT_MS,
+  waitForProjectSnapshotHydration,
+} from "./projectSnapshotHydration";
 import { resolveServerChatWorkspaceRoot, type ServerWorkspacePaths } from "./serverWorkspacePaths";
 import { newCommandId, newProjectId } from "./utils";
 
 const pendingHomeChatCreationByWorkspaceRoot = new Map<string, Promise<ProjectId | null>>();
 const pendingHomeChatFixupByWorkspaceRoot = new Map<string, Promise<void>>();
+
+interface HomeChatContainerCandidate {
+  readonly id?: ProjectId | undefined;
+  readonly kind?: Project["kind"] | undefined;
+  readonly cwd?: string | undefined;
+  readonly workspaceRoot?: string | undefined;
+  readonly name?: string | undefined;
+  readonly remoteName?: string | undefined;
+  readonly title?: string | undefined;
+}
+
+async function updateHomeChatProjectMetadata(
+  api: NonNullable<ReturnType<typeof readNativeApi>>,
+  projectId: ProjectId,
+): Promise<void> {
+  await api.orchestration.dispatchCommand({
+    type: "project.meta.update",
+    commandId: newCommandId(),
+    projectId,
+    kind: "chat",
+    title: "Home",
+  });
+}
+
+function isHomeChatContainerCandidate(
+  project: HomeChatContainerCandidate | null | undefined,
+  paths: ServerWorkspacePaths,
+): boolean {
+  const cwd = resolveContainerCandidateCwd(project);
+  if (!cwd) {
+    return false;
+  }
+
+  const title = project?.title ?? "";
+  return isHomeChatContainerProject(
+    {
+      cwd,
+      kind: project?.kind ?? "project",
+      name: project?.name ?? title,
+      remoteName: project?.remoteName ?? title,
+    },
+    paths,
+  );
+}
+
+function findHomeChatContainerCandidateById<T extends HomeChatContainerCandidate>(
+  projects: readonly T[],
+  projectId: ProjectId,
+  paths: ServerWorkspacePaths,
+): T | null {
+  return findContainerCandidateById(projects, projectId, (project) =>
+    isHomeChatContainerCandidate(project, paths),
+  );
+}
+
+async function findDuplicateHomeChatContainer(
+  api: NonNullable<ReturnType<typeof readNativeApi>>,
+  projectId: ProjectId,
+  paths: ServerWorkspacePaths,
+): Promise<HomeChatContainerCandidate | null> {
+  const localProject = findHomeChatContainerCandidateById(
+    useStore.getState().projects,
+    projectId,
+    paths,
+  );
+  if (localProject) {
+    return localProject;
+  }
+
+  const snapshot = await api.orchestration.getShellSnapshot().catch(() => null);
+  if (!snapshot) {
+    return null;
+  }
+
+  return findHomeChatContainerCandidateById(snapshot.projects, projectId, paths);
+}
 
 function matchesLegacyHomeChatWorkspaceRoot(
   project: Pick<Project, "cwd">,
@@ -128,13 +214,7 @@ async function fixupHomeChatProject(input: ServerWorkspacePaths): Promise<void> 
   }
 
   if (needsKindFixup) {
-    await api.orchestration.dispatchCommand({
-      type: "project.meta.update",
-      commandId: newCommandId(),
-      projectId: canonicalProjectId,
-      kind: "chat",
-      title: "Home",
-    });
+    await updateHomeChatProjectMetadata(api, canonicalProjectId);
   }
 
   for (const duplicateProjectId of duplicateProjectIds) {
@@ -154,9 +234,11 @@ function scheduleHomeChatFixup(input: ServerWorkspacePaths): void {
   if (pendingHomeChatFixupByWorkspaceRoot.has(workspaceRoot)) {
     return;
   }
-  const promise = fixupHomeChatProject(input).finally(() => {
-    pendingHomeChatFixupByWorkspaceRoot.delete(workspaceRoot);
-  });
+  const promise = fixupHomeChatProject(input)
+    .catch(() => undefined)
+    .finally(() => {
+      pendingHomeChatFixupByWorkspaceRoot.delete(workspaceRoot);
+    });
   pendingHomeChatFixupByWorkspaceRoot.set(workspaceRoot, promise);
 }
 
@@ -174,6 +256,17 @@ export async function ensureHomeChatProject(
     return null;
   }
 
+  // Never decide "the container doesn't exist" against an unhydrated store: a prewarm firing
+  // before the first shell snapshot (persisted paths make homeDir truthy immediately on reload)
+  // would otherwise dispatch a duplicate or misrooted project.create. Bound the wait so a stuck
+  // connection surfaces a user-visible error instead of hanging "new chat" forever.
+  const hydrated = await waitForProjectSnapshotHydration({
+    timeoutMs: PROJECT_SNAPSHOT_HYDRATION_TIMEOUT_MS,
+  });
+  if (!hydrated) {
+    return null;
+  }
+
   const { canonicalProjectId } = findCanonicalHomeProject(paths);
   if (canonicalProjectId) {
     scheduleHomeChatFixup(paths);
@@ -187,16 +280,34 @@ export async function ensureHomeChatProject(
 
   const creationPromise = (async () => {
     const projectId = newProjectId();
-    await api.orchestration.dispatchCommand({
-      type: "project.create",
-      commandId: newCommandId(),
-      projectId,
-      kind: "chat",
-      title: "Home",
-      workspaceRoot: placeholderWorkspaceRoot,
-      createdAt: new Date().toISOString(),
-    });
-    return projectId;
+    try {
+      await api.orchestration.dispatchCommand({
+        type: "project.create",
+        commandId: newCommandId(),
+        projectId,
+        kind: "chat",
+        title: "Home",
+        workspaceRoot: placeholderWorkspaceRoot,
+        createdAt: new Date().toISOString(),
+      });
+      return projectId;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (isDuplicateProjectCreateError(message)) {
+        const duplicateProjectId = extractDuplicateProjectCreateProjectId(message);
+        if (duplicateProjectId) {
+          const homeProjectId = duplicateProjectId as ProjectId;
+          const duplicateProject = await findDuplicateHomeChatContainer(api, homeProjectId, paths);
+          if (duplicateProject) {
+            if (duplicateProject.kind !== "chat") {
+              await updateHomeChatProjectMetadata(api, homeProjectId);
+            }
+            return homeProjectId;
+          }
+        }
+      }
+      throw error;
+    }
   })().finally(() => {
     pendingHomeChatCreationByWorkspaceRoot.delete(workspaceRoot);
   });
@@ -206,14 +317,33 @@ export async function ensureHomeChatProject(
 }
 
 export function prewarmHomeChatProject(paths: ServerWorkspacePaths): void {
-  void ensureHomeChatProject(paths);
+  void ensureHomeChatProject(paths).catch(() => undefined);
+}
+
+export async function resetHomeChatProjectPrewarmStateForTests(): Promise<void> {
+  const pendingOperations = [
+    ...pendingHomeChatCreationByWorkspaceRoot.values(),
+    ...pendingHomeChatFixupByWorkspaceRoot.values(),
+  ];
+  pendingHomeChatCreationByWorkspaceRoot.clear();
+  pendingHomeChatFixupByWorkspaceRoot.clear();
+  await Promise.allSettled(pendingOperations);
 }
 
 export function isHomeChatContainerProject(
   project: Pick<Project, "cwd" | "kind" | "name" | "remoteName"> | null | undefined,
   paths: ServerWorkspacePaths,
 ): boolean {
-  if (!project || !paths.homeDir) {
+  if (!project) {
+    return false;
+  }
+  // Before any server path resolves (first launch, cleared storage), trust the kind alone so
+  // chat-surface projects aren't mis-partitioned during boot — mirrors isStudioContainerProject.
+  // Once paths are known, the root checks below decide, so drifted rows stay excluded.
+  if (!paths.homeDir && !paths.chatWorkspaceRoot?.trim()) {
+    return project.kind === "chat";
+  }
+  if (!paths.homeDir) {
     return false;
   }
   return (

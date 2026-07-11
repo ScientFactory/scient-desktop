@@ -19,7 +19,7 @@ import type {
   ThreadId,
   ThreadMarker,
   ThreadMarkerId,
-} from "@t3tools/contracts";
+} from "@synara/contracts";
 import { useNavigate } from "@tanstack/react-router";
 
 import { useAppSettings } from "~/appSettings";
@@ -43,7 +43,9 @@ import {
 } from "./EnvironmentAutomationsSection";
 import { EnvironmentUsageSection } from "./EnvironmentUsageSection";
 import { EnvironmentLocalServersSection } from "./EnvironmentLocalServersSection";
+import { EnvironmentPullRequestSection } from "./EnvironmentPullRequestSection";
 import { EnvironmentMarkersSection } from "./EnvironmentMarkersSection";
+import { EnvironmentStudioOutputsSection } from "./EnvironmentStudioOutputsSection";
 import { EnvironmentNotesSection } from "./EnvironmentNotesSection";
 import { EnvironmentPinnedSection } from "./EnvironmentPinnedSection";
 import { EnvironmentProjectInstructionsSection } from "./EnvironmentProjectInstructionsSection";
@@ -88,6 +90,11 @@ export interface EnvironmentPanelProps {
   activeThreadId: ThreadId | null;
   /** Active provider for the usage row (same chip the header used to show). */
   activeProvider: ProviderKind;
+  /**
+   * Whether the active thread is a Studio chat. Studio chats show the Output section:
+   * the Outbox files THIS chat produced, so its output stays attached to the chat.
+   */
+  isStudioChat: boolean;
   /** Whether the active runtime exposes git actions (hides "Commit and Push" otherwise). */
   showGitActions: boolean;
   /** Current diff-panel open state, so the "Changes" row reflects/toggles it. */
@@ -197,6 +204,7 @@ export function EnvironmentPanel({
   availableEditors,
   activeThreadId,
   activeProvider,
+  isStudioChat,
   showGitActions,
   diffOpen,
   threadAutomations,
@@ -256,9 +264,15 @@ export function EnvironmentPanel({
 
       <div className="flex items-center justify-between gap-2 px-2 pb-0.5 pt-0.5">
         <EnvironmentPanelTitle>Environment</EnvironmentPanelTitle>
+        {/*
+          icon-xs centers the 14px gear inside a 28/24px box, insetting it ~7/5px from the
+          content edge; pull it back so the glyph's right edge lines up with the rows' chevrons
+          (which sit flush against the same px-2 gutter).
+        */}
         <IconButton
           label="Panel sections"
           tooltip="Panel sections"
+          className="-mr-[7px] sm:-mr-[5px]"
           onClick={() =>
             void navigate({
               to: "/settings",
@@ -317,6 +331,20 @@ export function EnvironmentPanel({
             }}
           />
         </EnvironmentLabeledSection>
+      ) : null}
+
+      {settings.showEnvironmentPullRequest && isGitRepo && onOpenGithubRepository ? (
+        <EnvironmentPullRequestSection
+          gitCwd={gitCwd}
+          enabled={open}
+          activeThreadId={activeThreadId}
+          onOpenUrl={onOpenGithubRepository}
+          onClose={onClose}
+        />
+      ) : null}
+
+      {isStudioChat && activeThreadId ? (
+        <EnvironmentStudioOutputsSection threadId={activeThreadId} enabled={open} />
       ) : null}
 
       {settings.showEnvironmentEditor ? (

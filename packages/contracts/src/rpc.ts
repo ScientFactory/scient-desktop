@@ -20,6 +20,7 @@ import {
 } from "./automation";
 import { OpenInEditorInput } from "./editor";
 import { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem";
+import { StudioListThreadOutputsInput, StudioListThreadOutputsResult } from "./studio";
 import {
   GitCheckoutInput,
   GitActionProgressEvent,
@@ -39,6 +40,8 @@ import {
   GitPreparePullRequestThreadResult,
   GitPullInput,
   GitPullRequestRefInput,
+  GitPullRequestSnapshotInput,
+  GitPullRequestSnapshotResult,
   GitPullResult,
   GitReadWorkingTreeDiffInput,
   GitReadWorkingTreeDiffResult,
@@ -90,6 +93,8 @@ import {
   ProviderReadPluginResult,
 } from "./providerDiscovery";
 import {
+  ProjectCreateLocalFilePreviewGrantInput,
+  ProjectCreateLocalFilePreviewGrantResult,
   ProjectDevServerEvent,
   ProjectDiscoverScriptsInput,
   ProjectDiscoverScriptsResult,
@@ -294,6 +299,15 @@ export const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
   error: WsRpcError,
 });
 
+export const WsProjectsCreateLocalFilePreviewGrantRpc = Rpc.make(
+  WS_METHODS.projectsCreateLocalFilePreviewGrant,
+  {
+    payload: ProjectCreateLocalFilePreviewGrantInput,
+    success: ProjectCreateLocalFilePreviewGrantResult,
+    error: WsRpcError,
+  },
+);
+
 export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
@@ -327,6 +341,12 @@ export const WsSubscribeProjectDevServerEventsRpc = Rpc.make(
     stream: true,
   },
 );
+
+export const WsStudioListThreadOutputsRpc = Rpc.make(WS_METHODS.studioListThreadOutputs, {
+  payload: StudioListThreadOutputsInput,
+  success: StudioListThreadOutputsResult,
+  error: WsRpcError,
+});
 
 export const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   payload: FilesystemBrowseInput,
@@ -380,6 +400,12 @@ export const WsGitRunStackedActionRpc = Rpc.make(WS_METHODS.gitRunStackedAction,
 export const WsGitResolvePullRequestRpc = Rpc.make(WS_METHODS.gitResolvePullRequest, {
   payload: GitPullRequestRefInput,
   success: GitResolvePullRequestResult,
+  error: WsRpcError,
+});
+
+export const WsGitPullRequestSnapshotRpc = Rpc.make(WS_METHODS.gitPullRequestSnapshot, {
+  payload: GitPullRequestSnapshotInput,
+  success: GitPullRequestSnapshotResult,
   error: WsRpcError,
 });
 
@@ -798,11 +824,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchEntriesRpc,
   WsProjectsSearchLocalEntriesRpc,
   WsProjectsReadFileRpc,
+  WsProjectsCreateLocalFilePreviewGrantRpc,
   WsProjectsWriteFileRpc,
   WsProjectsRunDevServerRpc,
   WsProjectsStopDevServerRpc,
   WsProjectsListDevServersRpc,
   WsSubscribeProjectDevServerEventsRpc,
+  WsStudioListThreadOutputsRpc,
   WsFilesystemBrowseRpc,
   WsShellOpenInEditorRpc,
   WsGitGithubRepositoryRpc,
@@ -812,6 +840,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitPullRpc,
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
+  WsGitPullRequestSnapshotRpc,
   WsGitPreparePullRequestThreadRpc,
   WsGitListBranchesRpc,
   WsGitCreateWorktreeRpc,

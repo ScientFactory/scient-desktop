@@ -3,21 +3,20 @@
 // Layer: Chat header action
 // Depends on: shared editor metadata, native shell bridge, and preferred editor state.
 
-import { type EditorId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { type EditorId, type ResolvedKeybindingsConfig } from "@synara/contracts";
 import { useQuery } from "@tanstack/react-query";
 import { memo } from "react";
 import { useEditorLaunchers } from "~/hooks/useEditorLaunchers";
-import { ChevronDownIcon, PlusIcon } from "~/lib/icons";
+import { ChevronDownIcon } from "~/lib/icons";
 import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
 import { cn } from "~/lib/utils";
 import {
   Menu,
-  MenuItem,
   MenuRadioGroup,
   MenuRadioItem,
-  MenuSeparator,
   MenuShortcut,
   MenuTrigger,
+  MenuItem,
 } from "../ui/menu";
 import { ComposerPickerMenuPopup } from "./ComposerPickerMenuPopup";
 import {
@@ -36,7 +35,6 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings: keybindingsProp,
   availableEditors: availableEditorsProp,
   openInTarget,
-  onAddAction,
   labelMode = "responsive",
   defaultEditor,
 }: {
@@ -47,13 +45,10 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings?: ResolvedKeybindingsConfig;
   availableEditors?: ReadonlyArray<EditorId>;
   openInTarget: string | null;
-  // Optional project "Add action" entry rendered at the bottom of the editor menu.
-  onAddAction?: () => void;
   // "responsive" (default) hides the "Open" label until the `header-actions`
-  // container is wide enough; "always" keeps it visible regardless. Surfaces
-  // without that container (e.g. the file-preview header) pass "always" so the
-  // label shows without needing an inline-size container that would collapse
-  // the control's own width.
+  // inline-size container (declared on an ancestor — the chat header and the
+  // file-preview header both do) is wide enough; "always" keeps it visible
+  // regardless, for surfaces that don't establish that container.
   labelMode?: "responsive" | "always";
   // Pins the primary "Open" action to a specific editor for this surface without
   // mutating the shared preferred-editor setting. The PDF viewer uses this to default
@@ -136,17 +131,6 @@ export const OpenInPicker = memo(function OpenInPicker({
               </MenuRadioItem>
             ))}
           </MenuRadioGroup>
-          {onAddAction ? (
-            <>
-              <MenuSeparator className="mx-1" />
-              <MenuItem onClick={onAddAction}>
-                <span className="shrink-0">
-                  <PlusIcon aria-hidden="true" className="size-3.5 text-muted-foreground" />
-                </span>
-                Add action
-              </MenuItem>
-            </>
-          ) : null}
         </ComposerPickerMenuPopup>
       </Menu>
     </ChatHeaderSplitGroup>

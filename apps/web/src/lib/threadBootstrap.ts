@@ -13,14 +13,15 @@ import {
   type RuntimeMode,
   type ThreadEnvironmentMode,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@synara/contracts";
+import { resolveThreadEnvironmentMode } from "@synara/shared/threadEnvironment";
 import {
   type ComposerThreadDraftState,
   type DraftThreadEnvMode,
   type DraftThreadState,
   resolvePreferredComposerModelSelection,
 } from "../composerDraftStore";
-import { DEFAULT_INTERACTION_MODE, type ThreadPrimarySurface } from "../types";
+import { DEFAULT_INTERACTION_MODE, type Thread, type ThreadPrimarySurface } from "../types";
 
 export interface NewThreadOptions {
   branch?: string | null;
@@ -30,6 +31,40 @@ export interface NewThreadOptions {
   temporary?: boolean;
   provider?: ProviderKind;
   fresh?: boolean;
+}
+
+export interface InheritedThreadContext {
+  branch: string | null;
+  worktreePath: string | null;
+  envMode: DraftThreadEnvMode;
+}
+
+// Carry the active surface's branch/worktree/env into a new thread bootstrap.
+// A pending draft wins outright; otherwise we derive the env mode from the
+// active thread's worktree so a fresh thread inherits the same workspace shape.
+export function resolveInheritedThreadContext(input: {
+  activeThread: Pick<Thread, "branch" | "worktreePath" | "envMode"> | null | undefined;
+  activeDraftThread:
+    | Pick<DraftThreadState, "branch" | "worktreePath" | "envMode">
+    | null
+    | undefined;
+}): InheritedThreadContext {
+  const { activeThread, activeDraftThread } = input;
+  if (activeDraftThread) {
+    return {
+      branch: activeDraftThread.branch,
+      worktreePath: activeDraftThread.worktreePath,
+      envMode: activeDraftThread.envMode,
+    };
+  }
+  return {
+    branch: activeThread?.branch ?? null,
+    worktreePath: activeThread?.worktreePath ?? null,
+    envMode: resolveThreadEnvironmentMode({
+      envMode: activeThread?.envMode,
+      worktreePath: activeThread?.worktreePath ?? null,
+    }),
+  };
 }
 
 interface ActiveThreadSnapshot {

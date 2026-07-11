@@ -67,6 +67,12 @@ export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
       "Show the standalone Chats list in the sidebar footer chats not tied to a project. sidebar section",
   },
   {
+    id: "general:studio-section",
+    section: "general",
+    title: "Studio",
+    keywords: "Show the Studio tab in the sidebar switcher. sidebar section content outbox",
+  },
+  {
     id: "general:workspace-section",
     section: "general",
     title: "Workspace",
@@ -84,6 +90,13 @@ export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
     section: "general",
     title: "Repository",
     keywords: "Show the GitHub repository link in the chat Environment panel. git changes worktree",
+  },
+  {
+    id: "general:environment-pull-request",
+    section: "general",
+    title: "Pull request",
+    keywords:
+      "Show the open pull request CI checks and review comments in the chat Environment panel. pr fix github",
   },
   {
     id: "general:environment-editor",
@@ -196,13 +209,6 @@ export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
     keywords: "Set the default wrap state when the diff panel opens. word wrap",
   },
   {
-    id: "behavior:prompt-suggestions",
-    section: "behavior",
-    title: "Prompt suggestions",
-    keywords:
-      "Show suggested prompts under the composer when starting a new thread. composer suggestions",
-  },
-  {
     id: "behavior:delete-confirmation",
     section: "behavior",
     title: "Delete confirmation",
@@ -219,6 +225,16 @@ export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
     section: "behavior",
     title: "Terminal close confirmation",
     keywords: "Ask before closing a terminal tab and clearing its history. safety confirm",
+  },
+
+  // ── Keyboard Shortcuts ────────────────────────────────────────────────────────
+  {
+    id: "shortcuts:keyboard-shortcuts",
+    section: "shortcuts",
+    title: "Keyboard Shortcuts",
+    keywords:
+      "Every keyboard shortcut available in Synara, grouped by context. keybindings hotkeys key combo cmd ctrl reference",
+    target: null,
   },
 
   // ── Worktrees ─────────────────────────────────────────────────────────────────
@@ -254,6 +270,13 @@ export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
   },
 
   // ── Providers ─────────────────────────────────────────────────────────────────
+  {
+    id: "providers:automatic-cli-update-checks",
+    section: "providers",
+    title: "Automatic CLI update checks",
+    keywords:
+      "Check Codex Claude and other provider CLIs for newer versions in the background. updates upgrade disable nags",
+  },
   {
     id: "providers:visible-providers",
     section: "providers",

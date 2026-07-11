@@ -1,4 +1,4 @@
-import { ProjectId, type ModelSelection, ThreadId } from "@t3tools/contracts";
+import { ProjectId, type ModelSelection, ThreadId } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 import { type ComposerThreadDraftState, type DraftThreadState } from "../composerDraftStore";
 import {
@@ -7,6 +7,7 @@ import {
   createActiveThreadSnapshot,
   createFreshDraftThreadSeed,
   hasDraftContextOverrides,
+  resolveInheritedThreadContext,
   resolveTerminalThreadCreationState,
   resolveThreadBootstrapPlan,
   shouldReuseActiveDraftThread,
@@ -46,6 +47,7 @@ function makeComposerDraftState(
 ): ComposerThreadDraftState {
   return {
     prompt: "",
+    promptHistorySavedDraft: null,
     images: [],
     files: [],
     nonPersistedImageIds: [],
@@ -167,6 +169,65 @@ describe("threadBootstrap", () => {
     expect(createActiveDraftThreadSnapshot(makeDraftThread(), PROJECT_ID)).toEqual({
       ...makeDraftThread(),
       lastKnownPr: null,
+    });
+  });
+
+  it("lets an active draft override inherited branch and worktree context", () => {
+    expect(
+      resolveInheritedThreadContext({
+        activeThread: {
+          branch: "feature/server-thread",
+          worktreePath: "/repo/.worktrees/server-thread",
+          envMode: "worktree",
+        },
+        activeDraftThread: makeDraftThread({
+          branch: "feature/draft-thread",
+          worktreePath: "/repo/.worktrees/draft-thread",
+          envMode: "worktree",
+        }),
+      }),
+    ).toEqual({
+      branch: "feature/draft-thread",
+      worktreePath: "/repo/.worktrees/draft-thread",
+      envMode: "worktree",
+    });
+  });
+
+  it("lets a local active draft clear active thread branch and worktree context", () => {
+    expect(
+      resolveInheritedThreadContext({
+        activeThread: {
+          branch: "feature/server-thread",
+          worktreePath: "/repo/.worktrees/server-thread",
+          envMode: "worktree",
+        },
+        activeDraftThread: makeDraftThread({
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        }),
+      }),
+    ).toEqual({
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+    });
+  });
+
+  it("derives inherited environment mode from the active thread when no draft exists", () => {
+    expect(
+      resolveInheritedThreadContext({
+        activeThread: {
+          branch: "feature/server-thread",
+          worktreePath: "/repo/.worktrees/server-thread",
+          envMode: undefined,
+        },
+        activeDraftThread: null,
+      }),
+    ).toEqual({
+      branch: "feature/server-thread",
+      worktreePath: "/repo/.worktrees/server-thread",
+      envMode: "worktree",
     });
   });
 

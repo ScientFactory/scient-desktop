@@ -7,7 +7,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@t3tools/contracts";
+import type { ChatAttachment, ProviderApprovalDecision, RuntimeMode } from "@synara/contracts";
 import {
   type ConsoleState,
   createOpencodeClient,
@@ -38,8 +38,8 @@ import {
 import * as Semaphore from "effect/Semaphore";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { NetService } from "@t3tools/shared/Net";
-import { prepareWindowsSafeProcess } from "@t3tools/shared/windowsProcess";
+import { NetService } from "@synara/shared/Net";
+import { prepareWindowsSafeProcess } from "@synara/shared/windowsProcess";
 import { isWindowsShellCommandMissingResult } from "../shell-command-detection.ts";
 
 const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 20_000;
@@ -714,6 +714,7 @@ export function openCodeQuestionId(
   return header.length > 0 ? `question-${index}-${header}` : `question-${index}`;
 }
 
+// OpenCode file parts reject many document MIME types; keep native parts to images.
 export function toOpenCodeFileParts(input: {
   readonly attachments: ReadonlyArray<ChatAttachment> | undefined;
   readonly resolveAttachmentPath: (attachment: ChatAttachment) => string | null;
@@ -721,7 +722,7 @@ export function toOpenCodeFileParts(input: {
   const parts: Array<FilePartInput> = [];
 
   for (const attachment of input.attachments ?? []) {
-    if (attachment.type !== "image" && attachment.type !== "file") {
+    if (attachment.type !== "image") {
       continue;
     }
 
@@ -1409,7 +1410,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
 });
 
 export class OpenCodeRuntime extends ServiceMap.Service<OpenCodeRuntime, OpenCodeRuntimeShape>()(
-  "t3/provider/opencodeRuntime",
+  "synara/provider/opencodeRuntime",
 ) {}
 
 export const OpenCodeRuntimeLive = Layer.effect(OpenCodeRuntime, makeOpenCodeRuntime).pipe(

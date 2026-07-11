@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { Button } from "~/components/ui/button";
-import { SidebarInset } from "~/components/ui/sidebar";
+import { RouteInsetSurface } from "./RouteInsetSurface";
 import { SidebarHeaderNavigationControls } from "~/components/SidebarHeaderNavigationControls";
 import {
   useDesktopTopBarTrafficLightGutterClassName,
@@ -22,11 +22,7 @@ import {
   CHAT_SURFACE_HEADER_HEIGHT_CLASS,
   CHAT_SURFACE_HEADER_PADDING_X_CLASS,
 } from "./chat/chatHeaderControls";
-import {
-  CHAT_BACKGROUND_CLASS_NAME,
-  CHAT_MAIN_CONTENT_SURFACE_CLASS_NAME,
-  CHAT_ROUTE_INSET_SHELL_CLASS_NAME,
-} from "./chat/composerPickerStyles";
+import { CHAT_BACKGROUND_CLASS_NAME } from "./chat/composerPickerStyles";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import WorkspaceSettingsSheet from "./WorkspaceSettingsSheet";
 import { onServerWelcome } from "~/wsNativeApi";
@@ -89,6 +85,7 @@ export default function WorkspaceView({ workspaceId }: { workspaceId: string }) 
         setServerWorkspacePaths({
           homeDir: payload.homeDir,
           chatWorkspaceRoot: payload.chatWorkspaceRoot,
+          studioWorkspaceRoot: payload.studioWorkspaceRoot,
         }),
       ),
     [setServerWorkspacePaths],
@@ -101,10 +98,12 @@ export default function WorkspaceView({ workspaceId }: { workspaceId: string }) 
     setServerWorkspacePaths({
       homeDir: serverConfigQuery.data.homeDir,
       chatWorkspaceRoot: serverConfigQuery.data.chatWorkspaceRoot,
+      studioWorkspaceRoot: serverConfigQuery.data.studioWorkspaceRoot,
     });
   }, [
     serverConfigQuery.data?.chatWorkspaceRoot,
     serverConfigQuery.data?.homeDir,
+    serverConfigQuery.data?.studioWorkspaceRoot,
     setServerWorkspacePaths,
   ]);
 
@@ -311,10 +310,7 @@ export default function WorkspaceView({ workspaceId }: { workspaceId: string }) 
   );
 
   return (
-    <SidebarInset
-      className={CHAT_ROUTE_INSET_SHELL_CLASS_NAME}
-      surfaceClassName={CHAT_MAIN_CONTENT_SURFACE_CLASS_NAME}
-    >
+    <RouteInsetSurface>
       <div
         className={cn(
           "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
@@ -428,6 +424,6 @@ export default function WorkspaceView({ workspaceId }: { workspaceId: string }) 
         onSelectPreset={applyWorkspacePresetSelection}
         workspaceTitle={workspace?.title ?? "Workspace"}
       />
-    </SidebarInset>
+    </RouteInsetSurface>
   );
 }

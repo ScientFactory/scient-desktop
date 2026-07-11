@@ -44,6 +44,7 @@ import {
   GitListBranchesInput,
   GitPullInput,
   GitPullRequestRefInput,
+  GitPullRequestSnapshotInput,
   GitReadWorkingTreeDiffInput,
   GitRemoveWorktreeInput,
   GitRemoveIndexLockInput,
@@ -68,6 +69,7 @@ import {
 } from "./terminal";
 import { KeybindingRule } from "./keybindings";
 import {
+  ProjectCreateLocalFilePreviewGrantInput,
   ProjectDevServerEvent,
   ProjectDiscoverScriptsInput,
   ProjectListDirectoriesInput,
@@ -78,6 +80,7 @@ import {
   ProjectStopDevServerInput,
   ProjectWriteFileInput,
 } from "./project";
+import { StudioListThreadOutputsInput } from "./studio";
 import { FilesystemBrowseInput } from "./filesystem";
 import { OpenInEditorInput } from "./editor";
 import {
@@ -119,11 +122,15 @@ export const WS_METHODS = {
   projectsSearchEntries: "projects.searchEntries",
   projectsSearchLocalEntries: "projects.searchLocalEntries",
   projectsReadFile: "projects.readFile",
+  projectsCreateLocalFilePreviewGrant: "projects.createLocalFilePreviewGrant",
   projectsWriteFile: "projects.writeFile",
   projectsRunDevServer: "projects.runDevServer",
   projectsStopDevServer: "projects.stopDevServer",
   projectsListDevServers: "projects.listDevServers",
   subscribeProjectDevServerEvents: "projects.subscribeDevServerEvents",
+
+  // Studio methods
+  studioListThreadOutputs: "studio.listThreadOutputs",
 
   // Filesystem browse methods
   filesystemBrowse: "filesystem.browse",
@@ -153,6 +160,7 @@ export const WS_METHODS = {
   gitUnstageFiles: "git.unstageFiles",
   gitHandoffThread: "git.handoffThread",
   gitResolvePullRequest: "git.resolvePullRequest",
+  gitPullRequestSnapshot: "git.pullRequestSnapshot",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
 
   // Terminal methods
@@ -266,6 +274,10 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.projectsSearchEntries, ProjectSearchEntriesInput),
   tagRequestBody(WS_METHODS.projectsSearchLocalEntries, ProjectSearchLocalEntriesInput),
   tagRequestBody(WS_METHODS.projectsReadFile, ProjectReadFileInput),
+  tagRequestBody(
+    WS_METHODS.projectsCreateLocalFilePreviewGrant,
+    ProjectCreateLocalFilePreviewGrantInput,
+  ),
   tagRequestBody(WS_METHODS.projectsWriteFile, ProjectWriteFileInput),
   tagRequestBody(WS_METHODS.projectsRunDevServer, ProjectRunDevServerInput),
   tagRequestBody(WS_METHODS.projectsStopDevServer, ProjectStopDevServerInput),
@@ -273,6 +285,9 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.subscribeProjectDevServerEvents, Schema.Struct({})),
 
   // Filesystem browse
+  // Studio
+  tagRequestBody(WS_METHODS.studioListThreadOutputs, StudioListThreadOutputsInput),
+
   tagRequestBody(WS_METHODS.filesystemBrowse, FilesystemBrowseInput),
 
   // Shell methods
@@ -300,6 +315,7 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.gitUnstageFiles, GitUnstageFilesInput),
   tagRequestBody(WS_METHODS.gitHandoffThread, GitHandoffThreadInput),
   tagRequestBody(WS_METHODS.gitResolvePullRequest, GitPullRequestRefInput),
+  tagRequestBody(WS_METHODS.gitPullRequestSnapshot, GitPullRequestSnapshotInput),
   tagRequestBody(WS_METHODS.gitPreparePullRequestThread, GitPreparePullRequestThreadInput),
 
   // Terminal methods
@@ -378,6 +394,7 @@ export const WsWelcomePayload = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   homeDir: Schema.optional(TrimmedNonEmptyString),
   chatWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  studioWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
   projectName: TrimmedNonEmptyString,
   bootstrapProjectId: Schema.optional(ProjectId),
   bootstrapThreadId: Schema.optional(ThreadId),

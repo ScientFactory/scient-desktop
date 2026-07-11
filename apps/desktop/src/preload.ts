@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge } from "@synara/contracts";
 import { BROWSER_IPC_CHANNELS } from "./browserIpc";
 import {
   DESKTOP_WS_URL_CHANNEL,
@@ -7,6 +7,7 @@ import {
   resolveDesktopWsUrlFromEnv,
 } from "./desktopWsBridge";
 import { SERVER_TRANSCRIBE_VOICE_CHANNEL } from "./voiceTranscription";
+import { STORAGE_MIGRATION_IPC_CHANNELS } from "./desktopStorageMigration";
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const SAVE_FILE_CHANNEL = "desktop:save-file";
@@ -15,6 +16,7 @@ const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const SHOW_IN_FOLDER_CHANNEL = "desktop:show-in-folder";
+const CLIPBOARD_WRITE_IMAGE_CHANNEL = "desktop:clipboard-write-image";
 const WINDOW_MINIMIZE_CHANNEL = "desktop:window-minimize";
 const WINDOW_TOGGLE_MAXIMIZE_CHANNEL = "desktop:window-toggle-maximize";
 const WINDOW_CLOSE_CHANNEL = "desktop:window-close";
@@ -51,6 +53,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   showInFolder: (path: string) => ipcRenderer.invoke(SHOW_IN_FOLDER_CHANNEL, path),
   shell: {
     showInFolder: (path: string) => ipcRenderer.invoke(SHOW_IN_FOLDER_CHANNEL, path),
+  },
+  clipboard: {
+    writeImagePngDataUrl: (dataUrl: string) =>
+      ipcRenderer.invoke(CLIPBOARD_WRITE_IMAGE_CHANNEL, dataUrl),
   },
   windowControls: {
     minimize: () => ipcRenderer.invoke(WINDOW_MINIMIZE_CHANNEL),
@@ -113,6 +119,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   notifications: {
     isSupported: () => ipcRenderer.invoke(NOTIFICATIONS_IS_SUPPORTED_CHANNEL),
     show: (input) => ipcRenderer.invoke(NOTIFICATIONS_SHOW_CHANNEL, input),
+  },
+  storageMigration: {
+    readSnapshot: () => ipcRenderer.sendSync(STORAGE_MIGRATION_IPC_CHANNELS.read),
+    acknowledgeSnapshot: () => ipcRenderer.invoke(STORAGE_MIGRATION_IPC_CHANNELS.acknowledge),
   },
   server: {
     transcribeVoice: (input) => ipcRenderer.invoke(SERVER_TRANSCRIBE_VOICE_CHANNEL, input),

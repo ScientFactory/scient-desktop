@@ -16,7 +16,7 @@ import {
   ResolvedKeybindingRule,
   ResolvedKeybindingsConfig,
   type ServerConfigIssue,
-} from "@t3tools/contracts";
+} from "@synara/contracts";
 import { Mutable } from "effect/Types";
 import {
   Array,
@@ -89,15 +89,23 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+m", command: "modelPicker.toggle", when: "!terminalFocus" },
   { key: "mod+shift+e", command: "traitsPicker.toggle", when: "!terminalFocus" },
   { key: "mod+shift+u", command: "settings.usage", when: "!terminalFocus" },
-  { key: "mod+n", command: "chat.new", when: "!terminalFocus" },
-  { key: "mod+shift+n", command: "chat.newLatestProject", when: "!terminalFocus" },
-  { key: "mod+alt+n", command: "chat.newChat", when: "!terminalFocus" },
-  { key: "mod+shift+t", command: "chat.newTerminal", when: "!terminalFocus" },
-  { key: "mod+alt+c", command: "chat.newClaude", when: "!terminalFocus" },
-  { key: "mod+alt+x", command: "chat.newCodex", when: "!terminalFocus" },
-  { key: "mod+alt+r", command: "chat.newCursor", when: "!terminalFocus" },
-  { key: "mod+alt+g", command: "chat.newGemini", when: "!terminalFocus" },
-  { key: "mod+\\", command: "chat.split", when: "!terminalFocus" },
+  // New thread (chat.new) is the primary create action; it falls back to the most
+  // recent project when no project is active.
+  //
+  // These new-surface chords use `!terminalFocus || isMac`: on macOS `mod` is Cmd and
+  // xterm never forwards a Cmd-chord to the PTY, so the bare `!terminalFocus` guard just
+  // dropped the chord while the terminal had focus (you couldn't open a new chat/terminal
+  // from the terminal). The `|| isMac` escape hatch fires them on macOS regardless of
+  // focus, while Linux/Windows keep `!terminalFocus` so Ctrl-chords still reach the shell.
+  { key: "mod+n", command: "chat.new", when: "!terminalFocus || isMac" },
+  { key: "mod+shift+n", command: "chat.newLatestProject", when: "!terminalFocus || isMac" },
+  { key: "mod+alt+n", command: "chat.newChat", when: "!terminalFocus || isMac" },
+  { key: "mod+shift+t", command: "chat.newTerminal", when: "!terminalFocus || isMac" },
+  { key: "mod+alt+c", command: "chat.newClaude", when: "!terminalFocus || isMac" },
+  { key: "mod+alt+x", command: "chat.newCodex", when: "!terminalFocus || isMac" },
+  { key: "mod+alt+r", command: "chat.newCursor", when: "!terminalFocus || isMac" },
+  { key: "mod+alt+g", command: "chat.newGemini", when: "!terminalFocus || isMac" },
+  { key: "mod+\\", command: "chat.split", when: "!terminalFocus || isMac" },
   // Recent-view switcher (Ctrl+Tab) is an installed-app feature only: Electron and
   // standalone PWA windows have no tab strip, so the chord reaches the page. It remains
   // app-level even with terminal focus; the web route captures it before xterm input.
@@ -449,7 +457,64 @@ function encodeWhenAst(node: KeybindingWhenNode): string {
 
 const DEFAULT_RESOLVED_KEYBINDINGS = compileResolvedKeybindingsConfig(DEFAULT_KEYBINDINGS);
 
-const RawKeybindingsEntries = Schema.fromJsonString(Schema.Array(Schema.Unknown));
+/**
+ * Result of normalizing the raw on-disk keybindings config into a list of entries.
+ *
+ * `migratedShape: true` marks tolerated non-canonical top-level shapes (empty file,
+ * `null`, `{}`, `{"keybindings": [...]}`, or a single rule object) so callers can
+ * rewrite the file into the canonical JSON-array form instead of surfacing an error
+ * on every startup.
+ */
+type RawKeybindingsEntriesResult =
+  | {
+      readonly _tag: "success";
+      readonly entries: ReadonlyArray<unknown>;
+      readonly migratedShape: boolean;
+    }
+  | { readonly _tag: "failure"; readonly detail: string };
+
+function describeJsonValueShape(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
+function decodeRawKeybindingsEntries(rawConfig: string): RawKeybindingsEntriesResult {
+  if (rawConfig.trim().length === 0) {
+    return { _tag: "success", entries: [], migratedShape: true };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawConfig);
+  } catch (error) {
+    return { _tag: "failure", detail: `expected JSON array (${String(error)})` };
+  }
+
+  if (Array.isArray(parsed)) {
+    return { _tag: "success", entries: parsed, migratedShape: false };
+  }
+  if (parsed === null) {
+    return { _tag: "success", entries: [], migratedShape: true };
+  }
+  if (typeof parsed === "object") {
+    const record = parsed as Record<string, unknown>;
+    if (Array.isArray(record.keybindings)) {
+      return { _tag: "success", entries: record.keybindings, migratedShape: true };
+    }
+    if (Object.keys(record).length === 0) {
+      return { _tag: "success", entries: [], migratedShape: true };
+    }
+    if (typeof record.key === "string" && typeof record.command === "string") {
+      return { _tag: "success", entries: [record], migratedShape: true };
+    }
+  }
+  return {
+    _tag: "failure",
+    detail: `expected JSON array, got ${describeJsonValueShape(parsed)}`,
+  };
+}
+
 const KeybindingsConfigJson = Schema.fromJsonString(KeybindingsConfig);
 const PrettyJsonString = SchemaGetter.parseJson<string>().compose(
   SchemaGetter.stringifyJson({ space: 2 }),
@@ -510,6 +575,26 @@ const RECENT_VIEW_SHORTCUT_BY_COMMAND: Partial<Record<KeybindingRule["command"],
   "view.recent.previous": "ctrl+shift+tab",
 };
 
+// New-surface creation commands shipped guarded by a bare `!terminalFocus`. On macOS
+// `mod` is Cmd and xterm never forwards a Cmd-chord to the PTY, so that guard silently
+// dropped "new chat/terminal" chords whenever the terminal had focus. The relaxed guard
+// adds an `|| isMac` escape hatch (see DEFAULT_KEYBINDINGS) so the chord fires on macOS
+// regardless of focus while Linux/Windows keep yielding Ctrl-chords to the shell.
+const OUTDATED_CREATION_TERMINAL_GUARD = "!terminalFocus";
+const RELAXED_CREATION_TERMINAL_GUARD = "!terminalFocus || isMac";
+const CREATION_COMMANDS_WITH_TERMINAL_ESCAPE = new Set<KeybindingRule["command"]>([
+  "chat.new",
+  "chat.newLatestProject",
+  "chat.newChat",
+  "chat.newLocal",
+  "chat.newTerminal",
+  "chat.newClaude",
+  "chat.newCodex",
+  "chat.newCursor",
+  "chat.newGemini",
+  "chat.split",
+]);
+
 function readKeybindingEntryCommand(entry: unknown): string | null {
   if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
     return null;
@@ -548,17 +633,19 @@ function normalizeLegacyKeybindingEntry(entry: unknown): {
   };
 }
 
-// Update exact old recent-view defaults so existing configs gain terminal-focus support.
+// Update exact old recent-view defaults so existing configs gain terminal-focus support
+// (drop the `!terminalFocus` guard). Per-rule because it never changes the key, so it
+// cannot collide with a sibling entry.
 function migrateOutdatedDefaultKeybindingRule(rule: KeybindingRule): {
   readonly rule: KeybindingRule;
   readonly migrated: boolean;
 } {
-  const expectedShortcut = RECENT_VIEW_SHORTCUT_BY_COMMAND[rule.command];
-  if (expectedShortcut === undefined) {
-    return { rule, migrated: false };
-  }
-
-  if (rule.key !== expectedShortcut || rule.when !== OUTDATED_RECENT_VIEW_TERMINAL_GUARD) {
+  const recentViewShortcut = RECENT_VIEW_SHORTCUT_BY_COMMAND[rule.command];
+  if (
+    recentViewShortcut === undefined ||
+    rule.key !== recentViewShortcut ||
+    rule.when !== OUTDATED_RECENT_VIEW_TERMINAL_GUARD
+  ) {
     return { rule, migrated: false };
   }
 
@@ -569,6 +656,30 @@ function migrateOutdatedDefaultKeybindingRule(rule: KeybindingRule): {
     },
     migrated: true,
   };
+}
+
+// Add the `|| isMac` escape hatch to new-surface creation commands still pinned to the
+// bare `!terminalFocus` guard, so existing configs gain the macOS terminal-focus fix the
+// shipped defaults already carry. Matched on command + exact old guard (not key) so it
+// also reaches a creation command the user rebound to a different chord — the guard, not
+// the key, is what was too aggressive. Idempotent: once relaxed the guard no longer
+// matches the old one.
+function relaxCreationCommandTerminalGuards(rules: readonly KeybindingRule[]): {
+  readonly rules: KeybindingRule[];
+  readonly migratedCount: number;
+} {
+  let migratedCount = 0;
+  const next = rules.map((rule) => {
+    if (
+      rule.when !== OUTDATED_CREATION_TERMINAL_GUARD ||
+      !CREATION_COMMANDS_WITH_TERMINAL_ESCAPE.has(rule.command)
+    ) {
+      return rule;
+    }
+    migratedCount += 1;
+    return { ...rule, when: RELAXED_CREATION_TERMINAL_GUARD };
+  });
+  return { rules: next, migratedCount };
 }
 
 function mergeWithDefaultKeybindings(custom: ResolvedKeybindingsConfig): ResolvedKeybindingsConfig {
@@ -646,7 +757,7 @@ export interface KeybindingsShape {
  * Keybindings - Service tag for keybinding configuration operations.
  */
 export class Keybindings extends ServiceMap.Service<Keybindings, KeybindingsShape>()(
-  "t3/keybindings",
+  "synara/keybindings",
 ) {}
 
 const makeKeybindings = Effect.gen(function* () {
@@ -693,19 +804,16 @@ const makeKeybindings = Effect.gen(function* () {
       return [];
     }
 
-    const rawConfig = yield* readRawConfig.pipe(
-      Effect.flatMap(Schema.decodeEffect(RawKeybindingsEntries)),
-      Effect.mapError(
-        (cause) =>
-          new KeybindingsConfigError({
-            configPath: keybindingsConfigPath,
-            detail: "expected JSON array",
-            cause,
-          }),
-      ),
-    );
+    const rawConfig = yield* readRawConfig;
+    const decodedEntries = decodeRawKeybindingsEntries(rawConfig);
+    if (decodedEntries._tag === "failure") {
+      return yield* new KeybindingsConfigError({
+        configPath: keybindingsConfigPath,
+        detail: decodedEntries.detail,
+      });
+    }
 
-    return yield* Effect.forEach(rawConfig, (entry) =>
+    return yield* Effect.forEach(decodedEntries.entries, (entry) =>
       Effect.gen(function* () {
         const command = readKeybindingEntryCommand(entry);
         if (command !== null && isRetiredLegacyKeybindingCommand(command)) {
@@ -742,6 +850,7 @@ const makeKeybindings = Effect.gen(function* () {
       readonly issues: readonly ServerConfigIssue[];
       readonly migratedLegacyCommandCount: number;
       readonly migratedDefaultRuleCount: number;
+      readonly migratedConfigShape: boolean;
     },
     KeybindingsConfigError
   > {
@@ -751,26 +860,32 @@ const makeKeybindings = Effect.gen(function* () {
         issues: [],
         migratedLegacyCommandCount: 0,
         migratedDefaultRuleCount: 0,
+        migratedConfigShape: false,
       };
     }
 
     const rawConfig = yield* readRawConfig;
-    const decodedEntries = Schema.decodeUnknownExit(RawKeybindingsEntries)(rawConfig);
-    if (decodedEntries._tag === "Failure") {
-      const detail = `expected JSON array (${Cause.pretty(decodedEntries.cause)})`;
+    const decodedEntries = decodeRawKeybindingsEntries(rawConfig);
+    if (decodedEntries._tag === "failure") {
       return {
         keybindings: [],
-        issues: [malformedConfigIssue(detail)],
+        issues: [malformedConfigIssue(decodedEntries.detail)],
         migratedLegacyCommandCount: 0,
         migratedDefaultRuleCount: 0,
+        migratedConfigShape: false,
       };
+    }
+    if (decodedEntries.migratedShape) {
+      yield* Effect.logWarning("migrating keybindings config with non-array top-level shape", {
+        path: keybindingsConfigPath,
+      });
     }
 
     const keybindings: KeybindingRule[] = [];
     const issues: ServerConfigIssue[] = [];
     let migratedLegacyCommandCount = 0;
     let migratedDefaultRuleCount = 0;
-    for (const [index, entry] of decodedEntries.value.entries()) {
+    for (const [index, entry] of decodedEntries.entries.entries()) {
       const command = readKeybindingEntryCommand(entry);
       if (command !== null && isRetiredLegacyKeybindingCommand(command)) {
         migratedLegacyCommandCount += 1;
@@ -813,7 +928,16 @@ const makeKeybindings = Effect.gen(function* () {
       keybindings.push(migratedDefaultRule.rule);
     }
 
-    return { keybindings, issues, migratedLegacyCommandCount, migratedDefaultRuleCount };
+    const relaxed = relaxCreationCommandTerminalGuards(keybindings);
+    migratedDefaultRuleCount += relaxed.migratedCount;
+
+    return {
+      keybindings: relaxed.rules,
+      issues,
+      migratedLegacyCommandCount,
+      migratedDefaultRuleCount,
+      migratedConfigShape: decodedEntries.migratedShape,
+    };
   });
 
   const writeConfigAtomically = (rules: readonly KeybindingRule[]) => {
@@ -922,7 +1046,8 @@ const makeKeybindings = Effect.gen(function* () {
       if (missingDefaults.length === 0) {
         if (
           runtimeConfig.migratedLegacyCommandCount > 0 ||
-          runtimeConfig.migratedDefaultRuleCount > 0
+          runtimeConfig.migratedDefaultRuleCount > 0 ||
+          runtimeConfig.migratedConfigShape
         ) {
           yield* writeConfigAtomically(customConfig);
         }

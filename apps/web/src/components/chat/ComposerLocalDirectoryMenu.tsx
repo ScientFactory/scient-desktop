@@ -3,7 +3,7 @@
 // Layer: Chat composer UI
 // Depends on: the same Command primitives used by ComposerCommandMenu so both pickers share chrome.
 
-import type { ProjectFileSystemEntry, ProjectLocalSearchEntry } from "@t3tools/contracts";
+import type { ProjectFileSystemEntry, ProjectLocalSearchEntry } from "@synara/contracts";
 import type { Ref } from "react";
 import {
   memo,
@@ -487,7 +487,7 @@ export const ComposerLocalDirectoryMenu = memo(function ComposerLocalDirectoryMe
                   <CommandSeparator className="my-0.5" />
                 ) : null}
                 <CommandGroup>
-                  <CommandGroupLabel className="px-2 pt-1.5 pb-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/55">
+                  <CommandGroupLabel className="px-2 pt-1.5 pb-1 text-[10px] font-semibold text-muted-foreground/55">
                     Matches deeper
                   </CommandGroupLabel>
                   {searchRows.map((entry, searchIndex) => {

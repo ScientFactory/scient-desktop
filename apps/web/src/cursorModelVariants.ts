@@ -1,4 +1,4 @@
-import type { ProviderModelDescriptor } from "@t3tools/contracts";
+import type { ProviderModelDescriptor } from "@synara/contracts";
 
 function uniqueByValue<T extends { readonly value: string }>(values: ReadonlyArray<T>): T[] {
   const seen = new Set<string>();
@@ -137,6 +137,7 @@ function fallbackContextWindowOptionsForCursorBase(
   }
   if (
     baseSlug === "claude-fable-5" ||
+    baseSlug === "claude-sonnet-5" ||
     baseSlug === "claude-opus-4-8" ||
     baseSlug === "claude-opus-4-7"
   ) {

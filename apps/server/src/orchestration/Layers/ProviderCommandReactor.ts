@@ -19,20 +19,21 @@ import {
   type ProviderSession,
   type RuntimeMode,
   TurnId,
-} from "@t3tools/contracts";
+} from "@synara/contracts";
 import { Cache, Cause, Duration, Effect, Equal, Layer, Option, Schema, Stream } from "effect";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { makeDrainableWorker } from "@synara/shared/DrainableWorker";
 import {
   buildPromptThreadTitleFallback,
   isGenericChatThreadTitle,
-} from "@t3tools/shared/chatThreads";
+} from "@synara/shared/chatThreads";
 import {
   collectTailTurnIds,
   resolveTailUserMessageEditTarget,
-} from "@t3tools/shared/conversationEdit";
-import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@t3tools/shared/git";
-import { buildStalePendingRequestFailureDetail } from "@t3tools/shared/threadSummary";
-import { resolveThreadWorkspaceState } from "@t3tools/shared/threadEnvironment";
+} from "@synara/shared/conversationEdit";
+import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@synara/shared/git";
+import { claudeSelectionRequiresRestart } from "@synara/shared/model";
+import { buildStalePendingRequestFailureDetail } from "@synara/shared/threadSummary";
+import { resolveThreadWorkspaceState } from "@synara/shared/threadEnvironment";
 
 import {
   checkpointRefForThreadMessageStart,
@@ -64,11 +65,13 @@ import {
   ProviderCommandReactor,
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
+import { StudioOutputReactor } from "../Services/StudioOutputReactor.ts";
 
 type ProviderIntentEvent = Extract<
   OrchestrationEvent,
   {
     type:
+      | "thread.created"
       | "thread.meta-updated"
       | "thread.runtime-mode-set"
       | "thread.turn-queued"
@@ -230,7 +233,7 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
     .replace(/^refs\/heads\//, "")
     .replace(/['"`]/g, "");
 
-  const withoutPrefix = normalized.replace(/^(synara|dpcode|t3code)\//, "");
+  const withoutPrefix = normalized.replace(/^synara\//, "");
 
   const branchFragment = withoutPrefix
     .replace(/[^a-z0-9/_-]+/g, "-")
@@ -249,6 +252,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const checkpointStore = yield* CheckpointStore;
+  const studioOutputReactor = yield* StudioOutputReactor;
   const git = yield* GitCore;
   const textGeneration = yield* TextGeneration;
   const serverSettings = yield* ServerSettingsService;
@@ -266,7 +270,24 @@ const make = Effect.gen(function* () {
     );
 
   const threadProviderOptions = new Map<string, ProviderStartOptions>();
-  const threadModelSelections = new Map<string, ModelSelection>();
+  // The selection last applied to each live session. Keep this separate from
+  // projected thread metadata so an option changed mid-turn is still compared
+  // against the old subprocess configuration before the next turn starts.
+  const threadSessionModelSelections = new Map<string, ModelSelection>();
+  const seedThreadModelSelections = projectionSnapshotQuery.getCommandReadModel().pipe(
+    Effect.tap((snapshot) =>
+      Effect.sync(() => {
+        for (const thread of snapshot.threads) {
+          threadSessionModelSelections.set(thread.id, thread.modelSelection);
+        }
+      }),
+    ),
+    Effect.catchCause((cause) =>
+      Effect.logWarning("provider command reactor failed to seed model selections", {
+        cause: Cause.pretty(cause),
+      }),
+    ),
+  );
 
   const resolveThreadWorkspaceProject = Effect.fnUntraced(function* (
     thread: Pick<OrchestrationThread, "projectId">,
@@ -296,6 +317,11 @@ const make = Effect.gen(function* () {
   >();
   const editResendTurnStartKeys = new Set<string>();
   const drainingQueuedTurns = new Set<string>();
+  // Threads with a drained queued turn whose `thread.turn-start-requested` has
+  // been dispatched into the engine but not yet processed by the worker. While
+  // set, recovery drains and terminal-event drains must hold off so two queued
+  // turns are never promoted at once.
+  const pendingQueuedDispatchThreads = new Set<string>();
   const sidechatContextBootstrapThreadIds = new Set<string>();
 
   const resolveThreadTextGenerationInput = Effect.fnUntraced(function* (input: {
@@ -306,7 +332,9 @@ const make = Effect.gen(function* () {
   }) {
     const thread = yield* resolveThread(input.threadId);
     const modelSelection =
-      input.modelSelection ?? threadModelSelections.get(input.threadId) ?? thread?.modelSelection;
+      input.modelSelection ??
+      thread?.modelSelection ??
+      threadSessionModelSelections.get(input.threadId);
     const providerOptions = input.providerOptions ?? threadProviderOptions.get(input.threadId);
     const threadTextGenerationInput = resolveTextGenerationInputForSelection(
       modelSelection,
@@ -492,6 +520,18 @@ const make = Effect.gen(function* () {
           .get(threadId)
           ?.some((payload) => payload.messageId === messageId) ?? false,
     );
+
+  // Live provider state, not the projection: the decider routes turn starts
+  // from a projected session snapshot that can lag the runtime in both
+  // directions (queueing after the turn already settled, or dispatching while
+  // a turn is still live). Adapters clear `activeTurnId` synchronously with
+  // emitting `turn.completed`/`turn.aborted`, so this check is authoritative.
+  const hasLiveProviderTurn = Effect.fnUntraced(function* (threadId: ThreadId) {
+    const session = yield* providerService
+      .listSessions()
+      .pipe(Effect.map((sessions) => sessions.find((entry) => entry.threadId === threadId)));
+    return session?.status === "running" && session.activeTurnId !== undefined;
+  });
 
   const editResendTurnStartKey = (threadId: ThreadId, messageId: string) =>
     `${threadId}:${messageId}`;
@@ -733,11 +773,22 @@ const make = Effect.gen(function* () {
         requestedModelSelection !== undefined &&
         requestedModelSelection.model !== activeSession?.model;
       const shouldRestartForModelChange = modelChanged && sessionModelSwitch === "restart-session";
-      const previousModelSelection = threadModelSelections.get(threadId);
+      const previousModelSelection = threadSessionModelSelections.get(threadId);
+      // Claude restarts resume via `--resume`, which replays the whole conversation
+      // as uncached input tokens. Only spawn-fixed options (effort/settings) may
+      // force that; model and context-window changes switch in-session via setModel.
+      // When the dispatch cache has no entry (the session was started by a turn
+      // without a selection), compare against the projected thread selection the
+      // session was actually spawned from so spawn-fixed changes still restart.
       const shouldRestartForModelSelectionChange =
-        (currentProvider === "claudeAgent" || currentProvider === "grok") &&
         requestedModelSelection !== undefined &&
-        !Equal.equals(previousModelSelection, requestedModelSelection);
+        (currentProvider === "claudeAgent"
+          ? claudeSelectionRequiresRestart(
+              previousModelSelection ?? thread.modelSelection,
+              requestedModelSelection,
+            )
+          : currentProvider === "grok" &&
+            !Equal.equals(previousModelSelection, requestedModelSelection));
 
       if (
         !runtimeModeChanged &&
@@ -769,6 +820,7 @@ const make = Effect.gen(function* () {
       const restartedSession = yield* startProviderSession(
         resumeCursor !== undefined ? { resumeCursor } : undefined,
       );
+      threadSessionModelSelections.set(threadId, desiredModelSelection);
       yield* Effect.logInfo("provider command reactor restarted provider session", {
         threadId,
         previousSessionId: existingSessionThreadId,
@@ -792,6 +844,7 @@ const make = Effect.gen(function* () {
         runtimeMode: desiredRuntimeMode,
       });
       if (forked) {
+        threadSessionModelSelections.set(threadId, desiredModelSelection);
         const forkedSession =
           (yield* resolveActiveSession(threadId)) ??
           ({
@@ -815,6 +868,10 @@ const make = Effect.gen(function* () {
     }
 
     const startedSession = yield* startProviderSession(undefined);
+    // Record the exact selection the session was spawned with so later
+    // restart-necessity checks compare against the live spawn state even when
+    // the spawning dispatch carried no explicit model selection.
+    threadSessionModelSelections.set(threadId, desiredModelSelection);
     yield* bindSessionToThread(startedSession);
     return startedSession.threadId;
   });
@@ -852,7 +909,7 @@ const make = Effect.gen(function* () {
       threadProviderOptions.set(input.threadId, input.providerOptions);
     }
     if (input.modelSelection !== undefined) {
-      threadModelSelections.set(input.threadId, input.modelSelection);
+      threadSessionModelSelections.set(input.threadId, input.modelSelection);
     }
     const shouldBootstrapHandoff =
       thread.handoff?.bootstrapStatus === "pending" &&
@@ -877,7 +934,7 @@ const make = Effect.gen(function* () {
         : null;
     const selectedProvider =
       input.modelSelection?.provider ??
-      threadModelSelections.get(input.threadId)?.provider ??
+      threadSessionModelSelections.get(input.threadId)?.provider ??
       thread.session?.providerName ??
       thread.modelSelection.provider;
     const shouldBootstrapPriorTranscriptContext =
@@ -941,8 +998,7 @@ const make = Effect.gen(function* () {
       activeSession === undefined
         ? "in-session"
         : (yield* providerService.getCapabilities(activeSession.provider)).sessionModelSwitch;
-    const requestedModelSelection =
-      input.modelSelection ?? threadModelSelections.get(input.threadId) ?? thread.modelSelection;
+    const requestedModelSelection = input.modelSelection ?? thread.modelSelection;
     const modelForTurn =
       sessionModelSwitch === "unsupported"
         ? activeSession?.model !== undefined
@@ -951,7 +1007,7 @@ const make = Effect.gen(function* () {
               model: activeSession.model,
             }
           : requestedModelSelection
-        : input.modelSelection;
+        : requestedModelSelection;
     const sendQueuedProviderTurn = (messageText: string | undefined) =>
       providerService.sendTurn({
         threadId: input.threadId,
@@ -979,13 +1035,15 @@ const make = Effect.gen(function* () {
       }
 
       // Capture before provider dispatch so the later turn diff is bounded by
-      // the user's submit moment, not an async runtime event.
+      // the user's submit moment, not early provider edits. skipIfExists keeps
+      // a backup baseline from CheckpointReactor as the first-writer winner.
       yield* checkpointStore.captureCheckpoint({
         cwd,
         checkpointRef: checkpointRefForThreadMessageStart(
           input.threadId,
           MessageId.makeUnsafe(input.messageId),
         ),
+        skipIfExists: true,
       });
     }).pipe(
       Effect.catchCause((cause) =>
@@ -997,11 +1055,28 @@ const make = Effect.gen(function* () {
       ),
     );
 
+    // Both Git and non-Git Studio baselines must finish before provider execution
+    // starts. Otherwise a fast command can write a file while the baseline scan is
+    // still running and make that output look unchanged at turn completion.
+    const capturePreTurnBaselines = Effect.all(
+      [
+        captureMessageStartCheckpoint,
+        studioOutputReactor.captureBaselineBeforeTurn(input.threadId),
+      ],
+      { concurrency: 2, discard: true },
+    );
+    const cancelPendingStudioBaseline = studioOutputReactor.cancelPendingTurnBaseline(
+      input.threadId,
+    );
+
     if (input.reviewTarget !== undefined) {
-      yield* providerService.startReview({
-        threadId: input.threadId,
-        target: input.reviewTarget,
-      });
+      yield* capturePreTurnBaselines;
+      yield* providerService
+        .startReview({
+          threadId: input.threadId,
+          target: input.reviewTarget,
+        })
+        .pipe(Effect.onError(() => cancelPendingStudioBaseline));
     } else if (input.dispatchMode === "steer") {
       yield* providerService.steerTurn({
         threadId: input.threadId,
@@ -1013,7 +1088,7 @@ const make = Effect.gen(function* () {
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
       });
     } else {
-      yield* captureMessageStartCheckpoint;
+      yield* capturePreTurnBaselines;
       yield* sendQueuedProviderTurn(normalizedInput).pipe(
         Effect.catch((error) =>
           Effect.gen(function* () {
@@ -1070,6 +1145,7 @@ const make = Effect.gen(function* () {
             return yield* sendQueuedProviderTurn(retryNormalizedInput);
           }),
         ),
+        Effect.onError(() => cancelPendingStudioBaseline),
       );
     }
     if (handoffBootstrapText && thread.handoff !== null) {
@@ -1336,6 +1412,10 @@ const make = Effect.gen(function* () {
   const processTurnStartRequested = Effect.fnUntraced(function* (
     event: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
   ) {
+    // This turn start (queued promotion or direct decider dispatch) is now
+    // being handled on the serialized worker, so the in-flight marker set by
+    // the drain path has served its purpose.
+    pendingQueuedDispatchThreads.delete(event.payload.threadId);
     const key = turnStartKeyForEvent(event);
     if (yield* hasHandledTurnStartRecently(key)) {
       return;
@@ -1356,6 +1436,26 @@ const make = Effect.gen(function* () {
         turnId: null,
         createdAt: event.payload.createdAt,
       });
+      return;
+    }
+
+    // The decider routes turn starts from the projected session, which can lag
+    // the runtime: a message dispatched right as another turn begins (e.g. the
+    // gap between a steer interrupt and the steered turn's start) would race a
+    // live provider turn. Codex steers ride the live turn natively; everything
+    // else re-queues and is promoted when the live turn settles.
+    const providerName = thread.session?.providerName ?? thread.modelSelection.provider;
+    const isCodexSteer = event.payload.dispatchMode === "steer" && providerName === "codex";
+    if (!isCodexSteer && (yield* hasLiveProviderTurn(event.payload.threadId))) {
+      yield* enqueueQueuedTurnStart(event.payload);
+      if (event.payload.dispatchMode === "steer") {
+        // Preserve steer semantics: jump the queue (enqueue unshifts steers)
+        // and ask the live turn to stop so the steer dispatches next.
+        yield* interruptProviderTurn({
+          threadId: event.payload.threadId,
+          createdAt: event.payload.createdAt,
+        });
+      }
       return;
     }
 
@@ -1468,11 +1568,19 @@ const make = Effect.gen(function* () {
     event: Extract<ProviderIntentEvent, { type: "thread.turn-queued" }>,
   ) {
     yield* enqueueQueuedTurnStart(event.payload);
+    // Recovery drain: if the provider turn settled between the decider's
+    // (stale) running check and this enqueue, the terminal
+    // `turn.completed`/`turn.aborted` event has already been consumed and will
+    // never drain this queue — the message would be stuck forever. Re-check
+    // live provider state and promote immediately.
+    if (!(yield* hasLiveProviderTurn(event.payload.threadId))) {
+      yield* drainQueuedTurnsForThread(event.payload.threadId);
+    }
   });
 
   // Promote the next queued message only after the active provider turn settles.
   const drainQueuedTurnsForThread = Effect.fnUntraced(function* (threadId: ThreadId) {
-    if (drainingQueuedTurns.has(threadId)) {
+    if (drainingQueuedTurns.has(threadId) || pendingQueuedDispatchThreads.has(threadId)) {
       return;
     }
     drainingQueuedTurns.add(threadId);
@@ -1481,31 +1589,38 @@ const make = Effect.gen(function* () {
       if (!nextQueuedTurn) {
         return;
       }
-      yield* orchestrationEngine.dispatch({
-        type: "thread.turn.dispatch-queued",
-        commandId: serverCommandId("dispatch-queued-turn"),
-        threadId,
-        messageId: nextQueuedTurn.messageId,
-        ...(nextQueuedTurn.modelSelection !== undefined
-          ? { modelSelection: nextQueuedTurn.modelSelection }
-          : {}),
-        ...(nextQueuedTurn.providerOptions !== undefined
-          ? { providerOptions: nextQueuedTurn.providerOptions }
-          : {}),
-        ...(nextQueuedTurn.reviewTarget !== undefined
-          ? { reviewTarget: nextQueuedTurn.reviewTarget }
-          : {}),
-        ...(nextQueuedTurn.assistantDeliveryMode !== undefined
-          ? { assistantDeliveryMode: nextQueuedTurn.assistantDeliveryMode }
-          : {}),
-        dispatchMode: nextQueuedTurn.dispatchMode,
-        runtimeMode: nextQueuedTurn.runtimeMode,
-        interactionMode: nextQueuedTurn.interactionMode,
-        ...(nextQueuedTurn.sourceProposedPlan !== undefined
-          ? { sourceProposedPlan: nextQueuedTurn.sourceProposedPlan }
-          : {}),
-        createdAt: nextQueuedTurn.createdAt,
-      });
+      pendingQueuedDispatchThreads.add(threadId);
+      yield* orchestrationEngine
+        .dispatch({
+          type: "thread.turn.dispatch-queued",
+          commandId: serverCommandId("dispatch-queued-turn"),
+          threadId,
+          messageId: nextQueuedTurn.messageId,
+          ...(nextQueuedTurn.modelSelection !== undefined
+            ? { modelSelection: nextQueuedTurn.modelSelection }
+            : {}),
+          ...(nextQueuedTurn.providerOptions !== undefined
+            ? { providerOptions: nextQueuedTurn.providerOptions }
+            : {}),
+          ...(nextQueuedTurn.reviewTarget !== undefined
+            ? { reviewTarget: nextQueuedTurn.reviewTarget }
+            : {}),
+          ...(nextQueuedTurn.assistantDeliveryMode !== undefined
+            ? { assistantDeliveryMode: nextQueuedTurn.assistantDeliveryMode }
+            : {}),
+          dispatchMode: nextQueuedTurn.dispatchMode,
+          runtimeMode: nextQueuedTurn.runtimeMode,
+          interactionMode: nextQueuedTurn.interactionMode,
+          ...(nextQueuedTurn.sourceProposedPlan !== undefined
+            ? { sourceProposedPlan: nextQueuedTurn.sourceProposedPlan }
+            : {}),
+          createdAt: nextQueuedTurn.createdAt,
+        })
+        .pipe(
+          // A failed promotion must not leave the in-flight marker behind, or
+          // every future drain for this thread would be blocked forever.
+          Effect.onError(() => Effect.sync(() => pendingQueuedDispatchThreads.delete(threadId))),
+        );
     } finally {
       drainingQueuedTurns.delete(threadId);
     }
@@ -1515,33 +1630,45 @@ const make = Effect.gen(function* () {
     yield* drainQueuedTurnsForThread(event.threadId);
   });
 
-  const processTurnInterruptRequested = Effect.fnUntraced(function* (
-    event: Extract<ProviderIntentEvent, { type: "thread.turn-interrupt-requested" }>,
-  ) {
-    const thread = yield* resolveThread(event.payload.threadId);
-    const providerThread = yield* resolveProviderSessionThread(event.payload.threadId);
+  const interruptProviderTurn = Effect.fnUntraced(function* (input: {
+    readonly threadId: ThreadId;
+    readonly turnId?: TurnId | undefined;
+    readonly createdAt: string;
+  }) {
+    const thread = yield* resolveThread(input.threadId);
+    const providerThread = yield* resolveProviderSessionThread(input.threadId);
     if (!thread || !providerThread) {
       return;
     }
     const hasSession = providerThread.session && providerThread.session.status !== "stopped";
     if (!hasSession) {
       return yield* appendProviderFailureActivity({
-        threadId: event.payload.threadId,
+        threadId: input.threadId,
         kind: "provider.turn.interrupt.failed",
         summary: "Provider turn interrupt failed",
         detail: "No active provider session is bound to this thread.",
-        turnId: event.payload.turnId ?? null,
-        createdAt: event.payload.createdAt,
+        turnId: input.turnId ?? null,
+        createdAt: input.createdAt,
       });
     }
 
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
     const providerThreadId = resolveSubagentProviderThreadId(thread.id, providerThread.id);
-    const turnId = event.payload.turnId ?? thread.session?.activeTurnId ?? undefined;
+    const turnId = input.turnId ?? thread.session?.activeTurnId ?? undefined;
     yield* providerService.interruptTurn({
       threadId: providerThread.id,
       ...(turnId ? { turnId } : {}),
       ...(providerThreadId ? { providerThreadId } : {}),
+    });
+  });
+
+  const processTurnInterruptRequested = Effect.fnUntraced(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.turn-interrupt-requested" }>,
+  ) {
+    yield* interruptProviderTurn({
+      threadId: event.payload.threadId,
+      turnId: event.payload.turnId,
+      createdAt: event.payload.createdAt,
     });
   });
 
@@ -1882,6 +2009,7 @@ const make = Effect.gen(function* () {
     queuedTurnStartsByThread.delete(thread.id);
     yield* clearEditResendTurnStartKeysForThread(thread.id);
     drainingQueuedTurns.delete(thread.id);
+    pendingQueuedDispatchThreads.delete(thread.id);
 
     const now = event.payload.createdAt;
     const providerThreadId =
@@ -1947,18 +2075,24 @@ const make = Effect.gen(function* () {
   const processDomainEvent = (event: ProviderIntentEvent) =>
     Effect.gen(function* () {
       switch (event.type) {
+        case "thread.created":
+          threadSessionModelSelections.set(event.payload.threadId, event.payload.modelSelection);
+          return;
         case "thread.meta-updated": {
           const thread = yield* resolveThread(event.payload.threadId);
           if (event.payload.modelSelection === undefined) {
             return;
           }
 
-          if (
-            !thread?.session ||
-            thread.session.status === "stopped" ||
-            thread.session.activeTurnId !== null
-          ) {
-            threadModelSelections.set(event.payload.threadId, event.payload.modelSelection);
+          if (!thread?.session || thread.session.status === "stopped") {
+            threadSessionModelSelections.set(event.payload.threadId, event.payload.modelSelection);
+            return;
+          }
+
+          if (thread.session.activeTurnId !== null) {
+            // The current runtime still owns the previous spawn profile. The
+            // projected thread now carries the desired selection; compare them
+            // when the next turn ensures the session.
             return;
           }
 
@@ -1969,7 +2103,7 @@ const make = Effect.gen(function* () {
               ? { providerOptions: cachedProviderOptions }
               : {}),
           });
-          threadModelSelections.set(event.payload.threadId, event.payload.modelSelection);
+          threadSessionModelSelections.set(event.payload.threadId, event.payload.modelSelection);
           return;
         }
         case "thread.runtime-mode-set": {
@@ -1978,12 +2112,11 @@ const make = Effect.gen(function* () {
             return;
           }
           const cachedProviderOptions = threadProviderOptions.get(event.payload.threadId);
-          const cachedModelSelection = threadModelSelections.get(event.payload.threadId);
           yield* ensureSessionForThread(event.payload.threadId, event.occurredAt, {
             ...(cachedProviderOptions !== undefined
               ? { providerOptions: cachedProviderOptions }
               : {}),
-            ...(cachedModelSelection !== undefined ? { modelSelection: cachedModelSelection } : {}),
+            modelSelection: thread.modelSelection,
             runtimeMode: event.payload.runtimeMode,
           });
           return;
@@ -2053,32 +2186,37 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
-  const start: ProviderCommandReactorShape["start"] = Effect.all([
-    Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
-      if (
-        event.type !== "thread.meta-updated" &&
-        event.type !== "thread.runtime-mode-set" &&
-        event.type !== "thread.turn-queued" &&
-        event.type !== "thread.turn-start-requested" &&
-        event.type !== "thread.turn-interrupt-requested" &&
-        event.type !== "thread.approval-response-requested" &&
-        event.type !== "thread.user-input-response-requested" &&
-        event.type !== "thread.conversation-rollback-requested" &&
-        event.type !== "thread.message-edit-resend-requested" &&
-        event.type !== "thread.session-stop-requested"
-      ) {
-        return Effect.void;
-      }
+  const start: ProviderCommandReactorShape["start"] = seedThreadModelSelections.pipe(
+    Effect.andThen(
+      Effect.all([
+        Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
+          if (
+            event.type !== "thread.created" &&
+            event.type !== "thread.meta-updated" &&
+            event.type !== "thread.runtime-mode-set" &&
+            event.type !== "thread.turn-queued" &&
+            event.type !== "thread.turn-start-requested" &&
+            event.type !== "thread.turn-interrupt-requested" &&
+            event.type !== "thread.approval-response-requested" &&
+            event.type !== "thread.user-input-response-requested" &&
+            event.type !== "thread.conversation-rollback-requested" &&
+            event.type !== "thread.message-edit-resend-requested" &&
+            event.type !== "thread.session-stop-requested"
+          ) {
+            return Effect.void;
+          }
 
-      return worker.enqueue(event);
-    }).pipe(Effect.forkScoped),
-    Stream.runForEach(providerService.streamEvents, (event) => {
-      if (event.type !== "turn.completed" && event.type !== "turn.aborted") {
-        return Effect.void;
-      }
-      return processQueueDrainEventSafely(event);
-    }).pipe(Effect.forkScoped),
-  ]).pipe(Effect.asVoid);
+          return worker.enqueue(event);
+        }).pipe(Effect.forkScoped),
+        Stream.runForEach(providerService.streamEvents, (event) => {
+          if (event.type !== "turn.completed" && event.type !== "turn.aborted") {
+            return Effect.void;
+          }
+          return processQueueDrainEventSafely(event);
+        }).pipe(Effect.forkScoped),
+      ]).pipe(Effect.asVoid),
+    ),
+  );
 
   return {
     start,

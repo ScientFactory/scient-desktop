@@ -35,7 +35,7 @@ import {
   WS_METHODS,
   type WsWelcomePayload,
   type AutomationStreamEvent,
-} from "@t3tools/contracts";
+} from "@synara/contracts";
 
 import { showConfirmDialogFallback } from "./confirmDialogFallback";
 import { showContextMenuFallback } from "./contextMenuFallback";
@@ -491,6 +491,8 @@ export function createWsNativeApi(): NativeApi {
       searchLocalEntries: (input) =>
         transport.request(WS_METHODS.projectsSearchLocalEntries, input),
       readFile: (input) => transport.request(WS_METHODS.projectsReadFile, input),
+      createLocalFilePreviewGrant: (input) =>
+        transport.request(WS_METHODS.projectsCreateLocalFilePreviewGrant, input),
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
       runDevServer: (input) => transport.request(WS_METHODS.projectsRunDevServer, input),
       stopDevServer: (input) => transport.request(WS_METHODS.projectsStopDevServer, input),
@@ -504,6 +506,9 @@ export function createWsNativeApi(): NativeApi {
     },
     filesystem: {
       browse: (input) => transport.request(WS_METHODS.filesystemBrowse, input),
+    },
+    studio: {
+      listThreadOutputs: (input) => transport.request(WS_METHODS.studioListThreadOutputs, input),
     },
     shell: {
       openInEditor: (cwd, editor) =>
@@ -557,6 +562,7 @@ export function createWsNativeApi(): NativeApi {
       unstageFiles: (input) => transport.request(WS_METHODS.gitUnstageFiles, input),
       handoffThread: (input) => transport.request(WS_METHODS.gitHandoffThread, input),
       resolvePullRequest: (input) => transport.request(WS_METHODS.gitResolvePullRequest, input),
+      pullRequestSnapshot: (input) => transport.request(WS_METHODS.gitPullRequestSnapshot, input),
       preparePullRequestThread: (input) =>
         transport.request(WS_METHODS.gitPreparePullRequestThread, input),
       onActionProgress: (callback) => {

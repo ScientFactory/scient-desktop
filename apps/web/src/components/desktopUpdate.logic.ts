@@ -3,7 +3,7 @@
 // Layer: Web UI state helper
 // Depends on: Desktop update IPC contracts.
 
-import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopUpdateActionResult, DesktopUpdateState } from "@synara/contracts";
 
 export type DesktopUpdateButtonAction = "check" | "download" | "install" | "none";
 
@@ -25,6 +25,9 @@ export function resolveDesktopUpdateButtonAction(
     return "install";
   }
   if (state.status === "error") {
+    if (state.errorContext === "install" && !state.downloadedVersion && state.availableVersion) {
+      return "download";
+    }
     if (
       state.downloadedVersion &&
       (state.errorContext === "install" || state.errorContext === null)
@@ -67,18 +70,9 @@ export function isDesktopUpdateButtonDisabled(state: DesktopUpdateState | null):
   );
 }
 
-function formatDesktopUpdateDownloadPercent(percent: number | null): string | null {
-  if (typeof percent !== "number" || !Number.isFinite(percent)) {
-    return null;
-  }
-  const normalized = Math.max(0, Math.min(100, Math.floor(percent)));
-  return `${normalized}%`;
-}
-
 export interface DesktopUpdateButtonPresentation {
   label: string;
   secondaryLabel: string | null;
-  progressPercent: number | null;
 }
 
 export function getDesktopUpdateButtonPresentation(
@@ -89,7 +83,6 @@ export function getDesktopUpdateButtonPresentation(
     return {
       label: "Updating...",
       secondaryLabel: null,
-      progressPercent: null,
     };
   }
 
@@ -97,7 +90,6 @@ export function getDesktopUpdateButtonPresentation(
     return {
       label: "Update",
       secondaryLabel: null,
-      progressPercent: null,
     };
   }
 
@@ -105,32 +97,27 @@ export function getDesktopUpdateButtonPresentation(
     return {
       label: "Checking...",
       secondaryLabel: null,
-      progressPercent: null,
     };
   }
 
   if (state.status === "downloading") {
-    const percentText = formatDesktopUpdateDownloadPercent(state.downloadPercent);
     return {
-      label: "Preparing...",
+      label: "Preparing",
       secondaryLabel: null,
-      progressPercent: percentText ? Number.parseInt(percentText, 10) : null,
     };
   }
 
   const action = resolveDesktopUpdateButtonAction(state);
   if (action === "download") {
-    if (state.errorContext === "download") {
+    if (state.errorContext === "download" || state.errorContext === "install") {
       return {
         label: "Retry",
         secondaryLabel: null,
-        progressPercent: null,
       };
     }
     return {
-      label: "Preparing...",
+      label: "Preparing",
       secondaryLabel: null,
-      progressPercent: null,
     };
   }
   if (action === "install") {
@@ -138,31 +125,39 @@ export function getDesktopUpdateButtonPresentation(
       return {
         label: "Retry",
         secondaryLabel: null,
-        progressPercent: null,
       };
     }
     return {
       label: "Update",
       secondaryLabel: null,
-      progressPercent: null,
     };
   }
   if (action === "check") {
     return {
       label: "Check updates",
       secondaryLabel: null,
-      progressPercent: null,
     };
   }
   return {
     label: "Update",
     secondaryLabel: null,
-    progressPercent: null,
   };
 }
 
 export function getDesktopUpdateButtonLabel(state: DesktopUpdateState | null): string {
   return getDesktopUpdateButtonPresentation(state).label;
+}
+
+/**
+ * Clamped, integer download percentage to surface on the update button while a
+ * download is in flight. Returns null outside the downloading state or when the
+ * updater has not reported a finite percentage yet.
+ */
+export function getDesktopUpdateDownloadPercent(state: DesktopUpdateState | null): number | null {
+  if (!state || state.status !== "downloading") return null;
+  const percent = state.downloadPercent;
+  if (typeof percent !== "number" || !Number.isFinite(percent)) return null;
+  return Math.max(0, Math.min(100, Math.floor(percent)));
 }
 
 export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState): string {
@@ -195,6 +190,9 @@ export function getDesktopUpdateButtonTooltip(
   }
   if (state.status === "up-to-date") {
     return `You're up to date on ${state.currentVersion}. Click to check again.`;
+  }
+  if (state.errorContext === "install" && !state.downloadedVersion && state.availableVersion) {
+    return `Synara restarted, but update ${state.availableVersion} was not installed. Click to try again.`;
   }
   if (state.errorContext === "download" && state.availableVersion) {
     return `Could not prepare update ${state.availableVersion}. Click to retry.`;
@@ -258,6 +256,10 @@ export function shouldHighlightDesktopUpdateError(state: DesktopUpdateState | nu
   return state.errorContext === "download" || state.errorContext === "install";
 }
 
+export function shouldRecommendManualDesktopDownload(state: DesktopUpdateState | null): boolean {
+  return Boolean(state && state.installFailureCount >= 2 && state.releaseUrl);
+}
+
 // Stable identity for an in-app update failure, used to avoid toasting the same
 // download/install error twice (e.g. once from the click handler and again when
 // the install watchdog pushes the recovered state). Returns null for states that
@@ -267,7 +269,7 @@ export function getDesktopUpdateErrorSignature(state: DesktopUpdateState | null)
     return null;
   }
   const version = state.downloadedVersion ?? state.availableVersion ?? "";
-  return `${state.errorContext}:${version}:${state.message ?? ""}`;
+  return `${state.errorContext}:${version}:${state.installFailureCount}:${state.message ?? ""}`;
 }
 
 export type DesktopUpdateButtonVariant = "installing" | "ready" | "progress" | "error" | "info";

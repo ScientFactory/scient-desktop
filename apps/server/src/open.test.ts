@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { assertSuccess } from "@effect/vitest/utils";
+import { EDITORS } from "@synara/contracts";
 import { FileSystem, Path, Effect } from "effect";
 
 import {
@@ -8,7 +9,31 @@ import {
   launchDetached,
   resolveAvailableEditors,
   resolveEditorLaunch,
+  resolveWindowsEditorUriLaunch,
 } from "./open";
+import {
+  clearWindowsStorePackageDiscoveryCache,
+  getEditorWindowsStorePackages,
+  resolveWindowsStorePackageDirectory,
+  resolveWindowsStorePackageDirectoryFromPowerShell,
+  resolveWindowsStorePackageInstallLocation,
+} from "./editorAppDiscovery";
+
+function encodeExpectedWindowsEditorUriPath(targetPath: string): string {
+  return targetPath
+    .replaceAll("\\", "/")
+    .split("/")
+    .map((segment) => encodeURIComponent(segment).replaceAll("%3A", ":"))
+    .join("/");
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function fakePowerShellAppxScript(installLocation: string): string {
+  return `#!/bin/sh\nprintf '%s\\n' ${shellSingleQuote(installLocation)}\n`;
+}
 
 it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
   it.effect("returns commands for command-based editors", () =>
@@ -149,11 +174,68 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
     }),
   );
 
+  it.effect("falls back to the VS Code URL handler on Windows when the CLI is absent", () =>
+    Effect.gen(function* () {
+      const launch = yield* resolveEditorLaunch(
+        { cwd: "C:\\Users\\Chris\\Project Folder\\src\\open.ts:71:5", editor: "vscode" },
+        "win32",
+        { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD", SystemRoot: "C:\\Windows" },
+      );
+
+      assert.deepEqual(launch, {
+        command: "C:\\Windows\\explorer.exe",
+        args: ["vscode://file/C:/Users/Chris/Project%20Folder/src/open.ts:71:5"],
+      });
+    }),
+  );
+
+  it.effect("preserves UNC paths in VS Code URL-handler launches", () =>
+    Effect.gen(function* () {
+      const launch = yield* resolveEditorLaunch(
+        { cwd: "\\\\server\\share\\Project Folder\\src\\open.ts:71:5", editor: "vscode" },
+        "win32",
+        { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD", SystemRoot: "C:\\Windows" },
+      );
+
+      assert.deepEqual(launch, {
+        command: "C:\\Windows\\explorer.exe",
+        args: ["vscode://file//server/share/Project%20Folder/src/open.ts:71:5"],
+      });
+    }),
+  );
+
+  it.effect("adds the VS Code URL-handler trailing slash for existing folders", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "synara-vscode-folder-" });
+      const folderPath = path.join(dir, "Project Folder");
+      yield* fs.makeDirectory(folderPath);
+
+      const launch = yield* resolveEditorLaunch({ cwd: folderPath, editor: "vscode" }, "win32", {
+        PATH: "",
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+        SystemRoot: "C:\\Windows",
+      });
+
+      assert.deepEqual(launch, {
+        command: "C:\\Windows\\explorer.exe",
+        args: [`vscode://file/${encodeExpectedWindowsEditorUriPath(folderPath)}/`],
+      });
+    }),
+  );
+
+  it("does not build URL-handler launches for non-Windows platforms", () => {
+    const editor = EDITORS.find((candidate) => candidate.id === "vscode");
+    assert.ok(editor);
+    assert.equal(resolveWindowsEditorUriLaunch(editor, "/tmp/workspace", "linux"), null);
+  });
+
   it.effect("opens terminal-style editors in the target working directory", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-terminal-" });
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "synara-open-terminal-" });
       const filePath = path.join(dir, "src", "open.ts");
       yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
       yield* fs.writeFileString(filePath, "export const value = 1;\n");
@@ -166,6 +248,16 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       assert.deepEqual(ghosttyLaunch, {
         command: "ghostty",
         args: [`--working-directory=${path.dirname(filePath)}`],
+      });
+
+      const muxyLaunch = yield* resolveEditorLaunch(
+        { cwd: `${filePath}:71:5`, editor: "muxy" },
+        "linux",
+        { PATH: "" },
+      );
+      assert.deepEqual(muxyLaunch, {
+        command: "muxy",
+        args: [path.dirname(filePath)],
       });
 
       const binDir = path.join(dir, "bin");
@@ -210,8 +302,11 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-apps-" });
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "synara-open-apps-" });
       yield* fs.makeDirectory(path.join(home, "Applications", "Ghostty.app"), {
+        recursive: true,
+      });
+      yield* fs.makeDirectory(path.join(home, "Applications", "Muxy.app"), {
         recursive: true,
       });
       yield* fs.makeDirectory(path.join(home, "Applications", "WebStorm.app"), {
@@ -229,6 +324,16 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       assert.deepEqual(ghosttyLaunch, {
         command: "open",
         args: ["-a", "Ghostty", "/tmp/workspace"],
+      });
+
+      const muxyLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "muxy" },
+        "darwin",
+        { HOME: home, PATH: "" },
+      );
+      assert.deepEqual(muxyLaunch, {
+        command: "open",
+        args: ["-a", "Muxy", "/tmp/workspace"],
       });
 
       const terminalLaunch = yield* resolveEditorLaunch(
@@ -262,6 +367,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 
       const availableEditors = resolveAvailableEditors("darwin", { HOME: home, PATH: "" });
       assert.equal(availableEditors.includes("ghostty"), true);
+      assert.equal(availableEditors.includes("muxy"), true);
       assert.equal(availableEditors.includes("webstorm"), true);
       assert.equal(availableEditors.includes("pycharm"), true);
     }),
@@ -271,7 +377,7 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-ghostty-" });
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "synara-open-ghostty-" });
       const binDir = path.join(home, "bin");
       yield* fs.makeDirectory(binDir, { recursive: true });
       yield* fs.writeFileString(path.join(binDir, "ghostty"), "#!/bin/sh\n");
@@ -339,7 +445,7 @@ it.layer(NodeServices.layer)("launchDetached", (it) => {
   it.effect("rejects when command does not exist", () =>
     Effect.gen(function* () {
       const result = yield* launchDetached({
-        command: `t3code-no-such-command-${Date.now()}`,
+        command: `synara-no-such-command-${Date.now()}`,
         args: [],
       }).pipe(Effect.result);
       assert.equal(result._tag, "Failure");
@@ -352,7 +458,7 @@ it.layer(NodeServices.layer)("isCommandAvailable", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "synara-open-test-" });
       yield* fs.writeFileString(path.join(dir, "code.CMD"), "@echo off\r\n");
       const env = {
         PATH: dir,
@@ -374,7 +480,7 @@ it.layer(NodeServices.layer)("isCommandAvailable", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "synara-open-test-" });
       yield* fs.writeFileString(path.join(dir, "npm"), "echo nope\r\n");
       const env = {
         PATH: dir,
@@ -388,7 +494,7 @@ it.layer(NodeServices.layer)("isCommandAvailable", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "synara-open-test-" });
       yield* fs.writeFileString(path.join(dir, "my.tool.CMD"), "@echo off\r\n");
       const env = {
         PATH: dir,
@@ -402,8 +508,8 @@ it.layer(NodeServices.layer)("isCommandAvailable", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const firstDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
-      const secondDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
+      const firstDir = yield* fs.makeTempDirectoryScoped({ prefix: "synara-open-test-" });
+      const secondDir = yield* fs.makeTempDirectoryScoped({ prefix: "synara-open-test-" });
       yield* fs.writeFileString(path.join(firstDir, "code.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(secondDir, "code.CMD"), "MZ");
       const env = {
@@ -420,7 +526,7 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "synara-editors-" });
 
       yield* fs.writeFileString(path.join(dir, "cursor.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "code-insiders.CMD"), "@echo off\r\n");
@@ -431,6 +537,152 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
       });
       assert.deepEqual(editors, ["cursor", "vscode-insiders", "zed", "file-manager"]);
+    }),
+  );
+
+  it.effect("returns VS Code when the Windows Store package is installed without a CLI", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const programFiles = yield* fs.makeTempDirectoryScoped({ prefix: "synara-vscode-store-" });
+      const binDir = path.join(programFiles, "bin");
+      const installLocation = path.join(
+        programFiles,
+        "WindowsApps",
+        "Microsoft.VisualStudioCode_1.0.0.0_x64__8wekyb3d8bbwe",
+      );
+      yield* fs.makeDirectory(installLocation, { recursive: true });
+      yield* fs.makeDirectory(binDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(binDir, "powershell.exe"),
+        fakePowerShellAppxScript(installLocation),
+      );
+      yield* fs.chmod(path.join(binDir, "powershell.exe"), 0o755);
+
+      clearWindowsStorePackageDiscoveryCache();
+
+      const editors = resolveAvailableEditors("win32", {
+        PATH: binDir,
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+        ProgramFiles: programFiles,
+      });
+
+      assert.equal(editors.includes("vscode"), true);
+    }),
+  );
+
+  it.effect("does not treat Windows app-execution-alias folders as package installs", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const localAppData = yield* fs.makeTempDirectoryScoped({
+        prefix: "synara-vscode-store-alias-",
+      });
+      yield* fs.makeDirectory(
+        path.join(
+          localAppData,
+          "Microsoft",
+          "WindowsApps",
+          "Microsoft.VisualStudioCode_8wekyb3d8bbwe",
+        ),
+        { recursive: true },
+      );
+      const editor = EDITORS.find((candidate) => candidate.id === "vscode");
+      assert.ok(editor);
+
+      assert.equal(
+        resolveWindowsStorePackageDirectory(getEditorWindowsStorePackages(editor), "win32", {
+          LOCALAPPDATA: localAppData,
+        }),
+        null,
+      );
+    }),
+  );
+
+  it("resolves Windows Store package locations through matching AppX registration", () => {
+    const editor = EDITORS.find((candidate) => candidate.id === "vscode");
+    assert.ok(editor);
+    const installLocation =
+      "C:\\Program Files\\WindowsApps\\Microsoft.VisualStudioCode_1.0.0.0_x64__8wekyb3d8bbwe";
+    let script = "";
+
+    const result = resolveWindowsStorePackageDirectoryFromPowerShell(
+      getEditorWindowsStorePackages(editor),
+      "win32",
+      { PATH: "" },
+      (_file, args) => {
+        script = String(args[2]);
+        return `${installLocation}\r\n`;
+      },
+    );
+
+    assert.equal(result, installLocation);
+    assert.equal(script.includes("PackageFamilyName -ieq $packageDef.Family"), true);
+    assert.equal(script.includes("Microsoft.VisualStudioCode_8wekyb3d8bbwe"), true);
+  });
+
+  it("caches Windows Store AppX registration probes", () => {
+    clearWindowsStorePackageDiscoveryCache();
+    const editor = EDITORS.find((candidate) => candidate.id === "vscode");
+    assert.ok(editor);
+    const installLocation =
+      "C:\\Program Files\\WindowsApps\\Microsoft.VisualStudioCode_1.0.0.0_x64__8wekyb3d8bbwe";
+    let calls = 0;
+
+    const first = resolveWindowsStorePackageDirectoryFromPowerShell(
+      getEditorWindowsStorePackages(editor),
+      "win32",
+      { PATH: "C:\\Windows\\System32" },
+      () => {
+        calls += 1;
+        return `${installLocation}\r\n`;
+      },
+      { useCache: true, now: () => 1_000 },
+    );
+    const second = resolveWindowsStorePackageDirectoryFromPowerShell(
+      getEditorWindowsStorePackages(editor),
+      "win32",
+      { PATH: "C:\\Windows\\System32" },
+      () => {
+        calls += 1;
+        return "C:\\wrong\r\n";
+      },
+      { useCache: true, now: () => 1_100 },
+    );
+
+    assert.equal(first, installLocation);
+    assert.equal(second, installLocation);
+    assert.equal(calls, 1);
+    clearWindowsStorePackageDiscoveryCache();
+  });
+
+  it.effect("does not treat filesystem-only AppX package directories as installed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const editor = EDITORS.find((candidate) => candidate.id === "vscode");
+      assert.ok(editor);
+      const programFiles = yield* fs.makeTempDirectoryScoped({ prefix: "synara-vscode-staged-" });
+      yield* fs.makeDirectory(
+        path.join(
+          programFiles,
+          "WindowsApps",
+          "Microsoft.VisualStudioCode_1.0.0.0_x64__8wekyb3d8bbwe",
+        ),
+        { recursive: true },
+      );
+
+      const installLocation = resolveWindowsStorePackageInstallLocation(
+        getEditorWindowsStorePackages(editor),
+        "win32",
+        { PATH: "", ProgramFiles: programFiles },
+        () => {
+          throw new Error("not registered");
+        },
+        { useCache: false },
+      );
+
+      assert.equal(installLocation, null);
     }),
   );
 });

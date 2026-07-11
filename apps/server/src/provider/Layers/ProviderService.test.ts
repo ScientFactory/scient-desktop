@@ -8,7 +8,7 @@ import type {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderTurnStartResult,
-} from "@t3tools/contracts";
+} from "@synara/contracts";
 import {
   ApprovalRequestId,
   EventId,
@@ -16,7 +16,7 @@ import {
   ProviderSessionStartInput,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@synara/contracts";
 import { it, assert, vi } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
 
@@ -65,9 +65,7 @@ type LegacyProviderRuntimeEvent = {
 type ReleaseListSessions = (sessions: ReadonlyArray<ProviderSession>) => void;
 
 // Converts deferred listSessions callbacks into typed release handles for race tests.
-function requireReleaseListSessions(
-  release: ReleaseListSessions | undefined,
-): ReleaseListSessions {
+function requireReleaseListSessions(release: ReleaseListSessions | undefined): ReleaseListSessions {
   if (typeof release !== "function") {
     assert.fail("Expected listSessions release callback");
   }
@@ -334,7 +332,7 @@ function makeProviderServiceLayer(options?: Parameters<typeof makeProviderServic
 const routing = makeProviderServiceLayer();
 it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", () =>
   Effect.gen(function* () {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-"));
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "synara-provider-service-"));
     const dbPath = path.join(tempDir, "orchestration.sqlite");
 
     const codex = makeFakeCodexAdapter();
@@ -400,7 +398,7 @@ it.effect(
   "ProviderServiceLive persists active sessions as stopped before adapter cleanup runs",
   () =>
     Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-stopall-"));
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "synara-provider-service-stopall-"));
       const dbPath = path.join(tempDir, "orchestration.sqlite");
       const persistenceLayer = makeSqlitePersistenceLive(dbPath);
       const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
@@ -476,7 +474,7 @@ it.effect(
   "ProviderServiceLive restores rollback routing after restart using persisted thread mapping",
   () =>
     Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-restart-"));
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "synara-provider-service-restart-"));
       const dbPath = path.join(tempDir, "orchestration.sqlite");
       const persistenceLayer = makeSqlitePersistenceLive(dbPath);
       const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
@@ -992,7 +990,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
-  it.effect("refreshes persisted resume cursor from the active session on runtime events", () =>
+  it.effect("refreshes persisted resume cursor immediately on model reroutes", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
       const runtimeRepository = yield* ProviderSessionRuntimeRepository;
@@ -1007,6 +1005,8 @@ routing.layer("ProviderServiceLive routing", (it) => {
         resume: "550e8400-e29b-41d4-a716-446655440000",
         resumeSessionAt: "assistant-message-refresh",
         turnCount: 2,
+        rerouteOriginalApiModelId: "claude-fable-5",
+        rerouteFallbackApiModelId: "claude-opus-4-8",
       };
 
       routing.claude.updateSession(session.threadId, (existing) => ({
@@ -1014,12 +1014,16 @@ routing.layer("ProviderServiceLive routing", (it) => {
         resumeCursor: updatedResumeCursor,
       }));
       routing.claude.emit({
-        type: "thread.started",
-        eventId: asEventId("runtime-thread-started-refresh"),
+        type: "model.rerouted",
+        eventId: asEventId("runtime-model-rerouted-refresh"),
         provider: "claudeAgent",
         createdAt: "2026-02-27T00:04:00.000Z",
         threadId: session.threadId,
-        payload: { providerThreadId: updatedResumeCursor.resume },
+        payload: {
+          fromModel: "claude-fable-5",
+          toModel: "claude-opus-4-8",
+          reason: "Model safeguards rerouted this request.",
+        },
       });
       yield* sleep(50);
 
@@ -1169,7 +1173,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
   it.effect("reuses persisted resume cursor when startSession is called after a restart", () =>
     Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-start-"));
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "synara-provider-service-start-"));
       const dbPath = path.join(tempDir, "orchestration.sqlite");
       const persistenceLayer = makeSqlitePersistenceLive(dbPath);
       const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
@@ -1259,7 +1263,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
   it.effect("clears stale resume cursor while preserving provider options for fresh restart", () =>
     Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-clear-"));
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "synara-provider-service-clear-"));
       const dbPath = path.join(tempDir, "orchestration.sqlite");
       const persistenceLayer = makeSqlitePersistenceLive(dbPath);
       const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
@@ -1350,7 +1354,9 @@ routing.layer("ProviderServiceLive routing", (it) => {
 
   it.effect("stops the live runtime while preserving resume cursor and provider options", () =>
     Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-stop-runtime-"));
+      const tempDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "synara-provider-service-stop-runtime-"),
+      );
       const dbPath = path.join(tempDir, "orchestration.sqlite");
       const persistenceLayer = makeSqlitePersistenceLive(dbPath);
       const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
@@ -2449,6 +2455,47 @@ validation.layer("ProviderServiceLive validation", (it) => {
       if (Option.isSome(runtime)) {
         assert.equal(runtime.value.threadId, session.threadId);
       }
+    }),
+  );
+});
+
+const liveFallback = makeProviderServiceLayer();
+liveFallback.layer("ProviderServiceLive live-fallback settled turns", (it) => {
+  it.effect("persists the first binding row as stopped when the turn settles pre-write", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = asThreadId("thread-live-fallback-settled");
+      const turnId = asTurnId("turn-live-fallback-settled");
+
+      // The adapter owns a live session but startSession has not persisted a
+      // binding row yet (the startup window resolveRoutableSession allows).
+      liveFallback.codex.hasSession.mockImplementation((candidate: ThreadId) =>
+        Effect.succeed(candidate === threadId),
+      );
+      liveFallback.codex.sendTurn.mockImplementationOnce((input: ProviderSendTurnInput) =>
+        Effect.gen(function* () {
+          // The terminal runtime event is fully processed before sendTurn
+          // returns, so the post-dispatch write takes the settled-turn branch.
+          liveFallback.codex.emit({
+            type: "turn.completed",
+            eventId: asEventId("evt-live-fallback-settled"),
+            provider: "codex",
+            createdAt: new Date().toISOString(),
+            threadId: input.threadId,
+            turnId,
+            payload: { state: "cancelled" },
+          });
+          yield* sleep(100);
+          return { threadId: input.threadId, turnId };
+        }),
+      );
+      yield* liveFallback.codex.waitForRuntimeSubscribers();
+
+      yield* provider.sendTurn({ threadId, input: "hello" });
+
+      const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+      assert.equal(binding?.status, "stopped");
     }),
   );
 });

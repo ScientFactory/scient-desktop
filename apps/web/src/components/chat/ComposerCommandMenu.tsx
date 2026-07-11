@@ -6,7 +6,7 @@ import {
   type ProviderKind,
   type ProviderPluginDescriptor,
   type ProviderSkillDescriptor,
-} from "@t3tools/contracts";
+} from "@synara/contracts";
 import { memo, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { type ComposerTriggerKind } from "../../composer-logic";
 import { type ComposerSlashCommand } from "../../composerSlashCommands";
@@ -17,8 +17,8 @@ import {
   ChangesIcon,
   ClockIcon,
   DeviceLaptopIcon,
-  DisposableThreadIcon,
   EraserIcon,
+  FastModeIcon,
   GitBranchIcon,
   GitForkIcon,
   InfoIcon,
@@ -28,9 +28,9 @@ import {
   Minimize2,
   PluginIcon,
   SkillCubeIcon,
+  TemporaryThreadIcon,
   TerminalIcon,
   WorktreeIcon,
-  ZapIcon,
 } from "~/lib/icons";
 import { formatSkillScope } from "~/lib/providerDiscovery";
 import { cn } from "~/lib/utils";
@@ -415,12 +415,12 @@ const SLASH_COMMAND_ICONS: Record<string, LucideIcon> = {
   clear: EraserIcon,
   compact: Minimize2,
   model: BrainIcon,
-  fast: ZapIcon,
+  fast: FastModeIcon,
   plan: ListTodoIcon,
   default: MessageCircleIcon,
   review: BugIcon,
   fork: GitForkIcon,
-  side: DisposableThreadIcon,
+  side: TemporaryThreadIcon,
   status: InfoIcon,
   subagents: BotIcon,
   automation: ClockIcon,

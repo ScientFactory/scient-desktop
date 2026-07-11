@@ -1,12 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { DEFAULT_MODEL_BY_PROVIDER } from "@t3tools/contracts";
+import { DEFAULT_MODEL_BY_PROVIDER } from "@synara/contracts";
 import { Effect, FileSystem, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 import { ServerConfig } from "./config";
 import { ServerSettingsLive, ServerSettingsService } from "./serverSettings";
 
 const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
-  prefix: "dpcode-settings-test-",
+  prefix: "synara-settings-test-",
 }).pipe(Layer.provide(NodeServices.layer));
 const makeTestLayer = Layer.merge(NodeServices.layer, serverConfigLayer);
 const testLayer = Layer.merge(makeTestLayer, ServerSettingsLive.pipe(Layer.provide(makeTestLayer)));
@@ -28,6 +28,7 @@ describe("ServerSettingsService", () => {
     expect(settings.providers.codex.binaryPath).toBe("codex");
     expect(settings.providers.grok.binaryPath).toBe("grok");
     expect(settings.defaultThreadEnvMode).toBe("local");
+    expect(settings.enableProviderUpdateChecks).toBe(true);
   });
 
   it("persists updates and reloads them", async () => {
@@ -40,6 +41,7 @@ describe("ServerSettingsService", () => {
 
         const updated = yield* service.updateSettings({
           enableAssistantStreaming: true,
+          enableProviderUpdateChecks: false,
           providers: {
             codex: {
               binaryPath: "/usr/local/bin/codex",
@@ -53,9 +55,11 @@ describe("ServerSettingsService", () => {
     );
 
     expect(result.updated.enableAssistantStreaming).toBe(true);
+    expect(result.updated.enableProviderUpdateChecks).toBe(false);
     expect(result.updated.providers.codex.binaryPath).toBe("/usr/local/bin/codex");
     expect(result.parsed).toMatchObject({
       enableAssistantStreaming: true,
+      enableProviderUpdateChecks: false,
       providers: {
         codex: {
           binaryPath: "/usr/local/bin/codex",

@@ -22,7 +22,7 @@ import {
   WS_METHODS,
   type WsPush,
   type ServerProviderStatus,
-} from "@t3tools/contracts";
+} from "@synara/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestMock = vi.fn<(...args: Array<unknown>) => Promise<unknown>>();
@@ -137,7 +137,7 @@ describe("wsNativeApi", () => {
     const listener = vi.fn();
     onServerWelcome(listener);
 
-    const payload = { cwd: "/tmp/workspace", homeDir: "/Users/tester", projectName: "t3-code" };
+    const payload = { cwd: "/tmp/workspace", homeDir: "/Users/tester", projectName: "synara-code" };
     emitPush(WS_CHANNELS.serverWelcome, payload);
 
     expect(listener).toHaveBeenCalledTimes(1);
@@ -160,7 +160,7 @@ describe("wsNativeApi", () => {
     emitPush(WS_CHANNELS.serverWelcome, {
       cwd: "/tmp/workspace",
       homeDir: "/Users/tester",
-      projectName: "t3-code",
+      projectName: "synara-code",
       bootstrapProjectId: ProjectId.makeUnsafe("project-1"),
       bootstrapThreadId: ThreadId.makeUnsafe("thread-1"),
     });
@@ -170,7 +170,7 @@ describe("wsNativeApi", () => {
       expect.objectContaining({
         cwd: "/tmp/workspace",
         homeDir: "/Users/tester",
-        projectName: "t3-code",
+        projectName: "synara-code",
         bootstrapProjectId: "project-1",
         bootstrapThreadId: "thread-1",
       }),
@@ -192,7 +192,7 @@ describe("wsNativeApi", () => {
     emitPush(WS_CHANNELS.serverWelcome, {
       cwd: "/tmp/workspace",
       homeDir: "/Users/tester",
-      projectName: "t3-code",
+      projectName: "synara-code",
     });
 
     expect(listener).toHaveBeenCalledTimes(2);
@@ -200,7 +200,7 @@ describe("wsNativeApi", () => {
       expect.objectContaining({
         cwd: "/tmp/workspace",
         homeDir: "/Users/tester",
-        projectName: "t3-code",
+        projectName: "synara-code",
       }),
     );
   });
@@ -287,6 +287,7 @@ describe("wsNativeApi", () => {
     const payload = {
       settings: {
         enableAssistantStreaming: true,
+        enableProviderUpdateChecks: true,
         defaultThreadEnvMode: "local",
         addProjectBaseDirectory: "",
         textGenerationModelSelection: { provider: "codex", model: "gpt-5.4-mini" },
@@ -546,6 +547,23 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards local preview grant creation to the websocket project method", async () => {
+    requestMock.mockResolvedValue({
+      grant: "grant-token",
+      expiresAt: "2026-01-01T00:00:00.000Z",
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.projects.createLocalFilePreviewGrant({
+      path: "/Users/tester/Downloads/shot.png",
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.projectsCreateLocalFilePreviewGrant, {
+      path: "/Users/tester/Downloads/shot.png",
+    });
+  });
+
   it("forwards project script discovery to the websocket project method", async () => {
     requestMock.mockResolvedValue({ targets: [] });
     const { createWsNativeApi } = await import("./wsNativeApi");
@@ -587,7 +605,7 @@ describe("wsNativeApi", () => {
             policy: "loopback-browser",
             bootstrapMethods: ["one-time-token"],
             sessionMethods: ["browser-session-cookie", "bearer-session-token"],
-            sessionCookieName: "t3_session",
+            sessionCookieName: "synara_session",
           },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },

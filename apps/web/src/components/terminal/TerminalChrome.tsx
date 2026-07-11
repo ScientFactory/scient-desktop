@@ -10,7 +10,7 @@
 
 import type { ReactNode } from "react";
 
-import type { ResolvedTerminalVisualIdentity } from "@t3tools/shared/terminalThreads";
+import type { ResolvedTerminalVisualIdentity } from "@synara/shared/terminalThreads";
 
 import { IconButton } from "~/components/ui/icon-button";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
@@ -157,7 +157,7 @@ export function TerminalSidebar(props: {
               {props.showGroupHeaders && (
                 <button
                   type="button"
-                  className={`flex w-full items-center px-1 py-0.5 text-[10px] uppercase tracking-[0.08em] ${
+                  className={`flex w-full items-center px-1 py-0.5 text-[10px] ${
                     isGroupActive
                       ? "bg-[var(--sidebar-accent-active)] text-foreground"
                       : "text-muted-foreground hover:bg-[var(--sidebar-accent)] hover:text-foreground"

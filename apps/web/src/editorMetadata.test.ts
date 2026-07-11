@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EDITOR_ICON_ROUTE_PATH } from "@t3tools/shared/editorIcons";
+import { EDITOR_ICON_ROUTE_PATH } from "@synara/shared/editorIcons";
 import {
   resolveAvailableEditorOptions,
   resolveEditorIcon,
@@ -26,6 +26,7 @@ describe("resolveAvailableEditorOptions", () => {
         "zed",
         "idea",
         "ghostty",
+        "muxy",
         "terminal",
         "warp",
         "xcode",
@@ -52,6 +53,7 @@ describe("resolveAvailableEditorOptions", () => {
       "windsurf",
       "sublime",
       "ghostty",
+      "muxy",
       "terminal",
       "warp",
       "xcode",
@@ -72,6 +74,7 @@ describe("resolveAvailableEditorOptions", () => {
 
   it("provides dedicated icons for newly supported editor rows", () => {
     expect(resolveEditorIcon("ghostty").name).toBe("GhosttyIcon");
+    expect(resolveEditorIcon("muxy").name).toBe("TerminalAppIcon");
     expect(resolveEditorIcon("terminal").name).toBe("TerminalAppIcon");
     expect(resolveEditorIcon("xcode").name).toBe("SimpleIcon");
     expect(resolveEditorIcon("webstorm").name).toBe("SimpleIcon");

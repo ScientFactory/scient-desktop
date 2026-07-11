@@ -14,11 +14,19 @@ import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 
 import type { CheckpointStoreError } from "../Errors.ts";
-import { CheckpointRef } from "@t3tools/contracts";
+import { CheckpointRef } from "@synara/contracts";
 
 export interface CaptureCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  /**
+   * Treat an already-existing ref as success and skip the capture.
+   *
+   * Used for pre-turn baseline refs where the first snapshot must win:
+   * overwriting an existing baseline with a later capture would record a
+   * working tree the agent may already have modified.
+   */
+  readonly skipIfExists?: boolean;
 }
 
 export interface CopyCheckpointRefInput {
@@ -113,5 +121,5 @@ export interface CheckpointStoreShape {
  * CheckpointStore - Service tag for checkpoint persistence and restore operations.
  */
 export class CheckpointStore extends ServiceMap.Service<CheckpointStore, CheckpointStoreShape>()(
-  "t3/checkpointing/Services/CheckpointStore",
+  "synara/checkpointing/Services/CheckpointStore",
 ) {}

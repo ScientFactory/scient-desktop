@@ -1,8 +1,8 @@
-import type { GitBranch } from "@t3tools/contracts";
+import type { GitBranch } from "@synara/contracts";
 import {
   deriveAssociatedWorktreeMetadata,
   type AssociatedWorktreeMetadata,
-} from "@t3tools/shared/threadWorkspace";
+} from "@synara/shared/threadWorkspace";
 import { Schema } from "effect";
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);
@@ -57,6 +57,7 @@ export function shouldSyncLocalThreadBranch(input: {
   activeWorktreePath: string | null;
   activeThreadBranch: string | null;
   currentGitBranch: string | null;
+  hasServerThread: boolean;
   isBranchActionPending: boolean;
 }): boolean {
   return (
@@ -64,6 +65,7 @@ export function shouldSyncLocalThreadBranch(input: {
     input.activeWorktreePath === null &&
     !input.isBranchActionPending &&
     input.currentGitBranch !== null &&
+    (input.hasServerThread || input.activeThreadBranch !== null) &&
     input.activeThreadBranch !== input.currentGitBranch
   );
 }

@@ -8,23 +8,19 @@ export const MICROPHONE_USAGE_DESCRIPTION =
 export const MAC_ENTITLEMENTS_PATH = "apps/desktop/resources/entitlements.mac.plist";
 export const MAC_INHERITED_ENTITLEMENTS_PATH =
   "apps/desktop/resources/entitlements.mac.inherit.plist";
-const MAC_AFTER_PACK_HOOK_PATH = "./electron-builder-after-pack.cjs";
+export const WINDOWS_INSTALLER_GUID = "368107a8-afe6-5db5-ab3b-d4f331684868";
 const MAC_DMG_ICON_PATH = "icon.icns";
 export const NODE_PTY_ASAR_UNPACK_GLOBS = ["node_modules/node-pty/**"] as const;
 
 export interface DesktopPlatformBuildConfig {
-  readonly afterPack?: string;
   readonly asarUnpack?: ReadonlyArray<string>;
-  readonly dmg?: {
-    readonly icon: string;
-  };
   readonly linux?: Record<string, unknown>;
   readonly mac?: Record<string, unknown>;
+  readonly nsis?: Record<string, unknown>;
   readonly win?: Record<string, unknown>;
 }
 
 export interface CreateDesktopPlatformBuildConfigInput {
-  readonly hasMacIconComposer: boolean;
   readonly platform: "linux" | "mac" | "win";
   readonly target: string;
   readonly windowsAzureSignOptions?: Record<string, string>;
@@ -59,29 +55,17 @@ export function createDesktopPlatformBuildConfig(
   if (input.platform === "mac") {
     const mac = {
       target: input.target === "dmg" ? [input.target, "zip"] : [input.target],
-      icon: input.hasMacIconComposer ? "icon.icon" : MAC_DMG_ICON_PATH,
+      icon: MAC_DMG_ICON_PATH,
       category: "public.app-category.developer-tools",
       hardenedRuntime: true,
       entitlements: MAC_ENTITLEMENTS_PATH,
       entitlementsInherit: MAC_INHERITED_ENTITLEMENTS_PATH,
       extendInfo: {
         NSMicrophoneUsageDescription: MICROPHONE_USAGE_DESCRIPTION,
-        ...(input.hasMacIconComposer ? { CFBundleIconFile: MAC_DMG_ICON_PATH } : {}),
       },
     } satisfies Record<string, unknown>;
 
-    if (!input.hasMacIconComposer) {
-      return { ...nativePackaging, mac };
-    }
-
-    return {
-      ...nativePackaging,
-      mac,
-      afterPack: MAC_AFTER_PACK_HOOK_PATH,
-      dmg: {
-        icon: MAC_DMG_ICON_PATH,
-      },
-    };
+    return { ...nativePackaging, mac };
   }
 
   if (input.platform === "linux") {
@@ -103,6 +87,11 @@ export function createDesktopPlatformBuildConfig(
 
   return {
     ...nativePackaging,
+    // Keep the Windows product registration stable while the public app ID changes.
+    // This lets NSIS updates replace the existing installation and own its uninstaller.
+    nsis: {
+      guid: WINDOWS_INSTALLER_GUID,
+    },
     win: {
       target: [input.target],
       icon: "icon.ico",

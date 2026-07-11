@@ -1,8 +1,15 @@
-import { MessageId, TurnId } from "@t3tools/contracts";
+// FILE: MessagesTimeline.test.tsx
+// Purpose: Covers transcript row rendering and SSR-safe presentation contracts.
+// Layer: Web chat component tests
+// Depends on: renderToStaticMarkup and a mocked LegendList.
+
+import { MessageId, TurnId } from "@synara/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { formatShortTimestamp } from "../../timestampFormat";
 import { COLLAPSED_USER_MESSAGE_MAX_CHARS } from "./userMessagePreview";
+
+const TOOLTIP_TRIGGER_MARKER = 'data-base-ui-tooltip-trigger=""';
 
 vi.mock("@legendapp/list/react", async () => {
   const React = await import("react");
@@ -197,7 +204,7 @@ describe("MessagesTimeline", () => {
       "w-max max-w-full min-w-0 self-end bg-[var(--app-user-message-background)]",
     );
     expect(markup).toContain("rounded-[var(--radius-user-message)]");
-    expect(markup).toContain("py-[8px]");
+    expect(markup).toContain("py-1.5");
     expect(markup).toContain("group-hover:opacity-100");
   });
 
@@ -501,6 +508,49 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Steering conversation");
     expect(markup).toContain("mb-1.5");
+  });
+
+  it("renders a 'Sent via Automation' chip above automation-dispatched user messages", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        timelineEntries={[
+          {
+            id: "entry-automation-user-message",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-automation-user"),
+              role: "user",
+              text: "hello",
+              dispatchOrigin: "automation",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-03-17T19:12:30.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain("Sent via Automation");
+    expect(markup).not.toContain("Steering conversation");
   });
 
   it("pushes the steering chip higher when the user message has chips or photos", async () => {
@@ -1372,6 +1422,179 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("+2 more tool calls");
   });
 
+  it("renders reasoning activity as iconless tool text while Thinking remains live", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const activeTurnId = TurnId.makeUnsafe("turn-reasoning-live");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking
+        activeTurnInProgress
+        activeTurnId={activeTurnId}
+        activeTurnStartedAt="2026-03-17T19:12:28.000Z"
+        timelineEntries={[
+          {
+            id: "entry-reasoning-trace",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.100Z",
+            entry: {
+              id: "reasoning-trace",
+              createdAt: "2026-03-17T19:12:28.100Z",
+              turnId: activeTurnId,
+              label: "Reasoning trace",
+              toolTitle: "Reasoning trace",
+              detail: "**Inspecting apps/web/src/store.ts**\n\n<!-- -->",
+              tone: "tool",
+            },
+          },
+          {
+            id: "entry-mcp-tool",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.200Z",
+            entry: {
+              id: "mcp-tool",
+              createdAt: "2026-03-17T19:12:28.200Z",
+              turnId: activeTurnId,
+              label: "MCP tool call",
+              toolTitle: "MCP tool call",
+              toolName: "mcp__docs__search",
+              itemType: "mcp_tool_call",
+              tone: "tool",
+            },
+          },
+          {
+            id: "entry-reasoning-summary",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.300Z",
+            entry: {
+              id: "reasoning-summary",
+              createdAt: "2026-03-17T19:12:28.300Z",
+              turnId: activeTurnId,
+              label: "Reasoning summary",
+              toolTitle: "Reasoning summary",
+              preview: "Updating the adapter",
+              tone: "tool",
+            },
+          },
+          {
+            id: "entry-command-execution",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.400Z",
+            entry: {
+              id: "command-execution",
+              createdAt: "2026-03-17T19:12:28.400Z",
+              turnId: activeTurnId,
+              label: "Ran command",
+              toolTitle: "Ran command",
+              itemType: "command_execution",
+              preview: "Running the focused tests",
+              tone: "tool",
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup.match(/data-codex-status-row="true"/g) ?? []).toHaveLength(3);
+    expect(markup.match(/data-work-entry-icon="true"/g) ?? []).toHaveLength(1);
+    expect(markup).toContain(">Thinking<");
+    expect(markup).toContain("Inspecting apps/web/src/store.ts");
+    expect(markup).not.toContain("Reasoning trace Inspecting");
+  });
+
+  it("keeps Thinking when a new local send has no server turn id yet", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const previousTurnId = TurnId.makeUnsafe("turn-previous");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking
+        activeTurnInProgress
+        activeTurnId={null}
+        activeTurnStartedAt={null}
+        timelineEntries={[
+          {
+            id: "entry-user-previous",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:20.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-user-previous"),
+              role: "user",
+              text: "Previous request",
+              createdAt: "2026-03-17T19:12:20.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "entry-reasoning-previous",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:21.000Z",
+            entry: {
+              id: "reasoning-previous",
+              createdAt: "2026-03-17T19:12:21.000Z",
+              turnId: previousTurnId,
+              label: "Reasoning",
+              toolTitle: "Reasoning",
+              tone: "info",
+            },
+          },
+          {
+            id: "entry-assistant-previous",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:22.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-assistant-previous"),
+              role: "assistant",
+              turnId: previousTurnId,
+              text: "Previous answer",
+              createdAt: "2026-03-17T19:12:22.000Z",
+              completedAt: "2026-03-17T19:12:23.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "entry-user-current",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-user-current"),
+              role: "user",
+              text: "Current request",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup).toContain(">Thinking<");
+  });
+
   it("attaches trailing tool rows to the last assistant reply after completion", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -1676,11 +1899,13 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain('data-tool-detail-trigger="true"');
-    expect(markup).toContain('title="View tool details"');
-    expect(markup).toContain("Details");
+    expect(markup).toContain(TOOLTIP_TRIGGER_MARKER);
+    expect(markup).not.toContain('data-tool-details-inline="true"');
+    expect(markup).not.toContain("Diff");
+    expect(markup).not.toContain("Details");
   });
 
-  it("renders command rows with a readable summary and keeps the full command on hover", async () => {
+  it("renders command rows with a readable summary and styled hover tooltip trigger", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -1722,12 +1947,71 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Searched");
+    expect(markup).toContain("for ProjectionSnapshotQuery in server/src");
     expect(markup).not.toContain("data-work-entry-action-word");
-    expect(markup).toContain("rg -n &quot;ProjectionSnapshotQuery&quot; apps/server/src");
-    expect(markup).toContain(
+    expect(markup).toContain(TOOLTIP_TRIGGER_MARKER);
+    expect(markup).not.toContain(
       `title="/bin/zsh -lc &#x27;rg -n &quot;ProjectionSnapshotQuery&quot; apps/server/src&#x27;"`,
     );
     expect(markup).not.toContain("&gt;/bin/zsh -lc");
+  });
+
+  it("uses the GitHub logo for git and GitHub CLI command rows", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        timelineEntries={[
+          {
+            id: "entry-git-command",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-git-command",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Ran command",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Checked",
+              command: "git status --short",
+            },
+          },
+          {
+            id: "entry-gh-command",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-gh-command",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "Ran command",
+              tone: "tool",
+              itemType: "command_execution",
+              toolTitle: "Ran",
+              command: "gh pr view 274 --repo owner/repo",
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-03-17T19:12:30.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="dark"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup.match(/data-tool-icon="github"/g)).toHaveLength(2);
+    expect(markup).not.toContain("/central-icons-reversed/git.svg");
   });
 
   it("marks command rows with captured details as clickable", async () => {
@@ -1779,7 +2063,13 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain('data-tool-detail-trigger="true"');
-    expect(markup).toContain('title="View tool details"');
+    expect(markup).not.toContain('data-tool-details-inline="true"');
+    expect(markup).not.toContain("Shell");
+    expect(markup).not.toContain("rounded-lg border border-border/45 bg-background/62");
+    expect(markup).not.toContain("chat-markdown-codeblock");
+    expect(markup).not.toContain("$ rg -n &quot;toolDetails&quot; apps/web/src");
+    expect(markup).not.toContain("apps/web/src/session-logic.ts:55: toolDetails");
+    expect(markup).not.toContain("Stdout");
     expect(markup).toContain("Searched");
   });
 
@@ -1914,7 +2204,8 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Listed");
     expect(markup).not.toContain("data-work-entry-action-word");
-    expect(markup).toContain("find apps/web/src -maxdepth 2 -type d");
+    expect(markup).toContain("web/src");
+    expect(markup).toContain(TOOLTIP_TRIGGER_MARKER);
     expect(markup).not.toContain(">Listed web<");
   });
 
@@ -2050,7 +2341,8 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Searched the web");
     expect(markup).toContain("48 files found");
-    expect(markup).toContain("tabler-icon-world");
+    expect(markup).toContain("/central-icons-reversed/globe.svg");
+    expect(markup).not.toContain("tabler-icon-world");
   });
 
   it("shows a GitHub icon next to compact GitHub MCP rows", async () => {
