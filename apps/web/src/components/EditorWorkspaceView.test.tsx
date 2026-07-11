@@ -5,6 +5,7 @@
 
 import type { FileDiffMetadata } from "@pierre/diffs/react";
 import { ProjectId } from "@synara/contracts";
+import { SCRATCH_WORKSPACES_DIRNAME } from "@synara/shared/threadWorkspace";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -260,7 +261,7 @@ describe("EditorWorkspaceView", () => {
         <EditorWorkspaceView
           workspaceRoot={null}
           projectName="project"
-          selectedFilePath="/tmp/synara-codex-workspaces/thread-1/report.pdf"
+          selectedFilePath={`/tmp/${SCRATCH_WORKSPACES_DIRNAME}/thread-1/report.pdf`}
           expandedDirectories={new Set()}
           centerMode="file"
           diffFiles={[]}
@@ -287,7 +288,7 @@ describe("EditorWorkspaceView", () => {
         <EditorWorkspaceView
           workspaceRoot={null}
           projectName="project"
-          selectedFilePath="/tmp/synara-codex-workspaces/thread-1/shot.png"
+          selectedFilePath={`/tmp/${SCRATCH_WORKSPACES_DIRNAME}/thread-1/shot.png`}
           expandedDirectories={new Set()}
           centerMode="file"
           diffFiles={[]}
@@ -305,7 +306,7 @@ describe("EditorWorkspaceView", () => {
 
     expect(markup).toContain("local-image-preview");
     expect(markup).toContain(
-      "/api/local-image?path=%2Ftmp%2Fsynara-codex-workspaces%2Fthread-1%2Fshot.png",
+      `/api/local-image?path=%2Ftmp%2F${SCRATCH_WORKSPACES_DIRNAME}%2Fthread-1%2Fshot.png`,
     );
     expect(markup).not.toContain("No workspace is attached");
     expect(markup).not.toContain("cwd=");

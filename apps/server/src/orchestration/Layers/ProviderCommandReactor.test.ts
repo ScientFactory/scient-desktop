@@ -13,6 +13,7 @@ import {
   ThreadId,
   TurnId,
 } from "@synara/contracts";
+import { WORKTREE_BRANCH_PREFIX } from "@synara/shared/git";
 import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -1646,11 +1647,11 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.makeUnsafe("cmd-thread-worktree-bootstrap"),
         threadId: ThreadId.makeUnsafe("thread-1"),
         envMode: "worktree",
-        branch: "synara/cb661f0d",
+        branch: `${WORKTREE_BRANCH_PREFIX}/cb661f0d`,
         worktreePath: "/tmp/provider-project/.worktrees/cb661f0d",
         associatedWorktreePath: "/tmp/provider-project/.worktrees/cb661f0d",
-        associatedWorktreeBranch: "synara/cb661f0d",
-        associatedWorktreeRef: "synara/cb661f0d",
+        associatedWorktreeBranch: `${WORKTREE_BRANCH_PREFIX}/cb661f0d`,
+        associatedWorktreeRef: `${WORKTREE_BRANCH_PREFIX}/cb661f0d`,
       }),
     );
 
@@ -1681,20 +1682,20 @@ describe("ProviderCommandReactor", () => {
         (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
       );
       return (
-        thread?.branch === "synara/app-startup-crash" &&
-        thread.associatedWorktreeBranch === "synara/app-startup-crash" &&
-        thread.associatedWorktreeRef === "synara/app-startup-crash"
+        thread?.branch === `${WORKTREE_BRANCH_PREFIX}/app-startup-crash` &&
+        thread.associatedWorktreeBranch === `${WORKTREE_BRANCH_PREFIX}/app-startup-crash` &&
+        thread.associatedWorktreeRef === `${WORKTREE_BRANCH_PREFIX}/app-startup-crash`
       );
     });
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread).toMatchObject({
-      branch: "synara/app-startup-crash",
+      branch: `${WORKTREE_BRANCH_PREFIX}/app-startup-crash`,
       worktreePath: "/tmp/provider-project/.worktrees/cb661f0d",
       associatedWorktreePath: "/tmp/provider-project/.worktrees/cb661f0d",
-      associatedWorktreeBranch: "synara/app-startup-crash",
-      associatedWorktreeRef: "synara/app-startup-crash",
+      associatedWorktreeBranch: `${WORKTREE_BRANCH_PREFIX}/app-startup-crash`,
+      associatedWorktreeRef: `${WORKTREE_BRANCH_PREFIX}/app-startup-crash`,
     });
   });
 
@@ -1708,11 +1709,11 @@ describe("ProviderCommandReactor", () => {
         commandId: CommandId.makeUnsafe("cmd-thread-worktree-bootstrap-gemini"),
         threadId: ThreadId.makeUnsafe("thread-1"),
         envMode: "worktree",
-        branch: "synara/cb661f0d",
+        branch: `${WORKTREE_BRANCH_PREFIX}/cb661f0d`,
         worktreePath: "/tmp/provider-project/.worktrees/cb661f0d",
         associatedWorktreePath: "/tmp/provider-project/.worktrees/cb661f0d",
-        associatedWorktreeBranch: "synara/cb661f0d",
-        associatedWorktreeRef: "synara/cb661f0d",
+        associatedWorktreeBranch: `${WORKTREE_BRANCH_PREFIX}/cb661f0d`,
+        associatedWorktreeRef: `${WORKTREE_BRANCH_PREFIX}/cb661f0d`,
       }),
     );
 
@@ -1740,8 +1741,8 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.renameBranch.mock.calls.length === 1);
     expect(harness.generateBranchName).not.toHaveBeenCalled();
     expect(harness.renameBranch.mock.calls[0]?.[0]).toMatchObject({
-      oldBranch: "synara/cb661f0d",
-      newBranch: "synara/fix-provider-startup-timeouts",
+      oldBranch: `${WORKTREE_BRANCH_PREFIX}/cb661f0d`,
+      newBranch: `${WORKTREE_BRANCH_PREFIX}/fix-provider-startup-timeouts`,
     });
 
     await waitFor(async () => {
@@ -1749,7 +1750,7 @@ describe("ProviderCommandReactor", () => {
       const thread = readModel.threads.find(
         (entry) => entry.id === ThreadId.makeUnsafe("thread-1"),
       );
-      return thread?.branch === "synara/fix-provider-startup-timeouts";
+      return thread?.branch === `${WORKTREE_BRANCH_PREFIX}/fix-provider-startup-timeouts`;
     });
   });
 

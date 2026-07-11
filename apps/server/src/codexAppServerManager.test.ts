@@ -12,6 +12,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { ApprovalRequestId, ThreadId } from "@synara/contracts";
+import { SCRATCH_WORKSPACES_DIRNAME } from "@synara/shared/threadWorkspace";
 
 import {
   buildCodexProcessEnv,
@@ -474,7 +475,7 @@ describe("buildCodexProcessEnv", () => {
       );
 
       const env = buildCodexProcessEnv({
-        env: { SYNARA_HOME: runtimeHome },
+        env: { LITREV_HOME: runtimeHome },
         homePath: tempDir,
         platform: "darwin",
       });
@@ -511,7 +512,7 @@ describe("buildCodexProcessEnv", () => {
 
       const overlayHome = path.join(runtimeHome, "codex-home-overlay");
       const env = buildCodexProcessEnv({
-        env: { SYNARA_HOME: runtimeHome },
+        env: { LITREV_HOME: runtimeHome },
         homePath: tempDir,
         platform: "darwin",
       });
@@ -551,7 +552,7 @@ describe("buildCodexProcessEnv", () => {
       );
 
       const env = buildCodexProcessEnv({
-        env: { SYNARA_HOME: runtimeHome },
+        env: { LITREV_HOME: runtimeHome },
         homePath: tempDir,
         platform: "darwin",
       });
@@ -586,7 +587,7 @@ describe("buildCodexProcessEnv", () => {
       writeFileSync(overlayMemoryPath, "stale-overlay-db", "utf8");
 
       const env = buildCodexProcessEnv({
-        env: { SYNARA_HOME: runtimeHome },
+        env: { LITREV_HOME: runtimeHome },
         homePath: tempDir,
         platform: "darwin",
       });
@@ -614,7 +615,7 @@ describe("buildCodexProcessEnv", () => {
       writeFileSync(overlayAuthPath, '{"tokens":{"access_token":"stale"}}', "utf8");
 
       const env = buildCodexProcessEnv({
-        env: { SYNARA_HOME: runtimeHome },
+        env: { LITREV_HOME: runtimeHome },
         homePath: tempDir,
         platform: "darwin",
       });
@@ -645,7 +646,7 @@ describe("buildCodexProcessEnv", () => {
       writeFileSync(overlayImagePath, "overlay-image", "utf8");
 
       const env = buildCodexProcessEnv({
-        env: { SYNARA_HOME: runtimeHome },
+        env: { LITREV_HOME: runtimeHome },
         homePath: tempDir,
         platform: "darwin",
       });
@@ -848,7 +849,7 @@ describe("startSession", () => {
 
   it("uses an isolated scratch workspace path when no cwd is provided", () => {
     const cwd = ensureIsolatedScratchWorkspace(asThreadId("thread-1"));
-    expect(cwd).toContain(`${path.sep}synara-codex-workspaces${path.sep}thread-1`);
+    expect(cwd).toContain(`${path.sep}${SCRATCH_WORKSPACES_DIRNAME}${path.sep}thread-1`);
   });
 
   it("fails fast with an upgrade message when codex is below the minimum supported version", async () => {

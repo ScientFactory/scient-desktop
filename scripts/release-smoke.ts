@@ -131,6 +131,21 @@ function verifyReleaseWorkflowSafety(): void {
   const workflow = readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
   assertContains(
     workflow,
+    "if: ${{ vars.LITREV_DESKTOP_RELEASES_ENABLED == 'true' }}",
+    "Expected desktop release jobs to remain gated until LitRev releases are explicitly enabled.",
+  );
+  assertContains(
+    workflow,
+    "UPDATE_REPOSITORY: ${{ vars.LITREV_DESKTOP_UPDATE_REPOSITORY }}",
+    "Expected release preflight to require the owned updater repository.",
+  );
+  assertContains(
+    workflow,
+    "LITREV_DESKTOP_UPDATE_REPOSITORY: ${{ needs.preflight.outputs.update_repository }}",
+    "Expected artifact builds to receive the verified owned updater repository.",
+  );
+  assertContains(
+    workflow,
     "publish_release:\n        description:",
     "Expected a manual publication opt-in input.",
   );

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { SCRATCH_WORKSPACES_DIRNAME } from "@synara/shared/threadWorkspace";
 import { afterEach, describe, it } from "vitest";
 
 import { resolveAllowedLocalPreviewFile } from "./localImageFiles.ts";
@@ -61,10 +62,10 @@ describe("resolveAllowedLocalPreviewFile", () => {
     }
   });
 
-  it("allows images written to the SYNARA_HOME codex-home-overlay generated_images root", async () => {
-    // Codex app-server is launched with CODEX_HOME pointing at a Synara overlay
+  it("allows images written to the LITREV_HOME codex-home-overlay generated_images root", async () => {
+    // Codex app-server is launched with CODEX_HOME pointing at a LitRev overlay
     // directory (see resolveSynaraCodexHomeOverlayPath). Generated images therefore
-    // live under <SYNARA_HOME>/codex-home-overlay/generated_images/<thread>/<call>.png,
+    // live under <LITREV_HOME>/codex-home-overlay/generated_images/<thread>/<call>.png,
     // which sits outside both the user's `~/.codex` source home and any workspace
     // root. The allowlist must still serve them.
     //
@@ -73,9 +74,9 @@ describe("resolveAllowedLocalPreviewFile", () => {
     // way only the overlay candidate can satisfy the allowlist.
     const fakeRoot = path.join(process.cwd(), `.test-codex-overlay-${process.pid}-${Date.now()}`);
     const sourceHome = path.join(fakeRoot, "source", ".codex");
-    const synaraHome = path.join(fakeRoot, "synara", "runtime");
+    const litrevHome = path.join(fakeRoot, "litrev", "runtime");
     const overlayImageDir = path.join(
-      synaraHome,
+      litrevHome,
       "codex-home-overlay",
       "generated_images",
       "thread-overlay",
@@ -84,8 +85,8 @@ describe("resolveAllowedLocalPreviewFile", () => {
     mkdirSync(overlayImageDir, { recursive: true });
     writeFileSync(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
 
-    const previousSynaraHome = process.env.SYNARA_HOME;
-    process.env.SYNARA_HOME = synaraHome;
+    const previousLitrevHome = process.env.LITREV_HOME;
+    process.env.LITREV_HOME = litrevHome;
     try {
       const result = await resolveAllowedLocalPreviewFile({
         requestedPath: imagePath,
@@ -95,10 +96,10 @@ describe("resolveAllowedLocalPreviewFile", () => {
 
       assert.equal(result?.path, realpathSync(imagePath));
     } finally {
-      if (previousSynaraHome === undefined) {
-        delete process.env.SYNARA_HOME;
+      if (previousLitrevHome === undefined) {
+        delete process.env.LITREV_HOME;
       } else {
-        process.env.SYNARA_HOME = previousSynaraHome;
+        process.env.LITREV_HOME = previousLitrevHome;
       }
       rmSync(fakeRoot, { recursive: true, force: true });
     }
@@ -123,9 +124,9 @@ describe("resolveAllowedLocalPreviewFile", () => {
 
   it("allows PDFs inside a per-thread scratch workspace without a cwd", async () => {
     // Sessions that start before a project workspace exists run in
-    // <tmpdir>/synara-codex-workspaces/<threadId>; files agents create there
+    // <tmpdir>/<scratch-workspaces-dir>/<threadId>; files agents create there
     // are workspace-equivalent, so documents must be servable from that root.
-    const scratchRoot = path.join(os.tmpdir(), "synara-codex-workspaces");
+    const scratchRoot = path.join(os.tmpdir(), SCRATCH_WORKSPACES_DIRNAME);
     const threadDir = path.join(scratchRoot, `test-thread-${process.pid}-${Date.now()}`);
     const pdfPath = path.join(threadDir, "viewer-test.pdf");
     mkdirSync(threadDir, { recursive: true });

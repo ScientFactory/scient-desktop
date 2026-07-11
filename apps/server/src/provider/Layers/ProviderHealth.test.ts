@@ -160,7 +160,7 @@ function withTempCodexHome(configContent?: string) {
         // the resolved CODEX_HOME during this test.
         const overrides: Record<string, string> = {
           CODEX_HOME: tmpDir,
-          SYNARA_HOME: runtimeDir,
+          LITREV_HOME: runtimeDir,
         };
         const restore: Record<string, string | undefined> = {};
         for (const [key, value] of Object.entries(overrides)) {

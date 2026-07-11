@@ -27,6 +27,7 @@ concurrency:
 jobs:
   preflight:
     name: Preflight
+    if: ${{ vars.LITREV_DESKTOP_RELEASES_ENABLED == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
@@ -39,10 +40,28 @@ jobs:
       release_lane: ${{ steps.release_meta.outputs.release_lane }}
       bridge_tag: ${{ steps.release_meta.outputs.bridge_tag }}
       update_channel: ${{ steps.release_meta.outputs.update_channel }}
+      update_repository: ${{ steps.release_config.outputs.update_repository }}
       ref: ${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+
+      - id: release_config
+        name: Verify LitRev release configuration
+        shell: bash
+        env:
+          UPDATE_REPOSITORY: ${{ vars.LITREV_DESKTOP_UPDATE_REPOSITORY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$UPDATE_REPOSITORY" ]]; then
+            echo "Set the LITREV_DESKTOP_UPDATE_REPOSITORY repository variable before enabling LitRev desktop releases." >&2
+            exit 1
+          fi
+          if [[ "$UPDATE_REPOSITORY" != "$GITHUB_REPOSITORY" ]]; then
+            echo "The updater repository must be the owned release repository $GITHUB_REPOSITORY, got $UPDATE_REPOSITORY." >&2
+            exit 1
+          fi
+          echo "update_repository=$UPDATE_REPOSITORY" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -71,8 +90,9 @@ jobs:
       - name: Verify public updater repository
         env:
           GH_TOKEN: ${{ github.token }}
+          UPDATE_REPOSITORY: ${{ steps.release_config.outputs.update_repository }}
         run: |
-          visibility="$(gh api "repos/${GITHUB_REPOSITORY}" --jq .visibility)"
+          visibility="$(gh api "repos/${UPDATE_REPOSITORY}" --jq .visibility)"
           if [[ "$visibility" != "public" ]]; then
             echo "The dedicated updater channel requires the public GitHub provider; repository visibility is $visibility." >&2
             exit 1
@@ -201,6 +221,7 @@ jobs:
           AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
           AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
           AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
+          LITREV_DESKTOP_UPDATE_REPOSITORY: ${{ needs.preflight.outputs.update_repository }}
         run: |
           args=(
             --platform "${{ matrix.platform }}"

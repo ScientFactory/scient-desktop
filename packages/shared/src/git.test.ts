@@ -89,7 +89,7 @@ describe("buildSynaraBranchName", () => {
     }
   });
 
-  it("falls back to synara/update when no preferred name is provided", () => {
+  it("falls back to the LitRev update branch when no preferred name is provided", () => {
     expect(buildSynaraBranchName()).toBe("litrev/update");
   });
 });
