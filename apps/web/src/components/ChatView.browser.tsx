@@ -18,6 +18,7 @@ import {
   OrchestrationSessionStatus,
 } from "@synara/contracts";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
+import { WORKTREE_BRANCH_PREFIX } from "@synara/shared/git";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
 import { page } from "vitest/browser";
@@ -4008,7 +4009,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
               typeof request.newBranch === "string",
           );
           expect(createWorktreeRequest).toBeTruthy();
-          expect(createWorktreeRequest?.newBranch).toMatch(/^synara\/[0-9a-f]{8}$/);
+          expect(createWorktreeRequest?.newBranch).toMatch(
+            new RegExp(`^${WORKTREE_BRANCH_PREFIX}/[0-9a-f]{8}$`),
+          );
 
           const detachedRequest = wsRequests.find(
             (request) => request._tag === WS_METHODS.gitCreateDetachedWorktree,
