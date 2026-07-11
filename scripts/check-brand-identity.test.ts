@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   findBrandIdentityViolations,
-  findLitRevPackagingViolations,
+  findLitRevIdentityViolations,
   findVisualBrandAssetViolations,
 } from "./check-brand-identity";
 
@@ -67,19 +67,35 @@ describe("brand identity guard", () => {
       ["package.json", ['name: "litrev-desktop"', 'description: "LitRev desktop build"']],
     ]);
     expect(
-      findLitRevPackagingViolations(
+      findLitRevIdentityViolations(
         [{ path: "package.json", contents: 'name: "litrev-desktop"' }],
         requirements,
       ),
     ).toHaveLength(1);
     expect(
-      findLitRevPackagingViolations(
+      findLitRevIdentityViolations(
         [
           {
             path: "package.json",
             contents: 'name: "litrev-desktop"\ndescription: "LitRev desktop build"',
           },
         ],
+        requirements,
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps upstream release marketing out of the LitRev UI", () => {
+    const requirements = new Map([["entries.ts", ["WHATS_NEW_ENTRIES = []"]]]);
+    expect(
+      findLitRevIdentityViolations(
+        [{ path: "entries.ts", contents: "WHATS_NEW_ENTRIES = upstreamEntries" }],
+        requirements,
+      ),
+    ).toHaveLength(1);
+    expect(
+      findLitRevIdentityViolations(
+        [{ path: "entries.ts", contents: "WHATS_NEW_ENTRIES = []" }],
         requirements,
       ),
     ).toEqual([]);

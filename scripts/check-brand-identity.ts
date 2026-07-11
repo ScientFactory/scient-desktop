@@ -72,11 +72,15 @@ export interface BrandIdentityBinaryFile {
   readonly contents: Uint8Array;
 }
 
-const requiredLitRevPackagingText = new Map<string, readonly string[]>([
+const requiredLitRevIdentityText = new Map<string, readonly string[]>([
   ["apps/desktop/package.json", ['"productName": "LitRev"']],
   [
     "scripts/build-desktop-artifact.ts",
     ['name: "litrev-desktop"', 'description: "LitRev desktop build"', 'author: "Yaacov Corcos"'],
+  ],
+  [
+    "apps/web/src/whatsNew/entries.ts",
+    ["export const WHATS_NEW_ENTRIES: readonly WhatsNewEntry[] = [];"],
   ],
 ]);
 
@@ -128,16 +132,16 @@ export function findVisualBrandAssetViolations(
   return violations;
 }
 
-export function findLitRevPackagingViolations(
+export function findLitRevIdentityViolations(
   files: readonly BrandIdentityFile[],
-  requirements: ReadonlyMap<string, readonly string[]> = requiredLitRevPackagingText,
+  requirements: ReadonlyMap<string, readonly string[]> = requiredLitRevIdentityText,
 ): BrandIdentityViolation[] {
   const filesByPath = new Map(files.map((file) => [file.path, file.contents]));
   const violations: BrandIdentityViolation[] = [];
   for (const [path, requiredText] of requirements) {
     const contents = filesByPath.get(path);
     if (contents === undefined) {
-      violations.push({ path, line: null, text: "Required LitRev packaging source is missing." });
+      violations.push({ path, line: null, text: "Required LitRev identity source is missing." });
       continue;
     }
     for (const text of requiredText) {
@@ -145,7 +149,7 @@ export function findLitRevPackagingViolations(
         violations.push({
           path,
           line: null,
-          text: `Required LitRev packaging identity is missing: ${text}`,
+          text: `Required LitRev identity is missing: ${text}`,
         });
       }
     }
@@ -168,7 +172,7 @@ function main(): void {
   }));
   const violations = [
     ...findBrandIdentityViolations(searchableFiles),
-    ...findLitRevPackagingViolations(searchableFiles),
+    ...findLitRevIdentityViolations(searchableFiles),
     ...findVisualBrandAssetViolations(trackedFiles),
   ];
   if (violations.length === 0) {
