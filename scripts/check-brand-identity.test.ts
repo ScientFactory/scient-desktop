@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   findBrandIdentityViolations,
   findLitRevIdentityViolations,
+  findLitRevSurfaceIdentityViolations,
   findVisualBrandAssetViolations,
 } from "./check-brand-identity";
 
@@ -97,6 +98,33 @@ describe("brand identity guard", () => {
       findLitRevIdentityViolations(
         [{ path: "entries.ts", contents: "WHATS_NEW_ENTRIES = []" }],
         requirements,
+      ),
+    ).toEqual([]);
+  });
+
+  it("rejects Synara copy from LitRev-owned user and developer surfaces", () => {
+    const surfacePaths = new Set(["Sidebar.tsx", "desktopUpdate.logic.ts", "dev-electron.mjs"]);
+    expect(
+      findLitRevSurfaceIdentityViolations(
+        [
+          { path: "desktopUpdate.logic.ts", contents: "Synara restarted." },
+          { path: "dev-electron.mjs", contents: "SYNARA (Dev) is running." },
+          { path: "Sidebar.tsx", contents: 'description: "synara is downloading."' },
+        ],
+        surfacePaths,
+      ),
+    ).toHaveLength(3);
+    expect(
+      findLitRevSurfaceIdentityViolations(
+        [
+          { path: "desktopUpdate.logic.ts", contents: "LitRev restarted." },
+          {
+            path: "dev-electron.mjs",
+            contents: "--synara-dev-root=/tmp/project\nimport '@synara/contracts';",
+          },
+          { path: "Sidebar.tsx", contents: "// Synara owns the inherited run tracker." },
+        ],
+        surfacePaths,
       ),
     ).toEqual([]);
   });

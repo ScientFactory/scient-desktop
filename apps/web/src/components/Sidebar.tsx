@@ -6422,7 +6422,7 @@ export default function Sidebar() {
             toastManager.add({
               type: "info",
               title: "Preparing update",
-              description: `Synara is preparing version ${nextState.availableVersion ?? "available"} in the background.`,
+              description: `LitRev is preparing version ${nextState.availableVersion ?? "available"} in the background.`,
             });
             return;
           }
@@ -6431,7 +6431,7 @@ export default function Sidebar() {
             toastManager.add({
               type: "info",
               title: "Preparing update",
-              description: "Synara is downloading the update in the background.",
+              description: "LitRev is downloading the update in the background.",
             });
             return;
           }
@@ -6449,7 +6449,7 @@ export default function Sidebar() {
             toastManager.add({
               type: "info",
               title: "You're up to date",
-              description: `Synara ${nextState.currentVersion} is already the newest version.`,
+              description: `LitRev ${nextState.currentVersion} is already the newest version.`,
             });
             return;
           }

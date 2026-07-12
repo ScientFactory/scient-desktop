@@ -84,6 +84,28 @@ const requiredLitRevIdentityText = new Map<string, readonly string[]>([
   ],
 ]);
 
+const litRevOnlySurfacePaths = new Set([
+  "apps/desktop/scripts/dev-electron.mjs",
+  "apps/web/src/components/Sidebar.tsx",
+  "apps/web/src/components/desktopUpdate.logic.ts",
+]);
+
+export function findLitRevSurfaceIdentityViolations(
+  files: readonly BrandIdentityFile[],
+  surfacePaths: ReadonlySet<string> = litRevOnlySurfacePaths,
+): BrandIdentityViolation[] {
+  const violations: BrandIdentityViolation[] = [];
+  for (const file of files) {
+    if (!surfacePaths.has(file.path)) continue;
+    for (const [index, line] of file.contents.split(/\r?\n/).entries()) {
+      if (line.trimStart().startsWith("//")) continue;
+      if (!/(?<![@-])\bSynara\b/i.test(line)) continue;
+      violations.push({ path: file.path, line: index + 1, text: line.trim() });
+    }
+  }
+  return violations;
+}
+
 function containsForbiddenIdentity(value: string): boolean {
   return forbiddenPatterns.some((pattern) => pattern.test(value));
 }
@@ -173,10 +195,11 @@ function main(): void {
   const violations = [
     ...findBrandIdentityViolations(searchableFiles),
     ...findLitRevIdentityViolations(searchableFiles),
+    ...findLitRevSurfaceIdentityViolations(searchableFiles),
     ...findVisualBrandAssetViolations(trackedFiles),
   ];
   if (violations.length === 0) {
-    console.log("Synara identity check passed.");
+    console.log("LitRev identity check passed.");
     return;
   }
 
