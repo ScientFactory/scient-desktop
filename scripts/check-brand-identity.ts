@@ -86,6 +86,7 @@ const requiredLitRevIdentityText = new Map<string, readonly string[]>([
 
 const litRevOnlySurfacePaths = new Set([
   "apps/desktop/scripts/dev-electron.mjs",
+  "apps/web/src/components/Sidebar.tsx",
   "apps/web/src/components/desktopUpdate.logic.ts",
 ]);
 
@@ -97,7 +98,8 @@ export function findLitRevSurfaceIdentityViolations(
   for (const file of files) {
     if (!surfacePaths.has(file.path)) continue;
     for (const [index, line] of file.contents.split(/\r?\n/).entries()) {
-      if (!/\bSynara\b/.test(line)) continue;
+      if (line.trimStart().startsWith("//")) continue;
+      if (!/(?<![@-])\bSynara\b/i.test(line)) continue;
       violations.push({ path: file.path, line: index + 1, text: line.trim() });
     }
   }
