@@ -77,7 +77,7 @@ describe("localServerMonitor", () => {
     );
   });
 
-  it("keeps dev servers and ignores Electron/Synara-style application listeners", () => {
+  it("keeps dev servers and ignores Electron/PapiLab-style application listeners", () => {
     expect(
       isLikelyDevServerProcess({
         command: "node",
@@ -88,14 +88,14 @@ describe("localServerMonitor", () => {
     expect(
       isIgnoredLocalServerProcess({
         command: "Electron",
-        args: "/Applications/Synara.app/Contents/MacOS/Synara",
+        args: "/Applications/PapiLab.app/Contents/MacOS/PapiLab",
         ports: [61449],
       }),
     ).toBe(true);
     expect(
       isIgnoredLocalServerProcess({
-        command: "Synara",
-        args: "/Applications/Synara.app/Contents/MacOS/Synara",
+        command: "PapiLab",
+        args: "/Applications/PapiLab.app/Contents/MacOS/PapiLab",
         ports: [61449],
       }),
     ).toBe(true);

@@ -837,8 +837,8 @@ describe("startSession", () => {
   it("enables Codex experimental api capabilities during initialize", () => {
     expect(buildCodexInitializeParams()).toEqual({
       clientInfo: {
-        name: "synara_desktop",
-        title: "Synara Desktop",
+        name: "papilab_desktop",
+        title: "PapiLab Desktop",
         version: "0.1.0",
       },
       capabilities: {
