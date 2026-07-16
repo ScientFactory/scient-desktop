@@ -1805,7 +1805,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
         assert.strictEqual(status.version, "1.0.11");
         assert.strictEqual(
           status.message,
-          "Antigravity CLI 1.0.11 is too old for Synara. Upgrade to 1.0.12 or newer.",
+          "Antigravity CLI 1.0.11 is too old for PapiLab. Upgrade to 1.0.12 or newer.",
         );
       }).pipe(
         Effect.provide(
