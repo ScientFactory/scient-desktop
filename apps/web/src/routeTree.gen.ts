@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
+import { Route as ChatWorldcupRouteImport } from './routes/_chat.worldcup'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatPluginsRouteImport } from './routes/_chat.plugins'
@@ -32,6 +33,11 @@ const ChatRoute = ChatRouteImport.update({
 const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatWorldcupRoute = ChatWorldcupRouteImport.update({
+  id: '/worldcup',
+  path: '/worldcup',
   getParentRoute: () => ChatRoute,
 } as any)
 const ChatSettingsRoute = ChatSettingsRouteImport.update({
@@ -109,6 +115,7 @@ export interface FileRoutesByFullPath {
   '/plugins': typeof ChatPluginsRoute
   '/pull-requests': typeof ChatPullRequestsRouteWithChildren
   '/settings': typeof ChatSettingsRoute
+  '/worldcup': typeof ChatWorldcupRoute
   '/automations/$automationId': typeof ChatAutomationsAutomationIdRoute
   '/kanban/$projectId': typeof ChatKanbanProjectIdRoute
   '/workspace/$workspaceId': typeof ChatWorkspaceWorkspaceIdRoute
@@ -122,6 +129,7 @@ export interface FileRoutesByTo {
   '/$threadId': typeof ChatThreadIdRoute
   '/plugins': typeof ChatPluginsRoute
   '/settings': typeof ChatSettingsRoute
+  '/worldcup': typeof ChatWorldcupRoute
   '/': typeof ChatIndexRoute
   '/automations/$automationId': typeof ChatAutomationsAutomationIdRoute
   '/kanban/$projectId': typeof ChatKanbanProjectIdRoute
@@ -140,6 +148,7 @@ export interface FileRoutesById {
   '/_chat/plugins': typeof ChatPluginsRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRouteWithChildren
   '/_chat/settings': typeof ChatSettingsRoute
+  '/_chat/worldcup': typeof ChatWorldcupRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/automations/$automationId': typeof ChatAutomationsAutomationIdRoute
   '/_chat/kanban/$projectId': typeof ChatKanbanProjectIdRoute
@@ -159,6 +168,7 @@ export interface FileRouteTypes {
     | '/plugins'
     | '/pull-requests'
     | '/settings'
+    | '/worldcup'
     | '/automations/$automationId'
     | '/kanban/$projectId'
     | '/workspace/$workspaceId'
@@ -172,6 +182,7 @@ export interface FileRouteTypes {
     | '/$threadId'
     | '/plugins'
     | '/settings'
+    | '/worldcup'
     | '/'
     | '/automations/$automationId'
     | '/kanban/$projectId'
@@ -189,6 +200,7 @@ export interface FileRouteTypes {
     | '/_chat/plugins'
     | '/_chat/pull-requests'
     | '/_chat/settings'
+    | '/_chat/worldcup'
     | '/_chat/'
     | '/_chat/automations/$automationId'
     | '/_chat/kanban/$projectId'
@@ -218,6 +230,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof ChatIndexRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/worldcup': {
+      id: '/_chat/worldcup'
+      path: '/worldcup'
+      fullPath: '/worldcup'
+      preLoaderRoute: typeof ChatWorldcupRouteImport
       parentRoute: typeof ChatRoute
     }
     '/_chat/settings': {
@@ -345,6 +364,7 @@ interface ChatRouteChildren {
   ChatPluginsRoute: typeof ChatPluginsRoute
   ChatPullRequestsRoute: typeof ChatPullRequestsRouteWithChildren
   ChatSettingsRoute: typeof ChatSettingsRoute
+  ChatWorldcupRoute: typeof ChatWorldcupRoute
   ChatIndexRoute: typeof ChatIndexRoute
   ChatKanbanProjectIdRoute: typeof ChatKanbanProjectIdRoute
   ChatWorkspaceWorkspaceIdRoute: typeof ChatWorkspaceWorkspaceIdRoute
@@ -359,6 +379,7 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatPluginsRoute: ChatPluginsRoute,
   ChatPullRequestsRoute: ChatPullRequestsRouteWithChildren,
   ChatSettingsRoute: ChatSettingsRoute,
+  ChatWorldcupRoute: ChatWorldcupRoute,
   ChatIndexRoute: ChatIndexRoute,
   ChatKanbanProjectIdRoute: ChatKanbanProjectIdRoute,
   ChatWorkspaceWorkspaceIdRoute: ChatWorkspaceWorkspaceIdRoute,
