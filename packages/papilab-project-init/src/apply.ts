@@ -347,8 +347,12 @@ export async function applyProjectInitialization(
     return {
       projectId: plan.projectId,
       created: [],
-      preserved: [],
-      proposed: [],
+      preserved: plan.operations
+        .filter((operation) => operation.kind === "preserve")
+        .map((operation) => operation.path),
+      proposed: plan.operations
+        .filter((operation) => operation.kind === "propose")
+        .map((operation) => operation.path),
       recovered: false,
     };
   }

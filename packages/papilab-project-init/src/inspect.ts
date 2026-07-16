@@ -5,6 +5,7 @@ import {
   MAX_IDENTITY_BYTES,
   readUtf8FileBounded,
   resolveProjectRoot,
+  snapshotRelativePathSafely,
   snapshotPath,
 } from "./filesystem.ts";
 import { readInitializationTransaction } from "./transaction.ts";
@@ -29,11 +30,11 @@ export async function inspectProjectFolder(requestedRoot: string): Promise<Proje
   const metadataDirectory = await snapshotPath(path.join(root, PAPILAB_METADATA_DIRECTORY));
   const identityFile =
     metadataDirectory.kind === "directory"
-      ? await snapshotPath(path.join(root, PAPILAB_IDENTITY_FILE))
+      ? await snapshotRelativePathSafely(root, PAPILAB_IDENTITY_FILE)
       : ({ kind: "missing" } as const);
   const transactionFile =
     metadataDirectory.kind === "directory"
-      ? await snapshotPath(path.join(root, PAPILAB_TRANSACTION_FILE))
+      ? await snapshotRelativePathSafely(root, PAPILAB_TRANSACTION_FILE)
       : ({ kind: "missing" } as const);
   const issues: InspectionIssue[] = [];
   let identity: PapiLabProjectIdentity | null = null;
@@ -95,7 +96,12 @@ export async function inspectProjectFolder(requestedRoot: string): Promise<Proje
     });
   } else if (transactionValid) {
     state = "partially-initialized";
-  } else if (transactionFile.kind !== "missing" || issues.some((issue) => issue.code === "invalid-identity")) {
+  } else if (
+    transactionFile.kind !== "missing" ||
+    issues.some(
+      (issue) => issue.code === "invalid-identity" || issue.code === "metadata-path-conflict",
+    )
+  ) {
     state = "invalid-or-conflicting";
   } else if (identity) {
     state = "initialized-compatible";

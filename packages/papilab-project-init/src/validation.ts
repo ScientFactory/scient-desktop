@@ -15,6 +15,23 @@ const MAX_TEXT_LENGTH = 10_000;
 const MAX_PROFILE_FILE_LENGTH = 1_048_576;
 const PROFILE_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const PROJECT_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,126}[A-Za-z0-9])?$/;
+const RESERVED_PROJECT_HEADINGS = new Set(
+  [
+    "Purpose",
+    "Main Question Or Objective",
+    "Project Type And Workflow",
+    "Scope",
+    "Included",
+    "Excluded",
+    "Starting Materials",
+    "Intended Outputs",
+    "Constraints And Sensitivities",
+    "Terminology",
+    "Important Decisions",
+    "Open Questions",
+    "Current Status",
+  ].map((heading) => heading.toLowerCase()),
+);
 
 function normalizeOptionalText(value: string | undefined, field: string): string | null {
   if (value === undefined) return null;
@@ -41,8 +58,15 @@ export function normalizeInitializationRequest(
       );
     }
   }
+  const title = normalizeOptionalText(request.title, "Project title");
+  if (title !== null && (title.length > 200 || /[\r\n]/.test(title))) {
+    throw new ProjectInitializationError(
+      "INVALID_REQUEST",
+      "Project title must be a single line of at most 200 characters.",
+    );
+  }
   return {
-    title: normalizeOptionalText(request.title, "Project title"),
+    title,
     purpose: normalizeOptionalText(request.purpose, "Project purpose"),
     question: normalizeOptionalText(request.question, "Project question"),
     scopeIncluded: normalizeOptionalText(request.scopeIncluded, "Included scope"),
@@ -115,15 +139,25 @@ export function validateProfileDescriptor(
         `Profile ${descriptor.id} repeats project section ${heading}.`,
       );
     }
+    if (RESERVED_PROJECT_HEADINGS.has(heading.toLowerCase())) {
+      throw new ProjectInitializationError(
+        "INVALID_PROFILE",
+        `Profile ${descriptor.id} may not repeat universal section ${heading}.`,
+      );
+    }
     headings.add(heading.toLowerCase());
     normalizeOptionalText(section.prompt, `Profile ${descriptor.id} section prompt`);
   }
 
   for (const instruction of descriptor.managedAgentInstructions ?? []) {
-    if (normalizeOptionalText(instruction, `Profile ${descriptor.id} agent instruction`) === null) {
+    const normalized = normalizeOptionalText(
+      instruction,
+      `Profile ${descriptor.id} agent instruction`,
+    );
+    if (normalized === null || normalized.length > 500 || /[\r\n]/.test(normalized)) {
       throw new ProjectInitializationError(
         "INVALID_PROFILE",
-        `Profile ${descriptor.id} contains an empty agent instruction.`,
+        `Profile ${descriptor.id} agent instructions must be single lines of at most 500 characters.`,
       );
     }
   }
@@ -131,13 +165,14 @@ export function validateProfileDescriptor(
   const filePaths = new Set<string>();
   for (const file of descriptor.files ?? []) {
     const normalizedPath = validatePortableRelativePath(file.path);
-    if (filePaths.has(normalizedPath)) {
+    const portableKey = normalizedPath.toLowerCase();
+    if (filePaths.has(portableKey)) {
       throw new ProjectInitializationError(
         "INVALID_PROFILE",
         `Profile ${descriptor.id} repeats file ${normalizedPath}.`,
       );
     }
-    filePaths.add(normalizedPath);
+    filePaths.add(portableKey);
     if (Buffer.byteLength(file.contents, "utf8") > MAX_PROFILE_FILE_LENGTH) {
       throw new ProjectInitializationError(
         "INVALID_PROFILE",

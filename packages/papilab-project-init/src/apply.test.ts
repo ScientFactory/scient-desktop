@@ -71,6 +71,7 @@ describe("applyProjectInitialization", () => {
     expect(secondPlan.status).toBe("already-initialized");
     expect(secondResult.created).toEqual([]);
     expect(secondResult.projectId).toBe(TEST_IDENTITY.projectId);
+    expect(secondResult.preserved).toEqual(["PROJECT.md", "AGENTS.md"]);
   });
 
   it("keeps identity portable when the initialized folder moves", async () => {
@@ -236,6 +237,11 @@ describe("applyProjectInitialization", () => {
     expect(result.proposed).toEqual(["AGENTS.md"]);
     expect(await readFile(path.join(fixture.root, "AGENTS.md"), "utf8")).toBe("# User rules\n");
     expect((await inspectProjectFolder(fixture.root)).state).toBe("initialized-compatible");
+
+    const reopenedPlan = await makePlan(fixture.root);
+    const reopenedResult = await applyProjectInitialization(reopenedPlan);
+    expect(reopenedPlan.status).toBe("already-initialized");
+    expect(reopenedResult.proposed).toEqual(["AGENTS.md"]);
   });
 
   it("rejects a profile target whose parent is an escaping symlink", async () => {

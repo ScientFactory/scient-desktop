@@ -129,7 +129,23 @@ describe("planProjectInitialization", () => {
 
     expect(plan.status).toBe("already-initialized");
     expect(plan.projectId).toBe(TEST_IDENTITY.projectId);
-    expect(plan.operations).toEqual([]);
+    expect(plan.operations.map((operation) => [operation.kind, operation.path])).toEqual([
+      ["preserve", "PROJECT.md"],
+      ["propose", "AGENTS.md"],
+    ]);
+  });
+
+  it("rejects multiline project titles instead of injecting Markdown structure", async () => {
+    const fixture = await makeTemporaryProject();
+    cleanups.push(fixture.cleanup);
+
+    await expect(
+      planProjectInitialization({
+        inspection: await inspectProjectFolder(fixture.root),
+        request: { title: "Valid title\n# Injected heading" },
+        ...TEST_IDENTITY,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_REQUEST" });
   });
 
   it("proves the profile extension with data-only fixture content", async () => {
@@ -172,5 +188,51 @@ describe("planProjectInitialization", () => {
         ]),
       ).rejects.toBeInstanceOf(ProjectInitializationError);
     }
+  });
+
+  it("rejects profiles that duplicate universal headings or inject multiline instructions", async () => {
+    const fixture = await makeTemporaryProject();
+    cleanups.push(fixture.cleanup);
+    for (const profile of [
+      {
+        id: "duplicate-purpose",
+        version: 1,
+        displayName: "Duplicate Purpose",
+        projectSections: [{ heading: "Purpose" }],
+      },
+      {
+        id: "multiline-instruction",
+        version: 1,
+        displayName: "Multiline Instruction",
+        managedAgentInstructions: ["First line\n## Injected section"],
+      },
+    ] satisfies readonly ProjectProfileDescriptor[]) {
+      await expect(deterministicPlan(fixture.root, [profile])).rejects.toMatchObject({
+        code: "INVALID_PROFILE",
+      });
+    }
+  });
+
+  it("rejects cross-profile file collisions case-insensitively", async () => {
+    const fixture = await makeTemporaryProject();
+    cleanups.push(fixture.cleanup);
+    const profiles: readonly ProjectProfileDescriptor[] = [
+      {
+        id: "profile-one",
+        version: 1,
+        displayName: "One",
+        files: [{ path: "Notes/README.md", contents: "one\n" }],
+      },
+      {
+        id: "profile-two",
+        version: 1,
+        displayName: "Two",
+        files: [{ path: "notes/readme.md", contents: "two\n" }],
+      },
+    ];
+
+    await expect(deterministicPlan(fixture.root, profiles)).rejects.toMatchObject({
+      code: "INVALID_PROFILE",
+    });
   });
 });

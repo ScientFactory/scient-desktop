@@ -137,14 +137,15 @@ async function planProfileFiles(
     )
     .toSorted((left, right) => left.path.localeCompare(right.path));
   for (const file of files) {
-    const existingOwner = owners.get(file.path);
+    const portableKey = file.path.toLowerCase();
+    const existingOwner = owners.get(portableKey);
     if (existingOwner) {
       throw new ProjectInitializationError(
         "INVALID_PROFILE",
         `Profiles ${existingOwner} and ${file.profileId} both define ${file.path}.`,
       );
     }
-    owners.set(file.path, file.profileId);
+    owners.set(portableKey, file.profileId);
     const observed = await snapshotRelativePathSafely(root, file.path);
     if (observed.kind === "missing") {
       operations.push(
@@ -170,16 +171,54 @@ export async function planProjectInitialization(
   const profiles = resolveSelectedProfiles({ profileIds: request.profileIds, profiles: input.profiles ?? [] });
 
   if (input.inspection.state === "initialized-compatible" && input.inspection.identity) {
+    const operations: InitializationPlanOperation[] = [];
+    if (input.inspection.projectFile.kind === "file") {
+      operations.push(
+        preserveOperation(
+          PAPILAB_PROJECT_FILE,
+          input.inspection.projectFile,
+          "Preserve the existing PROJECT.md.",
+        ),
+      );
+    } else {
+      operations.push(
+        conflictOperation(
+          PAPILAB_PROJECT_FILE,
+          input.inspection.projectFile,
+          "The initialized project requires a regular PROJECT.md before it can be considered complete.",
+        ),
+      );
+    }
+    if (input.inspection.agentsFile.kind === "file") {
+      operations.push(
+        await planAgentsFile(
+          input.inspection.root,
+          input.inspection.agentsFile,
+          renderAgentsMarkdown(profiles),
+          profiles,
+        ),
+      );
+    } else {
+      operations.push(
+        conflictOperation(
+          PAPILAB_AGENTS_FILE,
+          input.inspection.agentsFile,
+          "The initialized project requires a regular AGENTS.md before it can be considered complete.",
+        ),
+      );
+    }
     return {
       planVersion: 1,
       transactionId: assertProjectId(input.transactionId ?? randomUUID()),
       root: input.inspection.root,
       projectId: input.inspection.identity.projectId,
       createdAt: input.inspection.identity.createdAt,
-      status: "already-initialized",
+      status: operations.some((operation) => operation.kind === "conflict")
+        ? "blocked"
+        : "already-initialized",
       request,
       profileVersions: profileVersionRecord(profiles),
-      operations: [],
+      operations,
     };
   }
 
