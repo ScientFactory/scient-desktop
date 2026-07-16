@@ -9,7 +9,7 @@
 
 ## Project Snapshot
 
-PapiLab is a local-first desktop workspace for using coding agents. It is multi-provider: `ProviderKind` currently spans 9 providers — Codex, Claude (`claudeAgent`), Cursor, Gemini, Grok, Factory Droid (`droid`), Kilo, OpenCode, and Pi. Each provider has its own model options and capabilities (reasoning effort, thinking budget/level, context window, fast mode), defined in `packages/contracts` and resolved in `packages/shared/src/model.ts`.
+PapiLab is a local-first desktop workspace for using coding agents. It is multi-provider: `ProviderKind` currently spans 9 providers — Codex, Claude (`claudeAgent`), Cursor, Antigravity, Grok, Factory Droid (`droid`), Kilo, OpenCode, and Pi. Each provider has its own model options and capabilities (reasoning effort, thinking budget/level, context window, fast mode), defined in `packages/contracts` and resolved in `packages/shared/src/model.ts`.
 
 Codex was the first integration and remains the most fleshed-out reference (see the Codex App Server section), but PapiLab is not Codex-only.
 
