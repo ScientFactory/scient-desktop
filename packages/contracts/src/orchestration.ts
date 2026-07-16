@@ -50,7 +50,7 @@ export const ORCHESTRATION_WS_CHANNELS = {
   threadEvent: "orchestration.threadEvent",
 } as const;
 
-const CanonicalProviderKind = Schema.Literals([
+export const ProviderKind = Schema.Literals([
   "codex",
   "claudeAgent",
   "cursor",
@@ -61,26 +61,6 @@ const CanonicalProviderKind = Schema.Literals([
   "opencode",
   "pi",
 ]);
-const PersistedProviderKind = Schema.Literals([
-  "codex",
-  "claudeAgent",
-  "cursor",
-  "antigravity",
-  "gemini",
-  "grok",
-  "droid",
-  "kilo",
-  "opencode",
-  "pi",
-]);
-export const ProviderKind = PersistedProviderKind.pipe(
-  Schema.decodeTo(CanonicalProviderKind, {
-    decode: SchemaGetter.transform((provider) =>
-      provider === "gemini" ? "antigravity" : provider,
-    ),
-    encode: SchemaGetter.transform((provider) => provider),
-  }),
-);
 export type ProviderKind = typeof ProviderKind.Type;
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
@@ -454,9 +434,20 @@ export const OrchestrationMessage = Schema.Struct({
 });
 export type OrchestrationMessage = typeof OrchestrationMessage.Type;
 
+const PersistedThreadHandoffProviderKind = Schema.Union([
+  ProviderKind,
+  Schema.Literal("gemini"),
+]).pipe(
+  Schema.decodeTo(ProviderKind, {
+    decode: SchemaGetter.transform((provider) =>
+      provider === "gemini" ? "antigravity" : provider,
+    ),
+    encode: SchemaGetter.transform((provider) => provider),
+  }),
+);
 export const ThreadHandoff = Schema.Struct({
   sourceThreadId: ThreadId,
-  sourceProvider: ProviderKind,
+  sourceProvider: PersistedThreadHandoffProviderKind,
   importedAt: IsoDateTime,
   bootstrapStatus: ThreadHandoffBootstrapStatus,
 });
