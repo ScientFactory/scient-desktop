@@ -121,9 +121,13 @@ function warnIfReleaseAppRunning() {
     return;
   }
 
-  const result = spawnSync("pgrep", ["-fal", "/Applications/PapiLab\\.app/Contents/MacOS/PapiLab"], {
-    encoding: "utf8",
-  });
+  const result = spawnSync(
+    "pgrep",
+    ["-fal", "/Applications/PapiLab\\.app/Contents/MacOS/PapiLab"],
+    {
+      encoding: "utf8",
+    },
+  );
   const output = typeof result.stdout === "string" ? result.stdout.trim() : "";
   if (!output) {
     return;

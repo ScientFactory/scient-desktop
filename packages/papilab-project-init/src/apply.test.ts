@@ -57,7 +57,9 @@ describe("applyProjectInitialization", () => {
       state: "initialized-compatible",
       identity: { projectId: TEST_IDENTITY.projectId },
     });
-    expect(await readFile(path.join(fixture.root, PAPILAB_TRANSACTION_FILE)).catch(() => null)).toBeNull();
+    expect(
+      await readFile(path.join(fixture.root, PAPILAB_TRANSACTION_FILE)).catch(() => null),
+    ).toBeNull();
   });
 
   it("is idempotent after successful initialization", async () => {
@@ -102,7 +104,9 @@ describe("applyProjectInitialization", () => {
     expect(await readFile(path.join(fixture.root, "PROJECT.md"), "utf8")).toBe(
       "# Human race winner\n",
     );
-    expect(await readFile(path.join(fixture.root, ".papilab/project.json")).catch(() => null)).toBeNull();
+    expect(
+      await readFile(path.join(fixture.root, ".papilab/project.json")).catch(() => null),
+    ).toBeNull();
   });
 
   it("recovers after interruption at every created-file boundary", async () => {
@@ -147,7 +151,9 @@ describe("applyProjectInitialization", () => {
 
     expect(result.complete).toBe(true);
     expect(result.removed).toEqual(expect.arrayContaining(["PROJECT.md", "AGENTS.md"]));
-    expect(await inspectProjectFolder(fixture.root)).toMatchObject({ state: "empty-uninitialized" });
+    expect(await inspectProjectFolder(fixture.root)).toMatchObject({
+      state: "empty-uninitialized",
+    });
   });
 
   it("preserves a user-modified partial file during rollback", async () => {
@@ -203,7 +209,9 @@ describe("applyProjectInitialization", () => {
     };
     const plan = await makePlan(fixture.root, [profile]);
 
-    await expect(applyProjectInitialization(plan)).rejects.toBeInstanceOf(ProjectInitializationError);
+    await expect(applyProjectInitialization(plan)).rejects.toBeInstanceOf(
+      ProjectInitializationError,
+    );
     expect(await readFile(path.join(outside.root, "NOTES.md")).catch(() => null)).toBeNull();
   });
 

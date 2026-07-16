@@ -189,11 +189,7 @@ export class ProjectInitializationError extends Error {
     | "PATH_ESCAPE"
     | "RECOVERY_CONFLICT";
 
-  constructor(
-    code: ProjectInitializationError["code"],
-    message: string,
-    options?: ErrorOptions,
-  ) {
+  constructor(code: ProjectInitializationError["code"], message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "ProjectInitializationError";
     this.code = code;

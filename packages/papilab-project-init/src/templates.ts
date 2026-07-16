@@ -79,9 +79,7 @@ export function renderProjectMarkdown(
   return `${sections.join("\n")}\n`;
 }
 
-export function renderManagedAgentsBlock(
-  profiles: readonly ProjectProfileDescriptor[],
-): string {
+export function renderManagedAgentsBlock(profiles: readonly ProjectProfileDescriptor[]): string {
   const lines = [
     PAPILAB_MANAGED_START,
     "",
@@ -136,7 +134,8 @@ export function proposeManagedAgentsContents(
   }
   if (
     hasStart &&
-    (existingContents.indexOf(PAPILAB_MANAGED_START, startIndex + PAPILAB_MANAGED_START.length) >= 0 ||
+    (existingContents.indexOf(PAPILAB_MANAGED_START, startIndex + PAPILAB_MANAGED_START.length) >=
+      0 ||
       existingContents.indexOf(PAPILAB_MANAGED_END, endIndex + PAPILAB_MANAGED_END.length) >= 0)
   ) {
     throw new ProjectInitializationError(

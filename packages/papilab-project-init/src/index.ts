@@ -1,4 +1,8 @@
-export { applyProjectInitialization, recoverProjectInitialization, rollbackProjectInitialization } from "./apply.ts";
+export {
+  applyProjectInitialization,
+  recoverProjectInitialization,
+  rollbackProjectInitialization,
+} from "./apply.ts";
 export { inspectProjectFolder } from "./inspect.ts";
 export { planProjectInitialization } from "./plan.ts";
 export {

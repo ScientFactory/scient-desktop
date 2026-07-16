@@ -6,7 +6,11 @@ import {
   readUtf8FileBounded,
   snapshotRelativePathSafely,
 } from "./filesystem.ts";
-import { renderAgentsMarkdown, renderProjectMarkdown, proposeManagedAgentsContents } from "./templates.ts";
+import {
+  renderAgentsMarkdown,
+  renderProjectMarkdown,
+  proposeManagedAgentsContents,
+} from "./templates.ts";
 import {
   PAPILAB_AGENTS_FILE,
   PAPILAB_FORMAT_VERSION,
@@ -62,7 +66,11 @@ async function planProjectFile(
   contents: string,
 ): Promise<InitializationPlanOperation> {
   if (snapshot.kind === "missing") {
-    return createOperation(PAPILAB_PROJECT_FILE, contents, "Create the human-readable project orientation.");
+    return createOperation(
+      PAPILAB_PROJECT_FILE,
+      contents,
+      "Create the human-readable project orientation.",
+    );
   }
   if (snapshot.kind === "file") {
     return preserveOperation(
@@ -85,7 +93,11 @@ async function planAgentsFile(
   profiles: readonly ProjectProfileDescriptor[],
 ): Promise<InitializationPlanOperation> {
   if (snapshot.kind === "missing") {
-    return createOperation(PAPILAB_AGENTS_FILE, contents, "Create the portable root agent guidance.");
+    return createOperation(
+      PAPILAB_AGENTS_FILE,
+      contents,
+      "Create the portable root agent guidance.",
+    );
   }
   if (snapshot.kind !== "file") {
     return conflictOperation(
@@ -95,7 +107,10 @@ async function planAgentsFile(
     );
   }
   try {
-    const existing = await readUtf8FileBounded(path.join(root, PAPILAB_AGENTS_FILE), MAX_MANAGED_TEXT_BYTES);
+    const existing = await readUtf8FileBounded(
+      path.join(root, PAPILAB_AGENTS_FILE),
+      MAX_MANAGED_TEXT_BYTES,
+    );
     const proposedContents = proposeManagedAgentsContents(existing, profiles);
     if (proposedContents === existing.replace(/\r\n?/g, "\n")) {
       return preserveOperation(
@@ -167,7 +182,10 @@ export async function planProjectInitialization(
   input: InitializationPlanInput,
 ): Promise<InitializationPlan> {
   const request = normalizeInitializationRequest(input.request);
-  const profiles = resolveSelectedProfiles({ profileIds: request.profileIds, profiles: input.profiles ?? [] });
+  const profiles = resolveSelectedProfiles({
+    profileIds: request.profileIds,
+    profiles: input.profiles ?? [],
+  });
 
   if (input.inspection.state === "initialized-compatible" && input.inspection.identity) {
     return {

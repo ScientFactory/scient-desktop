@@ -111,16 +111,25 @@ export function snapshotsEqual(left: PathSnapshot, right: PathSnapshot): boolean
 
 export function assertRelativePathWithinRoot(root: string, relativePath: string): string {
   if (relativePath.includes("\0") || relativePath.includes("\\") || path.isAbsolute(relativePath)) {
-    throw new ProjectInitializationError("PATH_ESCAPE", `Unsafe project-relative path: ${relativePath}`);
+    throw new ProjectInitializationError(
+      "PATH_ESCAPE",
+      `Unsafe project-relative path: ${relativePath}`,
+    );
   }
   const segments = relativePath.split("/");
   if (segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")) {
-    throw new ProjectInitializationError("PATH_ESCAPE", `Unsafe project-relative path: ${relativePath}`);
+    throw new ProjectInitializationError(
+      "PATH_ESCAPE",
+      `Unsafe project-relative path: ${relativePath}`,
+    );
   }
   const target = path.resolve(root, ...segments);
   const relative = path.relative(root, target);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new ProjectInitializationError("PATH_ESCAPE", `Path escapes project root: ${relativePath}`);
+    throw new ProjectInitializationError(
+      "PATH_ESCAPE",
+      `Path escapes project root: ${relativePath}`,
+    );
   }
   return target;
 }

@@ -21,7 +21,9 @@ import {
 } from "./types.ts";
 import { validateProjectIdentity } from "./validation.ts";
 
-export async function inspectProjectFolder(requestedRoot: string): Promise<ProjectFolderInspection> {
+export async function inspectProjectFolder(
+  requestedRoot: string,
+): Promise<ProjectFolderInspection> {
   const root = await resolveProjectRoot(requestedRoot);
   const entries = (await readdir(root)).toSorted();
   const projectFile = await snapshotPath(path.join(root, PAPILAB_PROJECT_FILE));
@@ -36,7 +38,9 @@ export async function inspectProjectFolder(requestedRoot: string): Promise<Proje
   if (identityFile.kind === "file") {
     try {
       identity = validateProjectIdentity(
-        JSON.parse(await readUtf8FileBounded(path.join(root, PAPILAB_IDENTITY_FILE), MAX_IDENTITY_BYTES)),
+        JSON.parse(
+          await readUtf8FileBounded(path.join(root, PAPILAB_IDENTITY_FILE), MAX_IDENTITY_BYTES),
+        ),
       );
     } catch (error) {
       issues.push({
@@ -89,7 +93,10 @@ export async function inspectProjectFolder(requestedRoot: string): Promise<Proje
     });
   } else if (transactionValid) {
     state = "partially-initialized";
-  } else if (transactionFile.kind !== "missing" || issues.some((issue) => issue.code === "invalid-identity")) {
+  } else if (
+    transactionFile.kind !== "missing" ||
+    issues.some((issue) => issue.code === "invalid-identity")
+  ) {
     state = "invalid-or-conflicting";
   } else if (identity) {
     state = "initialized-compatible";

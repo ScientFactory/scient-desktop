@@ -20,7 +20,9 @@ describe("inspectProjectFolder", () => {
 
     expect(inspection.state).toBe("empty-uninitialized");
     expect(inspection.entries).toEqual([]);
-    expect(await readFile(path.join(fixture.root, ".papilab/project.json")).catch(() => null)).toBeNull();
+    expect(
+      await readFile(path.join(fixture.root, ".papilab/project.json")).catch(() => null),
+    ).toBeNull();
   });
 
   it("classifies a non-empty ordinary folder without modifying it", async () => {
