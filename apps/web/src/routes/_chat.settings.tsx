@@ -251,7 +251,7 @@ const SIDEBAR_THREAD_SORT_ORDER_LABELS = {
 } as const;
 
 function appSnapStatusText(state: DesktopAppSnapState | null): string {
-  if (!state) return "Available in the Synara desktop app";
+  if (!state) return "Available in the PapiLab desktop app";
   if (!state.supported) return state.message ?? "Available on macOS only";
   if (state.status === "ready") return "Listening — press both Option keys to snap";
   if (state.status === "disabled") return "Off";
@@ -1392,7 +1392,7 @@ function SettingsRouteView() {
       toastManager.add({
         type: "warning",
         title: "AppSnap unavailable",
-        description: "AppSnap requires the Synara desktop app on macOS.",
+        description: "AppSnap requires the PapiLab desktop app on macOS.",
       });
       return;
     }
@@ -2318,7 +2318,7 @@ function SettingsRouteView() {
             </p>
             <p className={SETTINGS_CARD_ROW_DESCRIPTION_CLASS_NAME}>
               Press both <Kbd className="mx-px">⌥ Option</Kbd> keys at once while any app is
-              frontmost. Synara captures that window as an image, brings itself forward, and
+              frontmost. PapiLab captures that window as an image, brings itself forward, and
               attaches the snap to a task composer — the capture stays on this device until you send
               the message.
             </p>
@@ -2326,7 +2326,7 @@ function SettingsRouteView() {
               <p className={cn(SETTINGS_CARD_ROW_DESCRIPTION_CLASS_NAME, "pt-0.5")}>
                 {appSnapState
                   ? (appSnapState.message ?? "AppSnap is available only in the macOS desktop app.")
-                  : "AppSnap requires the Synara desktop app on macOS."}
+                  : "AppSnap requires the PapiLab desktop app on macOS."}
               </p>
             ) : null}
           </div>
@@ -2335,7 +2335,7 @@ function SettingsRouteView() {
         <SettingsSection title="Capture">
           <SettingsRow
             title="Enable AppSnap"
-            description="Run the capture listener in the background while Synara is open."
+            description="Run the capture listener in the background while PapiLab is open."
             status={appSnapStatusText(appSnapState)}
             resetAction={
               settings.enableAppSnap !== defaults.enableAppSnap ? (
@@ -2369,7 +2369,7 @@ function SettingsRouteView() {
 
           <SettingsRow
             title="Destination"
-            description="Snaps join the task you interacted with in the last minute, and consecutive snaps stay together. Otherwise Synara opens a fresh task with the capture attached."
+            description="Snaps join the task you interacted with in the last minute, and consecutive snaps stay together. Otherwise PapiLab opens a fresh task with the capture attached."
             control={<span className="text-xs font-medium text-muted-foreground">Automatic</span>}
           />
 
@@ -2405,21 +2405,21 @@ function SettingsRouteView() {
           <SettingsSection title="macOS permissions">
             <SettingsRow
               title="Input Monitoring"
-              description="Lets Synara notice the double-Option chord while another app owns the keyboard. Nothing you type is recorded."
+              description="Lets PapiLab notice the double-Option chord while another app owns the keyboard. Nothing you type is recorded."
               control={
                 <AppSnapPermissionBadge permission={appSnapState.inputMonitoringPermission} />
               }
             />
             <SettingsRow
               title="Screen Recording"
-              description="Lets Synara capture an image of the frontmost window. Only the single window you snap is captured, only at the moment you press the chord."
+              description="Lets PapiLab capture an image of the frontmost window. Only the single window you snap is captured, only at the moment you press the chord."
               control={
                 <AppSnapPermissionBadge permission={appSnapState.screenRecordingPermission} />
               }
             />
             <SettingsRow
               title="Permission status"
-              description="Grant both permissions to Synara under System Settings → Privacy & Security, then recheck here. macOS may require relaunching the app after a change."
+              description="Grant both permissions to PapiLab under System Settings → Privacy & Security, then recheck here. macOS may require relaunching the app after a change."
               control={
                 <Button
                   type="button"
@@ -3279,7 +3279,7 @@ function SettingsRouteView() {
                                     </code>
                                   </>
                                 ) : (
-                                  "A newer version is available, but Synara could not identify a safe one-click update command for this installation."
+                                  "A newer version is available, but PapiLab could not identify a safe one-click update command for this installation."
                                 )}
                               </div>
                             ) : null}

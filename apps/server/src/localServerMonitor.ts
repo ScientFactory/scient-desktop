@@ -602,7 +602,7 @@ async function fetchLocalPageTitleResponse(
     signal: AbortSignal.timeout(PAGE_TITLE_FETCH_TIMEOUT_MS),
     headers: {
       Accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1",
-      "User-Agent": "SynaraLocalServerMonitor/1.0",
+      "User-Agent": "PapiLabLocalServerMonitor/1.0",
     },
   });
   if (response.status >= 300 && response.status < 400) {
@@ -808,7 +808,7 @@ function toServerProcess(
     ports,
     addresses,
     isStoppable,
-    ...(isStoppable ? {} : { stopDisabledReason: "Synara cannot signal this process." }),
+    ...(isStoppable ? {} : { stopDisabledReason: "PapiLab cannot signal this process." }),
   };
 }
 
@@ -984,7 +984,7 @@ export async function stopLocalServer(
     return {
       pid: input.pid,
       stopped: false,
-      message: target.stopDisabledReason ?? "Synara cannot stop this process.",
+      message: target.stopDisabledReason ?? "PapiLab cannot stop this process.",
     };
   }
 

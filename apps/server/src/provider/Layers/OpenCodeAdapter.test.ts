@@ -1570,7 +1570,7 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
         variant: "fast",
       },
       agent: "build",
-      title: "Synara thread-model-pin",
+      title: "PapiLab thread-model-pin",
     });
   });
 
@@ -2011,7 +2011,7 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
     expect(runtime.promptCalls[0]?.parts).toEqual([
       {
         type: "text",
-        text: expect.stringContaining("Synara plan mode is active."),
+        text: expect.stringContaining("PapiLab plan mode is active."),
       },
     ]);
     expect(result.map((event) => event.type)).toEqual([

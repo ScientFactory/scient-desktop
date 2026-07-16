@@ -112,7 +112,7 @@ export function SkillsSettingsPanel() {
       <SettingsSection title="Portable skills">
         <SettingsRow
           title="PapiLab skills folder"
-          description="Skills placed here are available on every provider. When a provider already ships its own copy of a skill, that copy is used; otherwise Synara's copy is the fallback."
+          description="Skills placed here are available on every provider. When a provider already ships its own copy of a skill, that copy is used; otherwise PapiLab's copy is the fallback."
           status={
             synaraSkillsDir ? (
               <code className="break-all text-[11px] text-muted-foreground">{synaraSkillsDir}</code>
@@ -132,7 +132,7 @@ export function SkillsSettingsPanel() {
         <SettingsSection title="Skills">
           <SettingsRow
             title="Skill discovery failed"
-            description="Synara could not scan the skill folders. Retry after checking that the server is running."
+            description="PapiLab could not scan the skill folders. Retry after checking that the server is running."
           />
         </SettingsSection>
       ) : null}
@@ -141,7 +141,7 @@ export function SkillsSettingsPanel() {
         <SettingsSection title="Skills">
           <SettingsRow
             title="No skills found"
-            description="Add a skill folder containing a SKILL.md to the Synara skills folder above, or install skills for any supported provider."
+            description="Add a skill folder containing a SKILL.md to the PapiLab skills folder above, or install skills for any supported provider."
           />
         </SettingsSection>
       ) : null}

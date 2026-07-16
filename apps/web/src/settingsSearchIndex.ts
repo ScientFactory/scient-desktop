@@ -277,7 +277,7 @@ export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
     section: "shortcuts",
     title: "Keyboard Shortcuts",
     keywords:
-      "Every keyboard shortcut available in Synara, grouped by context. keybindings hotkeys key combo cmd ctrl reference",
+      "Every keyboard shortcut available in PapiLab, grouped by context. keybindings hotkeys key combo cmd ctrl reference",
     target: null,
   },
 
@@ -286,7 +286,7 @@ export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
     id: "worktrees:managed-worktrees",
     section: "worktrees",
     title: "Managed worktrees",
-    keywords: "Review and clean up the worktrees created by Synara. git branch remove",
+    keywords: "Review and clean up the worktrees created by PapiLab. git branch remove",
     target: null,
   },
 

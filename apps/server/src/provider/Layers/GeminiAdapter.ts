@@ -1875,7 +1875,7 @@ const makeGeminiAdapter = Effect.fn("makeGeminiAdapter")(function* (
         protocolVersion: 1,
         clientInfo: {
           name: "papilab",
-          title: "Synara",
+          title: "PapiLab",
           version: "0.1.0",
         },
         clientCapabilities: {

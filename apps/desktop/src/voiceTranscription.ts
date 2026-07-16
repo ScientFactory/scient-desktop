@@ -184,8 +184,8 @@ async function resolveDesktopVoiceAuth(
         method: "initialize",
         params: {
           clientInfo: {
-            name: "synara-desktop",
-            title: "Synara Desktop",
+            name: "papilab-desktop",
+            title: "PapiLab Desktop",
             version: app.getVersion(),
           },
           capabilities: { experimentalApi: true },

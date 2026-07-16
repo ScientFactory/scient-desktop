@@ -28,8 +28,8 @@ const GEMINI_BROWSER_BLOCKLIST_VALUE = "www-browser";
 const GEMINI_API_KEY_ENV_HINT = "`GEMINI_API_KEY`";
 const GEMINI_VERTEX_ENV_HINT =
   "`GOOGLE_GENAI_USE_VERTEXAI=true`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, plus ADC or `GOOGLE_API_KEY`";
-const GEMINI_HEADLESS_AUTH_GUIDANCE = `Use Gemini API key or Vertex AI auth for Synara: set ${GEMINI_API_KEY_ENV_HINT} in \`~/.gemini/.env\`, or set Vertex AI env (${GEMINI_VERTEX_ENV_HINT}), then refresh provider status.`;
-const GEMINI_CODE_ASSIST_MIGRATION_AUTH_MESSAGE = `Gemini is not authenticated because Google Code Assist OAuth for individual accounts appears to require Antigravity. For Synara, use ${GEMINI_API_KEY_ENV_HINT} or Vertex AI auth (${GEMINI_VERTEX_ENV_HINT}); use Antigravity for individual Code Assist OAuth until Gemini CLI exposes a compatible path.`;
+const GEMINI_HEADLESS_AUTH_GUIDANCE = `Use Gemini API key or Vertex AI auth for PapiLab: set ${GEMINI_API_KEY_ENV_HINT} in \`~/.gemini/.env\`, or set Vertex AI env (${GEMINI_VERTEX_ENV_HINT}), then refresh provider status.`;
+const GEMINI_CODE_ASSIST_MIGRATION_AUTH_MESSAGE = `Gemini is not authenticated because Google Code Assist OAuth for individual accounts appears to require Antigravity. For PapiLab, use ${GEMINI_API_KEY_ENV_HINT} or Vertex AI auth (${GEMINI_VERTEX_ENV_HINT}); use Antigravity for individual Code Assist OAuth until Gemini CLI exposes a compatible path.`;
 
 const GEMINI_OAUTH_BROWSER_PROMPT_PATTERNS = [
   /opening your browser for oauth sign-in/i,
@@ -70,7 +70,7 @@ function pushLogLine(target: string[], line: string): void {
 }
 
 function formatGeminiDiscoveryWarning(detail: string): string {
-  return `Gemini CLI is installed, but Synara could not verify authentication or discover models. ${detail}`;
+  return `Gemini CLI is installed, but PapiLab could not verify authentication or discover models. ${detail}`;
 }
 
 function formatGeminiAuthMessage(detail: string): string {
@@ -82,7 +82,7 @@ function formatGeminiCodeAssistMigrationAuthMessage(): string {
 }
 
 function formatGeminiModelDiscoveryFallbackMessage(): string {
-  return "Gemini CLI is installed and authenticated, but it did not report any available models. Synara will use its built-in Gemini model list.";
+  return "Gemini CLI is installed and authenticated, but it did not report any available models. PapiLab will use its built-in Gemini model list.";
 }
 
 function isGeminiUnauthenticatedFailure(message: string, code?: number): boolean {
@@ -359,7 +359,7 @@ export const probeGeminiCapabilities = (input: {
             auth: { status: "unauthenticated" },
             models: [],
             message: formatGeminiAuthMessage(
-              "Gemini attempted to start an OAuth browser flow during a Synara status check. Run `gemini` in a terminal to sign in.",
+              "Gemini attempted to start an OAuth browser flow during a PapiLab status check. Run `gemini` in a terminal to sign in.",
             ),
           });
         };

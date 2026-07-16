@@ -10,8 +10,8 @@ import { readNativeApi } from "~/nativeApi";
 
 export { downloadBlob } from "~/lib/browserDownload";
 
-const SHARE_BRAND_HANDLE = "@trySynara";
-export const SHARE_TWEET_TEXT = `Just checking my ${SHARE_BRAND_HANDLE} dev stats. Absolute masterpiece of an IDE.`;
+const SHARE_BRAND_NAME = "PapiLab";
+export const SHARE_TWEET_TEXT = `Just checking my ${SHARE_BRAND_NAME} activity.`;
 const SHARE_URL = "https://github.com/yaacovcorcos/PapiLab";
 
 export type ShareTarget = "x" | "linkedin" | "reddit";
