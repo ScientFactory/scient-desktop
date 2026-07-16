@@ -32,6 +32,7 @@ import {
 } from "effect";
 import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "./config";
+import { normalizePersistedModelSelection } from "./persistence/modelSelectionCompatibility.ts";
 
 export interface ServerSettingsShape {
   readonly start: Effect.Effect<void, ServerSettingsError>;
@@ -123,9 +124,43 @@ function normalizeSettings(
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizePersistedServerSettings(input: unknown): unknown {
+  if (!isRecord(input)) return input;
+  const providers = isRecord(input.providers) ? input.providers : undefined;
+  const legacyGemini = providers && isRecord(providers.gemini) ? providers.gemini : undefined;
+  const migratedAntigravity =
+    providers?.antigravity === undefined && typeof legacyGemini?.enabled === "boolean"
+      ? { enabled: legacyGemini.enabled }
+      : providers?.antigravity;
+  return {
+    ...input,
+    ...(Object.hasOwn(input, "textGenerationModelSelection")
+      ? {
+          textGenerationModelSelection: normalizePersistedModelSelection(
+            input.textGenerationModelSelection,
+          ),
+        }
+      : {}),
+    ...(providers
+      ? {
+          providers: {
+            ...providers,
+            ...(migratedAntigravity === undefined ? {} : { antigravity: migratedAntigravity }),
+          },
+        }
+      : {}),
+  };
+}
+
 function decodeSettingsFromJson(settingsPath: string, raw: string) {
   try {
-    const decoded = Schema.decodeUnknownExit(ServerSettings)(JSON.parse(raw) as unknown);
+    const decoded = Schema.decodeUnknownExit(ServerSettings)(
+      normalizePersistedServerSettings(JSON.parse(raw) as unknown),
+    );
     if (decoded._tag === "Failure") {
       return { _tag: "Failure" as const, error: Cause.pretty(decoded.cause) };
     }

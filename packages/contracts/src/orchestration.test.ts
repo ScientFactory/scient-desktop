@@ -22,6 +22,7 @@ import {
   ProjectCreateCommand,
   THREAD_NOTES_MAX_CHARS,
   THREAD_MARKER_LABEL_MAX_CHARS,
+  ThreadHandoff,
   ThreadMetaUpdatedPayload,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
@@ -191,6 +192,21 @@ it.effect("preserves Antigravity effort options separately from the model", () =
       model: "Gemini 3.5 Flash",
       options: { reasoningEffort: "high" },
     });
+  }),
+);
+
+it.effect("decodes legacy Gemini handoff metadata as Antigravity", () =>
+  Effect.gen(function* () {
+    const handoff = yield* Schema.decodeUnknownEffect(ThreadHandoff)({
+      sourceThreadId: "thread-1",
+      sourceProvider: "gemini",
+      importedAt: "2026-07-16T12:00:00.000Z",
+      bootstrapStatus: "completed",
+    });
+
+    assert.strictEqual(handoff.sourceProvider, "antigravity");
+    const encoded = yield* Schema.encodeUnknownEffect(ThreadHandoff)(handoff);
+    assert.strictEqual((encoded as { sourceProvider: string }).sourceProvider, "antigravity");
   }),
 );
 

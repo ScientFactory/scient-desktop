@@ -86,6 +86,18 @@ type AntigravitySessionContext = {
   stopped: boolean;
 };
 
+export function serializeAntigravityPoll<TKey extends object, TArgs extends unknown[]>(
+  poll: (key: TKey, ...args: TArgs) => Promise<void>,
+): (key: TKey, ...args: TArgs) => Promise<void> {
+  const tails = new WeakMap<TKey, Promise<void>>();
+  return (key: TKey, ...args: TArgs) => {
+    const previous = tails.get(key) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(() => poll(key, ...args));
+    tails.set(key, current);
+    return current;
+  };
+}
+
 function messageFromCause(cause: unknown, fallback: string): string {
   return cause instanceof Error && cause.message.trim() ? cause.message : fallback;
 }
@@ -605,7 +617,7 @@ const makeAntigravityAdapter = Effect.gen(function* () {
     }
   };
 
-  const pollHookFile = async (context: AntigravitySessionContext) => {
+  const pollHookFile = serializeAntigravityPoll(async (context: AntigravitySessionContext) => {
     if (context.stopped) return;
     if (!context.eventFile) return;
     let batch: Awaited<ReturnType<typeof readCompleteAntigravityLines>>;
@@ -653,7 +665,7 @@ const makeAntigravityAdapter = Effect.gen(function* () {
       }
     }
     await readTranscript(context);
-  };
+  });
 
   const startSession: AntigravityAdapterShape["startSession"] = (input) =>
     Effect.gen(function* () {

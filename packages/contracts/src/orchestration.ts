@@ -1,4 +1,5 @@
 import { Option, Schema, SchemaIssue, Struct } from "effect";
+import * as SchemaGetter from "effect/SchemaGetter";
 import {
   AntigravityModelOptions,
   ClaudeModelOptions,
@@ -433,9 +434,20 @@ export const OrchestrationMessage = Schema.Struct({
 });
 export type OrchestrationMessage = typeof OrchestrationMessage.Type;
 
+const PersistedThreadHandoffProviderKind = Schema.Union([
+  ProviderKind,
+  Schema.Literal("gemini"),
+]).pipe(
+  Schema.decodeTo(ProviderKind, {
+    decode: SchemaGetter.transform((provider) =>
+      provider === "gemini" ? "antigravity" : provider,
+    ),
+    encode: SchemaGetter.transform((provider) => provider),
+  }),
+);
 export const ThreadHandoff = Schema.Struct({
   sourceThreadId: ThreadId,
-  sourceProvider: ProviderKind,
+  sourceProvider: PersistedThreadHandoffProviderKind,
   importedAt: IsoDateTime,
   bootstrapStatus: ThreadHandoffBootstrapStatus,
 });

@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildAntigravityHookConfig,
@@ -13,6 +13,7 @@ import {
   readCompleteAntigravityLines,
   resolveAntigravityCliModelLabel,
   runAntigravityHelperProcess,
+  serializeAntigravityPoll,
 } from "./AntigravityAdapter";
 
 describe("Antigravity CLI model translation", () => {
@@ -128,6 +129,30 @@ Claude Sonnet 5 (Thinking)
 });
 
 describe("Antigravity CLI integration helpers", () => {
+  it("serializes hook-file polls per session without blocking other sessions", async () => {
+    const releases: Array<() => void> = [];
+    const started: string[] = [];
+    const poll = serializeAntigravityPoll(async (session: object, call: number) => {
+      started.push(`${String(session)}:${call}`);
+      await new Promise<void>((resolve) => releases.push(resolve));
+    });
+    const firstSession = { toString: () => "first" };
+    const secondSession = { toString: () => "second" };
+
+    const first = poll(firstSession, 1);
+    const queued = poll(firstSession, 2);
+    const independent = poll(secondSession, 1);
+    await vi.waitFor(() => expect(started).toEqual(["first:1", "second:1"]));
+
+    releases.shift()?.();
+    await first;
+    await vi.waitFor(() => expect(started).toEqual(["first:1", "second:1", "first:2"]));
+
+    releases.shift()?.();
+    releases.shift()?.();
+    await Promise.all([queued, independent]);
+  });
+
   it("keeps the globally installed hook neutral outside Synara sessions", async () => {
     const result = await runAntigravityHelperProcess(
       process.execPath,
