@@ -1,12 +1,11 @@
 // FILE: _chat.worldcup.tsx
-// Purpose: Registers the World Cup 2026 ball-physics playground under the chat shell.
-// Layer: Route
-// Exports: Route
+// Purpose: Redirects retired World Cup bookmarks to the PapiLab home surface.
+// Layer: Routing compatibility
 
-import { createFileRoute } from "@tanstack/react-router";
-
-import { WorldCup2026View } from "~/components/worldcup/WorldCup2026View";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/_chat/worldcup")({
-  component: WorldCup2026View,
+  beforeLoad: () => {
+    throw redirect({ to: "/", replace: true });
+  },
 });
