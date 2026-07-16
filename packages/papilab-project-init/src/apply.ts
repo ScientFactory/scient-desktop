@@ -22,6 +22,7 @@ import { sha256 } from "./hash.ts";
 import {
   readInitializationTransaction,
   serializeInitializationTransaction,
+  validateInitializationTransaction,
 } from "./transaction.ts";
 import {
   PAPILAB_IDENTITY_FILE,
@@ -78,6 +79,8 @@ async function syncDirectory(directoryPath: string): Promise<void> {
 }
 
 async function writeExclusiveAtomic(input: {
+  readonly root: string;
+  readonly relativePath: string;
   readonly targetPath: string;
   readonly contents: string;
   readonly transactionId: string;
@@ -88,6 +91,21 @@ async function writeExclusiveAtomic(input: {
     directoryPath,
     `.${path.basename(input.targetPath)}.papilab-init-${input.transactionId}.tmp`,
   );
+  const staleTemporary = await snapshotPath(temporaryPath);
+  if (staleTemporary.kind !== "missing") {
+    if (
+      staleTemporary.kind !== "file" ||
+      staleTemporary.sha256 !== sha256(input.contents) ||
+      staleTemporary.size !== Buffer.byteLength(input.contents, "utf8")
+    ) {
+      throw new ProjectInitializationError(
+        "RECOVERY_CONFLICT",
+        `A stale temporary file conflicts with ${input.relativePath}.`,
+      );
+    }
+    await unlink(temporaryPath);
+  }
+  assertCanonicalChild(input.root, await realpath(directoryPath), input.relativePath);
   const handle = await open(temporaryPath, "wx", input.mode);
   try {
     await handle.writeFile(input.contents, "utf8");
@@ -96,11 +114,36 @@ async function writeExclusiveAtomic(input: {
     await handle.close();
   }
   try {
+    assertCanonicalChild(input.root, await realpath(directoryPath), input.relativePath);
     await link(temporaryPath, input.targetPath);
     await syncDirectory(directoryPath);
   } finally {
     await rm(temporaryPath, { force: true });
   }
+}
+
+async function removeMatchingTemporaryFile(input: {
+  readonly targetPath: string;
+  readonly contents: string;
+  readonly transactionId: string;
+}): Promise<void> {
+  const temporaryPath = path.join(
+    path.dirname(input.targetPath),
+    `.${path.basename(input.targetPath)}.papilab-init-${input.transactionId}.tmp`,
+  );
+  const observed = await snapshotPath(temporaryPath);
+  if (observed.kind === "missing") return;
+  if (
+    observed.kind !== "file" ||
+    observed.sha256 !== sha256(input.contents) ||
+    observed.size !== Buffer.byteLength(input.contents, "utf8")
+  ) {
+    throw new ProjectInitializationError(
+      "RECOVERY_CONFLICT",
+      `A stale temporary file cannot be attributed safely to ${input.targetPath}.`,
+    );
+  }
+  await unlink(temporaryPath);
 }
 
 function assertCanonicalChild(root: string, candidate: string, relativePath: string): void {
@@ -245,6 +288,11 @@ async function runTransaction(input: {
       observed.sha256 === intendedHash &&
       observed.size === Buffer.byteLength(operation.contents, "utf8")
     ) {
+      await removeMatchingTemporaryFile({
+        targetPath,
+        contents: operation.contents,
+        transactionId: input.transaction.transactionId,
+      });
       continue;
     }
     if (observed.kind !== "missing") {
@@ -254,6 +302,8 @@ async function runTransaction(input: {
       );
     }
     await writeExclusiveAtomic({
+      root: input.root,
+      relativePath: operation.path,
       targetPath,
       contents: operation.contents,
       transactionId: input.transaction.transactionId,
@@ -309,13 +359,15 @@ export async function applyProjectInitialization(
       "The project root changed after the initialization preview.",
     );
   }
-  const transaction = transactionFromPlan(plan);
+  const transaction = validateInitializationTransaction(transactionFromPlan(plan));
   for (const operation of transaction.operations) {
     await assertOperationPrecondition(root, operation);
   }
   await prepareMetadataDirectory(root);
   const transactionPath = await ensureSafeParentDirectories(root, PAPILAB_TRANSACTION_FILE);
   await writeExclusiveAtomic({
+    root,
+    relativePath: PAPILAB_TRANSACTION_FILE,
     targetPath: transactionPath,
     contents: serializeInitializationTransaction(transaction),
     transactionId: transaction.transactionId,
@@ -374,6 +426,11 @@ export async function rollbackProjectInitialization(
   for (const operation of createOperations) {
     const targetPath = assertRelativePathWithinRoot(root, operation.path);
     const observed = await snapshotPath(targetPath);
+    await removeMatchingTemporaryFile({
+      targetPath,
+      contents: operation.contents,
+      transactionId: transaction.transactionId,
+    });
     if (observed.kind === "missing") continue;
     if (
       observed.kind === "file" &&
