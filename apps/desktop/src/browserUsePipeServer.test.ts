@@ -18,7 +18,7 @@ describe("browser-use pipe path resolution", () => {
     const pipePath = resolveDefaultBrowserUsePipePath("darwin");
 
     expect(dirname(pipePath)).toBe(`${tmpdir()}/codex-browser-use`);
-    expect(basename(pipePath)).toMatch(/^synara-iab-\d+\.sock$/);
+    expect(basename(pipePath)).toMatch(/^papilab-iab-\d+\.sock$/);
   });
 
   it("prefers an explicit Synara pipe path from the environment", () => {
@@ -34,7 +34,7 @@ describe("browser-use pipe path resolution", () => {
 
   it("falls back to the generated path when the environment is empty", () => {
     expect(resolveConfiguredBrowserUsePipePath({}, "darwin")).toMatch(
-      /codex-browser-use\/synara-iab-\d+\.sock$/,
+      /codex-browser-use\/papilab-iab-\d+\.sock$/,
     );
   });
 });

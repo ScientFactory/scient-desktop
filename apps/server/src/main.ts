@@ -79,7 +79,7 @@ export interface CliConfigShape {
  * CliConfig - Service tag for startup CLI/runtime helpers.
  */
 export class CliConfig extends ServiceMap.Service<CliConfig, CliConfigShape>()(
-  "synara/main/CliConfig",
+  "papilab/main/CliConfig",
 ) {
   static readonly layer = Layer.effect(
     CliConfig,
@@ -396,7 +396,7 @@ const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
   Flag.optional,
 );
 
-export const synaraCli = Command.make("synara", {
+export const synaraCli = Command.make("papilab", {
   mode: modeFlag,
   port: portFlag,
   host: hostFlag,

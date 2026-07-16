@@ -253,5 +253,5 @@ export function threadArchiveFileName(input: {
   readonly isoTimestamp: string;
 }): string {
   const dateBucket = input.isoTimestamp.slice(0, 10).replaceAll("-", "");
-  return `synara-thread-${slugifyTitle(input.title)}-${dateBucket}.zip`;
+  return `papilab-thread-${slugifyTitle(input.title)}-${dateBucket}.zip`;
 }

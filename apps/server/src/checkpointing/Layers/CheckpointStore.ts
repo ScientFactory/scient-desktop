@@ -117,7 +117,7 @@ const makeCheckpointStore = Effect.gen(function* () {
       }
 
       yield* Effect.acquireUseRelease(
-        fs.makeTempDirectory({ prefix: "synara-fs-checkpoint-" }),
+        fs.makeTempDirectory({ prefix: "papilab-fs-checkpoint-" }),
         (tempDir) =>
           Effect.gen(function* () {
             const tempIndexPath = path.join(tempDir, `index-${randomUUID()}`);
@@ -402,7 +402,7 @@ const makeCheckpointStore = Effect.gen(function* () {
       const affectedPaths = changedPaths.stdout.split("\0").filter((entry) => entry.length > 0);
 
       return yield* Effect.acquireUseRelease(
-        fs.makeTempDirectory({ prefix: "synara-checkpoint-undo-" }),
+        fs.makeTempDirectory({ prefix: "papilab-checkpoint-undo-" }),
         (tempDir) =>
           Effect.gen(function* () {
             const patchPath = path.join(tempDir, "turn.patch");
