@@ -11,7 +11,7 @@
 
 ## Project Snapshot
 
-Synara is a minimal web GUI for using coding agents like Codex and Claude.
+PapiLab is a local-first desktop workspace for using coding agents like Codex and Claude.
 
 This repository is a VERY EARLY WIP. Proposing sweeping changes that improve long-term maintainability is encouraged.
 
@@ -96,7 +96,7 @@ Reference usage: opening/closing a project and the sidebar sections in `apps/web
 
 ## Local Dev Instance Isolation
 
-- Never start the default `bun run dev` while another Synara instance is running unless the user explicitly wants shared ports/state.
+- Never start the default `bun run dev` while another PapiLab instance is running unless the user explicitly wants shared ports/state.
 - Use an isolated home dir and non-default ports when running alongside the user's own Synara instance, for example: `env -u SYNARA_AUTH_TOKEN SYNARA_PORT_OFFSET=3158 SYNARA_NO_BROWSER=1 bun run dev -- --home-dir ./.synara-pr84 --port 58090`.
 - Always dry-run first when avoiding conflicts: `env -u SYNARA_AUTH_TOKEN SYNARA_PORT_OFFSET=3158 bun run dev -- --home-dir ./.synara-pr84 --port 58090 --dry-run`.
 - Unset `SYNARA_AUTH_TOKEN` for browser dev instances unless the web app is also configured to connect with that token. If auth is accidentally inherited, the browser WebSocket can be rejected and the UI will show no threads even though SQLite has projects/threads.
@@ -105,7 +105,7 @@ Reference usage: opening/closing a project and the sidebar sections in `apps/web
 
 ## Codex App Server (Important)
 
-Synara is currently Codex-first. The server starts `codex app-server` (JSON-RPC over stdio) per provider session, then streams structured events to the browser through WebSocket push messages.
+PapiLab currently uses the inherited Codex-first provider path. The server starts `codex app-server` (JSON-RPC over stdio) per provider session, then streams structured events to the browser through WebSocket push messages.
 
 How we use it in this codebase:
 
