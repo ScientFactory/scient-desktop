@@ -86,6 +86,7 @@ async function writeExclusiveAtomic(input: {
     directoryPath,
     `.${path.basename(input.targetPath)}.papilab-init-${input.transactionId}.tmp`,
   );
+  await assertSafeExistingParents(input.root, input.relativePath);
   const staleTemporary = await snapshotPath(temporaryPath);
   if (staleTemporary.kind !== "missing") {
     if (
@@ -98,6 +99,7 @@ async function writeExclusiveAtomic(input: {
         `A stale temporary file conflicts with ${input.relativePath}.`,
       );
     }
+    await assertSafeExistingParents(input.root, input.relativePath);
     await unlink(temporaryPath);
   }
   assertCanonicalChild(input.root, await realpath(directoryPath), input.relativePath);
@@ -113,6 +115,7 @@ async function writeExclusiveAtomic(input: {
     await link(temporaryPath, input.targetPath);
     await syncDirectory(directoryPath);
   } finally {
+    await assertSafeExistingParents(input.root, input.relativePath);
     await rm(temporaryPath, { force: true });
   }
 }
@@ -358,7 +361,7 @@ async function runTransaction(input: {
     stepIndex += 1;
   }
 
-  await unlink(path.join(input.root, PAPILAB_TRANSACTION_FILE));
+  await unlink(await assertSafeExistingParents(input.root, PAPILAB_TRANSACTION_FILE));
   await syncDirectory(path.join(input.root, PAPILAB_METADATA_DIRECTORY));
   await emitStep(input.options, {
     index: stepIndex,
@@ -471,7 +474,6 @@ export async function rollbackProjectInitialization(
   requestedRoot: string,
 ): Promise<RollbackInitializationResult> {
   const root = await resolveProjectRoot(requestedRoot);
-  const transactionPath = path.join(root, PAPILAB_TRANSACTION_FILE);
   const transaction = await readSafeInitializationTransaction(root);
   const removed: string[] = [];
   const preserved: string[] = [];
@@ -506,7 +508,7 @@ export async function rollbackProjectInitialization(
   if (preserved.length > 0) {
     return { complete: false, removed, preserved };
   }
-  await unlink(transactionPath);
+  await unlink(await assertSafeExistingParents(root, PAPILAB_TRANSACTION_FILE));
   try {
     await rmdir(path.join(root, PAPILAB_METADATA_DIRECTORY));
   } catch (error) {

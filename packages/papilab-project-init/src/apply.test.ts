@@ -299,6 +299,28 @@ describe("applyProjectInitialization", () => {
     expect(await readFile(path.join(outside.root, "NOTES.md"), "utf8")).toBe("# Notes\n");
   });
 
+  it("does not clean up a transaction through a replaced metadata parent", async () => {
+    const fixture = await makeTemporaryProject();
+    const outside = await makeTemporaryProject();
+    cleanups.push(fixture.cleanup, outside.cleanup);
+    const outsideTransactionPath = path.join(outside.root, "init-transaction.json");
+    await writeFile(outsideTransactionPath, "outside transaction\n");
+
+    await expect(
+      applyProjectInitialization(await makePlan(fixture.root), {
+        onStep: async (step) => {
+          if (step.kind !== "file-created" || step.path !== ".papilab/project.json") return;
+          await rename(
+            path.join(fixture.root, ".papilab"),
+            path.join(fixture.root, ".papilab-original"),
+          );
+          await symlink(outside.root, path.join(fixture.root, ".papilab"));
+        },
+      }),
+    ).rejects.toMatchObject({ code: "PATH_ESCAPE" });
+    expect(await readFile(outsideTransactionPath, "utf8")).toBe("outside transaction\n");
+  });
+
   it("creates a profile file beneath a safe two-dot-prefixed directory", async () => {
     const fixture = await makeTemporaryProject();
     cleanups.push(fixture.cleanup);
