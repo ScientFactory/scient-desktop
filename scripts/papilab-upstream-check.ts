@@ -11,7 +11,7 @@ import {
   PAPILAB_DESKTOP_UPDATES_ENABLED,
 } from "@synara/shared/desktopIdentity";
 
-const EXPECTED_ORIGIN_REPOSITORY = "yaacovcorcos/synara";
+const EXPECTED_ORIGIN_REPOSITORY = "yaacovcorcos/papilab-desktop";
 const EXPECTED_UPSTREAM_REPOSITORY = "emanuele-web04/synara";
 const UPSTREAM_BRANCH = "upstream/main";
 
