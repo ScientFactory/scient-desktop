@@ -27,8 +27,14 @@ export async function inspectProjectFolder(requestedRoot: string): Promise<Proje
   const projectFile = await snapshotPath(path.join(root, PAPILAB_PROJECT_FILE));
   const agentsFile = await snapshotPath(path.join(root, PAPILAB_AGENTS_FILE));
   const metadataDirectory = await snapshotPath(path.join(root, PAPILAB_METADATA_DIRECTORY));
-  const identityFile = await snapshotPath(path.join(root, PAPILAB_IDENTITY_FILE));
-  const transactionFile = await snapshotPath(path.join(root, PAPILAB_TRANSACTION_FILE));
+  const identityFile =
+    metadataDirectory.kind === "directory"
+      ? await snapshotPath(path.join(root, PAPILAB_IDENTITY_FILE))
+      : ({ kind: "missing" } as const);
+  const transactionFile =
+    metadataDirectory.kind === "directory"
+      ? await snapshotPath(path.join(root, PAPILAB_TRANSACTION_FILE))
+      : ({ kind: "missing" } as const);
   const issues: InspectionIssue[] = [];
   let identity: PapiLabProjectIdentity | null = null;
   let transactionValid = false;

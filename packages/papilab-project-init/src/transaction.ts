@@ -10,11 +10,17 @@ import {
   type PreserveOperation,
   type ProposeOperation,
 } from "./types.ts";
-import { assertIsoTimestamp, assertProjectId, validatePortableRelativePath } from "./validation.ts";
+import {
+  assertIsoTimestamp,
+  assertProjectId,
+  validatePortableRelativePath,
+  validateProjectIdentity,
+} from "./validation.ts";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_OPERATIONS = 256;
 const MAX_OPERATION_CONTENT_BYTES = 1_048_576;
+const PROFILE_ID_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
 function validateOperationPath(value: unknown): string {
   if (typeof value !== "string") {
@@ -155,7 +161,9 @@ export function validateInitializationTransaction(value: unknown): Initializatio
   }
   const profileVersions: Record<string, number> = {};
   for (const [profileId, version] of Object.entries(candidate.profileVersions)) {
-    validatePortableRelativePath(`${profileId}.profile`);
+    if (!PROFILE_ID_PATTERN.test(profileId)) {
+      throw new ProjectInitializationError("INVALID_TRANSACTION", "Invalid profile ID.");
+    }
     if (!Number.isSafeInteger(version) || (version as number) < 1) {
       throw new ProjectInitializationError("INVALID_TRANSACTION", "Invalid profile version.");
     }
@@ -172,11 +180,56 @@ export function validateInitializationTransaction(value: unknown): Initializatio
     }
     paths.add(operation.path);
   }
+  if (
+    typeof candidate.projectId !== "string" ||
+    typeof candidate.createdAt !== "string"
+  ) {
+    throw new ProjectInitializationError(
+      "INVALID_TRANSACTION",
+      "Transaction identity fields are invalid.",
+    );
+  }
+  const transactionId = assertProjectId(candidate.transactionId);
+  const projectId = assertProjectId(candidate.projectId);
+  const createdAt = assertIsoTimestamp(candidate.createdAt);
+  const identityOperations = operations.filter(
+    (operation): operation is CreateOperation =>
+      operation.kind === "create" && operation.path === PAPILAB_IDENTITY_FILE,
+  );
+  if (identityOperations.length !== 1) {
+    throw new ProjectInitializationError(
+      "INVALID_TRANSACTION",
+      "Transaction must contain exactly one PapiLab identity creation.",
+    );
+  }
+  const identityOperation = identityOperations[0];
+  if (!identityOperation) {
+    throw new ProjectInitializationError(
+      "INVALID_TRANSACTION",
+      "Transaction identity creation is missing.",
+    );
+  }
+  let identity;
+  try {
+    identity = validateProjectIdentity(JSON.parse(identityOperation.contents));
+  } catch (error) {
+    throw new ProjectInitializationError(
+      "INVALID_TRANSACTION",
+      "Transaction contains an invalid PapiLab project identity.",
+      { cause: error },
+    );
+  }
+  if (identity.projectId !== projectId || identity.createdAt !== createdAt) {
+    throw new ProjectInitializationError(
+      "INVALID_TRANSACTION",
+      "Transaction identity does not match its project metadata.",
+    );
+  }
   return {
     transactionVersion: 1,
-    transactionId: assertProjectId(candidate.transactionId),
-    projectId: assertProjectId(candidate.projectId as string),
-    createdAt: assertIsoTimestamp(candidate.createdAt as string),
+    transactionId,
+    projectId,
+    createdAt,
     profileVersions,
     operations,
   };
