@@ -91,6 +91,17 @@ const requiredPapiLabIdentityText = new Map<string, readonly string[]>([
     ['name: "papilab-desktop"', 'description: "PapiLab desktop build"', 'author: "Yaacov Corcos"'],
   ],
   [
+    "apps/desktop/native/appsnap/WindowCapture.swift",
+    ['message: "PapiLab cannot capture its own window."'],
+  ],
+  [
+    "scripts/lib/desktop-platform-build-config.ts",
+    [
+      '"PapiLab needs microphone access so you can record voice notes and transcribe them into the chat composer."',
+    ],
+  ],
+  ["scripts/release-smoke.ts", ["PapiLab-9.9.9-smoke.0-arm64.zip"]],
+  [
     "apps/web/src/whatsNew/entries.ts",
     ["export const WHATS_NEW_ENTRIES: readonly WhatsNewEntry[] = [];"],
   ],
@@ -120,6 +131,7 @@ const papiLabOnlySurfacePaths = new Set([
   "apps/desktop/src/browserUsePipeServer.ts",
   "apps/desktop/src/voiceTranscription.ts",
   "apps/server/src/checkpointing/Layers/CheckpointStore.ts",
+  "apps/server/scripts/cli.ts",
   "apps/server/src/codexAppServerManager.ts",
   "apps/server/src/environment/Layers/ServerEnvironmentLabel.ts",
   "apps/server/src/git/Layers/OpenCodeTextGeneration.ts",
@@ -163,6 +175,7 @@ const papiLabOnlySurfacePaths = new Set([
   "apps/web/src/routes/-automations.shared.tsx",
   "apps/web/src/routes/_chat.settings.tsx",
   "apps/web/src/settingsSearchIndex.ts",
+  "scripts/lib/release-update-policy.ts",
 ]);
 
 export function findPapiLabSurfaceIdentityViolations(

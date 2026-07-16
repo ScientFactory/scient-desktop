@@ -1531,7 +1531,9 @@ function SingleChatSurface(props: {
   const chatPanelState = useMemo<SplitViewPanePanelState>(
     () => ({
       panel:
-        activePane && (activePane.kind === "browser" || activePane.kind === "diff")
+        dockState.open &&
+        activePane &&
+        (activePane.kind === "browser" || activePane.kind === "diff")
           ? activePane.kind
           : null,
       diffTurnId: activePane?.kind === "diff" ? activePane.diffTurnId : null,
@@ -1539,7 +1541,7 @@ function SingleChatSurface(props: {
       hasOpenedPanel: dockState.panes.length > 0,
       lastOpenPanel: "browser",
     }),
-    [activePane, dockState.panes.length],
+    [activePane, dockState.open, dockState.panes.length],
   );
 
   const handleToggleDiff = useCallback(() => {

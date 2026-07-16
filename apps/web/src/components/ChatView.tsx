@@ -4402,6 +4402,7 @@ export default function ChatView({
   const hasRightDockPanes = useRightDockStore(
     (store) => selectRightDockState(threadId)(store).panes.length > 0,
   );
+  const canToggleOwnedRightDock = surfaceMode === "single" && !isEditorRail && hasRightDockPanes;
   const setRightDockOpen = useRightDockStore((store) => store.setDockOpen);
   const toggleRightDock = useCallback(() => {
     setRightDockOpen(threadId, !rightDockOpen);
@@ -10911,6 +10912,9 @@ export default function ChatView({
           showDiffToggle={!isEditorRail}
           diffOpen={resolvedDiffOpen}
           diffDisabledReason={diffDisabledReason}
+          rightDockOpen={rightDockOpen}
+          rightDockHasPanes={hasRightDockPanes}
+          {...(canToggleOwnedRightDock ? { onToggleRightDock: toggleRightDock } : {})}
           environment={isEditorRail ? null : environmentHeaderState}
           surfaceMode={surfaceMode}
           chatLayoutAction={

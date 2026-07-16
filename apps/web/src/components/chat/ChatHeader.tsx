@@ -103,6 +103,9 @@ interface ChatHeaderProps {
   showDiffToggle?: boolean;
   diffOpen: boolean;
   diffDisabledReason?: string | null;
+  rightDockOpen?: boolean;
+  rightDockHasPanes?: boolean;
+  onToggleRightDock?: () => void;
   surfaceMode?: "single" | "split";
   isSidechat?: boolean;
   // When provided, the header collapses the
@@ -465,6 +468,23 @@ function EditorRailTabs(props: {
 
 export type ChatHeaderThreadIconKind = "none" | "provider" | "terminal";
 
+export type ChatHeaderRightPanelToggleMode = "diff" | "dock";
+
+export function resolveChatHeaderRightPanelToggleMode(input: {
+  isGitRepo: boolean;
+  diffOpen: boolean;
+  rightDockHasPanes: boolean;
+  canToggleRightDock: boolean;
+}): ChatHeaderRightPanelToggleMode {
+  if (
+    input.canToggleRightDock &&
+    (!input.isGitRepo || (input.rightDockHasPanes && !input.diffOpen))
+  ) {
+    return "dock";
+  }
+  return "diff";
+}
+
 export function resolveChatHeaderThreadIconKind(
   entryPoint: ThreadPrimarySurface,
   title?: string,
@@ -504,6 +524,9 @@ export const ChatHeader = memo(function ChatHeader({
   showDiffToggle = true,
   diffOpen,
   diffDisabledReason = null,
+  rightDockOpen = false,
+  rightDockHasPanes = false,
+  onToggleRightDock,
   surfaceMode = "single",
   isSidechat = false,
   environment = null,
@@ -567,11 +590,17 @@ export const ChatHeader = memo(function ChatHeader({
     );
   };
 
-  // The right-side diff toggle (the "open the diff on the right" affordance). It stays in
-  // the header in both layouts — beside the Environment button when that is enabled, and
-  // inside the legacy cluster otherwise — so the familiar right-sidebar control is always a
-  // single click away. Declared once here to avoid duplicating the markup across branches.
-  const diffToggleControl = showDiffToggle ? (
+  const rightPanelToggleMode = resolveChatHeaderRightPanelToggleMode({
+    isGitRepo,
+    diffOpen,
+    rightDockHasPanes,
+    canToggleRightDock: onToggleRightDock !== undefined,
+  });
+
+  // Keep the familiar right-sidebar control useful even outside Git repositories. When the
+  // dock already owns a file/browser/etc. pane (or Diff cannot exist), this control toggles the
+  // dock itself instead of becoming a disabled Diff-only button.
+  const rightPanelToggleControl = showDiffToggle ? (
     <Tooltip>
       <TooltipTrigger
         render={
@@ -580,14 +609,21 @@ export const ChatHeader = memo(function ChatHeader({
               CHAT_HEADER_TOGGLE_CLASS_NAME,
               showDiffTotals ? null : "!size-7 [&_svg,&_[data-slot=central-icon]]:mx-0",
             )}
-            pressed={diffOpen}
-            onPressedChange={onToggleDiff}
-            aria-label="Toggle diff panel"
+            pressed={rightPanelToggleMode === "dock" ? rightDockOpen : diffOpen}
+            onPressedChange={
+              rightPanelToggleMode === "dock" && onToggleRightDock
+                ? onToggleRightDock
+                : onToggleDiff
+            }
+            aria-label={rightPanelToggleMode === "dock" ? "Toggle side panel" : "Toggle diff panel"}
             variant="default"
             size="xs"
-            disabled={!isGitRepo || (diffDisabledReason !== null && !diffOpen)}
+            disabled={
+              rightPanelToggleMode === "diff" &&
+              (!isGitRepo || (diffDisabledReason !== null && !diffOpen))
+            }
           >
-            {showDiffTotals ? (
+            {rightPanelToggleMode === "diff" && showDiffTotals ? (
               <span className="inline-flex items-center gap-1">
                 <span className="font-system-ui text-[length:var(--app-font-size-ui-sm,11px)] sm:text-[length:var(--app-font-size-ui-xs,10px)] font-normal tracking-normal tabular-nums text-success">
                   +{diffAdditions}
@@ -602,13 +638,15 @@ export const ChatHeader = memo(function ChatHeader({
         }
       />
       <TooltipPopup side="bottom">
-        {!isGitRepo
-          ? "Diff panel is unavailable because this project is not a git repository."
-          : diffDisabledReason && !diffOpen
-            ? diffDisabledReason
-            : diffToggleShortcutLabel
-              ? `Toggle diff panel (${diffToggleShortcutLabel})`
-              : "Toggle diff panel"}
+        {rightPanelToggleMode === "dock"
+          ? "Toggle side panel"
+          : !isGitRepo
+            ? "Diff panel is unavailable because this project is not a git repository."
+            : diffDisabledReason && !diffOpen
+              ? diffDisabledReason
+              : diffToggleShortcutLabel
+                ? `Toggle diff panel (${diffToggleShortcutLabel})`
+                : "Toggle diff panel"}
       </TooltipPopup>
     </Tooltip>
   ) : null;
@@ -827,13 +865,13 @@ export const ChatHeader = memo(function ChatHeader({
         ) : null}
 
         {/* Environment: one button consolidating Open-in-editor and git actions into the
-            Environment panel. The right-side diff toggle stays beside it so the familiar
-            "open the diff on the right" control is preserved. Falls back to the legacy split
-            controls when no environment is resolved. */}
+            Environment panel. The right-side control preserves the Diff shortcut when it is
+            applicable and otherwise reopens the thread's existing side dock. Falls back to
+            the legacy split controls when no environment is resolved. */}
         {environment ? (
           <>
             <EnvironmentToggle environment={environment} />
-            {diffToggleControl}
+            {rightPanelToggleControl}
           </>
         ) : (
           <>
@@ -854,7 +892,7 @@ export const ChatHeader = memo(function ChatHeader({
                 hideQuickActionLabel={compact}
               />
             ) : null}
-            {diffToggleControl}
+            {rightPanelToggleControl}
           </>
         )}
       </div>

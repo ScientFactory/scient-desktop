@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,6 +11,7 @@ console.log("\nLaunching Electron smoke test...");
 
 const child = spawn(electronBin, [mainJs], {
   stdio: ["pipe", "pipe", "pipe"],
+  detached: process.platform !== "win32",
   env: {
     ...process.env,
     VITE_DEV_SERVER_URL: "",
@@ -26,8 +27,22 @@ child.stderr.on("data", (chunk) => {
   output += chunk.toString();
 });
 
+function killChildTree() {
+  if (!child.pid) return;
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
+    return;
+  }
+
+  try {
+    process.kill(-child.pid, "SIGKILL");
+  } catch {
+    child.kill("SIGKILL");
+  }
+}
+
 const timeout = setTimeout(() => {
-  child.kill();
+  killChildTree();
 }, 8_000);
 
 child.on("exit", () => {

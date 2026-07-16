@@ -857,7 +857,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     });
   }
 
-  if (options.platform === "mac") {
+  const macUpdateArtifactsEnabled =
+    options.platform === "mac" &&
+    (options.mockUpdates || resolveGitHubPublishConfig() !== undefined);
+  if (macUpdateArtifactsEnabled) {
     yield* Effect.log("[desktop-artifact] Repacking and validating macOS update zip...");
     const finalizedZip = yield* Effect.tryPromise({
       try: () =>
@@ -956,7 +959,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.optional,
   ),
 }).pipe(
-  Command.withDescription("Build a desktop artifact for Synara."),
+  Command.withDescription("Build a desktop artifact for PapiLab."),
   Command.withHandler((input) => Effect.flatMap(resolveBuildOptions(input), buildDesktopArtifact)),
 );
 
