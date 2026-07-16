@@ -114,7 +114,7 @@ const make = Effect.gen(function* () {
         }),
       ).pipe(
         Effect.catchCause((cause) =>
-          Effect.logWarning("synara skills catalog discovery failed", {
+          Effect.logWarning("papilab skills catalog discovery failed", {
             provider: parsed.provider,
             cause,
           }).pipe(Effect.as([] as ProviderSkillDescriptor[])),
@@ -129,7 +129,7 @@ const make = Effect.gen(function* () {
       );
       return {
         skills: filterDisabledSkills(merged, settings.skills.disabled),
-        source: nativeResult?.source ? `${nativeResult.source}+synara.catalog` : "synara.catalog",
+        source: nativeResult?.source ? `${nativeResult.source}+papilab.catalog` : "papilab.catalog",
         cached: nativeResult?.cached ?? false,
       } satisfies ProviderListSkillsResult;
     });

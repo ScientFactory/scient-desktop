@@ -2113,7 +2113,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
             yield* completeOpenCodeTurn(context, {
               turnId,
               raw: {
-                source: "synara.opencode.idle-after-tool-calls",
+                source: "papilab.opencode.idle-after-tool-calls",
                 event: raw,
               },
               errorMessage: message,
@@ -2131,7 +2131,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
                 threadId: context.session.threadId,
                 turnId,
                 raw: {
-                  source: "synara.opencode.idle-after-tool-calls",
+                  source: "papilab.opencode.idle-after-tool-calls",
                   event: raw,
                 },
               }),
@@ -2245,7 +2245,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
             turnId: input.turnId,
             assistantEntry,
             raw: {
-              source: "synara.opencode.prompt.recovery",
+              source: "papilab.opencode.prompt.recovery",
               message: assistantEntry,
             },
           });
@@ -2318,7 +2318,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
                 "OpenCode did not produce any activity for this prompt. The session may be stuck; try sending again or restart OpenCode.";
               yield* completeOpenCodeTurn(context, {
                 turnId: input.turnId,
-                raw: { source: "synara.opencode.prompt.watchdog" },
+                raw: { source: "papilab.opencode.prompt.watchdog" },
                 errorMessage: message,
               });
               updateProviderSession(
@@ -2333,7 +2333,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
                 ...buildEventBase({
                   threadId: context.session.threadId,
                   turnId: input.turnId,
-                  raw: { source: "synara.opencode.prompt.watchdog" },
+                  raw: { source: "papilab.opencode.prompt.watchdog" },
                 }),
                 type: "runtime.error",
                 payload: {
@@ -2385,7 +2385,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
                   turnId: input.turnId,
                   assistantEntry,
                   raw: {
-                    source: "synara.opencode.prompt.response",
+                    source: "papilab.opencode.prompt.response",
                     message: assistantEntry,
                   },
                 });

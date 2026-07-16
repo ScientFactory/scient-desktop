@@ -528,8 +528,8 @@ export const probeGeminiCapabilities = (input: {
         sendRequest(1, "initialize", {
           protocolVersion: 1,
           clientInfo: {
-            name: "synara",
-            title: "Synara",
+            name: "papilab",
+            title: "PapiLab",
             version: "0.1.0",
           },
           clientCapabilities: {

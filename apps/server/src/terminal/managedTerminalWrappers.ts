@@ -182,7 +182,7 @@ function buildCodexWrapperScript(input: {
     "  export CODEX_TUI_RECORD_SESSION=1",
     '  if [ -z "${CODEX_TUI_SESSION_LOG_PATH:-}" ]; then',
     '    _synara_codex_ts="$(date +%s 2>/dev/null || echo "$$")"',
-    '    export CODEX_TUI_SESSION_LOG_PATH="${TMPDIR:-/tmp}/synara-codex-session-$$_${_synara_codex_ts}.jsonl"',
+    '    export CODEX_TUI_SESSION_LOG_PATH="${TMPDIR:-/tmp}/papilab-codex-session-$$_${_synara_codex_ts}.jsonl"',
     "  fi",
     "  (",
     '    _synara_log="$CODEX_TUI_SESSION_LOG_PATH"',
@@ -272,7 +272,7 @@ function buildWrapperScript(input: {
       : buildCodexWrapperScript({ codexHomeDir, notifyHookPath, targetPath });
   return [
     "#!/bin/sh",
-    `# Managed ${commandName} wrapper injected by synara terminal sessions.`,
+    `# Managed ${commandName} wrapper injected by PapiLab terminal sessions.`,
     `printf '\\033]0;%s\\007' ${shellQuote(title)}`,
     `export ${SYNARA_TERMINAL_CLI_KIND_ENV_KEY}=${shellQuote(cliKind)}`,
     commandBody,

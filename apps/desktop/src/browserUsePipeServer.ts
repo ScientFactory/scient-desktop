@@ -18,7 +18,7 @@ const BROWSER_USE_INITIAL_URL = "about:blank";
 const BROWSER_USE_PANEL_READY_TIMEOUT_MS = 2_000;
 const BROWSER_USE_PANEL_READY_POLL_MS = 50;
 const BROWSER_USE_PIPE_DIR = "codex-browser-use";
-const BROWSER_USE_PIPE_NAME_PREFIX = "synara-iab";
+const BROWSER_USE_PIPE_NAME_PREFIX = "papilab-iab";
 export const SYNARA_BROWSER_USE_PIPE_ENV = "SYNARA_BROWSER_USE_PIPE_PATH";
 
 type BrowserUseRpcId = string | number;
