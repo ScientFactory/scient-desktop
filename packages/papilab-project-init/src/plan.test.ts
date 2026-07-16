@@ -71,6 +71,20 @@ describe("planProjectInitialization", () => {
     );
   });
 
+  it("preserves existing CRLF line endings in an AGENTS.md proposal", async () => {
+    const fixture = await makeTemporaryProject();
+    cleanups.push(fixture.cleanup);
+    await writeFile(path.join(fixture.root, "AGENTS.md"), "# Windows Rules\r\n\r\nKeep this.\r\n");
+
+    const plan = await deterministicPlan(fixture.root);
+    const proposal = plan.operations.find((operation) => operation.kind === "propose");
+
+    expect(proposal?.kind).toBe("propose");
+    if (proposal?.kind !== "propose") throw new Error("Expected AGENTS.md proposal.");
+    expect(proposal.contents).toContain("# Windows Rules\r\n\r\nKeep this.\r\n");
+    expect(proposal.contents.replaceAll("\r\n", "")).not.toContain("\n");
+  });
+
   it("blocks top-level file symlink conflicts", async () => {
     const fixture = await makeTemporaryProject();
     const outside = await makeTemporaryProject();

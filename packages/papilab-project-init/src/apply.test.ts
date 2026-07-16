@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -127,6 +127,54 @@ describe("applyProjectInitialization", () => {
       expect(recovered.recovered).toBe(true);
       expect((await inspectProjectFolder(fixture.root)).state).toBe("initialized-compatible");
     }
+  });
+
+  it("removes an attributable stale temporary hard link during recovery", async () => {
+    const fixture = await makeTemporaryProject();
+    cleanups.push(fixture.cleanup);
+    const plan = await makePlan(fixture.root);
+    await expect(
+      applyProjectInitialization(plan, {
+        onStep: (step) => {
+          if (step.kind === "file-created" && step.path === "PROJECT.md") {
+            throw new Error("simulated crash");
+          }
+        },
+      }),
+    ).rejects.toThrow("simulated crash");
+    const agentsPath = path.join(fixture.root, "AGENTS.md");
+    const staleTemporaryPath = path.join(
+      fixture.root,
+      `.AGENTS.md.papilab-init-${TEST_IDENTITY.transactionId}.tmp`,
+    );
+    await link(agentsPath, staleTemporaryPath);
+
+    await recoverProjectInitialization(fixture.root);
+
+    expect(await readFile(staleTemporaryPath).catch(() => null)).toBeNull();
+    expect((await inspectProjectFolder(fixture.root)).state).toBe("initialized-compatible");
+  });
+
+  it("refuses recovery when a preserved file changes after the marker is written", async () => {
+    const fixture = await makeTemporaryProject();
+    cleanups.push(fixture.cleanup);
+    await writeFile(path.join(fixture.root, "AGENTS.md"), "# Existing rules\n");
+    const plan = await makePlan(fixture.root);
+    await expect(
+      applyProjectInitialization(plan, {
+        onStep: (step) => {
+          if (step.kind === "marker-written") throw new Error("simulated crash");
+        },
+      }),
+    ).rejects.toThrow("simulated crash");
+    await writeFile(path.join(fixture.root, "AGENTS.md"), "# Changed during recovery\n");
+
+    await expect(recoverProjectInitialization(fixture.root)).rejects.toMatchObject({
+      code: "RECOVERY_CONFLICT",
+    });
+    expect(await readFile(path.join(fixture.root, "AGENTS.md"), "utf8")).toBe(
+      "# Changed during recovery\n",
+    );
   });
 
   it("rolls back only unchanged files created by the interrupted transaction", async () => {

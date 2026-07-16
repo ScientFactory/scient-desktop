@@ -72,12 +72,15 @@ describe("inspectProjectFolder", () => {
     const fixture = await makeTemporaryProject();
     const outside = await makeTemporaryProject();
     cleanups.push(fixture.cleanup, outside.cleanup);
+    await writeFile(path.join(outside.root, "project.json"), "{bad outside metadata\n");
     await symlink(outside.root, path.join(fixture.root, ".papilab"));
 
     const inspection = await inspectProjectFolder(fixture.root);
 
     expect(inspection.state).toBe("invalid-or-conflicting");
     expect(inspection.issues.map((issue) => issue.code)).toContain("metadata-path-conflict");
+    expect(inspection.identityFile).toEqual({ kind: "missing" });
+    expect(inspection.issues.map((issue) => issue.code)).not.toContain("invalid-identity");
   });
 
   it("reports malformed identity as invalid rather than guessing", async () => {
@@ -90,5 +93,20 @@ describe("inspectProjectFolder", () => {
 
     expect(inspection.state).toBe("invalid-or-conflicting");
     expect(inspection.issues.map((issue) => issue.code)).toContain("invalid-identity");
+  });
+
+  it("reports a structurally invalid transaction as invalid", async () => {
+    const fixture = await makeTemporaryProject();
+    cleanups.push(fixture.cleanup);
+    await mkdir(path.join(fixture.root, ".papilab"));
+    await writeFile(
+      path.join(fixture.root, ".papilab/init-transaction.json"),
+      `${JSON.stringify({ transactionVersion: 1, transactionId: "missing-project-fields" })}\n`,
+    );
+
+    const inspection = await inspectProjectFolder(fixture.root);
+
+    expect(inspection.state).toBe("invalid-or-conflicting");
+    expect(inspection.issues.map((issue) => issue.code)).toContain("invalid-transaction");
   });
 });
