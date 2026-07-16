@@ -73,6 +73,8 @@ export interface BrandIdentityBinaryFile {
 }
 
 const requiredPapiLabIdentityText = new Map<string, readonly string[]>([
+  ["README.md", ["# PapiLab Desktop", "yaacovcorcos/papilab-desktop"]],
+  ["KEYBINDINGS.md", ["# PapiLab Keybindings", "~/.papilab/userdata/keybindings.json"]],
   ["apps/desktop/package.json", ['"productName": "PapiLab"']],
   [
     "packages/shared/src/desktopIdentity.ts",
@@ -92,12 +94,27 @@ const requiredPapiLabIdentityText = new Map<string, readonly string[]>([
     "apps/web/src/whatsNew/entries.ts",
     ["export const WHATS_NEW_ENTRIES: readonly WhatsNewEntry[] = [];"],
   ],
+  [
+    "apps/marketing/src/lib/releases.ts",
+    ["yaacovcorcos/papilab-desktop", '"papilab-latest-release"'],
+  ],
+  ["apps/marketing/src/pages/index.astro", ["PapiLab is a scientific workspace"]],
+  ["apps/marketing/src/pages/download.astro", ["Download — PapiLab"]],
+  ["apps/marketing/src/layouts/Layout.astro", ["PapiLab — A local-first scientific workspace"]],
 ]);
 
 // These files render, export, or transmit PapiLab-owned product copy. Internal
 // Synara package/type names remain intentionally outside this list so the fork
 // can preserve upstream structure without leaking predecessor branding to users.
 const papiLabOnlySurfacePaths = new Set([
+  "README.md",
+  "CONTRIBUTING.md",
+  "KEYBINDINGS.md",
+  "REMOTE.md",
+  "apps/marketing/src/layouts/Layout.astro",
+  "apps/marketing/src/lib/releases.ts",
+  "apps/marketing/src/pages/download.astro",
+  "apps/marketing/src/pages/index.astro",
   "apps/desktop/scripts/dev-electron.mjs",
   "apps/desktop/src/appSnapManager.ts",
   "apps/desktop/src/browserUsePipeServer.ts",
