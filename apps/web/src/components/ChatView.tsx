@@ -77,6 +77,7 @@ import {
 } from "~/lib/gitReactQuery";
 import { resolveProviderDiscoveryCwd } from "~/lib/providerDiscovery";
 import {
+  isInitialModelDiscoveryPending,
   providerAgentsQueryOptions,
   providerComposerCapabilitiesQueryOptions,
   providerCommandsQueryOptions,
@@ -93,6 +94,7 @@ import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuer
 import { useRefreshProviderStatusesNow } from "~/hooks/useProviderStatusRefresh";
 import { SINGLE_CHAT_PANE_SCOPE_ID } from "~/lib/chatPaneScope";
 import {
+  composerMentionPathNeedsQuoting,
   formatComposerMentionToken,
   filterPromptProviderMentionReferences,
   filterPromptSkillReferences,
@@ -282,9 +284,10 @@ import {
 } from "~/lib/icons";
 import { ComposerQueuedHeader } from "./chat/ComposerQueuedHeader";
 import { ComposerLiveChangesHeader } from "./chat/ComposerLiveChangesHeader";
+import { ComposerPickerMenuPopup } from "./chat/ComposerPickerMenuPopup";
 import { Button } from "./ui/button";
 import { Skeleton } from "./ui/skeleton";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
+import { Menu, MenuItem, MenuTrigger } from "./ui/menu";
 import { disposeAndCloseTerminalSession, randomTerminalId } from "./terminal/terminalSession";
 import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
 import { toastManager } from "./ui/toast";
@@ -2161,14 +2164,14 @@ export default function ChatView({
   const cursorModelDiscoveryPending =
     cursorModelDiscoveryEnabled &&
     !hasResolvedCursorModelDiscovery &&
-    (cursorDynamicModelsQuery.isLoading || cursorDynamicModelsQuery.isFetching);
+    isInitialModelDiscoveryPending(cursorDynamicModelsQuery);
   const hasResolvedDroidModelDiscovery =
     droidDynamicModelsQuery.data?.source === "droid-acp" &&
     (droidDynamicModelsQuery.data.models.length ?? 0) > 0;
   const droidModelDiscoveryPending =
     droidModelDiscoveryEnabled &&
     !hasResolvedDroidModelDiscovery &&
-    (droidDynamicModelsQuery.isLoading || droidDynamicModelsQuery.isFetching);
+    isInitialModelDiscoveryPending(droidDynamicModelsQuery);
   const hasResolvedKiloModelDiscovery =
     (kiloDynamicModelsQuery.data?.source === "kilo-cli" ||
       kiloDynamicModelsQuery.data?.source === "kilo") &&
@@ -2176,7 +2179,7 @@ export default function ChatView({
   const kiloModelDiscoveryPending =
     kiloModelDiscoveryEnabled &&
     !hasResolvedKiloModelDiscovery &&
-    (kiloDynamicModelsQuery.isLoading || kiloDynamicModelsQuery.isFetching);
+    isInitialModelDiscoveryPending(kiloDynamicModelsQuery);
   const hasResolvedOpenCodeModelDiscovery =
     (openCodeDynamicModelsQuery.data?.source === "opencode-cli" ||
       openCodeDynamicModelsQuery.data?.source === "opencode") &&
@@ -2184,20 +2187,19 @@ export default function ChatView({
   const openCodeModelDiscoveryPending =
     openCodeModelDiscoveryEnabled &&
     !hasResolvedOpenCodeModelDiscovery &&
-    (openCodeDynamicModelsQuery.isLoading || openCodeDynamicModelsQuery.isFetching);
+    isInitialModelDiscoveryPending(openCodeDynamicModelsQuery);
   const hasResolvedPiModelDiscovery =
     piDynamicModelsQuery.data?.source?.startsWith("pi.sdk") === true &&
     (piDynamicModelsQuery.data.models.length ?? 0) > 0;
   const piModelDiscoveryPending =
     piModelDiscoveryEnabled &&
     !hasResolvedPiModelDiscovery &&
-    (piDynamicModelsQuery.isLoading || piDynamicModelsQuery.isFetching);
+    isInitialModelDiscoveryPending(piDynamicModelsQuery);
   const antigravityModelDiscoveryPending =
     !(
       antigravityModelsQuery.data?.source === "antigravity.cli" &&
       (antigravityModelsQuery.data.models.length ?? 0) > 0
-    ) &&
-    (antigravityModelsQuery.isLoading || antigravityModelsQuery.isFetching);
+    ) && isInitialModelDiscoveryPending(antigravityModelsQuery);
   const modelOptionsByProvider = useMemo(() => {
     const staticOptions: Record<ProviderKind, ReturnType<typeof getAppModelOptions>> = {
       codex: getAppModelOptions(
@@ -2683,8 +2685,13 @@ export default function ChatView({
       };
     }
 
-    const liveTurnId = latestTurnSettled ? undefined : activeLatestTurn?.turnId;
-    return deriveActiveTaskListState(threadActivities, liveTurnId);
+    // Only while a turn is live: deriveActiveTaskListState falls back to the latest
+    // unfinished prior-turn list (follow-up turns, reloads mid-turn), but once the
+    // thread is idle the card must clear — providers routinely end a turn without
+    // marking every task completed, and an unfinished list must not linger forever.
+    return latestTurnSettled
+      ? null
+      : deriveActiveTaskListState(threadActivities, activeLatestTurn?.turnId);
   }, [activeLatestTurn?.turnId, latestTurnSettled, showDebugTaskBanner, threadActivities]);
   const activeBackgroundTasks = useMemo(
     () =>
@@ -2978,8 +2985,13 @@ export default function ChatView({
       pendingAutomationConversation && pendingAutomationConversation.threadId === threadId
         ? pendingAutomationConversation.bubbles
         : [];
-    const serverIds = new Set(serverMessagesWithPreviewHandoff.map((message) => message.id));
-    const pendingMessages = optimisticUserMessages.filter((message) => !serverIds.has(message.id));
+    // Optimistic messages exist only briefly after a send; skip the full-transcript
+    // id Set on the common (streaming-flush) path where there is nothing to reconcile.
+    let pendingMessages = optimisticUserMessages;
+    if (optimisticUserMessages.length > 0) {
+      const serverIds = new Set(serverMessagesWithPreviewHandoff.map((message) => message.id));
+      pendingMessages = optimisticUserMessages.filter((message) => !serverIds.has(message.id));
+    }
     const withPending =
       pendingMessages.length === 0
         ? serverMessagesWithPreviewHandoff
@@ -2995,6 +3007,11 @@ export default function ChatView({
   ]);
   const promptHistory = useMemo(() => {
     const activeMessages = activeThread?.messages ?? EMPTY_MESSAGES;
+    // Optimistic messages exist only briefly after a send; skip the full-transcript
+    // id Set on the common (streaming-flush) path where there is nothing to reconcile.
+    if (optimisticUserMessages.length === 0) {
+      return derivePromptHistoryFromMessages(activeMessages);
+    }
     const activeMessageIds = new Set(activeMessages.map((message) => message.id));
     const pendingOptimisticMessages = optimisticUserMessages.filter(
       (message) => !activeMessageIds.has(message.id),
@@ -5360,6 +5377,11 @@ export default function ChatView({
     if (activeThread.messages.length === 0) {
       return;
     }
+    // No optimistic messages → nothing to reconcile; skip the full-transcript id Set
+    // this effect would otherwise rebuild on every streaming flush.
+    if (optimisticUserMessages.length === 0) {
+      return;
+    }
     const serverIds = new Set(activeThread.messages.map((message) => message.id));
     const removedMessages = optimisticUserMessages.filter((message) => serverIds.has(message.id));
     if (removedMessages.length === 0) {
@@ -6362,6 +6384,11 @@ export default function ChatView({
       addFiles: addComposerFiles,
     },
     appendReferenceText: (referenceText) => appendComposerPromptText(threadId, referenceText),
+    appendPathMentions: (paths) => {
+      for (const absolutePath of paths) {
+        appendComposerPromptText(threadId, formatComposerMentionToken(absolutePath));
+      }
+    },
     dragDepthRef,
     focusComposer,
     setIsDragOverComposer,
@@ -9361,8 +9388,8 @@ export default function ChatView({
 
   // Rewrites the active `@...` mention to an absolute folder path with a trailing separator
   // so the local-folder picker stays open and the user can keep browsing by clicking or typing.
-  // Paths with whitespace are written as an unclosed `@"...` so detectComposerTrigger keeps
-  // matching and the picker stays open while the user descends into folders with spaces.
+  // Paths that need quoting (spaces, parentheses, …) are written as an unclosed
+  // `@"...` so detectComposerTrigger keeps matching while the user descends (#351).
   const handleNavigateLocalFolder = useCallback(
     (absolutePath: string) => {
       const { snapshot, trigger } = resolveActiveComposerTrigger();
@@ -9371,7 +9398,7 @@ export default function ChatView({
       const withTrailingSeparator = absolutePath.endsWith(separator)
         ? absolutePath
         : `${absolutePath}${separator}`;
-      const base = /\s/.test(withTrailingSeparator)
+      const base = composerMentionPathNeedsQuoting(withTrailingSeparator)
         ? `@"${withTrailingSeparator}`
         : `@${withTrailingSeparator}`;
       applyComposerTriggerReplacement({ snapshot, trigger, base });
@@ -10745,14 +10772,14 @@ export default function ChatView({
                                 >
                                   <ChevronDownIcon className="size-3.5" />
                                 </MenuTrigger>
-                                <MenuPopup align="end" side="top">
+                                <ComposerPickerMenuPopup align="end" side="top">
                                   <MenuItem
                                     disabled={isSendBusy || isConnecting}
                                     onClick={() => void onImplementPlanInNewThread()}
                                   >
                                     Implement in a new thread
                                   </MenuItem>
-                                </MenuPopup>
+                                </ComposerPickerMenuPopup>
                               </Menu>
                             </div>
                           )
