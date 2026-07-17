@@ -114,7 +114,7 @@ function ReadyProjectChoice(props: {
             type="button"
             disabled={!props.preview.canApply}
             onClick={() => props.onDecision("apply")}
-            className="group flex min-h-32 items-center gap-3.5 rounded-xl border border-[color:var(--color-border)] bg-[var(--color-background-elevated-primary-opaque)] p-4 text-left outline-none transition-colors hover:bg-[var(--color-background-elevated-secondary)] focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50"
+            className="group flex min-h-32 cursor-pointer items-center gap-3.5 rounded-xl border border-[color:var(--color-border)] bg-[var(--color-background-elevated-primary-opaque)] p-4 text-left outline-none transition-colors hover:bg-[var(--color-background-elevated-secondary)] focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span className="relative flex size-12 shrink-0 items-center justify-center rounded-full bg-secondary text-foreground">
               <IconFolder aria-hidden className="size-7" stroke={1.7} />
@@ -137,7 +137,7 @@ function ReadyProjectChoice(props: {
           <button
             type="button"
             onClick={() => props.onDecision("open-only")}
-            className="group flex min-h-32 items-center gap-3.5 rounded-xl border border-[color:var(--color-border)] bg-[var(--color-background-elevated-primary-opaque)] p-4 text-left outline-none transition-colors hover:bg-[var(--color-background-elevated-secondary)] focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+            className="group flex min-h-32 cursor-pointer items-center gap-3.5 rounded-xl border border-[color:var(--color-border)] bg-[var(--color-background-elevated-primary-opaque)] p-4 text-left outline-none transition-colors hover:bg-[var(--color-background-elevated-secondary)] focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background"
           >
             <span className="flex size-12 shrink-0 items-center justify-center rounded-full bg-secondary text-foreground">
               <IconFolder aria-hidden className="size-7" stroke={1.7} />
@@ -156,7 +156,7 @@ function ReadyProjectChoice(props: {
         <button
           type="button"
           onClick={() => setShowInformation(true)}
-          className="inline-flex min-h-8 items-center gap-1.5 rounded-md px-1 text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring/60"
+          className="inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-md px-1 text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring/60"
         >
           <IconInfoCircle aria-hidden className="size-4" stroke={1.7} />
           What is a Scient project?
