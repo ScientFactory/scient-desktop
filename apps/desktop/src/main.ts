@@ -1401,9 +1401,9 @@ function resolveNotificationIconPath(): string | null {
     return null;
   }
   if (process.platform === "win32") {
-    return resolveResourcePath("synara.png") ?? resolveIconPath("ico");
+    return resolveResourcePath("papilab.png") ?? resolveIconPath("ico");
   }
-  return resolveResourcePath("synara.png") ?? resolveIconPath("png");
+  return resolveResourcePath("papilab.png") ?? resolveIconPath("png");
 }
 
 function resolveAppSnapHelperPath(): string {
