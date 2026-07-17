@@ -17,7 +17,7 @@ export default defineConfig({
   outDir: "dist",
   sourcemap: buildSourcemap,
   clean: true,
-  noExternal: (id) => id.startsWith("@synara/"),
+  noExternal: (id) => id.startsWith("@synara/") || id.startsWith("@papilab/"),
   inlineOnly: false,
   banner: {
     js: "#!/usr/bin/env node\n",
