@@ -1,6 +1,6 @@
-// FILE: whatsNew/entries.ts
-// Purpose: Defines PapiLab-owned release notes shown in the desktop UI.
-// Layer: static data consumed by useWhatsNew, WhatsNewDialog, and ChangelogAccordion.
+// FILE: entries.ts
+// Purpose: Defines the PapiLab release notes shown in the app.
+// Layer: Web application release communication.
 
 import type { WhatsNewEntry } from "./logic";
 
