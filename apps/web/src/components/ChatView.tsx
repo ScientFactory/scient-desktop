@@ -236,7 +236,6 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
-import { selectRightDockState, useRightDockStore } from "../rightDockStore";
 import { useStore } from "../store";
 import { RenameThreadDialog } from "./RenameThreadDialog";
 import { getThreadFromState } from "../threadDerivation";
@@ -1023,6 +1022,8 @@ interface ChatViewProps {
   presentationMode?: "default" | "editor";
   isFocusedPane?: boolean;
   panelState?: SplitViewPanePanelState;
+  rightDockOpen?: boolean;
+  onToggleRightDock?: () => void;
   onToggleDiffPanel?: () => void;
   onToggleBrowserPanel?: () => void;
   onOpenBrowserUrl?: (url: string) => void;
@@ -1085,6 +1086,8 @@ export default function ChatView({
   presentationMode = "default",
   isFocusedPane = true,
   panelState,
+  rightDockOpen = false,
+  onToggleRightDock,
   onToggleDiffPanel,
   onToggleBrowserPanel,
   onOpenBrowserUrl,
@@ -3724,10 +3727,6 @@ export default function ChatView({
     () => shortcutLabelForCommand(keybindings, "terminal.workspace.closeActive"),
     [keybindings],
   );
-  const diffPanelShortcutLabel = useMemo(
-    () => shortcutLabelForCommand(keybindings, "diff.toggle"),
-    [keybindings],
-  );
   const chatSplitShortcutLabel = useMemo(
     () => shortcutLabelForCommand(keybindings, "chat.split"),
     [keybindings],
@@ -3769,27 +3768,6 @@ export default function ChatView({
       },
     });
   }, [diffEnvironmentPending, diffOpen, navigate, onToggleDiffPanel, threadId]);
-  // Open-only diff action (no toggle): used by affordances like the live-changes
-  // "Review" strip where a second click should never close an already-open panel.
-  const onOpenDiff = useCallback(() => {
-    if (diffEnvironmentPending || resolvedDiffOpen) {
-      return;
-    }
-    if (onToggleDiffPanel) {
-      onToggleDiffPanel();
-      return;
-    }
-    void navigate({
-      to: "/$threadId",
-      params: { threadId },
-      replace: true,
-      search: (previous) => ({
-        ...stripDiffSearchParams(previous),
-        panel: "diff",
-        diff: "1",
-      }),
-    });
-  }, [diffEnvironmentPending, navigate, onToggleDiffPanel, resolvedDiffOpen, threadId]);
   const onToggleBrowser = useCallback(() => {
     if (onToggleBrowserPanel) {
       onToggleBrowserPanel();
@@ -4356,9 +4334,6 @@ export default function ChatView({
     terminalState.workspaceLayout,
     terminalWorkspaceOpen,
   ]);
-  // The terminal's panel toggle mirrors the right dock's collapse control: it shows
-  // or hides the side panel only when this thread already has a pane to show.
-  const rightDockOpen = useRightDockStore((store) => selectRightDockState(threadId)(store).open);
   const isMobileViewport = useIsMobile();
   // Temporary threads are visually identical to regular chats — they use the same
   // Environment panel + header controls. "Temporary" is purely a sidebar badge +
@@ -4416,19 +4391,11 @@ export default function ChatView({
     codexHomePath: settings.codexHomePath || null,
     providerOptions: providerOptionsForDispatch ?? null,
   });
-  const hasRightDockPanes = useRightDockStore(
-    (store) => selectRightDockState(threadId)(store).panes.length > 0,
-  );
-  const canToggleOwnedRightDock = surfaceMode === "single" && !isEditorRail && hasRightDockPanes;
-  const setRightDockOpen = useRightDockStore((store) => store.setDockOpen);
-  const toggleRightDock = useCallback(() => {
-    setRightDockOpen(threadId, !rightDockOpen);
-  }, [rightDockOpen, setRightDockOpen, threadId]);
   const terminalDrawerProps = useMemo(
     () => ({
       threadId,
-      onTogglePanel: hasRightDockPanes ? toggleRightDock : undefined,
-      isPanelOpen: hasRightDockPanes ? rightDockOpen : undefined,
+      onTogglePanel: onToggleRightDock,
+      isPanelOpen: onToggleRightDock ? rightDockOpen : undefined,
       cwd: gitCwd ?? activeProject?.cwd ?? "",
       runtimeEnv: threadTerminalRuntimeEnv,
       height: terminalState.terminalHeight,
@@ -4517,9 +4484,8 @@ export default function ChatView({
       terminalState.runningTerminalIds,
       threadId,
       threadTerminalRuntimeEnv,
-      toggleRightDock,
+      onToggleRightDock,
       rightDockOpen,
-      hasRightDockPanes,
     ],
   );
   const runProjectScript = useCallback(
@@ -10918,7 +10884,6 @@ export default function ChatView({
           isSidechat={Boolean(activeThread.sidechatSourceThreadId)}
           hideSidebarControls={isEditorRail}
           hideHandoffControls={terminalWorkspaceTerminalTabActive || isEditorRail}
-          isGitRepo={isGitRepo}
           openInTarget={threadWorkspaceCwd}
           activeProjectScripts={isEditorRail ? undefined : activeProjectScripts}
           preferredScriptId={
@@ -10926,7 +10891,6 @@ export default function ChatView({
           }
           keybindings={keybindings}
           availableEditors={availableEditors}
-          diffToggleShortcutLabel={diffPanelShortcutLabel}
           handoffBadgeLabel={handoffBadgeLabel}
           handoffActionLabel={handoffActionLabel}
           handoffDisabled={handoffDisabled}
@@ -10934,14 +10898,9 @@ export default function ChatView({
           handoffBadgeSourceProvider={handoffBadgeSourceProvider}
           handoffBadgeTargetProvider={handoffBadgeTargetProvider}
           gitCwd={threadWorkspaceCwd}
-          diffTotals={repoDiffTotals}
           showGitActions={showGitActions && !isEditorRail}
-          showDiffToggle={!isEditorRail}
-          diffOpen={resolvedDiffOpen}
-          diffDisabledReason={diffDisabledReason}
           rightDockOpen={rightDockOpen}
-          rightDockHasPanes={hasRightDockPanes}
-          {...(canToggleOwnedRightDock ? { onToggleRightDock: toggleRightDock } : {})}
+          {...(onToggleRightDock ? { onToggleRightDock } : {})}
           environment={isEditorRail ? null : environmentHeaderState}
           surfaceMode={surfaceMode}
           chatLayoutAction={
@@ -10988,7 +10947,6 @@ export default function ChatView({
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
-          onToggleDiff={onToggleDiff}
           onCreateHandoff={onCreateHandoffThread}
           onNavigateToThread={onNavigateToThread}
           onRenameThread={() => setRenameDialogOpen(true)}

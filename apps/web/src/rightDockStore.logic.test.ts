@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DEFAULT_RIGHT_DOCK_PANE_KIND,
   RIGHT_DOCK_PANE_KINDS,
   SINGLETON_PANE_KINDS,
   createDefaultRightDockState,
@@ -8,8 +9,75 @@ import {
   openPaneInState,
   sanitizeRightDockStateByThreadId,
   sanitizeRightDockThreadState,
+  toggleRightDockInState,
   updatePaneInState,
 } from "./rightDockStore.logic";
+
+describe("toggleRightDockInState", () => {
+  it("opens Explorer when the dock has never had a pane", () => {
+    const state = toggleRightDockInState(createDefaultRightDockState(), "explorer-1");
+
+    expect(state.open).toBe(true);
+    expect(state.activePaneId).toBe("explorer-1");
+    expect(state.panes).toHaveLength(1);
+    expect(state.panes[0]).toMatchObject({
+      id: "explorer-1",
+      kind: DEFAULT_RIGHT_DOCK_PANE_KIND,
+    });
+  });
+
+  it("closes the dock without discarding its panes or active tab", () => {
+    const openState = openPaneInState(
+      openPaneInState(createDefaultRightDockState(), {
+        paneId: "browser-1",
+        kind: "browser",
+      }),
+      { paneId: "file-1", kind: "file", filePath: "notes.md" },
+    );
+
+    const state = toggleRightDockInState(openState, "unused");
+
+    expect(state.open).toBe(false);
+    expect(state.activePaneId).toBe("file-1");
+    expect(state.panes).toBe(openState.panes);
+  });
+
+  it("reopens the retained active tab without creating another pane", () => {
+    const closedState = {
+      ...openPaneInState(
+        openPaneInState(createDefaultRightDockState(), {
+          paneId: "browser-1",
+          kind: "browser" as const,
+        }),
+        { paneId: "file-1", kind: "file" as const, filePath: "notes.md" },
+      ),
+      open: false,
+    };
+
+    const state = toggleRightDockInState(closedState, "unused");
+
+    expect(state.open).toBe(true);
+    expect(state.activePaneId).toBe("file-1");
+    expect(state.panes).toBe(closedState.panes);
+  });
+
+  it("repairs a stale active-tab reference when reopening", () => {
+    const closedState = {
+      ...openPaneInState(createDefaultRightDockState(), {
+        paneId: "browser-1",
+        kind: "browser" as const,
+      }),
+      open: false,
+      activePaneId: "missing",
+    };
+
+    const state = toggleRightDockInState(closedState, "unused");
+
+    expect(state.open).toBe(true);
+    expect(state.activePaneId).toBe("browser-1");
+    expect(state.panes).toBe(closedState.panes);
+  });
+});
 
 describe("RIGHT_DOCK_PANE_KINDS (single source of truth)", () => {
   it("lists every supported kind", () => {

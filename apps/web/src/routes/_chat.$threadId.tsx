@@ -77,6 +77,7 @@ import {
 } from "../splitViewStore";
 import { selectRightDockState, useRightDockStore } from "../rightDockStore";
 import {
+  DEFAULT_RIGHT_DOCK_PANE_KIND,
   type RightDockPane,
   type RightDockPaneKind,
   resolveActivePane,
@@ -699,6 +700,8 @@ function DeferredChatView(props: {
   presentationMode?: "default" | "editor";
   isFocusedPane: boolean;
   panelState: SplitViewPanePanelState;
+  rightDockOpen?: boolean;
+  onToggleRightDock?: () => void;
   onToggleDiff: () => void;
   onToggleBrowser: () => void;
   onOpenBrowserUrl: (url: string) => void;
@@ -756,6 +759,8 @@ function DeferredChatView(props: {
       presentationMode={props.presentationMode ?? "default"}
       isFocusedPane={props.isFocusedPane}
       panelState={props.panelState}
+      {...(props.rightDockOpen !== undefined ? { rightDockOpen: props.rightDockOpen } : {})}
+      {...(props.onToggleRightDock ? { onToggleRightDock: props.onToggleRightDock } : {})}
       onToggleDiffPanel={props.onToggleDiff}
       onToggleBrowserPanel={props.onToggleBrowser}
       onOpenBrowserUrl={props.onOpenBrowserUrl}
@@ -1453,6 +1458,7 @@ function SingleChatSurface(props: {
   const closePane = useRightDockStore((store) => store.closePane);
   const setActivePane = useRightDockStore((store) => store.setActivePane);
   const setDockOpen = useRightDockStore((store) => store.setDockOpen);
+  const toggleDock = useRightDockStore((store) => store.toggleDock);
   const updatePane = useRightDockStore((store) => store.updatePane);
   const activeProject = useStore(
     useMemo(() => createProjectSelector(props.projectId), [props.projectId]),
@@ -1517,6 +1523,10 @@ function SingleChatSurface(props: {
   const [editorDiffOptionsControl, setEditorDiffOptionsControl] = useState<ReactNode | null>(null);
 
   const activePane = resolveActivePane(dockState);
+  const retainedActivePane =
+    dockState.panes.find((pane) => pane.id === dockState.activePaneId) ??
+    dockState.panes[0] ??
+    null;
   const {
     activePaneRuntimeMode,
     requestActivePaneLive: requestActiveDockPaneLive,
@@ -1552,6 +1562,18 @@ function SingleChatSurface(props: {
     requestImmediateDockHydration("browser");
     toggleSingletonPane(props.threadId, { kind: "browser" });
   }, [props.threadId, requestImmediateDockHydration, toggleSingletonPane]);
+  const handleToggleRightDock = useCallback(() => {
+    if (!dockState.open) {
+      requestImmediateDockHydration(retainedActivePane?.kind ?? DEFAULT_RIGHT_DOCK_PANE_KIND);
+    }
+    toggleDock(props.threadId);
+  }, [
+    dockState.open,
+    props.threadId,
+    requestImmediateDockHydration,
+    retainedActivePane?.kind,
+    toggleDock,
+  ]);
   const handleOpenBrowserUrl = useCallback(() => {
     requestImmediateDockHydration("browser");
     openPane(props.threadId, { kind: "browser" });
@@ -2304,6 +2326,8 @@ function SingleChatSurface(props: {
               surfaceMode="single"
               isFocusedPane
               panelState={chatPanelState}
+              rightDockOpen={dockState.open}
+              onToggleRightDock={handleToggleRightDock}
               onToggleDiff={handleToggleDiff}
               onToggleBrowser={handleToggleBrowser}
               onOpenBrowserUrl={handleOpenBrowserUrl}

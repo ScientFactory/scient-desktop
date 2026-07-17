@@ -18,6 +18,7 @@ import {
   sanitizeRightDockStateByThreadId,
   setActivePaneInState,
   setDockOpenInState,
+  toggleRightDockInState,
   toggleSingletonPaneInState,
   updatePaneInState,
 } from "./rightDockStore.logic";
@@ -37,6 +38,7 @@ interface RightDockStore {
   closePane: (threadId: ThreadId, paneId: string) => void;
   setActivePane: (threadId: ThreadId, paneId: string) => void;
   setDockOpen: (threadId: ThreadId, open: boolean) => void;
+  toggleDock: (threadId: ThreadId) => void;
   updatePane: (
     threadId: ThreadId,
     paneId: string,
@@ -102,6 +104,8 @@ export const useRightDockStore = create<RightDockStore>()(
         commit(set, threadId, (state) => setActivePaneInState(state, paneId)),
       setDockOpen: (threadId, open) =>
         commit(set, threadId, (state) => setDockOpenInState(state, open)),
+      toggleDock: (threadId) =>
+        commit(set, threadId, (state) => toggleRightDockInState(state, randomUUID())),
       updatePane: (threadId, paneId, patch) =>
         commit(set, threadId, (state) => updatePaneInState(state, paneId, patch)),
       clearThreadDockState: (threadId) =>
