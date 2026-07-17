@@ -67,8 +67,9 @@ function ReadyProjectChoice(props: {
         <DialogHeader className="pr-10">
           <DialogTitle className="text-xl">What is a Scient project?</DialogTitle>
           <DialogDescription>
-            A Scient project adds a few portable files so PapiLab and your agents can understand and
-            continue the work.
+            A Scient project adds a small portable foundation that helps agents understand your
+            project and follow the right instructions. You can update or delete these files whenever
+            you want.
           </DialogDescription>
         </DialogHeader>
 
@@ -260,7 +261,7 @@ export function PapiLabProjectInitializationDialog(props: {
         if (!open) props.onDecision("cancel");
       }}
     >
-      <DialogPopup surface="solid" className="max-w-2xl" showCloseButton>
+      <DialogPopup surface="solid" className="max-w-2xl sm:translate-y-[10vh]" showCloseButton>
         {preview ? (
           ready ? (
             <ReadyProjectChoice
