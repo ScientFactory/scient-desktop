@@ -23,6 +23,8 @@ export const RIGHT_DOCK_PANE_KINDS = [
 export type RightDockPaneKind = (typeof RIGHT_DOCK_PANE_KINDS)[number];
 export type PullRequestInitialTab = "summary" | "timeline" | "code";
 
+export const DEFAULT_RIGHT_DOCK_PANE_KIND: RightDockPaneKind = "explorer";
+
 const RIGHT_DOCK_PANE_KIND_SET: ReadonlySet<string> = new Set(RIGHT_DOCK_PANE_KINDS);
 
 export interface RightDockPane {
@@ -316,6 +318,29 @@ export function setDockOpenInState(
     return state;
   }
   return { ...state, open };
+}
+
+// The persistent header control owns dock visibility, not any specific pane kind.
+// Closing preserves all tabs and their active selection. Reopening restores that
+// selection; the first-ever open creates Explorer so the panel is immediately useful.
+export function toggleRightDockInState(
+  state: RightDockThreadState,
+  defaultPaneId: string,
+): RightDockThreadState {
+  if (state.open) {
+    return { ...state, open: false };
+  }
+  if (state.panes.length === 0) {
+    return openPaneInState(state, {
+      paneId: defaultPaneId,
+      kind: DEFAULT_RIGHT_DOCK_PANE_KIND,
+    });
+  }
+  const activePaneId =
+    state.activePaneId && state.panes.some((pane) => pane.id === state.activePaneId)
+      ? state.activePaneId
+      : (state.panes[0]?.id ?? null);
+  return { ...state, open: true, activePaneId };
 }
 
 export function updatePaneInState(

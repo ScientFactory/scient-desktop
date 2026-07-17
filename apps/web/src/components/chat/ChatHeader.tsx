@@ -59,7 +59,6 @@ import {
 } from "../../editorViewState";
 import { cn } from "~/lib/utils";
 import { useOpenFavoriteEditorShortcut } from "~/hooks/useOpenFavoriteEditorShortcut";
-import type { RepoDiffTotals } from "~/hooks/useRepoDiffTotals";
 import { ProviderIcon } from "../ProviderIcon";
 import { ProviderUsageMenuControl } from "../ProviderUsageMenuControl";
 import { EnvironmentToggle, type EnvironmentToggleState } from "./environment/EnvironmentToggle";
@@ -84,13 +83,11 @@ interface ChatHeaderProps {
   className?: string;
   hideSidebarControls?: boolean;
   hideHandoffControls?: boolean;
-  isGitRepo: boolean;
   openInTarget: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
-  diffToggleShortcutLabel: string | null;
   handoffBadgeLabel: string | null;
   handoffActionLabel: string;
   handoffDisabled: boolean;
@@ -98,18 +95,13 @@ interface ChatHeaderProps {
   handoffBadgeSourceProvider: ProviderKind | null;
   handoffBadgeTargetProvider: ProviderKind | null;
   gitCwd: string | null;
-  diffTotals: RepoDiffTotals;
   showGitActions?: boolean;
-  showDiffToggle?: boolean;
-  diffOpen: boolean;
-  diffDisabledReason?: string | null;
   rightDockOpen?: boolean;
-  rightDockHasPanes?: boolean;
   onToggleRightDock?: () => void;
   surfaceMode?: "single" | "split";
   isSidechat?: boolean;
   // When provided, the header collapses the
-  // Open-in-editor + git-actions + diff-toggle cluster into one Environment button that
+  // Open-in-editor + git-actions cluster into one Environment button that
   // drives the Environment panel; otherwise the legacy cluster is rendered.
   environment?: EnvironmentToggleState | null;
   chatLayoutAction?: {
@@ -139,7 +131,6 @@ interface ChatHeaderProps {
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
-  onToggleDiff: () => void;
   onCreateHandoff: (targetProvider: ProviderKind) => void;
   onNavigateToThread: (threadId: ThreadId) => void;
   onRenameThread: () => void;
@@ -468,23 +459,6 @@ function EditorRailTabs(props: {
 
 export type ChatHeaderThreadIconKind = "none" | "provider" | "terminal";
 
-export type ChatHeaderRightPanelToggleMode = "diff" | "dock";
-
-export function resolveChatHeaderRightPanelToggleMode(input: {
-  isGitRepo: boolean;
-  diffOpen: boolean;
-  rightDockHasPanes: boolean;
-  canToggleRightDock: boolean;
-}): ChatHeaderRightPanelToggleMode {
-  if (
-    input.canToggleRightDock &&
-    (!input.isGitRepo || (input.rightDockHasPanes && !input.diffOpen))
-  ) {
-    return "dock";
-  }
-  return "diff";
-}
-
 export function resolveChatHeaderThreadIconKind(
   entryPoint: ThreadPrimarySurface,
   title?: string,
@@ -505,13 +479,11 @@ export const ChatHeader = memo(function ChatHeader({
   className,
   hideSidebarControls = false,
   hideHandoffControls = false,
-  isGitRepo,
   openInTarget,
   activeProjectScripts,
   preferredScriptId,
   keybindings,
   availableEditors,
-  diffToggleShortcutLabel,
   handoffBadgeLabel,
   handoffActionLabel,
   handoffDisabled,
@@ -519,13 +491,8 @@ export const ChatHeader = memo(function ChatHeader({
   handoffBadgeSourceProvider,
   handoffBadgeTargetProvider,
   gitCwd,
-  diffTotals,
   showGitActions = true,
-  showDiffToggle = true,
-  diffOpen,
-  diffDisabledReason = null,
   rightDockOpen = false,
-  rightDockHasPanes = false,
   onToggleRightDock,
   surfaceMode = "single",
   isSidechat = false,
@@ -537,7 +504,6 @@ export const ChatHeader = memo(function ChatHeader({
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
-  onToggleDiff,
   onCreateHandoff,
   onNavigateToThread,
   onRenameThread,
@@ -546,12 +512,6 @@ export const ChatHeader = memo(function ChatHeader({
   const { isMobile, state } = useSidebar();
   const headerRef = useRef<HTMLDivElement>(null);
   const [compact, setCompact] = useState(false);
-  const {
-    additions: diffAdditions,
-    deletions: diffDeletions,
-    hasChanges: showDiffTotals,
-  } = diffTotals;
-
   // Own the open-favorite editor shortcut here so it survives regardless of which editor UI
   // is mounted (the legacy Open-in button, the Environment panel's Editor section, or
   // neither while the panel is closed). The header is always present for a project thread.
@@ -590,64 +550,28 @@ export const ChatHeader = memo(function ChatHeader({
     );
   };
 
-  const rightPanelToggleMode = resolveChatHeaderRightPanelToggleMode({
-    isGitRepo,
-    diffOpen,
-    rightDockHasPanes,
-    canToggleRightDock: onToggleRightDock !== undefined,
-  });
-
-  // Keep the familiar right-sidebar control useful even outside Git repositories. When the
-  // dock already owns a file/browser/etc. pane (or Diff cannot exist), this control toggles the
-  // dock itself instead of becoming a disabled Diff-only button.
-  const rightPanelToggleControl = showDiffToggle ? (
+  // One stable contract: this control owns the route's right dock, never Diff itself.
+  // Pane-specific actions (including Diff) remain available through the dock and shortcuts.
+  const rightPanelToggleControl = onToggleRightDock ? (
     <Tooltip>
       <TooltipTrigger
         render={
           <Toggle
             className={cn(
               CHAT_HEADER_TOGGLE_CLASS_NAME,
-              showDiffTotals ? null : "!size-7 [&_svg,&_[data-slot=central-icon]]:mx-0",
+              "!size-7 [&_svg,&_[data-slot=central-icon]]:mx-0",
             )}
-            pressed={rightPanelToggleMode === "dock" ? rightDockOpen : diffOpen}
-            onPressedChange={
-              rightPanelToggleMode === "dock" && onToggleRightDock
-                ? onToggleRightDock
-                : onToggleDiff
-            }
-            aria-label={rightPanelToggleMode === "dock" ? "Toggle side panel" : "Toggle diff panel"}
+            pressed={rightDockOpen}
+            onPressedChange={onToggleRightDock}
+            aria-label="Toggle right panel"
             variant="default"
             size="xs"
-            disabled={
-              rightPanelToggleMode === "diff" &&
-              (!isGitRepo || (diffDisabledReason !== null && !diffOpen))
-            }
           >
-            {rightPanelToggleMode === "diff" && showDiffTotals ? (
-              <span className="inline-flex items-center gap-1">
-                <span className="font-system-ui text-[length:var(--app-font-size-ui-sm,11px)] sm:text-[length:var(--app-font-size-ui-xs,10px)] font-normal tracking-normal tabular-nums text-success">
-                  +{diffAdditions}
-                </span>
-                <span className="font-system-ui text-[length:var(--app-font-size-ui-sm,11px)] sm:text-[length:var(--app-font-size-ui-xs,10px)] font-normal tracking-normal tabular-nums text-destructive">
-                  -{diffDeletions}
-                </span>
-              </span>
-            ) : null}
             <SurfaceChipIcon icon={PanelRightCloseIcon} className="size-4" />
           </Toggle>
         }
       />
-      <TooltipPopup side="bottom">
-        {rightPanelToggleMode === "dock"
-          ? "Toggle side panel"
-          : !isGitRepo
-            ? "Diff panel is unavailable because this project is not a git repository."
-            : diffDisabledReason && !diffOpen
-              ? diffDisabledReason
-              : diffToggleShortcutLabel
-                ? `Toggle diff panel (${diffToggleShortcutLabel})`
-                : "Toggle diff panel"}
-      </TooltipPopup>
+      <TooltipPopup side="bottom">Toggle right panel</TooltipPopup>
     </Tooltip>
   ) : null;
 
@@ -864,10 +788,8 @@ export const ChatHeader = memo(function ChatHeader({
           </Tooltip>
         ) : null}
 
-        {/* Environment: one button consolidating Open-in-editor and git actions into the
-            Environment panel. The right-side control preserves the Diff shortcut when it is
-            applicable and otherwise reopens the thread's existing side dock. Falls back to
-            the legacy split controls when no environment is resolved. */}
+        {/* Environment consolidates project actions. The adjacent right-panel control keeps
+            one stable meaning: open or close the route-owned dock. */}
         {environment ? (
           <>
             <EnvironmentToggle environment={environment} />
