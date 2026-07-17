@@ -26,8 +26,9 @@ or mathematics profile.
 
 The kernel depends on Node filesystem and cryptography primitives, but not on
 Electron, React, the PapiLab desktop shell, Synara application modules,
-OpenCode, or SQLite. The future desktop UI and agent tools should call this
-package rather than reimplementing its rules.
+OpenCode, or SQLite. The desktop server and UI call this package through a
+narrow integration that keeps generated plans server-owned; future agent tools
+should use the same kernel rather than reimplementing its rules.
 
 ## Safety contract
 

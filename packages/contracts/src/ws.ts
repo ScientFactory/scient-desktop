@@ -80,6 +80,10 @@ import {
   ProjectStopDevServerInput,
   ProjectWriteFileInput,
 } from "./project";
+import {
+  PapiLabProjectInitializationActionInput,
+  PapiLabProjectInitializationPreviewInput,
+} from "./papilabProjectInitialization";
 import { StudioListThreadOutputsInput } from "./studio";
 import { FilesystemBrowseInput } from "./filesystem";
 import { OpenInEditorInput } from "./editor";
@@ -136,6 +140,12 @@ export const WS_METHODS = {
   projectsStopDevServer: "projects.stopDevServer",
   projectsListDevServers: "projects.listDevServers",
   subscribeProjectDevServerEvents: "projects.subscribeDevServerEvents",
+
+  // PapiLab-owned project initiation
+  papilabProjectInitializationPreview: "papilab.projectInitialization.preview",
+  papilabProjectInitializationApply: "papilab.projectInitialization.apply",
+  papilabProjectInitializationRecover: "papilab.projectInitialization.recover",
+  papilabProjectInitializationRollback: "papilab.projectInitialization.rollback",
 
   // Studio methods
   studioListThreadOutputs: "studio.listThreadOutputs",
@@ -300,6 +310,22 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.projectsStopDevServer, ProjectStopDevServerInput),
   tagRequestBody(WS_METHODS.projectsListDevServers, Schema.Struct({})),
   tagRequestBody(WS_METHODS.subscribeProjectDevServerEvents, Schema.Struct({})),
+  tagRequestBody(
+    WS_METHODS.papilabProjectInitializationPreview,
+    PapiLabProjectInitializationPreviewInput,
+  ),
+  tagRequestBody(
+    WS_METHODS.papilabProjectInitializationApply,
+    PapiLabProjectInitializationActionInput,
+  ),
+  tagRequestBody(
+    WS_METHODS.papilabProjectInitializationRecover,
+    PapiLabProjectInitializationActionInput,
+  ),
+  tagRequestBody(
+    WS_METHODS.papilabProjectInitializationRollback,
+    PapiLabProjectInitializationActionInput,
+  ),
 
   // Filesystem browse
   // Studio

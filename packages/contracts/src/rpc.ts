@@ -130,6 +130,13 @@ import {
   ProjectWriteFileResult,
 } from "./project";
 import {
+  PapiLabProjectInitializationActionInput,
+  PapiLabProjectInitializationApplyResult,
+  PapiLabProjectInitializationPreviewInput,
+  PapiLabProjectInitializationPreviewResult,
+  PapiLabProjectInitializationRollbackResult,
+} from "./papilabProjectInitialization";
+import {
   ServerConfig,
   ServerConfigStreamEvent,
   ServerDiagnosticsResult,
@@ -289,6 +296,42 @@ export const WsProjectsListDirectoriesRpc = Rpc.make(WS_METHODS.projectsListDire
   success: ProjectListDirectoriesResult,
   error: WsRpcError,
 });
+
+export const WsPapiLabProjectInitializationPreviewRpc = Rpc.make(
+  WS_METHODS.papilabProjectInitializationPreview,
+  {
+    payload: PapiLabProjectInitializationPreviewInput,
+    success: PapiLabProjectInitializationPreviewResult,
+    error: WsRpcError,
+  },
+);
+
+export const WsPapiLabProjectInitializationApplyRpc = Rpc.make(
+  WS_METHODS.papilabProjectInitializationApply,
+  {
+    payload: PapiLabProjectInitializationActionInput,
+    success: PapiLabProjectInitializationApplyResult,
+    error: WsRpcError,
+  },
+);
+
+export const WsPapiLabProjectInitializationRecoverRpc = Rpc.make(
+  WS_METHODS.papilabProjectInitializationRecover,
+  {
+    payload: PapiLabProjectInitializationActionInput,
+    success: PapiLabProjectInitializationApplyResult,
+    error: WsRpcError,
+  },
+);
+
+export const WsPapiLabProjectInitializationRollbackRpc = Rpc.make(
+  WS_METHODS.papilabProjectInitializationRollback,
+  {
+    payload: PapiLabProjectInitializationActionInput,
+    success: PapiLabProjectInitializationRollbackResult,
+    error: WsRpcError,
+  },
+);
 
 export const WsProjectsDiscoverScriptsRpc = Rpc.make(WS_METHODS.projectsDiscoverScripts, {
   payload: ProjectDiscoverScriptsInput,
@@ -894,6 +937,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsStopDevServerRpc,
   WsProjectsListDevServersRpc,
   WsSubscribeProjectDevServerEventsRpc,
+  WsPapiLabProjectInitializationPreviewRpc,
+  WsPapiLabProjectInitializationApplyRpc,
+  WsPapiLabProjectInitializationRecoverRpc,
+  WsPapiLabProjectInitializationRollbackRpc,
   WsStudioListThreadOutputsRpc,
   WsFilesystemBrowseRpc,
   WsShellOpenInEditorRpc,

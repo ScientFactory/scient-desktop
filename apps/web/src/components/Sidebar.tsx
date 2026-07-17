@@ -77,6 +77,7 @@ import {
   MAX_PINNED_PROJECTS,
   type DesktopUpdateState,
   type OrchestrationShellSnapshot,
+  type PapiLabProjectInitializationPreviewResult,
   PROVIDER_DISPLAY_NAMES,
   ProjectId,
   type ProviderKind,
@@ -200,6 +201,7 @@ import { ThreadPinToggleButton } from "./ThreadPinToggleButton";
 import { ThreadRunningSpinner } from "./ThreadRunningSpinner";
 import { RenameDialog } from "./RenameDialog";
 import { RenameThreadDialog } from "./RenameThreadDialog";
+import { PapiLabProjectInitializationDialog } from "./PapiLabProjectInitializationDialog";
 import { terminalRuntimeRegistry } from "./terminal/terminalRuntimeRegistry";
 import {
   SidebarSearchPalette,
@@ -380,6 +382,11 @@ import {
   createOrRecoverProjectFromPath,
   PROJECT_CREATE_EXISTING_SYNC_ERROR,
 } from "../lib/projectCreation";
+import {
+  preparePapiLabProjectForOpening,
+  type PapiLabProjectInitializationCompletion,
+  type PapiLabProjectInitializationDecision,
+} from "../lib/papilabProjectInitialization";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 5;
@@ -428,6 +435,7 @@ type ProjectContextMenuId =
   | "start-dev"
   | "stop-dev"
   | "open-dev-server"
+  | "papilab-project-setup"
   | "rename"
   | "toggle-pin"
   | "archive-threads"
@@ -1579,7 +1587,14 @@ export default function Sidebar() {
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [showManualPathInput, setShowManualPathInput] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
+  const isAddingProjectRef = useRef(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
+  const [projectInitializationPreview, setProjectInitializationPreview] =
+    useState<PapiLabProjectInitializationPreviewResult | null>(null);
+  const [projectInitializationError, setProjectInitializationError] = useState<string | null>(null);
+  const projectInitializationDecisionRef = useRef<
+    ((decision: PapiLabProjectInitializationDecision) => void) | null
+  >(null);
   const addProjectErrorMeaning = useMemo(
     () => (addProjectError ? describeAddProjectError(addProjectError) : null),
     [addProjectError],
@@ -2622,13 +2637,74 @@ export default function Sidebar() {
     [reorderWorkspace, workspacePages],
   );
 
+  const requestProjectInitializationDecision = useCallback(
+    (
+      preview: PapiLabProjectInitializationPreviewResult,
+      error: string | null,
+    ): Promise<PapiLabProjectInitializationDecision> =>
+      new Promise((resolve) => {
+        projectInitializationDecisionRef.current?.("cancel");
+        projectInitializationDecisionRef.current = resolve;
+        setProjectInitializationError(error);
+        setProjectInitializationPreview(preview);
+      }),
+    [],
+  );
+
+  const resolveProjectInitializationDecision = useCallback(
+    (decision: PapiLabProjectInitializationDecision) => {
+      const resolve = projectInitializationDecisionRef.current;
+      if (!resolve) return;
+      projectInitializationDecisionRef.current = null;
+      setProjectInitializationPreview(null);
+      setProjectInitializationError(null);
+      resolve(decision);
+    },
+    [],
+  );
+
+  useEffect(
+    () => () => {
+      projectInitializationDecisionRef.current?.("cancel");
+      projectInitializationDecisionRef.current = null;
+    },
+    [],
+  );
+
+  const notifyProjectInitializationCompletion = useCallback(
+    (completion: PapiLabProjectInitializationCompletion) => {
+      if (completion.kind === "rolled-back") {
+        toastManager.add({
+          type: completion.result.complete ? "info" : "warning",
+          title: completion.result.complete
+            ? "Initialization rolled back"
+            : "Some changed files were preserved",
+          description: completion.result.complete
+            ? "The folder is back to its state before this initialization attempt."
+            : completion.result.preserved.join(", "),
+        });
+        return;
+      }
+      toastManager.add({
+        type: "success",
+        title:
+          completion.kind === "recovered"
+            ? "PapiLab project recovered"
+            : "PapiLab project initialized",
+        description: "The portable project foundation is ready.",
+      });
+    },
+    [],
+  );
+
   const addProjectFromPath = useCallback(
     async (rawCwd: string, options: { createIfMissing?: boolean } = {}) => {
       const cwd = rawCwd.trim();
-      if (!cwd || isAddingProject) return;
+      if (!cwd || isAddingProjectRef.current) return;
       const api = readNativeApi();
       if (!api) return;
 
+      isAddingProjectRef.current = true;
       setIsAddingProject(true);
       const finishAddingProject = () => {
         setIsAddingProject(false);
@@ -2638,6 +2714,17 @@ export default function Sidebar() {
       };
 
       try {
+        const preparation = await preparePapiLabProjectForOpening({
+          api,
+          root: cwd,
+          requestDecision: requestProjectInitializationDecision,
+          onCompletion: notifyProjectInitializationCompletion,
+        });
+        if (preparation === "cancel") {
+          setIsAddingProject(false);
+          return;
+        }
+
         const existing = findWorkspaceRootMatch(projects, cwd, (project) => project.cwd);
         const existingRecovery = await recoverExistingAddProjectTarget({
           existingProjectId: existing?.id,
@@ -2708,12 +2795,14 @@ export default function Sidebar() {
           error instanceof Error ? error.message : "An error occurred while adding the project.";
         setIsAddingProject(false);
         throw error instanceof Error ? error : new Error(description);
+      } finally {
+        isAddingProjectRef.current = false;
+        setIsAddingProject(false);
       }
     },
     [
       appSettings.defaultThreadEnvMode,
       handleNewThread,
-      isAddingProject,
       projects,
       recoverExistingProjectFromServer,
       recoverExistingProjectByWorkspaceRootFromServer,
@@ -2721,6 +2810,8 @@ export default function Sidebar() {
       openExistingProjectFromSnapshot,
       setProjectExpanded,
       syncServerShellSnapshot,
+      requestProjectInitializationDecision,
+      notifyProjectInitializationCompletion,
     ],
   );
 
@@ -4112,6 +4203,30 @@ export default function Sidebar() {
         await handleOpenProjectRunServer(projectId);
         return;
       }
+      if (clicked === "papilab-project-setup") {
+        try {
+          const result = await preparePapiLabProjectForOpening({
+            api,
+            root: project.cwd,
+            requestDecision: requestProjectInitializationDecision,
+            onCompletion: notifyProjectInitializationCompletion,
+          });
+          if (result === "already-initialized") {
+            toastManager.add({
+              type: "info",
+              title: "PapiLab project is ready",
+              description: "This folder already has a compatible PapiLab project foundation.",
+            });
+          }
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Unable to inspect PapiLab project setup",
+            description: error instanceof Error ? error.message : "The setup check failed.",
+          });
+        }
+        return;
+      }
       if (clicked === "rename") {
         setRenameProjectDialogId(projectId);
         return;
@@ -4194,7 +4309,9 @@ export default function Sidebar() {
       handleOpenProjectRunServer,
       handleStopProjectRun,
       navigate,
+      notifyProjectInitializationCompletion,
       projectById,
+      requestProjectInitializationDecision,
       removeDeletedProjectFromClientState,
       sidebarThreads,
       toggleProjectPinned,
@@ -7473,6 +7590,19 @@ export default function Sidebar() {
               <MenuItem
                 className={PROJECT_CONTEXT_MENU_ITEM_CLASS_NAME}
                 onClick={() =>
+                  void handleProjectContextMenuAction(
+                    projectContextMenuState.projectId,
+                    "papilab-project-setup",
+                  )
+                }
+              >
+                <ProjectContextMenuIcon icon={CheckCircle2Icon} />
+                <span>PapiLab project setup</span>
+              </MenuItem>
+              <MenuSeparator />
+              <MenuItem
+                className={PROJECT_CONTEXT_MENU_ITEM_CLASS_NAME}
+                onClick={() =>
                   void handleProjectContextMenuAction(projectContextMenuState.projectId, "rename")
                 }
               >
@@ -7600,6 +7730,12 @@ export default function Sidebar() {
           </DialogFooter>
         </DialogPopup>
       </Dialog>
+
+      <PapiLabProjectInitializationDialog
+        preview={projectInitializationPreview}
+        error={projectInitializationError}
+        onDecision={resolveProjectInitializationDecision}
+      />
 
       <RenameThreadDialog
         open={renameDialogThreadId !== null}

@@ -105,6 +105,13 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
+import type {
+  PapiLabProjectInitializationActionInput,
+  PapiLabProjectInitializationApplyResult,
+  PapiLabProjectInitializationPreviewInput,
+  PapiLabProjectInitializationPreviewResult,
+  PapiLabProjectInitializationRollbackResult,
+} from "./papilabProjectInitialization";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem";
 import type { StudioListThreadOutputsInput, StudioListThreadOutputsResult } from "./studio";
 import type {
@@ -522,6 +529,20 @@ export interface NativeApi {
     stopDevServer: (input: ProjectStopDevServerInput) => Promise<ProjectStopDevServerResult>;
     listDevServers: () => Promise<ProjectListDevServersResult>;
     onDevServerEvent: (callback: (event: ProjectDevServerEvent) => void) => () => void;
+  };
+  papilabProjectInitialization: {
+    preview: (
+      input: PapiLabProjectInitializationPreviewInput,
+    ) => Promise<PapiLabProjectInitializationPreviewResult>;
+    apply: (
+      input: PapiLabProjectInitializationActionInput,
+    ) => Promise<PapiLabProjectInitializationApplyResult>;
+    recover: (
+      input: PapiLabProjectInitializationActionInput,
+    ) => Promise<PapiLabProjectInitializationApplyResult>;
+    rollback: (
+      input: PapiLabProjectInitializationActionInput,
+    ) => Promise<PapiLabProjectInitializationRollbackResult>;
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;

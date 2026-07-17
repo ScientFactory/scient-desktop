@@ -56,6 +56,7 @@
         "@effect/platform-node": "catalog:",
         "@effect/sql-sqlite-bun": "catalog:",
         "@opencode-ai/sdk": "^1.15.13",
+        "@papilab/project-init": "workspace:*",
         "@pierre/diffs": "^1.2.12",
         "@xterm/headless": "^6.0.0",
         "effect": "catalog:",

@@ -505,6 +505,13 @@ export function createWsNativeApi(): NativeApi {
         };
       },
     },
+    papilabProjectInitialization: {
+      preview: (input) => transport.request(WS_METHODS.papilabProjectInitializationPreview, input),
+      apply: (input) => transport.request(WS_METHODS.papilabProjectInitializationApply, input),
+      recover: (input) => transport.request(WS_METHODS.papilabProjectInitializationRecover, input),
+      rollback: (input) =>
+        transport.request(WS_METHODS.papilabProjectInitializationRollback, input),
+    },
     filesystem: {
       browse: (input) => transport.request(WS_METHODS.filesystemBrowse, input),
     },
