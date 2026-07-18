@@ -806,7 +806,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const codexOptions = readCodexProviderOptions(input);
       const codexBinaryPath = codexOptions.binaryPath ?? "codex";
       const codexHomePath = codexOptions.homePath;
-      this.assertSupportedCodexCliVersion({
+      await this.assertSupportedCodexCliVersion({
         binaryPath: codexBinaryPath,
         cwd: resolvedCwd,
         ...(codexHomePath ? { homePath: codexHomePath } : {}),
@@ -814,7 +814,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const child = spawnCodexAppServer({
         binaryPath: codexBinaryPath,
         cwd: resolvedCwd,
-        env: buildCodexProcessEnv({
+        env: await buildCodexProcessEnv({
           ...(codexHomePath ? { homePath: codexHomePath } : {}),
         }),
       });
@@ -1428,7 +1428,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       });
       const codexBinaryPath = codexOptions.binaryPath ?? "codex";
       const codexHomePath = codexOptions.homePath;
-      this.assertSupportedCodexCliVersion({
+      await this.assertSupportedCodexCliVersion({
         binaryPath: codexBinaryPath,
         cwd: resolvedCwd,
         ...(codexHomePath ? { homePath: codexHomePath } : {}),
@@ -1436,7 +1436,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       const child = spawnCodexAppServer({
         binaryPath: codexBinaryPath,
         cwd: resolvedCwd,
-        env: buildCodexProcessEnv({
+        env: await buildCodexProcessEnv({
           ...(codexHomePath ? { homePath: codexHomePath } : {}),
         }),
       });
@@ -2013,14 +2013,14 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
 
     const now = new Date().toISOString();
-    this.assertSupportedCodexCliVersion({
+    await this.assertSupportedCodexCliVersion({
       binaryPath: "codex",
       cwd: normalizedCwd,
     });
     const child = spawnCodexAppServer({
       binaryPath: "codex",
       cwd: normalizedCwd,
-      env: buildCodexProcessEnv(),
+      env: await buildCodexProcessEnv(),
     });
     const output = readline.createInterface({ input: child.stdout });
     const context: CodexSessionContext = {
@@ -2665,12 +2665,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     });
   }
 
-  private assertSupportedCodexCliVersion(input: {
+  private async assertSupportedCodexCliVersion(input: {
     readonly binaryPath: string;
     readonly cwd: string;
     readonly homePath?: string;
-  }): void {
-    assertSupportedCodexCliVersion(input);
+  }): Promise<void> {
+    await assertSupportedCodexCliVersion(input);
   }
 
   private updateSession(context: CodexSessionContext, updates: Partial<ProviderSession>): void {
@@ -3393,12 +3393,12 @@ function readCodexProviderOptions(input: CodexAppServerStartSessionInput): {
   };
 }
 
-function assertSupportedCodexCliVersion(input: {
+async function assertSupportedCodexCliVersion(input: {
   readonly binaryPath: string;
   readonly cwd: string;
   readonly homePath?: string;
-}): void {
-  const env = buildCodexProcessEnv({
+}): Promise<void> {
+  const env = await buildCodexProcessEnv({
     ...(input.homePath ? { homePath: input.homePath } : {}),
   });
   const prepared = prepareWindowsSafeProcess(input.binaryPath, ["--version"], {

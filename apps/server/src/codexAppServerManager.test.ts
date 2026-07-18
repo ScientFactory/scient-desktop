@@ -363,7 +363,7 @@ describe("classifyCodexStderrLine", () => {
 });
 
 describe("buildCodexProcessEnv", () => {
-  it("hydrates the active custom provider env_key from the effective CODEX_HOME", () => {
+  it("hydrates the active custom provider env_key from the effective CODEX_HOME", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "synara-codex-env-"));
     try {
       writeFileSync(
@@ -383,7 +383,7 @@ describe("buildCodexProcessEnv", () => {
         MY_COMPANY_PROXY_KEY: "proxy-secret",
       }));
 
-      const env = buildCodexProcessEnv({
+      const env = await buildCodexProcessEnv({
         env: {
           SHELL: "/bin/zsh",
           PATH: "/usr/bin",
@@ -406,10 +406,10 @@ describe("buildCodexProcessEnv", () => {
     }
   });
 
-  it("does not read shell env when the provider key is already present", () => {
+  it("does not read shell env when the provider key is already present", async () => {
     const readEnvironment = vi.fn();
 
-    const env = buildCodexProcessEnv({
+    const env = await buildCodexProcessEnv({
       env: {
         SHELL: "/bin/zsh",
         PATH: "/usr/bin",
@@ -424,8 +424,8 @@ describe("buildCodexProcessEnv", () => {
     expect(env.AZURE_OPENAI_API_KEY).toBe("existing-secret");
   });
 
-  it("allows the configured desktop browser-use socket in the Codex sandbox", () => {
-    const env = buildCodexProcessEnv({
+  it("allows the configured desktop browser-use socket in the Codex sandbox", async () => {
+    const env = await buildCodexProcessEnv({
       env: {
         SYNARA_BROWSER_USE_PIPE_PATH: "/tmp/codex-browser-use/synara.sock",
         NODE_REPL_SANDBOX_ALLOWED_UNIX_SOCKETS: "/tmp/existing.sock",
@@ -447,7 +447,7 @@ describe("buildCodexProcessEnv", () => {
     ).toBe("/tmp/codex-browser-use/synara.sock");
   });
 
-  it("applies durable section suppressions inside Synara's Codex overlay", () => {
+  it("applies durable section suppressions inside Synara's Codex overlay", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "synara-codex-env-"));
     const runtimeHome = mkdtempSync(path.join(os.tmpdir(), "synara-runtime-home-"));
     try {
@@ -474,7 +474,7 @@ describe("buildCodexProcessEnv", () => {
         "utf8",
       );
 
-      const env = buildCodexProcessEnv({
+      const env = await buildCodexProcessEnv({
         env: { SCIENT_HOME: runtimeHome },
         homePath: tempDir,
         platform: "darwin",
@@ -497,7 +497,7 @@ describe("buildCodexProcessEnv", () => {
     }
   });
 
-  it("seeds markerless suppressions for conflicting local browser plugins", () => {
+  it("seeds markerless suppressions for conflicting local browser plugins", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "synara-codex-env-"));
     const runtimeHome = mkdtempSync(path.join(os.tmpdir(), "synara-runtime-home-"));
     try {
@@ -511,7 +511,7 @@ describe("buildCodexProcessEnv", () => {
       );
 
       const overlayHome = path.join(runtimeHome, "codex-home-overlay");
-      const env = buildCodexProcessEnv({
+      const env = await buildCodexProcessEnv({
         env: { SCIENT_HOME: runtimeHome },
         homePath: tempDir,
         platform: "darwin",
@@ -534,7 +534,7 @@ describe("buildCodexProcessEnv", () => {
     }
   });
 
-  it("preserves a recorded suppression after its plugin disappears from source config", () => {
+  it("preserves a recorded suppression after its plugin disappears from source config", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "synara-codex-env-"));
     const runtimeHome = mkdtempSync(path.join(os.tmpdir(), "synara-runtime-home-"));
     try {
@@ -551,7 +551,7 @@ describe("buildCodexProcessEnv", () => {
         "utf8",
       );
 
-      const env = buildCodexProcessEnv({
+      const env = await buildCodexProcessEnv({
         env: { SCIENT_HOME: runtimeHome },
         homePath: tempDir,
         platform: "darwin",
@@ -573,7 +573,7 @@ describe("buildCodexProcessEnv", () => {
     }
   });
 
-  it("repairs stale real files in Synara's Codex home overlay", () => {
+  it("repairs stale real files in Synara's Codex home overlay", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "synara-codex-env-"));
     const runtimeHome = mkdtempSync(path.join(os.tmpdir(), "synara-runtime-home-"));
     try {
@@ -586,7 +586,7 @@ describe("buildCodexProcessEnv", () => {
       mkdirSync(overlayHome, { recursive: true });
       writeFileSync(overlayMemoryPath, "stale-overlay-db", "utf8");
 
-      const env = buildCodexProcessEnv({
+      const env = await buildCodexProcessEnv({
         env: { SCIENT_HOME: runtimeHome },
         homePath: tempDir,
         platform: "darwin",
@@ -601,7 +601,7 @@ describe("buildCodexProcessEnv", () => {
     }
   });
 
-  it("repairs stale auth.json files in Synara's Codex home overlay", () => {
+  it("repairs stale auth.json files in Synara's Codex home overlay", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "synara-codex-env-"));
     const runtimeHome = mkdtempSync(path.join(os.tmpdir(), "synara-runtime-home-"));
     try {
@@ -614,7 +614,7 @@ describe("buildCodexProcessEnv", () => {
       mkdirSync(overlayHome, { recursive: true });
       writeFileSync(overlayAuthPath, '{"tokens":{"access_token":"stale"}}', "utf8");
 
-      const env = buildCodexProcessEnv({
+      const env = await buildCodexProcessEnv({
         env: { SCIENT_HOME: runtimeHome },
         homePath: tempDir,
         platform: "darwin",
@@ -630,7 +630,7 @@ describe("buildCodexProcessEnv", () => {
     }
   });
 
-  it("preserves real generated image directories in Synara's Codex home overlay", () => {
+  it("preserves real generated image directories in Synara's Codex home overlay", async () => {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "synara-codex-env-"));
     const runtimeHome = mkdtempSync(path.join(os.tmpdir(), "synara-runtime-home-"));
     try {
@@ -645,7 +645,7 @@ describe("buildCodexProcessEnv", () => {
       const overlayImagePath = path.join(overlayGeneratedImagesDir, "overlay.png");
       writeFileSync(overlayImagePath, "overlay-image", "utf8");
 
-      const env = buildCodexProcessEnv({
+      const env = await buildCodexProcessEnv({
         env: { SCIENT_HOME: runtimeHome },
         homePath: tempDir,
         platform: "darwin",
