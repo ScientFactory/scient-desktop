@@ -24,6 +24,7 @@ jobs:
       - name: Compare official source with reviewed checkpoint
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
