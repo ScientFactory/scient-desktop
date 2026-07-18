@@ -1,9 +1,11 @@
 #!/usr/bin/env bun
 // FILE: scient-upstream-check.ts
-// Purpose: Verifies the Scient desktop fork topology and current deterministic source baseline.
+// Purpose: Verifies Scient desktop source ownership, upstream review state, and intake readiness.
 // Layer: Maintainer verification script
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 import {
   SCIENT_APP_NAME,
@@ -12,8 +14,36 @@ import {
 } from "@synara/shared/desktopIdentity";
 
 const EXPECTED_ORIGIN_REPOSITORY = "ScientFactory/scient-desktop";
-const EXPECTED_UPSTREAM_REPOSITORY = "emanuele-web04/synara";
-const UPSTREAM_BRANCH = "upstream/main";
+const EXPECTED_ORIGIN_BRANCH = "main";
+const EXPECTED_UPSTREAM_REPOSITORY = "Emanuele-web04/synara";
+const EXPECTED_UPSTREAM_BRANCH = "main";
+const UPSTREAM_BRANCH = `upstream/${EXPECTED_UPSTREAM_BRANCH}`;
+const UPSTREAM_STATE_PATH = "upstream-state.json";
+
+const UPDATE_MODES = new Set([
+  "no-upstream",
+  "version-bump",
+  "adapter-maintained",
+  "thin-fork-merge",
+  "divergent-cherry-pick",
+  "reference-only",
+  "deferred",
+]);
+
+export interface UpstreamState {
+  readonly schemaVersion: 1;
+  readonly ownedRepository: string;
+  readonly ownedDefaultBranch: string;
+  readonly officialRepository: string;
+  readonly officialDefaultBranch: string;
+  readonly updateMode: string;
+  readonly reviewedThrough: string;
+  readonly reviewedAt: string;
+  readonly integrationBase: string;
+  readonly reviewRecord: string;
+}
+
+export type VerificationMode = "report" | "review" | "intake";
 
 interface CommandFailure extends Error {
   readonly stderr?: string | Buffer;
@@ -67,11 +97,61 @@ export function shouldFetchUpstream(args: readonly string[]): boolean {
   return !args.includes("--no-fetch");
 }
 
-export function assertCurrentUpstream(behind: string, args: readonly string[]): void {
-  if (behind === "0" || args.includes("--allow-behind")) return;
-  throw new Error(
-    `Scient desktop is ${behind} commit(s) behind ${UPSTREAM_BRANCH}. Reconcile upstream before acceptance, or use --allow-behind only for diagnostics.`,
-  );
+export function resolveVerificationMode(args: readonly string[]): VerificationMode {
+  const review = args.includes("--review-check");
+  const intake = args.includes("--intake") || args.includes("--checks");
+  if (review && intake) {
+    throw new Error("Choose either --review-check or --intake, not both.");
+  }
+  if (intake) return "intake";
+  if (review) return "review";
+  return "report";
+}
+
+export function parseUpstreamState(value: unknown): UpstreamState {
+  if (!isRecord(value)) {
+    throw new Error(`${UPSTREAM_STATE_PATH} must contain a JSON object.`);
+  }
+  if (value.schemaVersion !== 1) {
+    throw new Error(`${UPSTREAM_STATE_PATH} schemaVersion must be 1.`);
+  }
+  const state = {
+    schemaVersion: 1 as const,
+    ownedRepository: requireString(value, "ownedRepository"),
+    ownedDefaultBranch: requireString(value, "ownedDefaultBranch"),
+    officialRepository: requireString(value, "officialRepository"),
+    officialDefaultBranch: requireString(value, "officialDefaultBranch"),
+    updateMode: requireString(value, "updateMode"),
+    reviewedThrough: requireString(value, "reviewedThrough"),
+    reviewedAt: requireString(value, "reviewedAt"),
+    integrationBase: requireString(value, "integrationBase"),
+    reviewRecord: requireString(value, "reviewRecord"),
+  };
+  if (!UPDATE_MODES.has(state.updateMode)) {
+    throw new Error(`${UPSTREAM_STATE_PATH} has unsupported updateMode ${state.updateMode}.`);
+  }
+  for (const [key, commit] of [
+    ["reviewedThrough", state.reviewedThrough],
+    ["integrationBase", state.integrationBase],
+  ] as const) {
+    if (!/^[0-9a-f]{40}$/.test(commit)) {
+      throw new Error(`${UPSTREAM_STATE_PATH} field ${key} must be a full lowercase commit SHA.`);
+    }
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(state.reviewedAt)) {
+    throw new Error(`${UPSTREAM_STATE_PATH} field reviewedAt must use YYYY-MM-DD.`);
+  }
+  return state;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function requireString(value: Record<string, unknown>, key: string): string {
+  const field = value[key];
+  if (typeof field === "string" && field) return field;
+  throw new Error(`${UPSTREAM_STATE_PATH} field ${key} must be a non-empty string.`);
 }
 
 function assertGitHubRemote(label: string, remote: string, expectedRepository: string): void {
@@ -83,10 +163,45 @@ function assertGitHubRemote(label: string, remote: string, expectedRepository: s
   }
 }
 
+function assertStateIdentity(state: UpstreamState): void {
+  if (state.ownedRepository !== EXPECTED_ORIGIN_REPOSITORY) {
+    throw new Error(
+      `${UPSTREAM_STATE_PATH} field ownedRepository must be ${EXPECTED_ORIGIN_REPOSITORY}.`,
+    );
+  }
+  if (state.ownedDefaultBranch !== EXPECTED_ORIGIN_BRANCH) {
+    throw new Error(
+      `${UPSTREAM_STATE_PATH} field ownedDefaultBranch must be ${EXPECTED_ORIGIN_BRANCH}.`,
+    );
+  }
+  if (state.officialRepository !== EXPECTED_UPSTREAM_REPOSITORY) {
+    throw new Error(
+      `${UPSTREAM_STATE_PATH} field officialRepository must be ${EXPECTED_UPSTREAM_REPOSITORY}.`,
+    );
+  }
+  if (state.officialDefaultBranch !== EXPECTED_UPSTREAM_BRANCH) {
+    throw new Error(
+      `${UPSTREAM_STATE_PATH} field officialDefaultBranch must be ${EXPECTED_UPSTREAM_BRANCH}.`,
+    );
+  }
+}
+
+function assertAncestor(ancestor: string, descendant: string, label: string): void {
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", ancestor, descendant], {
+      stdio: "ignore",
+    });
+  } catch (error) {
+    throw new Error(`${label}: ${ancestor} is not an ancestor of ${descendant}.`, { cause: error });
+  }
+}
+
 function main(): void {
+  const args = process.argv.slice(2);
+  const mode = resolveVerificationMode(args);
   const initialStatus = run("git", ["status", "--porcelain"]);
-  if (initialStatus) {
-    throw new Error("Run the Scient desktop source check from a clean worktree.");
+  if (mode === "intake" && initialStatus) {
+    throw new Error("Run Scient desktop intake verification from a clean worktree.");
   }
 
   assertGitHubRemote(
@@ -111,12 +226,19 @@ function main(): void {
     );
   }
 
-  const args = process.argv.slice(2);
   const fetched = shouldFetchUpstream(args);
   if (fetched) {
     runVisible("git", ["fetch", "--prune", "upstream"]);
   }
-  run("git", ["rev-parse", "--verify", UPSTREAM_BRANCH]);
+  const upstreamTip = run("git", ["rev-parse", "--verify", UPSTREAM_BRANCH]);
+  const state = parseUpstreamState(
+    JSON.parse(readFileSync(path.join(process.cwd(), UPSTREAM_STATE_PATH), "utf8")),
+  );
+  assertStateIdentity(state);
+  run("git", ["cat-file", "-e", `${state.reviewedThrough}^{commit}`]);
+  run("git", ["cat-file", "-e", `${state.integrationBase}^{commit}`]);
+  assertAncestor(state.reviewedThrough, upstreamTip, "Invalid upstream review checkpoint");
+  assertAncestor(state.integrationBase, "HEAD", "Invalid integrated upstream base");
 
   const [ahead = "unknown", behind = "unknown"] = run("git", [
     "rev-list",
@@ -124,7 +246,9 @@ function main(): void {
     "--count",
     `HEAD...${UPSTREAM_BRANCH}`,
   ]).split(/\s+/);
-  assertCurrentUpstream(behind, args);
+  const unreviewedCommits = Number(
+    run("git", ["rev-list", "--count", `${state.reviewedThrough}..${upstreamTip}`]),
+  );
 
   if (SCIENT_APP_NAME !== "Scient" || SCIENT_DESKTOP_ORIGIN !== "scient://app") {
     throw new Error("Scient desktop identity invariant failed.");
@@ -135,9 +259,8 @@ function main(): void {
     );
   }
 
-  const sourceChecks = args.includes("--checks");
-  if (sourceChecks) {
-    for (const args of [
+  if (mode === "intake") {
+    for (const commandArgs of [
       ["run", "brand:check"],
       ["run", "fmt:check"],
       ["run", "lint"],
@@ -146,7 +269,7 @@ function main(): void {
       ["run", "build:desktop"],
       ["run", "release:smoke"],
     ] as const) {
-      runVisible("bun", args);
+      runVisible("bun", commandArgs);
     }
   }
 
@@ -160,14 +283,25 @@ function main(): void {
       {
         repository: EXPECTED_ORIGIN_REPOSITORY,
         head: run("git", ["rev-parse", "HEAD"]),
-        upstream: run("git", ["rev-parse", UPSTREAM_BRANCH]),
+        upstream: upstreamTip,
         ahead,
         behind,
         upstreamFetched: fetched,
+        verificationMode: mode,
+        worktreeClean: !initialStatus,
+        review: {
+          reviewedThrough: state.reviewedThrough,
+          reviewedAt: state.reviewedAt,
+          reviewRecord: state.reviewRecord,
+          current: unreviewedCommits === 0,
+          unreviewedCommits,
+        },
+        integrationBase: state.integrationBase,
+        updateMode: state.updateMode,
         identity: SCIENT_APP_NAME,
         origin: SCIENT_DESKTOP_ORIGIN,
         automaticUpdatesEnabled: SCIENT_DESKTOP_UPDATES_ENABLED,
-        deterministicSourceChecksRun: sourceChecks,
+        deterministicSourceChecksRun: mode === "intake",
         crossRepositoryScientAgentSmokeRun: false,
       },
       null,

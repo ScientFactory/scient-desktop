@@ -1,0 +1,92 @@
+name: Scient upstream monitor
+
+on:
+  schedule:
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: scient-desktop-upstream-monitor
+  cancel-in-progress: true
+
+jobs:
+  monitor:
+    name: Detect unreviewed Synara changes
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout Scient desktop
+        uses: actions/checkout@v6
+
+      - name: Compare official source with reviewed checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          upstream_repository="$(jq -r .officialRepository upstream-state.json)"
+          upstream_branch="$(jq -r .officialDefaultBranch upstream-state.json)"
+          reviewed_through="$(jq -r .reviewedThrough upstream-state.json)"
+          reviewed_at="$(jq -r .reviewedAt upstream-state.json)"
+          title="[Upstream review] ${upstream_repository}"
+
+          git remote add upstream "https://github.com/${upstream_repository}.git"
+          git remote set-url --push upstream DISABLED
+          git fetch --prune upstream "$upstream_branch"
+          upstream_tip="$(git rev-parse "upstream/${upstream_branch}")"
+
+          if ! git merge-base --is-ancestor "$reviewed_through" "$upstream_tip"; then
+            echo "Reviewed checkpoint $reviewed_through is not on upstream/${upstream_branch}." >&2
+            exit 1
+          fi
+
+          gh label create upstream-review --color 1D76DB --description "Official source changes awaiting review" --force
+          issue_number="$({ gh issue list --state open --label upstream-review --limit 100 --json number,title || true; } | jq -r --arg title "$title" '.[] | select(.title == $title) | .number' | head -1)"
+
+          if [[ "$upstream_tip" == "$reviewed_through" ]]; then
+            if [[ -n "$issue_number" ]]; then
+              gh issue comment "$issue_number" --body "The committed review checkpoint now matches official upstream at \`${upstream_tip}\`. Closing this detection issue."
+              gh issue close "$issue_number"
+            fi
+            exit 0
+          fi
+
+          commit_count="$(git rev-list --count "${reviewed_through}..${upstream_tip}")"
+          git log --format='- `%h` %s' --no-merges "${reviewed_through}..${upstream_tip}" > /tmp/upstream-digest.md
+          security_pattern='security|vulnerab|CVE-|auth|credential|token|permission|sandbox|escape|injection|path traversal|secret'
+          security_signal=false
+          if grep -Eiq "$security_pattern" /tmp/upstream-digest.md; then
+            security_signal=true
+            gh label create security-review --color B60205 --description "Security-relevant upstream signal" --force
+          fi
+
+          {
+            echo "Official upstream has moved beyond Scient's reviewed checkpoint. This issue is detection only; it must not advance pins or land code."
+            echo
+            echo "- Official source: \`${upstream_repository}\`, branch \`${upstream_branch}\`"
+            echo "- Observed upstream tip: \`${upstream_tip}\`"
+            echo "- Reviewed through: \`${reviewed_through}\` on ${reviewed_at}"
+            echo "- Unreviewed commits: ${commit_count}"
+            echo "- Security-looking subject detected: \`${security_signal}\`"
+            echo
+            echo "## Commit digest"
+            cat /tmp/upstream-digest.md
+            echo
+            echo "Follow the upstream-intake playbook in the private Scient project repository. Review may adopt, adapt, reimplement, defer, or reject every change."
+          } > /tmp/upstream-issue.md
+
+          if [[ -n "$issue_number" ]]; then
+            gh issue edit "$issue_number" --body-file /tmp/upstream-issue.md
+          else
+            issue_number="$(gh issue create --title "$title" --label upstream-review --body-file /tmp/upstream-issue.md)"
+          fi
+
+          if [[ "$security_signal" == "true" ]]; then
+            gh issue edit "$issue_number" --add-label security-review
+          else
+            gh issue edit "$issue_number" --remove-label security-review 2>/dev/null || true
+          fi
