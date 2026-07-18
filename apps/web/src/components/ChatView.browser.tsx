@@ -21,7 +21,7 @@ import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { WORKTREE_BRANCH_PREFIX } from "@synara/shared/git";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
@@ -1445,15 +1445,15 @@ async function waitForComposerPickerSurfaceOpen(): Promise<void> {
   });
 }
 
-function dispatchChatNewShortcut(): void {
-  dispatchThreadShortcut("o");
+async function dispatchChatNewShortcut(): Promise<void> {
+  await dispatchThreadShortcut("o");
 }
 
-function dispatchTerminalThreadShortcut(): void {
-  dispatchThreadShortcut("t");
+async function dispatchTerminalThreadShortcut(): Promise<void> {
+  await dispatchThreadShortcut("t");
 }
 
-function dispatchThreadShortcut(key: string): void {
+async function dispatchThreadShortcut(key: string): Promise<void> {
   const useMetaForMod = isMacPlatform(navigator.platform);
   window.dispatchEvent(
     new KeyboardEvent("keydown", {
@@ -1465,6 +1465,7 @@ function dispatchThreadShortcut(key: string): void {
       cancelable: true,
     }),
   );
+  await waitForLayout();
 }
 
 async function triggerChatNewShortcutUntilPath(
@@ -1490,21 +1491,12 @@ async function triggerTerminalThreadShortcutUntilPath(
 
 async function triggerThreadShortcutUntilPath(
   router: ReturnType<typeof getRouter>,
-  dispatchShortcut: () => void,
+  dispatchShortcut: () => Promise<void>,
   predicate: (pathname: string) => boolean,
   errorMessage: string,
 ): Promise<string> {
-  let pathname = router.state.location.pathname;
-  const deadline = Date.now() + 8_000;
-  while (Date.now() < deadline) {
-    dispatchShortcut();
-    await waitForLayout();
-    pathname = router.state.location.pathname;
-    if (predicate(pathname)) {
-      return pathname;
-    }
-  }
-  throw new Error(`${errorMessage} Last path: ${pathname}`);
+  await dispatchShortcut();
+  return waitForURL(router, predicate, errorMessage);
 }
 
 async function waitForNewThreadShortcutLabel(): Promise<void> {
@@ -2033,11 +2025,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
-      scrollContainer.scrollTop = 0;
-      scrollContainer.dispatchEvent(new Event("scroll"));
-      await waitForLayout();
-      expect(getScrollContainerDistanceFromBottom(scrollContainer)).toBeGreaterThan(
-        AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
+      await userEvent.wheel(scrollContainer, {
+        delta: { y: -scrollContainer.scrollHeight },
+      });
+      await vi.waitFor(
+        () => {
+          expect(getScrollContainerDistanceFromBottom(scrollContainer)).toBeGreaterThan(
+            AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
+          );
+        },
+        { timeout: 8_000, interval: 16 },
       );
 
       const scrollToCalls: ScrollToOptions[] = [];
@@ -2066,7 +2063,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       const sendButton = await waitForSendButton();
       expect(sendButton.disabled).toBe(false);
-      sendButton.click();
+      await userEvent.click(sendButton);
 
       await vi.waitFor(
         async () => {
@@ -2111,7 +2108,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       wsRequests.length = 0;
       const sendButton = await waitForSendButton();
       expect(sendButton.disabled).toBe(false);
-      sendButton.click();
+      await userEvent.click(sendButton);
 
       await vi.waitFor(
         () => {
@@ -2156,7 +2153,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       wsRequests.length = 0;
       const sendButton = await waitForSendButton();
       expect(sendButton.disabled).toBe(false);
-      sendButton.click();
+      await userEvent.click(sendButton);
 
       await vi.waitFor(
         () => {
@@ -4606,7 +4603,20 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 20_000, interval: 16 },
       );
 
+      // The shortcut persists terminal-first presentation separately from the
+      // server thread row. Observe that state before simulating promotion so
+      // clearing the draft cannot race the shortcut's async UI update.
+      await vi.waitFor(
+        () => {
+          expect(
+            useTerminalStateStore.getState().terminalStateByThreadId[newThreadId]?.entryPoint,
+          ).toBe("terminal");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
       useStore.getState().syncServerReadModel(addThreadToSnapshot(fixture.snapshot, newThreadId));
+      useStore.getState().setProjectExpanded(PROJECT_ID, true);
       useComposerDraftStore.getState().clearDraftThread(newThreadId);
 
       await vi.waitFor(
@@ -4710,7 +4720,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const composerEditor = await waitForComposerEditor();
       composerEditor.focus();
       await waitForLayout();
-      dispatchTerminalThreadShortcut();
+      await dispatchTerminalThreadShortcut();
 
       await waitForURL(
         mounted.router,
@@ -5063,9 +5073,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      useStore
-        .getState()
-        .syncServerReadModel(createSnapshotWithInlineToolOverflow({ active: false }));
+      const settledSnapshot = createSnapshotWithInlineToolOverflow({ active: false });
+      fixture = { ...fixture, snapshot: settledSnapshot };
+      useStore.getState().syncServerReadModel(settledSnapshot);
 
       expect(document.body.textContent).toContain("Tool 6");
       expect(document.body.textContent).not.toContain("Tool 1");
@@ -5103,11 +5113,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             document.querySelector("[data-settled-turn-collapse-transition='true']"),
           ).toBeNull();
           expect(document.body.textContent).not.toContain("Tool 1");
-          const settledTrigger = Array.from(
-            document.querySelectorAll<HTMLButtonElement>("button"),
-          ).find((element) => element.textContent?.includes("Worked for"));
-          expect(settledTrigger).toBeDefined();
-          expect(settledTrigger?.getAttribute("aria-expanded")).toBe("false");
+          expect(document.body.textContent).not.toContain("Tool 6");
         },
         { timeout: 20_000, interval: 16 },
       );

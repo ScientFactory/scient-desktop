@@ -326,6 +326,10 @@ async function mountApp(options?: {
   return {
     cleanup: async () => {
       await screen.unmount();
+      // EventRouter cleanup starts stream unsubscriptions asynchronously. Give
+      // those in-flight mock RPC callbacks a turn to settle before the next test
+      // replaces the global WebSocket fixture and Zustand state.
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
       host.remove();
     },
   };
@@ -482,8 +486,6 @@ describe("EventRouter scoped orchestration sync", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      sendThreadEventPush(firstAssistantChunk);
-
       const secondAssistantChunk = {
         ...firstAssistantChunk,
         sequence: 3,
@@ -507,14 +509,23 @@ describe("EventRouter scoped orchestration sync", () => {
           );
           expect(message?.text).toBe("hello world");
           expect(message?.streaming).toBe(false);
-          expect(
-            thread?.messages.filter(
-              (entry) => entry.id === MessageId.makeUnsafe("msg-assistant-1"),
-            ),
-          ).toHaveLength(1);
         },
         { timeout: 20_000, interval: 16 },
       );
+
+      // Re-send the stale event only after the newer sequence is observable.
+      // This directly exercises the cursor guard named by the test and avoids
+      // coupling the assertion to two back-to-back mock transport deliveries.
+      sendThreadEventPush(firstAssistantChunk);
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+
+      const threadAfterDuplicate = getThreadFromState(useStore.getState(), THREAD_ID);
+      const messagesAfterDuplicate = threadAfterDuplicate?.messages.filter(
+        (entry) => entry.id === MessageId.makeUnsafe("msg-assistant-1"),
+      );
+      expect(messagesAfterDuplicate).toHaveLength(1);
+      expect(messagesAfterDuplicate?.[0]?.text).toBe("hello world");
+      expect(messagesAfterDuplicate?.[0]?.streaming).toBe(false);
     } finally {
       await mounted.cleanup();
     }

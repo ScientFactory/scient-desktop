@@ -11,7 +11,10 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:browser": "vitest run --config vitest.browser.config.ts",
-    "test:browser:stable": "vitest run --config vitest.browser.stable.config.ts",
+    "test:browser:stable": "bun run test:browser:stable:chat-view && bun run test:browser:stable:event-router && bun run test:browser:stable:remaining",
+    "test:browser:stable:chat-view": "vitest run --config vitest.browser.stable.config.ts src/components/ChatView.browser.tsx",
+    "test:browser:stable:event-router": "vitest run --config vitest.browser.stable.config.ts src/components/EventRouter.browser.tsx",
+    "test:browser:stable:remaining": "vitest run --config vitest.browser.stable.config.ts --exclude src/components/ChatView.browser.tsx --exclude src/components/EventRouter.browser.tsx",
     "test:browser:geometry": "vitest run --config vitest.browser.geometry.config.ts",
     "test:browser:install": "playwright install --with-deps chromium",
     "measure:lcp": "node scripts/measure-lcp.mjs"
