@@ -283,7 +283,7 @@ export class BrowserUsePipeServer {
       case "getTabs":
         return this.getTabsForSession(requireSessionId(params));
       case "createTab":
-        return this.createTabForSession(requireSessionId(params));
+        return this.createTabForSession(requireSessionId(params), socket);
       case "nameSession":
         requireSessionId(params);
         if (!asString(asObject(params)?.name)) {
@@ -293,9 +293,9 @@ export class BrowserUsePipeServer {
       case "attach":
         return this.attachForSession(requireSessionId(params), params, socket);
       case "detach":
-        return this.detachForSession(requireSessionId(params));
+        return this.detachForSession(requireSessionId(params), socket);
       case "executeCdp":
-        return this.executeCdpForSession(requireSessionId(params), params);
+        return this.executeCdpForSession(requireSessionId(params), params, socket);
       default:
         throw new Error(`No handler registered for method: ${method}`);
     }
@@ -374,12 +374,16 @@ export class BrowserUsePipeServer {
     });
   }
 
-  private async createTabForSession(sessionId: string): Promise<{
+  private async createTabForSession(
+    sessionId: string,
+    socket: Net.Socket,
+  ): Promise<{
     id: number;
     title: string;
     active: boolean;
     url: string;
   }> {
+    this.assertSessionNotOwnedByAnotherSocket(sessionId, socket);
     const snapshot = await this.waitForActiveBrowserHostState();
     if (!snapshot) {
       throw new Error("No active Scient browser pane available");
@@ -423,17 +427,26 @@ export class BrowserUsePipeServer {
     params: unknown,
     socket: Net.Socket,
   ): Promise<Record<string, never>> {
+    const previousOwner = this.socketBySessionId.get(sessionId);
+    this.assertSessionNotOwnedByAnotherSocket(sessionId, socket);
     const tracked = this.resolveTrackedTabForSession(sessionId, params);
-    this.selectedTrackedTabIdBySessionId.set(sessionId, tracked.id);
-    await this.browserManager.attachBrowserUseTab({
-      threadId: tracked.threadId,
-      tabId: tracked.tabId,
-    });
+    this.bindSessionToSocket(sessionId, socket);
+    try {
+      await this.browserManager.attachBrowserUseTab({
+        threadId: tracked.threadId,
+        tabId: tracked.tabId,
+      });
+    } catch (error) {
+      if (!previousOwner && this.socketBySessionId.get(sessionId) === socket) {
+        this.unbindSessionFromSocket(sessionId);
+      }
+      throw error;
+    }
     if (socket.destroyed) {
       return {};
     }
+    this.selectedTrackedTabIdBySessionId.set(sessionId, tracked.id);
     this.cdpListenerDisposeBySessionId.get(sessionId)?.();
-    this.bindSessionToSocket(sessionId, socket);
     const dispose = this.browserManager.subscribeToCdpEvents(
       {
         threadId: tracked.threadId,
@@ -453,14 +466,23 @@ export class BrowserUsePipeServer {
     return {};
   }
 
-  private async detachForSession(sessionId: string): Promise<Record<string, never>> {
+  private async detachForSession(
+    sessionId: string,
+    socket: Net.Socket,
+  ): Promise<Record<string, never>> {
+    this.assertSessionOwnedBySocket(sessionId, socket);
     this.cdpListenerDisposeBySessionId.get(sessionId)?.();
     this.cdpListenerDisposeBySessionId.delete(sessionId);
     this.unbindSessionFromSocket(sessionId);
     return {};
   }
 
-  private async executeCdpForSession(sessionId: string, params: unknown): Promise<unknown> {
+  private async executeCdpForSession(
+    sessionId: string,
+    params: unknown,
+    socket: Net.Socket,
+  ): Promise<unknown> {
+    this.assertSessionOwnedBySocket(sessionId, socket);
     const request = asObject(params);
     const method = asString(request?.method);
     if (!method) {
@@ -483,6 +505,23 @@ export class BrowserUsePipeServer {
     const sessionIds = this.sessionIdsBySocket.get(socket) ?? new Set<string>();
     sessionIds.add(sessionId);
     this.sessionIdsBySocket.set(socket, sessionIds);
+  }
+
+  private assertSessionNotOwnedByAnotherSocket(sessionId: string, socket: Net.Socket): void {
+    const owner = this.socketBySessionId.get(sessionId);
+    if (owner && owner !== socket) {
+      throw new Error(`Browser session '${sessionId}' is attached to another client.`);
+    }
+  }
+
+  private assertSessionOwnedBySocket(sessionId: string, socket: Net.Socket): void {
+    const owner = this.socketBySessionId.get(sessionId);
+    if (!owner) {
+      throw new Error(`Browser session '${sessionId}' is not attached.`);
+    }
+    if (owner !== socket) {
+      throw new Error(`Browser session '${sessionId}' is attached to another client.`);
+    }
   }
 
   private unbindSessionFromSocket(sessionId: string): void {

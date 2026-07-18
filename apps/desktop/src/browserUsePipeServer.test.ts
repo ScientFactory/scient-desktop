@@ -24,6 +24,7 @@ interface BrowserUseMessage {
   method?: string;
   result?: unknown;
   params?: unknown;
+  error?: { code?: number; message?: string };
 }
 
 function encodeFrame(message: unknown): Buffer {
@@ -225,6 +226,17 @@ describe("browser-use pipe session isolation", () => {
       request(socketB, 2, "attach", { session_id: "session-b", tabId: 2 });
       expect((await readerA.next()).id).toBe(2);
       expect((await readerB.next()).id).toBe(2);
+
+      request(socketB, 4, "executeCdp", {
+        session_id: "session-a",
+        method: "Runtime.evaluate",
+      });
+      expect((await readerB.next()).error?.message).toContain("attached to another client");
+      request(socketB, 5, "detach", { session_id: "session-a" });
+      expect((await readerB.next()).error?.message).toContain("attached to another client");
+      request(socketB, 6, "attach", { session_id: "session-a", tabId: 2 });
+      expect((await readerB.next()).error?.message).toContain("attached to another client");
+      expect(fake.listenerCount("tab-a")).toBe(1);
 
       fake.emit("tab-a", { method: "Runtime.consoleAPICalled", params: { source: "a" } });
       request(socketA, 3, "ping");
