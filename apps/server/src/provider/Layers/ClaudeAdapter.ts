@@ -1011,6 +1011,7 @@ function buildUserMessageEffect(
 
       const bytes = yield* readProviderPromptImage({
         fileSystem: dependencies.fileSystem,
+        attachmentsDir: dependencies.attachmentsDir,
         path: attachmentPath,
         expectedBytes: attachment.sizeBytes,
       }).pipe(
@@ -3671,9 +3672,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
           // Non-max effort is a live Settings value. `max` has no equivalent
           // beyond the spawn-time query option and remains restart-bound.
-          ...(effectiveEffort && effectiveEffort !== "max"
-            ? { effortLevel: effectiveEffort }
-            : {}),
+          ...(effectiveEffort && effectiveEffort !== "max" ? { effortLevel: effectiveEffort } : {}),
           ...(fastMode ? { fastMode: true } : {}),
           ...(ultracode ? { ultracode: true } : {}),
         };

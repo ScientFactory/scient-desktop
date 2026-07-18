@@ -1741,6 +1741,7 @@ export function makeGrokAdapter(
             }
             const bytes = yield* readProviderPromptImage({
               fileSystem,
+              attachmentsDir: serverConfig.attachmentsDir,
               path: attachmentPath,
               expectedBytes: attachment.sizeBytes,
             }).pipe(

@@ -1687,6 +1687,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
               }
               const bytes = yield* readProviderPromptImage({
                 fileSystem,
+                attachmentsDir: serverConfig.attachmentsDir,
                 path: attachmentPath,
                 expectedBytes: attachment.sizeBytes,
               }).pipe(
@@ -1769,6 +1770,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
               }
               const bytes = yield* readProviderPromptImage({
                 fileSystem,
+                attachmentsDir: serverConfig.attachmentsDir,
                 path: attachmentPath,
                 expectedBytes: attachment.sizeBytes,
               }).pipe(
