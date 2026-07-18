@@ -2592,7 +2592,12 @@ export function makeProviderHealthLive(options?: { readonly providerUpdateTimeou
 
           const providers = yield* refreshNow.pipe(Effect.mapError(toUpdateError));
           const refreshed = providers.find((status) => status.provider === provider);
-          const stillOutdated = refreshed?.versionAdvisory?.status === "behind_latest";
+          const refreshedAdvisory = refreshed?.versionAdvisory;
+          const stillOutdated = refreshedAdvisory?.status === "behind_latest";
+          const stillOutdatedVersions =
+            refreshedAdvisory?.currentVersion && refreshedAdvisory.latestVersion
+              ? ` (installed ${refreshedAdvisory.currentVersion}, latest ${refreshedAdvisory.latestVersion})`
+              : "";
           const finalProviders = yield* setProviderUpdateState(
             provider,
             makeUpdateState({
@@ -2600,7 +2605,7 @@ export function makeProviderHealthLive(options?: { readonly providerUpdateTimeou
               startedAt,
               finishedAt,
               message: stillOutdated
-                ? "Update command completed, but Scient still detects an outdated provider version."
+                ? `Update command completed, but Scient still detects an outdated provider version${stillOutdatedVersions}.`
                 : "Provider updated.",
               output: output ? output.slice(0, UPDATE_OUTPUT_MAX_BYTES) : null,
             }),

@@ -194,6 +194,26 @@ export function normalizeCommandPath(commandPath: string): string {
   return commandPath.replaceAll("\\", "/").toLowerCase();
 }
 
+/**
+ * npm resolves its global prefix from the `node` binary that runs it, not from
+ * npm's own location. Derive the prefix that owns the detected provider binary
+ * so an update cannot silently land in another Node installation.
+ */
+export function deriveNpmGlobalPrefix(commandPath: string): string | null {
+  // Normalization preserves string length, so these offsets still apply to the
+  // original path and retain its casing and platform-specific separators.
+  const normalized = normalizeCommandPath(commandPath);
+  const unixIndex = normalized.indexOf("/lib/node_modules/");
+  if (unixIndex > 0) {
+    return commandPath.slice(0, unixIndex);
+  }
+  const windowsIndex = normalized.indexOf("/npm/node_modules/");
+  if (windowsIndex > 0) {
+    return commandPath.slice(0, windowsIndex + "/npm".length);
+  }
+  return null;
+}
+
 function hasPathSeparator(value: string): boolean {
   return value.includes("/") || value.includes("\\");
 }
@@ -211,7 +231,9 @@ export function makeProviderMaintenanceCapabilities(input: {
     input.updateExecutable === null || input.updateLockKey === null
       ? null
       : {
-          command: [input.updateExecutable, ...input.updateArgs].join(" "),
+          command: [input.updateExecutable, ...input.updateArgs]
+            .map((part) => (/\s/.test(part) ? `"${part}"` : part))
+            .join(" "),
           executable: input.updateExecutable,
           args: input.updateArgs,
           lockKey: input.updateLockKey,
@@ -245,6 +267,7 @@ function makeManualOnlyProviderMaintenanceCapabilities(input: {
 function makeNpmGlobalProviderMaintenanceCapabilities(
   definition: PackageManagedProviderMaintenanceDefinition,
   pathPrepend?: string | null,
+  commandPath?: string | null,
 ): ProviderMaintenanceCapabilities {
   if (!definition.npmPackageName) {
     return makeManualOnlyProviderMaintenanceCapabilities({
@@ -252,11 +275,17 @@ function makeNpmGlobalProviderMaintenanceCapabilities(
       packageName: null,
     });
   }
+  const globalPrefix = commandPath ? deriveNpmGlobalPrefix(commandPath) : null;
   return makeProviderMaintenanceCapabilities({
     provider: definition.provider,
     packageName: definition.npmPackageName,
     updateExecutable: "npm",
-    updateArgs: ["install", "-g", `${definition.npmPackageName}@latest`],
+    updateArgs: [
+      "install",
+      "-g",
+      ...(globalPrefix ? ["--prefix", globalPrefix] : []),
+      `${definition.npmPackageName}@latest`,
+    ],
     updateLockKey: "npm-global",
     ...(pathPrepend === undefined ? {} : { updatePathPrepend: pathPrepend }),
   });
@@ -394,8 +423,10 @@ function makeProviderMaintenanceForInstallSource(input: {
   readonly installSource: ProviderInstallSource;
   readonly executable?: string | null;
   readonly pathPrepend?: string | null;
+  /** Path that matched install-source detection, used to pin the install tree. */
+  readonly commandPath?: string | null;
 }): ProviderMaintenanceCapabilities {
-  const { definition, installSource, executable, pathPrepend } = input;
+  const { definition, installSource, executable, pathPrepend, commandPath } = input;
   if (
     definition.nativeUpdate?.strategy === "always" &&
     !definition.nativeUpdate.excludedInstallSources?.includes(installSource)
@@ -434,7 +465,7 @@ function makeProviderMaintenanceForInstallSource(input: {
     return makePnpmGlobalProviderMaintenanceCapabilities(definition, pathPrepend);
   }
   if (installSource === "npm") {
-    return makeNpmGlobalProviderMaintenanceCapabilities(definition, pathPrepend);
+    return makeNpmGlobalProviderMaintenanceCapabilities(definition, pathPrepend, commandPath);
   }
   if (installSource === "homebrew") {
     return makeHomebrewProviderMaintenanceCapabilities(definition, pathPrepend);
@@ -505,6 +536,7 @@ export function resolvePackageManagedProviderMaintenance(
         definition,
         installSource,
         executable: binaryPath,
+        commandPath,
         ...(options?.commandDirectory === undefined
           ? {}
           : { pathPrepend: options.commandDirectory }),
@@ -596,7 +628,10 @@ export function createProviderVersionAdvisory(input: {
 }): ServerProviderVersionAdvisory {
   const capabilities =
     input.maintenanceCapabilities ??
-    makeManualOnlyProviderMaintenanceCapabilities({ provider: input.provider, packageName: null });
+    makeManualOnlyProviderMaintenanceCapabilities({
+      provider: input.provider,
+      packageName: null,
+    });
   const latestVersion = input.latestVersion ?? null;
   const advisory = deriveVersionAdvisory({
     currentVersion: input.currentVersion,
