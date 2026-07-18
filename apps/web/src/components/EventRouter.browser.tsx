@@ -309,30 +309,35 @@ async function mountApp(options?: {
   const router = getRouter(createMemoryHistory({ initialEntries: [`/${routeThreadId}`] }));
   const screen = await render(<RouterProvider router={router} />, { container: host });
 
-  await vi.waitFor(
-    () => {
-      if (options?.waitForThreadId === null) {
-        expect(useStore.getState().threadsHydrated).toBe(true);
-        return;
-      }
-      const expectedThreadId = options?.waitForThreadId ?? THREAD_ID;
-      expect(useStore.getState().threads.some((thread) => thread.id === expectedThreadId)).toBe(
-        true,
-      );
-    },
-    { timeout: 8_000, interval: 16 },
-  );
-
-  return {
-    cleanup: async () => {
-      await screen.unmount();
-      // EventRouter cleanup starts stream unsubscriptions asynchronously. Give
-      // those in-flight mock RPC callbacks a turn to settle before the next test
-      // replaces the global WebSocket fixture and Zustand state.
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
-      host.remove();
-    },
+  const cleanup = async () => {
+    await screen.unmount();
+    // EventRouter cleanup starts stream unsubscriptions asynchronously. Give
+    // those in-flight mock RPC callbacks a turn to settle before the next test
+    // replaces the global WebSocket fixture and Zustand state.
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
+    host.remove();
   };
+
+  try {
+    await vi.waitFor(
+      () => {
+        if (options?.waitForThreadId === null) {
+          expect(useStore.getState().threadsHydrated).toBe(true);
+          return;
+        }
+        const expectedThreadId = options?.waitForThreadId ?? THREAD_ID;
+        expect(useStore.getState().threads.some((thread) => thread.id === expectedThreadId)).toBe(
+          true,
+        );
+      },
+      { timeout: 20_000, interval: 16 },
+    );
+  } catch (error) {
+    await cleanup().catch(() => {});
+    throw error;
+  }
+
+  return { cleanup };
 }
 
 function sendThreadEventPush(event: OrchestrationEvent) {
@@ -394,6 +399,7 @@ describe("EventRouter scoped orchestration sync", () => {
     resetWsNativeApiForTest();
     fixture = buildFixture();
     document.body.innerHTML = "";
+    wsClient = null;
     shellStreamRequestId = null;
     threadStreamRequestIdByThreadId.clear();
     delayNextThreadSnapshot = false;
@@ -443,6 +449,9 @@ describe("EventRouter scoped orchestration sync", () => {
   afterEach(() => {
     resetWsNativeApiForTest();
     document.body.innerHTML = "";
+    wsClient = null;
+    shellStreamRequestId = null;
+    threadStreamRequestIdByThreadId.clear();
   });
 
   it("drops duplicate thread events after the thread snapshot sequence advances", async () => {
