@@ -157,7 +157,7 @@ function resolvePullRequestWorktreeLocalBranchName(
 
   const sanitizedHeadBranch = sanitizeBranchFragment(pullRequest.headBranch).trim();
   const suffix = sanitizedHeadBranch.length > 0 ? sanitizedHeadBranch : "head";
-  return `synara/pr-${pullRequest.number}/${suffix}`;
+  return `scient/pr-${pullRequest.number}/${suffix}`;
 }
 
 function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null {
@@ -2044,11 +2044,11 @@ The local stash entry was kept for recovery.`,
 
       const preservedLocalStash = yield* stashWorkingTree(
         input.cwd,
-        `synara preserve local handoff ${randomUUID()}`,
+        `scient preserve local handoff ${randomUUID()}`,
       );
       const sourceStash = yield* stashWorkingTree(
         input.worktreePath,
-        `synara handoff to local ${randomUUID()}`,
+        `scient handoff to local ${randomUUID()}`,
       );
 
       yield* gitCore
@@ -2211,7 +2211,7 @@ The local stash entry was kept for recovery.`,
 
     const sourceStash = yield* stashWorkingTree(
       input.cwd,
-      `synara handoff to worktree ${randomUUID()}`,
+      `scient handoff to worktree ${randomUUID()}`,
     );
     const sourceBranch = currentLocalStatus.branch ?? input.currentBranch ?? null;
     const sourceHeadRef = yield* readHeadRef(input.cwd);

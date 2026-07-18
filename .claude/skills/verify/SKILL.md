@@ -1,12 +1,12 @@
-# Verify: run Synara locally for runtime verification
+# Verify: run Scient locally for runtime verification
 
-How to launch an isolated Synara instance (server + web) to observe UI changes, without touching `~/.synara` or the default dev ports.
+How to launch an isolated Scient instance (server + web) to observe UI changes, without touching `~/.scient` or the default dev ports. The `SYNARA_*` names below are inherited runtime compatibility variables; `SCIENT_HOME` is the canonical state-home variable.
 
 ## Launch
 
 ```bash
 # 1. Server (from the directory you want as the workspace/project cwd):
-SYNARA_HOME=<scratch>/synara-home \
+SCIENT_HOME=<scratch>/scient-home \
 SYNARA_PORT=3899 SYNARA_MODE=web SYNARA_NO_BROWSER=1 \
 VITE_DEV_SERVER_URL=http://localhost:5899 \
 bun <repo>/apps/server/src/index.ts &

@@ -390,15 +390,15 @@ function compareNullableText(
 function deriveInitials(name: string): string {
   const parts = name.split(/[\s._-]+/u).filter((part) => part.length > 0);
   if (parts.length >= 2) {
-    return `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}`.toUpperCase() || "SY";
+    return `${parts[0]?.[0] ?? ""}${parts[1]?.[0] ?? ""}`.toUpperCase() || "SC";
   }
   const single = parts[0] ?? name;
-  return (single.slice(0, 2) || "SY").toUpperCase();
+  return (single.slice(0, 2) || "SC").toUpperCase();
 }
 
 function sanitizeHandle(basename: string): string {
   const slug = basename.toLowerCase().replace(/[^a-z0-9_]/gu, "");
-  return `@${slug || "synara"}`;
+  return `@${slug || "scient"}`;
 }
 
 function formatHour(hour: number): string {

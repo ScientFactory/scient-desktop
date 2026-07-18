@@ -149,7 +149,7 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     if (process.platform === "win32") {
       return yield* Effect.die(
-        "Bun PTY terminal support is unavailable on Windows. Please use Node.js (e.g. by running `npx synara`) instead.",
+        "Bun PTY terminal support is unavailable on Windows. Build the Scient CLI, then run it with Node.js (for example, `node apps/server/dist/index.mjs`).",
       );
     }
     return {

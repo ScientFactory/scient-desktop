@@ -18,6 +18,8 @@ release/
 /.synara-*/
 /.synara/
 /.synara-*/
+/.scient/electron-dev
+/.scient-*/
 .idea/
 apps/web/.playwright
 apps/web/playwright-report
