@@ -5098,9 +5098,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
           const settledTrigger = Array.from(
             document.querySelectorAll<HTMLButtonElement>("button"),
           ).find((element) => element.textContent?.includes("Worked for"));
-          if (settledTrigger) {
-            expect(settledTrigger.getAttribute("aria-expanded")).toBe("false");
-          }
+          expect(settledTrigger).toBeDefined();
+          expect(settledTrigger?.getAttribute("aria-expanded")).toBe("false");
         },
         { timeout: 8_000, interval: 16 },
       );

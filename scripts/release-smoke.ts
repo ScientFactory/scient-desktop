@@ -216,6 +216,50 @@ function verifyDesktopStageLockAuthority(): void {
   );
 }
 
+function readPackageVersion(root: string, relativePath: string): string {
+  const packageJson = JSON.parse(readFileSync(resolve(root, relativePath), "utf8")) as {
+    version?: unknown;
+  };
+  if (typeof packageJson.version !== "string" || packageJson.version.length === 0) {
+    throw new Error(`Expected ${relativePath} to declare a package version.`);
+  }
+  return packageJson.version;
+}
+
+function verifyFrozenDesktopStageInstall(targetRoot: string): void {
+  execFileSync(
+    "bun",
+    [
+      "install",
+      "--production",
+      "--frozen-lockfile",
+      "--ignore-scripts",
+      "--linker",
+      "hoisted",
+      "--filter",
+      "@scientfactory/cli",
+      "--filter",
+      "@synara/desktop",
+    ],
+    { cwd: targetRoot, stdio: "inherit" },
+  );
+
+  const packagePairs = [
+    ["node_modules/electron/package.json", "apps/desktop/node_modules/electron/package.json"],
+    ["node_modules/ws/package.json", "apps/server/node_modules/ws/package.json"],
+    ["node_modules/@pierre/diffs/package.json", "apps/web/node_modules/@pierre/diffs/package.json"],
+  ] as const;
+  for (const [stagedPath, workspacePath] of packagePairs) {
+    const stagedVersion = readPackageVersion(targetRoot, stagedPath);
+    const workspaceVersion = readPackageVersion(repoRoot, workspacePath);
+    if (stagedVersion !== workspaceVersion) {
+      throw new Error(
+        `Frozen stage resolved ${stagedPath} at ${stagedVersion}; expected locked workspace version ${workspaceVersion}.`,
+      );
+    }
+  }
+}
+
 const tempRoot = mkdtempSync(join(tmpdir(), "scient-release-smoke-"));
 
 try {
@@ -223,6 +267,7 @@ try {
   verifyReleaseWorkflowSafety();
   verifyDesktopStageLockAuthority();
   copyWorkspaceManifestFixture(tempRoot);
+  verifyFrozenDesktopStageInstall(tempRoot);
 
   execFileSync(
     process.execPath,
