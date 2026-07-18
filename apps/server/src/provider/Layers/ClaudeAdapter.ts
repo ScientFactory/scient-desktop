@@ -219,6 +219,11 @@ interface ClaudeSessionContext {
   streamFiber: Fiber.Fiber<void, Error> | undefined;
   readonly startedAt: string;
   readonly basePermissionMode: PermissionMode | undefined;
+  // The CLI's permission mode is provable only until its first prompt. Skip a
+  // redundant first-turn control request when the desired mode matches this
+  // spawn mode; later turns always synchronize explicitly.
+  readonly spawnPermissionMode: PermissionMode;
+  firstTurnSpawnModeAuthoritative: boolean;
   lastInteractionMode: "default" | "plan" | undefined;
   currentApiModelId: string | undefined;
   resumeSessionId: string | undefined;
@@ -3771,6 +3776,8 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             streamFiber: undefined,
             startedAt,
             basePermissionMode: permissionMode,
+            spawnPermissionMode: permissionMode ?? "default",
+            firstTurnSpawnModeAuthoritative: true,
             lastInteractionMode: undefined,
             currentApiModelId: apiModelId,
             resumeSessionId: sessionId,
@@ -3985,17 +3992,18 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         // Apply interaction mode on every turn so sticky SDK permission state
         // cannot leak plan mode across service/recovery paths that omit it.
         const effectiveInteractionMode = input.interactionMode ?? "default";
-        if (effectiveInteractionMode === "plan") {
+        const desiredPermissionMode: PermissionMode | undefined =
+          effectiveInteractionMode === "plan"
+            ? "plan"
+            : context.basePermissionMode !== undefined || context.lastInteractionMode === "plan"
+              ? (context.basePermissionMode ?? "default")
+              : undefined;
+        const canSkipRedundantSpawnModeRequest =
+          context.firstTurnSpawnModeAuthoritative &&
+          desiredPermissionMode === context.spawnPermissionMode;
+        if (desiredPermissionMode !== undefined && !canSkipRedundantSpawnModeRequest) {
           yield* Effect.tryPromise({
-            try: () => context.query.setPermissionMode("plan"),
-            catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
-          });
-        } else if (
-          context.basePermissionMode !== undefined ||
-          context.lastInteractionMode === "plan"
-        ) {
-          yield* Effect.tryPromise({
-            try: () => context.query.setPermissionMode(context.basePermissionMode ?? "default"),
+            try: () => context.query.setPermissionMode(desiredPermissionMode),
             catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
           });
         }
@@ -4056,6 +4064,8 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           type: "message",
           message,
         }).pipe(Effect.mapError((cause) => toRequestError(input.threadId, "turn/start", cause)));
+
+        context.firstTurnSpawnModeAuthoritative = false;
 
         return {
           threadId: context.session.threadId,
