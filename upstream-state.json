@@ -5,7 +5,7 @@
   "officialRepository": "Emanuele-web04/synara",
   "officialDefaultBranch": "main",
   "updateMode": "divergent-cherry-pick",
-  "reviewedThrough": "69304bc1d59d86da8afbac367118c75db8c9dbfe",
+  "reviewedThrough": "2da3d4c625e5fb265b2b56e211770fb4612bd0a1",
   "reviewedAt": "2026-07-18",
   "integrationBase": "9be46c3ce6a7521b64436b7334bc6fce16e3cac4",
   "reviewRecord": "ScientFactory/Scient:lab/external/upstream-reviews/2026-07-18-scient-desktop.md"
