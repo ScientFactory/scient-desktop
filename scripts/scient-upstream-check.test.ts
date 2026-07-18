@@ -195,6 +195,7 @@ function createAncestryFixture(): {
   git(cwd, "init", "--initial-branch=owned");
   git(cwd, "config", "user.email", "scient-test@users.noreply.github.com");
   git(cwd, "config", "user.name", "Scient Test");
+  git(cwd, "config", "commit.gpgsign", "false");
   const base = commit(cwd, "base.txt", "base");
   git(cwd, "branch", "official");
   const owned = commit(cwd, "owned.txt", "owned");

@@ -10,6 +10,7 @@
         "oxlint": "^1.55.0",
         "turbo": "^2.3.3",
         "vitest": "catalog:",
+        "yaml": "2.9.0",
       },
     },
     "apps/desktop": {
