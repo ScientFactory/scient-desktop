@@ -100,12 +100,12 @@ export function createDesktopPlatformBuildConfig(
       ...nativePackaging,
       linux: {
         target: [input.target],
-        executableName: "synara",
+        executableName: "scient",
         icon: "icon.png",
         category: "Development",
         desktop: {
           entry: {
-            StartupWMClass: "synara",
+            StartupWMClass: "scient",
           },
         },
       },

@@ -44,18 +44,12 @@ const forbiddenPatterns = [
   new RegExp(escapeRegExp(incorrectBundleDomain), "i"),
 ] as const;
 
-// Raster images cannot be searched for embedded text. Keep the user-facing
-// screenshots behind reviewed digests so changing either one requires another
-// explicit visual identity audit instead of silently bypassing this guard.
-const approvedVisualAssetDigests = new Map<string, string>([
-  [
-    "apps/marketing/public/screenshot.jpeg",
-    "0b4be139f13dd08885a1aac26fc1f7c623697db157777d16360e985c93d47bcf",
-  ],
-  [
-    "assets/prod/readme-screenshot.jpeg",
-    "0b4be139f13dd08885a1aac26fc1f7c623697db157777d16360e985c93d47bcf",
-  ],
+// There is no currently approved product screenshot. New raster screenshots
+// must be added here only after a visual identity review.
+const approvedVisualAssetDigests = new Map<string, string>();
+const retiredPublicVisualAssetPaths = new Set([
+  "apps/marketing/public/screenshot.jpeg",
+  "assets/prod/readme-screenshot.jpeg",
 ]);
 
 export interface BrandIdentityFile {
@@ -97,6 +91,12 @@ const requiredScientIdentityText = new Map<string, readonly string[]>([
   ],
   ["apps/web/src/branding.ts", ['APP_BASE_NAME = "Scient"']],
   [
+    "apps/server/src/terminal/Layers/BunPTY.ts",
+    [
+      "Build the Scient CLI, then run it with Node.js (for example, `node apps/server/dist/index.mjs`).",
+    ],
+  ],
+  [
     "scripts/build-desktop-artifact.ts",
     ['name: "scient-desktop"', 'description: "Scient desktop build"', 'author: "Yaacov Corcos"'],
   ],
@@ -131,12 +131,22 @@ const requiredScientIdentityText = new Map<string, readonly string[]>([
   ["apps/marketing/src/pages/index.astro", ["Scient is a scientific workspace"]],
   ["apps/marketing/src/pages/download.astro", ["Download — Scient"]],
   ["apps/marketing/src/layouts/Layout.astro", ["Scient — A local-first scientific workspace"]],
+  [".gitignore", ["/.scient/electron-dev", "/.scient-*/"]],
 ]);
 
 // These files render, export, or transmit Scient-owned product copy. Internal
-// Synara package/type names remain intentionally outside this list so the fork
-// can preserve upstream structure without leaking predecessor branding to users.
+// Synara package/type names remain intentionally outside this list so inherited
+// source structure can stay stable without leaking predecessor branding to users.
 const scientOnlySurfacePaths = new Set([
+  ".claude/skills/verify/SKILL.md",
+  ".docs/architecture.md",
+  ".docs/codex-prerequisites.md",
+  ".docs/encyclopedia.md",
+  ".docs/quick-start.md",
+  ".docs/runtime-modes.md",
+  ".docs/scripts.md",
+  ".docs/workspace-layout.md",
+  "AGENTS.md",
   "README.md",
   "CONTRIBUTING.md",
   "KEYBINDINGS.md",
@@ -175,15 +185,18 @@ const scientOnlySurfacePaths = new Set([
   "apps/server/src/providerUsage/providers/codex.ts",
   "apps/server/src/studioWorkspaceScaffold.ts",
   "apps/server/src/terminal/managedTerminalWrappers.ts",
+  "apps/server/src/terminal/Layers/BunPTY.ts",
   "apps/web/src/components/AppSnapCoordinator.tsx",
   "apps/web/src/components/AppSnapWelcomeDialog.tsx",
   "apps/web/src/components/BranchToolbarBranchSelector.tsx",
+  "apps/web/src/components/ThreadWorktreeHandoffDialog.tsx",
   "apps/web/src/components/ChatView.logic.ts",
   "apps/web/src/components/ChatView.tsx",
   "apps/web/src/components/Sidebar.tsx",
   "apps/web/src/components/chat/ComposerCommandMenu.tsx",
   "apps/web/src/components/desktopUpdate.logic.ts",
   "apps/web/src/components/profile/ShareCard.tsx",
+  "apps/web/src/components/profile/ShareDialog.tsx",
   "apps/web/src/components/profile/shareCardExport.ts",
   "apps/web/src/components/pullRequest/PullRequestsUnavailableState.tsx",
   "apps/web/src/components/settings/ProfileSettingsPanel.tsx",
@@ -196,6 +209,61 @@ const scientOnlySurfacePaths = new Set([
   "apps/web/src/settingsSearchIndex.ts",
   "scripts/lib/release-update-policy.ts",
 ]);
+
+// These paths contain inherited implementation identifiers that must remain
+// stable for upstream intake. Only reject the old names in values that create
+// new Scient-owned product state or define distributable identity.
+const forbiddenScientOwnedOutputPatterns = new Map<string, readonly RegExp[]>([
+  [".github/workflows/ci.yml", [/\bVerify Synara identity\b/i]],
+  [
+    "scripts/lib/desktop-platform-build-config.ts",
+    [/executableName:\s*["']synara["']/i, /StartupWMClass:\s*["']synara["']/i],
+  ],
+  ["apps/web/src/components/profile/ShareDialog.tsx", [/synara-stats-/i]],
+  ["apps/web/src/components/ThreadWorktreeHandoffDialog.tsx", [/placeholder=["']synara\//i]],
+  ["apps/server/src/profileStats.ts", [/\|\|\s*["']SY["']/, /\|\|\s*["']synara["']/i]],
+  [
+    "apps/server/src/terminal/Layers/BunPTY.ts",
+    [/npx\s+synara\b/i, /npx\s+--package\s+@scientfactory\/cli\s+scient\b/i],
+  ],
+  [
+    "apps/server/src/git/Layers/GitCore.ts",
+    [/AUTO_DETACHED_WORKTREE_DIRNAME\s*=\s*["']synara["']/i, /synara:\s+stash before switching/i],
+  ],
+  [
+    "apps/server/src/git/Layers/GitManager.ts",
+    [/synara\/pr-/i, /synara preserve local handoff/i, /synara handoff to (?:local|worktree)/i],
+  ],
+]);
+
+export function findScientOwnedOutputIdentityViolations(
+  files: readonly BrandIdentityFile[],
+  patterns: ReadonlyMap<string, readonly RegExp[]> = forbiddenScientOwnedOutputPatterns,
+): BrandIdentityViolation[] {
+  const violations: BrandIdentityViolation[] = [];
+  for (const file of files) {
+    const filePatterns = patterns.get(file.path);
+    if (!filePatterns) continue;
+    for (const [index, line] of file.contents.split(/\r?\n/).entries()) {
+      if (!filePatterns.some((pattern) => pattern.test(line))) continue;
+      violations.push({ path: file.path, line: index + 1, text: line.trim() });
+    }
+  }
+  return violations;
+}
+
+export function findRetiredPublicVisualAssetViolations(
+  files: readonly BrandIdentityBinaryFile[],
+  retiredPaths: ReadonlySet<string> = retiredPublicVisualAssetPaths,
+): BrandIdentityViolation[] {
+  return files
+    .filter((file) => retiredPaths.has(file.path))
+    .map((file) => ({
+      path: file.path,
+      line: null,
+      text: "Retired public screenshot must not be restored without a new visual review.",
+    }));
+}
 
 export function findScientSurfaceIdentityViolations(
   files: readonly BrandIdentityFile[],
@@ -244,9 +312,17 @@ const legacyPapiLabCompatibilityPaths = new Set([
 
 function isAllowedLegacyPapiLabReference(path: string, value: string): boolean {
   if (!new RegExp(escapeRegExp(retiredPapiLabName), "i").test(value)) return false;
-  if (legacyPapiLabCompatibilityPaths.has(path)) return true;
-  if (path !== "apps/desktop/src/main.ts") return false;
-  return /(?:seedDesktopUserDataProfileFromPapiLab|seedScientHomeFromPapiLab|PAPILAB_HOME|LegacyPapiLab|PapiLab(?:Home|Desktop|Storage|Profile)|LEGACY_PAPILAB|papilab[:./-]|\.papilab|Failed to (?:seed Scient (?:home|profile) from PapiLab|migrate PapiLab browser state into Scient))/i.test(
+  if (
+    path === "scripts/check-brand-identity.ts" ||
+    path === "scripts/check-brand-identity.test.ts"
+  ) {
+    return true;
+  }
+  if (legacyPapiLabCompatibilityPaths.has(path) && value === path) return true;
+  if (!legacyPapiLabCompatibilityPaths.has(path) && path !== "apps/desktop/src/main.ts") {
+    return false;
+  }
+  return /(?:seedDesktopUserDataProfileFromPapiLab|seedScientHomeFromPapiLab|resolvePapiLabDesktopUserDataPath|exportLegacyPapiLabStorageSnapshot|configuredLegacyPapiLabHome|legacyPapiLab|migratingPapiLabProject|PAPILAB_[A-Z0-9_]+|PapiLab(?:Home|Desktop|Storage|Profile)|legacy-papilab-compatible|papilab[:./-]|\.papilab|["']papilab(?:-dev)?["']|\/papilab(?:-dev)?["']|PapiLab\s+(?:Baseline|browser state|home|identit(?:y|ies)|intact|key namespace|keys|managed|metadata|path|profile|project identity)|(?:legacy|migrat(?:e|es|ed|ing|ion)|previous|rollback|seed|source|upgrade|verified)[^\n]{0,100}PapiLab|PapiLab[^\n]{0,100}(?:legacy|migrat(?:e|es|ed|ing|ion)|rollback|seed|source|upgrade|without deleting|without overwriting))/i.test(
     value,
   );
 }
@@ -341,6 +417,8 @@ function main(): void {
     ...findBrandIdentityViolations(searchableFiles),
     ...findScientIdentityViolations(searchableFiles),
     ...findScientSurfaceIdentityViolations(searchableFiles),
+    ...findScientOwnedOutputIdentityViolations(searchableFiles),
+    ...findRetiredPublicVisualAssetViolations(trackedFiles),
     ...findVisualBrandAssetViolations(trackedFiles),
   ];
   if (violations.length === 0) {

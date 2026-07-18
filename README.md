@@ -4,8 +4,6 @@ Scient is a local-first desktop workspace for working with the AI agents and sub
 
 It brings chats, terminals, browser previews, diffs, branches, provider sessions, and handoffs into one focused workspace so you can run agent work without juggling a dozen windows.
 
-![Scient app showing parallel agent threads, terminal output, and project navigation](assets/prod/readme-screenshot.jpeg)
-
 ## What it does
 
 - Use the AI accounts you already pay for: Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok, Kilo Code, and Pi.

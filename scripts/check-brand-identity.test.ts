@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   findBrandIdentityViolations,
+  findRetiredPublicVisualAssetViolations,
   findScientIdentityViolations,
+  findScientOwnedOutputIdentityViolations,
   findScientSurfaceIdentityViolations,
   findVisualBrandAssetViolations,
 } from "./check-brand-identity";
@@ -44,6 +46,17 @@ describe("brand identity guard", () => {
     ).toEqual([]);
   });
 
+  it("rejects unrelated PapiLab product copy inside an allowlisted migration UI", () => {
+    expect(
+      findBrandIdentityViolations([
+        {
+          path: "apps/web/src/components/ScientProjectInitializationDialog.tsx",
+          contents: "Welcome to PapiLab",
+        },
+      ]),
+    ).toHaveLength(1);
+  });
+
   it("does not match ordinary numeric type names or canonical Synara text", () => {
     expect(
       findBrandIdentityViolations([
@@ -67,8 +80,8 @@ describe("brand identity guard", () => {
   });
 
   it("requires user-facing raster assets to match a visually approved digest", () => {
-    const approvedContents = new TextEncoder().encode("approved Synara screenshot");
-    const approvedDigest = "a553296ca5a2d3ad7b64a6bc1b36c2834da750eae6611642177482b99ba85bd8";
+    const approvedContents = new TextEncoder().encode("approved product screenshot");
+    const approvedDigest = "c37f0f3b75ede427b20d45d5fa32bf0f417d2bbae98de71caeb27d8aff9148fe";
     const approvedDigests = new Map([["screenshot.jpeg", approvedDigest]]);
 
     expect(
@@ -84,6 +97,16 @@ describe("brand identity guard", () => {
       ),
     ).toHaveLength(1);
     expect(findVisualBrandAssetViolations([], approvedDigests)).toHaveLength(1);
+  });
+
+  it("rejects restoring retired public screenshots without a new visual review", () => {
+    expect(
+      findRetiredPublicVisualAssetViolations(
+        [{ path: "screenshot.jpeg", contents: new Uint8Array() }],
+        new Set(["screenshot.jpeg"]),
+      ),
+    ).toHaveLength(1);
+    expect(findRetiredPublicVisualAssetViolations([], new Set(["screenshot.jpeg"]))).toEqual([]);
   });
 
   it("requires Scient identity in distributable package metadata", () => {
@@ -149,6 +172,54 @@ describe("brand identity guard", () => {
         ],
         surfacePaths,
       ),
+    ).toEqual([]);
+  });
+
+  it("rejects old identity in bounded Scient-owned generated outputs", () => {
+    const patterns = new Map<string, readonly RegExp[]>([
+      ["platform.ts", [/executableName:\s*["']synara["']/i]],
+      ["git.ts", [/synara\/pr-/i]],
+    ]);
+
+    expect(
+      findScientOwnedOutputIdentityViolations(
+        [
+          { path: "platform.ts", contents: 'executableName: "synara"' },
+          { path: "git.ts", contents: "return `synara/pr-${number}`;" },
+        ],
+        patterns,
+      ),
+    ).toHaveLength(2);
+    expect(
+      findScientOwnedOutputIdentityViolations(
+        [
+          { path: "platform.ts", contents: 'executableName: "scient"' },
+          { path: "git.ts", contents: "return `scient/pr-${number}`;" },
+        ],
+        patterns,
+      ),
+    ).toEqual([]);
+  });
+
+  it("rejects Windows recovery guidance that assumes an unpublished CLI package", () => {
+    const path = "apps/server/src/terminal/Layers/BunPTY.ts";
+
+    expect(
+      findScientOwnedOutputIdentityViolations([
+        {
+          path,
+          contents: "Please run `npx --package @scientfactory/cli scient` instead.",
+        },
+      ]),
+    ).toHaveLength(1);
+    expect(
+      findScientOwnedOutputIdentityViolations([
+        {
+          path,
+          contents:
+            "Build the Scient CLI, then run it with Node.js (for example, `node apps/server/dist/index.mjs`).",
+        },
+      ]),
     ).toEqual([]);
   });
 });

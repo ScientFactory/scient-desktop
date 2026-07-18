@@ -16,6 +16,7 @@ import {
 } from "@synara/shared/desktopIdentity";
 
 import { DESKTOP_STAGE_DEPENDENCY_OVERRIDES } from "./lib/desktop-stage-dependency-overrides.ts";
+import { createDesktopPlatformBuildConfig } from "./lib/desktop-platform-build-config.ts";
 import {
   readReleaseUpdatePolicyConfig,
   resolveReleaseUpdatePolicy,
@@ -124,6 +125,16 @@ function verifyCanonicalIdentity(): void {
     throw new Error(
       "Release publication must not implicitly enable desktop clients; a reviewed code change is required.",
     );
+  }
+
+  const linux = createDesktopPlatformBuildConfig({ platform: "linux", target: "AppImage" }).linux;
+  if (!linux || linux.executableName !== "scient") {
+    throw new Error("Expected Linux desktop releases to install the scient executable.");
+  }
+  const startupWmClass = (linux.desktop as { entry?: { StartupWMClass?: unknown } } | undefined)
+    ?.entry?.StartupWMClass;
+  if (startupWmClass !== "scient") {
+    throw new Error("Expected Linux desktop releases to use the Scient StartupWMClass.");
   }
 
   const releasePolicy = readReleaseUpdatePolicyConfig(repoRoot);
