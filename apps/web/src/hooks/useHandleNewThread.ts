@@ -1,8 +1,9 @@
 import { type ProjectId, ThreadId } from "@synara/contracts";
 import { getDefaultModel } from "@synara/shared/model";
 import { useNavigate, useRouter } from "@tanstack/react-router";
-import { useCallback } from "react";
+import { startTransition, useCallback } from "react";
 import { useAppSettings } from "../appSettings";
+import { clearNewThreadLanding, markNewThreadLanding } from "../lib/newThreadLanding";
 import {
   type ComposerThreadDraftState,
   type DraftThreadState,
@@ -282,21 +283,30 @@ export function useHandleNewThread() {
           // project's primary slot earlier makes the route guard redirect the old URL to Home.
           stage: () => {
             registerDraftThread(threadId, { projectId, ...draftSeed });
+            markNewThreadLanding(threadId);
             activateThreadEntryPoint(threadId);
             applyStickyState(threadId);
             applyProviderOverride(threadId);
           },
+          // Mark the draft-landing navigation as a transition so the new route
+          // subtree renders interruptibly and the browser can paint the composer
+          // skeleton immediately instead of freezing on the synchronous commit.
           navigate: () =>
-            navigate({
-              to: "/$threadId",
-              params: { threadId },
-              ...(navigation?.search ? { search: navigation.search } : {}),
+            new Promise<void>((resolve, reject) => {
+              startTransition(() => {
+                navigate({
+                  to: "/$threadId",
+                  params: { threadId },
+                  ...(navigation?.search ? { search: navigation.search } : {}),
+                }).then(resolve, reject);
+              });
             }),
           // TanStack resolves an older navigate() promise when a newer navigation supersedes it.
           // Verify the committed route before deleting the previous project draft.
           isDestinationActive: () => router.state.location.pathname === `/${threadId}`,
           finalize: () => setProjectDraftThreadId(projectId, threadId, draftSeed),
           rollback: () => {
+            clearNewThreadLanding(threadId);
             clearDraftThread(threadId);
             clearTerminalState(threadId);
             if (wantsTemporaryThread) {

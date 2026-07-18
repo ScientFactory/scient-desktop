@@ -1,5 +1,5 @@
 import { ThreadId } from "@synara/contracts";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { collectTerminalIdsFromLayout } from "./terminalPaneLayout";
 import {
@@ -23,6 +23,31 @@ function summarizeTerminalGroups(
 describe("terminalStateStore actions", () => {
   beforeEach(() => {
     useTerminalStateStore.setState({ terminalStateByThreadId: {} });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("defers terminal serialization until persistence is flushed", () => {
+    vi.useFakeTimers();
+    const storage = useTerminalStateStore.persist.getOptions().storage as unknown as {
+      getItem: (name: string) => unknown;
+      flush: () => void;
+    };
+    storage.flush();
+
+    useTerminalStateStore.getState().setTerminalHeight(THREAD_ID, 412);
+    const beforeFlush = storage.getItem("scient:terminal-state:v1") as
+      | { state?: { terminalStateByThreadId?: Record<string, { terminalHeight?: number }> } }
+      | null;
+    expect(beforeFlush?.state?.terminalStateByThreadId?.[THREAD_ID]?.terminalHeight).not.toBe(412);
+
+    storage.flush();
+    const afterFlush = storage.getItem("scient:terminal-state:v1") as {
+      state?: { terminalStateByThreadId?: Record<string, { terminalHeight?: number }> };
+    };
+    expect(afterFlush.state?.terminalStateByThreadId?.[THREAD_ID]?.terminalHeight).toBe(412);
   });
 
   it("returns a closed default terminal state for unknown threads", () => {
