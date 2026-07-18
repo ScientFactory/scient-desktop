@@ -1093,7 +1093,7 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   return {};
 }
 
-function installDeterministicSendNativeApi(): () => void {
+function installDeterministicActionNativeApi(): () => void {
   const previousNativeApi = window.nativeApi;
   const wsNativeApi = readNativeApi();
   if (!wsNativeApi) {
@@ -1104,6 +1104,19 @@ function installDeterministicSendNativeApi(): () => void {
     configurable: true,
     value: {
       ...wsNativeApi,
+      shell: {
+        ...wsNativeApi.shell,
+        openInEditor: async (
+          cwd: Parameters<typeof wsNativeApi.shell.openInEditor>[0],
+          editor: Parameters<typeof wsNativeApi.shell.openInEditor>[1],
+        ) => {
+          wsRequests.push({
+            _tag: WS_METHODS.shellOpenInEditor,
+            cwd,
+            editor,
+          });
+        },
+      },
       git: {
         ...wsNativeApi.git,
         createWorktree: async (input: Parameters<typeof wsNativeApi.git.createWorktree>[0]) => {
@@ -1144,6 +1157,17 @@ function installDeterministicSendNativeApi(): () => void {
             command,
           });
           return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        },
+      },
+      automation: {
+        ...wsNativeApi.automation,
+        create: async (input: Parameters<typeof wsNativeApi.automation.create>[0]) => {
+          const request: WsRequestEnvelope["body"] = {
+            _tag: WS_METHODS.automationCreate,
+            ...input,
+          };
+          wsRequests.push(request);
+          return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.automation.create>>;
         },
       },
     },
@@ -1247,6 +1271,13 @@ const worker = setupWorker(
   }),
   http.get("*/api/project-favicon", () => new HttpResponse(null, { status: 204 })),
 );
+
+function suppressExpectedRuntimeDisposal(event: PromiseRejectionEvent): void {
+  // This file deliberately replaces the browser API singleton between mounted
+  // app roots. Effect reports cancellation of the old test-only runtime as an
+  // unhandled defect even though WsTransport.dispose handles its promises.
+  if (event.reason === "ManagedRuntime disposed") event.preventDefault();
+}
 
 async function nextFrame(): Promise<void> {
   await new Promise<void>((resolve) => {
@@ -1614,6 +1645,11 @@ async function mountChatView(options: {
 }): Promise<MountedChatView> {
   fixture = buildFixture(options.snapshot);
   options.configureFixture?.(fixture);
+  // ChatView browser tests exercise UI behavior, while EventRouter owns the
+  // transport-level contract. Record mutating native actions synchronously so
+  // a slow Linux WebSocket round trip cannot outlive unmount and dispose the
+  // next test's Effect runtime.
+  const restoreNativeApi = installDeterministicActionNativeApi();
   await setViewport(options.viewport);
   await waitForProductionStyles();
 
@@ -1640,6 +1676,8 @@ async function mountChatView(options: {
 
   const cleanup = async () => {
     await screen.unmount();
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
+    restoreNativeApi();
     host.remove();
   };
 
@@ -1675,6 +1713,7 @@ async function measureUserRowAtViewport(options: {
 
 describe("ChatView timeline estimator parity (full app)", () => {
   beforeAll(async () => {
+    window.addEventListener("unhandledrejection", suppressExpectedRuntimeDisposal);
     fixture = buildFixture(
       createSnapshotForTargetUser({
         targetMessageId: "msg-user-bootstrap" as MessageId,
@@ -1692,6 +1731,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
   afterAll(async () => {
     await worker.stop();
+    window.removeEventListener("unhandledrejection", suppressExpectedRuntimeDisposal);
   });
 
   beforeEach(async () => {
@@ -4038,7 +4078,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("creates a temporary branch-backed worktree on first send in New worktree mode", async () => {
-    const restoreNativeApi = installDeterministicSendNativeApi();
+    const restoreNativeApi = installDeterministicActionNativeApi();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -4143,7 +4183,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("runs the setup action from the newly-created worktree before starting the turn", async () => {
-    const restoreNativeApi = installDeterministicSendNativeApi();
+    const restoreNativeApi = installDeterministicActionNativeApi();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: withProjectScripts(
