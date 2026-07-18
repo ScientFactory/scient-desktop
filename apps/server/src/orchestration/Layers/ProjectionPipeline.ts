@@ -2176,15 +2176,15 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
   const projectHotEventInCurrentTransaction: OrchestrationProjectionPipelineShape["projectHotEventInCurrentTransaction"] =
     (event) =>
       runProjectorsForHotEventInCurrentTransaction(
-      selectProjectorsForEvent(event, "hot"),
-      event,
-      ORCHESTRATION_PROJECTOR_NAMES.hot,
-    ).pipe(
-      Effect.provideService(FileSystem.FileSystem, fileSystem),
-      Effect.provideService(Path.Path, path),
-      Effect.provideService(ServerConfig, serverConfig),
-      Effect.asVoid,
-    );
+        selectProjectorsForEvent(event, "hot"),
+        event,
+        ORCHESTRATION_PROJECTOR_NAMES.hot,
+      ).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(ServerConfig, serverConfig),
+        Effect.asVoid,
+      );
 
   const projectDeferredEvent: OrchestrationProjectionPipelineShape["projectDeferredEvent"] = (
     event,

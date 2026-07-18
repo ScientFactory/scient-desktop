@@ -101,10 +101,7 @@ import {
 import type { FileCommentSelection } from "../lib/fileComments";
 import { type DockPaneRuntimeMode } from "../lib/dockPaneActivation";
 import { projectListDirectoriesQueryOptions } from "../lib/projectReactQuery";
-import {
-  clearNewThreadLanding,
-  isNewThreadLandingPending,
-} from "../lib/newThreadLanding";
+import { clearNewThreadLanding, isNewThreadLandingPending } from "../lib/newThreadLanding";
 import {
   WorkspaceFileOpenerContext,
   prefetchWorkspaceFile,

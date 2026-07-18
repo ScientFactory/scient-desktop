@@ -38,9 +38,9 @@ describe("terminalStateStore actions", () => {
     storage.flush();
 
     useTerminalStateStore.getState().setTerminalHeight(THREAD_ID, 412);
-    const beforeFlush = storage.getItem("scient:terminal-state:v1") as
-      | { state?: { terminalStateByThreadId?: Record<string, { terminalHeight?: number }> } }
-      | null;
+    const beforeFlush = storage.getItem("scient:terminal-state:v1") as {
+      state?: { terminalStateByThreadId?: Record<string, { terminalHeight?: number }> };
+    } | null;
     expect(beforeFlush?.state?.terminalStateByThreadId?.[THREAD_ID]?.terminalHeight).not.toBe(412);
 
     storage.flush();
