@@ -87,6 +87,7 @@ import {
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { buildFileAttachmentsPromptBlock } from "../attachmentProjection.ts";
+import { readProviderPromptImage } from "../promptAttachments.ts";
 import { buildClaudeProcessEnv } from "../claudeProcessEnv.ts";
 import {
   applyClaudeTaskToolResult,
@@ -991,7 +992,11 @@ function buildUserMessageEffect(
         });
       }
 
-      const bytes = yield* dependencies.fileSystem.readFile(attachmentPath).pipe(
+      const bytes = yield* readProviderPromptImage({
+        fileSystem: dependencies.fileSystem,
+        path: attachmentPath,
+        expectedBytes: attachment.sizeBytes,
+      }).pipe(
         Effect.mapError(
           (cause) =>
             new ProviderAdapterRequestError({

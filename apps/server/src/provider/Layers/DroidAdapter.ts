@@ -43,7 +43,10 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig, type ServerConfigShape } from "../../config.ts";
 import { appendFileAttachmentsPromptBlock } from "../attachmentProjection.ts";
-import { filterProviderPromptImageAttachments } from "../promptAttachments.ts";
+import {
+  filterProviderPromptImageAttachments,
+  readProviderPromptImage,
+} from "../promptAttachments.ts";
 import { listFactoryPlugins, readFactoryPlugin } from "../FactoryPluginDiscovery.ts";
 import { readFactorySessionHistory } from "../FactorySessionHistory.ts";
 import { appendProviderReferencesPromptBlock } from "../promptReferenceProjection.ts";
@@ -1532,7 +1535,11 @@ export function makeDroidAdapter(
                 detail: `Invalid attachment id '${attachment.id}'.`,
               });
             }
-            const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+            const bytes = yield* readProviderPromptImage({
+              fileSystem,
+              path: attachmentPath,
+              expectedBytes: attachment.sizeBytes,
+            }).pipe(
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterRequestError({
