@@ -69,7 +69,22 @@ export interface BrandIdentityBinaryFile {
 }
 
 const requiredScientIdentityText = new Map<string, readonly string[]>([
-  ["README.md", ["# Scient Desktop", "ScientFactory/scient-desktop"]],
+  [
+    "README.md",
+    [
+      "# Scient Desktop",
+      "ScientFactory/scient-desktop",
+      "No public Scient Desktop release is available yet.",
+      "[SECURITY.md](./SECURITY.md)",
+    ],
+  ],
+  [
+    "SECURITY.md",
+    [
+      "# Security policy",
+      "https://github.com/ScientFactory/scient-desktop/security/advisories/new",
+    ],
+  ],
   ["KEYBINDINGS.md", ["# Scient Keybindings", "~/.scient/userdata/keybindings.json"]],
   ["apps/desktop/package.json", ['"productName": "Scient"']],
   [
@@ -151,6 +166,7 @@ const scientOnlySurfacePaths = new Set([
   "CONTRIBUTING.md",
   "KEYBINDINGS.md",
   "REMOTE.md",
+  "SECURITY.md",
   "apps/marketing/src/layouts/Layout.astro",
   "apps/marketing/src/lib/releases.ts",
   "apps/marketing/src/pages/download.astro",
@@ -215,6 +231,13 @@ const scientOnlySurfacePaths = new Set([
 // new Scient-owned product state or define distributable identity.
 const forbiddenScientOwnedOutputPatterns = new Map<string, readonly RegExp[]>([
   [".github/workflows/ci.yml", [/\bVerify Synara identity\b/i]],
+  [
+    "README.md",
+    [
+      /https:\/\/scientfactory\.com\/?/i,
+      /https:\/\/github\.com\/ScientFactory\/scient-desktop\/releases/i,
+    ],
+  ],
   [
     "scripts/lib/desktop-platform-build-config.ts",
     [/executableName:\s*["']synara["']/i, /StartupWMClass:\s*["']synara["']/i],

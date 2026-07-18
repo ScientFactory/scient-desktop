@@ -18,9 +18,8 @@ It brings chats, terminals, browser previews, diffs, branches, provider sessions
 > [!WARNING]
 > You need to have [Codex CLI](https://github.com/openai/codex) installed and authorized for Codex sessions to work.
 
-Install the [desktop app from the Scient releases page](https://github.com/ScientFactory/scient-desktop/releases), or visit [scientfactory.com](https://scientfactory.com/).
-
-You can also run Scient locally while the project is still early:
+No public Scient Desktop release is available yet. While the project is still
+early, build and run the current source locally:
 
 ```sh
 bun install
@@ -44,3 +43,6 @@ Focused issues and PRs are welcome, especially bug fixes, reliability fixes, and
 Read [CONTRIBUTING.md](./CONTRIBUTING.md) before opening an issue or PR.
 
 Need support? [Open a GitHub issue](https://github.com/ScientFactory/scient-desktop/issues).
+
+For vulnerabilities, follow the private reporting instructions in
+[SECURITY.md](./SECURITY.md) instead of opening a public issue.

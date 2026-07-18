@@ -201,6 +201,27 @@ describe("brand identity guard", () => {
     ).toEqual([]);
   });
 
+  it("rejects public installation channels that are not available yet", () => {
+    expect(
+      findScientOwnedOutputIdentityViolations([
+        {
+          path: "README.md",
+          contents:
+            "Install from https://github.com/ScientFactory/scient-desktop/releases.\nVisit https://scientfactory.com/.",
+        },
+      ]),
+    ).toHaveLength(2);
+
+    expect(
+      findScientOwnedOutputIdentityViolations([
+        {
+          path: "README.md",
+          contents: "No public Scient Desktop release is available yet.",
+        },
+      ]),
+    ).toEqual([]);
+  });
+
   it("rejects Windows recovery guidance that assumes an unpublished CLI package", () => {
     const path = "apps/server/src/terminal/Layers/BunPTY.ts";
 
