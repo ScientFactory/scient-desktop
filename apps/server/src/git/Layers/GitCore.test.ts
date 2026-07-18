@@ -2113,6 +2113,49 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect("prepareCommitContext treats selected file paths literally", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const core = yield* GitCore;
+        const selectedPaths = [
+          "selected[1].txt",
+          "experiment*.csv",
+          "question?.md",
+          ":(exclude)results",
+          "-leading-dash.txt",
+          "spaces and Unicode-מדע.txt",
+        ];
+        const patternMatches = ["selected1.txt", "experiment-one.csv", "question1.md"];
+
+        for (const filePath of [...selectedPaths, ...patternMatches]) {
+          yield* writeTextFile(path.join(tmp, filePath), `${filePath}\n`);
+        }
+
+        const context = yield* core.prepareCommitContext(tmp, selectedPaths);
+        expect(context).not.toBeNull();
+
+        const stagedPaths = (yield* git(tmp, [
+          "-c",
+          "core.quotePath=false",
+          "diff",
+          "--cached",
+          "--name-only",
+        ])).split("\n");
+        expect(stagedPaths.toSorted()).toEqual(selectedPaths.toSorted());
+
+        const statusAfter = yield* git(tmp, [
+          "-c",
+          "core.quotePath=false",
+          "status",
+          "--porcelain",
+        ]);
+        for (const patternMatch of patternMatches) {
+          expect(statusAfter).toContain(patternMatch);
+        }
+      }),
+    );
+
     it.effect("prepareCommitContext stages everything when filePaths is undefined", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
