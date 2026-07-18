@@ -904,6 +904,74 @@ describe("startSession", () => {
       manager.stopAll();
     }
   });
+
+  it("serializes startup operations for the same thread and releases the queue after failure", async () => {
+    const manager = new CodexAppServerManager() as unknown as {
+      runSerializedSessionOperation: <T>(
+        threadId: ThreadId,
+        operation: () => Promise<T>,
+      ) => Promise<T>;
+    };
+    const threadId = asThreadId("thread-serialized-start");
+    const order: string[] = [];
+    let releaseFirst = (): void => undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    const first = manager.runSerializedSessionOperation(threadId, async () => {
+      order.push("first:start");
+      await firstGate;
+      order.push("first:end");
+      throw new Error("first failed");
+    });
+    const second = manager.runSerializedSessionOperation(threadId, async () => {
+      order.push("second:start");
+      return "ready";
+    });
+
+    await vi.waitFor(() => {
+      expect(order).toEqual(["first:start"]);
+    });
+    releaseFirst();
+
+    await expect(first).rejects.toThrow("first failed");
+    await expect(second).resolves.toBe("ready");
+    expect(order).toEqual(["first:start", "first:end", "second:start"]);
+  });
+
+  it("shares one in-flight discovery startup per normalized cwd", async () => {
+    const manager = new CodexAppServerManager();
+    const discoveryContext = { marker: "discovery" };
+    let resolveStart = (_value: unknown): void => undefined;
+    const startGate = new Promise<unknown>((resolve) => {
+      resolveStart = resolve;
+    });
+    const createDiscoverySession = vi
+      .spyOn(
+        manager as unknown as {
+          createDiscoverySession: (cwd: string) => Promise<unknown>;
+        },
+        "createDiscoverySession",
+      )
+      .mockReturnValue(startGate);
+    const getOrCreateDiscoverySession = (
+      manager as unknown as {
+        getOrCreateDiscoverySession: (cwd: string) => Promise<unknown>;
+      }
+    ).getOrCreateDiscoverySession.bind(manager);
+
+    const first = getOrCreateDiscoverySession(" /repo ");
+    const second = getOrCreateDiscoverySession("/repo");
+
+    expect(createDiscoverySession).toHaveBeenCalledTimes(1);
+    expect(createDiscoverySession).toHaveBeenCalledWith("/repo");
+    resolveStart(discoveryContext);
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      discoveryContext,
+      discoveryContext,
+    ]);
+  });
 });
 
 describe("sendTurn", () => {

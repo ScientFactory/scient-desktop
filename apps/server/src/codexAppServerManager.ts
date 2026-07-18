@@ -742,7 +742,9 @@ function setRecentCacheEntry<K, V>(
 
 export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEvents> {
   private readonly sessions = new Map<ThreadId, CodexSessionContext>();
+  private readonly sessionOperationTails = new Map<ThreadId, Promise<void>>();
   private readonly discoverySessions = new Map<string, CodexSessionContext>();
+  private readonly discoverySessionStarts = new Map<string, Promise<CodexSessionContext>>();
   private readonly discoverySessionIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly skillsCache = new Map<string, ProviderListSkillsResult>();
   private readonly pluginsCache = new Map<string, ProviderListPluginsResult>();
@@ -758,6 +760,29 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     super();
     this.runPromise = services ? Effect.runPromiseWith(services) : Effect.runPromise;
     this.synaraSkillsDir = options?.synaraSkillsDir;
+  }
+
+  private async runSerializedSessionOperation<T>(
+    threadId: ThreadId,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.sessionOperationTails.get(threadId) ?? Promise.resolve();
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.catch(() => undefined).then(() => gate);
+    this.sessionOperationTails.set(threadId, tail);
+
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.sessionOperationTails.get(threadId) === tail) {
+        this.sessionOperationTails.delete(threadId);
+      }
+    }
   }
 
   // Registers `~/.synara/skills` as a codex skill root so portable skills are
@@ -780,6 +805,14 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   async startSession(input: CodexAppServerStartSessionInput): Promise<ProviderSession> {
+    return this.runSerializedSessionOperation(input.threadId, () =>
+      this.startSessionUnlocked(input),
+    );
+  }
+
+  private async startSessionUnlocked(
+    input: CodexAppServerStartSessionInput,
+  ): Promise<ProviderSession> {
     const threadId = input.threadId;
     const now = new Date().toISOString();
     let context: CodexSessionContext | undefined;
@@ -1390,6 +1423,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   }
 
   async forkThread(input: ProviderForkThreadInput): Promise<ProviderForkThreadResult> {
+    return this.runSerializedSessionOperation(input.threadId, () => this.forkThreadUnlocked(input));
+  }
+
+  private async forkThreadUnlocked(
+    input: ProviderForkThreadInput,
+  ): Promise<ProviderForkThreadResult> {
     const threadId = input.threadId;
     const now = new Date().toISOString();
     let context: CodexSessionContext | undefined;
@@ -2012,6 +2051,21 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       return existing;
     }
 
+    const existingStart = this.discoverySessionStarts.get(normalizedCwd);
+    if (existingStart) {
+      return existingStart;
+    }
+
+    const start = this.createDiscoverySession(normalizedCwd).finally(() => {
+      if (this.discoverySessionStarts.get(normalizedCwd) === start) {
+        this.discoverySessionStarts.delete(normalizedCwd);
+      }
+    });
+    this.discoverySessionStarts.set(normalizedCwd, start);
+    return start;
+  }
+
+  private async createDiscoverySession(normalizedCwd: string): Promise<CodexSessionContext> {
     const now = new Date().toISOString();
     await this.assertSupportedCodexCliVersion({
       binaryPath: "codex",
@@ -2176,11 +2230,13 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       this.emitLifecycleEvent(context, "session/exited", message);
       if (context.discovery) {
         const discoveryKey = context.session.cwd ?? "";
-        if (discoveryKey) {
+        if (discoveryKey && this.discoverySessions.get(discoveryKey) === context) {
           this.discoverySessions.delete(discoveryKey);
         }
       } else {
-        this.sessions.delete(context.session.threadId);
+        if (this.sessions.get(context.session.threadId) === context) {
+          this.sessions.delete(context.session.threadId);
+        }
       }
     });
   }
