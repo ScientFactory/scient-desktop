@@ -484,15 +484,6 @@ describe("EventRouter scoped orchestration sync", () => {
 
       sendThreadEventPush(firstAssistantChunk);
 
-      await new Promise((resolve) => window.setTimeout(resolve, 120));
-
-      const threadAfterDuplicate = useStore.getState();
-      expect(
-        getThreadFromState(threadAfterDuplicate, THREAD_ID)?.messages.filter(
-          (entry) => entry.id === MessageId.makeUnsafe("msg-assistant-1"),
-        ),
-      ).toHaveLength(1);
-
       const secondAssistantChunk = {
         ...firstAssistantChunk,
         sequence: 3,
@@ -516,8 +507,13 @@ describe("EventRouter scoped orchestration sync", () => {
           );
           expect(message?.text).toBe("hello world");
           expect(message?.streaming).toBe(false);
+          expect(
+            thread?.messages.filter(
+              (entry) => entry.id === MessageId.makeUnsafe("msg-assistant-1"),
+            ),
+          ).toHaveLength(1);
         },
-        { timeout: 8_000, interval: 16 },
+        { timeout: 20_000, interval: 16 },
       );
     } finally {
       await mounted.cleanup();

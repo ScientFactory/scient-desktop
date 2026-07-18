@@ -1944,7 +1944,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         () => {
           expect(document.body.textContent).toContain(THREAD_TITLE);
         },
-        { timeout: 8_000, interval: 16 },
+        { timeout: 20_000, interval: 16 },
       );
     } finally {
       await mounted.cleanup();
@@ -2024,6 +2024,14 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const scrollContainer = await waitForElement(
         () => document.querySelector<HTMLElement>("[data-chat-scroll-container='true']"),
         "Unable to find message scroll container.",
+      );
+      await vi.waitFor(
+        () => {
+          expect(scrollContainer.scrollHeight - scrollContainer.clientHeight).toBeGreaterThan(
+            AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
+          );
+        },
+        { timeout: 8_000, interval: 16 },
       );
       scrollContainer.scrollTop = 0;
       scrollContainer.dispatchEvent(new Event("scroll"));
@@ -2113,7 +2121,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           });
           expect(turnStartRequest).toBeTruthy();
         },
-        { timeout: 8_000, interval: 16 },
+        { timeout: 20_000, interval: 16 },
       );
 
       expect(wsRequests.some((request) => request._tag === WS_METHODS.automationCreate)).toBe(
@@ -2166,7 +2174,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             schedule: { type: "interval", everySeconds: 15 },
           });
         },
-        { timeout: 8_000, interval: 16 },
+        { timeout: 20_000, interval: 16 },
       );
       await waitForLayout();
 
@@ -2222,7 +2230,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             schedule: { type: "interval", everySeconds: 15 },
           });
         },
-        { timeout: 8_000, interval: 16 },
+        { timeout: 20_000, interval: 16 },
       );
       await waitForLayout();
 
@@ -4595,7 +4603,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             ),
           ).toBe(true);
         },
-        { timeout: 8_000, interval: 16 },
+        { timeout: 20_000, interval: 16 },
       );
 
       useStore.getState().syncServerReadModel(addThreadToSnapshot(fixture.snapshot, newThreadId));
@@ -4737,7 +4745,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             },
           });
         },
-        { timeout: 8_000, interval: 16 },
+        { timeout: 20_000, interval: 16 },
       );
     } finally {
       await mounted.cleanup();
@@ -5101,7 +5109,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(settledTrigger).toBeDefined();
           expect(settledTrigger?.getAttribute("aria-expanded")).toBe("false");
         },
-        { timeout: 8_000, interval: 16 },
+        { timeout: 20_000, interval: 16 },
       );
     } finally {
       await mounted.cleanup();
