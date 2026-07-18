@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -45,6 +47,12 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Verify Scient upstream ownership and review state
+        run: |
+          git remote add upstream https://github.com/Emanuele-web04/synara.git
+          git remote set-url --push upstream DISABLED
+          bun run scient:upstream-check --review-check
 
       - name: Verify Linux terminal PTY native dependency
         if: runner.os == 'Linux'
