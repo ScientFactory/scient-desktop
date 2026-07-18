@@ -60,9 +60,10 @@ function commandFailureDetails(error: unknown): string {
   return stderr || stdout || error.message;
 }
 
-function run(command: string, args: readonly string[]): string {
+function run(command: string, args: readonly string[], cwd = process.cwd()): string {
   try {
     return execFileSync(command, [...args], {
+      cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
@@ -98,10 +99,10 @@ export function shouldFetchUpstream(args: readonly string[]): boolean {
 }
 
 export function resolveVerificationMode(args: readonly string[]): VerificationMode {
-  const review = args.includes("--review-check");
+  const review = args.includes("--require-reviewed-tip") || args.includes("--review-check");
   const intake = args.includes("--intake") || args.includes("--checks");
   if (review && intake) {
-    throw new Error("Choose either --review-check or --intake, not both.");
+    throw new Error("Choose either strict review verification or --intake, not both.");
   }
   if (intake) return "intake";
   if (review) return "review";
@@ -154,13 +155,22 @@ function requireString(value: Record<string, unknown>, key: string): string {
   throw new Error(`${UPSTREAM_STATE_PATH} field ${key} must be a non-empty string.`);
 }
 
-function assertGitHubRemote(label: string, remote: string, expectedRepository: string): void {
+export function assertGitHubRemote(
+  label: string,
+  remote: string,
+  expectedRepository: string,
+): void {
   const actualRepository = githubRepositoryFromRemote(remote);
   if (actualRepository !== expectedRepository.toLowerCase()) {
     throw new Error(
       `${label} mismatch: expected GitHub repository ${expectedRepository}, received ${remote || "(empty)"}`,
     );
   }
+}
+
+export function assertUpstreamPushDisabled(remote: string): void {
+  if (remote === "DISABLED") return;
+  throw new Error(`upstream push URL mismatch: expected DISABLED, received ${remote || "(empty)"}`);
 }
 
 function assertStateIdentity(state: UpstreamState): void {
@@ -186,14 +196,57 @@ function assertStateIdentity(state: UpstreamState): void {
   }
 }
 
-function assertAncestor(ancestor: string, descendant: string, label: string): void {
+function assertAncestor(ancestor: string, descendant: string, label: string, cwd: string): void {
   try {
     execFileSync("git", ["merge-base", "--is-ancestor", ancestor, descendant], {
+      cwd,
       stdio: "ignore",
     });
   } catch (error) {
     throw new Error(`${label}: ${ancestor} is not an ancestor of ${descendant}.`, { cause: error });
   }
+}
+
+export function verifyAncestry(input: {
+  readonly reviewedThrough: string;
+  readonly integrationBase: string;
+  readonly upstreamTip: string;
+  readonly ownedHead: string;
+  readonly cwd?: string;
+}): void {
+  const cwd = input.cwd ?? process.cwd();
+  run("git", ["cat-file", "-e", `${input.reviewedThrough}^{commit}`], cwd);
+  run("git", ["cat-file", "-e", `${input.integrationBase}^{commit}`], cwd);
+  assertAncestor(
+    input.reviewedThrough,
+    input.upstreamTip,
+    "Invalid upstream review checkpoint",
+    cwd,
+  );
+  assertAncestor(
+    input.integrationBase,
+    input.upstreamTip,
+    "Integration base is not official upstream history",
+    cwd,
+  );
+  assertAncestor(
+    input.integrationBase,
+    input.ownedHead,
+    "Integration base is not present in owned history",
+    cwd,
+  );
+}
+
+export function assertReviewCurrent(
+  mode: VerificationMode,
+  unreviewedCommits: number,
+  reviewedThrough: string,
+  upstreamTip: string,
+): void {
+  if (mode !== "review" || unreviewedCommits === 0) return;
+  throw new Error(
+    `Strict review verification requires reviewedThrough to equal the official tip. ${reviewedThrough} leaves ${unreviewedCommits} unreviewed commit(s) before ${upstreamTip}.`,
+  );
 }
 
 function main(): void {
@@ -220,11 +273,7 @@ function main(): void {
     EXPECTED_UPSTREAM_REPOSITORY,
   );
   const upstreamPushUrl = run("git", ["remote", "get-url", "--push", "upstream"]);
-  if (upstreamPushUrl !== "DISABLED") {
-    throw new Error(
-      `upstream push URL mismatch: expected DISABLED, received ${upstreamPushUrl || "(empty)"}`,
-    );
-  }
+  assertUpstreamPushDisabled(upstreamPushUrl);
 
   const fetched = shouldFetchUpstream(args);
   if (fetched) {
@@ -235,15 +284,12 @@ function main(): void {
     JSON.parse(readFileSync(path.join(process.cwd(), UPSTREAM_STATE_PATH), "utf8")),
   );
   assertStateIdentity(state);
-  run("git", ["cat-file", "-e", `${state.reviewedThrough}^{commit}`]);
-  run("git", ["cat-file", "-e", `${state.integrationBase}^{commit}`]);
-  assertAncestor(state.reviewedThrough, upstreamTip, "Invalid upstream review checkpoint");
-  assertAncestor(
-    state.integrationBase,
+  verifyAncestry({
+    reviewedThrough: state.reviewedThrough,
+    integrationBase: state.integrationBase,
     upstreamTip,
-    "Integration base is not official upstream history",
-  );
-  assertAncestor(state.integrationBase, "HEAD", "Integration base is not present in owned history");
+    ownedHead: "HEAD",
+  });
 
   const [ahead = "unknown", behind = "unknown"] = run("git", [
     "rev-list",
@@ -254,6 +300,7 @@ function main(): void {
   const unreviewedCommits = Number(
     run("git", ["rev-list", "--count", `${state.reviewedThrough}..${upstreamTip}`]),
   );
+  assertReviewCurrent(mode, unreviewedCommits, state.reviewedThrough, upstreamTip);
 
   if (SCIENT_APP_NAME !== "Scient" || SCIENT_DESKTOP_ORIGIN !== "scient://app") {
     throw new Error("Scient desktop identity invariant failed.");

@@ -12,9 +12,11 @@ its release schedule.
 - Canonical policy: `Scient/docs/operations/upstream-intake.md`
 
 Use `bun run scient:upstream-check` for topology, identity invariants,
-divergence, and review-state reporting. Use `--review-check` to validate the
-committed review checkpoint. Use `--intake` from a clean maintenance branch to
-run the deterministic source suite before proposing inherited code.
+divergence, and non-blocking review-state reporting in ordinary product CI. Use
+`--require-reviewed-tip` when closing a disposition review; the strict mode
+fails unless `reviewedThrough` equals the fetched official tip. Use `--intake`
+from a clean maintenance branch to run the deterministic source suite before
+proposing inherited code. `--review-check` remains a strict compatibility alias.
 
 Being behind official Synara is not itself a failure. Unreviewed movement must
 be surfaced, classified, and dispositioned. Upstream intake must not be mixed
