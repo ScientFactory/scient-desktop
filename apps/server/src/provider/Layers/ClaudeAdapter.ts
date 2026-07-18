@@ -29,6 +29,7 @@ import {
 import {
   ApprovalRequestId,
   type CanonicalItemType,
+  type ClaudeApiEffort,
   type CanonicalRequestType,
   EventId,
   type ProviderApprovalDecision,
@@ -240,6 +241,10 @@ interface ClaudeSessionContext {
   interruptRequestedTurnId: TurnId | undefined;
   lastKnownContextWindow: number | undefined;
   currentAutoCompactWindow: number | undefined;
+  currentAlwaysThinkingEnabled: boolean | undefined;
+  currentEffort: ClaudeApiEffort | null;
+  currentUltracode: boolean;
+  currentFastMode: boolean;
   lastKnownAutoCompactThreshold: number | undefined;
   contextUsageControlEnabled: boolean;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
@@ -644,6 +649,18 @@ function resolveSelectedClaudeAutoCompactWindow(
   return CLAUDE_CONTEXT_WINDOW_MAX_TOKENS[
     resolvedAutoCompactWindow as keyof typeof CLAUDE_CONTEXT_WINDOW_MAX_TOKENS
   ];
+}
+
+function resolveSelectedClaudeThinkingToggle(
+  model: string | null | undefined,
+  selectedThinking: boolean | null | undefined,
+): boolean | undefined {
+  if (typeof selectedThinking !== "boolean") {
+    return undefined;
+  }
+  return getModelCapabilities("claudeAgent", model).supportsThinkingToggle
+    ? selectedThinking
+    : undefined;
 }
 
 function resolveEffectiveClaudeContextWindow(input: {
@@ -3635,10 +3652,10 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         const effort =
           requestedEffort && hasEffortLevel(caps, requestedEffort) ? requestedEffort : null;
         const fastMode = modelSelection?.options?.fastMode === true && caps.supportsFastMode;
-        const thinking =
-          typeof modelSelection?.options?.thinking === "boolean" && caps.supportsThinkingToggle
-            ? modelSelection.options.thinking
-            : undefined;
+        const thinking = resolveSelectedClaudeThinkingToggle(
+          effectiveClaudeModel,
+          modelSelection?.options?.thinking,
+        );
         const effectiveEffort = getEffectiveClaudeCodeEffort(effort);
         const ultracode = effort === "ultracode" && hasEffortLevel(caps, "xhigh");
         const permissionMode =
@@ -3652,6 +3669,11 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             ? { autoCompactWindow: requestedAutoCompactWindowTokens }
             : {}),
           ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
+          // Non-max effort is a live Settings value. `max` has no equivalent
+          // beyond the spawn-time query option and remains restart-bound.
+          ...(effectiveEffort && effectiveEffort !== "max"
+            ? { effortLevel: effectiveEffort }
+            : {}),
           ...(fastMode ? { fastMode: true } : {}),
           ...(ultracode ? { ultracode: true } : {}),
         };
@@ -3671,10 +3693,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             append: EMBEDDED_CLAUDE_SYSTEM_PROMPT_APPEND,
           },
           ...(Object.keys(claudeSubagents).length > 0 ? { agents: claudeSubagents } : {}),
-          // Keep the runtime value explicit so Opus 4.7 can pass xhigh through to the SDK.
-          ...(effectiveEffort
-            ? { effort: effectiveEffort as "low" | "medium" | "high" | "xhigh" | "max" }
-            : {}),
+          ...(effectiveEffort === "max" ? { effort: "max" as const } : {}),
           ...(permissionMode ? { permissionMode } : {}),
           ...(permissionMode === "bypassPermissions"
             ? { allowDangerouslySkipPermissions: true }
@@ -3797,6 +3816,10 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
               apiModelId ?? effectiveClaudeModel,
             ),
             currentAutoCompactWindow: requestedAutoCompactWindowTokens,
+            currentAlwaysThinkingEnabled: thinking,
+            currentEffort: effectiveEffort,
+            currentUltracode: ultracode,
+            currentFastMode: fastMode,
             lastKnownAutoCompactThreshold: requestedAutoCompactWindowTokens,
             contextUsageControlEnabled: true,
             lastKnownTokenUsage: undefined,
@@ -3992,6 +4015,62 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           context.lastKnownAutoCompactThreshold = requestedAutoCompactWindow;
           context.emittedContextUsageWarnings.delete("near-window");
           context.emittedContextUsageWarnings.delete("large-prompt");
+        }
+
+        const requestedThinking = resolveSelectedClaudeThinkingToggle(
+          modelSelection?.model,
+          modelSelection?.options?.thinking,
+        );
+        if (modelSelection && requestedThinking !== context.currentAlwaysThinkingEnabled) {
+          yield* Effect.tryPromise({
+            try: () =>
+              context.query.applyFlagSettings({
+                alwaysThinkingEnabled: requestedThinking ?? null,
+              }),
+            catch: (cause) => toRequestError(input.threadId, "turn/applyFlagSettings", cause),
+          });
+          context.currentAlwaysThinkingEnabled = requestedThinking;
+        }
+
+        // Effort, fast mode, and ultracode are live Settings values. Only max
+        // effort remains restart-bound because the SDK has no flag equivalent.
+        if (modelSelection) {
+          const turnCaps = getModelCapabilities("claudeAgent", modelSelection.model);
+          const selectedEffort = trimOrNull(modelSelection.options?.effort ?? null);
+          const validEffort =
+            selectedEffort && hasEffortLevel(turnCaps, selectedEffort) ? selectedEffort : null;
+          const requestedEffort = getEffectiveClaudeCodeEffort(validEffort);
+          const requestedUltracode =
+            validEffort === "ultracode" && hasEffortLevel(turnCaps, "xhigh");
+          const requestedFastMode =
+            modelSelection.options?.fastMode === true && turnCaps.supportsFastMode;
+          const effortChanged =
+            requestedEffort !== context.currentEffort &&
+            requestedEffort !== "max" &&
+            context.currentEffort !== "max";
+          const ultracodeChanged = requestedUltracode !== context.currentUltracode;
+          const fastModeChanged = requestedFastMode !== context.currentFastMode;
+
+          if (effortChanged || ultracodeChanged || fastModeChanged) {
+            yield* Effect.tryPromise({
+              try: () =>
+                context.query.applyFlagSettings({
+                  ...(effortChanged
+                    ? {
+                        effortLevel: requestedEffort as Exclude<ClaudeApiEffort, "max"> | null,
+                      }
+                    : {}),
+                  ...(ultracodeChanged ? { ultracode: requestedUltracode ? true : null } : {}),
+                  ...(fastModeChanged ? { fastMode: requestedFastMode ? true : null } : {}),
+                }),
+              catch: (cause) => toRequestError(input.threadId, "turn/applyFlagSettings", cause),
+            });
+            if (effortChanged) {
+              context.currentEffort = requestedEffort;
+            }
+            context.currentUltracode = requestedUltracode;
+            context.currentFastMode = requestedFastMode;
+          }
         }
 
         // Apply interaction mode on every turn so sticky SDK permission state

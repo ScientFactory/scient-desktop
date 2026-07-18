@@ -879,8 +879,8 @@ const make = Effect.gen(function* () {
       const shouldRestartForModelChange = modelChanged && sessionModelSwitch === "restart-session";
       const previousModelSelection = threadSessionModelSelections.get(threadId);
       // Claude restarts resume via `--resume`, which replays the whole conversation
-      // as uncached input tokens. Only spawn-fixed options (effort/settings) may
-      // force that; model and context-window changes switch in-session via setModel.
+      // as uncached input tokens. Only max effort is spawn-fixed; other selection
+      // changes use setModel or the SDK's live flag-settings control.
       // When the dispatch cache has no entry (the session was started by a turn
       // without a selection), compare against the projected thread selection the
       // session was actually spawned from so spawn-fixed changes still restart.

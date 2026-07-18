@@ -3305,7 +3305,24 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    // Effort is fixed at subprocess spawn, so an effort change still restarts.
+    // Non-max effort applies live through Claude flag settings.
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.makeUnsafe("cmd-thread-meta-update-claude-high-effort"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-7",
+          options: {
+            effort: "high",
+          },
+        },
+      }),
+    );
+    expect(harness.startSession).not.toHaveBeenCalled();
+
+    // Max effort has no live Settings equivalent, so it still restarts.
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.meta.update",

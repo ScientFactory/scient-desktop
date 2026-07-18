@@ -302,6 +302,13 @@ function autoCompactWindowFromOptions(options: ClaudeQueryOptions | undefined): 
   return settings && typeof settings === "object" ? settings.autoCompactWindow : undefined;
 }
 
+function effortLevelFromOptions(
+  options: ClaudeQueryOptions | undefined,
+): "low" | "medium" | "high" | "xhigh" | undefined {
+  const settings = options?.settings;
+  return settings && typeof settings === "object" ? settings.effortLevel : undefined;
+}
+
 const THREAD_ID = ThreadId.makeUnsafe("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.makeUnsafe("thread-claude-resume");
 
@@ -458,7 +465,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("forwards xhigh effort for Claude Opus 4.7", () => {
+  it.effect("forwards xhigh effort through Claude live settings", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -476,7 +483,8 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.effort, "xhigh");
+      assert.equal(createInput?.options.effort, undefined);
+      assert.equal(effortLevelFromOptions(createInput?.options), "xhigh");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -504,14 +512,15 @@ describe("ClaudeAdapterLive", () => {
       const createInput = harness.getLastCreateQueryInput();
       assert.equal(createInput?.options.model, "claude-sonnet-5");
       assert.equal(autoCompactWindowFromOptions(createInput?.options), 1_000_000);
-      assert.equal(createInput?.options.effort, "xhigh");
+      assert.equal(createInput?.options.effort, undefined);
+      assert.equal(effortLevelFromOptions(createInput?.options), "xhigh");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
   });
 
-  it.effect("forwards every Sonnet 5 API effort unchanged", () =>
+  it.effect("uses live settings for non-max Sonnet 5 effort and spawn options for max", () =>
     Effect.gen(function* () {
       for (const effort of ["low", "medium", "high", "xhigh", "max"] as const) {
         const harness = makeHarness();
@@ -530,7 +539,11 @@ describe("ClaudeAdapterLive", () => {
 
           const createInput = harness.getLastCreateQueryInput();
           assert.equal(createInput?.options.model, "claude-sonnet-5");
-          assert.equal(createInput?.options.effort, effort);
+          assert.equal(createInput?.options.effort, effort === "max" ? "max" : undefined);
+          assert.equal(
+            effortLevelFromOptions(createInput?.options),
+            effort === "max" ? undefined : effort,
+          );
         }).pipe(Effect.provide(harness.layer));
       }
     }).pipe(Effect.provideService(Random.Random, makeDeterministicRandomService())),
@@ -555,10 +568,11 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.equal(createInput?.options.model, "claude-sonnet-5");
-      assert.equal(createInput?.options.effort, "xhigh");
+      assert.equal(createInput?.options.effort, undefined);
       assert.deepEqual(createInput?.options.settings, {
         autoCompactEnabled: true,
         autoCompactWindow: 200_000,
+        effortLevel: "xhigh",
         ultracode: true,
       });
     }).pipe(
@@ -4097,6 +4111,108 @@ describe("ClaudeAdapterLive", () => {
 
       assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-6"]);
       assert.deepEqual(harness.query.applyFlagSettingsCalls, [{ autoCompactWindow: 1_000_000 }]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("applies the Claude thinking toggle live", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-haiku-4-5",
+          options: { thinking: false },
+        },
+      });
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-haiku-4-5",
+          options: { thinking: true },
+        },
+        attachments: [],
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "continue",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-haiku-4-5",
+          options: { thinking: true },
+        },
+        attachments: [],
+      });
+
+      assert.deepEqual(harness.query.applyFlagSettingsCalls, [
+        { alwaysThinkingEnabled: true },
+      ]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("applies effort, fast mode, and ultracode live", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-8",
+          options: { effort: "high" },
+        },
+      });
+      assert.equal(effortLevelFromOptions(harness.getLastCreateQueryInput()?.options), "high");
+
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-8",
+          options: { effort: "ultracode", fastMode: true },
+        },
+        attachments: [],
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "continue",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-8",
+          options: { effort: "ultracode", fastMode: true },
+        },
+        attachments: [],
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "wrap up",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-8",
+        },
+        attachments: [],
+      });
+
+      assert.deepEqual(harness.query.applyFlagSettingsCalls, [
+        { effortLevel: "xhigh", ultracode: true, fastMode: true },
+        { effortLevel: null, ultracode: null, fastMode: null },
+      ]);
+      assert.deepEqual(harness.query.setModelCalls, []);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
