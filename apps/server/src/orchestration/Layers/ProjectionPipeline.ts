@@ -1918,61 +1918,88 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
     }
   };
 
-  const runProjectorsForEvent = (
+  const runProjectorsForEventCore = (
     selectedProjectors: ReadonlyArray<ProjectorDefinition>,
     event: OrchestrationEvent,
     phaseCursor?: ProjectorName,
   ) =>
     Effect.gen(function* () {
       if (selectedProjectors.length === 0 && phaseCursor === undefined) {
-        return;
+        return null;
       }
       const attachmentSideEffects: AttachmentSideEffects = {
         deletedThreadIds: new Set<string>(),
         prunedThreadRelativePaths: new Map<string, Set<string>>(),
       };
 
-      yield* sql.withTransaction(
-        Effect.forEach(
-          selectedProjectors,
-          (projector) =>
-            projector.apply(event, attachmentSideEffects).pipe(
-              Effect.flatMap(() => {
-                if (projector.name === phaseCursor) {
-                  return Effect.void;
-                }
-                return projectionStateRepository.upsert({
-                  projector: projector.name,
-                  lastAppliedSequence: event.sequence,
-                  updatedAt: event.occurredAt,
-                });
-              }),
-            ),
-          { concurrency: 1 },
-        ).pipe(
-          Effect.flatMap(() =>
-            phaseCursor === undefined
-              ? Effect.void
-              : projectionStateRepository.upsert({
-                  projector: phaseCursor,
-                  lastAppliedSequence: event.sequence,
-                  updatedAt: event.occurredAt,
-                }),
+      yield* Effect.forEach(
+        selectedProjectors,
+        (projector) =>
+          projector.apply(event, attachmentSideEffects).pipe(
+            Effect.flatMap(() => {
+              if (projector.name === phaseCursor) {
+                return Effect.void;
+              }
+              return projectionStateRepository.upsert({
+                projector: projector.name,
+                lastAppliedSequence: event.sequence,
+                updatedAt: event.occurredAt,
+              });
+            }),
           ),
-        ),
+        { concurrency: 1 },
       );
+      if (phaseCursor !== undefined) {
+        yield* projectionStateRepository.upsert({
+          projector: phaseCursor,
+          lastAppliedSequence: event.sequence,
+          updatedAt: event.occurredAt,
+        });
+      }
 
-      yield* runAttachmentSideEffects(attachmentSideEffects).pipe(
-        Effect.catch((cause) =>
-          Effect.logWarning("failed to apply projected attachment side-effects", {
-            projectors: selectedProjectors.map((projector) => projector.name),
-            sequence: event.sequence,
-            eventType: event.type,
-            cause,
-          }),
-        ),
-      );
+      return attachmentSideEffects;
     });
+
+  const runProjectorAttachmentSideEffects = (
+    selectedProjectors: ReadonlyArray<ProjectorDefinition>,
+    event: OrchestrationEvent,
+    attachmentSideEffects: AttachmentSideEffects | null,
+  ) =>
+    attachmentSideEffects === null
+      ? Effect.void
+      : runAttachmentSideEffects(attachmentSideEffects).pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("failed to apply projected attachment side-effects", {
+              projectors: selectedProjectors.map((projector) => projector.name),
+              sequence: event.sequence,
+              eventType: event.type,
+              cause,
+            }),
+          ),
+        );
+
+  const runProjectorsForEvent = (
+    selectedProjectors: ReadonlyArray<ProjectorDefinition>,
+    event: OrchestrationEvent,
+    phaseCursor?: ProjectorName,
+  ) =>
+    Effect.gen(function* () {
+      const attachmentSideEffects = yield* sql.withTransaction(
+        runProjectorsForEventCore(selectedProjectors, event, phaseCursor),
+      );
+      yield* runProjectorAttachmentSideEffects(selectedProjectors, event, attachmentSideEffects);
+    });
+
+  const runProjectorsForHotEventInCurrentTransaction = (
+    selectedProjectors: ReadonlyArray<ProjectorDefinition>,
+    event: OrchestrationEvent,
+    phaseCursor: ProjectorName,
+  ) =>
+    runProjectorsForEventCore(selectedProjectors, event, phaseCursor).pipe(
+      Effect.flatMap((attachmentSideEffects) =>
+        runProjectorAttachmentSideEffects(selectedProjectors, event, attachmentSideEffects),
+      ),
+    );
 
   const runProjectorForEvent = (projector: ProjectorDefinition, event: OrchestrationEvent) =>
     runProjectorsForEvent([projector], event);
@@ -2146,8 +2173,9 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
       ),
     );
 
-  const projectHotEvent: OrchestrationProjectionPipelineShape["projectHotEvent"] = (event) =>
-    runProjectorsForEvent(
+  const projectHotEventInCurrentTransaction: OrchestrationProjectionPipelineShape["projectHotEventInCurrentTransaction"] =
+    (event) =>
+      runProjectorsForHotEventInCurrentTransaction(
       selectProjectorsForEvent(event, "hot"),
       event,
       ORCHESTRATION_PROJECTOR_NAMES.hot,
@@ -2156,9 +2184,6 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
       Effect.provideService(ServerConfig, serverConfig),
       Effect.asVoid,
-      Effect.catchTag("SqlError", (sqlError) =>
-        Effect.fail(toPersistenceSqlError("ProjectionPipeline.projectHotEvent:query")(sqlError)),
-      ),
     );
 
   const projectDeferredEvent: OrchestrationProjectionPipelineShape["projectDeferredEvent"] = (
@@ -2205,7 +2230,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
   return {
     bootstrap,
     projectEvent,
-    projectHotEvent,
+    projectHotEventInCurrentTransaction,
     projectDeferredEvent,
     projectMetadataEvent,
   } satisfies OrchestrationProjectionPipelineShape;

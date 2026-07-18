@@ -26,14 +26,25 @@ const makeRuntimeSqliteLayer = (
     return clientModule.layer(config);
   }).pipe(Layer.unwrap);
 
-const setup = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`PRAGMA journal_mode = WAL;`;
-    yield* sql`PRAGMA foreign_keys = ON;`;
-    yield* runMigrations();
-  }),
-);
+const makeSetup = (filename: string) =>
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const journalModeRows = yield* sql<{ readonly journal_mode: string }>`
+        PRAGMA journal_mode = WAL;
+      `;
+      const journalMode = journalModeRows[0]?.journal_mode;
+      // In-memory SQLite correctly reports `memory`; only file-backed databases
+      // are expected to enter WAL mode.
+      if (filename !== ":memory:" && journalMode?.toLowerCase() !== "wal") {
+        yield* Effect.logWarning("SQLite WAL journal mode could not be enabled", {
+          resultingJournalMode: journalMode ?? "unknown",
+        });
+      }
+      yield* sql`PRAGMA foreign_keys = ON;`;
+      yield* runMigrations();
+    }),
+  );
 
 export const makeSqlitePersistenceLive = (dbPath: string) =>
   Effect.gen(function* () {
@@ -41,11 +52,11 @@ export const makeSqlitePersistenceLive = (dbPath: string) =>
     const path = yield* Path.Path;
     yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
 
-    return Layer.provideMerge(setup, makeRuntimeSqliteLayer({ filename: dbPath }));
+    return Layer.provideMerge(makeSetup(dbPath), makeRuntimeSqliteLayer({ filename: dbPath }));
   }).pipe(Layer.unwrap);
 
 export const SqlitePersistenceMemory = Layer.provideMerge(
-  setup,
+  makeSetup(":memory:"),
   makeRuntimeSqliteLayer({ filename: ":memory:" }),
 );
 
