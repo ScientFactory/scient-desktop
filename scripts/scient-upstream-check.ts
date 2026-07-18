@@ -238,7 +238,11 @@ function main(): void {
   run("git", ["cat-file", "-e", `${state.reviewedThrough}^{commit}`]);
   run("git", ["cat-file", "-e", `${state.integrationBase}^{commit}`]);
   assertAncestor(state.reviewedThrough, upstreamTip, "Invalid upstream review checkpoint");
-  assertAncestor(state.integrationBase, upstreamTip, "Integration base is not official upstream history");
+  assertAncestor(
+    state.integrationBase,
+    upstreamTip,
+    "Integration base is not official upstream history",
+  );
   assertAncestor(state.integrationBase, "HEAD", "Integration base is not present in owned history");
 
   const [ahead = "unknown", behind = "unknown"] = run("git", [
