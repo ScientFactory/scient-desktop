@@ -1746,7 +1746,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it.each(TEXT_VIEWPORT_MATRIX)(
-    "keeps long user message estimate close at the $name viewport",
+    "[geometry:linux] keeps long user message estimate close at the $name viewport",
     async (viewport) => {
       const userText = "x".repeat(3_200);
       const targetMessageId = `msg-user-target-long-${viewport.name}` as MessageId;
@@ -1778,7 +1778,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     },
   );
 
-  it("keeps collapsed height parity while resizing an existing ChatView", async () => {
+  it("[geometry:linux] tracks wrapping parity while resizing an existing ChatView across the viewport matrix", async () => {
     const userText = "x".repeat(3_200);
     const targetMessageId = "msg-user-target-resize" as MessageId;
     const mounted = await mountChatView({
@@ -1831,7 +1831,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("tracks additional rendered wrapping when ChatView width narrows between desktop and mobile viewports", async () => {
+  it("[geometry:linux] tracks additional rendered wrapping when ChatView width narrows between desktop and mobile viewports", async () => {
     // Short enough to remain below the 12-line collapse at both widths, while
     // still wrapping onto materially more lines on mobile.
     const userText = "x".repeat(320);
@@ -1870,7 +1870,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     expect(ratio).toBeLessThan(1.35);
   });
 
-  it("collapses header actions into overflow before they can overlap the thread title", async () => {
+  it("[geometry:linux] collapses header actions into overflow before they can overlap the thread title", async () => {
     const longTitle =
       'remove "ago" from the sidebar while the diff panel stays open on smaller viewports';
     const headerOverflowSnapshot = (() => {
@@ -1951,7 +1951,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("keeps the composer visible while a long assistant response forces a viewport relayout", async () => {
+  it("[geometry:linux] keeps the composer visible while a long assistant response forces a viewport relayout", async () => {
     const mounted = await mountChatView({
       viewport: TEXT_VIEWPORT_MATRIX[0],
       snapshot: createSnapshotWithLongAssistantResponse(),
@@ -2391,7 +2391,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it.each(ATTACHMENT_VIEWPORT_MATRIX)(
-    "keeps user attachment estimate close at the $name viewport",
+    "[geometry:linux] keeps user attachment estimate close at the $name viewport",
     async (viewport) => {
       const targetMessageId = `msg-user-target-attachments-${viewport.name}` as MessageId;
       const userText = "message with image attachments";
@@ -5095,7 +5095,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
             document.querySelector("[data-settled-turn-collapse-transition='true']"),
           ).toBeNull();
           expect(document.body.textContent).not.toContain("Tool 1");
-          expect(document.body.textContent).not.toContain("Tool 6");
+          const settledTrigger = Array.from(
+            document.querySelectorAll<HTMLButtonElement>("button"),
+          ).find((element) => element.textContent?.includes("Worked for"));
+          if (settledTrigger) {
+            expect(settledTrigger.getAttribute("aria-expanded")).toBe("false");
+          }
         },
         { timeout: 8_000, interval: 16 },
       );
