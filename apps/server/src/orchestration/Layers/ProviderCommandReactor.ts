@@ -78,6 +78,7 @@ type ProviderIntentEvent = Extract<
   {
     type:
       | "thread.created"
+      | "thread.deleted"
       | "thread.meta-updated"
       | "thread.session-set"
       | "thread.runtime-mode-set"
@@ -2341,6 +2342,24 @@ const make = Effect.gen(function* () {
     });
   });
 
+  const processThreadDeleted = Effect.fnUntraced(function* (
+    event: Extract<ProviderIntentEvent, { type: "thread.deleted" }>,
+  ) {
+    const { threadId } = event.payload;
+    queuedTurnStartsByThread.delete(threadId);
+    threadProviderOptions.delete(threadId);
+    threadSessionModelSelections.delete(threadId);
+    yield* clearEditResendTurnStartKeysForThread(threadId);
+    pendingQueuedDispatchThreads.delete(threadId);
+    clearPendingContextBootstraps(threadId);
+    suppressContextBootstrapOnNextStartThreadIds.delete(threadId);
+
+    // Do not clear drainingQueuedTurns here. A drain that is already in flight
+    // owns that guard and must release it in its finally block. The deleted
+    // thread can no longer accept a dispatch, and removing the queued payloads
+    // above prevents any later terminal provider event from promoting work.
+  });
+
   const processDomainEvent = (event: ProviderIntentEvent) =>
     Effect.gen(function* () {
       switch (event.type) {
@@ -2357,6 +2376,9 @@ const make = Effect.gen(function* () {
         }
         case "thread.created":
           threadSessionModelSelections.set(event.payload.threadId, event.payload.modelSelection);
+          return;
+        case "thread.deleted":
+          yield* processThreadDeleted(event);
           return;
         case "thread.meta-updated": {
           const thread = yield* resolveThread(event.payload.threadId);
@@ -2472,6 +2494,7 @@ const make = Effect.gen(function* () {
         Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
           if (
             event.type !== "thread.created" &&
+            event.type !== "thread.deleted" &&
             event.type !== "thread.meta-updated" &&
             event.type !== "thread.session-set" &&
             event.type !== "thread.runtime-mode-set" &&
