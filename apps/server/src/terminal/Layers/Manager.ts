@@ -860,6 +860,44 @@ function shouldExcludeTerminalEnvKey(key: string): boolean {
   return TERMINAL_ENV_BLOCKLIST.has(normalizedKey);
 }
 
+const APPIMAGE_RUNTIME_ENV_KEYS = ["APPIMAGE", "APPDIR", "ARGV0", "OWD"] as const;
+const APPIMAGE_PATH_ENV_KEYS = ["PATH", "LD_LIBRARY_PATH"] as const;
+
+function isPathSegmentUnderAppDir(segment: string, appDir: string): boolean {
+  return segment === appDir || segment.startsWith(`${appDir}/`);
+}
+
+function stripAppImageRuntimeEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (env.APPIMAGE === undefined && env.APPDIR === undefined) return env;
+
+  const scrubbed = { ...env };
+  for (const key of APPIMAGE_RUNTIME_ENV_KEYS) {
+    delete scrubbed[key];
+  }
+
+  const appDir = env.APPDIR?.replace(/\/+$/, "");
+  if (appDir) {
+    for (const key of APPIMAGE_PATH_ENV_KEYS) {
+      const value = scrubbed[key];
+      if (value === undefined) continue;
+      const kept = value
+        .split(path.delimiter)
+        .filter((segment) => !isPathSegmentUnderAppDir(segment, appDir));
+      if (kept.some((segment) => segment.length > 0)) {
+        scrubbed[key] = kept.join(path.delimiter);
+      } else {
+        delete scrubbed[key];
+      }
+    }
+  }
+
+  return scrubbed;
+}
+
+export const __terminalManagerEnvTesting = {
+  stripAppImageRuntimeEnv,
+};
+
 function createTerminalSpawnEnv(
   baseEnv: NodeJS.ProcessEnv,
   runtimeEnv?: Record<string, string> | null,
@@ -869,7 +907,7 @@ function createTerminalSpawnEnv(
   },
 ): NodeJS.ProcessEnv {
   const spawnEnv: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(baseEnv)) {
+  for (const [key, value] of Object.entries(stripAppImageRuntimeEnv(baseEnv))) {
     if (value === undefined) continue;
     if (shouldExcludeTerminalEnvKey(key)) continue;
     spawnEnv[key] = value;

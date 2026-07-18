@@ -18,6 +18,7 @@ import {
   type PtySpawnInput,
 } from "../Services/PTY";
 import {
+  __terminalManagerEnvTesting,
   __terminalManagerShellTesting,
   TerminalManagerRuntime,
   type TerminalSubprocessActivity,
@@ -1157,6 +1158,44 @@ describe("TerminalManager", () => {
     } finally {
       restoreEnv();
     }
+  });
+
+  it("strips AppImage runtime markers and mounted paths without mutating the host env", () => {
+    const appDir = "/tmp/.mount_Scientabc123";
+    const hostEnv = {
+      APPIMAGE: "/home/user/Scient.AppImage",
+      APPDIR: appDir,
+      ARGV0: "/home/user/Scient.AppImage",
+      OWD: "/home/user/project",
+      PATH: `${appDir}/usr/bin${path.delimiter}${appDir}${path.delimiter}/usr/local/bin${path.delimiter}/usr/bin`,
+      LD_LIBRARY_PATH: `${appDir}/usr/lib${path.delimiter}/home/user/.local/lib`,
+      TEST_TERMINAL_KEEP: "keep-me",
+    } satisfies NodeJS.ProcessEnv;
+
+    const scrubbed = __terminalManagerEnvTesting.stripAppImageRuntimeEnv(hostEnv);
+
+    expect(scrubbed.APPIMAGE).toBeUndefined();
+    expect(scrubbed.APPDIR).toBeUndefined();
+    expect(scrubbed.ARGV0).toBeUndefined();
+    expect(scrubbed.OWD).toBeUndefined();
+    expect(scrubbed.PATH).toBe(`/usr/local/bin${path.delimiter}/usr/bin`);
+    expect(scrubbed.LD_LIBRARY_PATH).toBe("/home/user/.local/lib");
+    expect(scrubbed.TEST_TERMINAL_KEEP).toBe("keep-me");
+    expect(hostEnv.APPIMAGE).toBe("/home/user/Scient.AppImage");
+    expect(hostEnv.PATH).toContain(appDir);
+  });
+
+  it("leaves non-AppImage environments untouched", () => {
+    const hostEnv = {
+      PATH: "/usr/local/bin:/usr/bin:/bin",
+      LD_LIBRARY_PATH: "/home/user/.local/lib",
+      OWD: "/home/user/keep-this",
+    } satisfies NodeJS.ProcessEnv;
+
+    const result = __terminalManagerEnvTesting.stripAppImageRuntimeEnv(hostEnv);
+
+    expect(result).toBe(hostEnv);
+    expect(result).toEqual(hostEnv);
   });
 
   it("pins TERM to the embedded renderer and drops host-terminal identity env", async () => {

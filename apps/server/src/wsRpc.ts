@@ -177,6 +177,13 @@ const failLiveUiStreamForSnapshotResync = (report: LiveUiStreamDropReport) =>
     }),
   );
 
+export function bufferLiveWhileInitialStreamLoads<A, B, E1, R1, E2, R2>(
+  initialStream: Stream.Stream<A, E1, R1>,
+  liveStream: Stream.Stream<B, E2, R2>,
+): Stream.Stream<A | B, E1 | E2, R1 | R2> {
+  return Stream.merge(initialStream, liveStream);
+}
+
 // Must mirror the cases of toShellStreamEvent: events rejected here are dropped
 // before the live-UI buffer so the sliding window only holds events that can
 // actually project to a shell update.
@@ -588,7 +595,7 @@ export const makeWsRpcLayer = () =>
             "Failed to replay orchestration events",
           ),
         [ORCHESTRATION_WS_METHODS.subscribeShell]: () =>
-          Stream.merge(
+          bufferLiveWhileInitialStreamLoads(
             Stream.fromEffect(
               projectionReadModelQuery.getShellSnapshot().pipe(
                 Effect.map((snapshot) => ({ kind: "snapshot" as const, snapshot })),
@@ -613,7 +620,7 @@ export const makeWsRpcLayer = () =>
           ),
         [ORCHESTRATION_WS_METHODS.unsubscribeShell]: () => Effect.void,
         [ORCHESTRATION_WS_METHODS.subscribeThread]: (input) =>
-          Stream.merge(
+          bufferLiveWhileInitialStreamLoads(
             Stream.fromEffect(
               projectionReadModelQuery.getThreadDetailSnapshotById(input.threadId).pipe(
                 Effect.map((snapshot) =>

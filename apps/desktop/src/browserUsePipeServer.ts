@@ -148,6 +148,8 @@ export class BrowserUsePipeServer {
   private readonly trackedTabById = new Map<number, BrowserUseTrackedTab>();
   private readonly selectedTrackedTabIdBySessionId = new Map<string, number>();
   private readonly cdpListenerDisposeBySessionId = new Map<string, () => void>();
+  private readonly socketBySessionId = new Map<string, Net.Socket>();
+  private readonly sessionIdsBySocket = new Map<Net.Socket, Set<string>>();
   private readonly server: Net.Server;
   private readonly pipePath: string;
   private readonly requestOpenPanel: (() => void | Promise<void>) | undefined;
@@ -185,6 +187,8 @@ export class BrowserUsePipeServer {
       dispose();
     }
     this.cdpListenerDisposeBySessionId.clear();
+    this.socketBySessionId.clear();
+    this.sessionIdsBySocket.clear();
     for (const socket of this.sockets) {
       socket.destroy();
     }
@@ -204,10 +208,12 @@ export class BrowserUsePipeServer {
     this.pendingBySocket.set(socket, Buffer.alloc(0));
     socket.on("data", (chunk) => this.handleSocketData(socket, chunk));
     socket.on("close", () => {
+      this.disposeSocketSessions(socket);
       this.sockets.delete(socket);
       this.pendingBySocket.delete(socket);
     });
     socket.on("error", () => {
+      this.disposeSocketSessions(socket);
       this.sockets.delete(socket);
       this.pendingBySocket.delete(socket);
       socket.destroy();
@@ -242,7 +248,7 @@ export class BrowserUsePipeServer {
     }
 
     try {
-      const result = await this.handleRequest(request.method, request.params);
+      const result = await this.handleRequest(socket, request.method, request.params);
       socket.write(encodeBrowserUseFrame({ jsonrpc: "2.0", id: request.id, result }));
     } catch (error) {
       socket.write(
@@ -258,7 +264,11 @@ export class BrowserUsePipeServer {
     }
   }
 
-  private async handleRequest(method: string, params: unknown): Promise<unknown> {
+  private async handleRequest(
+    socket: Net.Socket,
+    method: string,
+    params: unknown,
+  ): Promise<unknown> {
     switch (method) {
       case "ping":
         return "pong";
@@ -273,7 +283,7 @@ export class BrowserUsePipeServer {
       case "getTabs":
         return this.getTabsForSession(requireSessionId(params));
       case "createTab":
-        return this.createTabForSession(requireSessionId(params));
+        return this.createTabForSession(requireSessionId(params), socket);
       case "nameSession":
         requireSessionId(params);
         if (!asString(asObject(params)?.name)) {
@@ -281,11 +291,11 @@ export class BrowserUsePipeServer {
         }
         return {};
       case "attach":
-        return this.attachForSession(requireSessionId(params), params);
+        return this.attachForSession(requireSessionId(params), params, socket);
       case "detach":
-        return this.detachForSession(requireSessionId(params));
+        return this.detachForSession(requireSessionId(params), socket);
       case "executeCdp":
-        return this.executeCdpForSession(requireSessionId(params), params);
+        return this.executeCdpForSession(requireSessionId(params), params, socket);
       default:
         throw new Error(`No handler registered for method: ${method}`);
     }
@@ -364,12 +374,16 @@ export class BrowserUsePipeServer {
     });
   }
 
-  private async createTabForSession(sessionId: string): Promise<{
+  private async createTabForSession(
+    sessionId: string,
+    socket: Net.Socket,
+  ): Promise<{
     id: number;
     title: string;
     active: boolean;
     url: string;
   }> {
+    this.assertSessionNotOwnedByAnotherSocket(sessionId, socket);
     const snapshot = await this.waitForActiveBrowserHostState();
     if (!snapshot) {
       throw new Error("No active Scient browser pane available");
@@ -411,21 +425,35 @@ export class BrowserUsePipeServer {
   private async attachForSession(
     sessionId: string,
     params: unknown,
+    socket: Net.Socket,
   ): Promise<Record<string, never>> {
+    const previousOwner = this.socketBySessionId.get(sessionId);
+    this.assertSessionNotOwnedByAnotherSocket(sessionId, socket);
     const tracked = this.resolveTrackedTabForSession(sessionId, params);
+    this.bindSessionToSocket(sessionId, socket);
+    try {
+      await this.browserManager.attachBrowserUseTab({
+        threadId: tracked.threadId,
+        tabId: tracked.tabId,
+      });
+    } catch (error) {
+      if (!previousOwner && this.socketBySessionId.get(sessionId) === socket) {
+        this.unbindSessionFromSocket(sessionId);
+      }
+      throw error;
+    }
+    if (socket.destroyed) {
+      return {};
+    }
     this.selectedTrackedTabIdBySessionId.set(sessionId, tracked.id);
     this.cdpListenerDisposeBySessionId.get(sessionId)?.();
-    await this.browserManager.attachBrowserUseTab({
-      threadId: tracked.threadId,
-      tabId: tracked.tabId,
-    });
     const dispose = this.browserManager.subscribeToCdpEvents(
       {
         threadId: tracked.threadId,
         tabId: tracked.tabId,
       },
       (event) => {
-        this.broadcastNotification("onCDPEvent", {
+        this.sendNotification(socket, "onCDPEvent", {
           source: {
             tabId: tracked.id,
           },
@@ -438,13 +466,23 @@ export class BrowserUsePipeServer {
     return {};
   }
 
-  private async detachForSession(sessionId: string): Promise<Record<string, never>> {
+  private async detachForSession(
+    sessionId: string,
+    socket: Net.Socket,
+  ): Promise<Record<string, never>> {
+    this.assertSessionOwnedBySocket(sessionId, socket);
     this.cdpListenerDisposeBySessionId.get(sessionId)?.();
     this.cdpListenerDisposeBySessionId.delete(sessionId);
+    this.unbindSessionFromSocket(sessionId);
     return {};
   }
 
-  private async executeCdpForSession(sessionId: string, params: unknown): Promise<unknown> {
+  private async executeCdpForSession(
+    sessionId: string,
+    params: unknown,
+    socket: Net.Socket,
+  ): Promise<unknown> {
+    this.assertSessionOwnedBySocket(sessionId, socket);
     const request = asObject(params);
     const method = asString(request?.method);
     if (!method) {
@@ -461,16 +499,61 @@ export class BrowserUsePipeServer {
     } satisfies BrowserExecuteCdpInput);
   }
 
-  private broadcastNotification(method: string, params: unknown): void {
+  private bindSessionToSocket(sessionId: string, socket: Net.Socket): void {
+    this.unbindSessionFromSocket(sessionId);
+    this.socketBySessionId.set(sessionId, socket);
+    const sessionIds = this.sessionIdsBySocket.get(socket) ?? new Set<string>();
+    sessionIds.add(sessionId);
+    this.sessionIdsBySocket.set(socket, sessionIds);
+  }
+
+  private assertSessionNotOwnedByAnotherSocket(sessionId: string, socket: Net.Socket): void {
+    const owner = this.socketBySessionId.get(sessionId);
+    if (owner && owner !== socket) {
+      throw new Error(`Browser session '${sessionId}' is attached to another client.`);
+    }
+  }
+
+  private assertSessionOwnedBySocket(sessionId: string, socket: Net.Socket): void {
+    const owner = this.socketBySessionId.get(sessionId);
+    if (!owner) {
+      throw new Error(`Browser session '${sessionId}' is not attached.`);
+    }
+    if (owner !== socket) {
+      throw new Error(`Browser session '${sessionId}' is attached to another client.`);
+    }
+  }
+
+  private unbindSessionFromSocket(sessionId: string): void {
+    const socket = this.socketBySessionId.get(sessionId);
+    if (!socket) return;
+    this.socketBySessionId.delete(sessionId);
+    const sessionIds = this.sessionIdsBySocket.get(socket);
+    sessionIds?.delete(sessionId);
+    if (sessionIds?.size === 0) {
+      this.sessionIdsBySocket.delete(socket);
+    }
+  }
+
+  private disposeSocketSessions(socket: Net.Socket): void {
+    const sessionIds = this.sessionIdsBySocket.get(socket);
+    if (!sessionIds) return;
+    for (const sessionId of sessionIds) {
+      if (this.socketBySessionId.get(sessionId) !== socket) continue;
+      this.cdpListenerDisposeBySessionId.get(sessionId)?.();
+      this.cdpListenerDisposeBySessionId.delete(sessionId);
+      this.socketBySessionId.delete(sessionId);
+    }
+    this.sessionIdsBySocket.delete(socket);
+  }
+
+  private sendNotification(socket: Net.Socket, method: string, params: unknown): void {
+    if (socket.destroyed) return;
     const payload = encodeBrowserUseFrame({
       jsonrpc: "2.0",
       method,
       params,
     });
-    for (const socket of this.sockets) {
-      if (!socket.destroyed) {
-        socket.write(payload);
-      }
-    }
+    socket.write(payload);
   }
 }
