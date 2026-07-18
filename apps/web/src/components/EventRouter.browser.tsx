@@ -860,6 +860,13 @@ describe("EventRouter scoped orchestration sync", () => {
 
       sendThreadEventPush(bufferedEvent);
 
+      await vi.waitFor(
+        () => {
+          expect(subscribeThreadRequestCountById.get(THREAD_ID)).toBeGreaterThanOrEqual(2);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
       let thread;
       await vi.waitFor(
         () => {
