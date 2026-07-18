@@ -15,8 +15,12 @@ import {
   SCIENT_PRODUCTION_BUNDLE_ID,
 } from "@synara/shared/desktopIdentity";
 
-import { DESKTOP_STAGE_DEPENDENCY_OVERRIDES } from "./lib/desktop-stage-dependency-overrides.ts";
 import { createDesktopPlatformBuildConfig } from "./lib/desktop-platform-build-config.ts";
+import {
+  RELEASE_LOCKFILE_PATH,
+  RELEASE_PATCHES_PATH,
+  RELEASE_WORKSPACE_MANIFEST_PATHS,
+} from "./lib/release-workspace-manifests.ts";
 import {
   readReleaseUpdatePolicyConfig,
   resolveReleaseUpdatePolicy,
@@ -24,28 +28,17 @@ import {
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-const workspaceFiles = [
-  "package.json",
-  "bun.lock",
-  "apps/server/package.json",
-  "apps/desktop/package.json",
-  "apps/web/package.json",
-  "apps/marketing/package.json",
-  "packages/contracts/package.json",
-  "packages/effect-acp/package.json",
-  "packages/scient-project-init/package.json",
-  "packages/shared/package.json",
-  "scripts/package.json",
-] as const;
-
 function copyWorkspaceManifestFixture(targetRoot: string): void {
-  for (const relativePath of workspaceFiles) {
+  for (const relativePath of RELEASE_WORKSPACE_MANIFEST_PATHS) {
     const sourcePath = resolve(repoRoot, relativePath);
     const destinationPath = resolve(targetRoot, relativePath);
     mkdirSync(dirname(destinationPath), { recursive: true });
     cpSync(sourcePath, destinationPath);
   }
-  cpSync(resolve(repoRoot, "patches"), resolve(targetRoot, "patches"), { recursive: true });
+  cpSync(resolve(repoRoot, RELEASE_LOCKFILE_PATH), resolve(targetRoot, RELEASE_LOCKFILE_PATH));
+  cpSync(resolve(repoRoot, RELEASE_PATCHES_PATH), resolve(targetRoot, RELEASE_PATCHES_PATH), {
+    recursive: true,
+  });
 }
 
 function writeMacManifestFixtures(targetRoot: string): { arm64Path: string; x64Path: string } {
@@ -96,8 +89,10 @@ function assertContains(haystack: string, needle: string, message: string): void
   }
 }
 
-function writeJsonFile(path: string, value: unknown): void {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+function assertNotContains(haystack: string, needle: string, message: string): void {
+  if (haystack.includes(needle)) {
+    throw new Error(message);
+  }
 }
 
 function verifyCanonicalIdentity(): void {
@@ -202,35 +197,23 @@ function verifyReleaseWorkflowSafety(): void {
   );
 }
 
-function verifyDesktopStageProductionInstall(targetRoot: string): void {
-  const stageInstallRoot = resolve(targetRoot, "desktop-stage-install");
-  mkdirSync(stageInstallRoot, { recursive: true });
-
-  writeJsonFile(resolve(stageInstallRoot, "package.json"), {
-    private: true,
-    dependencies: {
-      "@pierre/diffs": "^1.1.0-beta.16",
-    },
-    overrides: DESKTOP_STAGE_DEPENDENCY_OVERRIDES,
-  });
-
-  execFileSync("bun", ["install", "--production"], {
-    cwd: stageInstallRoot,
-    stdio: "inherit",
-  });
-
-  const diffsPackageJson = JSON.parse(
-    readFileSync(resolve(stageInstallRoot, "node_modules/@pierre/diffs/package.json"), "utf8"),
-  ) as { dependencies?: Record<string, string> };
-  const themePackageJson = JSON.parse(
-    readFileSync(resolve(stageInstallRoot, "node_modules/@pierre/theme/package.json"), "utf8"),
-  ) as { version?: string };
-  const expectedThemeVersion = diffsPackageJson.dependencies?.["@pierre/theme"];
-  if (!expectedThemeVersion || themePackageJson.version !== expectedThemeVersion) {
-    throw new Error(
-      `Expected @pierre/theme ${expectedThemeVersion ?? "<missing>"} for @pierre/diffs, got ${themePackageJson.version ?? "<missing>"}.`,
-    );
-  }
+function verifyDesktopStageLockAuthority(): void {
+  const buildScript = readFileSync(resolve(repoRoot, "scripts/build-desktop-artifact.ts"), "utf8");
+  assertContains(
+    buildScript,
+    "bun install --production --frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
+    "Expected desktop staging to install only from the repository's frozen workspace lockfile.",
+  );
+  assertNotContains(
+    buildScript,
+    ")`bun install --production`,",
+    "Desktop staging must not retain the fresh production install path.",
+  );
+  assertContains(
+    buildScript,
+    '"scripts",\n    "node_modules",\n    ".bin",',
+    "Expected packaging to use the pinned scripts-workspace electron-builder executable.",
+  );
 }
 
 const tempRoot = mkdtempSync(join(tmpdir(), "scient-release-smoke-"));
@@ -238,6 +221,7 @@ const tempRoot = mkdtempSync(join(tmpdir(), "scient-release-smoke-"));
 try {
   verifyCanonicalIdentity();
   verifyReleaseWorkflowSafety();
+  verifyDesktopStageLockAuthority();
   copyWorkspaceManifestFixture(tempRoot);
 
   execFileSync(
@@ -287,8 +271,6 @@ try {
     "Scient-9.9.9-smoke.0-x64.zip",
     "Merged manifest is missing the x64 asset.",
   );
-
-  verifyDesktopStageProductionInstall(tempRoot);
 
   console.log("Release smoke checks passed.");
 } finally {

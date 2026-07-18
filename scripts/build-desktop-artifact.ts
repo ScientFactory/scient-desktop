@@ -13,7 +13,6 @@ import desktopPackageJson from "../apps/desktop/package.json" with { type: "json
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
-import { DESKTOP_STAGE_DEPENDENCY_OVERRIDES } from "./lib/desktop-stage-dependency-overrides.ts";
 import {
   createDesktopPlatformBuildConfig,
   MAC_APPSNAP_HELPER_STAGE_PATH,
@@ -22,6 +21,11 @@ import {
 import { SCIENT_PRODUCTION_BUNDLE_ID } from "@synara/shared/desktopIdentity";
 import { parseBooleanEnvValue } from "./lib/env-bool.ts";
 import { finalizeMacUpdateZip } from "./lib/mac-update-zip-finalize.ts";
+import {
+  RELEASE_LOCKFILE_PATH,
+  RELEASE_PATCHES_PATH,
+  RELEASE_WORKSPACE_MANIFEST_PATHS,
+} from "./lib/release-workspace-manifests.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -577,19 +581,48 @@ function patchedPackageName(dependency: string): string {
   return versionSeparator > 0 ? dependency.slice(0, versionSeparator) : dependency;
 }
 
-const stagePatchedDependencies = Effect.fn("stagePatchedDependencies")(function* (
+const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies")(function* (
   repoRoot: string,
   stageAppDir: string,
+  verbose: boolean,
 ) {
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
-  for (const patchRelativePath of Object.values(rootPackageJson.patchedDependencies ?? {})) {
-    const stagedPatchPath = path.join(stageAppDir, patchRelativePath);
-    yield* fs.makeDirectory(path.dirname(stagedPatchPath), {
-      recursive: true,
-    });
-    yield* fs.copyFile(path.join(repoRoot, patchRelativePath), stagedPatchPath);
+
+  for (const relativePath of RELEASE_WORKSPACE_MANIFEST_PATHS) {
+    const destination = path.join(stageAppDir, relativePath);
+    yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
+    yield* fs.copyFile(path.join(repoRoot, relativePath), destination);
   }
+
+  yield* fs.copyFile(
+    path.join(repoRoot, RELEASE_LOCKFILE_PATH),
+    path.join(stageAppDir, RELEASE_LOCKFILE_PATH),
+  );
+  yield* fs.copy(
+    path.join(repoRoot, RELEASE_PATCHES_PATH),
+    path.join(stageAppDir, RELEASE_PATCHES_PATH),
+  );
+
+  yield* Effect.log(
+    "[desktop-artifact] Installing staged production dependencies from the repository lockfile...",
+  );
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: stageAppDir,
+      ...commandOutputOptions(verbose),
+      // Windows needs shell mode to resolve .cmd shims (for example bun.cmd).
+      shell: process.platform === "win32",
+    })`bun install --production --frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
+  );
+
+  for (const relativePath of RELEASE_WORKSPACE_MANIFEST_PATHS) {
+    if (relativePath !== "package.json") {
+      yield* fs.remove(path.join(stageAppDir, relativePath));
+    }
+  }
+  yield* fs.remove(path.join(stageAppDir, RELEASE_LOCKFILE_PATH));
+  yield* fs.remove(path.join(stageAppDir, RELEASE_PATCHES_PATH), { recursive: true });
 });
 
 // A staged package has its own package.json and install root. Keep the tracked
@@ -882,25 +915,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       electron: electronVersion,
     },
     overrides: {
-      ...DESKTOP_STAGE_DEPENDENCY_OVERRIDES,
       ...resolvedOverrides,
     },
     patchedDependencies: rootPackageJson.patchedDependencies ?? {},
   };
 
-  yield* stagePatchedDependencies(repoRoot, stageAppDir);
+  yield* installFrozenStageDependencies(repoRoot, stageAppDir, options.verbose);
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
-
-  yield* Effect.log("[desktop-artifact] Installing staged production dependencies...");
-  yield* runCommand(
-    ChildProcess.make({
-      cwd: stageAppDir,
-      ...commandOutputOptions(options.verbose),
-      // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
-      shell: process.platform === "win32",
-    })`bun install --production`,
-  );
 
   yield* verifyStagedPatchedDependencies(repoRoot, stageAppDir);
 
@@ -938,6 +960,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* Effect.log(
     `[desktop-artifact] Building ${options.platform}/${options.target} (arch=${options.arch}, version=${appVersion})...`,
   );
+  const electronBuilderExecutable = path.join(
+    repoRoot,
+    "scripts",
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "electron-builder.cmd" : "electron-builder",
+  );
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
@@ -945,7 +974,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ...commandOutputOptions(options.verbose),
       // Windows needs shell mode to resolve .cmd shims.
       shell: process.platform === "win32",
-    })`bunx electron-builder ${platformConfig.cliFlag} --${options.arch} --publish never`,
+    })`${electronBuilderExecutable} ${platformConfig.cliFlag} --${options.arch} --publish never`,
   );
 
   const stageDistDir = path.join(stageAppDir, "dist");
