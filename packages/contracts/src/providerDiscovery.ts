@@ -36,6 +36,28 @@ export const ProviderSkillDescriptor = Schema.Struct({
 });
 export type ProviderSkillDescriptor = typeof ProviderSkillDescriptor.Type;
 
+export const ScientBuiltInSkillCatalogEntry = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  displayName: TrimmedNonEmptyString,
+  description: TrimmedNonEmptyString,
+  version: TrimmedNonEmptyString,
+  digest: TrimmedNonEmptyString,
+  origin: Schema.Literal("scient:builtin"),
+  kind: Schema.Literals(["scientific", "meta"]),
+  role: Schema.Literals(["constructive", "review", "orientation"]),
+  activationScope: Schema.Literals(["user", "project"]),
+  enabled: Schema.Boolean,
+  defaultEnabled: Schema.Boolean,
+  capabilities: Schema.Struct({
+    network: Schema.Boolean,
+    codeExecution: Schema.Boolean,
+    projectWrites: Schema.Literals(["none", "proposal-only"]),
+  }),
+  limitations: Schema.Array(TrimmedNonEmptyString),
+});
+export type ScientBuiltInSkillCatalogEntry = typeof ScientBuiltInSkillCatalogEntry.Type;
+
 export const ProviderSkillReference = Schema.Struct({
   name: TrimmedNonEmptyString,
   path: TrimmedNonEmptyString,
@@ -91,6 +113,9 @@ export type ProviderSkillsCatalogInput = typeof ProviderSkillsCatalogInput.Type;
 
 export const ProviderSkillsCatalogResult = Schema.Struct({
   skills: Schema.Array(ProviderSkillDescriptor),
+  scientBuiltInSkills: Schema.Array(ScientBuiltInSkillCatalogEntry).pipe(
+    Schema.withDecodingDefault(() => []),
+  ),
   synaraSkillsDir: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderSkillsCatalogResult = typeof ProviderSkillsCatalogResult.Type;

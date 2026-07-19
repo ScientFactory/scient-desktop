@@ -37,6 +37,7 @@ import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { startThreadRetentionJob } from "./threadRetention";
+import { synchronizeScientBuiltInSkills } from "./scientBuiltInSkills";
 
 export class StartupError extends Data.TaggedError("StartupError")<{
   readonly message: string;
@@ -284,6 +285,22 @@ const makeServerProgram = (input: CliInput) =>
 
     const config = yield* ServerConfig;
     yield* Effect.sync(() => startServerMemoryDiagnostics({ mode: config.mode }));
+
+    // Built-in delivery must reflect persisted user activation before any
+    // provider session can observe the managed skill root.
+    yield* serverSettings.start;
+    const initialSettings = yield* serverSettings.getSettings;
+    yield* Effect.tryPromise(() =>
+      synchronizeScientBuiltInSkills({ baseDir: config.baseDir, settings: initialSettings }),
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StartupError({
+            message: "Failed to prepare enabled Scient built-in skills.",
+            cause,
+          }),
+      ),
+    );
 
     if (!config.devUrl && !config.staticDir) {
       yield* Effect.logWarning(

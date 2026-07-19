@@ -79,6 +79,7 @@
         "@effect/language-service": "catalog:",
         "@effect/vitest": "catalog:",
         "@scientfactory/project-init": "workspace:*",
+        "@scientfactory/scient-skills": "workspace:*",
         "@synara/contracts": "workspace:*",
         "@synara/shared": "workspace:*",
         "@synara/web": "workspace:*",
@@ -194,6 +195,15 @@
     },
     "packages/scient-project-init": {
       "name": "@scientfactory/project-init",
+      "version": "0.0.0-alpha.1",
+      "devDependencies": {
+        "@types/node": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:",
+      },
+    },
+    "packages/scient-skills": {
+      "name": "@scientfactory/scient-skills",
       "version": "0.0.0-alpha.1",
       "devDependencies": {
         "@types/node": "catalog:",
@@ -1020,6 +1030,8 @@
     "@scientfactory/cli": ["@scientfactory/cli@workspace:apps/server"],
 
     "@scientfactory/project-init": ["@scientfactory/project-init@workspace:packages/scient-project-init"],
+
+    "@scientfactory/scient-skills": ["@scientfactory/scient-skills@workspace:packages/scient-skills"],
 
     "@sec-ant/readable-stream": ["@sec-ant/readable-stream@0.4.1", "", {}, "sha512-831qok9r2t8AlxLko40y2ebgSDhenenCatLVeW/uBtnHPyhHOvG0C7TvfgecV+wHzIm5KUICgzmVpWS+IMEAeg=="],
 

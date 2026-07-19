@@ -3,6 +3,7 @@ import path from "node:path";
 
 import {
   MAX_IDENTITY_BYTES,
+  MAX_SKILLS_LOCK_BYTES,
   readUtf8FileBounded,
   resolveProjectRoot,
   snapshotRelativePathSafely,
@@ -15,13 +16,15 @@ import {
   SCIENT_IDENTITY_FILE,
   SCIENT_METADATA_DIRECTORY,
   SCIENT_PROJECT_FILE,
+  SCIENT_SKILLS_LOCK_FILE,
   SCIENT_TRANSACTION_FILE,
   type InspectionIssue,
   type ScientProjectIdentity,
+  type ScientSkillsLock,
   type ProjectFolderInspection,
   type ProjectFolderState,
 } from "./types.ts";
-import { validateProjectIdentity } from "./validation.ts";
+import { validateProjectIdentity, validateSkillsLock } from "./validation.ts";
 
 export async function inspectProjectFolder(
   requestedRoot: string,
@@ -39,6 +42,10 @@ export async function inspectProjectFolder(
     metadataDirectory.kind === "directory"
       ? await snapshotRelativePathSafely(root, SCIENT_TRANSACTION_FILE)
       : ({ kind: "missing" } as const);
+  const skillsLockFile =
+    metadataDirectory.kind === "directory"
+      ? await snapshotRelativePathSafely(root, SCIENT_SKILLS_LOCK_FILE)
+      : ({ kind: "missing" } as const);
   const legacyPapiLabMetadataDirectory = await snapshotRelativePathSafely(
     root,
     LEGACY_PAPILAB_METADATA_DIRECTORY,
@@ -49,6 +56,7 @@ export async function inspectProjectFolder(
       : ({ kind: "missing" } as const);
   const issues: InspectionIssue[] = [];
   let identity: ScientProjectIdentity | null = null;
+  let skillsLock: ScientSkillsLock | null = null;
   let legacyPapiLabIdentity: ScientProjectIdentity | null = null;
   let transactionValid = false;
 
@@ -71,6 +79,32 @@ export async function inspectProjectFolder(
       code: "metadata-path-conflict",
       path: SCIENT_IDENTITY_FILE,
       message: "The Scient project identity path is not a regular file.",
+    });
+  }
+
+  if (skillsLockFile.kind === "file") {
+    try {
+      skillsLock = validateSkillsLock(
+        JSON.parse(
+          await readUtf8FileBounded(
+            path.join(root, SCIENT_SKILLS_LOCK_FILE),
+            MAX_SKILLS_LOCK_BYTES,
+          ),
+        ),
+      );
+    } catch (error) {
+      issues.push({
+        code: "invalid-skills-lock",
+        path: SCIENT_SKILLS_LOCK_FILE,
+        message:
+          error instanceof Error ? error.message : "Invalid built-in skill activation record.",
+      });
+    }
+  } else if (skillsLockFile.kind !== "missing") {
+    issues.push({
+      code: "metadata-path-conflict",
+      path: SCIENT_SKILLS_LOCK_FILE,
+      message: "The built-in skill activation path is not a regular file.",
     });
   }
 
@@ -179,7 +213,10 @@ export async function inspectProjectFolder(
   } else if (
     transactionFile.kind !== "missing" ||
     issues.some(
-      (issue) => issue.code === "invalid-identity" || issue.code === "metadata-path-conflict",
+      (issue) =>
+        issue.code === "invalid-identity" ||
+        issue.code === "invalid-skills-lock" ||
+        issue.code === "metadata-path-conflict",
     )
   ) {
     state = "invalid-or-conflicting";
@@ -228,11 +265,13 @@ export async function inspectProjectFolder(
     agentsFile,
     metadataDirectory,
     identityFile,
+    skillsLockFile,
     transactionFile,
     legacyPapiLabMetadataDirectory,
     legacyPapiLabIdentityFile,
     legacyPapiLabIdentity,
     identity,
+    skillsLock,
     issues,
   };
 }

@@ -5,6 +5,7 @@
 import {
   type ChatAttachment,
   CommandId,
+  DEFAULT_SERVER_SETTINGS,
   EventId,
   type ModelSelection,
   MessageId,
@@ -56,6 +57,8 @@ import {
 import { resolveTextGenerationInputForSelection } from "../../git/textGenerationSelection.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ServerConfig } from "../../config.ts";
+import { buildScientBuiltInSkillTriggerInstructions } from "../../scientBuiltInSkills.ts";
 import { clearWorkspaceIndexCache } from "../../workspaceEntries.ts";
 import {
   buildPriorTranscriptBootstrapText,
@@ -188,11 +191,23 @@ function availableProviderContextChars(input: {
   readonly tag: ProviderContextTag;
   readonly messageText: string;
   readonly wrapLatestUserMessage: boolean;
+  readonly reservedChars?: number;
 }): number {
   return Math.max(
     0,
-    PROVIDER_SEND_TURN_MAX_INPUT_CHARS - wrapProviderContext({ ...input, contextText: "" }).length,
+    PROVIDER_SEND_TURN_MAX_INPUT_CHARS -
+      wrapProviderContext({
+        tag: input.tag,
+        messageText: input.messageText,
+        wrapLatestUserMessage: input.wrapLatestUserMessage,
+        contextText: "",
+      }).length -
+      (input.reservedChars ?? 0),
   );
+}
+
+function appendScientBuiltInSkillInstructions(message: string, instructions: string): string {
+  return instructions ? `${message}\n\n${instructions}` : message;
 }
 
 function wrapSidechatInput(messageText: string): string {
@@ -286,6 +301,7 @@ const make = Effect.gen(function* () {
   const git = yield* GitCore;
   const textGeneration = yield* TextGeneration;
   const serverSettings = yield* ServerSettingsService;
+  const serverConfig = yield* ServerConfig;
   const handledTurnStartKeys = yield* Cache.make<string, true>({
     capacity: HANDLED_TURN_START_KEY_MAX,
     timeToLive: HANDLED_TURN_START_KEY_TTL,
@@ -1045,6 +1061,16 @@ const make = Effect.gen(function* () {
     const boundaryMessageText = thread.sidechatSourceThreadId
       ? wrapSidechatInput(input.messageText)
       : input.messageText;
+    const currentServerSettings = yield* serverSettings.getSettings.pipe(
+      Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS),
+    );
+    const scientBuiltInSkillInstructions = buildScientBuiltInSkillTriggerInstructions({
+      baseDir: serverConfig.baseDir,
+      settings: currentServerSettings,
+    });
+    const scientBuiltInSkillReservedChars = scientBuiltInSkillInstructions
+      ? scientBuiltInSkillInstructions.length + 2
+      : 0;
     const shouldBootstrapHandoff =
       thread.handoff?.bootstrapStatus === "pending" &&
       !hasNativeAssistantMessagesBefore(thread, input.messageId);
@@ -1052,6 +1078,7 @@ const make = Effect.gen(function* () {
       tag: "handoff_context",
       messageText: boundaryMessageText,
       wrapLatestUserMessage: true,
+      reservedChars: scientBuiltInSkillReservedChars,
     });
     const handoffBootstrapText =
       shouldBootstrapHandoff && handoffBootstrapAvailableChars > 0
@@ -1075,6 +1102,7 @@ const make = Effect.gen(function* () {
       tag: "sidechat_context",
       messageText: boundaryMessageText,
       wrapLatestUserMessage: false,
+      reservedChars: scientBuiltInSkillReservedChars,
     });
     const sidechatBootstrapText =
       shouldBootstrapSidechatContext && sidechatBootstrapAvailableChars > 0
@@ -1107,6 +1135,7 @@ const make = Effect.gen(function* () {
       tag: "thread_context",
       messageText: boundaryMessageText,
       wrapLatestUserMessage: true,
+      reservedChars: scientBuiltInSkillReservedChars,
     });
     if (
       input.reviewTarget === undefined &&
@@ -1152,6 +1181,21 @@ const make = Effect.gen(function* () {
               wrapLatestUserMessage: true,
             })
           : boundaryMessageText;
+    const providerInputWithBuiltInSkills = appendScientBuiltInSkillInstructions(
+      providerInput,
+      scientBuiltInSkillInstructions,
+    );
+    if (
+      input.reviewTarget === undefined &&
+      providerInputWithBuiltInSkills.length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS
+    ) {
+      return yield* new ProviderAdapterRequestError({
+        provider: selectedProvider as ProviderKind,
+        method: "thread.turn.start",
+        detail:
+          "The latest message is too long to include the Scient skill activation context. Shorten the message and retry.",
+      });
+    }
     // Portable skills fallback: providers that cannot load the referenced skill
     // file natively get the skill instructions inlined into the prompt.
     const skillInlineText =
@@ -1162,7 +1206,7 @@ const make = Effect.gen(function* () {
               skills: input.skills ?? [],
               maxChars: Math.max(
                 0,
-                PROVIDER_SEND_TURN_MAX_INPUT_CHARS - providerInput.length - 1_000,
+                PROVIDER_SEND_TURN_MAX_INPUT_CHARS - providerInputWithBuiltInSkills.length - 1_000,
               ),
             }),
           ).pipe(
@@ -1175,8 +1219,8 @@ const make = Effect.gen(function* () {
           )
         : "";
     const providerInputWithSkills = skillInlineText
-      ? `${providerInput}\n\n${skillInlineText}`
-      : providerInput;
+      ? `${providerInputWithBuiltInSkills}\n\n${skillInlineText}`
+      : providerInputWithBuiltInSkills;
     const normalizedInput = toNonEmptyProviderInput(
       normalizeSkillMentionTextForProvider({
         provider: selectedProvider as ProviderKind,
@@ -1336,9 +1380,13 @@ const make = Effect.gen(function* () {
                   wrapLatestUserMessage: true,
                 })
               : boundaryMessageText;
+            const retryProviderInputWithBuiltInSkills = appendScientBuiltInSkillInstructions(
+              retryProviderInput,
+              scientBuiltInSkillInstructions,
+            );
             const retryProviderInputWithSkills = skillInlineText
-              ? `${retryProviderInput}\n\n${skillInlineText}`
-              : retryProviderInput;
+              ? `${retryProviderInputWithBuiltInSkills}\n\n${skillInlineText}`
+              : retryProviderInputWithBuiltInSkills;
             const retryNormalizedInput = toNonEmptyProviderInput(
               normalizeSkillMentionTextForProvider({
                 provider: selectedProvider as ProviderKind,

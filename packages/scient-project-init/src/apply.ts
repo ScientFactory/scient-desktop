@@ -55,6 +55,7 @@ function transactionFromPlan(plan: InitializationPlan): InitializationTransactio
     projectId: plan.projectId,
     createdAt: plan.createdAt,
     profileVersions: plan.profileVersions,
+    skillActivations: plan.skillActivations,
     operations,
   };
 }
@@ -373,6 +374,7 @@ async function runTransaction(input: {
     created: orderedCreates.map((operation) => operation.path),
     preserved,
     proposed: [],
+    activatedSkills: input.transaction.skillActivations,
     recovered: input.recovered,
   };
 }
@@ -397,6 +399,7 @@ export async function applyProjectInitialization(
       proposed: plan.operations
         .filter((operation) => operation.kind === "propose")
         .map((operation) => operation.path),
+      activatedSkills: plan.skillActivations,
       recovered: false,
     };
   }

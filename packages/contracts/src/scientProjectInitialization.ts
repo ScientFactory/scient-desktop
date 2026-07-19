@@ -19,6 +19,7 @@ export const ScientProjectInitializationRequest = Schema.Struct({
   question: Schema.optional(Schema.String),
   scopeIncluded: Schema.optional(Schema.String),
   scopeExcluded: Schema.optional(Schema.String),
+  skillIds: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
 export type ScientProjectInitializationRequest = typeof ScientProjectInitializationRequest.Type;
 
@@ -40,6 +41,31 @@ export const ScientProjectInitializationOperation = Schema.Struct({
 });
 export type ScientProjectInitializationOperation = typeof ScientProjectInitializationOperation.Type;
 
+export const ScientBuiltInSkillActivation = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  version: TrimmedNonEmptyString,
+  digest: TrimmedNonEmptyString,
+  origin: Schema.Literal("scient:builtin"),
+});
+export type ScientBuiltInSkillActivation = typeof ScientBuiltInSkillActivation.Type;
+
+export const ScientBuiltInSkillChoice = Schema.Struct({
+  ...ScientBuiltInSkillActivation.fields,
+  displayName: TrimmedNonEmptyString,
+  description: TrimmedNonEmptyString,
+  role: Schema.Literals(["constructive", "review", "orientation"]),
+  selected: Schema.Boolean,
+  defaultSelected: Schema.Boolean,
+  readiness: Schema.Literals(["available", "latent"]),
+  prerequisites: Schema.Array(TrimmedNonEmptyString),
+  capabilities: Schema.Struct({
+    network: Schema.Boolean,
+    codeExecution: Schema.Boolean,
+    projectWrites: Schema.Literals(["none", "proposal-only"]),
+  }),
+});
+export type ScientBuiltInSkillChoice = typeof ScientBuiltInSkillChoice.Type;
+
 export const ScientProjectInitializationIssue = Schema.Struct({
   code: TrimmedNonEmptyString,
   path: TrimmedNonEmptyString,
@@ -58,6 +84,7 @@ export const ScientProjectInitializationPreviewResult = Schema.Struct({
   canRecover: Schema.Boolean,
   canRollback: Schema.Boolean,
   operations: Schema.Array(ScientProjectInitializationOperation),
+  skills: Schema.Array(ScientBuiltInSkillChoice),
   issues: Schema.Array(ScientProjectInitializationIssue),
 });
 export type ScientProjectInitializationPreviewResult =
@@ -75,6 +102,7 @@ export const ScientProjectInitializationApplyResult = Schema.Struct({
   created: Schema.Array(TrimmedNonEmptyString),
   preserved: Schema.Array(TrimmedNonEmptyString),
   proposed: Schema.Array(TrimmedNonEmptyString),
+  activatedSkills: Schema.Array(ScientBuiltInSkillActivation),
   recovered: Schema.Boolean,
 });
 export type ScientProjectInitializationApplyResult =

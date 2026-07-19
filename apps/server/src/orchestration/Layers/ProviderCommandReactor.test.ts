@@ -88,6 +88,12 @@ async function waitFor(
   return poll();
 }
 
+function expectSkillAwareProviderInput(input: string | undefined, userText: string): void {
+  expect(input).toContain(`${userText}\n\n<scient_builtin_skills enabled="true">`);
+  expect(input).toContain('id="scient.skill-authoring"');
+  expect(input).toContain("scient-skill-authoring/SKILL.md");
+}
+
 describe("ProviderCommandReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
     OrchestrationEngineService | ProviderCommandReactor,
@@ -124,6 +130,7 @@ describe("ProviderCommandReactor", () => {
     readonly checkpointStore?: Partial<CheckpointStoreShape>;
     readonly studioOutputReactor?: Partial<StudioOutputReactorShape>;
     readonly forkThreadResult?: ProviderForkThreadResult | null;
+    readonly skillAuthoringEnabled?: boolean;
   }) {
     const now = new Date().toISOString();
     const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "synara-reactor-"));
@@ -405,7 +412,22 @@ describe("ProviderCommandReactor", () => {
           generateThreadTitle,
         } as unknown as TextGenerationShape),
       ),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        ServerSettingsService.layerTest(
+          input?.skillAuthoringEnabled === undefined
+            ? {}
+            : {
+                skills: {
+                  scientBuiltInActivationOverrides: [
+                    {
+                      id: "scient.skill-authoring",
+                      enabled: input.skillAuthoringEnabled,
+                    },
+                  ],
+                },
+              },
+        ),
+      ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
       Layer.provideMerge(SqlitePersistenceMemory),
@@ -513,6 +535,66 @@ describe("ProviderCommandReactor", () => {
       }),
     );
   }
+
+  it("withholds deactivated Scient built-ins from provider turns", async () => {
+    const harness = await createHarness({ skillAuthoringEnabled: false });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-disabled-built-in-turn"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("disabled-built-in-user"),
+          role: "user",
+          text: "Write a reusable skill",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const providerInput = (harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined)
+      ?.input;
+    expect(providerInput).toContain('<scient_builtin_skills enabled="none">');
+    expect(providerInput).not.toContain("scient.skill-authoring");
+  });
+
+  it("does not exceed the provider input limit when active skill guidance needs space", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-overlong-active-built-in-turn"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("overlong-active-built-in-user"),
+          role: "user",
+          text: "x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS),
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      return readModel.threads[0]?.session?.status === "error";
+    });
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    expect(readModel.threads[0]?.session?.lastError).toContain(
+      "too long to include the Scient skill activation context",
+    );
+  });
 
   it("bootstraps sidechat context when the provider cannot fork natively", async () => {
     const harness = await createHarness();
@@ -1317,7 +1399,7 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 3);
     const followUpInput = harness.sendTurn.mock.calls[2]?.[0] as { input?: string } | undefined;
     expect(followUpInput?.input).not.toContain("<thread_context>");
-    expect(followUpInput?.input).toBe("Continue after successful retry");
+    expectSkillAwareProviderInput(followUpInput?.input, "Continue after successful retry");
   });
 
   it("rolls back provider conversation state for message edits", async () => {
@@ -1475,11 +1557,14 @@ describe("ProviderCommandReactor", () => {
     expect(harness.rollbackConversation.mock.calls.length).toBe(0);
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.makeUnsafe("thread-1"),
-      input: "edited prompt",
       attachments: [imageAttachment],
       skills: [skill],
       mentions: [mention],
     });
+    expectSkillAwareProviderInput(
+      (harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined)?.input,
+      "edited prompt",
+    );
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
@@ -1667,8 +1752,11 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.makeUnsafe("thread-1"),
-      input: "edited queued prompt",
     });
+    expectSkillAwareProviderInput(
+      (harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined)?.input,
+      "edited queued prompt",
+    );
   });
 
   it("preserves image attachment files while rolling back an edit resend", async () => {
@@ -1734,9 +1822,12 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(fs.existsSync(attachmentPath)).toBe(true);
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
-      input: "edited image prompt",
       attachments: [imageAttachment],
     });
+    expectSkillAwareProviderInput(
+      (harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined)?.input,
+      "edited image prompt",
+    );
   });
 
   it("restores the previous filesystem checkpoint before resending a completed edit", async () => {
@@ -2204,6 +2295,8 @@ describe("ProviderCommandReactor", () => {
     expect(retrySendInput.input).toContain("Move the changelog navigation to the left.");
     expect(retrySendInput.input).toContain("<latest_user_message>");
     expect(retrySendInput.input).toContain("nice but bring it on the left.");
+    expect(retrySendInput.input).toContain('id="scient.skill-authoring"');
+    expect(retrySendInput.input).toContain("scient-skill-authoring/SKILL.md");
   });
 
   it("marks the thread session errored when normal turn start fails", async () => {
@@ -2779,8 +2872,11 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.makeUnsafe("thread-1"),
-      input: "queue this next",
     });
+    expectSkillAwareProviderInput(
+      (harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined)?.input,
+      "queue this next",
+    );
   });
 
   it("does not promote queued work after its thread is deleted", async () => {
@@ -2902,8 +2998,11 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.makeUnsafe("thread-1"),
-      input: "recover me",
     });
+    expectSkillAwareProviderInput(
+      (harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined)?.input,
+      "recover me",
+    );
   });
 
   it("re-queues a direct turn start that races a live provider turn", async () => {
@@ -2956,8 +3055,11 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.makeUnsafe("thread-1"),
-      input: "wait your turn",
     });
+    expectSkillAwareProviderInput(
+      (harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined)?.input,
+      "wait your turn",
+    );
   });
 
   it("steers immediately for codex sessions when Cmd/Ctrl+Enter is used", async () => {
@@ -3009,9 +3111,12 @@ describe("ProviderCommandReactor", () => {
     expect(harness.interruptTurn).not.toHaveBeenCalled();
     expect(harness.steerTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.makeUnsafe("thread-1"),
-      input: "pivot now",
       interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
     });
+    expectSkillAwareProviderInput(
+      (harness.steerTurn.mock.calls[0]?.[0] as { input?: string } | undefined)?.input,
+      "pivot now",
+    );
   });
 
   it("falls back to interrupt plus priority queue for claude steering", async () => {
@@ -3090,8 +3195,11 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.makeUnsafe("thread-1"),
-      input: "switch directions",
     });
+    expectSkillAwareProviderInput(
+      (harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined)?.input,
+      "switch directions",
+    );
   });
 
   it("forwards codex model options through session start and turn send", async () => {

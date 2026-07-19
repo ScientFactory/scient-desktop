@@ -16,6 +16,9 @@ import {
   SCIENT_FORMAT_VERSION,
   SCIENT_IDENTITY_FILE,
   SCIENT_PROJECT_FILE,
+  SCIENT_BUILT_IN_ORIGIN,
+  SCIENT_SKILLS_LOCK_FILE,
+  SCIENT_SKILLS_LOCK_FORMAT_VERSION,
   ProjectInitializationError,
   type ConflictOperation,
   type CreateOperation,
@@ -25,12 +28,14 @@ import {
   type PathSnapshot,
   type PreserveOperation,
   type ProjectProfileDescriptor,
+  type BuiltInSkillDescriptor,
   type ProposeOperation,
 } from "./types.ts";
 import {
   assertIsoTimestamp,
   assertProjectId,
   normalizeInitializationRequest,
+  resolveSelectedBuiltInSkills,
   resolveSelectedProfiles,
   validatePortableRelativePath,
 } from "./validation.ts";
@@ -59,6 +64,28 @@ function profileVersionRecord(
   profiles: readonly ProjectProfileDescriptor[],
 ): Readonly<Record<string, number>> {
   return Object.fromEntries(profiles.map((profile) => [profile.id, profile.version]));
+}
+
+function skillActivationRecords(
+  skills: readonly BuiltInSkillDescriptor[],
+): InitializationPlan["skillActivations"] {
+  return skills.map((skill) => ({
+    id: skill.id,
+    version: skill.version,
+    digest: skill.digest,
+    origin: SCIENT_BUILT_IN_ORIGIN,
+  }));
+}
+
+function renderSkillsLock(skills: readonly BuiltInSkillDescriptor[]): string {
+  return `${JSON.stringify(
+    {
+      formatVersion: SCIENT_SKILLS_LOCK_FORMAT_VERSION,
+      skills: skillActivationRecords(skills),
+    },
+    null,
+    2,
+  )}\n`;
 }
 
 function portablePathKey(value: string): string {
@@ -196,10 +223,20 @@ async function planProfileFiles(
 export async function planProjectInitialization(
   input: InitializationPlanInput,
 ): Promise<InitializationPlan> {
-  const request = normalizeInitializationRequest(input.request);
+  const availableSkills = input.builtInSkills ?? [];
+  const request = normalizeInitializationRequest({
+    ...input.request,
+    skillIds:
+      input.request.skillIds ??
+      availableSkills.filter((skill) => skill.defaultSelected).map((skill) => skill.id),
+  });
   const profiles = resolveSelectedProfiles({
     profileIds: request.profileIds,
     profiles: input.profiles ?? [],
+  });
+  const skills = resolveSelectedBuiltInSkills({
+    skillIds: request.skillIds,
+    skills: availableSkills,
   });
 
   if (input.inspection.state === "initialized-compatible" && input.inspection.identity) {
@@ -239,6 +276,23 @@ export async function planProjectInitialization(
         ),
       );
     }
+    if (input.inspection.skillsLockFile.kind === "file") {
+      operations.push(
+        preserveOperation(
+          SCIENT_SKILLS_LOCK_FILE,
+          input.inspection.skillsLockFile,
+          "Preserve the existing built-in skill activation record.",
+        ),
+      );
+    } else if (input.inspection.skillsLockFile.kind !== "missing") {
+      operations.push(
+        conflictOperation(
+          SCIENT_SKILLS_LOCK_FILE,
+          input.inspection.skillsLockFile,
+          "The built-in skill activation path is not a regular file.",
+        ),
+      );
+    }
     return {
       planVersion: 1,
       transactionId: assertProjectId(input.transactionId ?? randomUUID()),
@@ -250,6 +304,7 @@ export async function planProjectInitialization(
         : "already-initialized",
       request,
       profileVersions: profileVersionRecord(profiles),
+      skillActivations: input.inspection.skillsLock?.skills ?? [],
       operations,
     };
   }
@@ -273,6 +328,7 @@ export async function planProjectInitialization(
       status: "blocked",
       request,
       profileVersions: profileVersionRecord(profiles),
+      skillActivations: skillActivationRecords(skills),
       operations: [
         conflictOperation(
           issue?.path ?? ".scient",
@@ -307,6 +363,13 @@ export async function planProjectInitialization(
   operations.push(...(await planProfileFiles(input.inspection.root, profiles)));
   operations.push(
     createOperation(
+      SCIENT_SKILLS_LOCK_FILE,
+      renderSkillsLock(skills),
+      "Record exact built-in skill activation identities without copying skill bodies.",
+    ),
+  );
+  operations.push(
+    createOperation(
       SCIENT_IDENTITY_FILE,
       `${JSON.stringify({ projectId, formatVersion: SCIENT_FORMAT_VERSION, createdAt }, null, 2)}\n`,
       legacyPapiLabIdentity
@@ -324,6 +387,7 @@ export async function planProjectInitialization(
     status: operations.some((operation) => operation.kind === "conflict") ? "blocked" : "ready",
     request,
     profileVersions: profileVersionRecord(profiles),
+    skillActivations: skillActivationRecords(skills),
     operations,
   };
 }
