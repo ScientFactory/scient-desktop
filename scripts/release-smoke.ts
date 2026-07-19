@@ -147,7 +147,10 @@ function verifyCanonicalIdentity(): void {
 }
 
 function verifyReleaseWorkflowSafety(): void {
-  const workflow = readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
+  const workflow = readFileSync(
+    resolve(repoRoot, ".github/workflows/release.yml"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
   assertContains(
     workflow,
     "if: ${{ vars.SCIENT_DESKTOP_RELEASES_ENABLED == 'true' }}",
