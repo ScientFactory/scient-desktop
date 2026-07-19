@@ -631,10 +631,7 @@ const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies
     path.join(stageAppDir, RELEASE_PATCHES_PATH),
   );
 
-  const lockProjectionConfigPath = path.join(
-    stageAppDir,
-    ".scient-release-lock-projection.bunfig.toml",
-  );
+  const lockProjectionConfigPath = path.join(stageAppDir, "bunfig.toml");
   yield* fs.writeFileString(
     lockProjectionConfigPath,
     '[install]\nfrozenLockfile = false\nlinker = "hoisted"\n',
@@ -650,7 +647,7 @@ const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies
       cwd: stageAppDir,
       ...commandOutputOptions(verbose),
       shell: process.platform === "win32",
-    })`bun --config ${lockProjectionConfigPath} install --production --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
+    })`bun install --production --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
   );
   yield* fs.remove(lockProjectionConfigPath);
   yield* Effect.log("[desktop-artifact] Installing staged frozen production dependencies...");
