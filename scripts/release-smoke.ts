@@ -243,13 +243,13 @@ function verifyDesktopStageLockAuthority(): void {
   ).replace(/\r\n/g, "\n");
   assertContains(
     buildScript,
-    "bun install --production --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
+    "bun install --omit dev --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
     "Expected desktop staging to materialize its production workspace from the repository lockfile.",
   );
   assertContains(
     buildScript,
-    'frozenLockfile = false\\nlinker = "hoisted"',
-    "Expected desktop lock projection to explicitly permit its one intentional lockfile update on every platform.",
+    "Bun 1.3.12 makes --production implicitly frozen.",
+    "Expected desktop lock materialization to document why it uses the equivalent omit-dev scope.",
   );
   assertContains(
     buildScript,
@@ -300,16 +300,12 @@ function readPackageVersion(root: string, relativePath: string): string {
 }
 
 function verifyFrozenDesktopStageInstall(targetRoot: string, verifyNative = false): void {
-  const lockProjectionConfigPath = resolve(targetRoot, "bunfig.toml");
-  writeFileSync(
-    lockProjectionConfigPath,
-    '[install]\nfrozenLockfile = false\nlinker = "hoisted"\n',
-  );
   execFileSync(
     "bun",
     [
       "install",
-      "--production",
+      "--omit",
+      "dev",
       "--ignore-scripts",
       "--linker",
       "hoisted",
@@ -320,7 +316,6 @@ function verifyFrozenDesktopStageInstall(targetRoot: string, verifyNative = fals
     ],
     { cwd: targetRoot, stdio: "inherit" },
   );
-  rmSync(lockProjectionConfigPath);
   execFileSync(
     "bun",
     [
