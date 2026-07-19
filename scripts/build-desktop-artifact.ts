@@ -996,21 +996,18 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* Effect.log(
     `[desktop-artifact] Building ${options.platform}/${options.target} (arch=${options.arch}, version=${appVersion})...`,
   );
-  const electronBuilderExecutable = path.join(
-    repoRoot,
-    "scripts",
-    "node_modules",
-    ".bin",
-    process.platform === "win32" ? "electron-builder.cmd" : "electron-builder",
-  );
+  const electronBuilderCli = path.join(repoRoot, "node_modules", "electron-builder", "cli.js");
+  if (!(yield* fs.exists(electronBuilderCli))) {
+    return yield* new BuildScriptError({
+      message: `Pinned electron-builder CLI was not found at ${electronBuilderCli}`,
+    });
+  }
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
       env: buildEnv,
       ...commandOutputOptions(options.verbose),
-      // Windows needs shell mode to resolve .cmd shims.
-      shell: process.platform === "win32",
-    })`${electronBuilderExecutable} ${platformConfig.cliFlag} --${options.arch} --publish never`,
+    })`${process.execPath} ${electronBuilderCli} ${platformConfig.cliFlag} --${options.arch} --publish never`,
   );
 
   const stageDistDir = path.join(stageAppDir, "dist");

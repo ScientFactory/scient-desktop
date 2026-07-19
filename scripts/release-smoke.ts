@@ -268,8 +268,8 @@ function verifyDesktopStageLockAuthority(): void {
   );
   assertContains(
     buildScript,
-    '"scripts",\n    "node_modules",\n    ".bin",',
-    "Expected packaging to use the pinned scripts-workspace electron-builder executable.",
+    'path.join(repoRoot, "node_modules", "electron-builder", "cli.js")',
+    "Expected packaging to invoke the pinned root electron-builder CLI without platform-specific shims.",
   );
   assertContains(
     buildScript,
