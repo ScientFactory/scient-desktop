@@ -512,6 +512,16 @@ describe("EventRouter scoped orchestration sync", () => {
         { timeout: 8_000, interval: 16 },
       );
 
+      // A delayed lower-sequence snapshot must not overwrite the live event that
+      // already advanced this thread's cursor.
+      sendThreadSnapshotPush(THREAD_ID, 1);
+      await new Promise((resolve) => window.setTimeout(resolve, 120));
+      expect(
+        getThreadFromState(useStore.getState(), THREAD_ID)?.messages.find(
+          (entry) => entry.id === MessageId.makeUnsafe("msg-assistant-1"),
+        )?.text,
+      ).toBe("hello");
+
       const secondAssistantChunk = {
         ...firstAssistantChunk,
         sequence: 3,
