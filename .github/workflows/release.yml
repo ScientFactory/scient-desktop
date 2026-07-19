@@ -24,6 +24,9 @@ concurrency:
   group: scient-desktop-release
   cancel-in-progress: false
 
+env:
+  RELEASE_BRANCH: release/stable
+
 jobs:
   preflight:
     name: Preflight
@@ -45,6 +48,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
 
       - id: release_config
         name: Verify Scient release configuration
@@ -80,6 +85,29 @@ jobs:
           else
             echo "Build-only validation enabled; no release or package will be published."
           fi
+
+      - name: Verify publication source
+        if: ${{ steps.release_mode.outputs.publish_release == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin \
+            "refs/heads/${RELEASE_BRANCH}:refs/remotes/origin/${RELEASE_BRANCH}"
+          release_branch_sha="$(git rev-parse "refs/remotes/origin/${RELEASE_BRANCH}")"
+
+          if [[ "$GITHUB_SHA" != "$release_branch_sha" ]]; then
+            echo "Public releases must use the exact head of ${RELEASE_BRANCH}." >&2
+            echo "Workflow source: $GITHUB_SHA" >&2
+            echo "${RELEASE_BRANCH}: $release_branch_sha" >&2
+            exit 1
+          fi
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF" != "refs/heads/${RELEASE_BRANCH}" ]]; then
+            echo "Manual publication must be dispatched from ${RELEASE_BRANCH}, got ${GITHUB_REF}." >&2
+            exit 1
+          fi
+
+          echo "Publication source verified at ${RELEASE_BRANCH} (${release_branch_sha})."
 
       - id: release_meta
         name: Resolve release policy
@@ -224,6 +252,7 @@ jobs:
           AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
           AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
           SCIENT_DESKTOP_UPDATE_REPOSITORY: ${{ needs.preflight.outputs.update_repository }}
+          PUBLISH_RELEASE: ${{ needs.preflight.outputs.publish_release }}
         run: |
           args=(
             --platform "${{ matrix.platform }}"
@@ -249,12 +278,15 @@ jobs:
               export APPLE_API_KEY="$key_path"
               echo "macOS signing enabled."
               args+=(--signed)
+            elif [[ "$PUBLISH_RELEASE" == "true" ]]; then
+              echo "Public macOS releases require all Apple signing and notarization secrets." >&2
+              exit 1
             else
-              echo "macOS signing disabled (missing one or more Apple signing secrets)."
+              echo "Build-only macOS signing disabled (missing one or more Apple signing secrets)."
             fi
           elif [[ "${{ matrix.platform }}" == "win" ]]; then
-            # Windows signing is optional. Keep producing the NSIS installer when
-            # Azure signing is unavailable, matching the existing unsigned release path.
+            # Build-only validation may produce an unsigned installer. Public
+            # releases fail closed unless Trusted Signing is fully configured.
             if has_all \
               "$AZURE_TENANT_ID" \
               "$AZURE_CLIENT_ID" \
@@ -265,8 +297,11 @@ jobs:
               "$AZURE_TRUSTED_SIGNING_PUBLISHER_NAME"; then
               echo "Windows signing enabled (Azure Trusted Signing)."
               args+=(--signed)
+            elif [[ "$PUBLISH_RELEASE" == "true" ]]; then
+              echo "Public Windows releases require all Azure Trusted Signing secrets." >&2
+              exit 1
             else
-              echo "Windows signing is optional; building an unsigned installer because one or more Azure Trusted Signing secrets are missing."
+              echo "Build-only Windows signing disabled because one or more Azure Trusted Signing secrets are missing."
             fi
           else
             echo "Signing disabled for ${{ matrix.platform }}."

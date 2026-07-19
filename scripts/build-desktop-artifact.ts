@@ -545,6 +545,33 @@ const verifyStagedNodePty = Effect.fn("verifyStagedNodePty")(function* (
   );
 });
 
+// Keep all dependency lifecycle scripts disabled in the release stage, then run
+// only node-pty's pinned native lifecycle. `bun run install` also runs its
+// postinstall hook, which places the Windows ConPTY payload correctly.
+const prepareStagedNodePty = Effect.fn("prepareStagedNodePty")(function* (
+  repoRoot: string,
+  stageAppDir: string,
+  verbose: boolean,
+) {
+  const path = yield* Path.Path;
+  const nodePtyRoot = path.join(stageAppDir, "node_modules", "node-pty");
+  const buildToolBinDir = path.join(repoRoot, "node_modules", ".bin");
+  const buildEnv = {
+    ...process.env,
+    PATH: `${buildToolBinDir}${delimiter}${process.env.PATH ?? ""}`,
+  };
+
+  yield* Effect.log("[desktop-artifact] Building staged node-pty native dependency...");
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: nodePtyRoot,
+      env: buildEnv,
+      ...commandOutputOptions(verbose),
+      shell: process.platform === "win32",
+    })`bun run install`,
+  );
+});
+
 interface PatchFileExpectation {
   readonly file: string;
   readonly addedLines: ReadonlyArray<string>;
@@ -606,38 +633,27 @@ const installLockedStageDependencies = Effect.fn("installLockedStageDependencies
     path.join(stageAppDir, RELEASE_PATCHES_PATH),
   );
 
-  const stagedLockfilePath = path.join(stageAppDir, RELEASE_LOCKFILE_PATH);
-  const stagedLockfileBeforeInstall = yield* fs.readFileString(stagedLockfilePath);
   yield* Effect.log(
-    "[desktop-artifact] Installing staged runtime dependencies without mutating the repository lockfile...",
+    "[desktop-artifact] Materializing staged production dependencies from the repository lockfile...",
   );
+  // Bun 1.3.12 makes --production implicitly frozen. Use its equivalent
+  // dependency scope without that implicit freeze so Windows can materialize
+  // platform-specific lock data, then prove it with the frozen pass below.
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: stageAppDir,
+      ...commandOutputOptions(verbose),
+      shell: process.platform === "win32",
+    })`bun install --omit dev --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
+  );
+  yield* Effect.log("[desktop-artifact] Installing staged frozen production dependencies...");
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
       ...commandOutputOptions(verbose),
       // Windows needs shell mode to resolve .cmd shims (for example bun.cmd).
       shell: process.platform === "win32",
-    })`bun install --no-save --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
-  );
-  const stagedLockfileAfterInstall = yield* fs.readFileString(stagedLockfilePath);
-  if (stagedLockfileAfterInstall !== stagedLockfileBeforeInstall) {
-    return yield* new BuildScriptError({
-      message: "Staged runtime install unexpectedly changed the repository lockfile copy.",
-    });
-  }
-  yield* Effect.log("[desktop-artifact] Building the staged node-pty native dependency...");
-  const stagedNodePtyDir = path.join(stageAppDir, "node_modules", "node-pty");
-  const buildToolBinDir = path.join(repoRoot, "node_modules", ".bin");
-  yield* runCommand(
-    ChildProcess.make({
-      cwd: stagedNodePtyDir,
-      env: {
-        ...process.env,
-        PATH: `${buildToolBinDir}${delimiter}${process.env.PATH ?? ""}`,
-      },
-      ...commandOutputOptions(verbose),
-      shell: process.platform === "win32",
-    })`bun run install`,
+    })`bun install --production --frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
   );
 
   for (const relativePath of RELEASE_WORKSPACE_MANIFEST_PATHS) {
@@ -950,9 +966,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   yield* verifyStagedPatchedDependencies(repoRoot, stageAppDir);
 
-  if (options.platform === "linux") {
-    yield* verifyStagedNodePty(stageAppDir, options.verbose);
-  }
+  yield* prepareStagedNodePty(repoRoot, stageAppDir, options.verbose);
+  yield* verifyStagedNodePty(stageAppDir, options.verbose);
 
   const buildEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -984,21 +999,18 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* Effect.log(
     `[desktop-artifact] Building ${options.platform}/${options.target} (arch=${options.arch}, version=${appVersion})...`,
   );
-  const electronBuilderExecutable = path.join(
-    repoRoot,
-    "scripts",
-    "node_modules",
-    ".bin",
-    process.platform === "win32" ? "electron-builder.cmd" : "electron-builder",
-  );
+  const electronBuilderCli = path.join(repoRoot, "node_modules", "electron-builder", "cli.js");
+  if (!(yield* fs.exists(electronBuilderCli))) {
+    return yield* new BuildScriptError({
+      message: `Pinned electron-builder CLI was not found at ${electronBuilderCli}`,
+    });
+  }
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
       env: buildEnv,
       ...commandOutputOptions(options.verbose),
-      // Windows needs shell mode to resolve .cmd shims.
-      shell: process.platform === "win32",
-    })`${electronBuilderExecutable} ${platformConfig.cliFlag} --${options.arch} --publish never`,
+    })`${process.execPath} ${electronBuilderCli} ${platformConfig.cliFlag} --${options.arch} --publish never`,
   );
 
   const stageDistDir = path.join(stageAppDir, "dist");
