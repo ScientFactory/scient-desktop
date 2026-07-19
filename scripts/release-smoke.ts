@@ -136,6 +136,9 @@ function verifyCanonicalIdentity(): void {
   if (startupWmClass !== "scient") {
     throw new Error("Expected Linux desktop releases to use the Scient StartupWMClass.");
   }
+  if (linux.syncDesktopName !== true) {
+    throw new Error("Expected Linux desktop releases to synchronize the desktop entry name.");
+  }
 
   const releasePolicy = readReleaseUpdatePolicyConfig(repoRoot);
   const resolvedPolicy = resolveReleaseUpdatePolicy("9.9.9", releasePolicy);
@@ -199,6 +202,21 @@ function verifyReleaseWorkflowSafety(): void {
     workflow,
     "Windows signing is optional; building an unsigned installer",
     "Expected Windows releases to support unsigned installers when signing is unavailable.",
+  );
+  assertContains(
+    workflow,
+    "Verify public download contract",
+    "Expected the release workflow to validate every public platform download.",
+  );
+  assertContains(
+    workflow,
+    '"Scient-${RELEASE_VERSION}-x86_64.AppImage"',
+    "Expected the public contract to validate the Linux AppImage filename.",
+  );
+  assertContains(
+    workflow,
+    "release-assets/SHA256SUMS.txt",
+    "Expected releases to publish a SHA-256 checksum manifest.",
   );
 }
 

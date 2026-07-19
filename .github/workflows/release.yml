@@ -395,6 +395,68 @@ jobs:
       - name: Prepare updater feed metadata
         run: node scripts/prepare-release-update-feed.ts release-assets
 
+      - name: Generate SHA-256 checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+
+          mapfile -d '' payloads < <(
+            find . -maxdepth 1 -type f \
+              \( -name '*.dmg' -o -name '*.zip' -o -name '*.AppImage' -o -name '*.exe' \) \
+              -print0 | sort -z
+          )
+          if [[ "${#payloads[@]}" -eq 0 ]]; then
+            echo "No desktop payloads found for checksum generation." >&2
+            exit 1
+          fi
+
+          printf '%s\0' "${payloads[@]}" | xargs -0 sha256sum | sed 's#  \./#  #' > SHA256SUMS.txt
+          test -s SHA256SUMS.txt
+
+      - name: Verify public download contract
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          UPDATE_CHANNEL: ${{ needs.preflight.outputs.update_channel }}
+        run: |
+          set -euo pipefail
+          cd release-assets
+
+          required_assets=(
+            "Scient-${RELEASE_VERSION}-arm64.dmg"
+            "Scient-${RELEASE_VERSION}-x64.dmg"
+            "Scient-${RELEASE_VERSION}-x64.exe"
+            "Scient-${RELEASE_VERSION}-x86_64.AppImage"
+            "latest-mac.yml"
+            "latest.yml"
+            "latest-linux.yml"
+            "${UPDATE_CHANNEL}-mac.yml"
+            "${UPDATE_CHANNEL}.yml"
+            "${UPDATE_CHANNEL}-linux.yml"
+            "SHA256SUMS.txt"
+          )
+
+          for asset in "${required_assets[@]}"; do
+            if [[ ! -s "$asset" ]]; then
+              echo "Release is missing required public asset: $asset" >&2
+              exit 1
+            fi
+          done
+
+          required_payloads=(
+            "Scient-${RELEASE_VERSION}-arm64.dmg"
+            "Scient-${RELEASE_VERSION}-x64.dmg"
+            "Scient-${RELEASE_VERSION}-x64.exe"
+            "Scient-${RELEASE_VERSION}-x86_64.AppImage"
+          )
+          for payload in "${required_payloads[@]}"; do
+            if ! grep -Eq "^[0-9a-f]{64}  ${payload}$" SHA256SUMS.txt; then
+              echo "Checksum manifest is missing $payload." >&2
+              exit 1
+            fi
+          done
+
       - name: Prevent compatibility channel rollback
         if: ${{ needs.preflight.outputs.release_lane == 'bridge' }}
         env:
@@ -487,6 +549,7 @@ jobs:
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/*.yml
+            release-assets/SHA256SUMS.txt
           fail_on_unmatched_files: true
 
       - name: Mirror Scient artifacts onto the pinned updater feed

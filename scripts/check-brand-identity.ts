@@ -141,11 +141,17 @@ const requiredScientIdentityText = new Map<string, readonly string[]>([
   ],
   [
     "apps/marketing/src/lib/releases.ts",
-    ["ScientFactory/scient-desktop", '"scient-latest-release"'],
+    ["ScientFactory/scient-desktop", '"scient-latest-release-v2"'],
   ],
-  ["apps/marketing/src/pages/index.astro", ["Scient is a scientific workspace"]],
-  ["apps/marketing/src/pages/download.astro", ["Download — Scient"]],
-  ["apps/marketing/src/layouts/Layout.astro", ["Scient — A local-first scientific workspace"]],
+  [
+    "apps/marketing/src/pages/index.astro",
+    ["ScientFactory — One intelligent workspace for research"],
+  ],
+  ["apps/marketing/src/pages/download.astro", ["Download Scient for macOS, Windows, and Linux"]],
+  [
+    "apps/marketing/src/layouts/Layout.astro",
+    ["One intelligent workspace for every stage of research."],
+  ],
   [".gitignore", ["/.scient/electron-dev", "/.scient-*/"]],
 ]);
 
