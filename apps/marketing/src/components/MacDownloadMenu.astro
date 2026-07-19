@@ -156,7 +156,6 @@ const chevronPath = Array.isArray(chevronPathData) ? chevronPathData[0] : chevro
     height: 1.9rem;
     flex: 0 0 auto;
     fill: currentColor;
-    transition: transform 260ms var(--ease-out);
   }
 
   .mac-download__chevron {
@@ -255,14 +254,9 @@ const chevronPath = Array.isArray(chevronPathData) ? chevronPathData[0] : chevro
 
   @media (hover: hover) and (pointer: fine) {
     .mac-download:not([data-open]) .mac-download__trigger:hover {
-      transform: translate3d(5px, -3px, 0);
       border-color: color-mix(in srgb, var(--button-accent) 82%, var(--ink));
       background: var(--button-hover);
       box-shadow: -10px 18px 42px rgba(17, 17, 17, 0.09);
-    }
-
-    .mac-download:not([data-open]) .mac-download__trigger:hover .mac-download__apple {
-      transform: translate3d(4px, -1px, 0) scale(1.09);
     }
 
     .mac-download__options a:hover {
