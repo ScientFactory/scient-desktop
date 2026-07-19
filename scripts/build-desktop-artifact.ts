@@ -615,6 +615,15 @@ const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies
       shell: process.platform === "win32",
     })`bun install --production --frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
   );
+  yield* Effect.log("[desktop-artifact] Building the staged node-pty native dependency...");
+  const stagedNodePtyDir = path.join(stageAppDir, "node_modules", "node-pty");
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: stagedNodePtyDir,
+      ...commandOutputOptions(verbose),
+      shell: process.platform === "win32",
+    })`bun run install`,
+  );
 
   for (const relativePath of RELEASE_WORKSPACE_MANIFEST_PATHS) {
     if (relativePath !== "package.json") {

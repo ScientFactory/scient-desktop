@@ -213,6 +213,11 @@ function verifyReleaseWorkflowSafety(): void {
     "release-assets/SHA256SUMS.txt",
     "Expected releases to publish a SHA-256 checksum manifest.",
   );
+  assertContains(
+    workflow,
+    'node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"\n          bun install --lockfile-only --ignore-scripts',
+    "Expected artifact builds to refresh lockfile metadata after aligning workspace versions.",
+  );
 }
 
 function verifyDesktopStageLockAuthority(): void {
@@ -221,6 +226,11 @@ function verifyDesktopStageLockAuthority(): void {
     buildScript,
     "bun install --production --frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
     "Expected desktop staging to install only from the repository's frozen workspace lockfile.",
+  );
+  assertContains(
+    buildScript,
+    'path.join(stageAppDir, "node_modules", "node-pty")',
+    "Expected desktop staging to run only the required node-pty native install lifecycle.",
   );
   assertNotContains(
     buildScript,
@@ -261,6 +271,11 @@ function verifyFrozenDesktopStageInstall(targetRoot: string): void {
     ],
     { cwd: targetRoot, stdio: "inherit" },
   );
+  const stagedNodePtyDir = resolve(targetRoot, "node_modules/node-pty");
+  execFileSync("bun", ["run", "install"], {
+    cwd: stagedNodePtyDir,
+    stdio: "inherit",
+  });
 
   const packagePairs = [
     ["node_modules/electron/package.json", "apps/desktop/node_modules/electron/package.json"],
@@ -275,6 +290,17 @@ function verifyFrozenDesktopStageInstall(targetRoot: string): void {
         `Frozen stage resolved ${stagedPath} at ${stagedVersion}; expected locked workspace version ${workspaceVersion}.`,
       );
     }
+  }
+
+  if (process.platform === "linux") {
+    execFileSync(process.execPath, [resolve(repoRoot, "scripts/node-pty-smoke.mjs")], {
+      cwd: targetRoot,
+      env: {
+        ...process.env,
+        SYNARA_NODE_PTY_SMOKE_REQUIRE_ROOT: resolve(targetRoot, "apps/server"),
+      },
+      stdio: "inherit",
+    });
   }
 }
 
