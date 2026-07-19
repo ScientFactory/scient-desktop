@@ -243,8 +243,8 @@ function verifyDesktopStageLockAuthority(): void {
   ).replace(/\r\n/g, "\n");
   assertContains(
     buildScript,
-    "bun --config ${lockProjectionConfigPath} install --production --lockfile-only --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
-    "Expected desktop staging to derive its production workspace lock projection from the repository lockfile.",
+    "bun --config ${lockProjectionConfigPath} install --production --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
+    "Expected desktop staging to materialize its production workspace from the repository lockfile.",
   );
   assertContains(
     buildScript,
@@ -315,7 +315,6 @@ function verifyFrozenDesktopStageInstall(targetRoot: string, verifyNative = fals
       lockProjectionConfigPath,
       "install",
       "--production",
-      "--lockfile-only",
       "--ignore-scripts",
       "--linker",
       "hoisted",

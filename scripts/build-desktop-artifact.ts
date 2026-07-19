@@ -640,14 +640,17 @@ const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies
     '[install]\nfrozenLockfile = false\nlinker = "hoisted"\n',
   );
   yield* Effect.log(
-    "[desktop-artifact] Projecting the repository lockfile for the staged production workspace...",
+    "[desktop-artifact] Materializing staged production dependencies from the repository lockfile...",
   );
+  // Bun on Windows can defer platform-specific lock stabilization until a real
+  // install. Materialize once with updates explicitly allowed, then repeat the
+  // identical install frozen below to prove the staged lock is reproducible.
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
       ...commandOutputOptions(verbose),
       shell: process.platform === "win32",
-    })`bun --config ${lockProjectionConfigPath} install --production --lockfile-only --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
+    })`bun --config ${lockProjectionConfigPath} install --production --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
   );
   yield* fs.remove(lockProjectionConfigPath);
   yield* Effect.log("[desktop-artifact] Installing staged frozen production dependencies...");
