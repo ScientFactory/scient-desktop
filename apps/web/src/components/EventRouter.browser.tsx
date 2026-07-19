@@ -339,9 +339,15 @@ async function mountApp(options?: {
           return;
         }
         const expectedThreadId = options?.waitForThreadId ?? THREAD_ID;
-        expect(useStore.getState().threads.some((thread) => thread.id === expectedThreadId)).toBe(
-          true,
-        );
+        const expectedThread = findThreadDetailFromFixtureSnapshot(expectedThreadId);
+        const actualThread = getThreadFromState(useStore.getState(), expectedThreadId);
+        expect(actualThread).toBeDefined();
+        expect(threadStreamByThreadId.has(expectedThreadId)).toBe(true);
+        for (const expectedMessage of expectedThread?.messages ?? []) {
+          expect(actualThread?.messages.some((message) => message.id === expectedMessage.id)).toBe(
+            true,
+          );
+        }
       },
       { timeout: 20_000, interval: 16 },
     );
