@@ -605,8 +605,16 @@ const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies
   );
 
   yield* Effect.log(
-    "[desktop-artifact] Installing staged production dependencies from the repository lockfile...",
+    "[desktop-artifact] Projecting the repository lockfile for the staged production workspace...",
   );
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: stageAppDir,
+      ...commandOutputOptions(verbose),
+      shell: process.platform === "win32",
+    })`bun install --production --lockfile-only --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
+  );
+  yield* Effect.log("[desktop-artifact] Installing staged frozen production dependencies...");
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
