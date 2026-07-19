@@ -2482,8 +2482,9 @@ function configureAutoUpdater(): void {
 
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
-  // This channel is inert until SCIENT_DESKTOP_UPDATES_ENABLED is deliberately
-  // enabled alongside a tested, Scient-owned release feed.
+  // Stable production builds use the dedicated Scient-owned update channel.
+  // resolveAutoUpdateDisabledReason still keeps development, unpackaged, and
+  // unsupported runtime environments away from the public feed.
   autoUpdater.channel = SCIENT_DESKTOP_UPDATE_CHANNEL;
   autoUpdater.allowPrerelease = DESKTOP_UPDATE_ALLOW_PRERELEASE;
   autoUpdater.allowDowngrade = false;

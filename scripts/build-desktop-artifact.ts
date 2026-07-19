@@ -544,6 +544,41 @@ const verifyStagedNodePty = Effect.fn("verifyStagedNodePty")(function* (
   );
 });
 
+// Keep all dependency lifecycle scripts disabled in the release stage, then
+// build only the pinned native PTY dependency on Linux. node-pty's npm tarball
+// does not include a Linux prebuild, so skipping this targeted rebuild produces
+// an AppImage whose terminal cannot start.
+const prepareStagedLinuxNodePty = Effect.fn("prepareStagedLinuxNodePty")(function* (
+  repoRoot: string,
+  stageAppDir: string,
+  verbose: boolean,
+) {
+  const path = yield* Path.Path;
+  const nodePtyRoot = path.join(stageAppDir, "node_modules", "node-pty");
+  const nodeGypScript = path.join(
+    repoRoot,
+    "scripts",
+    "node_modules",
+    "node-gyp",
+    "bin",
+    "node-gyp.js",
+  );
+
+  yield* Effect.log("[desktop-artifact] Building staged Linux node-pty native dependency...");
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: nodePtyRoot,
+      ...commandOutputOptions(verbose),
+    })`node ${nodeGypScript} rebuild`,
+  );
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: nodePtyRoot,
+      ...commandOutputOptions(verbose),
+    })`node scripts/post-install.js`,
+  );
+});
+
 interface PatchFileExpectation {
   readonly file: string;
   readonly addedLines: ReadonlyArray<string>;
@@ -927,6 +962,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* verifyStagedPatchedDependencies(repoRoot, stageAppDir);
 
   if (options.platform === "linux") {
+    yield* prepareStagedLinuxNodePty(repoRoot, stageAppDir, options.verbose);
     yield* verifyStagedNodePty(stageAppDir, options.verbose);
   }
 

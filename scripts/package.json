@@ -21,6 +21,7 @@
     "@effect/vitest": "catalog:",
     "@types/bun": "catalog:",
     "electron-builder": "26.15.3",
+    "node-gyp": "12.4.0",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

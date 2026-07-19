@@ -6,7 +6,7 @@ export const SCIENT_DESKTOP_SCHEME = "scient";
 export const SCIENT_DESKTOP_ORIGIN = `${SCIENT_DESKTOP_SCHEME}://app`;
 export const SCIENT_DESKTOP_ENTRY_URL = `${SCIENT_DESKTOP_ORIGIN}/index.html`;
 export const SCIENT_DESKTOP_UPDATE_CHANNEL = "scient";
-export const SCIENT_DESKTOP_UPDATES_ENABLED = false;
+export const SCIENT_DESKTOP_UPDATES_ENABLED = true;
 export const SCIENT_PRODUCTION_BUNDLE_ID = "com.scientfactory.scient";
 export const SCIENT_DEVELOPMENT_BUNDLE_ID = `${SCIENT_PRODUCTION_BUNDLE_ID}.dev`;
 

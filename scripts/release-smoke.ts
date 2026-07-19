@@ -116,10 +116,8 @@ function verifyCanonicalIdentity(): void {
   if (SCIENT_DESKTOP_UPDATE_CHANNEL !== "scient") {
     throw new Error(`Unexpected desktop update channel: ${SCIENT_DESKTOP_UPDATE_CHANNEL}.`);
   }
-  if (SCIENT_DESKTOP_UPDATES_ENABLED) {
-    throw new Error(
-      "Release publication must not implicitly enable desktop clients; a reviewed code change is required.",
-    );
+  if (!SCIENT_DESKTOP_UPDATES_ENABLED) {
+    throw new Error("Expected packaged Scient clients to use the approved update channel.");
   }
 
   const linux = createDesktopPlatformBuildConfig({ platform: "linux", target: "AppImage" }).linux;
@@ -195,8 +193,23 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     workflow,
-    "Windows signing is optional; building an unsigned installer",
-    "Expected Windows releases to support unsigned installers when signing is unavailable.",
+    "RELEASE_BRANCH: release/stable",
+    "Expected public releases to use the protected stable branch.",
+  );
+  assertContains(
+    workflow,
+    'if [[ "$GITHUB_SHA" != "$release_branch_sha" ]]',
+    "Expected publication to require the exact release/stable head.",
+  );
+  assertContains(
+    workflow,
+    "Public macOS releases require all Apple signing and notarization secrets.",
+    "Expected public macOS releases to fail closed without signing and notarization.",
+  );
+  assertContains(
+    workflow,
+    "Public Windows releases require all Azure Trusted Signing secrets.",
+    "Expected public Windows releases to fail closed without signing.",
   );
   assertContains(
     workflow,
@@ -231,6 +244,16 @@ function verifyDesktopStageLockAuthority(): void {
     buildScript,
     '"scripts",\n    "node_modules",\n    ".bin",',
     "Expected packaging to use the pinned scripts-workspace electron-builder executable.",
+  );
+  assertContains(
+    buildScript,
+    "prepareStagedLinuxNodePty",
+    "Expected Linux release staging to rebuild only the pinned node-pty native dependency.",
+  );
+  assertContains(
+    buildScript,
+    '"node-gyp",\n    "bin",\n    "node-gyp.js",',
+    "Expected Linux node-pty staging to use the scripts-workspace node-gyp executable.",
   );
 }
 

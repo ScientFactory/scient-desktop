@@ -25,8 +25,8 @@ describe("desktopIdentity", () => {
     expect(SCIENT_DESKTOP_ENTRY_URL).toBe("scient://app/index.html");
   });
 
-  it("keeps updates off until the Scient-owned release channel is ready", () => {
+  it("enables the approved Scient-owned release channel", () => {
     expect(SCIENT_DESKTOP_UPDATE_CHANNEL).toBe("scient");
-    expect(SCIENT_DESKTOP_UPDATES_ENABLED).toBe(false);
+    expect(SCIENT_DESKTOP_UPDATES_ENABLED).toBe(true);
   });
 });
