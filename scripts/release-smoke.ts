@@ -145,7 +145,10 @@ function verifyCanonicalIdentity(): void {
 }
 
 function verifyReleaseWorkflowSafety(): void {
-  const workflow = readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
+  const workflow = readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8").replace(
+    /\r\n/g,
+    "\n",
+  );
   assertContains(
     workflow,
     "if: ${{ vars.SCIENT_DESKTOP_RELEASES_ENABLED == 'true' }}",
@@ -237,8 +240,13 @@ function verifyDesktopStageLockAuthority(): void {
   const buildScript = readFileSync(resolve(repoRoot, "scripts/build-desktop-artifact.ts"), "utf8");
   assertContains(
     buildScript,
-    "bun install --production --lockfile-only --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
+    "bun --config ${lockProjectionConfigPath} install --production --lockfile-only --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
     "Expected desktop staging to derive its production workspace lock projection from the repository lockfile.",
+  );
+  assertContains(
+    buildScript,
+    'frozenLockfile = false\\nlinker = "hoisted"',
+    "Expected desktop lock projection to explicitly permit its one intentional lockfile update on every platform.",
   );
   assertContains(
     buildScript,
@@ -289,9 +297,19 @@ function readPackageVersion(root: string, relativePath: string): string {
 }
 
 function verifyFrozenDesktopStageInstall(targetRoot: string, verifyNative = false): void {
+  const lockProjectionConfigPath = resolve(
+    targetRoot,
+    ".scient-release-lock-projection.bunfig.toml",
+  );
+  writeFileSync(
+    lockProjectionConfigPath,
+    '[install]\nfrozenLockfile = false\nlinker = "hoisted"\n',
+  );
   execFileSync(
     "bun",
     [
+      "--config",
+      lockProjectionConfigPath,
       "install",
       "--production",
       "--lockfile-only",
@@ -305,6 +323,7 @@ function verifyFrozenDesktopStageInstall(targetRoot: string, verifyNative = fals
     ],
     { cwd: targetRoot, stdio: "inherit" },
   );
+  rmSync(lockProjectionConfigPath);
   execFileSync(
     "bun",
     [
