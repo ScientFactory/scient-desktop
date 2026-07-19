@@ -237,8 +237,13 @@ function verifyDesktopStageLockAuthority(): void {
   const buildScript = readFileSync(resolve(repoRoot, "scripts/build-desktop-artifact.ts"), "utf8");
   assertContains(
     buildScript,
+    "bun install --production --lockfile-only --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
+    "Expected desktop staging to derive its production workspace lock projection from the repository lockfile.",
+  );
+  assertContains(
+    buildScript,
     "bun install --production --frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
-    "Expected desktop staging to install only from the repository's frozen workspace lockfile.",
+    "Expected desktop staging to install only from its repository-derived frozen lock projection.",
   );
   assertContains(
     buildScript,
@@ -284,6 +289,22 @@ function readPackageVersion(root: string, relativePath: string): string {
 }
 
 function verifyFrozenDesktopStageInstall(targetRoot: string, verifyNative = false): void {
+  execFileSync(
+    "bun",
+    [
+      "install",
+      "--production",
+      "--lockfile-only",
+      "--ignore-scripts",
+      "--linker",
+      "hoisted",
+      "--filter",
+      "@scientfactory/cli",
+      "--filter",
+      "@synara/desktop",
+    ],
+    { cwd: targetRoot, stdio: "inherit" },
+  );
   execFileSync(
     "bun",
     [
