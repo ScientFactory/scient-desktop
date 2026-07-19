@@ -6,7 +6,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
@@ -544,38 +544,30 @@ const verifyStagedNodePty = Effect.fn("verifyStagedNodePty")(function* (
   );
 });
 
-// Keep all dependency lifecycle scripts disabled in the release stage, then
-// build only the pinned native PTY dependency on Linux. node-pty's npm tarball
-// does not include a Linux prebuild, so skipping this targeted rebuild produces
-// an AppImage whose terminal cannot start.
-const prepareStagedLinuxNodePty = Effect.fn("prepareStagedLinuxNodePty")(function* (
+// Keep all dependency lifecycle scripts disabled in the release stage, then run
+// only node-pty's pinned native lifecycle. `bun run install` also runs its
+// postinstall hook, which places the Windows ConPTY payload correctly.
+const prepareStagedNodePty = Effect.fn("prepareStagedNodePty")(function* (
   repoRoot: string,
   stageAppDir: string,
   verbose: boolean,
 ) {
   const path = yield* Path.Path;
   const nodePtyRoot = path.join(stageAppDir, "node_modules", "node-pty");
-  const nodeGypScript = path.join(
-    repoRoot,
-    "scripts",
-    "node_modules",
-    "node-gyp",
-    "bin",
-    "node-gyp.js",
-  );
+  const buildToolBinDir = path.join(repoRoot, "node_modules", ".bin");
+  const buildEnv = {
+    ...process.env,
+    PATH: `${buildToolBinDir}${delimiter}${process.env.PATH ?? ""}`,
+  };
 
-  yield* Effect.log("[desktop-artifact] Building staged Linux node-pty native dependency...");
+  yield* Effect.log("[desktop-artifact] Building staged node-pty native dependency...");
   yield* runCommand(
     ChildProcess.make({
       cwd: nodePtyRoot,
+      env: buildEnv,
       ...commandOutputOptions(verbose),
-    })`node ${nodeGypScript} rebuild`,
-  );
-  yield* runCommand(
-    ChildProcess.make({
-      cwd: nodePtyRoot,
-      ...commandOutputOptions(verbose),
-    })`node scripts/post-install.js`,
+      shell: process.platform === "win32",
+    })`bun run install`,
   );
 });
 
@@ -650,7 +642,6 @@ const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies
       shell: process.platform === "win32",
     })`bun install --production --frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
   );
-
   for (const relativePath of RELEASE_WORKSPACE_MANIFEST_PATHS) {
     if (relativePath !== "package.json") {
       yield* fs.remove(path.join(stageAppDir, relativePath));
@@ -961,10 +952,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   yield* verifyStagedPatchedDependencies(repoRoot, stageAppDir);
 
-  if (options.platform === "linux") {
-    yield* prepareStagedLinuxNodePty(repoRoot, stageAppDir, options.verbose);
-    yield* verifyStagedNodePty(stageAppDir, options.verbose);
-  }
+  yield* prepareStagedNodePty(repoRoot, stageAppDir, options.verbose);
+  yield* verifyStagedNodePty(stageAppDir, options.verbose);
 
   const buildEnv: NodeJS.ProcessEnv = {
     ...process.env,

@@ -4,6 +4,7 @@
 // Layer: Release/CI smoke check
 
 import { createRequire } from "node:module";
+import { chmodSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,6 +14,20 @@ const requireRoot =
   process.env.SYNARA_NODE_PTY_SMOKE_REQUIRE_ROOT?.trim() || resolve(repoRoot, "apps/server");
 const requireFromTarget = createRequire(resolve(requireRoot, "package.json"));
 const expectedOutput = "synara-node-pty-smoke";
+
+const nodePtyPackageDir = dirname(requireFromTarget.resolve("node-pty/package.json"));
+if (process.platform !== "win32") {
+  for (const helperPath of [
+    resolve(nodePtyPackageDir, "build/Release/spawn-helper"),
+    resolve(nodePtyPackageDir, "build/Debug/spawn-helper"),
+    resolve(nodePtyPackageDir, `prebuilds/${process.platform}-${process.arch}/spawn-helper`),
+  ]) {
+    if (existsSync(helperPath)) {
+      chmodSync(helperPath, 0o755);
+      break;
+    }
+  }
+}
 
 function fail(message, detail) {
   console.error(`[node-pty-smoke] ${message}`);

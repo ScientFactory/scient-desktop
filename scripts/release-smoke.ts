@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -240,6 +240,11 @@ function verifyDesktopStageLockAuthority(): void {
     "bun install --production --frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
     "Expected desktop staging to install only from the repository's frozen workspace lockfile.",
   );
+  assertContains(
+    buildScript,
+    'path.join(stageAppDir, "node_modules", "node-pty")',
+    "Expected desktop staging to run only the required node-pty native install lifecycle.",
+  );
   assertNotContains(
     buildScript,
     ")`bun install --production`,",
@@ -252,13 +257,19 @@ function verifyDesktopStageLockAuthority(): void {
   );
   assertContains(
     buildScript,
-    "prepareStagedLinuxNodePty",
-    "Expected Linux release staging to rebuild only the pinned node-pty native dependency.",
+    "prepareStagedNodePty",
+    "Expected every release target to prepare the pinned node-pty native dependency.",
   );
   assertContains(
     buildScript,
-    '"node-gyp",\n    "bin",\n    "node-gyp.js",',
-    "Expected Linux node-pty staging to use the scripts-workspace node-gyp executable.",
+    ")`bun run install`,",
+    "Expected node-pty staging to run its pinned install and postinstall lifecycle.",
+  );
+  const rootPackage = readFileSync(resolve(repoRoot, "package.json"), "utf8");
+  assertContains(
+    rootPackage,
+    '"node-gyp": "12.4.0"',
+    "Expected native compiler tooling to be pinned.",
   );
 }
 
@@ -272,7 +283,7 @@ function readPackageVersion(root: string, relativePath: string): string {
   return packageJson.version;
 }
 
-function verifyFrozenDesktopStageInstall(targetRoot: string): void {
+function verifyFrozenDesktopStageInstall(targetRoot: string, verifyNative = false): void {
   execFileSync(
     "bun",
     [
@@ -289,7 +300,6 @@ function verifyFrozenDesktopStageInstall(targetRoot: string): void {
     ],
     { cwd: targetRoot, stdio: "inherit" },
   );
-
   const packagePairs = [
     ["node_modules/electron/package.json", "apps/desktop/node_modules/electron/package.json"],
     ["node_modules/ws/package.json", "apps/server/node_modules/ws/package.json"],
@@ -304,6 +314,27 @@ function verifyFrozenDesktopStageInstall(targetRoot: string): void {
       );
     }
   }
+
+  if (!verifyNative) return;
+
+  const stagedNodePtyDir = resolve(targetRoot, "node_modules/node-pty");
+  const nativeEnv = {
+    ...process.env,
+    PATH: `${resolve(repoRoot, "node_modules/.bin")}${delimiter}${process.env.PATH ?? ""}`,
+  };
+  execFileSync("bun", ["run", "install"], {
+    cwd: stagedNodePtyDir,
+    env: nativeEnv,
+    stdio: "inherit",
+  });
+  execFileSync(process.execPath, [resolve(repoRoot, "scripts/node-pty-smoke.mjs")], {
+    cwd: targetRoot,
+    env: {
+      ...process.env,
+      SYNARA_NODE_PTY_SMOKE_REQUIRE_ROOT: targetRoot,
+    },
+    stdio: "inherit",
+  });
 }
 
 const tempRoot = mkdtempSync(join(tmpdir(), "scient-release-smoke-"));
@@ -333,7 +364,7 @@ try {
     cwd: tempRoot,
     stdio: "inherit",
   });
-  verifyFrozenDesktopStageInstall(tempRoot);
+  verifyFrozenDesktopStageInstall(tempRoot, true);
 
   const lockfile = readFileSync(resolve(tempRoot, "bun.lock"), "utf8");
   assertContains(
