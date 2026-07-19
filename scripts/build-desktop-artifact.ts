@@ -22,6 +22,7 @@ import { SCIENT_PRODUCTION_BUNDLE_ID } from "@synara/shared/desktopIdentity";
 import { parseBooleanEnvValue } from "./lib/env-bool.ts";
 import { finalizeMacUpdateZip } from "./lib/mac-update-zip-finalize.ts";
 import {
+  createReleaseInstallManifest,
   RELEASE_LOCKFILE_PATH,
   RELEASE_PATCHES_PATH,
   RELEASE_WORKSPACE_MANIFEST_PATHS,
@@ -608,7 +609,7 @@ function patchedPackageName(dependency: string): string {
   return versionSeparator > 0 ? dependency.slice(0, versionSeparator) : dependency;
 }
 
-const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies")(function* (
+const installLockedStageDependencies = Effect.fn("installLockedStageDependencies")(function* (
   repoRoot: string,
   stageAppDir: string,
   verbose: boolean,
@@ -619,7 +620,8 @@ const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies
   for (const relativePath of RELEASE_WORKSPACE_MANIFEST_PATHS) {
     const destination = path.join(stageAppDir, relativePath);
     yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
-    yield* fs.copyFile(path.join(repoRoot, relativePath), destination);
+    const sourceContents = yield* fs.readFileString(path.join(repoRoot, relativePath));
+    yield* fs.writeFileString(destination, createReleaseInstallManifest(sourceContents));
   }
 
   yield* fs.copyFile(
@@ -653,6 +655,7 @@ const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies
       shell: process.platform === "win32",
     })`bun install --production --frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
   );
+
   for (const relativePath of RELEASE_WORKSPACE_MANIFEST_PATHS) {
     if (relativePath !== "package.json") {
       yield* fs.remove(path.join(stageAppDir, relativePath));
@@ -957,7 +960,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     patchedDependencies: rootPackageJson.patchedDependencies ?? {},
   };
 
-  yield* installFrozenStageDependencies(repoRoot, stageAppDir, options.verbose);
+  yield* installLockedStageDependencies(repoRoot, stageAppDir, options.verbose);
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
 

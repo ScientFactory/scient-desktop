@@ -17,6 +17,7 @@ import {
 
 import { createDesktopPlatformBuildConfig } from "./lib/desktop-platform-build-config.ts";
 import {
+  createReleaseInstallManifest,
   RELEASE_LOCKFILE_PATH,
   RELEASE_PATCHES_PATH,
   RELEASE_WORKSPACE_MANIFEST_PATHS,
@@ -33,7 +34,7 @@ function copyWorkspaceManifestFixture(targetRoot: string): void {
     const sourcePath = resolve(repoRoot, relativePath);
     const destinationPath = resolve(targetRoot, relativePath);
     mkdirSync(dirname(destinationPath), { recursive: true });
-    cpSync(sourcePath, destinationPath);
+    writeFileSync(destinationPath, createReleaseInstallManifest(readFileSync(sourcePath, "utf8")));
   }
   cpSync(resolve(repoRoot, RELEASE_LOCKFILE_PATH), resolve(targetRoot, RELEASE_LOCKFILE_PATH));
   cpSync(resolve(repoRoot, RELEASE_PATCHES_PATH), resolve(targetRoot, RELEASE_PATCHES_PATH), {
@@ -145,10 +146,10 @@ function verifyCanonicalIdentity(): void {
 }
 
 function verifyReleaseWorkflowSafety(): void {
-  const workflow = readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8").replace(
-    /\r\n/g,
-    "\n",
-  );
+  const workflow = readFileSync(
+    resolve(repoRoot, ".github/workflows/release.yml"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
   assertContains(
     workflow,
     "if: ${{ vars.SCIENT_DESKTOP_RELEASES_ENABLED == 'true' }}",
@@ -234,13 +235,18 @@ function verifyReleaseWorkflowSafety(): void {
     "release-assets/SHA256SUMS.txt",
     "Expected releases to publish a SHA-256 checksum manifest.",
   );
+  assertContains(
+    workflow,
+    'node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"\n          bun install --lockfile-only --ignore-scripts',
+    "Expected artifact builds to refresh lockfile metadata after aligning workspace versions.",
+  );
 }
 
 function verifyDesktopStageLockAuthority(): void {
   const buildScript = readFileSync(
     resolve(repoRoot, "scripts/build-desktop-artifact.ts"),
     "utf8",
-  ).replace(/\r\n/g, "\n");
+  ).replaceAll("\r\n", "\n");
   assertContains(
     buildScript,
     "bun install --omit dev --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",

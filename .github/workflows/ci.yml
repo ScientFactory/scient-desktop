@@ -146,7 +146,7 @@ jobs:
       - name: Test Effect Windows process spawn
         run: bun run --cwd apps/server test src/windowsProcessEffect.test.ts
 
-      - name: Verify Windows release staging lock
+      - name: Exercise Windows release staging
         run: bun run release:smoke
 
   release_smoke:
