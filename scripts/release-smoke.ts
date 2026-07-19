@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -17,6 +17,7 @@ import {
 
 import { createDesktopPlatformBuildConfig } from "./lib/desktop-platform-build-config.ts";
 import {
+  createReleaseInstallManifest,
   RELEASE_LOCKFILE_PATH,
   RELEASE_PATCHES_PATH,
   RELEASE_WORKSPACE_MANIFEST_PATHS,
@@ -33,7 +34,7 @@ function copyWorkspaceManifestFixture(targetRoot: string): void {
     const sourcePath = resolve(repoRoot, relativePath);
     const destinationPath = resolve(targetRoot, relativePath);
     mkdirSync(dirname(destinationPath), { recursive: true });
-    cpSync(sourcePath, destinationPath);
+    writeFileSync(destinationPath, createReleaseInstallManifest(readFileSync(sourcePath, "utf8")));
   }
   cpSync(resolve(repoRoot, RELEASE_LOCKFILE_PATH), resolve(targetRoot, RELEASE_LOCKFILE_PATH));
   cpSync(resolve(repoRoot, RELEASE_PATCHES_PATH), resolve(targetRoot, RELEASE_PATCHES_PATH), {
@@ -147,7 +148,10 @@ function verifyCanonicalIdentity(): void {
 }
 
 function verifyReleaseWorkflowSafety(): void {
-  const workflow = readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
+  const workflow = readFileSync(
+    resolve(repoRoot, ".github/workflows/release.yml"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
   assertContains(
     workflow,
     "if: ${{ vars.SCIENT_DESKTOP_RELEASES_ENABLED == 'true' }}",
@@ -213,14 +217,27 @@ function verifyReleaseWorkflowSafety(): void {
     "release-assets/SHA256SUMS.txt",
     "Expected releases to publish a SHA-256 checksum manifest.",
   );
+  assertContains(
+    workflow,
+    'node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"\n          bun install --lockfile-only --ignore-scripts',
+    "Expected artifact builds to refresh lockfile metadata after aligning workspace versions.",
+  );
 }
 
 function verifyDesktopStageLockAuthority(): void {
-  const buildScript = readFileSync(resolve(repoRoot, "scripts/build-desktop-artifact.ts"), "utf8");
+  const buildScript = readFileSync(
+    resolve(repoRoot, "scripts/build-desktop-artifact.ts"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
   assertContains(
     buildScript,
-    "bun install --production --frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
-    "Expected desktop staging to install only from the repository's frozen workspace lockfile.",
+    "bun install --no-save --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
+    "Expected desktop staging to install runtime-only manifests from the repository lock without saving platform-specific metadata.",
+  );
+  assertContains(
+    buildScript,
+    'path.join(stageAppDir, "node_modules", "node-pty")',
+    "Expected desktop staging to run only the required node-pty native install lifecycle.",
   );
   assertNotContains(
     buildScript,
@@ -244,13 +261,14 @@ function readPackageVersion(root: string, relativePath: string): string {
   return packageJson.version;
 }
 
-function verifyFrozenDesktopStageInstall(targetRoot: string): void {
+function verifyLockedDesktopStageInstall(targetRoot: string): void {
+  const lockfilePath = resolve(targetRoot, RELEASE_LOCKFILE_PATH);
+  const lockfileBeforeInstall = readFileSync(lockfilePath, "utf8");
   execFileSync(
     "bun",
     [
       "install",
-      "--production",
-      "--frozen-lockfile",
+      "--no-save",
       "--ignore-scripts",
       "--linker",
       "hoisted",
@@ -261,6 +279,18 @@ function verifyFrozenDesktopStageInstall(targetRoot: string): void {
     ],
     { cwd: targetRoot, stdio: "inherit" },
   );
+  if (readFileSync(lockfilePath, "utf8") !== lockfileBeforeInstall) {
+    throw new Error("Expected staged runtime install to leave the lockfile unchanged.");
+  }
+  const stagedNodePtyDir = resolve(targetRoot, "node_modules/node-pty");
+  execFileSync("bun", ["run", "install"], {
+    cwd: stagedNodePtyDir,
+    env: {
+      ...process.env,
+      PATH: `${resolve(repoRoot, "node_modules/.bin")}${delimiter}${process.env.PATH ?? ""}`,
+    },
+    stdio: "inherit",
+  });
 
   const packagePairs = [
     ["node_modules/electron/package.json", "apps/desktop/node_modules/electron/package.json"],
@@ -276,6 +306,17 @@ function verifyFrozenDesktopStageInstall(targetRoot: string): void {
       );
     }
   }
+
+  if (process.platform === "linux") {
+    execFileSync(process.execPath, [resolve(repoRoot, "scripts/node-pty-smoke.mjs")], {
+      cwd: targetRoot,
+      env: {
+        ...process.env,
+        SYNARA_NODE_PTY_SMOKE_REQUIRE_ROOT: resolve(targetRoot, "apps/server"),
+      },
+      stdio: "inherit",
+    });
+  }
 }
 
 const tempRoot = mkdtempSync(join(tmpdir(), "scient-release-smoke-"));
@@ -285,7 +326,7 @@ try {
   verifyReleaseWorkflowSafety();
   verifyDesktopStageLockAuthority();
   copyWorkspaceManifestFixture(tempRoot);
-  verifyFrozenDesktopStageInstall(tempRoot);
+  verifyLockedDesktopStageInstall(tempRoot);
 
   execFileSync(
     process.execPath,

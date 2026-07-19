@@ -63,6 +63,7 @@
     "@cloudflare/workers-types": "5.20260719.1",
     "@types/node": "catalog:",
     "electron-builder": "26.15.3",
+    "node-gyp": "12.4.0",
     "oxfmt": "^0.40.0",
     "oxlint": "^1.55.0",
     "turbo": "^2.9.14",

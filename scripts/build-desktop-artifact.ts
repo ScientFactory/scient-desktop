@@ -6,7 +6,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
@@ -22,6 +22,7 @@ import { SCIENT_PRODUCTION_BUNDLE_ID } from "@synara/shared/desktopIdentity";
 import { parseBooleanEnvValue } from "./lib/env-bool.ts";
 import { finalizeMacUpdateZip } from "./lib/mac-update-zip-finalize.ts";
 import {
+  createReleaseInstallManifest,
   RELEASE_LOCKFILE_PATH,
   RELEASE_PATCHES_PATH,
   RELEASE_WORKSPACE_MANIFEST_PATHS,
@@ -581,7 +582,7 @@ function patchedPackageName(dependency: string): string {
   return versionSeparator > 0 ? dependency.slice(0, versionSeparator) : dependency;
 }
 
-const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies")(function* (
+const installLockedStageDependencies = Effect.fn("installLockedStageDependencies")(function* (
   repoRoot: string,
   stageAppDir: string,
   verbose: boolean,
@@ -592,7 +593,8 @@ const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies
   for (const relativePath of RELEASE_WORKSPACE_MANIFEST_PATHS) {
     const destination = path.join(stageAppDir, relativePath);
     yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
-    yield* fs.copyFile(path.join(repoRoot, relativePath), destination);
+    const sourceContents = yield* fs.readFileString(path.join(repoRoot, relativePath));
+    yield* fs.writeFileString(destination, createReleaseInstallManifest(sourceContents));
   }
 
   yield* fs.copyFile(
@@ -604,8 +606,10 @@ const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies
     path.join(stageAppDir, RELEASE_PATCHES_PATH),
   );
 
+  const stagedLockfilePath = path.join(stageAppDir, RELEASE_LOCKFILE_PATH);
+  const stagedLockfileBeforeInstall = yield* fs.readFileString(stagedLockfilePath);
   yield* Effect.log(
-    "[desktop-artifact] Installing staged production dependencies from the repository lockfile...",
+    "[desktop-artifact] Installing staged runtime dependencies without mutating the repository lockfile...",
   );
   yield* runCommand(
     ChildProcess.make({
@@ -613,7 +617,27 @@ const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies
       ...commandOutputOptions(verbose),
       // Windows needs shell mode to resolve .cmd shims (for example bun.cmd).
       shell: process.platform === "win32",
-    })`bun install --production --frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
+    })`bun install --no-save --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
+  );
+  const stagedLockfileAfterInstall = yield* fs.readFileString(stagedLockfilePath);
+  if (stagedLockfileAfterInstall !== stagedLockfileBeforeInstall) {
+    return yield* new BuildScriptError({
+      message: "Staged runtime install unexpectedly changed the repository lockfile copy.",
+    });
+  }
+  yield* Effect.log("[desktop-artifact] Building the staged node-pty native dependency...");
+  const stagedNodePtyDir = path.join(stageAppDir, "node_modules", "node-pty");
+  const buildToolBinDir = path.join(repoRoot, "node_modules", ".bin");
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: stagedNodePtyDir,
+      env: {
+        ...process.env,
+        PATH: `${buildToolBinDir}${delimiter}${process.env.PATH ?? ""}`,
+      },
+      ...commandOutputOptions(verbose),
+      shell: process.platform === "win32",
+    })`bun run install`,
   );
 
   for (const relativePath of RELEASE_WORKSPACE_MANIFEST_PATHS) {
@@ -920,7 +944,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     patchedDependencies: rootPackageJson.patchedDependencies ?? {},
   };
 
-  yield* installFrozenStageDependencies(repoRoot, stageAppDir, options.verbose);
+  yield* installLockedStageDependencies(repoRoot, stageAppDir, options.verbose);
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
 
