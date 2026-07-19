@@ -610,6 +610,13 @@ const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
+      env: {
+        ...process.env,
+        // Bun implicitly freezes lockfiles on Windows CI. This command must be
+        // allowed to write the disposable stage projection; the next install
+        // is explicitly frozen against that result.
+        CI: "false",
+      },
       ...commandOutputOptions(verbose),
       shell: process.platform === "win32",
     })`bun install --production --lockfile-only --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,

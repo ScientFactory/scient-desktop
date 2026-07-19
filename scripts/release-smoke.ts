@@ -274,7 +274,11 @@ function verifyFrozenDesktopStageInstall(targetRoot: string): void {
       "--filter",
       "@synara/desktop",
     ],
-    { cwd: targetRoot, stdio: "inherit" },
+    {
+      cwd: targetRoot,
+      env: { ...process.env, CI: "false" },
+      stdio: "inherit",
+    },
   );
   execFileSync(
     "bun",
