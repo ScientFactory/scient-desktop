@@ -5,17 +5,43 @@ import PlatformButton from "../components/PlatformButton.astro";
 import Layout from "../layouts/Layout.astro";
 
 const capabilities = [
-  { kind: "literature", label: "Literature review", tone: "burgundy" },
-  { kind: "analysis", label: "Data analysis", tone: "slate" },
-  { kind: "writing", label: "Scientific writing", tone: "slate" },
-  { kind: "figures", label: "Figure creation", tone: "burgundy" },
+  {
+    kind: "literature",
+    label: "Literature review",
+    description: "Find, compare, and synthesize relevant research.",
+  },
+  {
+    kind: "planning",
+    label: "Experiment planning",
+    description: "Shape methods and protocols before the work begins.",
+  },
+  {
+    kind: "analysis",
+    label: "Data analysis",
+    description: "Explore data and turn results into clear evidence.",
+  },
+  {
+    kind: "figures",
+    label: "Figure creation",
+    description: "Create publication-ready scientific visuals.",
+  },
+  {
+    kind: "writing",
+    label: "Scientific writing",
+    description: "Draft and refine manuscripts with focused assistance.",
+  },
+  {
+    kind: "citations",
+    label: "Citation management",
+    description: "Organize references and keep every claim connected.",
+  },
 ] as const;
 ---
 
 <Layout
   theme="light"
   title="ScientFactory — One intelligent workspace for research"
-  description="From the first question to final publication, Scient brings your research tools and AI assistance into one focused workspace."
+  description="Scient is an agentic workspace that brings your research tools and AI agents together—from the first question to final publication."
 >
   <section class="hero" aria-labelledby="hero-title">
     <div class="hero-surface" aria-hidden="true"></div>
@@ -34,11 +60,11 @@ const capabilities = [
       <h1 id="hero-title" class="headline reveal" style="--reveal-delay: 90ms">
         <span>One intelligent</span>
         <span>workspace for every</span>
-        <span>stage of research.</span>
+        <span>stage of your research.</span>
       </h1>
 
       <p class="description reveal" style="--reveal-delay: 160ms">
-        From the first question to final publication, Scient brings your research tools and AI assistance into one focused workspace.
+        Scient is an agentic workspace that brings your research tools and AI agents together—from the first question to final publication.
       </p>
 
       <ul class="capabilities reveal" style="--reveal-delay: 230ms" aria-label="Scient capabilities">
@@ -148,8 +174,8 @@ const capabilities = [
     width: min(100%, 40.75rem);
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.75rem;
-    margin: 3.2rem 0 0;
+    gap: 0.3rem 0.45rem;
+    margin: 2.4rem 0 0;
     padding: 0;
     list-style: none;
   }
@@ -275,8 +301,8 @@ const capabilities = [
     .capabilities {
       width: 100%;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0.55rem;
-      margin-top: 1.6rem;
+      gap: 0.2rem;
+      margin-top: 1.35rem;
     }
 
     .downloads {
