@@ -305,9 +305,9 @@ function main(): void {
   if (SCIENT_APP_NAME !== "Scient" || SCIENT_DESKTOP_ORIGIN !== "scient://app") {
     throw new Error("Scient desktop identity invariant failed.");
   }
-  if (SCIENT_DESKTOP_UPDATES_ENABLED) {
+  if (!SCIENT_DESKTOP_UPDATES_ENABLED) {
     throw new Error(
-      "Automatic updates must remain disabled until client update support is explicitly enabled in a reviewed code change and a Scient-owned feed is approved.",
+      "Automatic updates must remain enabled after approval of the reviewed Scient-owned release feed.",
     );
   }
 
