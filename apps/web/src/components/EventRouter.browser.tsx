@@ -254,6 +254,22 @@ function resolveWsRpc(tag: string, body?: unknown): unknown {
   if (tag === WS_METHODS.projectsSearchEntries) {
     return { entries: [], truncated: false };
   }
+  // Void RPCs (output: Schema.Void) decode to `null` on the wire. Returning an
+  // object for them produces SchemaError(Expected null, got {}), which fails the
+  // RPC stream and triggers the reconnect churn that drops thread events — the
+  // root cause of the flaky EventRouter event-stream tests. unsubscribeThread
+  // and unsubscribeShell are fire-and-forget void calls the app issues on thread
+  // switch, teardown, and reconnect (see routes/__root.tsx and wsNativeApi.ts).
+  if (
+    tag === ORCHESTRATION_WS_METHODS.unsubscribeThread ||
+    tag === ORCHESTRATION_WS_METHODS.unsubscribeShell
+  ) {
+    return null;
+  }
+  // Remaining unary methods (provider.listModels, git.readWorkingTreeDiff, etc.)
+  // return objects whose schemas accept an empty object, so the permissive
+  // fallback is fine for them. Only void methods (handled above) and streaming
+  // subscriptions (handled in the request dispatcher) must avoid it.
   return {};
 }
 
@@ -305,8 +321,16 @@ const worker = setupWorker(
         method === WS_METHODS.subscribeServerProviderStatuses ||
         method === WS_METHODS.subscribeServerSettings ||
         method === WS_METHODS.subscribeTerminalEvents ||
-        method === WS_METHODS.subscribeOrchestrationDomainEvents
+        method === WS_METHODS.subscribeOrchestrationDomainEvents ||
+        method === WS_METHODS.subscribeProjectDevServerEvents ||
+        method === WS_METHODS.subscribeAutomationEvents
       ) {
+        // Streaming subscriptions the EventRouter tests don't assert on: leave the
+        // stream open with no chunks, matching the handlers above. They must NOT
+        // fall through to sendEffectRpcExit — a stream completes with void, so an
+        // Exit(Success({})) decodes as SchemaError(Expected null, got {}), which
+        // fails the RPC stream and drives the reconnect churn that drops thread
+        // events (the root cause of the flaky event-stream tests).
         return;
       }
       if (method === ORCHESTRATION_WS_METHODS.subscribeThread && "threadId" in requestBody) {
@@ -928,9 +952,24 @@ describe("EventRouter scoped orchestration sync", () => {
 
   it("recovers buffered thread events by re-requesting the missing thread snapshot", async () => {
     delayNextThreadSnapshot = true;
-    const mounted = await mountApp();
+    // The first thread subscription intentionally yields no snapshot, so mount
+    // without waiting on thread detail. The buffered event pushed below drives
+    // the legitimate event-triggered re-request (routes/__root.tsx
+    // requestThreadSnapshot), matching the sibling "draft thread becomes real"
+    // test. (Previously this relied on reconnect churn from malformed subscription
+    // exits to force the re-subscribe; that churn no longer occurs.)
+    const mounted = await mountApp({ waitForThreadId: null });
 
     try {
+      // Wait for the initial (snapshot-less) thread subscription before pushing
+      // an event onto its stream.
+      await vi.waitFor(
+        () => {
+          expect(subscribeThreadRequestCountById.get(THREAD_ID) ?? 0).toBeGreaterThanOrEqual(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
       const bufferedEvent = {
         sequence: 2,
         eventId: EventId.makeUnsafe("event-buffered-message"),

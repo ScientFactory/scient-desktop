@@ -7,24 +7,6 @@ tests must never be added here.
 
 Owner: `web/transcript`.
 
-## EventRouter event-stream tests: temporarily non-blocking (not quarantined)
-
-The `Browser test (stable)` CI step is currently `continue-on-error: true`,
-matching main's browser-suite policy. Two event-stream tests in
-`src/components/EventRouter.browser.tsx` are flaky on hosted Linux:
-
-- `drops duplicate thread events after the thread snapshot sequence advances`
-- `flushes only the first assistant chunk immediately for a message`
-
-Their assertions can run before async event delivery/flush settles on slow
-runners, so the failing subset varies run to run (2-3 of 8 observed). These are
-**not** added to the `[geometry:linux]` table above — event-stream tests are
-never marker-quarantined. The fix is to make the assertions wait
-(`expect.poll` / `waitFor`) so they are deterministic on slow runners, after
-which the stable step returns to blocking (drop the `continue-on-error`).
-
-Owner: `web/transcript`.
-
 Remove an entry after the underlying estimator, font, or layout behavior is
 corrected and the untagged test passes in three consecutive blocking Ubuntu CI
 runs. These cases were isolated after browser tests first ran on hosted Ubuntu;
