@@ -61,6 +61,7 @@ import {
   useAppSettings,
 } from "../appSettings";
 import { createLatestAppSnapRequestGuard } from "../appSnap.logic";
+import { useProviderConnectionDialogStore } from "../providerConnectionDialogStore";
 import { APP_VERSION } from "../branding";
 import { useDesktopTopBarTrafficLightGutterClassName } from "../hooks/useDesktopTopBarGutter";
 import { useProviderModelCatalog } from "../hooks/useProviderModelCatalog";
@@ -3185,6 +3186,13 @@ function SettingsRouteView() {
                     (showProviderUpdateStatus || updateAdvisory?.status === "unknown")
                   : false;
                 const canUpdateProvider = shouldShowProviderUpdateButton && !isProviderUpdateActive;
+                const providerConnectionActive =
+                  providerStatus?.connectionState?.status === "starting" ||
+                  providerStatus?.connectionState?.status === "waiting_for_browser" ||
+                  providerStatus?.connectionState?.status === "verifying";
+                const providerConnected =
+                  providerStatus?.available === true &&
+                  providerStatus.authStatus !== "unauthenticated";
 
                 return (
                   <Collapsible
@@ -3258,6 +3266,29 @@ function SettingsRouteView() {
                               <DownloadIcon className="size-3.5" />
                             )}
                             {isProviderUpdateActive ? "Updating" : "Update"}
+                          </Button>
+                        ) : null}
+                        {!providerConnected ? (
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            disabled={providerConnectionActive}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              useProviderConnectionDialogStore
+                                .getState()
+                                .openDialog(providerSettings.provider, "settings");
+                            }}
+                          >
+                            {providerConnectionActive ? (
+                              <Loader2Icon className="size-3.5 animate-spin" />
+                            ) : null}
+                            {providerConnectionActive
+                              ? "Connecting"
+                              : providerStatus?.available
+                                ? "Connect"
+                                : "Set up"}
                           </Button>
                         ) : null}
                       </div>

@@ -94,6 +94,30 @@ it.effect("accepts project script discovery requests", () =>
   }),
 );
 
+it.effect("accepts provider connection start and cancel requests", () =>
+  Effect.gen(function* () {
+    const start = yield* decode(WebSocketRequest, {
+      id: "req-provider-connect-1",
+      body: {
+        _tag: WS_METHODS.serverStartProviderConnection,
+        provider: "codex",
+        method: "codex_browser",
+      },
+    });
+    assert.strictEqual(start.body._tag, WS_METHODS.serverStartProviderConnection);
+
+    const cancel = yield* decode(WebSocketRequest, {
+      id: "req-provider-connect-2",
+      body: {
+        _tag: WS_METHODS.serverCancelProviderConnection,
+        provider: "codex",
+        operationId: "operation-1",
+      },
+    });
+    assert.strictEqual(cancel.body._tag, WS_METHODS.serverCancelProviderConnection);
+  }),
+);
+
 it.effect("accepts automation create requests", () =>
   Effect.gen(function* () {
     const parsed = yield* decode(WebSocketRequest, {

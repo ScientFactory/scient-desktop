@@ -45,6 +45,7 @@ import {
   type FavoriteModelProvider,
 } from "../../lib/modelFavorites";
 import { Skeleton } from "../ui/skeleton";
+import { useProviderConnectionDialogStore } from "~/providerConnectionDialogStore";
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
   value: ProviderKind;
@@ -68,7 +69,7 @@ function resolveLiveProviderAvailability(provider: ServerProviderStatus | undefi
   if (!provider.available) {
     return {
       disabled: true,
-      label: provider.authStatus === "unauthenticated" ? "Sign in" : "Unavailable",
+      label: "Set up",
     };
   }
 
@@ -190,6 +191,7 @@ export const ProviderModelMenuItems = memo(function ProviderModelMenuItems(
   props: ProviderModelMenuItemsProps,
 ) {
   const { onAfterSelection } = props;
+  const openProviderConnection = useProviderConnectionDialogStore((state) => state.openDialog);
   const [modelSearchQuery, setModelSearchQuery] = useState("");
   const [kiloFavoriteModelSlugs, setKiloFavoriteModelSlugs] = useLocalStorage(
     FAVORITE_MODEL_STORAGE_KEYS.kilo,
@@ -422,7 +424,13 @@ export const ProviderModelMenuItems = memo(function ProviderModelMenuItems(
         const availability = resolveLiveProviderAvailability(liveProvider);
         if (availability.disabled) {
           return (
-            <MenuItem key={option.value} disabled>
+            <MenuItem
+              key={option.value}
+              onClick={() => {
+                onAfterSelection?.();
+                window.setTimeout(() => openProviderConnection(option.value, "provider_picker"), 0);
+              }}
+            >
               <OptionIcon
                 aria-hidden="true"
                 className={cn(

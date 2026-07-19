@@ -8,6 +8,7 @@
  */
 import type {
   ServerProviderStatus,
+  ServerProviderConnectionState,
   ServerProviderUpdateInput,
   ServerProviderUpdateResult,
   ServerProviderUpdateError,
@@ -33,6 +34,14 @@ export interface ProviderHealthShape {
   readonly updateProvider: (
     input: ServerProviderUpdateInput,
   ) => Effect.Effect<ServerProviderUpdateResult, ServerProviderUpdateError>;
+
+  /**
+   * Publish transient provider-connection progress without persisting it.
+   */
+  readonly setConnectionState: (
+    provider: ServerProviderStatus["provider"],
+    state: ServerProviderConnectionState | null,
+  ) => Effect.Effect<ReadonlyArray<ServerProviderStatus>>;
 
   /**
    * Stream of provider snapshot changes for config consumers.

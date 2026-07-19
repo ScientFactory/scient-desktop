@@ -129,6 +129,9 @@ import type {
   ServerGetSettingsResult,
   ServerListLocalServersResult,
   ServerListWorktreesResult,
+  ServerProviderConnectionCancelInput,
+  ServerProviderConnectionResult,
+  ServerProviderConnectionStartInput,
   ServerProviderUpdateInput,
   ServerProviderUpdateResult,
   ServerRefreshProvidersResult,
@@ -628,6 +631,12 @@ export interface NativeApi {
     revokeAuthClient: (input: AuthRevokeClientSessionInput) => Promise<{ revoked: boolean }>;
     revokeOtherAuthClients: () => Promise<{ revokedCount: number }>;
     refreshProviders: () => Promise<ServerRefreshProvidersResult>;
+    startProviderConnection: (
+      input: ServerProviderConnectionStartInput,
+    ) => Promise<ServerProviderConnectionResult>;
+    cancelProviderConnection: (
+      input: ServerProviderConnectionCancelInput,
+    ) => Promise<ServerProviderConnectionResult>;
     updateProvider: (input: ServerProviderUpdateInput) => Promise<ServerProviderUpdateResult>;
     listWorktrees: () => Promise<ServerListWorktreesResult>;
     listLocalServers: () => Promise<ServerListLocalServersResult>;

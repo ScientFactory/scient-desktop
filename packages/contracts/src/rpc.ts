@@ -153,6 +153,10 @@ import {
   ServerGetSettingsResult,
   ServerListLocalServersResult,
   ServerListWorktreesResult,
+  ServerProviderConnectionCancelInput,
+  ServerProviderConnectionError,
+  ServerProviderConnectionResult,
+  ServerProviderConnectionStartInput,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
   ServerProviderUpdateResult,
@@ -685,6 +689,24 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
   error: WsRpcError,
 });
 
+export const WsServerStartProviderConnectionRpc = Rpc.make(
+  WS_METHODS.serverStartProviderConnection,
+  {
+    payload: ServerProviderConnectionStartInput,
+    success: ServerProviderConnectionResult,
+    error: ServerProviderConnectionError,
+  },
+);
+
+export const WsServerCancelProviderConnectionRpc = Rpc.make(
+  WS_METHODS.serverCancelProviderConnection,
+  {
+    payload: ServerProviderConnectionCancelInput,
+    success: ServerProviderConnectionResult,
+    error: ServerProviderConnectionError,
+  },
+);
+
 export const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvider, {
   payload: ServerProviderUpdateInput,
   success: ServerProviderUpdateResult,
@@ -987,6 +1009,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsServerRefreshProvidersRpc,
+  WsServerStartProviderConnectionRpc,
+  WsServerCancelProviderConnectionRpc,
   WsServerUpdateProviderRpc,
   WsServerListWorktreesRpc,
   WsServerListLocalServersRpc,
