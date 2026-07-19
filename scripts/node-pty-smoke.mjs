@@ -83,5 +83,9 @@ terminal.onExit((event) => {
   if (event.exitCode !== 0) {
     fail(`PTY process exited with code ${event.exitCode}.`, output);
   }
-  console.log("[node-pty-smoke] node-pty loaded and spawned successfully.");
+  process.stdout.write("[node-pty-smoke] node-pty loaded and spawned successfully.\n", () => {
+    // ConPTY can retain a native event-loop handle after the child has exited.
+    // This is a standalone smoke process, so terminate after its verified result.
+    process.exit(0);
+  });
 });
