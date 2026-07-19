@@ -232,7 +232,9 @@ jobs:
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Align package versions to release version
-        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+        run: |
+          node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+          bun install --lockfile-only --ignore-scripts
 
       - name: Build desktop artifact
         shell: bash

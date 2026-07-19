@@ -213,6 +213,11 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     workflow,
+    'node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"\n          bun install --lockfile-only --ignore-scripts',
+    "Expected every native builder to refresh the lock after release version alignment.",
+  );
+  assertContains(
+    workflow,
     "Verify public download contract",
     "Expected the release workflow to validate every public platform download.",
   );
@@ -328,6 +333,7 @@ try {
     cwd: tempRoot,
     stdio: "inherit",
   });
+  verifyFrozenDesktopStageInstall(tempRoot);
 
   const lockfile = readFileSync(resolve(tempRoot, "bun.lock"), "utf8");
   assertContains(
