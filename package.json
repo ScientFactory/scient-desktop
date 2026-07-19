@@ -35,8 +35,11 @@
     "start:marketing": "turbo run preview --filter=@synara/marketing",
     "build": "turbo run build",
     "build:marketing": "turbo run build --filter=@synara/marketing",
+    "build:marketing:edge": "wrangler pages functions build --outdir .tmp/scientfactory-pages-worker",
     "build:desktop": "turbo run build --filter=@synara/desktop --filter=@scientfactory/cli",
     "typecheck": "turbo run typecheck",
+    "typecheck:marketing:edge": "wrangler types --include-runtime=false --check && tsc --noEmit --project functions/tsconfig.json",
+    "test:marketing:edge": "vitest run functions/api/releases/latest.test.ts",
     "lint": "oxlint --report-unused-disable-directives",
     "test": "turbo run test",
     "brand:check": "node scripts/check-brand-identity.ts",
@@ -57,11 +60,15 @@
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules scripts/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20260719.1",
     "@types/node": "catalog:",
+    "electron-builder": "26.15.3",
     "oxfmt": "^0.40.0",
     "oxlint": "^1.55.0",
     "turbo": "^2.3.3",
+    "typescript": "catalog:",
     "vitest": "catalog:",
+    "wrangler": "4.112.0",
     "yaml": "2.9.0"
   },
   "overrides": {

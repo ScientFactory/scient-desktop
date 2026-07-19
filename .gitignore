@@ -31,6 +31,7 @@ __screenshots__/
 .tanstack
 /.pi/
 /.tmp/
+/.wrangler/
 /~/
 /bootstrap.js
 /preload.js
