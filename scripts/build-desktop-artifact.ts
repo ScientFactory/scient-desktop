@@ -6,7 +6,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
@@ -617,9 +617,14 @@ const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies
   );
   yield* Effect.log("[desktop-artifact] Building the staged node-pty native dependency...");
   const stagedNodePtyDir = path.join(stageAppDir, "node_modules", "node-pty");
+  const buildToolBinDir = path.join(repoRoot, "node_modules", ".bin");
   yield* runCommand(
     ChildProcess.make({
       cwd: stagedNodePtyDir,
+      env: {
+        ...process.env,
+        PATH: `${buildToolBinDir}${delimiter}${process.env.PATH ?? ""}`,
+      },
       ...commandOutputOptions(verbose),
       shell: process.platform === "win32",
     })`bun run install`,

@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -274,6 +274,10 @@ function verifyFrozenDesktopStageInstall(targetRoot: string): void {
   const stagedNodePtyDir = resolve(targetRoot, "node_modules/node-pty");
   execFileSync("bun", ["run", "install"], {
     cwd: stagedNodePtyDir,
+    env: {
+      ...process.env,
+      PATH: `${resolve(repoRoot, "node_modules/.bin")}${delimiter}${process.env.PATH ?? ""}`,
+    },
     stdio: "inherit",
   });
 
