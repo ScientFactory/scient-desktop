@@ -21,6 +21,12 @@ const {
 
 const canonicalURL = new URL(Astro.url.pathname, "https://scientfactory.com");
 const brandIcon = theme === "light" ? "/scient-symbol.svg" : "/icon.png";
+const currentPath = Astro.url.pathname;
+
+const primaryLinks = [
+  { href: "/about", label: "About", active: currentPath === "/about" },
+  { href: "/docs", label: "Docs", active: currentPath.startsWith("/docs") },
+] as const;
 ---
 
 <html lang="en" data-theme={theme}>
@@ -53,15 +59,22 @@ const brandIcon = theme === "light" ? "/scient-symbol.svg" : "/icon.png";
           <img src={brandIcon} alt="" class="nav-icon" width="42" height="45" />
           <span class="nav-wordmark">ScientFactory</span>
         </a>
-        <a
-          href={REPO_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          class="nav-github"
-        >
-          <span>GitHub</span>
-          <span class="nav-github-arrow" aria-hidden="true">&#8599;</span>
-        </a>
+        <div class="nav-links">
+          {primaryLinks.map((link) => (
+            <a href={link.href} class="nav-link" aria-current={link.active ? "page" : undefined}>
+              {link.label}
+            </a>
+          ))}
+          <a
+            href={REPO_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="nav-link nav-github"
+          >
+            <span>GitHub</span>
+            <span class="nav-github-arrow" aria-hidden="true">&#8599;</span>
+          </a>
+        </div>
       </nav>
 
       <main id="main-content" class="main">
@@ -71,6 +84,7 @@ const brandIcon = theme === "light" ? "/scient-symbol.svg" : "/icon.png";
       <footer class="footer">
         <span class="footer-copy">&copy; {new Date().getFullYear()} ScientFactory</span>
         <div class="footer-links">
+          <a href="/privacy">Privacy</a>
           <a href={REPO_URL} target="_blank" rel="noopener noreferrer">GitHub</a>
           <a href={`${REPO_URL}/issues`} target="_blank" rel="noopener noreferrer">Issues</a>
         </div>
@@ -260,13 +274,20 @@ const brandIcon = theme === "light" ? "/scient-symbol.svg" : "/icon.png";
   }
 
   .nav-brand:focus-visible,
+  .nav-link:focus-visible,
   .nav-github:focus-visible,
   .footer-links a:focus-visible {
     outline: 3px solid var(--focus-ring);
     outline-offset: 5px;
   }
 
-  .nav-github {
+  .nav-links {
+    display: flex;
+    align-items: center;
+    gap: clamp(1.15rem, 2.1vw, 2.15rem);
+  }
+
+  .nav-link {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
@@ -277,7 +298,8 @@ const brandIcon = theme === "light" ? "/scient-symbol.svg" : "/icon.png";
     transition: border-color 220ms var(--ease-out), color 220ms var(--ease-out);
   }
 
-  .nav-github:hover {
+  .nav-link:hover,
+  .nav-link[aria-current="page"] {
     color: var(--burgundy);
     border-bottom-color: currentColor;
   }
@@ -343,6 +365,14 @@ const brandIcon = theme === "light" ? "/scient-symbol.svg" : "/icon.png";
     }
 
     .nav-github {
+      display: none;
+    }
+
+    .nav-links {
+      gap: 1.1rem;
+    }
+
+    .nav-link {
       font-size: 0.9rem;
     }
 
@@ -350,6 +380,11 @@ const brandIcon = theme === "light" ? "/scient-symbol.svg" : "/icon.png";
       align-items: flex-start;
       flex-direction: column;
       padding-block: 1.5rem;
+    }
+
+    .footer-links {
+      flex-wrap: wrap;
+      gap: 0.75rem 1.1rem;
     }
   }
 </style>
