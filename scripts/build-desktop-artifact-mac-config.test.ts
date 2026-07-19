@@ -48,7 +48,7 @@ describe("createDesktopPlatformBuildConfig", () => {
     assert.equal(extendInfo.NSScreenCaptureUsageDescription, undefined);
   });
 
-  it("leaves non-macOS platform configs unchanged", () => {
+  it("keeps non-macOS platform configs complete", () => {
     const linux = createDesktopPlatformBuildConfig({
       platform: "linux",
       target: "AppImage",
@@ -65,6 +65,7 @@ describe("createDesktopPlatformBuildConfig", () => {
     assert.deepStrictEqual(linux.linux, {
       target: ["AppImage"],
       executableName: "scient",
+      syncDesktopName: true,
       icon: "icon.png",
       category: "Development",
       desktop: {

@@ -101,6 +101,7 @@ export function createDesktopPlatformBuildConfig(
       linux: {
         target: [input.target],
         executableName: "scient",
+        syncDesktopName: true,
         icon: "icon.png",
         category: "Development",
         desktop: {
