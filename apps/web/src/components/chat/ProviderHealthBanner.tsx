@@ -7,6 +7,7 @@ import { PROVIDER_DISPLAY_NAMES, type ServerProviderStatus } from "@synara/contr
 import { memo } from "react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { IconButton } from "../ui/icon-button";
+import { Button } from "../ui/button";
 import {
   EXPANDED_NOTIFICATION_SURFACE_CLASS_NAME,
   NOTIFICATION_ICON_CLASS_NAME,
@@ -16,9 +17,11 @@ import { cn } from "~/lib/utils";
 import { ChatColumnBannerFrame } from "./ChatColumnBannerFrame";
 
 export const ProviderHealthBanner = memo(function ProviderHealthBanner({
+  onConnect,
   onDismiss,
   status,
 }: {
+  onConnect?: (provider: ServerProviderStatus["provider"]) => void;
   onDismiss?: () => void;
   status: ServerProviderStatus | null;
 }) {
@@ -33,6 +36,7 @@ export const ProviderHealthBanner = memo(function ProviderHealthBanner({
       : `${providerLabel} provider has limited availability.`;
   const title = `${providerLabel} provider status`;
   const Icon = status.status === "error" ? CircleAlertIcon : TriangleAlertIcon;
+  const canConnect = !status.available || status.authStatus === "unauthenticated";
 
   return (
     <ChatColumnBannerFrame>
@@ -48,16 +52,29 @@ export const ProviderHealthBanner = memo(function ProviderHealthBanner({
         >
           {status.message ?? defaultMessage}
         </AlertDescription>
-        {onDismiss ? (
-          <AlertAction className="absolute top-2 right-2">
-            <IconButton
-              className="size-6 rounded-full text-[var(--notification-fg)]/65 hover:bg-[var(--notification-fg)]/10 hover:text-[var(--notification-fg)] focus-visible:ring-[var(--notification-fg)]/35 sm:size-6"
-              label="Dismiss provider status"
-              title="Dismiss provider status"
-              onClick={onDismiss}
-            >
-              <XIcon className="size-3.5" />
-            </IconButton>
+        {(onConnect && canConnect) || onDismiss ? (
+          <AlertAction className="absolute top-2 right-2 items-center">
+            {onConnect && canConnect ? (
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                className="h-6 border-transparent px-2 text-[var(--notification-fg)] hover:bg-[var(--notification-fg)]/10 hover:text-[var(--notification-fg)] focus-visible:ring-[var(--notification-fg)]/35"
+                onClick={() => onConnect(status.provider)}
+              >
+                {status.available ? "Connect" : "Set up"}
+              </Button>
+            ) : null}
+            {onDismiss ? (
+              <IconButton
+                className="size-6 rounded-full text-[var(--notification-fg)]/65 hover:bg-[var(--notification-fg)]/10 hover:text-[var(--notification-fg)] focus-visible:ring-[var(--notification-fg)]/35 sm:size-6"
+                label="Dismiss provider status"
+                title="Dismiss provider status"
+                onClick={onDismiss}
+              >
+                <XIcon className="size-3.5" />
+              </IconButton>
+            ) : null}
           </AlertAction>
         ) : null}
       </Alert>

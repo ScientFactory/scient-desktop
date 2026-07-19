@@ -597,6 +597,30 @@ describe("wsNativeApi", () => {
     expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverGetEnvironment);
   });
 
+  it("forwards provider connection start and cancel requests", async () => {
+    requestMock.mockResolvedValue({ providers: defaultProviders });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+
+    await api.server.startProviderConnection({
+      provider: "codex",
+      method: "codex_browser",
+    });
+    await api.server.cancelProviderConnection({
+      provider: "codex",
+      operationId: "operation-1",
+    });
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverStartProviderConnection, {
+      provider: "codex",
+      method: "codex_browser",
+    });
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverCancelProviderConnection, {
+      provider: "codex",
+      operationId: "operation-1",
+    });
+  });
+
   it("fetches auth session state over HTTP", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
