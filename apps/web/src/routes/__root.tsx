@@ -1431,7 +1431,11 @@ function EventRouter() {
       });
     });
     subscribed = true;
-    void ensureScopedSubscriptions();
+    // Server welcome is the authoritative connection boundary for scoped
+    // subscriptions. onServerWelcome replays the cached welcome synchronously
+    // for late listeners, so starting another subscription pass here races the
+    // welcome-triggered pass and can clear thread cursors or buffered events
+    // after the first live detail events have already arrived.
     // The shell stream normally delivers the sidebar snapshot. If it fails before
     // the first event, use the same lightweight query instead of the full history.
     const shellBootstrapFallbackTimer = window.setTimeout(() => {

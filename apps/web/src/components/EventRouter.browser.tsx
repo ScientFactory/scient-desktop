@@ -1099,24 +1099,31 @@ describe("EventRouter scoped orchestration sync", () => {
     }
   });
 
-  it("does not resubscribe shell sync when workspace pages change", async () => {
+  it("subscribes once at startup and does not resubscribe shell sync when workspace pages change", async () => {
     const mounted = await mountApp();
 
     try {
-      let initialSubscribeShellCount = 0;
       await vi.waitFor(
         () => {
-          expect(subscribeShellRequestCount).toBeGreaterThan(0);
-          initialSubscribeShellCount = subscribeShellRequestCount;
+          expect(subscribeShellRequestCount).toBe(1);
+          expect(subscribeThreadRequestCountById.get(THREAD_ID)).toBe(1);
         },
         { timeout: 4_000, interval: 16 },
       );
+
+      // A replayed welcome and the initial effect setup must not create two
+      // overlapping subscription passes. A duplicate pass can clear the
+      // EventRouter cursor and pending-event buffers during cold startup.
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+      expect(subscribeShellRequestCount).toBe(1);
+      expect(subscribeThreadRequestCountById.get(THREAD_ID)).toBe(1);
 
       useWorkspaceStore.getState().createWorkspace();
 
       await new Promise((resolve) => window.setTimeout(resolve, 120));
 
-      expect(subscribeShellRequestCount).toBe(initialSubscribeShellCount);
+      expect(subscribeShellRequestCount).toBe(1);
+      expect(subscribeThreadRequestCountById.get(THREAD_ID)).toBe(1);
     } finally {
       await mounted.cleanup();
     }
