@@ -230,13 +230,8 @@ function verifyDesktopStageLockAuthority(): void {
   ).replaceAll("\r\n", "\n");
   assertContains(
     buildScript,
-    "bun install --production --lockfile-only --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
-    "Expected desktop staging to derive its production workspace lock projection from the repository lockfile.",
-  );
-  assertContains(
-    buildScript,
-    "bun install --production --frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
-    "Expected desktop staging to install only from its repository-derived frozen lock projection.",
+    "bun install --production --no-save --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
+    "Expected desktop staging to install from the repository lock without saving platform-specific metadata.",
   );
   assertContains(
     buildScript,
@@ -265,33 +260,15 @@ function readPackageVersion(root: string, relativePath: string): string {
   return packageJson.version;
 }
 
-function verifyFrozenDesktopStageInstall(targetRoot: string): void {
+function verifyLockedDesktopStageInstall(targetRoot: string): void {
+  const lockfilePath = resolve(targetRoot, RELEASE_LOCKFILE_PATH);
+  const lockfileBeforeInstall = readFileSync(lockfilePath, "utf8");
   execFileSync(
     "bun",
     [
       "install",
       "--production",
-      "--lockfile-only",
-      "--ignore-scripts",
-      "--linker",
-      "hoisted",
-      "--filter",
-      "@scientfactory/cli",
-      "--filter",
-      "@synara/desktop",
-    ],
-    {
-      cwd: targetRoot,
-      env: { ...process.env, CI: "false" },
-      stdio: "inherit",
-    },
-  );
-  execFileSync(
-    "bun",
-    [
-      "install",
-      "--production",
-      "--frozen-lockfile",
+      "--no-save",
       "--ignore-scripts",
       "--linker",
       "hoisted",
@@ -302,6 +279,9 @@ function verifyFrozenDesktopStageInstall(targetRoot: string): void {
     ],
     { cwd: targetRoot, stdio: "inherit" },
   );
+  if (readFileSync(lockfilePath, "utf8") !== lockfileBeforeInstall) {
+    throw new Error("Expected staged production install to leave the lockfile unchanged.");
+  }
   const stagedNodePtyDir = resolve(targetRoot, "node_modules/node-pty");
   execFileSync("bun", ["run", "install"], {
     cwd: stagedNodePtyDir,
@@ -346,7 +326,7 @@ try {
   verifyReleaseWorkflowSafety();
   verifyDesktopStageLockAuthority();
   copyWorkspaceManifestFixture(tempRoot);
-  verifyFrozenDesktopStageInstall(tempRoot);
+  verifyLockedDesktopStageInstall(tempRoot);
 
   execFileSync(
     process.execPath,

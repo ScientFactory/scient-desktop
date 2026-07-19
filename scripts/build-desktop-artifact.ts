@@ -604,32 +604,25 @@ const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies
     path.join(stageAppDir, RELEASE_PATCHES_PATH),
   );
 
+  const stagedLockfilePath = path.join(stageAppDir, RELEASE_LOCKFILE_PATH);
+  const stagedLockfileBeforeInstall = yield* fs.readFileString(stagedLockfilePath);
   yield* Effect.log(
-    "[desktop-artifact] Projecting the repository lockfile for the staged production workspace...",
+    "[desktop-artifact] Installing staged production dependencies without mutating the repository lockfile...",
   );
-  yield* runCommand(
-    ChildProcess.make({
-      cwd: stageAppDir,
-      env: {
-        ...process.env,
-        // Bun implicitly freezes lockfiles on Windows CI. This command must be
-        // allowed to write the disposable stage projection; the next install
-        // is explicitly frozen against that result.
-        CI: "false",
-      },
-      ...commandOutputOptions(verbose),
-      shell: process.platform === "win32",
-    })`bun install --production --lockfile-only --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
-  );
-  yield* Effect.log("[desktop-artifact] Installing staged frozen production dependencies...");
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
       ...commandOutputOptions(verbose),
       // Windows needs shell mode to resolve .cmd shims (for example bun.cmd).
       shell: process.platform === "win32",
-    })`bun install --production --frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
+    })`bun install --production --no-save --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
   );
+  const stagedLockfileAfterInstall = yield* fs.readFileString(stagedLockfilePath);
+  if (stagedLockfileAfterInstall !== stagedLockfileBeforeInstall) {
+    return yield* new BuildScriptError({
+      message: "Staged production install unexpectedly changed the repository lockfile copy.",
+    });
+  }
   yield* Effect.log("[desktop-artifact] Building the staged node-pty native dependency...");
   const stagedNodePtyDir = path.join(stageAppDir, "node_modules", "node-pty");
   const buildToolBinDir = path.join(repoRoot, "node_modules", ".bin");
