@@ -50,12 +50,18 @@ interface TestFixture {
 interface EffectRpcStreamHandle {
   client: EffectRpcWebSocketClient;
   requestId: string;
+  sentChunkCount: number;
+  acknowledgedChunkCount: number;
 }
 
 let fixture: TestFixture;
 let serverLifecycleStream: EffectRpcStreamHandle | null = null;
 let shellStream: EffectRpcStreamHandle | null = null;
 const threadStreamByThreadId = new Map<ThreadId, EffectRpcStreamHandle>();
+const streamByClientAndRequestId = new WeakMap<
+  EffectRpcWebSocketClient,
+  Map<string, EffectRpcStreamHandle>
+>();
 let delayNextThreadSnapshot = false;
 let subscribeShellRequestCount = 0;
 const subscribeThreadRequestCountById = new Map<ThreadId, number>();
@@ -65,6 +71,36 @@ let replayRequestCursors: number[] = [];
 const mountedAppCleanups = new Set<() => Promise<void>>();
 
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
+
+function createEffectRpcStreamHandle(
+  client: EffectRpcWebSocketClient,
+  requestId: string,
+): EffectRpcStreamHandle {
+  const handle = {
+    client,
+    requestId,
+    sentChunkCount: 0,
+    acknowledgedChunkCount: 0,
+  };
+  const streamsByRequestId = streamByClientAndRequestId.get(client) ?? new Map();
+  streamsByRequestId.set(requestId, handle);
+  streamByClientAndRequestId.set(client, streamsByRequestId);
+  return handle;
+}
+
+function sendEffectRpcStreamChunk(handle: EffectRpcStreamHandle, value: unknown): void {
+  handle.sentChunkCount += 1;
+  sendEffectRpcChunk(handle.client, handle.requestId, value);
+}
+
+async function waitForEffectRpcStreamAck(handle: EffectRpcStreamHandle): Promise<void> {
+  await vi.waitFor(
+    () => {
+      expect(handle.acknowledgedChunkCount).toBe(handle.sentChunkCount);
+    },
+    { timeout: 4_000, interval: 16 },
+  );
+}
 
 function createBaseServerConfig(): ServerConfig {
   return {
@@ -228,6 +264,13 @@ const worker = setupWorker(
         return;
       }
       const parsed = readEffectRpcClientMessage(client, event.data);
+      if (parsed.kind === "ack") {
+        const handle = streamByClientAndRequestId.get(client)?.get(parsed.requestId);
+        if (handle) {
+          handle.acknowledgedChunkCount += 1;
+        }
+        return;
+      }
       if (parsed.kind !== "request") {
         return;
       }
@@ -236,16 +279,16 @@ const worker = setupWorker(
       const method = requestBody._tag;
       if (method === ORCHESTRATION_WS_METHODS.subscribeShell) {
         subscribeShellRequestCount += 1;
-        shellStream = { client, requestId: request.id };
-        sendEffectRpcChunk(client, request.id, {
+        shellStream = createEffectRpcStreamHandle(client, request.id);
+        sendEffectRpcStreamChunk(shellStream, {
           kind: "snapshot",
           snapshot: createShellSnapshotFromReadModel(fixture.snapshot),
         });
         return;
       }
       if (method === WS_METHODS.subscribeServerLifecycle) {
-        serverLifecycleStream = { client, requestId: request.id };
-        sendEffectRpcChunk(client, request.id, {
+        serverLifecycleStream = createEffectRpcStreamHandle(client, request.id);
+        sendEffectRpcStreamChunk(serverLifecycleStream, {
           type: "welcome",
           payload: fixture.welcome,
         });
@@ -273,7 +316,8 @@ const worker = setupWorker(
           (subscribeThreadRequestCountById.get(threadId) ?? 0) + 1,
         );
         subscribeThreadRequests.push(threadId);
-        threadStreamByThreadId.set(threadId, { client, requestId: request.id });
+        const threadStream = createEffectRpcStreamHandle(client, request.id);
+        threadStreamByThreadId.set(threadId, threadStream);
         if (delayNextThreadSnapshot) {
           delayNextThreadSnapshot = false;
           return;
@@ -282,7 +326,7 @@ const worker = setupWorker(
         if (!thread) {
           return;
         }
-        sendEffectRpcChunk(client, request.id, {
+        sendEffectRpcStreamChunk(threadStream, {
           kind: "snapshot",
           snapshot: {
             snapshotSequence: fixture.snapshot.snapshotSequence,
@@ -341,8 +385,10 @@ async function mountApp(options?: {
         const expectedThreadId = options?.waitForThreadId ?? THREAD_ID;
         const expectedThread = findThreadDetailFromFixtureSnapshot(expectedThreadId);
         const actualThread = getThreadFromState(useStore.getState(), expectedThreadId);
+        const threadStream = threadStreamByThreadId.get(expectedThreadId);
         expect(actualThread).toBeDefined();
-        expect(threadStreamByThreadId.has(expectedThreadId)).toBe(true);
+        expect(threadStream).toBeDefined();
+        expect(threadStream?.acknowledgedChunkCount).toBe(threadStream?.sentChunkCount);
         for (const expectedMessage of expectedThread?.messages ?? []) {
           expect(actualThread?.messages.some((message) => message.id === expectedMessage.id)).toBe(
             true,
@@ -359,23 +405,25 @@ async function mountApp(options?: {
   return { cleanup };
 }
 
-function sendThreadEventPush(event: OrchestrationEvent) {
+async function sendThreadEventPush(event: OrchestrationEvent) {
   const stream = threadStreamByThreadId.get(event.aggregateId as ThreadId);
   if (!stream) {
     throw new Error(`Thread stream is not connected for ${event.aggregateId}`);
   }
-  sendEffectRpcChunk(stream.client, stream.requestId, {
+  await waitForEffectRpcStreamAck(stream);
+  sendEffectRpcStreamChunk(stream, {
     kind: "event",
     event,
   });
 }
 
-function sendThreadSnapshotPush(threadId: ThreadId, snapshotSequence: number) {
+async function sendThreadSnapshotPush(threadId: ThreadId, snapshotSequence: number) {
   const stream = threadStreamByThreadId.get(threadId);
   if (!stream) {
     throw new Error(`Thread stream is not connected for ${threadId}`);
   }
-  sendEffectRpcChunk(stream.client, stream.requestId, {
+  await waitForEffectRpcStreamAck(stream);
+  sendEffectRpcStreamChunk(stream, {
     kind: "snapshot",
     snapshot: {
       snapshotSequence,
@@ -384,18 +432,20 @@ function sendThreadSnapshotPush(threadId: ThreadId, snapshotSequence: number) {
   });
 }
 
-function sendShellEventPush(event: OrchestrationShellStreamEvent) {
+async function sendShellEventPush(event: OrchestrationShellStreamEvent) {
   if (!shellStream) {
     throw new Error("Shell stream is not connected");
   }
-  sendEffectRpcChunk(shellStream.client, shellStream.requestId, event);
+  await waitForEffectRpcStreamAck(shellStream);
+  sendEffectRpcStreamChunk(shellStream, event);
 }
 
-function sendServerWelcomePush() {
+async function sendServerWelcomePush() {
   if (!serverLifecycleStream) {
     throw new Error("Server lifecycle stream is not connected");
   }
-  sendEffectRpcChunk(serverLifecycleStream.client, serverLifecycleStream.requestId, {
+  await waitForEffectRpcStreamAck(serverLifecycleStream);
+  sendEffectRpcStreamChunk(serverLifecycleStream, {
     type: "welcome",
     payload: fixture.welcome,
   });
@@ -503,7 +553,7 @@ describe("EventRouter scoped orchestration sync", () => {
         },
       } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
 
-      sendThreadEventPush(firstAssistantChunk);
+      await sendThreadEventPush(firstAssistantChunk);
 
       await vi.waitFor(
         () => {
@@ -518,7 +568,7 @@ describe("EventRouter scoped orchestration sync", () => {
 
       // A delayed lower-sequence snapshot must not overwrite the live event that
       // already advanced this thread's cursor.
-      sendThreadSnapshotPush(THREAD_ID, 1);
+      await sendThreadSnapshotPush(THREAD_ID, 1);
       await new Promise((resolve) => window.setTimeout(resolve, 120));
       expect(
         getThreadFromState(useStore.getState(), THREAD_ID)?.messages.find(
@@ -539,7 +589,7 @@ describe("EventRouter scoped orchestration sync", () => {
         },
       } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
 
-      sendThreadEventPush(secondAssistantChunk);
+      await sendThreadEventPush(secondAssistantChunk);
 
       await vi.waitFor(
         () => {
@@ -556,7 +606,7 @@ describe("EventRouter scoped orchestration sync", () => {
       // Re-send the stale event only after the newer sequence is observable.
       // This directly exercises the cursor guard named by the test and avoids
       // coupling the assertion to two back-to-back mock transport deliveries.
-      sendThreadEventPush(firstAssistantChunk);
+      await sendThreadEventPush(firstAssistantChunk);
       await new Promise((resolve) => window.setTimeout(resolve, 500));
 
       const threadAfterDuplicate = getThreadFromState(useStore.getState(), THREAD_ID);
@@ -660,7 +710,7 @@ describe("EventRouter scoped orchestration sync", () => {
       } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
       replayEvents = [assistantMessage, sessionReady, otherThreadMessage, futureSameThreadMessage];
 
-      sendShellEventPush({
+      await sendShellEventPush({
         kind: "thread-upserted",
         sequence: 3,
         thread: {
@@ -825,7 +875,7 @@ describe("EventRouter scoped orchestration sync", () => {
         },
       } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
 
-      sendThreadEventPush(firstAssistantChunk);
+      await sendThreadEventPush(firstAssistantChunk);
 
       await vi.waitFor(
         () => {
@@ -851,7 +901,7 @@ describe("EventRouter scoped orchestration sync", () => {
         },
       } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
 
-      sendThreadEventPush(secondAssistantChunk);
+      await sendThreadEventPush(secondAssistantChunk);
 
       await new Promise((resolve) => window.setTimeout(resolve, 20));
 
@@ -905,7 +955,7 @@ describe("EventRouter scoped orchestration sync", () => {
         },
       } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
 
-      sendThreadEventPush(bufferedEvent);
+      await sendThreadEventPush(bufferedEvent);
 
       await vi.waitFor(
         () => {
@@ -926,7 +976,7 @@ describe("EventRouter scoped orchestration sync", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      sendThreadEventPush(bufferedEvent);
+      await sendThreadEventPush(bufferedEvent);
 
       await new Promise((resolve) => window.setTimeout(resolve, 120));
 
@@ -999,7 +1049,7 @@ describe("EventRouter scoped orchestration sync", () => {
         ],
       };
 
-      sendThreadEventPush({
+      await sendThreadEventPush({
         sequence: 3,
         eventId: EventId.makeUnsafe("event-draft-promoted-assistant"),
         aggregateKind: "thread",
@@ -1023,7 +1073,7 @@ describe("EventRouter scoped orchestration sync", () => {
         },
       } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>);
 
-      sendShellEventPush({
+      await sendShellEventPush({
         kind: "thread-upserted",
         sequence: 2,
         thread: createShellSnapshotFromReadModel(fixture.snapshot).threads.find(
@@ -1078,7 +1128,7 @@ describe("EventRouter scoped orchestration sync", () => {
         },
       } satisfies Extract<OrchestrationEvent, { type: "thread.message-sent" }>;
 
-      sendThreadEventPush(introEvent);
+      await sendThreadEventPush(introEvent);
 
       await vi.waitFor(
         () => {
@@ -1107,7 +1157,7 @@ describe("EventRouter scoped orchestration sync", () => {
         }),
       };
 
-      sendThreadSnapshotPush(THREAD_ID, 3);
+      await sendThreadSnapshotPush(THREAD_ID, 3);
 
       await vi.waitFor(
         () => {
@@ -1149,7 +1199,7 @@ describe("EventRouter scoped orchestration sync", () => {
       expect(subscribeShellRequestCount).toBe(1);
       expect(subscribeThreadRequestCountById.get(THREAD_ID)).toBe(1);
 
-      sendServerWelcomePush();
+      await sendServerWelcomePush();
 
       await new Promise((resolve) => window.setTimeout(resolve, 120));
       expect(subscribeShellRequestCount).toBe(1);

@@ -17,6 +17,7 @@ export interface EffectRpcRequest {
 
 export type EffectRpcReadResult =
   | { readonly kind: "request"; readonly request: EffectRpcRequest }
+  | { readonly kind: "ack"; readonly requestId: string }
   | { readonly kind: "handled" }
   | { readonly kind: "ignored" };
 
@@ -52,12 +53,11 @@ export function readEffectRpcClientMessage(
     };
   }
 
-  if (
-    frame._tag === "Ack" ||
-    frame._tag === "Interrupt" ||
-    frame._tag === "Eof" ||
-    frame._tag === "Pong"
-  ) {
+  if (frame._tag === "Ack" && typeof frame.requestId === "string") {
+    return { kind: "ack", requestId: frame.requestId };
+  }
+
+  if (frame._tag === "Interrupt" || frame._tag === "Eof" || frame._tag === "Pong") {
     return { kind: "handled" };
   }
 
