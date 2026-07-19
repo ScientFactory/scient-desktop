@@ -581,7 +581,7 @@ function patchedPackageName(dependency: string): string {
   return versionSeparator > 0 ? dependency.slice(0, versionSeparator) : dependency;
 }
 
-const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies")(function* (
+const installLockedStageDependencies = Effect.fn("installLockedStageDependencies")(function* (
   repoRoot: string,
   stageAppDir: string,
   verbose: boolean,
@@ -615,7 +615,7 @@ const installFrozenStageDependencies = Effect.fn("installFrozenStageDependencies
       ...commandOutputOptions(verbose),
       // Windows needs shell mode to resolve .cmd shims (for example bun.cmd).
       shell: process.platform === "win32",
-    })`bun install --production --no-save --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
+    })`bun install --production --no-save --no-frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
   );
   const stagedLockfileAfterInstall = yield* fs.readFileString(stagedLockfilePath);
   if (stagedLockfileAfterInstall !== stagedLockfileBeforeInstall) {
@@ -942,7 +942,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     patchedDependencies: rootPackageJson.patchedDependencies ?? {},
   };
 
-  yield* installFrozenStageDependencies(repoRoot, stageAppDir, options.verbose);
+  yield* installLockedStageDependencies(repoRoot, stageAppDir, options.verbose);
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
 

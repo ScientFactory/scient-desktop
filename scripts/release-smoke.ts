@@ -230,7 +230,7 @@ function verifyDesktopStageLockAuthority(): void {
   ).replaceAll("\r\n", "\n");
   assertContains(
     buildScript,
-    "bun install --production --no-save --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
+    "bun install --production --no-save --no-frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
     "Expected desktop staging to install from the repository lock without saving platform-specific metadata.",
   );
   assertContains(
@@ -269,6 +269,7 @@ function verifyLockedDesktopStageInstall(targetRoot: string): void {
       "install",
       "--production",
       "--no-save",
+      "--no-frozen-lockfile",
       "--ignore-scripts",
       "--linker",
       "hoisted",
