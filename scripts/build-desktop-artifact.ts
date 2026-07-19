@@ -22,6 +22,7 @@ import { SCIENT_PRODUCTION_BUNDLE_ID } from "@synara/shared/desktopIdentity";
 import { parseBooleanEnvValue } from "./lib/env-bool.ts";
 import { finalizeMacUpdateZip } from "./lib/mac-update-zip-finalize.ts";
 import {
+  createReleaseInstallManifest,
   RELEASE_LOCKFILE_PATH,
   RELEASE_PATCHES_PATH,
   RELEASE_WORKSPACE_MANIFEST_PATHS,
@@ -592,7 +593,8 @@ const installLockedStageDependencies = Effect.fn("installLockedStageDependencies
   for (const relativePath of RELEASE_WORKSPACE_MANIFEST_PATHS) {
     const destination = path.join(stageAppDir, relativePath);
     yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
-    yield* fs.copyFile(path.join(repoRoot, relativePath), destination);
+    const sourceContents = yield* fs.readFileString(path.join(repoRoot, relativePath));
+    yield* fs.writeFileString(destination, createReleaseInstallManifest(sourceContents));
   }
 
   yield* fs.copyFile(
@@ -607,7 +609,7 @@ const installLockedStageDependencies = Effect.fn("installLockedStageDependencies
   const stagedLockfilePath = path.join(stageAppDir, RELEASE_LOCKFILE_PATH);
   const stagedLockfileBeforeInstall = yield* fs.readFileString(stagedLockfilePath);
   yield* Effect.log(
-    "[desktop-artifact] Installing staged production dependencies without mutating the repository lockfile...",
+    "[desktop-artifact] Installing staged runtime dependencies without mutating the repository lockfile...",
   );
   yield* runCommand(
     ChildProcess.make({
@@ -615,12 +617,12 @@ const installLockedStageDependencies = Effect.fn("installLockedStageDependencies
       ...commandOutputOptions(verbose),
       // Windows needs shell mode to resolve .cmd shims (for example bun.cmd).
       shell: process.platform === "win32",
-    })`bun install --production --no-save --no-frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
+    })`bun install --no-save --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
   );
   const stagedLockfileAfterInstall = yield* fs.readFileString(stagedLockfilePath);
   if (stagedLockfileAfterInstall !== stagedLockfileBeforeInstall) {
     return yield* new BuildScriptError({
-      message: "Staged production install unexpectedly changed the repository lockfile copy.",
+      message: "Staged runtime install unexpectedly changed the repository lockfile copy.",
     });
   }
   yield* Effect.log("[desktop-artifact] Building the staged node-pty native dependency...");

@@ -17,6 +17,7 @@ import {
 
 import { createDesktopPlatformBuildConfig } from "./lib/desktop-platform-build-config.ts";
 import {
+  createReleaseInstallManifest,
   RELEASE_LOCKFILE_PATH,
   RELEASE_PATCHES_PATH,
   RELEASE_WORKSPACE_MANIFEST_PATHS,
@@ -33,7 +34,7 @@ function copyWorkspaceManifestFixture(targetRoot: string): void {
     const sourcePath = resolve(repoRoot, relativePath);
     const destinationPath = resolve(targetRoot, relativePath);
     mkdirSync(dirname(destinationPath), { recursive: true });
-    cpSync(sourcePath, destinationPath);
+    writeFileSync(destinationPath, createReleaseInstallManifest(readFileSync(sourcePath, "utf8")));
   }
   cpSync(resolve(repoRoot, RELEASE_LOCKFILE_PATH), resolve(targetRoot, RELEASE_LOCKFILE_PATH));
   cpSync(resolve(repoRoot, RELEASE_PATCHES_PATH), resolve(targetRoot, RELEASE_PATCHES_PATH), {
@@ -230,8 +231,8 @@ function verifyDesktopStageLockAuthority(): void {
   ).replaceAll("\r\n", "\n");
   assertContains(
     buildScript,
-    "bun install --production --no-save --no-frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
-    "Expected desktop staging to install from the repository lock without saving platform-specific metadata.",
+    "bun install --no-save --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
+    "Expected desktop staging to install runtime-only manifests from the repository lock without saving platform-specific metadata.",
   );
   assertContains(
     buildScript,
@@ -267,9 +268,7 @@ function verifyLockedDesktopStageInstall(targetRoot: string): void {
     "bun",
     [
       "install",
-      "--production",
       "--no-save",
-      "--no-frozen-lockfile",
       "--ignore-scripts",
       "--linker",
       "hoisted",
@@ -281,7 +280,7 @@ function verifyLockedDesktopStageInstall(targetRoot: string): void {
     { cwd: targetRoot, stdio: "inherit" },
   );
   if (readFileSync(lockfilePath, "utf8") !== lockfileBeforeInstall) {
-    throw new Error("Expected staged production install to leave the lockfile unchanged.");
+    throw new Error("Expected staged runtime install to leave the lockfile unchanged.");
   }
   const stagedNodePtyDir = resolve(targetRoot, "node_modules/node-pty");
   execFileSync("bun", ["run", "install"], {
