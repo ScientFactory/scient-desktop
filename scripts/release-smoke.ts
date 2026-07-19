@@ -224,7 +224,10 @@ function verifyReleaseWorkflowSafety(): void {
 }
 
 function verifyDesktopStageLockAuthority(): void {
-  const buildScript = readFileSync(resolve(repoRoot, "scripts/build-desktop-artifact.ts"), "utf8");
+  const buildScript = readFileSync(
+    resolve(repoRoot, "scripts/build-desktop-artifact.ts"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
   assertContains(
     buildScript,
     "bun install --production --lockfile-only --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
