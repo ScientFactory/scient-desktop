@@ -1,197 +1,135 @@
 ---
 import {
-  faBookOpen,
-  faChartColumn,
-  faPenNib,
-  faShapes,
-} from "@fortawesome/free-solid-svg-icons";
+  faBookmark,
+  faCalendarCheck,
+  faChartBar,
+  faFileLines,
+  faImage,
+  faPenToSquare,
+} from "@fortawesome/free-regular-svg-icons";
 
 interface Props {
-  kind: "literature" | "analysis" | "writing" | "figures";
+  kind: "literature" | "planning" | "analysis" | "figures" | "writing" | "citations";
   label: string;
-  tone: "burgundy" | "slate";
+  description: string;
 }
 
-const { kind, label, tone } = Astro.props;
+const { kind, label, description } = Astro.props;
 const icons = {
-  literature: faBookOpen,
-  analysis: faChartColumn,
-  writing: faPenNib,
-  figures: faShapes,
+  literature: faFileLines,
+  planning: faCalendarCheck,
+  analysis: faChartBar,
+  figures: faImage,
+  writing: faPenToSquare,
+  citations: faBookmark,
 };
 const icon = icons[kind];
 const [iconWidth, iconHeight, , , iconPathData] = icon.icon;
 const iconPaths = Array.isArray(iconPathData) ? iconPathData : [iconPathData];
 ---
 
-<li class={`capability-card capability-card--${tone} capability-card--${kind}`}>
-  <span class="capability-card__icon-wrap" aria-hidden="true">
-    <svg class="capability-card__icon" viewBox={`0 0 ${iconWidth} ${iconHeight}`}>
+<li class={`capability-card capability-card--${kind}`}>
+  <span class="capability-card__icon" aria-hidden="true">
+    <svg viewBox={`0 0 ${iconWidth} ${iconHeight}`}>
       {iconPaths.map((path) => <path d={path}></path>)}
     </svg>
-    <span class="capability-card__ai-badge">
-      <svg class="capability-card__ai-sparkles" viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M8 3c.6 4.4 2.6 6.4 7 7-4.4.6-6.4 2.6-7 7-.6-4.4-2.6-6.4-7-7 4.4-.6 6.4-2.6 7-7Z"></path>
-        <path d="M18.5 3.2c.3 1.4 1 2.1 2.4 2.4-1.4.3-2.1 1-2.4 2.4-.3-1.4-1-2.1-2.4-2.4 1.4-.3 2.1-1 2.4-2.4Z"></path>
-        <path d="M18 11.5c.4 2.3 1.7 3.6 4 4-2.3.4-3.6 1.7-4 4-.4-2.3-1.7-3.6-4-4 2.3-.4 3.6-1.7 4-4Z"></path>
-      </svg>
-    </span>
   </span>
-  <span class="capability-card__label">{label}</span>
+  <span class="capability-card__copy">
+    <span class="capability-card__label">{label}</span>
+    <span class="capability-card__description">{description}</span>
+  </span>
 </li>
 
 <style>
   .capability-card {
-    --card-accent: var(--burgundy);
-    --card-surface: #fbf8f7;
-    --icon-motion: -4deg;
     min-width: 0;
-    min-height: 4.35rem;
-    display: flex;
-    align-items: center;
-    gap: 0.85rem;
-    padding: 0.8rem 0.95rem;
-    border: 1px solid color-mix(in srgb, var(--card-accent) 17%, var(--line));
-    border-radius: 0.55rem;
-    background: var(--card-surface);
-    color: var(--ink);
-    box-shadow: 0 1px 0 rgba(17, 17, 17, 0.025);
-    transition:
-      transform 300ms var(--ease-out),
-      border-color 260ms var(--ease-out),
-      box-shadow 300ms var(--ease-out),
-      background-color 260ms var(--ease-out);
-  }
-
-  .capability-card--slate {
-    --card-accent: var(--slate);
-    --card-surface: #f7f8fa;
-  }
-
-  .capability-card--analysis {
-    --icon-motion: 3deg;
-  }
-
-  .capability-card--writing {
-    --icon-motion: -7deg;
-  }
-
-  .capability-card--figures {
-    --icon-motion: 5deg;
-  }
-
-  .capability-card__icon-wrap {
-    position: relative;
-    width: 2.35rem;
-    height: 2.35rem;
-    flex: 0 0 auto;
+    min-height: 6.45rem;
     display: grid;
-    place-items: center;
-    border: 1px solid color-mix(in srgb, var(--card-accent) 20%, transparent);
-    border-radius: 0.45rem;
-    background: color-mix(in srgb, var(--card-accent) 7%, white);
-    color: var(--card-accent);
-    transition:
-      transform 340ms var(--ease-out),
-      background-color 260ms var(--ease-out),
-      color 260ms var(--ease-out);
+    grid-template-columns: 1.45rem minmax(0, 1fr);
+    align-items: start;
+    gap: 0.95rem;
+    padding: 1rem 1.05rem;
+    border-radius: 0.72rem;
+    background: transparent;
+    color: var(--ink);
+    transition: background-color 220ms var(--ease-out);
   }
 
   .capability-card__icon {
-    width: 1.05rem;
-    height: 1.05rem;
+    width: 1.45rem;
+    height: 1.45rem;
+    display: grid;
+    place-items: center;
+    color: color-mix(in srgb, var(--ink-muted) 58%, transparent);
+  }
+
+  .capability-card__icon svg {
+    width: 1.1rem;
+    height: 1.1rem;
     fill: currentColor;
   }
 
-  .capability-card__ai-badge {
-    position: absolute;
-    top: -0.46rem;
-    right: -0.46rem;
-    width: 1.22rem;
-    height: 1.22rem;
+  .capability-card__copy {
+    min-width: 0;
     display: grid;
-    place-items: center;
-    color: var(--card-accent);
-    transition: transform 340ms var(--ease-out);
-  }
-
-  .capability-card__ai-sparkles {
-    width: 100%;
-    height: 100%;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.45;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    overflow: visible;
+    gap: 0.34rem;
   }
 
   .capability-card__label {
-    min-width: 0;
-    font-size: 0.92rem;
+    color: var(--ink);
+    font-size: 0.94rem;
     font-weight: 500;
-    letter-spacing: -0.012em;
+    letter-spacing: -0.016em;
     line-height: 1.25;
+  }
+
+  .capability-card__description {
+    color: color-mix(in srgb, var(--ink-muted) 76%, white);
+    font-size: 0.79rem;
+    font-weight: 400;
+    letter-spacing: -0.006em;
+    line-height: 1.46;
   }
 
   @media (hover: hover) and (pointer: fine) {
     .capability-card:hover {
-      transform: translateY(-3px);
-      border-color: color-mix(in srgb, var(--card-accent) 34%, var(--line));
-      background: color-mix(in srgb, var(--card-surface) 91%, white);
-      box-shadow: 0 13px 28px rgba(17, 17, 17, 0.065);
+      background: #faf9f6;
     }
 
-    .capability-card:hover .capability-card__icon-wrap {
-      transform: translateY(-2px) scale(1.07) rotate(var(--icon-motion));
-      background: color-mix(in srgb, var(--card-accent) 12%, white);
-    }
-
-    .capability-card:hover .capability-card__ai-badge {
-      transform: translate(1px, -1px) scale(1.1) rotate(7deg);
-    }
   }
 
   @media (max-width: 600px) {
     .capability-card {
-      min-height: 3.9rem;
-      gap: 0.65rem;
-      padding: 0.65rem 0.7rem;
-    }
-
-    .capability-card__icon-wrap {
-      width: 2rem;
-      height: 2rem;
+      min-height: 6rem;
+      grid-template-columns: 1.1rem minmax(0, 1fr);
+      gap: 0.5rem;
+      padding: 0.85rem 0.35rem;
+      border-radius: 0.6rem;
     }
 
     .capability-card__icon {
+      width: 1.1rem;
+      height: 1.1rem;
+    }
+
+    .capability-card__icon svg {
       width: 0.9rem;
       height: 0.9rem;
     }
 
-    .capability-card__ai-badge {
-      top: -0.4rem;
-      right: -0.4rem;
-      width: 1.08rem;
-      height: 1.08rem;
+    .capability-card__label {
+      font-size: 0.84rem;
     }
 
-    .capability-card__label {
-      font-size: 0.82rem;
+    .capability-card__description {
+      font-size: 0.78rem;
+      line-height: 1.4;
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .capability-card,
-    .capability-card__icon-wrap,
-    .capability-card__ai-badge {
+    .capability-card {
       transition-duration: 0.01ms;
-    }
-
-    .capability-card:hover,
-    .capability-card:hover .capability-card__icon-wrap,
-    .capability-card:hover .capability-card__ai-badge {
-      transform: none;
     }
   }
 </style>
