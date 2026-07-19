@@ -49,6 +49,7 @@ interface TestFixture {
 
 let fixture: TestFixture;
 let wsClient: EffectRpcWebSocketClient | null = null;
+let serverLifecycleStreamRequestId: string | null = null;
 let shellStreamRequestId: string | null = null;
 const threadStreamRequestIdByThreadId = new Map<ThreadId, string>();
 let delayNextThreadSnapshot = false;
@@ -239,6 +240,7 @@ const worker = setupWorker(
         return;
       }
       if (method === WS_METHODS.subscribeServerLifecycle) {
+        serverLifecycleStreamRequestId = request.id;
         sendEffectRpcChunk(client, request.id, {
           type: "welcome",
           payload: fixture.welcome,
@@ -381,6 +383,19 @@ function sendShellEventPush(event: OrchestrationShellStreamEvent) {
   sendEffectRpcChunk(wsClient, shellStreamRequestId, event);
 }
 
+function sendServerWelcomePush() {
+  if (!wsClient) {
+    throw new Error("WebSocket client not connected");
+  }
+  if (!serverLifecycleStreamRequestId) {
+    throw new Error("Server lifecycle stream is not connected");
+  }
+  sendEffectRpcChunk(wsClient, serverLifecycleStreamRequestId, {
+    type: "welcome",
+    payload: fixture.welcome,
+  });
+}
+
 describe("EventRouter scoped orchestration sync", () => {
   beforeAll(async () => {
     fixture = buildFixture();
@@ -400,6 +415,7 @@ describe("EventRouter scoped orchestration sync", () => {
     fixture = buildFixture();
     document.body.innerHTML = "";
     wsClient = null;
+    serverLifecycleStreamRequestId = null;
     shellStreamRequestId = null;
     threadStreamRequestIdByThreadId.clear();
     delayNextThreadSnapshot = false;
@@ -450,6 +466,7 @@ describe("EventRouter scoped orchestration sync", () => {
     resetWsNativeApiForTest();
     document.body.innerHTML = "";
     wsClient = null;
+    serverLifecycleStreamRequestId = null;
     shellStreamRequestId = null;
     threadStreamRequestIdByThreadId.clear();
   });
@@ -1115,6 +1132,12 @@ describe("EventRouter scoped orchestration sync", () => {
       // overlapping subscription passes. A duplicate pass can clear the
       // EventRouter cursor and pending-event buffers during cold startup.
       await new Promise((resolve) => window.setTimeout(resolve, 250));
+      expect(subscribeShellRequestCount).toBe(1);
+      expect(subscribeThreadRequestCountById.get(THREAD_ID)).toBe(1);
+
+      sendServerWelcomePush();
+
+      await new Promise((resolve) => window.setTimeout(resolve, 120));
       expect(subscribeShellRequestCount).toBe(1);
       expect(subscribeThreadRequestCountById.get(THREAD_ID)).toBe(1);
 

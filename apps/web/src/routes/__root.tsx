@@ -895,6 +895,8 @@ function EventRouter() {
     const threadSnapshotRequestInFlight = new Set<ThreadId>();
     const threadReplayRequestInFlight = new Set<ThreadId>();
     let reconcileThreadSubscriptionsChain = Promise.resolve();
+    let scopedSubscriptionsStarted = false;
+    let scopedSubscriptionsStartInFlight: Promise<void> | null = null;
 
     const beginThreadSubscription = (threadId: ThreadId) => {
       threadSnapshotSequenceById.delete(threadId);
@@ -1019,15 +1021,50 @@ function EventRouter() {
       flushShellBuffer(snapshot.snapshotSequence);
     };
 
-    const ensureScopedSubscriptions = async () => {
-      shellSnapshotSequence = -1;
-      pendingShellEvents = [];
-      subscribedThreadIds.clear();
-      threadSnapshotSequenceById.clear();
-      pendingThreadEventsById.clear();
-      threadReplayRequestInFlight.clear();
-      await api.orchestration.subscribeShell().catch(() => loadShellSnapshotOnce());
-      await enqueueThreadSubscriptionReconcile(visibleThreadIdsRef.current);
+    const ensureScopedSubscriptions = () => {
+      if (disposed || scopedSubscriptionsStarted) {
+        return Promise.resolve();
+      }
+      if (scopedSubscriptionsStartInFlight) {
+        return scopedSubscriptionsStartInFlight;
+      }
+
+      const startPromise = (async () => {
+        shellSnapshotSequence = -1;
+        pendingShellEvents = [];
+        subscribedThreadIds.clear();
+        threadSnapshotSequenceById.clear();
+        pendingThreadEventsById.clear();
+        threadReplayRequestInFlight.clear();
+        try {
+          await api.orchestration.subscribeShell();
+        } catch {
+          await loadShellSnapshotOnce().catch(() => undefined);
+          return;
+        }
+        if (disposed) {
+          await api.orchestration.unsubscribeShell().catch(() => undefined);
+          return;
+        }
+        await enqueueThreadSubscriptionReconcile(visibleThreadIdsRef.current);
+        if (disposed) {
+          await api.orchestration.unsubscribeShell().catch(() => undefined);
+          await Promise.all(
+            [...subscribedThreadIds].map((threadId) =>
+              api.orchestration.unsubscribeThread({ threadId }).catch(() => undefined),
+            ),
+          );
+          return;
+        }
+        scopedSubscriptionsStarted = true;
+      })();
+      const trackedPromise = startPromise.finally(() => {
+        if (scopedSubscriptionsStartInFlight === trackedPromise) {
+          scopedSubscriptionsStartInFlight = null;
+        }
+      });
+      scopedSubscriptionsStartInFlight = trackedPromise;
+      return trackedPromise;
     };
 
     const removeOrphanedTerminalsForCurrentState = () => {
@@ -1431,14 +1468,18 @@ function EventRouter() {
       });
     });
     subscribed = true;
-    // Server welcome is the authoritative connection boundary for scoped
-    // subscriptions. onServerWelcome replays the cached welcome synchronously
-    // for late listeners, so starting another subscription pass here races the
-    // welcome-triggered pass and can clear thread cursors or buffered events
-    // after the first live detail events have already arrived.
+    // Start scoped streams once for this mounted router. The welcome listener can
+    // replay a cached value and then receive another lifecycle welcome, so the
+    // idempotent guard above prevents either path from restarting a live thread
+    // stream and clearing its cursor or pending-event buffer. WsTransport already
+    // restarts active streams when its underlying connection is replaced.
+    void ensureScopedSubscriptions();
     // The shell stream normally delivers the sidebar snapshot. If it fails before
     // the first event, use the same lightweight query instead of the full history.
     const shellBootstrapFallbackTimer = window.setTimeout(() => {
+      if (!scopedSubscriptionsStarted) {
+        void ensureScopedSubscriptions();
+      }
       void loadShellSnapshotOnce().catch(() => undefined);
     }, SHELL_SNAPSHOT_BOOTSTRAP_FALLBACK_DELAY_MS);
     const threadDetailCatchupInterval = window.setInterval(() => {
