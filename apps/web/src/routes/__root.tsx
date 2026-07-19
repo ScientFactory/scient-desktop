@@ -19,6 +19,7 @@ import {
 } from "@tanstack/react-router";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Throttler } from "@tanstack/react-pacer";
 
 import { APP_DISPLAY_NAME } from "../branding";
 import { DesktopWindowControls } from "../components/DesktopWindowControls";
@@ -109,7 +110,6 @@ const THREAD_DETAIL_CATCHUP_INTERVAL_MS = 1_500;
 const PENDING_SHELL_EVENT_BUFFER_LIMIT = 1_024;
 const PENDING_THREAD_EVENT_BUFFER_LIMIT = 512;
 const IMMEDIATE_ASSISTANT_FLUSH_ID_LIMIT = 512;
-const DOMAIN_EVENT_FLUSH_DELAY_MS = 100;
 const seenProviderUpdateNotificationKeys = new Set<string>();
 
 type ProviderUpdateToastId = ReturnType<typeof toastManager.add>;
@@ -1155,24 +1155,6 @@ function EventRouter() {
       }
     };
 
-    let domainEventFlushTimeoutId: number | null = null;
-    const cancelPendingDomainEventFlush = () => {
-      if (domainEventFlushTimeoutId === null) {
-        return;
-      }
-      window.clearTimeout(domainEventFlushTimeoutId);
-      domainEventFlushTimeoutId = null;
-    };
-    const schedulePendingDomainEventFlush = () => {
-      if (domainEventFlushTimeoutId !== null) {
-        return;
-      }
-      domainEventFlushTimeoutId = window.setTimeout(() => {
-        domainEventFlushTimeoutId = null;
-        flushPendingDomainEvents();
-      }, DOMAIN_EVENT_FLUSH_DELAY_MS);
-    };
-
     const queueDomainEvent = (event: OrchestrationEvent) => {
       pendingDomainEvents.push(event);
       if (shouldInvalidateProviderQueriesForEvent(event)) {
@@ -1195,11 +1177,11 @@ function EventRouter() {
         }
       }
       if (shouldFlushDomainEventImmediately(event, immediatelyFlushedAssistantMessageIds)) {
-        cancelPendingDomainEventFlush();
+        domainEventFlushThrottler.cancel();
         flushPendingDomainEvents();
         return;
       }
-      schedulePendingDomainEventFlush();
+      domainEventFlushThrottler.maybeExecute();
     };
 
     const replayThreadEvents = async (
@@ -1236,6 +1218,17 @@ function EventRouter() {
         threadReplayRequestInFlight.delete(threadId);
       }
     };
+
+    const domainEventFlushThrottler = new Throttler(
+      () => {
+        flushPendingDomainEvents();
+      },
+      {
+        wait: 100,
+        leading: false,
+        trailing: true,
+      },
+    );
 
     reconcileThreadSubscriptionsRef.current = (threadIds) =>
       enqueueThreadSubscriptionReconcile(threadIds);
@@ -1518,7 +1511,7 @@ function EventRouter() {
       needsBroadGitInvalidation = false;
       pendingGitInvalidationThreadIds = new Set();
       pendingStudioOutputInvalidationThreadIds = new Set();
-      cancelPendingDomainEventFlush();
+      domainEventFlushThrottler.cancel();
       reconcileThreadSubscriptionsRef.current = null;
       void api.orchestration.unsubscribeShell().catch(() => undefined);
       void Promise.all(

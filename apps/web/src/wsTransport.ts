@@ -314,7 +314,11 @@ export class WsTransport {
 
   private async getSession(): Promise<SessionHandle> {
     try {
-      return await this.clientPromise;
+      const session = await this.clientPromise;
+      if (this.disposed) {
+        throw new Error("Transport disposed");
+      }
+      return session;
     } catch {
       if (this.disposed) throw new Error("Transport disposed");
       return this.reconnect();
@@ -368,6 +372,9 @@ export class WsTransport {
     this.clientPromise = session.clientPromise;
 
     const handle = await session.clientPromise;
+    if (this.disposed) {
+      throw new Error("Transport disposed");
+    }
     this.reconnectFailures = 0;
     for (const channel of this.listeners.keys()) {
       this.startChannelStream(channel as WsPushChannel);
@@ -512,7 +519,11 @@ export class WsTransport {
       if (!this.shouldKeepLifecycleStream()) return;
       void this.getSession()
         .then((nextSession) => this.startLifecycleStream(nextSession))
-        .catch((error) => console.warn("WebSocket RPC lifecycle stream failed to restart", error));
+        .catch((error) => {
+          if (!this.disposed) {
+            console.warn("WebSocket RPC lifecycle stream failed to restart", error);
+          }
+        });
     };
     this.startStream(
       session,
@@ -533,7 +544,11 @@ export class WsTransport {
     const restartShell = () => {
       void this.getSession()
         .then((nextSession) => this.startShellStream(nextSession))
-        .catch((error) => console.warn("WebSocket RPC shell stream failed to restart", error));
+        .catch((error) => {
+          if (!this.disposed) {
+            console.warn("WebSocket RPC shell stream failed to restart", error);
+          }
+        });
     };
     this.startStream(
       session,
@@ -552,7 +567,11 @@ export class WsTransport {
     const restartThread = () => {
       void this.getSession()
         .then((nextSession) => this.startThreadStream(nextSession, threadId, input))
-        .catch((error) => console.warn("WebSocket RPC thread stream failed to restart", error));
+        .catch((error) => {
+          if (!this.disposed) {
+            console.warn("WebSocket RPC thread stream failed to restart", error);
+          }
+        });
     };
     this.startStream(
       session,
@@ -590,7 +609,11 @@ export class WsTransport {
                 if (!this.disposed && !this.streamCleanups.has(key)) {
                   void this.reconnect()
                     .then(() => restart())
-                    .catch((error) => console.warn("WebSocket RPC stream reconnect failed", error));
+                    .catch((error) => {
+                      if (!this.disposed) {
+                        console.warn("WebSocket RPC stream reconnect failed", error);
+                      }
+                    });
                 }
               },
               Cause.hasInterruptsOnly(exit.cause) ? 0 : 500,
