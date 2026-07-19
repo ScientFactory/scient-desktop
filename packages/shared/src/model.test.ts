@@ -673,6 +673,24 @@ describe("claudeSelectionRequiresRestart", () => {
     ).toBe(false);
   });
 
+  it("restarts when a model switch makes persisted max effort effective", () => {
+    expect(
+      claudeSelectionRequiresRestart(
+        selection("claude-haiku-4-5", { effort: "max" }),
+        selection("claude-sonnet-5", { effort: "max" }),
+      ),
+    ).toBe(true);
+  });
+
+  it("restarts when a model switch makes persisted max effort unsupported", () => {
+    expect(
+      claudeSelectionRequiresRestart(
+        selection("claude-sonnet-5", { effort: "max" }),
+        selection("claude-haiku-4-5", { effort: "max" }),
+      ),
+    ).toBe(true);
+  });
+
   it("does not restart when a model switch carries an unsupported thinking override", () => {
     expect(
       claudeSelectionRequiresRestart(
@@ -709,13 +727,37 @@ describe("claudeSelectionRequiresRestart", () => {
     ).toBe(false);
   });
 
-  it("restarts when the effective effort changes", () => {
+  it("restarts when max effort toggles on", () => {
     expect(
       claudeSelectionRequiresRestart(
         selection("claude-opus-4-8", { effort: "high" }),
         selection("claude-opus-4-8", { effort: "max" }),
       ),
     ).toBe(true);
+  });
+
+  it("restarts when max effort toggles off", () => {
+    expect(
+      claudeSelectionRequiresRestart(
+        selection("claude-opus-4-8", { effort: "max" }),
+        selection("claude-opus-4-8", { effort: "high" }),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not restart for a non-max effort change", () => {
+    expect(
+      claudeSelectionRequiresRestart(
+        selection("claude-opus-4-8", { effort: "high" }),
+        selection("claude-opus-4-8", { effort: "xhigh" }),
+      ),
+    ).toBe(false);
+    expect(
+      claudeSelectionRequiresRestart(
+        selection("claude-opus-4-8"),
+        selection("claude-opus-4-8", { effort: "low" }),
+      ),
+    ).toBe(false);
   });
 
   it("treats ultrathink as prompt-injected, not a spawn change", () => {
@@ -729,31 +771,31 @@ describe("claudeSelectionRequiresRestart", () => {
     ).toBe(false);
   });
 
-  it("restarts when ultracode toggles", () => {
+  it("does not restart when ultracode toggles", () => {
     expect(
       claudeSelectionRequiresRestart(
         selection("claude-opus-4-8", { effort: "xhigh" }),
         selection("claude-opus-4-8", { effort: "ultracode" }),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it("restarts when fast mode toggles", () => {
+  it("does not restart when fast mode toggles", () => {
     expect(
       claudeSelectionRequiresRestart(
         selection("claude-opus-4-8", { effort: "high" }),
         selection("claude-opus-4-8", { effort: "high", fastMode: true }),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it("restarts when the thinking toggle changes on a supported model", () => {
+  it("does not restart when the thinking toggle changes on a supported model", () => {
     expect(
       claudeSelectionRequiresRestart(
         selection("claude-haiku-4-5"),
         selection("claude-haiku-4-5", { thinking: false }),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("ignores options the target model does not support", () => {

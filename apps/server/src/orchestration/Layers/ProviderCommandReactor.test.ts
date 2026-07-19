@@ -2783,6 +2783,76 @@ describe("ProviderCommandReactor", () => {
     });
   });
 
+  it("does not promote queued work after its thread is deleted", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.setRuntimeSessionTurnState({
+      threadId: "thread-1",
+      status: "running",
+      activeTurnId: asTurnId("turn-running-before-delete"),
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-running-before-delete"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-running-before-delete"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-queued-before-delete"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("msg-queued-before-delete"),
+          role: "user",
+          text: "do not run after deletion",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+    await harness.drain();
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.makeUnsafe("cmd-delete-with-queued-turn"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+      }),
+    );
+    await harness.drain();
+
+    harness.setRuntimeSessionTurnState({ threadId: "thread-1", status: "ready" });
+    await harness.emitRuntimeEvent({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-after-delete"),
+      provider: "codex",
+      threadId: ThreadId.makeUnsafe("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId: asTurnId("turn-running-before-delete"),
+      payload: { state: "completed" },
+      providerRefs: {},
+    } as ProviderRuntimeEvent);
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+  });
+
   it("promotes a queued turn immediately when the provider turn already settled", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
@@ -3235,7 +3305,24 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    // Effort is fixed at subprocess spawn, so an effort change still restarts.
+    // Non-max effort applies live through Claude flag settings.
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.makeUnsafe("cmd-thread-meta-update-claude-high-effort"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-4-7",
+          options: {
+            effort: "high",
+          },
+        },
+      }),
+    );
+    expect(harness.startSession).not.toHaveBeenCalled();
+
+    // Max effort has no live Settings equivalent, so it still restarts.
     await Effect.runPromise(
       harness.engine.dispatch({
         type: "thread.meta.update",

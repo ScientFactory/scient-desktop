@@ -144,7 +144,6 @@ export class WsTransport {
   private reconnectPromise: Promise<SessionHandle> | null = null;
   private reconnectFailures = 0;
   private readonly streamCleanups = new Map<string, () => void>();
-  private readonly stoppingStreams = new Set<string>();
   private shellSubscribed = false;
   private readonly threadSubscriptions = new Map<string, unknown>();
 
@@ -314,7 +313,11 @@ export class WsTransport {
 
   private async getSession(): Promise<SessionHandle> {
     try {
-      return await this.clientPromise;
+      const session = await this.clientPromise;
+      if (this.disposed) {
+        throw new Error("Transport disposed");
+      }
+      return session;
     } catch {
       if (this.disposed) throw new Error("Transport disposed");
       return this.reconnect();
@@ -326,9 +329,9 @@ export class WsTransport {
 
     const oldRuntime = this.runtime;
     const oldClientScope = this.clientScope;
-    for (const cleanup of this.streamCleanups.values()) cleanup();
+    const staleStreamCleanups = [...this.streamCleanups.values()];
     this.streamCleanups.clear();
-    this.stoppingStreams.clear();
+    for (const cleanup of staleStreamCleanups) cleanup();
 
     this.setState("connecting");
 
@@ -368,6 +371,9 @@ export class WsTransport {
     this.clientPromise = session.clientPromise;
 
     const handle = await session.clientPromise;
+    if (this.disposed) {
+      throw new Error("Transport disposed");
+    }
     this.reconnectFailures = 0;
     for (const channel of this.listeners.keys()) {
       this.startChannelStream(channel as WsPushChannel);
@@ -404,11 +410,6 @@ export class WsTransport {
     void this.getSession()
       .then((session) => {
         const { client } = session;
-        const restartChannel = () => {
-          if (this.listeners.has(channel)) {
-            this.startChannelStream(channel);
-          }
-        };
 
         if (isServerLifecyclePushChannel(channel)) {
           this.startLifecycleStream(session);
@@ -427,7 +428,6 @@ export class WsTransport {
                 this.emit(WS_CHANNELS.serverConfigUpdated, event.payload);
               }
             },
-            restartChannel,
           );
         } else if (channel === WS_CHANNELS.serverProviderStatusesUpdated) {
           this.startStream(
@@ -436,7 +436,6 @@ export class WsTransport {
             client[WS_METHODS.subscribeServerProviderStatuses]({}),
             (payload: ServerProviderStatusesUpdatedPayload) =>
               this.emit(WS_CHANNELS.serverProviderStatusesUpdated, payload),
-            restartChannel,
           );
         } else if (channel === WS_CHANNELS.serverSettingsUpdated) {
           this.startStream(
@@ -445,7 +444,6 @@ export class WsTransport {
             client[WS_METHODS.subscribeServerSettings]({}),
             (payload: ServerSettingsUpdatedPayload) =>
               this.emit(WS_CHANNELS.serverSettingsUpdated, payload),
-            restartChannel,
           );
         } else if (channel === WS_CHANNELS.terminalEvent) {
           this.startStream(
@@ -453,7 +451,6 @@ export class WsTransport {
             "terminal.events",
             client[WS_METHODS.subscribeTerminalEvents]({}),
             (event: TerminalEvent) => this.emit(WS_CHANNELS.terminalEvent, event),
-            restartChannel,
           );
         } else if (channel === WS_CHANNELS.projectDevServerEvent) {
           this.startStream(
@@ -461,7 +458,6 @@ export class WsTransport {
             "project.devServers",
             client[WS_METHODS.subscribeProjectDevServerEvents]({}),
             (event: ProjectDevServerEvent) => this.emit(WS_CHANNELS.projectDevServerEvent, event),
-            restartChannel,
           );
         } else if (channel === WS_CHANNELS.automationEvent) {
           this.startStream(
@@ -469,7 +465,6 @@ export class WsTransport {
             "automation.events",
             client[WS_METHODS.subscribeAutomationEvents]({}),
             (event: AutomationStreamEvent) => this.emit(WS_CHANNELS.automationEvent, event),
-            restartChannel,
           );
         } else if (channel === ORCHESTRATION_WS_CHANNELS.domainEvent) {
           this.startStream(
@@ -477,7 +472,6 @@ export class WsTransport {
             "orchestration.domain",
             client[WS_METHODS.subscribeOrchestrationDomainEvents]({}),
             (event: OrchestrationEvent) => this.emit(ORCHESTRATION_WS_CHANNELS.domainEvent, event),
-            restartChannel,
           );
         }
       })
@@ -508,12 +502,6 @@ export class WsTransport {
   }
 
   private startLifecycleStream(session: SessionHandle): void {
-    const restartLifecycle = () => {
-      if (!this.shouldKeepLifecycleStream()) return;
-      void this.getSession()
-        .then((nextSession) => this.startLifecycleStream(nextSession))
-        .catch((error) => console.warn("WebSocket RPC lifecycle stream failed to restart", error));
-    };
     this.startStream(
       session,
       "server.lifecycle",
@@ -525,42 +513,28 @@ export class WsTransport {
           this.emit(WS_CHANNELS.serverMaintenanceUpdated, event);
         }
       },
-      restartLifecycle,
     );
   }
 
   private startShellStream(session: SessionHandle): void {
-    const restartShell = () => {
-      void this.getSession()
-        .then((nextSession) => this.startShellStream(nextSession))
-        .catch((error) => console.warn("WebSocket RPC shell stream failed to restart", error));
-    };
     this.startStream(
       session,
       "orchestration.shell",
       session.client[ORCHESTRATION_WS_METHODS.subscribeShell]({}),
       (event: OrchestrationShellStreamItem) =>
         this.emit(ORCHESTRATION_WS_CHANNELS.shellEvent, event),
-      restartShell,
     );
   }
 
   private startThreadStream(session: SessionHandle, threadId: string, input: unknown): void {
     const key = `orchestration.thread:${threadId}`;
     this.stopStream(key);
-    this.stoppingStreams.delete(key);
-    const restartThread = () => {
-      void this.getSession()
-        .then((nextSession) => this.startThreadStream(nextSession, threadId, input))
-        .catch((error) => console.warn("WebSocket RPC thread stream failed to restart", error));
-    };
     this.startStream(
       session,
       key,
       session.client[ORCHESTRATION_WS_METHODS.subscribeThread](input as never),
       (event: OrchestrationThreadStreamItem) =>
         this.emit(ORCHESTRATION_WS_CHANNELS.threadEvent, event),
-      restartThread,
     );
   }
 
@@ -569,7 +543,6 @@ export class WsTransport {
     key: string,
     stream: unknown,
     listener: (event: T) => void,
-    restart?: (() => void) | undefined,
   ): void {
     if (this.streamCleanups.has(key)) return;
     const runnableStream = stream as Stream.Stream<T, WsTransportRpcError, never>;
@@ -577,28 +550,33 @@ export class WsTransport {
       Stream.runForEach(runnableStream, (event) => Effect.sync(() => listener(event))),
       {
         onExit: (exit) => {
-          if (this.streamCleanups.get(key) === cancel) {
-            this.streamCleanups.delete(key);
-          }
-          const wasStoppedIntentionally = this.stoppingStreams.delete(key);
-          if (wasStoppedIntentionally || this.disposed) {
+          // A replacement or intentional stop removes this exact cleanup from
+          // the map before cancellation. Ignore that stale stream's later exit;
+          // otherwise it can reconnect over the replacement and lose events.
+          if (this.streamCleanups.get(key) !== cancel || this.disposed) {
             return;
           }
-          if (restart && Exit.isFailure(exit)) {
+          this.streamCleanups.delete(key);
+          if (Exit.isFailure(exit)) {
+            const interrupted = Cause.hasInterruptsOnly(exit.cause);
+            if (!interrupted) {
+              console.warn("WebSocket RPC stream failed", causeToError(exit.cause));
+            }
             window.setTimeout(
               () => {
                 if (!this.disposed && !this.streamCleanups.has(key)) {
-                  void this.reconnect()
-                    .then(() => restart())
-                    .catch((error) => console.warn("WebSocket RPC stream reconnect failed", error));
+                  // Reconnecting restores every active channel, shell, and thread
+                  // subscription. Restarting this stream again would replace the
+                  // restored subscription and could drop its first event.
+                  void this.reconnect().catch((error) => {
+                    if (!this.disposed) {
+                      console.warn("WebSocket RPC stream reconnect failed", error);
+                    }
+                  });
                 }
               },
-              Cause.hasInterruptsOnly(exit.cause) ? 0 : 500,
+              interrupted ? 0 : 500,
             );
-            return;
-          }
-          if (Exit.isFailure(exit) && !this.disposed && !Cause.hasInterruptsOnly(exit.cause)) {
-            console.warn("WebSocket RPC stream failed", causeToError(exit.cause));
           }
         },
       },
@@ -609,7 +587,6 @@ export class WsTransport {
   private stopStream(key: string): void {
     const cleanup = this.streamCleanups.get(key);
     if (!cleanup) return;
-    this.stoppingStreams.add(key);
     this.streamCleanups.delete(key);
     cleanup();
   }

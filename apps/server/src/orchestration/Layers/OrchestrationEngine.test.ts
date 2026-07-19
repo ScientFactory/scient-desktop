@@ -430,7 +430,7 @@ describe("OrchestrationEngine", () => {
       bootstrap: Effect.void,
       projectMetadataEvent: () => Effect.void,
       projectEvent: () => Effect.void,
-      projectHotEvent: (event) => {
+      projectHotEventInCurrentTransaction: (event) => {
         if (
           shouldFailRequestedProjection &&
           event.commandId === CommandId.makeUnsafe("cmd-turn-start-atomic") &&
@@ -585,7 +585,7 @@ describe("OrchestrationEngine", () => {
         return Effect.void;
       },
       projectEvent: () => Effect.void,
-      projectHotEvent: () => Effect.void,
+      projectHotEventInCurrentTransaction: () => Effect.void,
       projectDeferredEvent: () => Effect.void,
     };
 
@@ -684,7 +684,7 @@ describe("OrchestrationEngine", () => {
       bootstrap: Effect.void,
       projectMetadataEvent: () => Effect.void,
       projectEvent: () => Effect.void,
-      projectHotEvent: (event) => {
+      projectHotEventInCurrentTransaction: (event) => {
         if (
           shouldFailProjection &&
           event.commandId === CommandId.makeUnsafe("cmd-thread-meta-sync-fail")
@@ -811,7 +811,7 @@ describe("OrchestrationEngine", () => {
       }),
       projectMetadataEvent: () => Effect.void,
       projectEvent: () => Effect.void,
-      projectHotEvent: () => Effect.void,
+      projectHotEventInCurrentTransaction: () => Effect.void,
       projectDeferredEvent: () => {
         deferredCalls += 1;
         if (deferredCalls === 1) {

@@ -145,6 +145,11 @@ import {
   pullRequestReviewRequestCountQueryOptions,
 } from "../lib/pullRequestReactQuery";
 import {
+  prefetchProviderModelsForNewThread,
+  resolveNewThreadModelPrefetchCwd,
+  resolveNewThreadModelPrefetchProvider,
+} from "../lib/providerModelPrefetch";
+import {
   serverConfigQueryOptions,
   serverQueryKeys,
   sidebarLocalServersQueryOptions,
@@ -1119,6 +1124,8 @@ function SidebarPrimaryAction({
   icon: Icon,
   label,
   onClick,
+  onMouseEnter,
+  onFocus,
   active = false,
   disabled = false,
   shortcutLabel,
@@ -1128,6 +1135,8 @@ function SidebarPrimaryAction({
   icon: ComponentType<{ className?: string }>;
   label: string;
   onClick?: () => void;
+  onMouseEnter?: () => void;
+  onFocus?: () => void;
   active?: boolean;
   disabled?: boolean;
   shortcutLabel?: string | null;
@@ -1151,6 +1160,8 @@ function SidebarPrimaryAction({
         aria-disabled={disabled || undefined}
         disabled={disabled}
         onClick={onClick}
+        onMouseEnter={onMouseEnter}
+        onFocus={onFocus}
       >
         <SidebarLeadingIcon size="sm" tone="text-inherit">
           <SidebarGlyph icon={Icon} variant="leading" />
@@ -1571,6 +1582,10 @@ export default function Sidebar() {
   const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery({
     ...serverConfigQueryOptions(),
     select: (config) => config.keybindings,
+  });
+  const { data: serverCwd = null } = useQuery({
+    ...serverConfigQueryOptions(),
+    select: (config) => config.cwd ?? null,
   });
   const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
   const { activeProjectId: focusedProjectId } = useFocusedChatContext();
@@ -2869,8 +2884,70 @@ export default function Sidebar() {
     [focusedProjectId, projects],
   );
 
+  // Warm model discovery before ChatView mounts so new-thread composers skip
+  // the "Loading models" skeleton when React Query already has a fresh cache hit.
+  const prefetchModelsForProjectNewThread = useCallback(
+    (projectId: ProjectId, options?: { includeDroid?: boolean }) => {
+      const project = projects.find((candidate) => candidate.id === projectId);
+      if (!project) {
+        return;
+      }
+
+      const draftStore = useComposerDraftStore.getState();
+      const draftThread = draftStore.getDraftThreadByProjectId(projectId, "chat");
+      const draftComposer = draftThread
+        ? (draftStore.draftsByThreadId[draftThread.threadId] ?? null)
+        : null;
+      const provider = resolveNewThreadModelPrefetchProvider({
+        draftActiveProvider: draftComposer?.activeProvider ?? null,
+        stickyActiveProvider: draftStore.stickyActiveProvider,
+        projectDefaultProvider: project.defaultModelSelection?.provider ?? null,
+        defaultProvider: appSettings.defaultProvider,
+      });
+      // Droid discovery spins disposable ACP sessions. Only warm it from
+      // keyboard focus or click, not idle project focus or a passing pointer.
+      if (provider === "droid" && options?.includeDroid !== true) {
+        return;
+      }
+      const cwd = resolveNewThreadModelPrefetchCwd({
+        draftWorktreePath: draftThread?.worktreePath ?? null,
+        projectCwd: project.cwd,
+        serverCwd,
+      });
+
+      prefetchProviderModelsForNewThread(queryClient, {
+        provider,
+        settings: appSettings,
+        cwd,
+      });
+    },
+    [appSettings, projects, queryClient, serverCwd],
+  );
+
+  const prefetchModelsForPrimaryNewThread = useCallback(() => {
+    if (!currentProjectShortcutTargetId) {
+      return;
+    }
+    prefetchModelsForProjectNewThread(currentProjectShortcutTargetId);
+  }, [currentProjectShortcutTargetId, prefetchModelsForProjectNewThread]);
+
+  const prefetchModelsForPrimaryNewThreadWithDroid = useCallback(() => {
+    if (!currentProjectShortcutTargetId) {
+      return;
+    }
+    prefetchModelsForProjectNewThread(currentProjectShortcutTargetId, { includeDroid: true });
+  }, [currentProjectShortcutTargetId, prefetchModelsForProjectNewThread]);
+
+  useEffect(() => {
+    if (!currentProjectShortcutTargetId) {
+      return;
+    }
+    prefetchModelsForProjectNewThread(currentProjectShortcutTargetId);
+  }, [currentProjectShortcutTargetId, prefetchModelsForProjectNewThread]);
+
   const handlePrimaryNewThread = useCallback(() => {
     if (currentProjectShortcutTargetId) {
+      prefetchModelsForProjectNewThread(currentProjectShortcutTargetId, { includeDroid: true });
       void handleNewThread(currentProjectShortcutTargetId, {
         envMode: resolveSidebarNewThreadEnvMode({
           defaultEnvMode: appSettings.defaultThreadEnvMode,
@@ -2885,6 +2962,7 @@ export default function Sidebar() {
     currentProjectShortcutTargetId,
     handleNewThread,
     handleStartAddProject,
+    prefetchModelsForProjectNewThread,
   ]);
 
   const handleImportThread = useCallback(
@@ -6044,9 +6122,16 @@ export default function Sidebar() {
                 }
                 tooltipSide="top"
                 data-testid="new-thread-button"
+                onMouseEnter={() => {
+                  prefetchModelsForProjectNewThread(project.id);
+                }}
+                onFocus={() => {
+                  prefetchModelsForProjectNewThread(project.id, { includeDroid: true });
+                }}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
+                  prefetchModelsForProjectNewThread(project.id, { includeDroid: true });
                   void handleNewThread(project.id, {
                     envMode: resolveSidebarNewThreadEnvMode({
                       defaultEnvMode: appSettings.defaultThreadEnvMode,
@@ -6935,6 +7020,8 @@ export default function Sidebar() {
                         icon={NewThreadIcon}
                         label="New thread"
                         onClick={handlePrimaryNewThread}
+                        onMouseEnter={prefetchModelsForPrimaryNewThread}
+                        onFocus={prefetchModelsForPrimaryNewThreadWithDroid}
                       />
                       <SidebarPrimaryAction
                         icon={SearchIcon}
