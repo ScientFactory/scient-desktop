@@ -62,6 +62,7 @@ const subscribeThreadRequestCountById = new Map<ThreadId, number>();
 let subscribeThreadRequests: ThreadId[] = [];
 let replayEvents: OrchestrationEvent[] = [];
 let replayRequestCursors: number[] = [];
+const mountedAppCleanups = new Set<() => Promise<void>>();
 
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
 
@@ -314,14 +315,21 @@ async function mountApp(options?: {
   const router = getRouter(createMemoryHistory({ initialEntries: [`/${routeThreadId}`] }));
   const screen = await render(<RouterProvider router={router} />, { container: host });
 
-  const cleanup = async () => {
-    await screen.unmount();
-    // EventRouter cleanup starts stream unsubscriptions asynchronously. Give
-    // those in-flight mock RPC callbacks a turn to settle before the next test
-    // replaces the global WebSocket fixture and Zustand state.
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
-    host.remove();
+  let cleanupPromise: Promise<void> | null = null;
+  const cleanup = () => {
+    cleanupPromise ??= (async () => {
+      await screen.unmount();
+      // EventRouter cleanup starts stream unsubscriptions asynchronously. Give
+      // those in-flight mock RPC callbacks a turn to settle before the next test
+      // replaces the global WebSocket fixture and Zustand state.
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
+      host.remove();
+    })().finally(() => {
+      mountedAppCleanups.delete(cleanup);
+    });
+    return cleanupPromise;
   };
+  mountedAppCleanups.add(cleanup);
 
   try {
     await vi.waitFor(
@@ -452,9 +460,10 @@ describe("EventRouter scoped orchestration sync", () => {
     replayRequestCursors = [];
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.allSettled([...mountedAppCleanups].map((cleanup) => cleanup()));
     resetWsNativeApiForTest();
-    document.body.innerHTML = "";
+    document.body.replaceChildren();
     serverLifecycleStream = null;
     shellStream = null;
     threadStreamByThreadId.clear();

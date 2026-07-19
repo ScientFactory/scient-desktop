@@ -144,7 +144,6 @@ export class WsTransport {
   private reconnectPromise: Promise<SessionHandle> | null = null;
   private reconnectFailures = 0;
   private readonly streamCleanups = new Map<string, () => void>();
-  private readonly stoppingStreams = new Set<string>();
   private shellSubscribed = false;
   private readonly threadSubscriptions = new Map<string, unknown>();
 
@@ -330,9 +329,9 @@ export class WsTransport {
 
     const oldRuntime = this.runtime;
     const oldClientScope = this.clientScope;
-    for (const cleanup of this.streamCleanups.values()) cleanup();
+    const staleStreamCleanups = [...this.streamCleanups.values()];
     this.streamCleanups.clear();
-    this.stoppingStreams.clear();
+    for (const cleanup of staleStreamCleanups) cleanup();
 
     this.setState("connecting");
 
@@ -563,7 +562,6 @@ export class WsTransport {
   private startThreadStream(session: SessionHandle, threadId: string, input: unknown): void {
     const key = `orchestration.thread:${threadId}`;
     this.stopStream(key);
-    this.stoppingStreams.delete(key);
     const restartThread = () => {
       void this.getSession()
         .then((nextSession) => this.startThreadStream(nextSession, threadId, input))
@@ -596,13 +594,13 @@ export class WsTransport {
       Stream.runForEach(runnableStream, (event) => Effect.sync(() => listener(event))),
       {
         onExit: (exit) => {
-          if (this.streamCleanups.get(key) === cancel) {
-            this.streamCleanups.delete(key);
-          }
-          const wasStoppedIntentionally = this.stoppingStreams.delete(key);
-          if (wasStoppedIntentionally || this.disposed) {
+          // A replacement or intentional stop removes this exact cleanup from
+          // the map before cancellation. Ignore that stale stream's later exit;
+          // otherwise it can reconnect over the replacement and lose events.
+          if (this.streamCleanups.get(key) !== cancel || this.disposed) {
             return;
           }
+          this.streamCleanups.delete(key);
           if (restart && Exit.isFailure(exit)) {
             window.setTimeout(
               () => {
@@ -632,7 +630,6 @@ export class WsTransport {
   private stopStream(key: string): void {
     const cleanup = this.streamCleanups.get(key);
     if (!cleanup) return;
-    this.stoppingStreams.add(key);
     this.streamCleanups.delete(key);
     cleanup();
   }
