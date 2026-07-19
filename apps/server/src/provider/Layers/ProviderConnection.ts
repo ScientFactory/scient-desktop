@@ -28,6 +28,7 @@ import { buildClaudeProcessEnv } from "../claudeProcessEnv";
 import { buildCursorAgentCommand } from "../acp/CursorAcpCommand";
 import { ProviderConnection, type ProviderConnectionShape } from "../Services/ProviderConnection";
 import { ProviderHealth } from "../Services/ProviderHealth";
+import { ProviderRuntimeManager } from "../Services/ProviderRuntimeManager";
 
 const CONNECTION_TIMEOUT = Duration.minutes(10);
 const CONNECTION_OUTPUT_MAX_BYTES = 64 * 1024;
@@ -55,6 +56,8 @@ export function expectedMethodForProvider(
       return "claude_subscription";
     case "cursor":
       return "cursor_browser";
+    case "antigravity":
+      return "antigravity_browser";
     default:
       return null;
   }
@@ -69,6 +72,7 @@ export function providerConnectionCommandArgs(
     return ["auth", "login", "--claudeai"];
   }
   if (provider === "cursor" && method === "cursor_browser") return ["login"];
+  if (provider === "antigravity" && method === "antigravity_browser") return ["models"];
   return null;
 }
 
@@ -90,6 +94,7 @@ export function makeProviderConnectionLive(options?: { readonly timeout?: Durati
       const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
       const providerHealth = yield* ProviderHealth;
+      const providerRuntimeManager = yield* ProviderRuntimeManager;
       const operationScope = yield* Scope.make("sequential");
       yield* Effect.addFinalizer(() => Scope.close(operationScope, Exit.void));
       const activeConnectionsRef = yield* Ref.make<ReadonlyMap<ProviderKind, ActiveConnection>>(
@@ -163,6 +168,21 @@ export function makeProviderConnectionLive(options?: { readonly timeout?: Durati
           });
         }
 
+        const resolveExecutable = (configured: string | undefined, fallback: string) =>
+          providerRuntimeManager.resolve(provider, configured).pipe(
+            Effect.flatMap((runtime) =>
+              runtime.source === "missing" || runtime.source === "bundled" || !runtime.executable
+                ? Effect.fail(
+                    makeConnectionError({
+                      provider,
+                      reason: "provider_not_installed",
+                      message: "Install the provider before signing in.",
+                    }),
+                  )
+                : Effect.succeed(runtime.executable ?? fallback),
+            ),
+          );
+
         if (provider === "codex") {
           if (!settings.providers.codex.enabled) {
             return yield* makeConnectionError({
@@ -175,8 +195,12 @@ export function makeProviderConnectionLive(options?: { readonly timeout?: Durati
           const runtimeEnv = yield* Effect.promise(() =>
             buildCodexProcessEnv(homePath ? { homePath } : {}),
           );
+          const executable = yield* resolveExecutable(
+            settings.providers.codex.binaryPath.trim() || undefined,
+            "codex",
+          );
           return {
-            executable: settings.providers.codex.binaryPath.trim() || "codex",
+            executable,
             args,
             env: {
               ...runtimeEnv,
@@ -194,12 +218,35 @@ export function makeProviderConnectionLive(options?: { readonly timeout?: Durati
               message: "Cursor is disabled in Scient settings.",
             });
           }
-          const cursorCommand = buildCursorAgentCommand(settings.providers.cursor.binaryPath, args);
+          const cursorExecutable = yield* resolveExecutable(
+            settings.providers.cursor.binaryPath.trim() || undefined,
+            "cursor-agent",
+          );
+          const cursorCommand = buildCursorAgentCommand(cursorExecutable, args);
           return {
             executable: cursorCommand.command,
             args: cursorCommand.args,
             env: process.env,
             waitingMessage: "Finish signing in to Cursor in the browser window.",
+          } satisfies ConnectionCommand;
+        }
+
+        if (provider === "antigravity") {
+          if (!settings.providers.antigravity.enabled) {
+            return yield* makeConnectionError({
+              provider,
+              reason: "provider_disabled",
+              message: "Antigravity is disabled in Scient settings.",
+            });
+          }
+          return {
+            executable: yield* resolveExecutable(
+              settings.providers.antigravity.binaryPath.trim() || undefined,
+              "agy",
+            ),
+            args,
+            env: process.env,
+            waitingMessage: "Finish signing in to Google in the browser window.",
           } satisfies ConnectionCommand;
         }
 
@@ -210,8 +257,12 @@ export function makeProviderConnectionLive(options?: { readonly timeout?: Durati
             message: "Claude is disabled in Scient settings.",
           });
         }
+        const executable = yield* resolveExecutable(
+          settings.providers.claudeAgent.binaryPath.trim() || undefined,
+          "claude",
+        );
         return {
-          executable: settings.providers.claudeAgent.binaryPath.trim() || "claude",
+          executable,
           args,
           env: buildClaudeProcessEnv({ homeDir: serverConfig.homeDir }),
           waitingMessage: "Finish signing in to Claude in the browser window.",
@@ -281,17 +332,6 @@ export function makeProviderConnectionLive(options?: { readonly timeout?: Durati
             return yield* commandResult.failure;
           }
           const command = commandResult.success;
-          const statuses = yield* providerHealth.getStatuses;
-          const currentStatus = statuses.find((status) => status.provider === provider);
-          if (!currentStatus?.available) {
-            yield* releaseProvider(provider, "");
-            return yield* makeConnectionError({
-              provider,
-              reason: "provider_not_installed",
-              message: "Install the provider CLI before signing in.",
-            });
-          }
-
           const operationId = randomUUID();
           const startedAt = new Date().toISOString();
           const state = (input: {

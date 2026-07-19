@@ -93,7 +93,6 @@ import {
   parseGenericCliVersion,
   resolveProviderMaintenanceCapabilitiesEffect,
   type PackageManagedProviderMaintenanceDefinition,
-  type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText";
 import { buildCodexProcessEnv } from "../../codexProcessEnv.ts";
@@ -806,15 +805,6 @@ function cursorModelsOutputHasNoModels(output: string): boolean {
   return output.toLowerCase().includes("no models available");
 }
 
-const runPiCommand = (args: ReadonlyArray<string>, executable = "pi") =>
-  runProviderCommand(executable, args).pipe(
-    Effect.flatMap((result) =>
-      isWindowsShellCommandMissingResult({ code: result.code, stderr: result.stderr })
-        ? Effect.fail(new Error(`spawn ${executable} ENOENT`))
-        : Effect.succeed(result),
-    ),
-  );
-
 const runAntigravityCommand = (args: ReadonlyArray<string>, executable = "agy") =>
   runProviderCommand(executable, args).pipe(
     Effect.flatMap((result) =>
@@ -1487,72 +1477,19 @@ export const checkKiloProviderStatus = makeCheckKiloProviderStatus();
 
 export const checkPiProviderStatus = (
   agentDir?: string,
-  binaryPath?: string,
-): Effect.Effect<ServerProviderStatus, never, ChildProcessSpawner.ChildProcessSpawner> =>
-  Effect.gen(function* () {
-    const checkedAt = new Date().toISOString();
-    const executable = nonEmptyTrimmed(binaryPath) ?? "pi";
-
-    const versionProbe = yield* runPiCommand(["--version"], executable).pipe(
-      Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
-      Effect.result,
-    );
-
-    // Pi itself is SDK-backed in Synara. Keep this CLI probe advisory so health
-    // refreshes do not import the SDK and initialize its native clipboard module.
-    if (Result.isFailure(versionProbe)) {
-      const error = versionProbe.failure;
-      return {
-        provider: PI_PROVIDER,
-        status: "warning" as const,
-        available: true,
-        authStatus: "unknown" as const,
-        checkedAt,
-        message: isCommandMissingCause(error)
-          ? "Pi SDK is bundled, but the Pi CLI (`pi`) is not on PATH, so Scient could not verify the installed CLI version."
-          : `Pi SDK is bundled, but the CLI health check failed: ${error instanceof Error ? error.message : String(error)}.`,
-      } satisfies ServerProviderStatus;
-    }
-
-    if (Option.isNone(versionProbe.success)) {
-      return {
-        provider: PI_PROVIDER,
-        status: "warning" as const,
-        available: true,
-        authStatus: "unknown" as const,
-        checkedAt,
-        message:
-          "Pi SDK is bundled, but the CLI health check timed out before Scient could verify the installed version.",
-      } satisfies ServerProviderStatus;
-    }
-
-    const version = versionProbe.success.value;
-    if (version.code !== 0) {
-      const detail = detailFromResult(version);
-      return {
-        provider: PI_PROVIDER,
-        status: "warning" as const,
-        available: true,
-        authStatus: "unknown" as const,
-        checkedAt,
-        message: detail
-          ? `Pi SDK is bundled, but the CLI health check failed. ${detail}`
-          : "Pi SDK is bundled, but the CLI health check failed.",
-      } satisfies ServerProviderStatus;
-    }
-
-    const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
+  _binaryPath?: string,
+): Effect.Effect<ServerProviderStatus> =>
+  Effect.sync(() => {
     const configuredAgentDir = nonEmptyTrimmed(agentDir);
     return {
       provider: PI_PROVIDER,
       status: "ready" as const,
       available: true,
       authStatus: "unknown" as const,
-      version: parsedVersion,
-      checkedAt,
+      checkedAt: new Date().toISOString(),
       message: configuredAgentDir
-        ? `Pi CLI is installed. Scient will use Pi agent dir ${configuredAgentDir}.`
-        : "Pi CLI is installed. Configure provider credentials inside Pi as needed.",
+        ? `Pi is built into Scient and will use agent dir ${configuredAgentDir}.`
+        : "Pi is built into Scient. Configure a model-provider account when you use it.",
     } satisfies ServerProviderStatus;
   });
 

@@ -72,7 +72,7 @@ export function isProviderUsable(status: ServerProviderStatus | null | undefined
     // Missing status means the health check has not confirmed an installed provider yet.
     return false;
   }
-  return status.available && status.authStatus !== "unauthenticated";
+  return status.available && status.status === "ready" && status.authStatus !== "unauthenticated";
 }
 
 export function providerUnavailableReason(status: ServerProviderStatus | null | undefined): string {

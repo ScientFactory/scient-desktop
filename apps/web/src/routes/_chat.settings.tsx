@@ -3192,7 +3192,7 @@ function SettingsRouteView() {
                   providerStatus?.connectionState?.status === "verifying";
                 const providerConnected =
                   providerStatus?.available === true &&
-                  providerStatus.authStatus !== "unauthenticated";
+                  providerStatus.authStatus === "authenticated";
 
                 return (
                   <Collapsible

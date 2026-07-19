@@ -647,6 +647,15 @@ export function createWsNativeApi(): NativeApi {
         transport.request(WS_METHODS.serverStartProviderConnection, input),
       cancelProviderConnection: (input) =>
         transport.request(WS_METHODS.serverCancelProviderConnection, input),
+      prepareProviderInstall: (input) =>
+        transport.request(WS_METHODS.serverPrepareProviderInstall, input),
+      installProvider: (input) => transport.request(WS_METHODS.serverInstallProvider, input),
+      cancelProviderInstall: (input) =>
+        transport.request(WS_METHODS.serverCancelProviderInstall, input),
+      repairProvider: (input) => transport.request(WS_METHODS.serverRepairProvider, input),
+      rollbackProvider: (input) => transport.request(WS_METHODS.serverRollbackProvider, input),
+      removeManagedProvider: (input) =>
+        transport.request(WS_METHODS.serverRemoveManagedProvider, input),
       // Provider updates run up to 2 minutes server-side; callers wrap this in
       // withProviderUpdateTimeout, which owns the client-side watchdog.
       updateProvider: (input) =>

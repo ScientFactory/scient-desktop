@@ -28,6 +28,7 @@ import { startClaudeCredentialKeepalive } from "./provider/claudeCredentialKeepa
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { ProviderHealthLive } from "./provider/Layers/ProviderHealth";
 import { ProviderConnectionLive } from "./provider/Layers/ProviderConnection";
+import { ProviderRuntimeManagerLive } from "./provider/Layers/ProviderRuntimeManager";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper";
 import { Server } from "./effectServer";
 import { ServerLoggerLive } from "./serverLogger";
@@ -224,10 +225,13 @@ const ServerConfigLive = (input: CliInput) =>
 const LayerLive = (input: CliInput) => {
   const runtimeServicesLayer = makeServerRuntimeServicesLayer();
   const providerLayer = makeServerProviderLayer();
+  const providerRuntimeLayer = ProviderRuntimeManagerLive;
   const providerHealthLayer = ProviderHealthLive.pipe(
     // Provider health reads persisted provider settings while constructing its
     // cache, so build it with the same runtime services layer exposed to Server.
     Layer.provideMerge(runtimeServicesLayer),
+    // Managed executable directories must be active before the first health probe.
+    Layer.provideMerge(providerRuntimeLayer),
   );
   const providerConnectionLayer = ProviderConnectionLive.pipe(
     Layer.provideMerge(runtimeServicesLayer),
@@ -238,6 +242,7 @@ const LayerLive = (input: CliInput) => {
     // so it belongs at the top level where both layers are available.
     Layer.provideMerge(runtimeServicesLayer),
     Layer.provideMerge(providerLayer),
+    Layer.provideMerge(providerRuntimeLayer),
   );
 
   return Layer.empty.pipe(

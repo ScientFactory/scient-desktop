@@ -132,6 +132,12 @@ import type {
   ServerProviderConnectionCancelInput,
   ServerProviderConnectionResult,
   ServerProviderConnectionStartInput,
+  ServerProviderInstallCancelInput,
+  ServerProviderInstallInput,
+  ServerProviderInstallPlanInput,
+  ServerProviderInstallPlanResult,
+  ServerProviderInstallationResult,
+  ServerProviderRuntimeMutationInput,
   ServerProviderUpdateInput,
   ServerProviderUpdateResult,
   ServerRefreshProvidersResult,
@@ -637,6 +643,24 @@ export interface NativeApi {
     cancelProviderConnection: (
       input: ServerProviderConnectionCancelInput,
     ) => Promise<ServerProviderConnectionResult>;
+    prepareProviderInstall: (
+      input: ServerProviderInstallPlanInput,
+    ) => Promise<ServerProviderInstallPlanResult>;
+    installProvider: (
+      input: ServerProviderInstallInput,
+    ) => Promise<ServerProviderInstallationResult>;
+    cancelProviderInstall: (
+      input: ServerProviderInstallCancelInput,
+    ) => Promise<ServerProviderInstallationResult>;
+    repairProvider: (
+      input: ServerProviderRuntimeMutationInput,
+    ) => Promise<ServerProviderInstallationResult>;
+    rollbackProvider: (
+      input: ServerProviderRuntimeMutationInput,
+    ) => Promise<ServerProviderInstallationResult>;
+    removeManagedProvider: (
+      input: ServerProviderRuntimeMutationInput,
+    ) => Promise<ServerProviderInstallationResult>;
     updateProvider: (input: ServerProviderUpdateInput) => Promise<ServerProviderUpdateResult>;
     listWorktrees: () => Promise<ServerListWorktreesResult>;
     listLocalServers: () => Promise<ServerListLocalServersResult>;

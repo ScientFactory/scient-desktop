@@ -1747,7 +1747,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
   });
 
   describe("checkPiProviderStatus", () => {
-    it.effect("returns ready using only the Pi CLI version probe", () =>
+    it.effect("returns ready from the bundled Pi SDK without a CLI probe", () =>
       Effect.gen(function* () {
         const status = yield* checkPiProviderStatus();
         assert.strictEqual(status.provider, "pi");
@@ -1756,7 +1756,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
         assert.strictEqual(status.authStatus, "unknown");
         assert.strictEqual(
           status.message,
-          "Pi CLI is installed. Configure provider credentials inside Pi as needed.",
+          "Pi is built into Scient. Configure a model-provider account when you use it.",
         );
       }).pipe(
         Effect.provide(
@@ -1770,13 +1770,13 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       ),
     );
 
-    it.effect("uses configured Pi binary and agent dir without SDK registry reads", () =>
+    it.effect("uses the configured Pi agent dir without requiring the optional CLI", () =>
       Effect.gen(function* () {
         const status = yield* checkPiProviderStatus("/tmp/pi-agent", "/custom/bin/pi");
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(
           status.message,
-          "Pi CLI is installed. Scient will use Pi agent dir /tmp/pi-agent.",
+          "Pi is built into Scient and will use agent dir /tmp/pi-agent.",
         );
       }).pipe(
         Effect.provide(
@@ -1790,16 +1790,16 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       ),
     );
 
-    it.effect("keeps Pi usable when the advisory CLI probe is missing", () =>
+    it.effect("keeps Pi ready when no external CLI is installed", () =>
       Effect.gen(function* () {
         const status = yield* checkPiProviderStatus();
         assert.strictEqual(status.provider, "pi");
-        assert.strictEqual(status.status, "warning");
+        assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.available, true);
         assert.strictEqual(status.authStatus, "unknown");
         assert.strictEqual(
           status.message,
-          "Pi SDK is bundled, but the Pi CLI (`pi`) is not on PATH, so Scient could not verify the installed CLI version.",
+          "Pi is built into Scient. Configure a model-provider account when you use it.",
         );
       }).pipe(Effect.provide(failingSpawnerLayer("spawn pi ENOENT"))),
     );

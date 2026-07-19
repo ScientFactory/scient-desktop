@@ -45,10 +45,58 @@ export const ServerProviderAuthStatus = Schema.Literals([
 ]);
 export type ServerProviderAuthStatus = typeof ServerProviderAuthStatus.Type;
 
+export const ServerProviderRuntimeSource = Schema.Literals([
+  "custom",
+  "system",
+  "managed",
+  "bundled",
+  "missing",
+]);
+export type ServerProviderRuntimeSource = typeof ServerProviderRuntimeSource.Type;
+
+export const ServerProviderInstallationStatus = Schema.Literals([
+  "resolving",
+  "awaiting_consent",
+  "downloading",
+  "verifying",
+  "installing",
+  "smoke_testing",
+  "installed",
+  "succeeded",
+  "failed",
+  "cancelled",
+]);
+export type ServerProviderInstallationStatus = typeof ServerProviderInstallationStatus.Type;
+
+export const ServerProviderInstallationState = Schema.Struct({
+  operationId: TrimmedNonEmptyString,
+  operation: Schema.Literals(["install", "repair", "rollback", "remove"]),
+  status: ServerProviderInstallationStatus,
+  startedAt: IsoDateTime,
+  finishedAt: Schema.NullOr(IsoDateTime),
+  message: TrimmedNonEmptyString,
+  version: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
+  bytesDownloaded: Schema.optionalKey(NonNegativeInt),
+  totalBytes: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
+});
+export type ServerProviderInstallationState = typeof ServerProviderInstallationState.Type;
+
+export const ServerProviderRuntimeState = Schema.Struct({
+  source: ServerProviderRuntimeSource,
+  managedVersion: Schema.NullOr(TrimmedNonEmptyString),
+  canInstall: Schema.Boolean,
+  canRepair: Schema.Boolean,
+  canRollback: Schema.Boolean,
+  canRemove: Schema.Boolean,
+  message: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ServerProviderRuntimeState = typeof ServerProviderRuntimeState.Type;
+
 export const ServerProviderConnectionMethod = Schema.Literals([
   "codex_browser",
   "claude_subscription",
   "cursor_browser",
+  "antigravity_browser",
 ]);
 export type ServerProviderConnectionMethod = typeof ServerProviderConnectionMethod.Type;
 
@@ -100,6 +148,8 @@ export const ServerProviderStatus = Schema.Struct({
       output: Schema.NullOr(Schema.String.check(Schema.isMaxLength(10_000))),
     }),
   ),
+  runtime: Schema.optionalKey(ServerProviderRuntimeState),
+  installationState: Schema.optionalKey(ServerProviderInstallationState),
   connectionState: Schema.optionalKey(ServerProviderConnectionState),
 });
 export type ServerProviderStatus = typeof ServerProviderStatus.Type;
@@ -458,6 +508,64 @@ export class ServerProviderUpdateError extends Schema.TaggedErrorClass<ServerPro
 
 export const ServerProviderUpdateResult = ServerProviderStatusesUpdatedPayload;
 export type ServerProviderUpdateResult = typeof ServerProviderUpdateResult.Type;
+
+export const ServerProviderInstallInput = Schema.Struct({
+  provider: ProviderKind,
+  planToken: TrimmedNonEmptyString,
+});
+export type ServerProviderInstallInput = typeof ServerProviderInstallInput.Type;
+
+export const ServerProviderInstallCancelInput = Schema.Struct({
+  provider: ProviderKind,
+  operationId: TrimmedNonEmptyString,
+});
+export type ServerProviderInstallCancelInput = typeof ServerProviderInstallCancelInput.Type;
+
+export const ServerProviderRuntimeMutationInput = Schema.Struct({
+  provider: ProviderKind,
+});
+export type ServerProviderRuntimeMutationInput = typeof ServerProviderRuntimeMutationInput.Type;
+
+export const ServerProviderInstallPlanInput = Schema.Struct({
+  provider: ProviderKind,
+});
+export type ServerProviderInstallPlanInput = typeof ServerProviderInstallPlanInput.Type;
+
+export const ServerProviderInstallPlan = Schema.Struct({
+  provider: ProviderKind,
+  planToken: TrimmedNonEmptyString,
+  version: TrimmedNonEmptyString,
+  target: TrimmedNonEmptyString,
+  sourceHost: TrimmedNonEmptyString,
+  downloadBytes: Schema.NullOr(NonNegativeInt),
+  expiresAt: IsoDateTime,
+});
+export type ServerProviderInstallPlan = typeof ServerProviderInstallPlan.Type;
+export const ServerProviderInstallPlanResult = ServerProviderInstallPlan;
+export type ServerProviderInstallPlanResult = typeof ServerProviderInstallPlanResult.Type;
+
+export class ServerProviderInstallationError extends Schema.TaggedErrorClass<ServerProviderInstallationError>()(
+  "ServerProviderInstallationError",
+  {
+    provider: ProviderKind,
+    reason: Schema.Literals([
+      "unsupported_provider",
+      "unsupported_target",
+      "already_running",
+      "operation_not_found",
+      "download_failed",
+      "verification_failed",
+      "installation_failed",
+      "rollback_unavailable",
+      "managed_runtime_unavailable",
+      "provider_disabled",
+    ]),
+    message: TrimmedNonEmptyString,
+  },
+) {}
+
+export const ServerProviderInstallationResult = ServerProviderStatusesUpdatedPayload;
+export type ServerProviderInstallationResult = typeof ServerProviderInstallationResult.Type;
 
 export const ServerProviderConnectionStartInput = Schema.Struct({
   provider: ProviderKind,

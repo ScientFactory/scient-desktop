@@ -7,6 +7,10 @@ import { ServerConfig, type ServerConfigShape } from "../../config";
 import { ServerSettingsService } from "../../serverSettings";
 import { ProviderConnection } from "../Services/ProviderConnection";
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
+import {
+  ProviderRuntimeManager,
+  type ProviderRuntimeManagerShape,
+} from "../Services/ProviderRuntimeManager";
 
 import {
   expectedMethodForProvider,
@@ -114,6 +118,44 @@ function makeConnectionTestLayer(input?: {
       );
     }),
   );
+  const providerRuntimeLayer = Layer.succeed(ProviderRuntimeManager, {
+    prepareInstall: () => Effect.die("unused"),
+    install: () => Effect.die("unused"),
+    cancel: () => Effect.die("unused"),
+    repair: () => Effect.die("unused"),
+    rollback: () => Effect.die("unused"),
+    remove: () => Effect.die("unused"),
+    getSnapshot: (provider) =>
+      Effect.succeed({
+        provider,
+        managedExecutablePath: null,
+        managedVersion: null,
+        previousReleaseAvailable: false,
+        bundled: false,
+        canInstall: false,
+        installationState: null,
+      }),
+    resolve: (provider, configured) =>
+      Effect.succeed({
+        source: input?.available === false ? "missing" : "system",
+        executable:
+          input?.available === false
+            ? null
+            : configured?.trim() ||
+              (provider === "claudeAgent"
+                ? "claude"
+                : provider === "antigravity"
+                  ? "agy"
+                  : provider),
+        managedVersion: null,
+        canInstall: false,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: null,
+      }),
+    streamChanges: Stream.empty,
+  } satisfies ProviderRuntimeManagerShape);
 
   const layer = makeProviderConnectionLive(
     input?.timeout ? { timeout: input.timeout } : undefined,
@@ -121,6 +163,7 @@ function makeConnectionTestLayer(input?: {
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(Layer.succeed(ServerConfig, TEST_CONFIG)),
     Layer.provideMerge(providerHealthLayer),
+    Layer.provideMerge(providerRuntimeLayer),
     Layer.provideMerge(spawnerLayer),
   );
   return { layer, getConnectionState: () => connectionState };
@@ -144,6 +187,11 @@ describe("provider connection command allowlist", () => {
   it("uses Cursor browser login with fixed argv", () => {
     expect(expectedMethodForProvider("cursor")).toBe("cursor_browser");
     expect(providerConnectionCommandArgs("cursor", "cursor_browser")).toEqual(["login"]);
+  });
+
+  it("uses Antigravity's provider-owned browser authentication probe", () => {
+    expect(expectedMethodForProvider("antigravity")).toBe("antigravity_browser");
+    expect(providerConnectionCommandArgs("antigravity", "antigravity_browser")).toEqual(["models"]);
   });
 
   it("does not construct commands for mismatched or unsupported providers", () => {

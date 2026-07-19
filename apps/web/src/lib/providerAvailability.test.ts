@@ -132,9 +132,25 @@ describe("isProviderUsable", () => {
     expect(
       isProviderUsable({ ...BASE_STATUS, available: true, authStatus: "unauthenticated" }),
     ).toBe(false);
-    expect(isProviderUsable({ ...BASE_STATUS, available: true, authStatus: "authenticated" })).toBe(
-      true,
-    );
+    expect(
+      isProviderUsable({
+        ...BASE_STATUS,
+        available: true,
+        status: "warning",
+        authStatus: "unknown",
+      }),
+    ).toBe(false);
+    expect(
+      isProviderUsable({ ...BASE_STATUS, available: true, status: "ready", authStatus: "unknown" }),
+    ).toBe(true);
+    expect(
+      isProviderUsable({
+        ...BASE_STATUS,
+        available: true,
+        status: "ready",
+        authStatus: "authenticated",
+      }),
+    ).toBe(true);
   });
 });
 

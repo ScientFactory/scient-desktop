@@ -20,6 +20,7 @@ describe("provider connection presentation", () => {
     expect(providerConnectionMethod("codex")).toBe("codex_browser");
     expect(providerConnectionMethod("claudeAgent")).toBe("claude_subscription");
     expect(providerConnectionMethod("cursor")).toBe("cursor_browser");
+    expect(providerConnectionMethod("antigravity")).toBe("antigravity_browser");
     expect(providerConnectionMethod("opencode")).toBeNull();
   });
 
@@ -31,6 +32,25 @@ describe("provider connection presentation", () => {
     });
     expect(presentation.primaryAction).toBe("open_install_guide");
     expect(providerInstallUrl("codex")).toMatch(/^https:\/\//u);
+  });
+
+  it("offers dependency-free managed installation when a reviewed artifact exists", () => {
+    const presentation = describeProviderConnection("codex", {
+      ...BASE_STATUS,
+      available: false,
+      authStatus: "unknown",
+      runtime: {
+        source: "missing",
+        managedVersion: null,
+        canInstall: true,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: "No usable provider runtime was found.",
+      },
+    });
+    expect(presentation.primaryAction).toBe("install");
+    expect(presentation.description).toContain("no Homebrew");
   });
 
   it("offers browser login without asking for credentials", () => {

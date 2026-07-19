@@ -37,6 +37,8 @@ function createQueryClient(provider: ServerProviderStatus) {
 
 function installNativeApi(overrides: {
   startProviderConnection?: ReturnType<typeof vi.fn>;
+  prepareProviderInstall?: ReturnType<typeof vi.fn>;
+  installProvider?: ReturnType<typeof vi.fn>;
   openExternal?: ReturnType<typeof vi.fn>;
 }) {
   const previousNativeApi = window.nativeApi;
@@ -52,6 +54,10 @@ function installNativeApi(overrides: {
         ...(overrides.startProviderConnection
           ? { startProviderConnection: overrides.startProviderConnection }
           : {}),
+        ...(overrides.prepareProviderInstall
+          ? { prepareProviderInstall: overrides.prepareProviderInstall }
+          : {}),
+        ...(overrides.installProvider ? { installProvider: overrides.installProvider } : {}),
       },
       shell: {
         ...baseApi.shell,
@@ -153,6 +159,90 @@ describe("ProviderConnectionDialog", () => {
       await vi.waitFor(() => {
         expect(openExternal).toHaveBeenCalledWith("https://code.claude.com/docs/en/installation");
       });
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("requires reviewed consent before starting a managed installation", async () => {
+    const installingProvider = {
+      provider: "antigravity",
+      status: "error",
+      available: false,
+      authStatus: "unknown",
+      checkedAt,
+      runtime: {
+        source: "missing",
+        managedVersion: null,
+        canInstall: false,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: "No usable provider runtime was found.",
+      },
+      installationState: {
+        operationId: "install-antigravity-1",
+        operation: "install",
+        status: "downloading",
+        startedAt: checkedAt,
+        finishedAt: null,
+        message: "Downloading Antigravity 1.1.4.",
+        version: "1.1.4",
+        bytesDownloaded: 0,
+        totalBytes: 46_664_998,
+      },
+    } satisfies ServerProviderStatus;
+    const prepareProviderInstall = vi.fn().mockResolvedValue({
+      provider: "antigravity",
+      planToken: "reviewed-plan-1",
+      version: "1.1.4",
+      target: "darwin-arm64",
+      sourceHost: "storage.googleapis.com",
+      downloadBytes: 46_664_998,
+      expiresAt: "2026-07-19T12:10:00.000Z",
+    });
+    const installProvider = vi.fn().mockResolvedValue({ providers: [installingProvider] });
+    const restoreNativeApi = installNativeApi({ prepareProviderInstall, installProvider });
+    const queryClient = createQueryClient({
+      provider: "antigravity",
+      status: "error",
+      available: false,
+      authStatus: "unknown",
+      checkedAt,
+      runtime: {
+        source: "missing",
+        managedVersion: null,
+        canInstall: true,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: "No usable provider runtime was found.",
+      },
+    });
+    useProviderConnectionDialogStore.getState().openDialog("antigravity", "settings");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await page.getByRole("button", { name: "Install Antigravity" }).click();
+      await expect.element(page.getByText("Ready to install version 1.1.4")).toBeVisible();
+      expect(installProvider).not.toHaveBeenCalled();
+
+      await page.getByRole("button", { name: "Download and install" }).click();
+      await vi.waitFor(() => {
+        expect(installProvider).toHaveBeenCalledWith({
+          provider: "antigravity",
+          planToken: "reviewed-plan-1",
+        });
+      });
+      await expect.element(page.getByText("Downloading Antigravity 1.1.4.")).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "Cancel installation" })).toBeVisible();
     } finally {
       await screen.unmount();
       queryClient.clear();
