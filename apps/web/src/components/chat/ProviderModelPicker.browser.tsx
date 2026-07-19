@@ -5,6 +5,7 @@ import { render } from "vitest-browser-react";
 
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import type { ProviderModelOption } from "../../providerModelOptions";
+import { useProviderConnectionDialogStore } from "../../providerConnectionDialogStore";
 
 const MODEL_OPTIONS_BY_PROVIDER = {
   claudeAgent: [
@@ -173,6 +174,7 @@ describe("ProviderModelPicker", () => {
   afterEach(() => {
     document.body.innerHTML = "";
     localStorage.clear();
+    useProviderConnectionDialogStore.getState().setOpen(false);
   });
 
   it("shows provider submenus when provider switching is allowed", async () => {
@@ -529,7 +531,7 @@ describe("ProviderModelPicker", () => {
     }
   });
 
-  it("shows unavailable providers as disabled rows", async () => {
+  it("opens guided connection from an unavailable provider row", async () => {
     const mounted = await mountPicker({
       provider: "codex",
       model: "gpt-5-codex",
@@ -559,7 +561,16 @@ describe("ProviderModelPicker", () => {
         const text = document.body.textContent ?? "";
         expect(text).toContain("Codex");
         expect(text).toContain("Claude");
-        expect(text).toContain("Sign in");
+        expect(text).toContain("Set up");
+      });
+      await page.getByRole("menuitem", { name: /Claude.*Set up/u }).click();
+
+      await vi.waitFor(() => {
+        expect(useProviderConnectionDialogStore.getState()).toMatchObject({
+          isOpen: true,
+          provider: "claudeAgent",
+          source: "provider_picker",
+        });
       });
     } finally {
       await mounted.cleanup();

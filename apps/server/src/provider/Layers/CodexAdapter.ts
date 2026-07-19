@@ -56,6 +56,7 @@ import { ServerConfig } from "../../config.ts";
 import { makeRuntimeTaskListItem } from "../runtimeTaskList.ts";
 import { extractProposedPlanMarkdown } from "../planMode.ts";
 import { appendFileAttachmentsPromptBlock } from "../attachmentProjection.ts";
+import { readProviderPromptImage } from "../promptAttachments.ts";
 import { synaraSkillsDir } from "../skillsCatalog.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
@@ -1684,7 +1685,12 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
                   new Error(`Invalid attachment id '${attachment.id}'.`),
                 );
               }
-              const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+              const bytes = yield* readProviderPromptImage({
+                fileSystem,
+                attachmentsDir: serverConfig.attachmentsDir,
+                path: attachmentPath,
+                expectedBytes: attachment.sizeBytes,
+              }).pipe(
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterRequestError({
@@ -1700,7 +1706,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
                 url: `data:${attachment.mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
               };
             }),
-          { concurrency: 1 },
+          { concurrency: 4 },
         );
         const nativeCodexAttachments = codexAttachments.filter(
           (attachment): attachment is NonNullable<typeof attachment> => attachment !== null,
@@ -1762,7 +1768,12 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
                   new Error(`Invalid attachment id '${attachment.id}'.`),
                 );
               }
-              const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+              const bytes = yield* readProviderPromptImage({
+                fileSystem,
+                attachmentsDir: serverConfig.attachmentsDir,
+                path: attachmentPath,
+                expectedBytes: attachment.sizeBytes,
+              }).pipe(
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterRequestError({
@@ -1778,7 +1789,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
                 url: `data:${attachment.mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
               };
             }),
-          { concurrency: 1 },
+          { concurrency: 4 },
         );
         const nativeCodexAttachments = codexAttachments.filter(
           (attachment): attachment is NonNullable<typeof attachment> => attachment !== null,

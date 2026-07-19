@@ -6,14 +6,13 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 import rootPackageJson from "../package.json" with { type: "json" };
 import desktopPackageJson from "../apps/desktop/package.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
-import { DESKTOP_STAGE_DEPENDENCY_OVERRIDES } from "./lib/desktop-stage-dependency-overrides.ts";
 import {
   createDesktopPlatformBuildConfig,
   MAC_APPSNAP_HELPER_STAGE_PATH,
@@ -22,6 +21,12 @@ import {
 import { SCIENT_PRODUCTION_BUNDLE_ID } from "@synara/shared/desktopIdentity";
 import { parseBooleanEnvValue } from "./lib/env-bool.ts";
 import { finalizeMacUpdateZip } from "./lib/mac-update-zip-finalize.ts";
+import {
+  createReleaseInstallManifest,
+  RELEASE_LOCKFILE_PATH,
+  RELEASE_PATCHES_PATH,
+  RELEASE_WORKSPACE_MANIFEST_PATHS,
+} from "./lib/release-workspace-manifests.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -209,6 +214,7 @@ interface StagePackageJson {
     readonly electron: string;
   };
   readonly overrides: Record<string, unknown>;
+  readonly patchedDependencies: Record<string, string>;
 }
 
 const AzureTrustedSigningOptionsConfig = Config.all({
@@ -539,6 +545,163 @@ const verifyStagedNodePty = Effect.fn("verifyStagedNodePty")(function* (
   );
 });
 
+// Keep all dependency lifecycle scripts disabled in the release stage, then run
+// only node-pty's pinned native lifecycle. `bun run install` also runs its
+// postinstall hook, which places the Windows ConPTY payload correctly.
+const prepareStagedNodePty = Effect.fn("prepareStagedNodePty")(function* (
+  repoRoot: string,
+  stageAppDir: string,
+  verbose: boolean,
+) {
+  const path = yield* Path.Path;
+  const nodePtyRoot = path.join(stageAppDir, "node_modules", "node-pty");
+  const buildToolBinDir = path.join(repoRoot, "node_modules", ".bin");
+  const buildEnv = {
+    ...process.env,
+    PATH: `${buildToolBinDir}${delimiter}${process.env.PATH ?? ""}`,
+  };
+
+  yield* Effect.log("[desktop-artifact] Building staged node-pty native dependency...");
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: nodePtyRoot,
+      env: buildEnv,
+      ...commandOutputOptions(verbose),
+      shell: process.platform === "win32",
+    })`bun run install`,
+  );
+});
+
+interface PatchFileExpectation {
+  readonly file: string;
+  readonly addedLines: ReadonlyArray<string>;
+}
+
+function parsePatchAddedLines(patchContents: string): PatchFileExpectation[] {
+  const expectations: Array<{ file: string; addedLines: string[] }> = [];
+  let current: { file: string; addedLines: string[] } | null = null;
+  for (const line of patchContents.split("\n")) {
+    if (line.startsWith("+++ ")) {
+      const target = line.slice(4).trim();
+      if (target === "/dev/null") {
+        current = null;
+        continue;
+      }
+      current = {
+        file: target.startsWith("b/") ? target.slice(2) : target,
+        addedLines: [],
+      };
+      expectations.push(current);
+      continue;
+    }
+    if (current && line.startsWith("+")) {
+      const added = line.slice(1).trim();
+      if (added.length > 0) {
+        current.addedLines.push(added);
+      }
+    }
+  }
+  return expectations.filter((expectation) => expectation.addedLines.length > 0);
+}
+
+function patchedPackageName(dependency: string): string {
+  const versionSeparator = dependency.indexOf("@", dependency.startsWith("@") ? 1 : 0);
+  return versionSeparator > 0 ? dependency.slice(0, versionSeparator) : dependency;
+}
+
+const installLockedStageDependencies = Effect.fn("installLockedStageDependencies")(function* (
+  repoRoot: string,
+  stageAppDir: string,
+  verbose: boolean,
+) {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+
+  for (const relativePath of RELEASE_WORKSPACE_MANIFEST_PATHS) {
+    const destination = path.join(stageAppDir, relativePath);
+    yield* fs.makeDirectory(path.dirname(destination), { recursive: true });
+    const sourceContents = yield* fs.readFileString(path.join(repoRoot, relativePath));
+    yield* fs.writeFileString(destination, createReleaseInstallManifest(sourceContents));
+  }
+
+  yield* fs.copyFile(
+    path.join(repoRoot, RELEASE_LOCKFILE_PATH),
+    path.join(stageAppDir, RELEASE_LOCKFILE_PATH),
+  );
+  yield* fs.copy(
+    path.join(repoRoot, RELEASE_PATCHES_PATH),
+    path.join(stageAppDir, RELEASE_PATCHES_PATH),
+  );
+
+  yield* Effect.log(
+    "[desktop-artifact] Materializing staged production dependencies from the repository lockfile...",
+  );
+  // Bun 1.3.12 makes --production implicitly frozen. Use its equivalent
+  // dependency scope without that implicit freeze so Windows can materialize
+  // platform-specific lock data, then prove it with the frozen pass below.
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: stageAppDir,
+      ...commandOutputOptions(verbose),
+      shell: process.platform === "win32",
+    })`bun install --omit dev --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
+  );
+  yield* Effect.log("[desktop-artifact] Installing staged frozen production dependencies...");
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: stageAppDir,
+      ...commandOutputOptions(verbose),
+      // Windows needs shell mode to resolve .cmd shims (for example bun.cmd).
+      shell: process.platform === "win32",
+    })`bun install --production --frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop`,
+  );
+
+  for (const relativePath of RELEASE_WORKSPACE_MANIFEST_PATHS) {
+    if (relativePath !== "package.json") {
+      yield* fs.remove(path.join(stageAppDir, relativePath));
+    }
+  }
+  yield* fs.remove(path.join(stageAppDir, RELEASE_LOCKFILE_PATH));
+  yield* fs.remove(path.join(stageAppDir, RELEASE_PATCHES_PATH), { recursive: true });
+});
+
+// A staged package has its own package.json and install root. Keep the tracked
+// patch files in that root and then verify their added lines, so a package
+// manager regression cannot silently ship an unpatched production dependency.
+const verifyStagedPatchedDependencies = Effect.fn("verifyStagedPatchedDependencies")(function* (
+  repoRoot: string,
+  stageAppDir: string,
+) {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  yield* Effect.log("[desktop-artifact] Verifying staged patched dependencies...");
+  for (const [dependency, patchRelativePath] of Object.entries(
+    rootPackageJson.patchedDependencies ?? {},
+  )) {
+    const packageName = patchedPackageName(dependency);
+    const patchContents = yield* fs.readFileString(path.join(repoRoot, patchRelativePath));
+    for (const expectation of parsePatchAddedLines(patchContents)) {
+      const stagedFilePath = path.join(stageAppDir, "node_modules", packageName, expectation.file);
+      const stagedContents = yield* fs.readFileString(stagedFilePath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new BuildScriptError({
+              message: `Patched dependency file is missing from the stage: ${stagedFilePath} (expected by ${patchRelativePath}).`,
+              cause,
+            }),
+        ),
+      );
+      for (const addedLine of expectation.addedLines) {
+        if (!stagedContents.includes(addedLine)) {
+          return yield* new BuildScriptError({
+            message: `Staged dependency ${packageName} is missing patched content: ${expectation.file} does not contain "${addedLine}" from ${patchRelativePath}. The tracked patch was not applied by the staged install.`,
+          });
+        }
+      }
+    }
+  }
+});
+
 const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -746,8 +909,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   yield* validateBundledClientAssets(path.dirname(bundledClientEntry));
 
-  yield* fs.makeDirectory(path.join(stageAppDir, "apps/desktop"), { recursive: true });
-  yield* fs.makeDirectory(path.join(stageAppDir, "apps/server"), { recursive: true });
+  yield* fs.makeDirectory(path.join(stageAppDir, "apps/desktop"), {
+    recursive: true,
+  });
+  yield* fs.makeDirectory(path.join(stageAppDir, "apps/server"), {
+    recursive: true,
+  });
 
   yield* Effect.log("[desktop-artifact] Staging release app...");
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
@@ -788,27 +955,19 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       electron: electronVersion,
     },
     overrides: {
-      ...DESKTOP_STAGE_DEPENDENCY_OVERRIDES,
       ...resolvedOverrides,
     },
+    patchedDependencies: rootPackageJson.patchedDependencies ?? {},
   };
 
+  yield* installLockedStageDependencies(repoRoot, stageAppDir, options.verbose);
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
 
-  yield* Effect.log("[desktop-artifact] Installing staged production dependencies...");
-  yield* runCommand(
-    ChildProcess.make({
-      cwd: stageAppDir,
-      ...commandOutputOptions(options.verbose),
-      // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
-      shell: process.platform === "win32",
-    })`bun install --production`,
-  );
+  yield* verifyStagedPatchedDependencies(repoRoot, stageAppDir);
 
-  if (options.platform === "linux") {
-    yield* verifyStagedNodePty(stageAppDir, options.verbose);
-  }
+  yield* prepareStagedNodePty(repoRoot, stageAppDir, options.verbose);
+  yield* verifyStagedNodePty(stageAppDir, options.verbose);
 
   const buildEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -840,14 +999,18 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* Effect.log(
     `[desktop-artifact] Building ${options.platform}/${options.target} (arch=${options.arch}, version=${appVersion})...`,
   );
+  const electronBuilderCli = path.join(repoRoot, "node_modules", "electron-builder", "cli.js");
+  if (!(yield* fs.exists(electronBuilderCli))) {
+    return yield* new BuildScriptError({
+      message: `Pinned electron-builder CLI was not found at ${electronBuilderCli}`,
+    });
+  }
   yield* runCommand(
     ChildProcess.make({
       cwd: stageAppDir,
       env: buildEnv,
       ...commandOutputOptions(options.verbose),
-      // Windows needs shell mode to resolve .cmd shims.
-      shell: process.platform === "win32",
-    })`bunx electron-builder ${platformConfig.cliFlag} --${options.arch} --publish never`,
+    })`${process.execPath} ${electronBuilderCli} ${platformConfig.cliFlag} --${options.arch} --publish never`,
   );
 
   const stageDistDir = path.join(stageAppDir, "dist");

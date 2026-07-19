@@ -8,6 +8,10 @@ const RECENT_MESSAGE_COUNT = 6;
 const EARLIER_MESSAGE_CHAR_LIMIT = 320;
 const RECENT_MESSAGE_CHAR_LIMIT = 2_400;
 const HANDOFF_BOOTSTRAP_CHAR_BUDGET = Math.floor(PROVIDER_SEND_TURN_MAX_INPUT_CHARS * 0.75);
+// Automatic recovery and sidechat replay should stay comparatively cheap: the
+// entire transcript is sent as fresh input. Explicit provider handoff retains
+// its larger, user-requested transfer budget.
+const AUTOMATIC_BOOTSTRAP_TRANSCRIPT_CHAR_BUDGET = 32_000;
 
 function normalizeMessageText(value: string): string {
   return value
@@ -25,6 +29,14 @@ function truncateText(value: string, maxChars: number): string {
 
 function roleLabel(message: Pick<OrchestrationMessage, "role">): "User" | "Assistant" {
   return message.role === "assistant" ? "Assistant" : "User";
+}
+
+function earlierSummaryHeader(omittedCount: number): string {
+  return omittedCount > 0
+    ? `Earlier conversation summary (${omittedCount} older ${
+        omittedCount === 1 ? "message" : "messages"
+      } omitted to fit the context budget):`
+    : "Earlier conversation summary:";
 }
 
 export function listImportedHandoffMessages(
@@ -96,11 +108,13 @@ function buildImportedMessagesBootstrapText(input: {
   importedMessages: ReadonlyArray<OrchestrationMessage>;
   intro: string;
   maxChars: number;
+  ceilingChars: number;
 }): string | null {
   if (input.importedMessages.length === 0) {
     return null;
   }
 
+  const maxChars = Math.min(Math.max(0, input.maxChars), input.ceilingChars);
   const earlierMessages = input.importedMessages.slice(0, -RECENT_MESSAGE_COUNT);
   const recentMessages = input.importedMessages.slice(-RECENT_MESSAGE_COUNT);
   const sections: string[] = [input.intro, `Original conversation title: ${input.thread.title}`];
@@ -112,36 +126,50 @@ function buildImportedMessagesBootstrapText(input: {
     sections.push(`Worktree path: ${input.thread.worktreePath}`);
   }
 
+  const recentSection =
+    "Most recent imported messages:\n" +
+    recentMessages
+      .map((message) => {
+        const normalized = truncateText(
+          normalizeMessageText(message.text),
+          RECENT_MESSAGE_CHAR_LIMIT,
+        );
+        return `${roleLabel(message)}:\n${normalized}`;
+      })
+      .join("\n\n");
+
   if (earlierMessages.length > 0) {
-    sections.push(
-      "Earlier conversation summary:\n" +
-        earlierMessages
-          .map((message) => {
-            const normalized = truncateText(
-              normalizeMessageText(message.text),
-              EARLIER_MESSAGE_CHAR_LIMIT,
-            );
-            return `- ${roleLabel(message)}: ${normalized}`;
-          })
-          .join("\n"),
-    );
+    let remaining =
+      maxChars -
+      sections.reduce((total, section) => total + section.length + 2, 0) -
+      (recentSection.length + 2);
+    // Reserve the largest possible omission header before accepting summary
+    // lines, so accounting never clips the newer transcript tail afterward.
+    remaining -= earlierSummaryHeader(earlierMessages.length).length + 1;
+    const summaryLines: string[] = [];
+    for (let index = earlierMessages.length - 1; index >= 0; index -= 1) {
+      const message = earlierMessages[index]!;
+      const normalized = truncateText(
+        normalizeMessageText(message.text),
+        EARLIER_MESSAGE_CHAR_LIMIT,
+      );
+      const line = `- ${roleLabel(message)}: ${normalized}`;
+      if (remaining < line.length + 1) {
+        break;
+      }
+      remaining -= line.length + 1;
+      summaryLines.push(line);
+    }
+    summaryLines.reverse();
+    const omittedCount = earlierMessages.length - summaryLines.length;
+    const header = earlierSummaryHeader(omittedCount);
+    sections.push(summaryLines.length > 0 ? `${header}\n${summaryLines.join("\n")}` : header);
   }
 
-  sections.push(
-    "Most recent imported messages:\n" +
-      recentMessages
-        .map((message) => {
-          const normalized = truncateText(
-            normalizeMessageText(message.text),
-            RECENT_MESSAGE_CHAR_LIMIT,
-          );
-          return `${roleLabel(message)}:\n${normalized}`;
-        })
-        .join("\n\n"),
-  );
+  sections.push(recentSection);
 
   const joined = sections.join("\n\n").trim();
-  return truncateText(joined, Math.max(0, input.maxChars));
+  return truncateText(joined, maxChars);
 }
 
 export function buildHandoffBootstrapText(
@@ -158,6 +186,7 @@ export function buildHandoffBootstrapText(
     importedMessages,
     intro: `This conversation was handed off from ${thread.handoff.sourceProvider}.`,
     maxChars,
+    ceilingChars: HANDOFF_BOOTSTRAP_CHAR_BUDGET,
   });
 }
 
@@ -177,6 +206,7 @@ export function buildPriorTranscriptBootstrapText(
     intro:
       "This provider session may have been restarted without native conversation state. Use this prior Scient transcript as context for the latest user message.",
     maxChars,
+    ceilingChars: AUTOMATIC_BOOTSTRAP_TRANSCRIPT_CHAR_BUDGET,
   });
 }
 
@@ -194,5 +224,6 @@ export function buildForkBootstrapText(
     importedMessages,
     intro: "This sidechat was cloned from an earlier conversation.",
     maxChars,
+    ceilingChars: AUTOMATIC_BOOTSTRAP_TRANSCRIPT_CHAR_BUDGET,
   });
 }

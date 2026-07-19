@@ -1,13 +1,14 @@
 # Release Checklist
 
-This document covers build-only native validation and publishing desktop releases from one tag.
+This document covers build-only native validation, promotion through the protected
+`release/stable` branch, and publishing desktop releases from one exact commit.
 
 ## What the workflow does
 
 - Triggers:
-  - Manual dispatch defaults to build-only validation and uploads workflow artifacts without publishing anything.
-  - A pushed tag matching `v*.*.*` publishes after successful builds.
-  - Manual publication requires the explicit `publish_release=true` input.
+  - Manual dispatch from any branch defaults to build-only validation and uploads workflow artifacts without publishing anything.
+  - A pushed tag matching `v*.*.*` publishes only when the tag points to the exact head of `release/stable`.
+  - Manual publication requires `publish_release=true` from the exact head of `release/stable`.
 - Runs quality gates first: lint, typecheck, test.
 - Builds four artifacts in parallel:
   - macOS `arm64` DMG
@@ -21,12 +22,17 @@ This document covers build-only native validation and publishing desktop release
 - Keeps the historical 0.4.x compatibility release unchanged; current stable payloads stay on their own GitHub Latest release.
 - Publishes prerelease installers only on their versioned GitHub prerelease; prereleases never replace the stable `scient` update manifests.
 - Publishes the CLI package (`apps/server`, npm package `@scientfactory/cli`, executable `scient`) with OIDC trusted publishing when `SCIENT_PUBLISH_CLI=1`.
-- Signing is optional and auto-detected per platform from secrets.
+- Build-only runs auto-detect signing credentials and may produce unsigned validation artifacts.
+- Public releases fail closed unless macOS signing/notarization and Windows Trusted Signing credentials are complete.
 
 ## Desktop auto-update notes
 
 - Runtime updater: `electron-updater` in `apps/desktop/src/main.ts`.
-- Safety lock: client update checks are currently disabled in source by `SCIENT_DESKTOP_UPDATES_ENABLED = false`. Configuring repository variables can validate and publish artifacts, but cannot enable client updates. Enabling updates requires a separate reviewed code change plus an installed-app feed test.
+- Client update checks are enabled in packaged production builds by `SCIENT_DESKTOP_UPDATES_ENABLED = true`. Development builds, unpackaged builds, builds without `app-update.yml`, Linux builds not running as an AppImage, and installations with `SYNARA_DISABLE_AUTO_UPDATE=1` remain disabled.
+- `v0.5.6` was published with client update checks disabled. Existing `v0.5.6`
+  installations therefore require one manual installation of the first signed,
+  updater-enabled release; the application cannot remotely enable code that is
+  compiled off. Releases after that bootstrap can use the in-app update flow.
 - Update UX:
   - Background checks run on startup delay + interval.
   - New updates are prepared/downloaded in the background after detection; install/restart stays manual.
@@ -79,6 +85,12 @@ Checklist:
 
 ## Scient release controls
 
+- `release/stable` is the protected public-release pointer. It starts at the exact
+  commit shipped as `v0.5.6` and advances only through a promotion PR.
+- Ordinary development remains on `main`. Merging or pushing to `main` cannot
+  publish a release and cannot update installed apps.
+- Publication preflight fetches `release/stable` and requires `github.sha` to
+  equal its exact head for both version-tag pushes and manual publication.
 - Set `SCIENT_DESKTOP_RELEASES_ENABLED=true` only after `SCIENT_DESKTOP_UPDATE_REPOSITORY=ScientFactory/scient-desktop` is configured and the release candidate is ready for native CI validation.
 - The desktop updater expects the pinned compatibility release in this repository to include the generated updater metadata files, not just the installers.
 - The published release title should read `Scient vX.Y.Z`.
@@ -87,18 +99,30 @@ Checklist:
   - `SCIENT_PUBLISH_CLI=1`
   - `SCIENT_FINALIZE_RELEASE=1`
 
-## 1) Build-only native CI validation
+## 1) Promote and validate a release candidate
 
-Use this before publication to validate the real native macOS, Linux, and Windows build matrix. Build-only mode does not create a tag, GitHub Release, npm package, updater manifest, or version-bump commit.
+Use this before publication to validate the exact protected-branch commit on the
+real native macOS, Linux, and Windows build matrix. Build-only mode does not
+create a tag, GitHub Release, npm package, updater manifest, or version-bump commit.
 
-1. Push the release-candidate branch so GitHub Actions can check it out.
-2. Start the workflow in build-only mode:
-   - `gh workflow run release.yml --ref BRANCH -f version=X.Y.Z -f publish_release=false`
-3. Wait for `.github/workflows/release.yml` to finish.
-4. Confirm preflight and all four native matrix builds pass.
-5. Download the workflow artifacts and sanity-check installation on each OS.
+1. Make sure the intended source commit is merged and green on `main`.
+2. Open a promotion PR from `main` into `release/stable` and merge it only after
+   the protected branch checks pass.
+3. Start the workflow against the promoted branch in build-only mode:
+   - `gh workflow run release.yml --ref release/stable -f version=X.Y.Z -f publish_release=false`
+4. Wait for `.github/workflows/release.yml` to finish.
+5. Confirm preflight and all four native matrix builds pass.
+6. Download the workflow artifacts and sanity-check installation on each OS.
+7. For an updater activation or updater change, install the candidate and verify
+   check, background download, visible Update action, restart/install, and
+   post-restart version/state continuity before publication.
+8. For the first updater-enabled release, verify both the one-time manual upgrade
+   from `v0.5.6` and an automatic update from that candidate to a higher mock or
+   prerelease version.
 
-To publish from a manual dispatch instead of a tag push, pass `publish_release=true`. This is intentionally opt-in.
+To publish from a manual dispatch instead of a tag push, dispatch the exact
+`release/stable` head with `publish_release=true`. The workflow rejects
+publication from every other ref or commit.
 
 ## 2) Apple signing + notarization setup (macOS)
 
@@ -132,10 +156,9 @@ Notes:
 
 ## 3) Azure Trusted Signing setup (Windows)
 
-Windows signing is optional for both the `0.4.2` compatibility bridge and the
-clean `0.5.0` release. When any Azure signing secret is absent, the workflow
-continues and produces an unsigned NSIS installer, matching previous releases.
-Signing is enabled only when all of the following secrets are present:
+When any Azure signing secret is absent, build-only validation continues with an
+unsigned NSIS installer, but public release publication fails. Signing is enabled
+only when all of the following secrets are present:
 
 - `AZURE_TENANT_ID`
 - `AZURE_CLIENT_ID`
@@ -159,24 +182,25 @@ Optional signing checklist:
 6. Add Azure secrets listed above in GitHub Actions secrets.
 7. Re-run a build-only workflow and confirm the Windows installer is signed.
 
-If Windows signing is not being configured, no placeholder or empty secrets are
-needed. Leave them absent and verify the workflow reports that it is building an
-unsigned installer.
+If Windows signing is not yet configured, leave the secrets absent and use only
+build-only validation. Do not publish a public release until signing is configured.
 
 ## 4) Ongoing release checklist
 
 1. Ensure `main` is green in CI.
-2. Run the build-only native CI validation for the release-candidate branch and version.
-3. Bump app version as needed.
-4. Confirm `gh api repos/OWNER/REPO/releases/latest --jq .tag_name` returns the compatibility tag configured in `scripts/release-update-policy.json`.
-5. Create release tag: `vX.Y.Z`.
-6. Push tag.
-7. Verify workflow steps:
+2. Promote `main` to `release/stable` through a protected PR.
+3. Run build-only native validation for the exact `release/stable` head and version.
+4. Install and smoke-test the produced artifacts; updater changes require the full check/download/button/install/restart path.
+5. Confirm all required Apple and Azure signing secrets are configured before publication.
+6. Confirm `gh api repos/OWNER/REPO/releases/latest --jq .tag_name` returns the current stable release.
+7. Either create and push `vX.Y.Z` at the exact `release/stable` head or manually dispatch that branch with `publish_release=true`.
+8. Verify workflow steps:
    - preflight passes
    - all matrix builds pass
    - release job uploads expected files
-8. Confirm a stable release is GitHub Latest and contains the new payloads plus all three `scient` manifests; prereleases must not replace Latest.
-9. Smoke test downloaded artifacts.
+9. Confirm a stable release is GitHub Latest and contains the new payloads plus all three `scient` manifests; prereleases must not replace Latest.
+10. From an installed previous version, verify detection, background preparation,
+    the Update button, confirmed install/restart, and post-restart continuity.
 
 ## 5) Troubleshooting
 
@@ -185,5 +209,5 @@ unsigned installer.
 - Windows build unsigned when expected signed:
   - Check all Azure ATS and auth secrets are populated and non-empty.
 - Build fails with signing error:
-  - Retry with all Azure signing secrets removed to use the supported unsigned path.
+  - Use a build-only run while credentials are incomplete; public release runs intentionally fail closed.
   - Re-check certificate/profile names and tenant/client credentials.

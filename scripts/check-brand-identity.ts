@@ -101,7 +101,7 @@ const requiredScientIdentityText = new Map<string, readonly string[]>([
       'SCIENT_APP_NAME = "Scient"',
       'SCIENT_DESKTOP_SCHEME = "scient"',
       'SCIENT_PRODUCTION_BUNDLE_ID = "com.scientfactory.scient"',
-      "SCIENT_DESKTOP_UPDATES_ENABLED = false",
+      "SCIENT_DESKTOP_UPDATES_ENABLED = true",
     ],
   ],
   ["apps/web/src/branding.ts", ['APP_BASE_NAME = "Scient"']],

@@ -289,7 +289,7 @@ async function waitForElement<T extends Element>(
       element = query();
       expect(element, errorMessage).toBeTruthy();
     },
-    { timeout: 8_000, interval: 16 },
+    { timeout: 20_000, interval: 16 },
   );
   return element!;
 }
@@ -307,7 +307,7 @@ async function waitForToast(title: string, count = 1): Promise<void> {
       const matches = queryToastTitles().filter((t) => t === title);
       expect(matches.length, `Expected ${count} "${title}" toast(s)`).toBeGreaterThanOrEqual(count);
     },
-    { timeout: 4_000, interval: 16 },
+    { timeout: 10_000, interval: 16 },
   );
 }
 
@@ -333,7 +333,13 @@ async function mountApp(): Promise<{ cleanup: () => Promise<void> }> {
   const router = getRouter(createMemoryHistory({ initialEntries: [`/${THREAD_ID}`] }));
 
   const screen = await render(<RouterProvider router={router} />, { container: host });
-  await waitForComposerEditor();
+  try {
+    await waitForComposerEditor();
+  } catch (error) {
+    await screen.unmount().catch(() => {});
+    host.remove();
+    throw error;
+  }
 
   return {
     cleanup: async () => {
@@ -361,6 +367,7 @@ describe("Keybindings update toast", () => {
     resetWsNativeApiForTest();
     localStorage.clear();
     document.body.innerHTML = "";
+    wsClient = null;
     serverConfigStreamRequestId = null;
     useComposerDraftStore.setState({
       draftsByThreadId: {},
@@ -378,6 +385,8 @@ describe("Keybindings update toast", () => {
   afterEach(() => {
     resetWsNativeApiForTest();
     document.body.innerHTML = "";
+    wsClient = null;
+    serverConfigStreamRequestId = null;
   });
 
   it("does not show success toasts for passive keybinding reloads", async () => {

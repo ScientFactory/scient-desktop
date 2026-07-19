@@ -45,6 +45,30 @@ export const ServerProviderAuthStatus = Schema.Literals([
 ]);
 export type ServerProviderAuthStatus = typeof ServerProviderAuthStatus.Type;
 
+export const ServerProviderConnectionMethod = Schema.Literals([
+  "codex_browser",
+  "claude_subscription",
+  "cursor_browser",
+]);
+export type ServerProviderConnectionMethod = typeof ServerProviderConnectionMethod.Type;
+
+export const ServerProviderConnectionState = Schema.Struct({
+  operationId: TrimmedNonEmptyString,
+  method: ServerProviderConnectionMethod,
+  status: Schema.Literals([
+    "starting",
+    "waiting_for_browser",
+    "verifying",
+    "connected",
+    "failed",
+    "cancelled",
+  ]),
+  startedAt: IsoDateTime,
+  finishedAt: Schema.NullOr(IsoDateTime),
+  message: TrimmedNonEmptyString,
+});
+export type ServerProviderConnectionState = typeof ServerProviderConnectionState.Type;
+
 export const ServerProviderStatus = Schema.Struct({
   provider: ProviderKind,
   status: ServerProviderStatusState,
@@ -76,6 +100,7 @@ export const ServerProviderStatus = Schema.Struct({
       output: Schema.NullOr(Schema.String.check(Schema.isMaxLength(10_000))),
     }),
   ),
+  connectionState: Schema.optionalKey(ServerProviderConnectionState),
 });
 export type ServerProviderStatus = typeof ServerProviderStatus.Type;
 
@@ -433,6 +458,37 @@ export class ServerProviderUpdateError extends Schema.TaggedErrorClass<ServerPro
 
 export const ServerProviderUpdateResult = ServerProviderStatusesUpdatedPayload;
 export type ServerProviderUpdateResult = typeof ServerProviderUpdateResult.Type;
+
+export const ServerProviderConnectionStartInput = Schema.Struct({
+  provider: ProviderKind,
+  method: ServerProviderConnectionMethod,
+});
+export type ServerProviderConnectionStartInput = typeof ServerProviderConnectionStartInput.Type;
+
+export const ServerProviderConnectionCancelInput = Schema.Struct({
+  provider: ProviderKind,
+  operationId: TrimmedNonEmptyString,
+});
+export type ServerProviderConnectionCancelInput = typeof ServerProviderConnectionCancelInput.Type;
+
+export class ServerProviderConnectionError extends Schema.TaggedErrorClass<ServerProviderConnectionError>()(
+  "ServerProviderConnectionError",
+  {
+    provider: ProviderKind,
+    reason: Schema.Literals([
+      "unsupported_provider",
+      "provider_not_installed",
+      "invalid_method",
+      "already_running",
+      "operation_not_found",
+      "provider_disabled",
+    ]),
+    message: TrimmedNonEmptyString,
+  },
+) {}
+
+export const ServerProviderConnectionResult = ServerProviderStatusesUpdatedPayload;
+export type ServerProviderConnectionResult = typeof ServerProviderConnectionResult.Type;
 
 export const ServerGetSettingsResult = ServerSettings;
 export type ServerGetSettingsResult = typeof ServerGetSettingsResult.Type;

@@ -101,6 +101,7 @@ import {
 import type { FileCommentSelection } from "../lib/fileComments";
 import { type DockPaneRuntimeMode } from "../lib/dockPaneActivation";
 import { projectListDirectoriesQueryOptions } from "../lib/projectReactQuery";
+import { clearNewThreadLanding, isNewThreadLandingPending } from "../lib/newThreadLanding";
 import {
   WorkspaceFileOpenerContext,
   prefetchWorkspaceFile,
@@ -1469,6 +1470,19 @@ function SingleChatSurface(props: {
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[props.threadId] ?? null,
   );
+  const newThreadLandingRef = useRef<{ threadId: ThreadIdType; deferMount: boolean } | null>(null);
+  if (newThreadLandingRef.current?.threadId !== props.threadId) {
+    newThreadLandingRef.current = {
+      threadId: props.threadId,
+      deferMount: isNewThreadLandingPending(props.threadId),
+    };
+  }
+  const deferNewThreadLandingMount = newThreadLandingRef.current.deferMount;
+  useEffect(() => {
+    if (deferNewThreadLandingMount) {
+      clearNewThreadLanding(props.threadId);
+    }
+  }, [deferNewThreadLandingMount, props.threadId]);
   // File preview must follow the same runtime cwd as chat markdown, diffs, and git:
   // worktree-backed threads resolve links against their materialized worktree.
   const workspaceRoot = resolveFilePreviewWorkspaceRoot({
@@ -2322,7 +2336,7 @@ function SingleChatSurface(props: {
             <DeferredChatView
               threadId={props.threadId}
               paneScopeId={SINGLE_CHAT_PANE_SCOPE_ID}
-              deferMount={false}
+              deferMount={deferNewThreadLandingMount}
               surfaceMode="single"
               isFocusedPane
               panelState={chatPanelState}

@@ -5,17 +5,43 @@ import PlatformButton from "../components/PlatformButton.astro";
 import Layout from "../layouts/Layout.astro";
 
 const capabilities = [
-  { kind: "literature", label: "Literature review", tone: "burgundy" },
-  { kind: "analysis", label: "Data analysis", tone: "slate" },
-  { kind: "writing", label: "Scientific writing", tone: "slate" },
-  { kind: "figures", label: "Figure creation", tone: "burgundy" },
+  {
+    kind: "literature",
+    label: "Literature review",
+    description: "Find, compare, and synthesize relevant research.",
+  },
+  {
+    kind: "planning",
+    label: "Experiment planning",
+    description: "Shape methods and protocols before the work begins.",
+  },
+  {
+    kind: "analysis",
+    label: "Data analysis",
+    description: "Explore data and turn results into clear evidence.",
+  },
+  {
+    kind: "figures",
+    label: "Figure creation",
+    description: "Create publication-ready scientific visuals.",
+  },
+  {
+    kind: "writing",
+    label: "Scientific writing",
+    description: "Draft and refine manuscripts with focused assistance.",
+  },
+  {
+    kind: "citations",
+    label: "Citation management",
+    description: "Organize references and keep every claim connected.",
+  },
 ] as const;
 ---
 
 <Layout
   theme="light"
   title="ScientFactory — One intelligent workspace for research"
-  description="From the first question to final publication, Scient brings your research tools and AI assistance into one focused workspace."
+  description="Scient is an agentic workspace that brings your research tools and AI agents together—from the first question to final publication."
 >
   <section class="hero" aria-labelledby="hero-title">
     <div class="hero-surface" aria-hidden="true"></div>
@@ -34,11 +60,11 @@ const capabilities = [
       <h1 id="hero-title" class="headline reveal" style="--reveal-delay: 90ms">
         <span>One intelligent</span>
         <span>workspace for every</span>
-        <span>stage of research.</span>
+        <span>stage of your research.</span>
       </h1>
 
       <p class="description reveal" style="--reveal-delay: 160ms">
-        From the first question to final publication, Scient brings your research tools and AI assistance into one focused workspace.
+        Scient is an agentic workspace that brings your research tools and AI agents together—from the first question to final publication.
       </p>
 
       <ul class="capabilities reveal" style="--reveal-delay: 230ms" aria-label="Scient capabilities">
@@ -96,8 +122,10 @@ const capabilities = [
     position: relative;
     z-index: 2;
     grid-column: 1;
+    justify-self: center;
     width: min(100%, 50rem);
-    padding: clamp(5.5rem, 9.5vh, 6.25rem) clamp(2.5rem, 4.5vw, 4.5rem) clamp(6rem, 11vh, 8rem) clamp(4.5rem, 5.75vw, 5.75rem);
+    padding: 1rem clamp(1.5rem, 2.25vw, 3rem) clamp(6rem, 11vh, 8rem)
+      clamp(3.75rem, calc(5.75vw - 0.75rem), 5rem);
   }
 
   .hero-geometry {
@@ -122,7 +150,7 @@ const capabilities = [
   .headline {
     margin: 0;
     color: var(--ink);
-    font-size: clamp(3.55rem, 5.2vw, 4.8rem);
+    font-size: clamp(3.55rem, 5vw, 4.55rem);
     font-weight: 500;
     letter-spacing: -0.058em;
     line-height: 1.13;
@@ -147,8 +175,8 @@ const capabilities = [
     width: min(100%, 40.75rem);
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.75rem;
-    margin: 3.2rem 0 0;
+    gap: 0.3rem 0.45rem;
+    margin: 2.4rem 0 0;
     padding: 0;
     list-style: none;
   }
@@ -158,7 +186,7 @@ const capabilities = [
     z-index: 3;
     grid-column: 2;
     min-width: 0;
-    padding: clamp(7.25rem, 12.8vh, 8.5rem) clamp(3.5rem, 4.4vw, 4.5rem) 6rem clamp(4.5rem, 6vw, 5.75rem);
+    padding: 2.75rem clamp(3.5rem, 4.4vw, 4.5rem) 6rem clamp(4.5rem, 6vw, 5.75rem);
   }
 
   .downloads-inner {
@@ -184,16 +212,16 @@ const capabilities = [
 
   @media (max-width: 1120px) {
     .hero {
-      grid-template-columns: minmax(0, 56fr) minmax(0, 44fr);
+      grid-template-columns: minmax(0, 60fr) minmax(0, 40fr);
     }
 
     .hero-surface {
-      width: 44%;
+      width: 40%;
     }
 
     .hero-content {
       width: 100%;
-      padding-right: 2.5rem;
+      padding-inline: clamp(2rem, 4vw, 3.25rem) clamp(1.75rem, 3vw, 2.5rem);
     }
 
     .hero-geometry {
@@ -203,7 +231,7 @@ const capabilities = [
     }
 
     .headline {
-      font-size: clamp(3.15rem, 5.7vw, 4rem);
+      font-size: clamp(2.85rem, 5.25vw, 3.6rem);
     }
 
     .downloads {
@@ -263,19 +291,24 @@ const capabilities = [
   }
 
   @media (max-width: 600px) {
+    .hero-content {
+      --mobile-title-gap: 1.65rem;
+      padding-top: 0;
+    }
+
     .hero-geometry {
       display: none;
     }
 
     .description {
-      margin-top: 1.55rem;
+      margin-top: var(--mobile-title-gap);
     }
 
     .capabilities {
       width: 100%;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0.55rem;
-      margin-top: 1.6rem;
+      gap: 0.2rem;
+      margin-top: 1.35rem;
     }
 
     .downloads {
@@ -289,6 +322,38 @@ const capabilities = [
 
     .download-actions {
       gap: 0.85rem;
+    }
+  }
+
+  @media (min-width: 431px) and (max-width: 600px) {
+    .headline {
+      font-size: clamp(2.8rem, 10vw, 3.65rem);
+    }
+  }
+
+  @media (max-width: 430px) {
+    .headline,
+    .description {
+      width: min(100%, 21rem);
+      margin-inline: auto;
+      text-align: left;
+    }
+  }
+
+  @media (max-width: 360px) {
+    .hero-content {
+      --mobile-copy-width: 17rem;
+    }
+
+    .headline,
+    .description {
+      width: min(100%, var(--mobile-copy-width));
+      margin-inline: auto;
+      text-align: left;
+    }
+
+    .description {
+      margin-top: var(--mobile-title-gap);
     }
   }
 

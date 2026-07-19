@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -15,8 +15,13 @@ import {
   SCIENT_PRODUCTION_BUNDLE_ID,
 } from "@synara/shared/desktopIdentity";
 
-import { DESKTOP_STAGE_DEPENDENCY_OVERRIDES } from "./lib/desktop-stage-dependency-overrides.ts";
 import { createDesktopPlatformBuildConfig } from "./lib/desktop-platform-build-config.ts";
+import {
+  createReleaseInstallManifest,
+  RELEASE_LOCKFILE_PATH,
+  RELEASE_PATCHES_PATH,
+  RELEASE_WORKSPACE_MANIFEST_PATHS,
+} from "./lib/release-workspace-manifests.ts";
 import {
   readReleaseUpdatePolicyConfig,
   resolveReleaseUpdatePolicy,
@@ -24,28 +29,17 @@ import {
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-const workspaceFiles = [
-  "package.json",
-  "bun.lock",
-  "apps/server/package.json",
-  "apps/desktop/package.json",
-  "apps/web/package.json",
-  "apps/marketing/package.json",
-  "packages/contracts/package.json",
-  "packages/effect-acp/package.json",
-  "packages/scient-project-init/package.json",
-  "packages/shared/package.json",
-  "scripts/package.json",
-] as const;
-
 function copyWorkspaceManifestFixture(targetRoot: string): void {
-  for (const relativePath of workspaceFiles) {
+  for (const relativePath of RELEASE_WORKSPACE_MANIFEST_PATHS) {
     const sourcePath = resolve(repoRoot, relativePath);
     const destinationPath = resolve(targetRoot, relativePath);
     mkdirSync(dirname(destinationPath), { recursive: true });
-    cpSync(sourcePath, destinationPath);
+    writeFileSync(destinationPath, createReleaseInstallManifest(readFileSync(sourcePath, "utf8")));
   }
-  cpSync(resolve(repoRoot, "patches"), resolve(targetRoot, "patches"), { recursive: true });
+  cpSync(resolve(repoRoot, RELEASE_LOCKFILE_PATH), resolve(targetRoot, RELEASE_LOCKFILE_PATH));
+  cpSync(resolve(repoRoot, RELEASE_PATCHES_PATH), resolve(targetRoot, RELEASE_PATCHES_PATH), {
+    recursive: true,
+  });
 }
 
 function writeMacManifestFixtures(targetRoot: string): { arm64Path: string; x64Path: string } {
@@ -96,8 +90,10 @@ function assertContains(haystack: string, needle: string, message: string): void
   }
 }
 
-function writeJsonFile(path: string, value: unknown): void {
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+function assertNotContains(haystack: string, needle: string, message: string): void {
+  if (haystack.includes(needle)) {
+    throw new Error(message);
+  }
 }
 
 function verifyCanonicalIdentity(): void {
@@ -121,10 +117,8 @@ function verifyCanonicalIdentity(): void {
   if (SCIENT_DESKTOP_UPDATE_CHANNEL !== "scient") {
     throw new Error(`Unexpected desktop update channel: ${SCIENT_DESKTOP_UPDATE_CHANNEL}.`);
   }
-  if (SCIENT_DESKTOP_UPDATES_ENABLED) {
-    throw new Error(
-      "Release publication must not implicitly enable desktop clients; a reviewed code change is required.",
-    );
+  if (!SCIENT_DESKTOP_UPDATES_ENABLED) {
+    throw new Error("Expected packaged Scient clients to use the approved update channel.");
   }
 
   const linux = createDesktopPlatformBuildConfig({ platform: "linux", target: "AppImage" }).linux;
@@ -152,7 +146,10 @@ function verifyCanonicalIdentity(): void {
 }
 
 function verifyReleaseWorkflowSafety(): void {
-  const workflow = readFileSync(resolve(repoRoot, ".github/workflows/release.yml"), "utf8");
+  const workflow = readFileSync(
+    resolve(repoRoot, ".github/workflows/release.yml"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
   assertContains(
     workflow,
     "if: ${{ vars.SCIENT_DESKTOP_RELEASES_ENABLED == 'true' }}",
@@ -200,8 +197,28 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     workflow,
-    "Windows signing is optional; building an unsigned installer",
-    "Expected Windows releases to support unsigned installers when signing is unavailable.",
+    "RELEASE_BRANCH: release/stable",
+    "Expected public releases to use the protected stable branch.",
+  );
+  assertContains(
+    workflow,
+    'if [[ "$GITHUB_SHA" != "$release_branch_sha" ]]',
+    "Expected publication to require the exact release/stable head.",
+  );
+  assertContains(
+    workflow,
+    "Public macOS releases require all Apple signing and notarization secrets.",
+    "Expected public macOS releases to fail closed without signing and notarization.",
+  );
+  assertContains(
+    workflow,
+    "Public Windows releases require all Azure Trusted Signing secrets.",
+    "Expected public Windows releases to fail closed without signing.",
+  );
+  assertContains(
+    workflow,
+    'node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"\n          bun install --lockfile-only --ignore-scripts',
+    "Expected every native builder to refresh the lock after release version alignment.",
   );
   assertContains(
     workflow,
@@ -218,37 +235,144 @@ function verifyReleaseWorkflowSafety(): void {
     "release-assets/SHA256SUMS.txt",
     "Expected releases to publish a SHA-256 checksum manifest.",
   );
+  assertContains(
+    workflow,
+    'node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"\n          bun install --lockfile-only --ignore-scripts',
+    "Expected artifact builds to refresh lockfile metadata after aligning workspace versions.",
+  );
 }
 
-function verifyDesktopStageProductionInstall(targetRoot: string): void {
-  const stageInstallRoot = resolve(targetRoot, "desktop-stage-install");
-  mkdirSync(stageInstallRoot, { recursive: true });
+function verifyDesktopStageLockAuthority(): void {
+  const buildScript = readFileSync(
+    resolve(repoRoot, "scripts/build-desktop-artifact.ts"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  assertContains(
+    buildScript,
+    "bun install --omit dev --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
+    "Expected desktop staging to materialize its production workspace from the repository lockfile.",
+  );
+  assertContains(
+    buildScript,
+    "Bun 1.3.12 makes --production implicitly frozen.",
+    "Expected desktop lock materialization to document why it uses the equivalent omit-dev scope.",
+  );
+  assertContains(
+    buildScript,
+    "bun install --production --frozen-lockfile --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",
+    "Expected desktop staging to install only from its repository-derived frozen lock projection.",
+  );
+  assertContains(
+    buildScript,
+    'path.join(stageAppDir, "node_modules", "node-pty")',
+    "Expected desktop staging to run only the required node-pty native install lifecycle.",
+  );
+  assertNotContains(
+    buildScript,
+    ")`bun install --production`,",
+    "Desktop staging must not retain the fresh production install path.",
+  );
+  assertContains(
+    buildScript,
+    'path.join(repoRoot, "node_modules", "electron-builder", "cli.js")',
+    "Expected packaging to invoke the pinned root electron-builder CLI without platform-specific shims.",
+  );
+  assertContains(
+    buildScript,
+    "prepareStagedNodePty",
+    "Expected every release target to prepare the pinned node-pty native dependency.",
+  );
+  assertContains(
+    buildScript,
+    ")`bun run install`,",
+    "Expected node-pty staging to run its pinned install and postinstall lifecycle.",
+  );
+  const rootPackage = readFileSync(resolve(repoRoot, "package.json"), "utf8");
+  assertContains(
+    rootPackage,
+    '"node-gyp": "12.4.0"',
+    "Expected native compiler tooling to be pinned.",
+  );
+}
 
-  writeJsonFile(resolve(stageInstallRoot, "package.json"), {
-    private: true,
-    dependencies: {
-      "@pierre/diffs": "^1.1.0-beta.16",
-    },
-    overrides: DESKTOP_STAGE_DEPENDENCY_OVERRIDES,
-  });
+function readPackageVersion(root: string, relativePath: string): string {
+  const packageJson = JSON.parse(readFileSync(resolve(root, relativePath), "utf8")) as {
+    version?: unknown;
+  };
+  if (typeof packageJson.version !== "string" || packageJson.version.length === 0) {
+    throw new Error(`Expected ${relativePath} to declare a package version.`);
+  }
+  return packageJson.version;
+}
 
-  execFileSync("bun", ["install", "--production"], {
-    cwd: stageInstallRoot,
+function verifyFrozenDesktopStageInstall(targetRoot: string, verifyNative = false): void {
+  execFileSync(
+    "bun",
+    [
+      "install",
+      "--omit",
+      "dev",
+      "--ignore-scripts",
+      "--linker",
+      "hoisted",
+      "--filter",
+      "@scientfactory/cli",
+      "--filter",
+      "@synara/desktop",
+    ],
+    { cwd: targetRoot, stdio: "inherit" },
+  );
+  execFileSync(
+    "bun",
+    [
+      "install",
+      "--production",
+      "--frozen-lockfile",
+      "--ignore-scripts",
+      "--linker",
+      "hoisted",
+      "--filter",
+      "@scientfactory/cli",
+      "--filter",
+      "@synara/desktop",
+    ],
+    { cwd: targetRoot, stdio: "inherit" },
+  );
+  const packagePairs = [
+    ["node_modules/electron/package.json", "apps/desktop/node_modules/electron/package.json"],
+    ["node_modules/ws/package.json", "apps/server/node_modules/ws/package.json"],
+    ["node_modules/@pierre/diffs/package.json", "apps/web/node_modules/@pierre/diffs/package.json"],
+  ] as const;
+  for (const [stagedPath, workspacePath] of packagePairs) {
+    const stagedVersion = readPackageVersion(targetRoot, stagedPath);
+    const workspaceVersion = readPackageVersion(repoRoot, workspacePath);
+    if (stagedVersion !== workspaceVersion) {
+      throw new Error(
+        `Frozen stage resolved ${stagedPath} at ${stagedVersion}; expected locked workspace version ${workspaceVersion}.`,
+      );
+    }
+  }
+
+  if (!verifyNative) return;
+
+  const stagedNodePtyDir = resolve(targetRoot, "node_modules/node-pty");
+  const nativeEnv = {
+    ...process.env,
+    PATH: `${resolve(repoRoot, "node_modules/.bin")}${delimiter}${process.env.PATH ?? ""}`,
+  };
+  execFileSync("bun", ["run", "install"], {
+    cwd: stagedNodePtyDir,
+    env: nativeEnv,
     stdio: "inherit",
   });
-
-  const diffsPackageJson = JSON.parse(
-    readFileSync(resolve(stageInstallRoot, "node_modules/@pierre/diffs/package.json"), "utf8"),
-  ) as { dependencies?: Record<string, string> };
-  const themePackageJson = JSON.parse(
-    readFileSync(resolve(stageInstallRoot, "node_modules/@pierre/theme/package.json"), "utf8"),
-  ) as { version?: string };
-  const expectedThemeVersion = diffsPackageJson.dependencies?.["@pierre/theme"];
-  if (!expectedThemeVersion || themePackageJson.version !== expectedThemeVersion) {
-    throw new Error(
-      `Expected @pierre/theme ${expectedThemeVersion ?? "<missing>"} for @pierre/diffs, got ${themePackageJson.version ?? "<missing>"}.`,
-    );
-  }
+  execFileSync(process.execPath, [resolve(repoRoot, "scripts/node-pty-smoke.mjs")], {
+    cwd: targetRoot,
+    env: {
+      ...process.env,
+      SYNARA_NODE_PTY_SMOKE_REQUIRE_ROOT: targetRoot,
+    },
+    stdio: "inherit",
+  });
 }
 
 const tempRoot = mkdtempSync(join(tmpdir(), "scient-release-smoke-"));
@@ -256,7 +380,9 @@ const tempRoot = mkdtempSync(join(tmpdir(), "scient-release-smoke-"));
 try {
   verifyCanonicalIdentity();
   verifyReleaseWorkflowSafety();
+  verifyDesktopStageLockAuthority();
   copyWorkspaceManifestFixture(tempRoot);
+  verifyFrozenDesktopStageInstall(tempRoot);
 
   execFileSync(
     process.execPath,
@@ -276,6 +402,7 @@ try {
     cwd: tempRoot,
     stdio: "inherit",
   });
+  verifyFrozenDesktopStageInstall(tempRoot, true);
 
   const lockfile = readFileSync(resolve(tempRoot, "bun.lock"), "utf8");
   assertContains(
@@ -305,8 +432,6 @@ try {
     "Scient-9.9.9-smoke.0-x64.zip",
     "Merged manifest is missing the x64 asset.",
   );
-
-  verifyDesktopStageProductionInstall(tempRoot);
 
   console.log("Release smoke checks passed.");
 } finally {

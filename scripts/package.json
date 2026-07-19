@@ -20,6 +20,7 @@
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
     "@types/bun": "catalog:",
+    "electron-builder": "26.15.3",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

@@ -13,6 +13,7 @@ import type {
   ProviderKind,
   ServerSettings,
   ServerProviderAuthStatus,
+  ServerProviderConnectionState,
   ServerProviderStatus,
   ServerProviderStatusState,
   ServerProviderUpdateState,
@@ -825,7 +826,7 @@ const runAntigravityCommand = (args: ReadonlyArray<string>, executable = "agy") 
 
 // ── Health check ────────────────────────────────────────────────────
 
-function makeCodexProbeEnv(homePath?: string): NodeJS.ProcessEnv {
+async function makeCodexProbeEnv(homePath?: string): Promise<NodeJS.ProcessEnv> {
   const normalizedHomePath = nonEmptyTrimmed(homePath);
   return buildCodexProcessEnv({
     ...(normalizedHomePath ? { homePath: normalizedHomePath } : {}),
@@ -866,7 +867,7 @@ export const makeCheckCodexProviderStatus = (
   Effect.gen(function* () {
     const checkedAt = new Date().toISOString();
     const executable = nonEmptyTrimmed(binaryPath) ?? "codex";
-    const probeEnv = makeCodexProbeEnv(homePath);
+    const probeEnv = yield* Effect.promise(() => makeCodexProbeEnv(homePath));
 
     // Probe 1: `codex --version` — is the CLI reachable?
     const versionProbe = yield* runCodexCommand(["--version"], executable, probeEnv).pipe(
@@ -2083,6 +2084,9 @@ export function makeProviderHealthLive(options?: { readonly providerUpdateTimeou
       const updateStatesRef = yield* Ref.make<ReadonlyMap<ProviderKind, ServerProviderUpdateState>>(
         new Map(),
       );
+      const connectionStatesRef = yield* Ref.make<
+        ReadonlyMap<ProviderKind, ServerProviderConnectionState>
+      >(new Map());
       const refreshFiberRef = yield* Ref.make<Fiber.Fiber<ProviderStatuses, never> | null>(null);
       const commandCoordinator = yield* makeProviderMaintenanceCommandCoordinator({
         makeAlreadyRunningError: (provider) =>
@@ -2175,14 +2179,18 @@ export function makeProviderHealthLive(options?: { readonly providerUpdateTimeou
         status: ServerProviderStatus,
       ) {
         const updateStates = yield* Ref.get(updateStatesRef);
+        const connectionStates = yield* Ref.get(connectionStatesRef);
         const updateState = updateStates.get(status.provider);
-        if (!updateState) {
-          const { updateState: _updateState, ...statusWithoutUpdateState } = status;
-          return statusWithoutUpdateState;
-        }
+        const connectionState = connectionStates.get(status.provider);
+        const {
+          updateState: _updateState,
+          connectionState: _connectionState,
+          ...stableStatus
+        } = status;
         return {
-          ...status,
-          updateState,
+          ...stableStatus,
+          ...(updateState ? { updateState } : {}),
+          ...(connectionState ? { connectionState } : {}),
         };
       });
 
@@ -2221,6 +2229,21 @@ export function makeProviderHealthLive(options?: { readonly providerUpdateTimeou
           return next;
         });
 
+        return yield* publishProjectedStatuses();
+      });
+
+      const setConnectionState: ProviderHealthShape["setConnectionState"] = Effect.fn(
+        "ProviderHealth.setConnectionState",
+      )(function* (provider, state) {
+        yield* Ref.update(connectionStatesRef, (previous) => {
+          const next = new Map(previous);
+          if (state) {
+            next.set(provider, state);
+          } else {
+            next.delete(provider);
+          }
+          return next;
+        });
         return yield* publishProjectedStatuses();
       });
 
@@ -2361,7 +2384,11 @@ export function makeProviderHealthLive(options?: { readonly providerUpdateTimeou
         Effect.forEach(
           statuses,
           (status) => {
-            const { updateState: _updateState, ...statusToPersist } = status;
+            const {
+              updateState: _updateState,
+              connectionState: _connectionState,
+              ...statusToPersist
+            } = status;
             return writeProviderStatusCache({
               filePath: cachePathByProvider.get(status.provider)!,
               provider: statusToPersist,
@@ -2592,7 +2619,12 @@ export function makeProviderHealthLive(options?: { readonly providerUpdateTimeou
 
           const providers = yield* refreshNow.pipe(Effect.mapError(toUpdateError));
           const refreshed = providers.find((status) => status.provider === provider);
-          const stillOutdated = refreshed?.versionAdvisory?.status === "behind_latest";
+          const refreshedAdvisory = refreshed?.versionAdvisory;
+          const stillOutdated = refreshedAdvisory?.status === "behind_latest";
+          const stillOutdatedVersions =
+            refreshedAdvisory?.currentVersion && refreshedAdvisory.latestVersion
+              ? ` (installed ${refreshedAdvisory.currentVersion}, latest ${refreshedAdvisory.latestVersion})`
+              : "";
           const finalProviders = yield* setProviderUpdateState(
             provider,
             makeUpdateState({
@@ -2600,7 +2632,7 @@ export function makeProviderHealthLive(options?: { readonly providerUpdateTimeou
               startedAt,
               finishedAt,
               message: stillOutdated
-                ? "Update command completed, but Scient still detects an outdated provider version."
+                ? `Update command completed, but Scient still detects an outdated provider version${stillOutdatedVersions}.`
                 : "Provider updated.",
               output: output ? output.slice(0, UPDATE_OUTPUT_MAX_BYTES) : null,
             }),
@@ -2630,6 +2662,7 @@ export function makeProviderHealthLive(options?: { readonly providerUpdateTimeou
         getStatuses: Ref.get(statusesRef).pipe(Effect.flatMap(projectStatusesForCurrentSettings)),
         refresh,
         updateProvider,
+        setConnectionState,
         get streamChanges() {
           return Stream.fromPubSub(changesPubSub);
         },

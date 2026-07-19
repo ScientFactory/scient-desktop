@@ -36,8 +36,12 @@ export interface OrchestrationProjectionPipelineShape {
   /**
    * Project only the hot-path repositories required for live transcript and
    * session updates during streaming.
+   *
+   * PRECONDITION: the caller already owns an open transaction. This method
+   * deliberately performs no transaction management; use `projectEvent` when
+   * there is no surrounding transaction.
    */
-  readonly projectHotEvent: (
+  readonly projectHotEventInCurrentTransaction: (
     event: OrchestrationEvent,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 

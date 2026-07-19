@@ -118,6 +118,7 @@ import { isElectron } from "../env";
 import { stripDiffSearchParams } from "../diffRouteSearch";
 import { resolveSubagentPresentationForThread } from "../lib/subagentPresentation";
 import { ensureHomeChatProject, isHomeChatContainerProject } from "../lib/chatProjects";
+import { useProviderConnectionDialogStore } from "../providerConnectionDialogStore";
 import { ensureStudioProject, isStudioContainerProject } from "../lib/studioProjects";
 import { resolveFirstSendTarget } from "../lib/chatFirstSend";
 import {
@@ -208,6 +209,7 @@ import {
   canOfferSideSlashCommand,
   canOfferReviewSlashCommand,
   hasProviderNativeSlashCommand,
+  providerSupportsTextNativeReviewCommand,
   resolveComposerSlashRootBranch,
 } from "../composerSlashCommands";
 import {
@@ -3379,8 +3381,8 @@ export default function ChatView({
   }, [composerTrigger, providerNativeCommandNames, selectedProvider]);
   const effectiveComposerTriggerKind = effectiveComposerTrigger?.kind ?? null;
   const supportsTextNativeReviewCommand = useMemo(
-    () => providerNativeCommands.some((command) => command.name.toLowerCase() === "review"),
-    [providerNativeCommands],
+    () => providerSupportsTextNativeReviewCommand(selectedProvider, providerNativeCommands),
+    [providerNativeCommands, selectedProvider],
   );
   const providerSkills = providerSkillsQuery.data?.skills ?? EMPTY_PROVIDER_SKILLS;
   const selectedModelCaps = useMemo(
@@ -6079,10 +6081,7 @@ export default function ChatView({
       return;
     }
     if (voiceProviderStatus?.authStatus === "unauthenticated") {
-      toastManager.add({
-        type: "error",
-        title: "Sign in to ChatGPT in Codex before using voice notes.",
-      });
+      useProviderConnectionDialogStore.getState().openDialog("codex", "runtime_error");
       return;
     }
     if (!canStartVoiceNotes) {
@@ -7357,10 +7356,9 @@ export default function ChatView({
       }
     })();
     if (!sendProviderAvailability.usable) {
-      toastManager.add({
-        type: "error",
-        title: sendProviderAvailability.unavailableReason,
-      });
+      useProviderConnectionDialogStore
+        .getState()
+        .openDialog(sendProviderAvailability.provider, "send");
       return false;
     }
 
@@ -10986,6 +10984,9 @@ export default function ChatView({
       <ProviderHealthBanner
         status={shouldShowProviderHealthBanner ? visibleActiveProviderStatus : null}
         onDismiss={dismissActiveProviderHealthBanner}
+        onConnect={(provider) =>
+          useProviderConnectionDialogStore.getState().openDialog(provider, "health_banner")
+        }
       />
       <ThreadErrorBanner error={activeThread.error} onDismiss={dismissActiveThreadError} />
       <RateLimitBanner

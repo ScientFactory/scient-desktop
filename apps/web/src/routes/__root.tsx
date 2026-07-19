@@ -19,13 +19,13 @@ import {
 } from "@tanstack/react-router";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Throttler } from "@tanstack/react-pacer";
 
 import { APP_DISPLAY_NAME } from "../branding";
 import { DesktopWindowControls } from "../components/DesktopWindowControls";
 import { AppSnapCoordinator } from "../components/AppSnapCoordinator";
 import { AppSnapWelcomeDialog } from "../components/AppSnapWelcomeDialog";
 import { FeedbackDialog } from "../components/FeedbackDialog";
+import { ProviderConnectionDialog } from "../components/ProviderConnectionDialog";
 import { SETTINGS_TARGETS } from "../settingsNavigation";
 import ShortcutsDialog from "../components/ShortcutsDialog";
 import WhatsNewDialog from "../components/WhatsNewDialog";
@@ -110,6 +110,7 @@ const THREAD_DETAIL_CATCHUP_INTERVAL_MS = 1_500;
 const PENDING_SHELL_EVENT_BUFFER_LIMIT = 1_024;
 const PENDING_THREAD_EVENT_BUFFER_LIMIT = 512;
 const IMMEDIATE_ASSISTANT_FLUSH_ID_LIMIT = 512;
+const DOMAIN_EVENT_FLUSH_DELAY_MS = 100;
 const seenProviderUpdateNotificationKeys = new Set<string>();
 
 type ProviderUpdateToastId = ReturnType<typeof toastManager.add>;
@@ -200,6 +201,7 @@ function RootRouteView() {
           <ProviderStatusRefreshCoordinator />
           <GlobalShortcutsDialog />
           <GlobalFeedbackDialog />
+          <ProviderConnectionDialog />
           <GlobalWhatsNewSurface />
           <TaskCompletionNotifications />
           <AppSnapWelcomeDialog />
@@ -895,6 +897,8 @@ function EventRouter() {
     const threadSnapshotRequestInFlight = new Set<ThreadId>();
     const threadReplayRequestInFlight = new Set<ThreadId>();
     let reconcileThreadSubscriptionsChain = Promise.resolve();
+    let scopedSubscriptionsStarted = false;
+    let scopedSubscriptionsStartInFlight: Promise<void> | null = null;
 
     const beginThreadSubscription = (threadId: ThreadId) => {
       threadSnapshotSequenceById.delete(threadId);
@@ -1019,15 +1023,50 @@ function EventRouter() {
       flushShellBuffer(snapshot.snapshotSequence);
     };
 
-    const ensureScopedSubscriptions = async () => {
-      shellSnapshotSequence = -1;
-      pendingShellEvents = [];
-      subscribedThreadIds.clear();
-      threadSnapshotSequenceById.clear();
-      pendingThreadEventsById.clear();
-      threadReplayRequestInFlight.clear();
-      await api.orchestration.subscribeShell().catch(() => loadShellSnapshotOnce());
-      await enqueueThreadSubscriptionReconcile(visibleThreadIdsRef.current);
+    const ensureScopedSubscriptions = () => {
+      if (disposed || scopedSubscriptionsStarted) {
+        return Promise.resolve();
+      }
+      if (scopedSubscriptionsStartInFlight) {
+        return scopedSubscriptionsStartInFlight;
+      }
+
+      const startPromise = (async () => {
+        shellSnapshotSequence = -1;
+        pendingShellEvents = [];
+        subscribedThreadIds.clear();
+        threadSnapshotSequenceById.clear();
+        pendingThreadEventsById.clear();
+        threadReplayRequestInFlight.clear();
+        try {
+          await api.orchestration.subscribeShell();
+        } catch {
+          await loadShellSnapshotOnce().catch(() => undefined);
+          return;
+        }
+        if (disposed) {
+          await api.orchestration.unsubscribeShell().catch(() => undefined);
+          return;
+        }
+        await enqueueThreadSubscriptionReconcile(visibleThreadIdsRef.current);
+        if (disposed) {
+          await api.orchestration.unsubscribeShell().catch(() => undefined);
+          await Promise.all(
+            [...subscribedThreadIds].map((threadId) =>
+              api.orchestration.unsubscribeThread({ threadId }).catch(() => undefined),
+            ),
+          );
+          return;
+        }
+        scopedSubscriptionsStarted = true;
+      })();
+      const trackedPromise = startPromise.finally(() => {
+        if (scopedSubscriptionsStartInFlight === trackedPromise) {
+          scopedSubscriptionsStartInFlight = null;
+        }
+      });
+      scopedSubscriptionsStartInFlight = trackedPromise;
+      return trackedPromise;
     };
 
     const removeOrphanedTerminalsForCurrentState = () => {
@@ -1118,6 +1157,24 @@ function EventRouter() {
       }
     };
 
+    let domainEventFlushTimeoutId: number | null = null;
+    const cancelPendingDomainEventFlush = () => {
+      if (domainEventFlushTimeoutId === null) {
+        return;
+      }
+      window.clearTimeout(domainEventFlushTimeoutId);
+      domainEventFlushTimeoutId = null;
+    };
+    const schedulePendingDomainEventFlush = () => {
+      if (domainEventFlushTimeoutId !== null) {
+        return;
+      }
+      domainEventFlushTimeoutId = window.setTimeout(() => {
+        domainEventFlushTimeoutId = null;
+        flushPendingDomainEvents();
+      }, DOMAIN_EVENT_FLUSH_DELAY_MS);
+    };
+
     const queueDomainEvent = (event: OrchestrationEvent) => {
       pendingDomainEvents.push(event);
       if (shouldInvalidateProviderQueriesForEvent(event)) {
@@ -1140,11 +1197,11 @@ function EventRouter() {
         }
       }
       if (shouldFlushDomainEventImmediately(event, immediatelyFlushedAssistantMessageIds)) {
-        domainEventFlushThrottler.cancel();
+        cancelPendingDomainEventFlush();
         flushPendingDomainEvents();
         return;
       }
-      domainEventFlushThrottler.maybeExecute();
+      schedulePendingDomainEventFlush();
     };
 
     const replayThreadEvents = async (
@@ -1181,17 +1238,6 @@ function EventRouter() {
         threadReplayRequestInFlight.delete(threadId);
       }
     };
-
-    const domainEventFlushThrottler = new Throttler(
-      () => {
-        flushPendingDomainEvents();
-      },
-      {
-        wait: 100,
-        leading: false,
-        trailing: true,
-      },
-    );
 
     reconcileThreadSubscriptionsRef.current = (threadIds) =>
       enqueueThreadSubscriptionReconcile(threadIds);
@@ -1232,6 +1278,14 @@ function EventRouter() {
     const unsubThreadEvent = api.orchestration.onThreadEvent((item) => {
       if (item.kind === "snapshot") {
         const threadId = item.snapshot.thread.id;
+        const latestThreadSequence = threadSnapshotSequenceById.get(threadId);
+        if (
+          latestThreadSequence !== undefined &&
+          item.snapshot.snapshotSequence < latestThreadSequence
+        ) {
+          threadSnapshotRequestInFlight.delete(threadId);
+          return;
+        }
         threadSnapshotSequenceById.set(threadId, item.snapshot.snapshotSequence);
         threadSnapshotRequestInFlight.delete(threadId);
         syncServerThreadDetailHotPath(item.snapshot.thread);
@@ -1431,10 +1485,18 @@ function EventRouter() {
       });
     });
     subscribed = true;
+    // Start scoped streams once for this mounted router. The welcome listener can
+    // replay a cached value and then receive another lifecycle welcome, so the
+    // idempotent guard above prevents either path from restarting a live thread
+    // stream and clearing its cursor or pending-event buffer. WsTransport already
+    // restarts active streams when its underlying connection is replaced.
     void ensureScopedSubscriptions();
     // The shell stream normally delivers the sidebar snapshot. If it fails before
     // the first event, use the same lightweight query instead of the full history.
     const shellBootstrapFallbackTimer = window.setTimeout(() => {
+      if (!scopedSubscriptionsStarted) {
+        void ensureScopedSubscriptions();
+      }
       void loadShellSnapshotOnce().catch(() => undefined);
     }, SHELL_SNAPSHOT_BOOTSTRAP_FALLBACK_DELAY_MS);
     const threadDetailCatchupInterval = window.setInterval(() => {
@@ -1458,7 +1520,7 @@ function EventRouter() {
       needsBroadGitInvalidation = false;
       pendingGitInvalidationThreadIds = new Set();
       pendingStudioOutputInvalidationThreadIds = new Set();
-      domainEventFlushThrottler.cancel();
+      cancelPendingDomainEventFlush();
       reconcileThreadSubscriptionsRef.current = null;
       void api.orchestration.unsubscribeShell().catch(() => undefined);
       void Promise.all(

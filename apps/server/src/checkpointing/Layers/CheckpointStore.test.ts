@@ -208,6 +208,110 @@ describe("CheckpointStoreLive", () => {
     );
   });
 
+  it("resolves checkpoint refs concurrently before falling back to HEAD", async () => {
+    const fromRef = CheckpointRef.makeUnsafe("refs/synara-checkpoints/thread/diff/from");
+    const toRef = CheckpointRef.makeUnsafe("refs/synara-checkpoints/thread/diff/to");
+    const started = new Set<string>();
+    let releaseTo: (() => void) | undefined;
+    const toGate = new Promise<void>((resolve) => {
+      releaseTo = resolve;
+    });
+    const execute = vi.fn<GitCoreShape["execute"]>((input) => {
+      const args = input.args.join(" ");
+      if (args === `rev-parse --verify --quiet ${fromRef}^{commit}`) {
+        started.add("from");
+        return Effect.succeed({ code: 1, stdout: "", stderr: "" });
+      }
+      if (args === `rev-parse --verify --quiet ${toRef}^{commit}`) {
+        started.add("to");
+        return Effect.promise(() => toGate).pipe(
+          Effect.as({ code: 0, stdout: "to-oid\n", stderr: "" }),
+        );
+      }
+      if (args === "rev-parse --verify --quiet HEAD^{commit}") {
+        started.add("head");
+        return Effect.succeed({ code: 0, stdout: "head-oid\n", stderr: "" });
+      }
+      if (args.startsWith("diff --patch --minimal")) {
+        return Effect.succeed({ code: 0, stdout: "checkpoint diff", stderr: "" });
+      }
+      throw new Error(`Unexpected git args: ${args}`);
+    });
+    const layer = CheckpointStoreLive.pipe(
+      Layer.provide(Layer.succeed(GitCore, { execute } as unknown as GitCoreShape)),
+      Layer.provide(NodeServices.layer),
+    );
+    runtime = ManagedRuntime.make(layer);
+
+    const result = runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CheckpointStore;
+        return yield* store.diffCheckpoints({
+          cwd: "/repo",
+          fromCheckpointRef: fromRef,
+          toCheckpointRef: toRef,
+          fallbackFromToHead: true,
+          ignoreWhitespace: false,
+        });
+      }),
+    );
+
+    await waitFor(() => started.has("from") && started.has("to"));
+    expect(started.has("head")).toBe(false);
+    releaseTo?.();
+    await expect(result).resolves.toBe("checkpoint diff");
+    expect(started.has("head")).toBe(true);
+  });
+
+  it("resolves both checkpoint refs concurrently before reversing a diff", async () => {
+    const fromRef = CheckpointRef.makeUnsafe("refs/synara-checkpoints/thread/reverse/from");
+    const toRef = CheckpointRef.makeUnsafe("refs/synara-checkpoints/thread/reverse/to");
+    const started = new Set<string>();
+    let releaseRefs: (() => void) | undefined;
+    const refsGate = new Promise<void>((resolve) => {
+      releaseRefs = resolve;
+    });
+    const execute = vi.fn<GitCoreShape["execute"]>((input) => {
+      const args = input.args.join(" ");
+      if (args === `rev-parse --verify --quiet ${fromRef}^{commit}`) {
+        started.add("from");
+        return Effect.promise(() => refsGate).pipe(
+          Effect.as({ code: 0, stdout: "from-oid\n", stderr: "" }),
+        );
+      }
+      if (args === `rev-parse --verify --quiet ${toRef}^{commit}`) {
+        started.add("to");
+        return Effect.promise(() => refsGate).pipe(
+          Effect.as({ code: 0, stdout: "to-oid\n", stderr: "" }),
+        );
+      }
+      if (args.startsWith("diff --patch --binary --full-index")) {
+        return Effect.succeed({ code: 0, stdout: "", stderr: "" });
+      }
+      throw new Error(`Unexpected git args: ${args}`);
+    });
+    const layer = CheckpointStoreLive.pipe(
+      Layer.provide(Layer.succeed(GitCore, { execute } as unknown as GitCoreShape)),
+      Layer.provide(NodeServices.layer),
+    );
+    runtime = ManagedRuntime.make(layer);
+
+    const result = runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CheckpointStore;
+        return yield* store.reverseCheckpointDiff({
+          cwd: "/repo",
+          fromCheckpointRef: fromRef,
+          toCheckpointRef: toRef,
+        });
+      }),
+    );
+
+    await waitFor(() => started.has("from") && started.has("to"));
+    releaseRefs?.();
+    await expect(result).resolves.toBe(true);
+  });
+
   it("restores the worktree patch when resetting the index fails during file undo", async () => {
     const fromRef = CheckpointRef.makeUnsafe("refs/synara-checkpoints/thread/turn/start");
     const toRef = CheckpointRef.makeUnsafe("refs/synara-checkpoints/thread/turn/end");

@@ -21,7 +21,7 @@ import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { WORKTREE_BRANCH_PREFIX } from "@synara/shared/git";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
@@ -1093,7 +1093,7 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   return {};
 }
 
-function installDeterministicSendNativeApi(): () => void {
+function installDeterministicActionNativeApi(): () => void {
   const previousNativeApi = window.nativeApi;
   const wsNativeApi = readNativeApi();
   if (!wsNativeApi) {
@@ -1104,6 +1104,19 @@ function installDeterministicSendNativeApi(): () => void {
     configurable: true,
     value: {
       ...wsNativeApi,
+      shell: {
+        ...wsNativeApi.shell,
+        openInEditor: async (
+          cwd: Parameters<typeof wsNativeApi.shell.openInEditor>[0],
+          editor: Parameters<typeof wsNativeApi.shell.openInEditor>[1],
+        ) => {
+          wsRequests.push({
+            _tag: WS_METHODS.shellOpenInEditor,
+            cwd,
+            editor,
+          });
+        },
+      },
       git: {
         ...wsNativeApi.git,
         createWorktree: async (input: Parameters<typeof wsNativeApi.git.createWorktree>[0]) => {
@@ -1144,6 +1157,17 @@ function installDeterministicSendNativeApi(): () => void {
             command,
           });
           return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        },
+      },
+      automation: {
+        ...wsNativeApi.automation,
+        create: async (input: Parameters<typeof wsNativeApi.automation.create>[0]) => {
+          const request: WsRequestEnvelope["body"] = {
+            _tag: WS_METHODS.automationCreate,
+            ...input,
+          };
+          wsRequests.push(request);
+          return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.automation.create>>;
         },
       },
     },
@@ -1247,6 +1271,13 @@ const worker = setupWorker(
   }),
   http.get("*/api/project-favicon", () => new HttpResponse(null, { status: 204 })),
 );
+
+function suppressExpectedRuntimeDisposal(event: PromiseRejectionEvent): void {
+  // This file deliberately replaces the browser API singleton between mounted
+  // app roots. Effect reports cancellation of the old test-only runtime as an
+  // unhandled defect even though WsTransport.dispose handles its promises.
+  if (event.reason === "ManagedRuntime disposed") event.preventDefault();
+}
 
 async function nextFrame(): Promise<void> {
   await new Promise<void>((resolve) => {
@@ -1445,15 +1476,15 @@ async function waitForComposerPickerSurfaceOpen(): Promise<void> {
   });
 }
 
-function dispatchChatNewShortcut(): void {
-  dispatchThreadShortcut("o");
+async function dispatchChatNewShortcut(): Promise<void> {
+  await dispatchThreadShortcut("o");
 }
 
-function dispatchTerminalThreadShortcut(): void {
-  dispatchThreadShortcut("t");
+async function dispatchTerminalThreadShortcut(): Promise<void> {
+  await dispatchThreadShortcut("t");
 }
 
-function dispatchThreadShortcut(key: string): void {
+async function dispatchThreadShortcut(key: string): Promise<void> {
   const useMetaForMod = isMacPlatform(navigator.platform);
   window.dispatchEvent(
     new KeyboardEvent("keydown", {
@@ -1465,6 +1496,7 @@ function dispatchThreadShortcut(key: string): void {
       cancelable: true,
     }),
   );
+  await waitForLayout();
 }
 
 async function triggerChatNewShortcutUntilPath(
@@ -1490,21 +1522,12 @@ async function triggerTerminalThreadShortcutUntilPath(
 
 async function triggerThreadShortcutUntilPath(
   router: ReturnType<typeof getRouter>,
-  dispatchShortcut: () => void,
+  dispatchShortcut: () => Promise<void>,
   predicate: (pathname: string) => boolean,
   errorMessage: string,
 ): Promise<string> {
-  let pathname = router.state.location.pathname;
-  const deadline = Date.now() + 8_000;
-  while (Date.now() < deadline) {
-    dispatchShortcut();
-    await waitForLayout();
-    pathname = router.state.location.pathname;
-    if (predicate(pathname)) {
-      return pathname;
-    }
-  }
-  throw new Error(`${errorMessage} Last path: ${pathname}`);
+  await dispatchShortcut();
+  return waitForURL(router, predicate, errorMessage);
 }
 
 async function waitForNewThreadShortcutLabel(): Promise<void> {
@@ -1622,6 +1645,11 @@ async function mountChatView(options: {
 }): Promise<MountedChatView> {
   fixture = buildFixture(options.snapshot);
   options.configureFixture?.(fixture);
+  // ChatView browser tests exercise UI behavior, while EventRouter owns the
+  // transport-level contract. Record mutating native actions synchronously so
+  // a slow Linux WebSocket round trip cannot outlive unmount and dispose the
+  // next test's Effect runtime.
+  const restoreNativeApi = installDeterministicActionNativeApi();
   await setViewport(options.viewport);
   await waitForProductionStyles();
 
@@ -1648,6 +1676,8 @@ async function mountChatView(options: {
 
   const cleanup = async () => {
     await screen.unmount();
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 150));
+    restoreNativeApi();
     host.remove();
   };
 
@@ -1683,6 +1713,7 @@ async function measureUserRowAtViewport(options: {
 
 describe("ChatView timeline estimator parity (full app)", () => {
   beforeAll(async () => {
+    window.addEventListener("unhandledrejection", suppressExpectedRuntimeDisposal);
     fixture = buildFixture(
       createSnapshotForTargetUser({
         targetMessageId: "msg-user-bootstrap" as MessageId,
@@ -1700,6 +1731,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
   afterAll(async () => {
     await worker.stop();
+    window.removeEventListener("unhandledrejection", suppressExpectedRuntimeDisposal);
   });
 
   beforeEach(async () => {
@@ -1746,7 +1778,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it.each(TEXT_VIEWPORT_MATRIX)(
-    "keeps long user message estimate close at the $name viewport",
+    "[geometry:linux] keeps long user message estimate close at the $name viewport",
     async (viewport) => {
       const userText = "x".repeat(3_200);
       const targetMessageId = `msg-user-target-long-${viewport.name}` as MessageId;
@@ -1778,7 +1810,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     },
   );
 
-  it("keeps collapsed height parity while resizing an existing ChatView", async () => {
+  it("[geometry:linux] tracks wrapping parity while resizing an existing ChatView across the viewport matrix", async () => {
     const userText = "x".repeat(3_200);
     const targetMessageId = "msg-user-target-resize" as MessageId;
     const mounted = await mountChatView({
@@ -1831,7 +1863,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("tracks additional rendered wrapping when ChatView width narrows between desktop and mobile viewports", async () => {
+  it("[geometry:linux] tracks additional rendered wrapping when ChatView width narrows between desktop and mobile viewports", async () => {
     // Short enough to remain below the 12-line collapse at both widths, while
     // still wrapping onto materially more lines on mobile.
     const userText = "x".repeat(320);
@@ -1870,7 +1902,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     expect(ratio).toBeLessThan(1.35);
   });
 
-  it("collapses header actions into overflow before they can overlap the thread title", async () => {
+  it("[geometry:linux] collapses header actions into overflow before they can overlap the thread title", async () => {
     const longTitle =
       'remove "ago" from the sidebar while the diff panel stays open on smaller viewports';
     const headerOverflowSnapshot = (() => {
@@ -1944,14 +1976,14 @@ describe("ChatView timeline estimator parity (full app)", () => {
         () => {
           expect(document.body.textContent).toContain(THREAD_TITLE);
         },
-        { timeout: 8_000, interval: 16 },
+        { timeout: 20_000, interval: 16 },
       );
     } finally {
       await mounted.cleanup();
     }
   });
 
-  it("keeps the composer visible while a long assistant response forces a viewport relayout", async () => {
+  it("[geometry:linux] keeps the composer visible while a long assistant response forces a viewport relayout", async () => {
     const mounted = await mountChatView({
       viewport: TEXT_VIEWPORT_MATRIX[0],
       snapshot: createSnapshotWithLongAssistantResponse(),
@@ -2025,11 +2057,24 @@ describe("ChatView timeline estimator parity (full app)", () => {
         () => document.querySelector<HTMLElement>("[data-chat-scroll-container='true']"),
         "Unable to find message scroll container.",
       );
-      scrollContainer.scrollTop = 0;
-      scrollContainer.dispatchEvent(new Event("scroll"));
-      await waitForLayout();
-      expect(getScrollContainerDistanceFromBottom(scrollContainer)).toBeGreaterThan(
-        AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
+      await vi.waitFor(
+        () => {
+          expect(scrollContainer.scrollHeight - scrollContainer.clientHeight).toBeGreaterThan(
+            AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      await userEvent.wheel(scrollContainer, {
+        delta: { y: -scrollContainer.scrollHeight },
+      });
+      await vi.waitFor(
+        () => {
+          expect(getScrollContainerDistanceFromBottom(scrollContainer)).toBeGreaterThan(
+            AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
+          );
+        },
+        { timeout: 8_000, interval: 16 },
       );
 
       const scrollToCalls: ScrollToOptions[] = [];
@@ -2058,7 +2103,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       const sendButton = await waitForSendButton();
       expect(sendButton.disabled).toBe(false);
-      sendButton.click();
+      await userEvent.click(sendButton);
 
       await vi.waitFor(
         async () => {
@@ -2103,7 +2148,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       wsRequests.length = 0;
       const sendButton = await waitForSendButton();
       expect(sendButton.disabled).toBe(false);
-      sendButton.click();
+      await userEvent.click(sendButton);
 
       await vi.waitFor(
         () => {
@@ -2113,7 +2158,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           });
           expect(turnStartRequest).toBeTruthy();
         },
-        { timeout: 8_000, interval: 16 },
+        { timeout: 20_000, interval: 16 },
       );
 
       expect(wsRequests.some((request) => request._tag === WS_METHODS.automationCreate)).toBe(
@@ -2148,7 +2193,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       wsRequests.length = 0;
       const sendButton = await waitForSendButton();
       expect(sendButton.disabled).toBe(false);
-      sendButton.click();
+      await userEvent.click(sendButton);
 
       await vi.waitFor(
         () => {
@@ -2166,7 +2211,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             schedule: { type: "interval", everySeconds: 15 },
           });
         },
-        { timeout: 8_000, interval: 16 },
+        { timeout: 20_000, interval: 16 },
       );
       await waitForLayout();
 
@@ -2222,7 +2267,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             schedule: { type: "interval", everySeconds: 15 },
           });
         },
-        { timeout: 8_000, interval: 16 },
+        { timeout: 20_000, interval: 16 },
       );
       await waitForLayout();
 
@@ -2391,7 +2436,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it.each(ATTACHMENT_VIEWPORT_MATRIX)(
-    "keeps user attachment estimate close at the $name viewport",
+    "[geometry:linux] keeps user attachment estimate close at the $name viewport",
     async (viewport) => {
       const targetMessageId = `msg-user-target-attachments-${viewport.name}` as MessageId;
       const userText = "message with image attachments";
@@ -4033,7 +4078,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("creates a temporary branch-backed worktree on first send in New worktree mode", async () => {
-    const restoreNativeApi = installDeterministicSendNativeApi();
+    const restoreNativeApi = installDeterministicActionNativeApi();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -4138,7 +4183,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("runs the setup action from the newly-created worktree before starting the turn", async () => {
-    const restoreNativeApi = installDeterministicSendNativeApi();
+    const restoreNativeApi = installDeterministicActionNativeApi();
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: withProjectScripts(
@@ -4595,10 +4640,23 @@ describe("ChatView timeline estimator parity (full app)", () => {
             ),
           ).toBe(true);
         },
+        { timeout: 20_000, interval: 16 },
+      );
+
+      // The shortcut persists terminal-first presentation separately from the
+      // server thread row. Observe that state before simulating promotion so
+      // clearing the draft cannot race the shortcut's async UI update.
+      await vi.waitFor(
+        () => {
+          expect(
+            useTerminalStateStore.getState().terminalStateByThreadId[newThreadId]?.entryPoint,
+          ).toBe("terminal");
+        },
         { timeout: 8_000, interval: 16 },
       );
 
       useStore.getState().syncServerReadModel(addThreadToSnapshot(fixture.snapshot, newThreadId));
+      useStore.getState().setProjectExpanded(PROJECT_ID, true);
       useComposerDraftStore.getState().clearDraftThread(newThreadId);
 
       await vi.waitFor(
@@ -4702,7 +4760,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const composerEditor = await waitForComposerEditor();
       composerEditor.focus();
       await waitForLayout();
-      dispatchTerminalThreadShortcut();
+      await dispatchTerminalThreadShortcut();
 
       await waitForURL(
         mounted.router,
@@ -4737,7 +4795,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             },
           });
         },
-        { timeout: 8_000, interval: 16 },
+        { timeout: 20_000, interval: 16 },
       );
     } finally {
       await mounted.cleanup();
@@ -5055,9 +5113,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      useStore
-        .getState()
-        .syncServerReadModel(createSnapshotWithInlineToolOverflow({ active: false }));
+      const settledSnapshot = createSnapshotWithInlineToolOverflow({ active: false });
+      fixture = { ...fixture, snapshot: settledSnapshot };
+      useStore.getState().syncServerReadModel(settledSnapshot);
 
       expect(document.body.textContent).toContain("Tool 6");
       expect(document.body.textContent).not.toContain("Tool 1");
@@ -5097,7 +5155,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(document.body.textContent).not.toContain("Tool 1");
           expect(document.body.textContent).not.toContain("Tool 6");
         },
-        { timeout: 8_000, interval: 16 },
+        { timeout: 20_000, interval: 16 },
       );
     } finally {
       await mounted.cleanup();

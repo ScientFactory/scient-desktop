@@ -643,6 +643,10 @@ export function createWsNativeApi(): NativeApi {
           method: "POST",
         }),
       refreshProviders: () => transport.request(WS_METHODS.serverRefreshProviders),
+      startProviderConnection: (input) =>
+        transport.request(WS_METHODS.serverStartProviderConnection, input),
+      cancelProviderConnection: (input) =>
+        transport.request(WS_METHODS.serverCancelProviderConnection, input),
       // Provider updates run up to 2 minutes server-side; callers wrap this in
       // withProviderUpdateTimeout, which owns the client-side watchdog.
       updateProvider: (input) =>

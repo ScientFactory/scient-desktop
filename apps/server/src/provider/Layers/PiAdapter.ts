@@ -44,6 +44,7 @@ import {
 import { PiAdapter, type PiAdapterShape } from "../Services/PiAdapter.ts";
 import type { ProviderThreadSnapshot } from "../Services/ProviderAdapter.ts";
 import { appendFileAttachmentsPromptBlock } from "../attachmentProjection.ts";
+import { readProviderPromptImage } from "../promptAttachments.ts";
 import { classifyPiTurnFailure } from "../piTurnFailure.ts";
 import { clampUsagePercent, nonNegativeFiniteNumber, positiveFiniteNumber } from "../tokenUsage.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
@@ -1792,7 +1793,12 @@ const makePiAdapter = (options?: PiAdapterLiveOptions) =>
                   issue: `Invalid attachment id '${attachment.id}'.`,
                 });
               }
-              const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+              const bytes = yield* readProviderPromptImage({
+                fileSystem,
+                attachmentsDir: serverConfig.attachmentsDir,
+                path: attachmentPath,
+                expectedBytes: attachment.sizeBytes,
+              }).pipe(
                 Effect.mapError(
                   (cause) =>
                     new ProviderAdapterRequestError({

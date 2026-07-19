@@ -1,15 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { linkOrCopyCodexOverlayEntry, prioritizeCodexOverlayEntries } from "./codexProcessEnv";
+import {
+  linkOrCopyCodexOverlayEntry,
+  prioritizeCodexOverlayEntries,
+  serializeCodexOverlayPreparation,
+} from "./codexProcessEnv";
 
 describe("linkOrCopyCodexOverlayEntry", () => {
-  it("copies auth.json when symlink creation is unavailable", () => {
-    const symlink = vi.fn(() => {
+  it("copies auth.json when symlink creation is unavailable", async () => {
+    const symlink = vi.fn(async () => {
       throw new Error("symlinks unavailable");
     });
-    const copyFile = vi.fn();
+    const copyFile = vi.fn(async () => undefined);
 
-    linkOrCopyCodexOverlayEntry(
+    await linkOrCopyCodexOverlayEntry(
       {
         entryName: "auth.json",
         sourcePath: "C:\\Users\\test\\.codex\\auth.json",
@@ -30,12 +34,12 @@ describe("linkOrCopyCodexOverlayEntry", () => {
     );
   });
 
-  it("keeps symlink failures visible for other overlay entries", () => {
-    const symlink = vi.fn(() => {
+  it("keeps symlink failures visible for other overlay entries", async () => {
+    const symlink = vi.fn(async () => {
       throw new Error("symlinks unavailable");
     });
 
-    expect(() =>
+    await expect(
       linkOrCopyCodexOverlayEntry(
         {
           entryName: "sessions",
@@ -43,9 +47,68 @@ describe("linkOrCopyCodexOverlayEntry", () => {
           targetPath: "C:\\Users\\test\\.synara\\codex-home-overlay\\sessions",
           type: "dir",
         },
-        { symlink, copyFile: vi.fn() },
+        { symlink, copyFile: vi.fn(async () => undefined) },
       ),
-    ).toThrow("symlinks unavailable");
+    ).rejects.toThrow("symlinks unavailable");
+  });
+});
+
+describe("serializeCodexOverlayPreparation", () => {
+  it("serializes work for the same overlay path", async () => {
+    const started: string[] = [];
+    let releaseFirst: (() => void) | undefined;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    const first = serializeCodexOverlayPreparation("/overlay/shared", async () => {
+      started.push("first");
+      await firstGate;
+      return 1;
+    });
+    const second = serializeCodexOverlayPreparation("/overlay/shared", async () => {
+      started.push("second");
+      return 2;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(started).toEqual(["first"]);
+    releaseFirst?.();
+    await expect(Promise.all([first, second])).resolves.toEqual([1, 2]);
+    expect(started).toEqual(["first", "second"]);
+  });
+
+  it("releases the overlay queue after a failed preparation", async () => {
+    await expect(
+      serializeCodexOverlayPreparation("/overlay/retry", async () => {
+        throw new Error("preparation failed");
+      }),
+    ).rejects.toThrow("preparation failed");
+
+    await expect(
+      serializeCodexOverlayPreparation("/overlay/retry", async () => "recovered"),
+    ).resolves.toBe("recovered");
+  });
+
+  it("allows different overlay paths to prepare concurrently", async () => {
+    const started: string[] = [];
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const first = serializeCodexOverlayPreparation("/overlay/a", async () => {
+      started.push("a");
+      await gate;
+    });
+    const second = serializeCodexOverlayPreparation("/overlay/b", async () => {
+      started.push("b");
+      await gate;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(started).toEqual(["a", "b"]);
+    release?.();
+    await Promise.all([first, second]);
   });
 });
 
