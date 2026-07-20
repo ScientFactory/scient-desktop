@@ -13,10 +13,10 @@ const sitemap = readFileSync(new URL("sitemap.xml", publicDirectory), "utf8");
 
 const publicURLs = [
   "https://scientfactory.com/",
-  "https://scientfactory.com/about",
-  "https://scientfactory.com/docs",
-  "https://scientfactory.com/download",
-  "https://scientfactory.com/privacy",
+  "https://scientfactory.com/about/",
+  "https://scientfactory.com/docs/",
+  "https://scientfactory.com/download/",
+  "https://scientfactory.com/privacy/",
 ] as const;
 
 describe("search discovery files", () => {
