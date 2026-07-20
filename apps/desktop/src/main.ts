@@ -113,6 +113,7 @@ import {
   reduceDesktopUpdateStateOnNoUpdate,
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
+import { resolveDesktopUpdateInstallMode } from "./updateInstallMode";
 import {
   PendingUpdateCacheClearQueue,
   resolveElectronUpdaterCacheDirName,
@@ -291,6 +292,9 @@ let desktopShutdownPromise: Promise<void> | null = null;
 let desktopShutdownComplete = false;
 let desktopProtocolRegistered = false;
 let aboutCommitHashCache: string | null | undefined;
+let embeddedReleaseMetadataCache:
+  | { readonly commitHash: string | null; readonly signed: boolean | null }
+  | undefined;
 let appUpdateYmlCache: Record<string, string> | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
@@ -358,8 +362,13 @@ const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
   processArch: process.arch,
   runningUnderArm64Translation: app.runningUnderARM64Translation === true,
 });
+const desktopUpdateInstallMode = resolveDesktopUpdateInstallMode({
+  platform: process.platform,
+  isPackaged: app.isPackaged,
+  signedRelease: resolveEmbeddedReleaseMetadata().signed,
+});
 const initialUpdateState = (): DesktopUpdateState =>
-  createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo);
+  createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo, desktopUpdateInstallMode);
 
 function logTimestamp(): string {
   return new Date().toISOString();
@@ -680,6 +689,7 @@ let updateCheckInFlight = false;
 let updateDownloadInFlight = false;
 let updaterConfigured = false;
 let updateState: DesktopUpdateState = initialUpdateState();
+let downloadedUpdateFilePath: string | null = null;
 let updateBackgroundedAtMs: number | null = null;
 let updateBackgroundBlurTimer: ReturnType<typeof setTimeout> | null = null;
 let updateCheckTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
@@ -880,19 +890,39 @@ function normalizeCommitHash(value: unknown): string | null {
   return trimmed.slice(0, COMMIT_HASH_DISPLAY_LENGTH).toLowerCase();
 }
 
-function resolveEmbeddedCommitHash(): string | null {
+function resolveEmbeddedReleaseMetadata(): {
+  readonly commitHash: string | null;
+  readonly signed: boolean | null;
+} {
+  if (embeddedReleaseMetadataCache !== undefined) {
+    return embeddedReleaseMetadataCache;
+  }
+
   const packageJsonPath = Path.join(resolveAppRoot(), "package.json");
   if (!FS.existsSync(packageJsonPath)) {
-    return null;
+    embeddedReleaseMetadataCache = { commitHash: null, signed: null };
+    return embeddedReleaseMetadataCache;
   }
 
   try {
     const raw = FS.readFileSync(packageJsonPath, "utf8");
-    const parsed = JSON.parse(raw) as { scientCommitHash?: unknown };
-    return normalizeCommitHash(parsed.scientCommitHash);
+    const parsed = JSON.parse(raw) as {
+      scientCommitHash?: unknown;
+      scientSigned?: unknown;
+    };
+    embeddedReleaseMetadataCache = {
+      commitHash: normalizeCommitHash(parsed.scientCommitHash),
+      signed: typeof parsed.scientSigned === "boolean" ? parsed.scientSigned : null,
+    };
   } catch {
-    return null;
+    embeddedReleaseMetadataCache = { commitHash: null, signed: null };
   }
+
+  return embeddedReleaseMetadataCache;
+}
+
+function resolveEmbeddedCommitHash(): string | null {
+  return resolveEmbeddedReleaseMetadata().commitHash;
 }
 
 function resolveAboutCommitHash(): string | null {
@@ -2411,6 +2441,39 @@ async function installDownloadedUpdate(): Promise<{
     return { accepted: false, completed: false };
   }
 
+  if (updateState.installMode === "manual") {
+    const updateFilePath = downloadedUpdateFilePath;
+    if (!updateFilePath || !FS.existsSync(updateFilePath)) {
+      setUpdateState(
+        reduceDesktopUpdateStateOnInstallFailure(
+          updateState,
+          "The downloaded update could not be found. Download it again and retry.",
+        ),
+      );
+      return { accepted: true, completed: false };
+    }
+
+    const openError = await shell.openPath(updateFilePath);
+    if (openError) {
+      setUpdateState(
+        reduceDesktopUpdateStateOnInstallFailure(
+          updateState,
+          `Could not open the downloaded update: ${openError}`,
+        ),
+      );
+      return { accepted: true, completed: false };
+    }
+
+    shell.showItemInFolder(updateFilePath);
+    setUpdateState({
+      message: "The update is open in Finder. Replace Scient in Applications, then reopen the app.",
+      errorContext: null,
+      canRetry: true,
+    });
+    console.info(`[desktop-updater] Opened unsigned macOS update at ${updateFilePath}.`);
+    return { accepted: true, completed: true };
+  }
+
   const markerPath = getUpdateInstallMarkerPath();
   const existingMarkerResult = readInstallMarker(markerPath);
   const existingMarker =
@@ -2462,7 +2525,11 @@ function configureAutoUpdater(): void {
   configuredUpdaterCacheDirName = resolveElectronUpdaterCacheDirName(appUpdateYml, app.getName());
   const enabled = shouldEnableAutoUpdates();
   setUpdateState({
-    ...createInitialDesktopUpdateState(app.getVersion(), desktopRuntimeInfo),
+    ...createInitialDesktopUpdateState(
+      app.getVersion(),
+      desktopRuntimeInfo,
+      desktopUpdateInstallMode,
+    ),
     enabled,
     status: enabled ? "idle" : "disabled",
   });
@@ -2528,6 +2595,7 @@ function configureAutoUpdater(): void {
       );
       return;
     }
+    downloadedUpdateFilePath = null;
     setUpdateState(
       reduceDesktopUpdateStateOnUpdateAvailable(
         updateState,
@@ -2541,6 +2609,7 @@ function configureAutoUpdater(): void {
   });
   autoUpdater.on("update-not-available", () => {
     clearUpdateCheckTimeoutTimer();
+    downloadedUpdateFilePath = null;
     void clearPendingUpdateCache("no newer update available");
     setUpdateState(reduceDesktopUpdateStateOnNoUpdate(updateState, new Date().toISOString()));
     lastLoggedDownloadMilestone = -1;
@@ -2608,6 +2677,10 @@ function configureAutoUpdater(): void {
       );
       return;
     }
+    downloadedUpdateFilePath =
+      typeof info.downloadedFile === "string" && info.downloadedFile.length > 0
+        ? info.downloadedFile
+        : null;
     setUpdateState(reduceDesktopUpdateStateOnDownloadComplete(updateState, info.version));
     console.info(`[desktop-updater] Update downloaded: ${info.version}`);
   });

@@ -22,6 +22,7 @@ import {
 
 const baseState: DesktopUpdateState = {
   enabled: true,
+  installMode: "automatic",
   status: "idle",
   currentVersion: "1.0.0",
   hostArch: "x64",
@@ -173,6 +174,20 @@ describe("desktop update button state", () => {
       secondaryLabel: null,
     });
     expect(getDesktopUpdateDownloadPercent(state)).toBe(42);
+  });
+
+  it("explains the Finder handoff for an unsigned macOS update", () => {
+    const state: DesktopUpdateState = {
+      ...baseState,
+      installMode: "manual",
+      status: "downloaded",
+      availableVersion: "1.1.0",
+      downloadedVersion: "1.1.0",
+    };
+
+    expect(resolveDesktopUpdateButtonAction(state)).toBe("install");
+    expect(getDesktopUpdateButtonLabel(state)).toBe("Open update");
+    expect(getDesktopUpdateButtonTooltip(state)).toContain("open it in Finder");
   });
 
   it("surfaces a clamped integer download percentage only while downloading", () => {

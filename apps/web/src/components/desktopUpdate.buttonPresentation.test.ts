@@ -5,6 +5,7 @@ import { getDesktopUpdateButtonPresentation } from "./desktopUpdate.logic";
 
 const baseState: DesktopUpdateState = {
   enabled: true,
+  installMode: "automatic",
   status: "idle",
   currentVersion: "1.0.0",
   hostArch: "x64",
@@ -65,6 +66,25 @@ describe("desktop update button presentation timeline", () => {
 
     expect(downloading).toEqual({
       label: "Preparing",
+      secondaryLabel: null,
+    });
+  });
+
+  it("labels an unsigned macOS update as a guided Finder handoff", () => {
+    const downloaded = {
+      ...baseState,
+      installMode: "manual" as const,
+      status: "downloaded" as const,
+      availableVersion: "1.2.0",
+      downloadedVersion: "1.2.0",
+    };
+
+    expect(getDesktopUpdateButtonPresentation(downloaded)).toEqual({
+      label: "Open update",
+      secondaryLabel: null,
+    });
+    expect(getDesktopUpdateButtonPresentation(downloaded, { installing: true })).toEqual({
+      label: "Opening...",
       secondaryLabel: null,
     });
   });

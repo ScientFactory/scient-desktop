@@ -15,6 +15,7 @@ import {
 
 const baseState: DesktopUpdateState = {
   enabled: true,
+  installMode: "automatic",
   status: "idle",
   currentVersion: "1.0.0",
   hostArch: "x64",

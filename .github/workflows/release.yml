@@ -15,6 +15,11 @@ on:
         required: true
         default: false
         type: boolean
+      allow_unsigned_release:
+        description: "Explicitly allow unsigned desktop artifacts for this manual early-access release"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -40,6 +45,7 @@ jobs:
       make_latest: ${{ steps.release_meta.outputs.make_latest }}
       mirror_to_stable_channel: ${{ steps.release_meta.outputs.mirror_to_stable_channel }}
       publish_release: ${{ steps.release_mode.outputs.publish_release }}
+      unsigned_release: ${{ steps.release_mode.outputs.unsigned_release }}
       release_lane: ${{ steps.release_meta.outputs.release_lane }}
       bridge_tag: ${{ steps.release_meta.outputs.bridge_tag }}
       update_channel: ${{ steps.release_meta.outputs.update_channel }}
@@ -78,10 +84,21 @@ jobs:
         shell: bash
         env:
           PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish_release }}
+          ALLOW_UNSIGNED_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_unsigned_release || false }}
         run: |
+          set -euo pipefail
           echo "publish_release=$PUBLISH_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "unsigned_release=$ALLOW_UNSIGNED_RELEASE" >> "$GITHUB_OUTPUT"
+          if [[ "$ALLOW_UNSIGNED_RELEASE" == "true" && "$PUBLISH_RELEASE" != "true" ]]; then
+            echo "Unsigned publication can only be enabled for a publishing run." >&2
+            exit 1
+          fi
           if [[ "$PUBLISH_RELEASE" == "true" ]]; then
-            echo "Publication enabled."
+            if [[ "$ALLOW_UNSIGNED_RELEASE" == "true" ]]; then
+              echo "Unsigned early-access publication explicitly enabled."
+            else
+              echo "Signed publication enabled."
+            fi
           else
             echo "Build-only validation enabled; no release or package will be published."
           fi
@@ -255,6 +272,7 @@ jobs:
           AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
           SCIENT_DESKTOP_UPDATE_REPOSITORY: ${{ needs.preflight.outputs.update_repository }}
           PUBLISH_RELEASE: ${{ needs.preflight.outputs.publish_release }}
+          ALLOW_UNSIGNED_RELEASE: ${{ needs.preflight.outputs.unsigned_release }}
         run: |
           args=(
             --platform "${{ matrix.platform }}"
@@ -283,12 +301,27 @@ jobs:
           }
 
           if [[ "${{ matrix.platform }}" == "mac" ]]; then
-            if has_all "$CSC_LINK" "$CSC_KEY_PASSWORD" "$APPLE_API_KEY" "$APPLE_API_KEY_ID" "$APPLE_API_ISSUER"; then
+            apple_values=(
+              "$CSC_LINK"
+              "$CSC_KEY_PASSWORD"
+              "$APPLE_API_KEY"
+              "$APPLE_API_KEY_ID"
+              "$APPLE_API_ISSUER"
+            )
+            if has_all "${apple_values[@]}"; then
               key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
               printf '%s' "$APPLE_API_KEY" > "$key_path"
               export APPLE_API_KEY="$key_path"
               echo "macOS signing enabled."
               args+=(--signed)
+            elif has_any "${apple_values[@]}"; then
+              if [[ "$PUBLISH_RELEASE" == "true" ]]; then
+                echo "Public macOS releases cannot use a partial Apple signing configuration." >&2
+                exit 1
+              fi
+              echo "Build-only macOS signing disabled because the Apple signing configuration is incomplete."
+            elif [[ "$PUBLISH_RELEASE" == "true" && "$ALLOW_UNSIGNED_RELEASE" == "true" ]]; then
+              echo "Unsigned macOS early-access publication explicitly enabled."
             elif [[ "$PUBLISH_RELEASE" == "true" ]]; then
               echo "Public macOS releases require all Apple signing and notarization secrets." >&2
               exit 1
@@ -321,6 +354,8 @@ jobs:
                 exit 1
               fi
               echo "Build-only Windows signing disabled because the signing configuration is incomplete or conflicting."
+            elif [[ "$PUBLISH_RELEASE" == "true" && "$ALLOW_UNSIGNED_RELEASE" == "true" ]]; then
+              echo "Unsigned Windows early-access publication explicitly enabled."
             elif [[ "$PUBLISH_RELEASE" == "true" ]]; then
               echo "Public Windows releases require a standard Authenticode certificate or Azure Trusted Signing." >&2
               exit 1
@@ -594,6 +629,20 @@ jobs:
             exit 1
           fi
 
+      - name: Prepare release notice
+        shell: bash
+        env:
+          UNSIGNED_RELEASE: ${{ needs.preflight.outputs.unsigned_release }}
+        run: |
+          if [[ "$UNSIGNED_RELEASE" == "true" ]]; then
+            printf '%s\n' \
+              '> [!WARNING]' \
+              '> This early-access release is unsigned. Windows may show an Unknown Publisher warning. On macOS, Scient downloads updates in-app and opens them in Finder for manual replacement.' \
+              > release-notice.md
+          else
+            : > release-notice.md
+          fi
+
       - name: Publish release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
@@ -603,6 +652,7 @@ jobs:
           generate_release_notes: true
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
+          body_path: release-notice.md
           files: |
             release-assets/*.dmg
             release-assets/*.zip
