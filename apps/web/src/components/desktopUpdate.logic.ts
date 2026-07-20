@@ -81,7 +81,7 @@ export function getDesktopUpdateButtonPresentation(
 ): DesktopUpdateButtonPresentation {
   if (options?.installing) {
     return {
-      label: "Updating...",
+      label: state?.installMode === "manual" ? "Opening..." : "Updating...",
       secondaryLabel: null,
     };
   }
@@ -128,7 +128,7 @@ export function getDesktopUpdateButtonPresentation(
       };
     }
     return {
-      label: "Update",
+      label: state.installMode === "manual" ? "Open update" : "Update",
       secondaryLabel: null,
     };
   }
@@ -209,6 +209,9 @@ export function getDesktopUpdateButtonTooltip(
     return `Preparing update${progress}`;
   }
   if (state.status === "downloaded") {
+    if (state.installMode === "manual") {
+      return `Update ${state.downloadedVersion ?? state.availableVersion ?? "ready"} is ready. Click to open it in Finder and finish replacing Scient.`;
+    }
     return `Update ${state.downloadedVersion ?? state.availableVersion ?? "ready"} is ready. Click to restart and install.`;
   }
   if (state.status === "error") {

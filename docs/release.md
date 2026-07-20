@@ -23,14 +23,14 @@ This document covers build-only native validation, promotion through the protect
 - Publishes prerelease installers only on their versioned GitHub prerelease; prereleases never replace the stable `scient` update manifests.
 - Publishes the CLI package (`apps/server`, npm package `@scientfactory/cli`, executable `scient`) with OIDC trusted publishing when `SCIENT_PUBLISH_CLI=1`.
 - Build-only runs auto-detect signing credentials and may produce unsigned validation artifacts.
-- Public releases fail closed unless macOS signing/notarization and Windows Trusted Signing credentials are complete.
+- Public releases fail closed unless signing credentials are complete or a manual dispatch explicitly enables the temporary unsigned early-access lane.
 
 ## Desktop auto-update notes
 
 - Runtime updater: `electron-updater` in `apps/desktop/src/main.ts`.
 - Client update checks are enabled in packaged production builds by `SCIENT_DESKTOP_UPDATES_ENABLED = true`. Development builds, unpackaged builds, builds without `app-update.yml`, Linux builds not running as an AppImage, and installations with `SYNARA_DISABLE_AUTO_UPDATE=1` remain disabled.
 - `v0.5.6` was published with client update checks disabled. Existing `v0.5.6`
-  installations therefore require one manual installation of the first signed,
+  installations therefore require one manual installation of the first
   updater-enabled release; the application cannot remotely enable code that is
   compiled off. Releases after that bootstrap can use the in-app update flow.
 - Update UX:
@@ -124,6 +124,24 @@ To publish from a manual dispatch instead of a tag push, dispatch the exact
 `release/stable` head with `publish_release=true`. The workflow rejects
 publication from every other ref or commit.
 
+### Temporary unsigned early-access publication
+
+When signing credentials are unavailable, a manual dispatch from the exact
+`release/stable` head may set both `publish_release=true` and
+`allow_unsigned_release=true`. This option is unavailable to tag-triggered
+publication and never weakens the default signed-release gate.
+
+Unsigned behavior is platform-specific:
+
+- Windows keeps the normal in-app NSIS update handoff. Windows may show an
+  Unknown Publisher or SmartScreen warning before installation continues.
+- macOS checks and downloads the update inside Scient, then opens the downloaded
+  ZIP in Finder. The user must replace Scient in Applications and reopen it.
+- Linux keeps the existing AppImage behavior.
+
+Never enable unsigned publication while a platform has a partial signing-secret
+configuration. Remove incomplete secrets or finish the signing setup first.
+
 ## 2) Apple signing + notarization setup (macOS)
 
 Required secrets used by the workflow:
@@ -156,9 +174,10 @@ Notes:
 
 ## 3) Windows signing setup
 
-Public releases require exactly one complete Windows signing provider. Build-only
-validation may continue with an unsigned NSIS installer when neither provider is
-configured, but publication fails closed.
+Public releases require exactly one complete Windows signing provider by default.
+Build-only validation may continue with an unsigned NSIS installer when neither
+provider is configured; a deliberate unsigned early-access dispatch may publish
+that installer with its operating-system warning.
 
 ### Option A: standard Authenticode certificate
 
@@ -201,7 +220,7 @@ Azure signing checklist:
 Do not mix the standard certificate and Azure secrets. Partial or conflicting
 configuration remains unsigned in build-only mode and fails public publication.
 If Windows signing is not yet configured, leave all provider secrets absent and
-use only build-only validation.
+use build-only validation by default or the explicit unsigned early-access lane.
 
 ## 4) Ongoing release checklist
 

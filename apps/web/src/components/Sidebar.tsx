@@ -6773,6 +6773,16 @@ export default function Sidebar() {
         .then((result) => {
           setDesktopUpdateState(result.state);
           setInstallingDesktopUpdate(false);
+          if (result.completed && result.state.installMode === "manual") {
+            toastManager.add({
+              type: "info",
+              title: "Finish updating in Finder",
+              description:
+                result.state.message ??
+                "Replace Scient in Applications with the downloaded version, then reopen the app.",
+            });
+            return;
+          }
           const alreadyCurrentNotice = getDesktopUpdateAlreadyCurrentNotice(result);
           if (alreadyCurrentNotice) {
             toastManager.add({

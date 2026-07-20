@@ -1,13 +1,19 @@
-import type { DesktopRuntimeInfo, DesktopUpdateState } from "@synara/contracts";
+import type {
+  DesktopRuntimeInfo,
+  DesktopUpdateInstallMode,
+  DesktopUpdateState,
+} from "@synara/contracts";
 
 import { getCanRetryAfterDownloadFailure, nextStatusAfterDownloadFailure } from "./updateState";
 
 export function createInitialDesktopUpdateState(
   currentVersion: string,
   runtimeInfo: DesktopRuntimeInfo,
+  installMode: DesktopUpdateInstallMode = "automatic",
 ): DesktopUpdateState {
   return {
     enabled: false,
+    installMode,
     status: "disabled",
     currentVersion,
     hostArch: runtimeInfo.hostArch,
