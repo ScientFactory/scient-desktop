@@ -59,7 +59,7 @@ export function buildGrokAcpSpawnInput(
   grokSettings: GrokAcpRuntimeSettings | null | undefined,
   cwd: string,
 ): AcpSpawnInput {
-  const args = ["agent", "--no-leader"];
+  const args = ["--no-auto-update", "agent", "--no-leader"];
   if (grokSettings?.alwaysApprove === true) {
     // Grok's approval flag belongs to `grok agent`, before the `stdio` subcommand.
     args.push("--always-approve");
@@ -92,11 +92,11 @@ export const resolveGrokAcpAuthMethodId = (
 ): Effect.Effect<string, EffectAcpErrors.AcpError> =>
   Effect.gen(function* () {
     const authMethodIds = availableAuthMethodIds(initializeResult);
-    if (hasGrokApiKeyEnv() && authMethodIds.has(GROK_API_KEY_AUTH_METHOD_ID)) {
-      return GROK_API_KEY_AUTH_METHOD_ID;
-    }
     if (authMethodIds.has(GROK_CACHED_TOKEN_AUTH_METHOD_ID)) {
       return GROK_CACHED_TOKEN_AUTH_METHOD_ID;
+    }
+    if (hasGrokApiKeyEnv() && authMethodIds.has(GROK_API_KEY_AUTH_METHOD_ID)) {
+      return GROK_API_KEY_AUTH_METHOD_ID;
     }
     return yield* new EffectAcpErrorsRuntime.AcpRequestError({
       code: -32602,

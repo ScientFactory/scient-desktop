@@ -301,10 +301,10 @@ const antigravityRecipe: ProviderRuntimeRecipe = {
 };
 
 const PINNED_GROK_MAC_ARM64 = {
-  version: "0.2.103",
-  url: "https://x.ai/cli/grok-0.2.103-macos-aarch64",
-  size: 121_600_480,
-  sha256: "1be9de92f31566f2d38992125f902220b022f4f1e3fb7330532a0513d1d6f0f2",
+  version: "0.2.106",
+  url: "https://x.ai/cli/grok-0.2.106-macos-aarch64",
+  size: 121_785_440,
+  sha256: "7229f5e2a69b05832c86db82bebda541e92b5c24958fbfacf5c8f463394d3027",
 } as const;
 
 const grokRecipe: ProviderRuntimeRecipe = {

@@ -2287,7 +2287,9 @@ export function makeGrokAdapter(
         let cliError: unknown;
         let apiError: ProviderAdapterRequestError | undefined;
         const cliModels = yield* Effect.gen(function* () {
-          const prepared = prepareWindowsSafeProcess(binaryPath, ["models"], { env: process.env });
+          const prepared = prepareWindowsSafeProcess(binaryPath, ["--no-auto-update", "models"], {
+            env: process.env,
+          });
           const child = yield* childProcessSpawner.spawn(
             ChildProcess.make(prepared.command, prepared.args, {
               shell: prepared.shell,

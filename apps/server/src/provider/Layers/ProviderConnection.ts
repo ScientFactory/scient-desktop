@@ -12,6 +12,7 @@ import type {
   ProviderKind,
   ServerProviderConnectionMethod,
   ServerProviderConnectionState,
+  ServerProviderStatus,
 } from "@synara/contracts";
 import { ServerProviderConnectionError } from "@synara/contracts";
 import { prepareWindowsSafeProcess } from "@synara/shared/windowsProcess";
@@ -26,9 +27,12 @@ import { collectUint8StreamText } from "../../stream/collectUint8StreamText";
 import { acquireClaudeAuthStatusLock } from "../claudeAuthStatusLock";
 import { buildClaudeProcessEnv } from "../claudeProcessEnv";
 import { buildCursorAgentCommand } from "../acp/CursorAcpCommand";
+import { probeDroidAcpAuthentication } from "../acp/DroidAcpSupport";
 import { ProviderConnection, type ProviderConnectionShape } from "../Services/ProviderConnection";
 import { ProviderHealth } from "../Services/ProviderHealth";
 import { ProviderRuntimeManager } from "../Services/ProviderRuntimeManager";
+import { PtyAdapter } from "../../terminal/Services/PTY";
+import { parseAntigravityModelsAuthStatus } from "./ProviderHealth";
 
 const CONNECTION_TIMEOUT = Duration.minutes(10);
 const CONNECTION_OUTPUT_MAX_BYTES = 64 * 1024;
@@ -44,6 +48,7 @@ interface ConnectionCommand {
   readonly env: NodeJS.ProcessEnv;
   readonly waitingMessage: string;
   readonly lock?: "claude-auth";
+  readonly strategy?: "antigravity-pty";
 }
 
 export function expectedMethodForProvider(
@@ -53,11 +58,15 @@ export function expectedMethodForProvider(
     case "codex":
       return "codex_browser";
     case "claudeAgent":
-      return "claude_subscription";
+      return "claude_console";
     case "cursor":
       return "cursor_browser";
     case "antigravity":
       return "antigravity_browser";
+    case "grok":
+      return "grok_browser";
+    case "droid":
+      return "droid_device_pairing";
     default:
       return null;
   }
@@ -68,11 +77,15 @@ export function providerConnectionCommandArgs(
   method: ServerProviderConnectionMethod,
 ): ReadonlyArray<string> | null {
   if (provider === "codex" && method === "codex_browser") return ["login"];
-  if (provider === "claudeAgent" && method === "claude_subscription") {
-    return ["auth", "login", "--claudeai"];
+  if (provider === "claudeAgent" && method === "claude_console") {
+    return ["auth", "login", "--console"];
   }
   if (provider === "cursor" && method === "cursor_browser") return ["login"];
-  if (provider === "antigravity" && method === "antigravity_browser") return ["models"];
+  if (provider === "antigravity" && method === "antigravity_browser") return [];
+  if (provider === "grok" && method === "grok_browser") return ["login"];
+  if (provider === "droid" && method === "droid_device_pairing") {
+    return ["exec", "--output-format", "acp"];
+  }
   return null;
 }
 
@@ -84,7 +97,10 @@ function makeConnectionError(input: {
   return new ServerProviderConnectionError(input);
 }
 
-export function makeProviderConnectionLive(options?: { readonly timeout?: Duration.Duration }) {
+export function makeProviderConnectionLive(options?: {
+  readonly timeout?: Duration.Duration;
+  readonly droidAuthenticationProbe?: typeof probeDroidAcpAuthentication;
+}) {
   const timeout = options?.timeout ?? CONNECTION_TIMEOUT;
 
   return Layer.effect(
@@ -95,6 +111,7 @@ export function makeProviderConnectionLive(options?: { readonly timeout?: Durati
       const serverSettings = yield* ServerSettingsService;
       const providerHealth = yield* ProviderHealth;
       const providerRuntimeManager = yield* ProviderRuntimeManager;
+      const ptyAdapter = yield* PtyAdapter;
       const operationScope = yield* Scope.make("sequential");
       yield* Effect.addFinalizer(() => Scope.close(operationScope, Exit.void));
       const activeConnectionsRef = yield* Ref.make<ReadonlyMap<ProviderKind, ActiveConnection>>(
@@ -168,7 +185,7 @@ export function makeProviderConnectionLive(options?: { readonly timeout?: Durati
           });
         }
 
-        const resolveExecutable = (configured: string | undefined, fallback: string) =>
+        const resolveRuntime = (configured: string | undefined) =>
           providerRuntimeManager.resolve(provider, configured).pipe(
             Effect.flatMap((runtime) =>
               runtime.source === "missing" || runtime.source === "bundled" || !runtime.executable
@@ -179,9 +196,11 @@ export function makeProviderConnectionLive(options?: { readonly timeout?: Durati
                       message: "Install the provider before signing in.",
                     }),
                   )
-                : Effect.succeed(runtime.executable ?? fallback),
+                : Effect.succeed(runtime),
             ),
           );
+        const resolveExecutable = (configured: string | undefined, fallback: string) =>
+          resolveRuntime(configured).pipe(Effect.map((runtime) => runtime.executable ?? fallback));
 
         if (provider === "codex") {
           if (!settings.providers.codex.enabled) {
@@ -239,14 +258,56 @@ export function makeProviderConnectionLive(options?: { readonly timeout?: Durati
               message: "Antigravity is disabled in Scient settings.",
             });
           }
+          const runtime = yield* resolveRuntime(
+            settings.providers.antigravity.binaryPath.trim() || undefined,
+          );
+          return {
+            executable: runtime.executable ?? "agy",
+            args,
+            env:
+              runtime.source === "managed"
+                ? { ...process.env, AGY_CLI_DISABLE_AUTO_UPDATE: "true" }
+                : process.env,
+            waitingMessage: "Finish signing in to Google in the browser window.",
+            strategy: "antigravity-pty",
+          } satisfies ConnectionCommand;
+        }
+
+        if (provider === "grok") {
+          if (!settings.providers.grok.enabled) {
+            return yield* makeConnectionError({
+              provider,
+              reason: "provider_disabled",
+              message: "Grok is disabled in Scient settings.",
+            });
+          }
+          const runtime = yield* resolveRuntime(
+            settings.providers.grok.binaryPath.trim() || undefined,
+          );
+          return {
+            executable: runtime.executable ?? "grok",
+            args: runtime.source === "managed" ? ["--no-auto-update", ...args] : args,
+            env: process.env,
+            waitingMessage: "Finish signing in to xAI in the browser window.",
+          } satisfies ConnectionCommand;
+        }
+
+        if (provider === "droid") {
+          if (!settings.providers.droid.enabled) {
+            return yield* makeConnectionError({
+              provider,
+              reason: "provider_disabled",
+              message: "Droid is disabled in Scient settings.",
+            });
+          }
           return {
             executable: yield* resolveExecutable(
-              settings.providers.antigravity.binaryPath.trim() || undefined,
-              "agy",
+              settings.providers.droid.binaryPath.trim() || undefined,
+              "droid",
             ),
             args,
             env: process.env,
-            waitingMessage: "Finish signing in to Google in the browser window.",
+            waitingMessage: "Finish confirming the Factory device code in your browser.",
           } satisfies ConnectionCommand;
         }
 
@@ -270,7 +331,7 @@ export function makeProviderConnectionLive(options?: { readonly timeout?: Durati
         } satisfies ConnectionCommand;
       });
 
-      const runCommand = Effect.fn("ProviderConnection.runCommand")(function* (
+      const runCommandResult = Effect.fn("ProviderConnection.runCommandResult")(function* (
         command: ConnectionCommand,
       ) {
         const prepared = prepareWindowsSafeProcess(command.executable, command.args, {
@@ -285,7 +346,7 @@ export function makeProviderConnectionLive(options?: { readonly timeout?: Durati
           }),
         );
         yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
-        const [, , exitCode] = yield* Effect.all(
+        const [stdout, stderr, exitCode] = yield* Effect.all(
           [
             collectUint8StreamText({
               stream: child.stdout,
@@ -299,8 +360,54 @@ export function makeProviderConnectionLive(options?: { readonly timeout?: Durati
           ],
           { concurrency: "unbounded" },
         );
-        return exitCode;
+        return { stdout: stdout.text, stderr: stderr.text, code: exitCode };
       });
+
+      const runCommand = (command: ConnectionCommand) =>
+        runCommandResult(command).pipe(Effect.map((result) => result.code));
+
+      const runAntigravityConnection = (command: ConnectionCommand) =>
+        Effect.gen(function* () {
+          const pty = yield* ptyAdapter.spawn({
+            shell: command.executable,
+            args: [],
+            cwd: serverConfig.stateDir,
+            cols: 100,
+            rows: 30,
+            env: command.env,
+          });
+          let exited = false;
+          const removeDataListener = pty.onData(() => undefined);
+          const removeExitListener = pty.onExit(() => {
+            exited = true;
+          });
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              removeDataListener();
+              removeExitListener();
+              try {
+                pty.kill();
+              } catch {
+                // The provider may already have exited after completing sign-in.
+              }
+            }),
+          );
+
+          while (true) {
+            if (exited) throw new Error("Antigravity sign-in exited before verification.");
+            const probe = yield* runCommandResult({ ...command, args: ["models"] }).pipe(
+              Effect.scoped,
+              Effect.result,
+            );
+            if (
+              Result.isSuccess(probe) &&
+              parseAntigravityModelsAuthStatus(probe.success) === "authenticated"
+            ) {
+              return 0;
+            }
+            yield* Effect.sleep(Duration.seconds(1));
+          }
+        }).pipe(Effect.scoped);
 
       const runWithOptionalLock = (
         command: ConnectionCommand,
@@ -357,10 +464,20 @@ export function makeProviderConnectionLive(options?: { readonly timeout?: Durati
               provider,
               state({ status: "waiting_for_browser", message: command.waitingMessage }),
             );
-            const exitCodeResult = yield* runWithOptionalLock(
-              command,
-              runCommand(command).pipe(Effect.scoped),
-            ).pipe(Effect.timeoutOption(timeout), Effect.result);
+            const connectionProcess =
+              provider === "droid"
+                ? (options?.droidAuthenticationProbe ?? probeDroidAcpAuthentication)({
+                    binaryPath: command.executable,
+                    childProcessSpawner: spawner,
+                    cwd: serverConfig.cwd,
+                  }).pipe(Effect.as(0))
+                : command.strategy === "antigravity-pty"
+                  ? runAntigravityConnection(command)
+                  : runWithOptionalLock(command, runCommand(command).pipe(Effect.scoped));
+            const exitCodeResult = yield* connectionProcess.pipe(
+              Effect.timeoutOption(timeout),
+              Effect.result,
+            );
 
             if (Result.isFailure(exitCodeResult)) {
               yield* publishState(
@@ -400,8 +517,13 @@ export function makeProviderConnectionLive(options?: { readonly timeout?: Durati
               provider,
               state({ status: "verifying", message: "Verifying the connection." }),
             );
-            const refreshed = yield* providerHealth.refresh;
-            const verified = refreshed.find((status) => status.provider === provider);
+            let verified: ServerProviderStatus | undefined;
+            for (let attempt = 0; attempt < 10; attempt += 1) {
+              const refreshed = yield* providerHealth.refresh;
+              verified = refreshed.find((status) => status.provider === provider);
+              if (verified?.available && verified.authStatus === "authenticated") break;
+              if (attempt < 9) yield* Effect.sleep(Duration.millis(500));
+            }
             if (!verified?.available || verified.authStatus !== "authenticated") {
               yield* publishState(
                 provider,

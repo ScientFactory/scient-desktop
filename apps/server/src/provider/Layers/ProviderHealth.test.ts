@@ -30,6 +30,7 @@ import {
   makeCheckClaudeProviderStatus,
   makeCheckCodexProviderStatus,
   makeCheckCursorProviderStatus,
+  makeCheckDroidProviderStatus,
   makeCheckGrokProviderStatus,
   makeCheckKiloProviderStatus,
   makeCheckOpenCodeProviderStatus,
@@ -1858,6 +1859,44 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       ),
     );
 
+    it.effect("maps Antigravity's clean-profile response to unauthenticated", () =>
+      Effect.gen(function* () {
+        const status = yield* checkAntigravityProviderStatus();
+        assert.strictEqual(status.status, "warning");
+        assert.strictEqual(status.available, true);
+        assert.strictEqual(status.authStatus, "unauthenticated");
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) =>
+            args.join(" ") === "--version"
+              ? { stdout: "Antigravity CLI 1.1.4\n", stderr: "", code: 0 }
+              : {
+                  stdout: "",
+                  stderr:
+                    "Error: Please sign in to view available models. Launch the CLI without arguments to sign in.\n",
+                  code: 1,
+                },
+          ),
+        ),
+      ),
+    );
+
+    it.effect("does not authenticate nonempty but unparseable Antigravity output", () =>
+      Effect.gen(function* () {
+        const status = yield* checkAntigravityProviderStatus();
+        assert.strictEqual(status.status, "warning");
+        assert.strictEqual(status.authStatus, "unknown");
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) =>
+            args.join(" ") === "--version"
+              ? { stdout: "Antigravity CLI 1.1.4\n", stderr: "", code: 0 }
+              : { stdout: "No model catalog is currently available.\n", stderr: "", code: 0 },
+          ),
+        ),
+      ),
+    );
+
     it.effect("uses the configured Antigravity binary", () =>
       Effect.gen(function* () {
         const status = yield* checkAntigravityProviderStatus("/custom/bin/agy");
@@ -1876,7 +1915,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
   });
 
   describe("checkGrokProviderStatus", () => {
-    it.effect("returns ready when Grok CLI is installed", () => {
+    it.effect("verifies cached Grok authentication by listing models", () => {
       const previousXaiApiKey = process.env.XAI_API_KEY;
       const previousApiKey = process.env.GROK_CODE_XAI_API_KEY;
       delete process.env.XAI_API_KEY;
@@ -1886,13 +1925,22 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
         assert.strictEqual(status.provider, "grok");
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.available, true);
-        assert.strictEqual(status.authStatus, "unknown");
+        assert.strictEqual(status.authStatus, "authenticated");
+        assert.strictEqual(status.authType, "oauth");
         assert.strictEqual(status.version, "0.1.0");
       }).pipe(
         Effect.provide(
           mockSpawnerLayer((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "grok 0.1.0\n", stderr: "", code: 0 };
+            if (joined === "--no-auto-update models") {
+              return {
+                stdout:
+                  "You are logged in with user@example.com.\nAvailable models:\n- grok-build\n",
+                stderr: "",
+                code: 0,
+              };
+            }
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),
@@ -1913,7 +1961,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       );
     });
 
-    it.effect("marks Grok authenticated when XAI_API_KEY is present", () => {
+    it.effect("marks a verified Grok API key authenticated", () => {
       const previousXaiApiKey = process.env.XAI_API_KEY;
       const previousApiKey = process.env.GROK_CODE_XAI_API_KEY;
       process.env.XAI_API_KEY = "xai-test-key";
@@ -1928,6 +1976,13 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
           mockSpawnerLayer((args) => {
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "grok 0.1.0\n", stderr: "", code: 0 };
+            if (joined === "--no-auto-update models") {
+              return {
+                stdout: "You are using XAI_API_KEY.\nAvailable models:\n- grok-build\n",
+                stderr: "",
+                code: 0,
+              };
+            }
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),
@@ -1958,6 +2013,65 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
             assert.strictEqual(command, "/custom/bin/grok");
             const joined = args.join(" ");
             if (joined === "--version") return { stdout: "grok 0.1.0\n", stderr: "", code: 0 };
+            if (joined === "--no-auto-update models") {
+              return {
+                stdout:
+                  "You are logged in with user@example.com.\nAvailable models:\n- grok-build\n",
+                stderr: "",
+                code: 0,
+              };
+            }
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("reports Grok unauthenticated when model verification fails", () => {
+      const previousXaiApiKey = process.env.XAI_API_KEY;
+      const previousApiKey = process.env.GROK_CODE_XAI_API_KEY;
+      delete process.env.XAI_API_KEY;
+      delete process.env.GROK_CODE_XAI_API_KEY;
+      return Effect.gen(function* () {
+        const status = yield* checkGrokProviderStatus;
+        assert.strictEqual(status.status, "warning");
+        assert.strictEqual(status.available, true);
+        assert.strictEqual(status.authStatus, "unauthenticated");
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "grok 0.1.0\n", stderr: "", code: 0 };
+            if (joined === "--no-auto-update models") {
+              return { stdout: "You are not authenticated.\n", stderr: "", code: 1 };
+            }
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousXaiApiKey === undefined) delete process.env.XAI_API_KEY;
+            else process.env.XAI_API_KEY = previousXaiApiKey;
+            if (previousApiKey === undefined) delete process.env.GROK_CODE_XAI_API_KEY;
+            else process.env.GROK_CODE_XAI_API_KEY = previousApiKey;
+          }),
+        ),
+      );
+    });
+
+    it.effect("keeps ambiguous Grok model output unknown", () =>
+      Effect.gen(function* () {
+        const status = yield* checkGrokProviderStatus;
+        assert.strictEqual(status.status, "warning");
+        assert.strictEqual(status.authStatus, "unknown");
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "grok 0.1.0\n", stderr: "", code: 0 };
+            if (joined === "--no-auto-update models") {
+              return { stdout: "Temporary service interruption.\n", stderr: "", code: 0 };
+            }
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),
@@ -1973,6 +2087,39 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
         assert.strictEqual(status.authStatus, "unknown");
         assert.strictEqual(status.message, "Grok CLI (`grok`) is not installed or not on PATH.");
       }).pipe(Effect.provide(failingSpawnerLayer("spawn grok ENOENT"))),
+    );
+  });
+
+  describe("checkDroidProviderStatus", () => {
+    it.effect("marks Droid ready only after the non-inference ACP verification succeeds", () =>
+      Effect.gen(function* () {
+        const status = yield* makeCheckDroidProviderStatus("/custom/bin/droid", "/tmp", () =>
+          Effect.succeed("authenticated"),
+        );
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.available, true);
+        assert.strictEqual(status.authStatus, "authenticated");
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args, command) => {
+            assert.strictEqual(command, "/custom/bin/droid");
+            assert.deepStrictEqual(args, ["--version"]);
+            return { stdout: "0.175.0\n", stderr: "", code: 0 };
+          }),
+        ),
+      ),
+    );
+
+    it.effect("reports Droid unauthenticated when Factory requires device pairing", () =>
+      Effect.gen(function* () {
+        const status = yield* makeCheckDroidProviderStatus("/custom/bin/droid", "/tmp", () =>
+          Effect.succeed("unauthenticated"),
+        );
+        assert.strictEqual(status.status, "warning");
+        assert.strictEqual(status.authStatus, "unauthenticated");
+      }).pipe(
+        Effect.provide(mockSpawnerLayer(() => ({ stdout: "0.175.0\n", stderr: "", code: 0 }))),
+      ),
     );
   });
 

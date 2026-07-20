@@ -4,7 +4,12 @@
 
 import "../index.css";
 
-import type { ServerConfig, ServerProviderStatus } from "@synara/contracts";
+import type {
+  ProviderKind,
+  ServerConfig,
+  ServerProviderConnectionMethod,
+  ServerProviderStatus,
+} from "@synara/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -129,6 +134,63 @@ describe("ProviderConnectionDialog", () => {
         .toBeVisible();
       await expect.element(page.getByRole("button", { name: "Cancel sign in" })).toBeVisible();
       await expect.element(page.getByText(/sign in continues in the background/u)).toBeVisible();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it.each([
+    { provider: "claudeAgent", method: "claude_console", title: "Connect Claude" },
+    { provider: "grok", method: "grok_browser", title: "Connect Grok" },
+    { provider: "droid", method: "droid_device_pairing", title: "Connect Droid" },
+  ] satisfies ReadonlyArray<{
+    provider: ProviderKind;
+    method: ServerProviderConnectionMethod;
+    title: string;
+  }>)("starts the guided $provider connection flow", async ({ provider, method, title }) => {
+    const waitingProvider = {
+      provider,
+      status: "warning",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+      connectionState: {
+        operationId: `connect-${provider}-1`,
+        method,
+        status: "waiting_for_browser",
+        startedAt: checkedAt,
+        finishedAt: null,
+        message: "Finish the provider sign-in in your browser.",
+      },
+    } satisfies ServerProviderStatus;
+    const startProviderConnection = vi.fn().mockResolvedValue({ providers: [waitingProvider] });
+    const restoreNativeApi = installNativeApi({ startProviderConnection });
+    const queryClient = createQueryClient({
+      provider,
+      status: "warning",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+    });
+    useProviderConnectionDialogStore.getState().openDialog(provider, "settings");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await expect.element(page.getByRole("heading", { name: title })).toBeVisible();
+      await page.getByRole("button", { name: "Continue in browser" }).click();
+      await vi.waitFor(() => {
+        expect(startProviderConnection).toHaveBeenCalledWith({ provider, method });
+      });
+      await expect
+        .element(page.getByText("Finish the provider sign-in in your browser."))
+        .toBeVisible();
     } finally {
       await screen.unmount();
       queryClient.clear();

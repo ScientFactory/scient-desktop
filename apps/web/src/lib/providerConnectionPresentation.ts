@@ -25,9 +25,11 @@ export function providerConnectionMethod(
   provider: ProviderKind,
 ): ServerProviderConnectionMethod | null {
   if (provider === "codex") return "codex_browser";
-  if (provider === "claudeAgent") return "claude_subscription";
+  if (provider === "claudeAgent") return "claude_console";
   if (provider === "cursor") return "cursor_browser";
   if (provider === "antigravity") return "antigravity_browser";
+  if (provider === "grok") return "grok_browser";
+  if (provider === "droid") return "droid_device_pairing";
   return null;
 }
 

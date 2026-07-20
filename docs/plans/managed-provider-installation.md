@@ -12,17 +12,17 @@ The runtime-installation half of this design is now implemented for every provid
 
 ## Current implementation matrix
 
-| Provider    | Automatic runtime on current macOS arm64 target  | In-app connection                                                           | Remaining release gate                                                                                     |
-| ----------- | ------------------------------------------------ | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Codex       | Yes, pinned official standalone release          | Official browser login and status verification                              | Clean-machine proof on every claimed OS/architecture                                                       |
-| Claude      | Yes, pinned native release and manifest checksum | Official Claude.ai browser login and status verification                    | Clean-machine proof and stronger manifest-signature verification if Anthropic publishes a stable mechanism |
-| Antigravity | Yes, pinned manifest release                     | Official Google browser login through `agy models`, then model verification | Clean-account authentication proof; other targets need packaged proof                                      |
-| Cursor      | Yes, pinned macOS arm64 archive                  | Official browser login and health verification                              | Managed installation is intentionally gated off on other targets until reviewed                            |
-| Grok        | Yes, pinned macOS arm64 binary                   | Existing API-key detection; otherwise provider guidance                     | Review a reliable browser-login and non-inference verification flow; review other targets                  |
-| Droid       | Yes, pinned native binary and vendor SHA-256     | Existing API-key detection; otherwise provider guidance                     | Review device-pairing supervision and a reliable non-inference auth probe                                  |
-| OpenCode    | Yes, pinned official GitHub release              | Provider guidance                                                           | Design a provider-and-method chooser; clean-machine proof on claimed targets                               |
-| Kilo        | Yes, pinned official GitHub release              | Provider guidance                                                           | Design Gateway/provider chooser; clean-machine proof on claimed targets                                    |
-| Pi          | Bundled; no external CLI is required             | Existing embedded provider configuration                                    | Design the model-provider/OAuth chooser and verified credential presentation                               |
+| Provider    | Automatic runtime on current macOS arm64 target  | In-app connection                                                          | Remaining release gate                                                                                      |
+| ----------- | ------------------------------------------------ | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Codex       | Yes, pinned official standalone release          | Official browser login and status verification                             | Clean-machine proof on every claimed OS/architecture                                                        |
+| Claude      | Yes, pinned native release and manifest checksum | Authorized Claude Console browser login and status verification            | Fresh Console account and billing-onboarding proof; subscription login stays disabled without authorization |
+| Antigravity | Yes, pinned manifest release                     | Bare `agy` in a private PTY opens Google sign-in; `agy models` verifies it | Clean-account authentication proof; other targets need packaged proof                                       |
+| Cursor      | Yes, pinned macOS arm64 archive                  | Official browser login and health verification                             | Managed installation is intentionally gated off on other targets until reviewed                             |
+| Grok        | Yes, pinned macOS arm64 binary                   | Official xAI browser login plus explicit model/auth verification           | Fresh-account packaged proof; review other targets                                                          |
+| Droid       | Yes, pinned native binary and vendor SHA-256     | Authentication-only ACP device pairing plus non-inference verification     | Fresh-account packaged proof on macOS, Windows, and Linux                                                   |
+| OpenCode    | Yes, pinned official GitHub release              | Provider guidance                                                          | Design a provider-and-method chooser; clean-machine proof on claimed targets                                |
+| Kilo        | Yes, pinned official GitHub release              | Provider guidance                                                          | Design Gateway/provider chooser; clean-machine proof on claimed targets                                     |
+| Pi          | Bundled; no external CLI is required             | Existing embedded provider configuration                                   | Design the model-provider/OAuth chooser and verified credential presentation                                |
 
 ## Product requirements
 
@@ -123,8 +123,9 @@ The installation service must:
 - Source: Anthropic native stable release.
 - Verification now: pinned version, exact manifest version/platform entry, and manifest SHA-256.
 - Smoke test: `claude --version`.
-- Authentication: `claude auth login --claudeai`; Console billing remains an advanced option.
+- Authentication: `claude auth login --console`, which uses the provider-owned Console/API billing path Anthropic permits for third-party products.
 - Auth verification: `claude auth status`.
+- Claude.ai Free, Pro, Max, Team, and Enterprise subscription login is not exposed by Scient unless Anthropic gives written authorization for this product.
 - Managed updates run through Scient's runtime manager; independent-updater suppression still requires provider-specific release validation.
 
 ### 3. Antigravity
@@ -132,9 +133,9 @@ The installation service must:
 - Source: official platform manifest and native artifact.
 - Verification now: pinned manifest version and manifest SHA-512.
 - Smoke test: `agy --version`.
-- Authentication now: the provider-owned `agy models` command triggers browser sign-in when needed and doubles as the post-login model probe.
+- Authentication now: bare `agy` runs in a private PTY and opens provider-owned Google sign-in. Scient discards raw PTY output and polls the separate model verifier.
 - Auth verification: `agy models` returns models.
-- Release gate: prove that authentication can be observed and the bootstrap process can be terminated cleanly without starting an unintended agent task.
+- Managed invocations disable AGY's native self-updater so updates stay inside Scient's reviewed runtime lifecycle.
 
 ### 4. Grok
 
@@ -142,7 +143,8 @@ The installation service must:
 - Verification now: pinned macOS arm64 URL, byte size, and reviewed SHA-256; Scient does not execute the vendor installer script.
 - Smoke test: `grok --version`.
 - Authentication: `grok login`; fallback `grok login --device-auth`.
-- Auth verification: `grok models`.
+- Auth verification: `grok models` must return an explicit positive account/key marker and a usable model catalog; signed-out output is never mistaken for success.
+- Managed and ACP invocations suppress Grok's native auto-update path.
 - Other operating systems and architectures remain safely unsupported until their artifacts and checksums are reviewed.
 
 ### 5. Cursor
@@ -160,8 +162,9 @@ The installation service must:
 - Target selection includes baseline x64 when AVX2 is unavailable.
 - Verification now: exact reviewed version and vendor `.sha256`.
 - Smoke test: `droid --version`.
-- Authentication: supervised first-run device-pairing flow. Scient opens captured URLs itself; a process-local opener shim handles Linux systems without `xdg-open`.
-- Auth verification gate: identify a reliable provider-owned, non-inference status probe. Until then, installation may complete but Scient must not claim authentication is verified.
+- Authentication: supervised, authentication-only ACP handshake using `device-pairing`; Droid owns browser opening and credential storage.
+- Auth verification: initialize ACP, then resume a cryptographically random nonexistent session without calling `authenticate`. Factory's exact unknown-session response proves accepted credentials; its authentication-required response proves signed-out state. No session is created and no model is invoked.
+- Browser URL/code capture is not currently exposed by Droid's ACP response; Linux browser-launch fallback remains a packaged release test.
 - Never kill externally owned Droid processes during install or update.
 
 ### 7. Pi
@@ -206,9 +209,10 @@ The installation service must:
 5. [x] Add prepare, install, cancel, repair, rollback, and remove RPCs.
 6. [x] Automate reviewed browser authentication for Codex, Claude, Antigravity, and Cursor.
 7. [x] Replace installation-guide-first UI with reviewed consent, progress, cancellation, connection, and safe guidance fallbacks.
-8. [ ] Add reviewed authentication flows for Grok and Droid and provider-chooser flows for Pi, OpenCode, and Kilo.
-9. [ ] Add signed catalog/release-monitoring automation.
-10. [ ] Complete packaged clean-machine validation for each released target.
+8. [x] Add reviewed authentication flows for Grok and Droid.
+9. [ ] Add provider-chooser flows for Pi, OpenCode, and Kilo.
+10. [ ] Add signed catalog/release-monitoring automation.
+11. [ ] Complete packaged clean-machine validation for each released target.
 
 ## Verification requirements
 
@@ -243,11 +247,15 @@ For every released OS/architecture combination, use a clean VM or clean account 
 - [x] A real Antigravity artifact completed download, verification, extraction, smoke test, activation, resolution, and persisted-record checks in an isolated state directory.
 - [x] Formatting, lint (0 errors), full typecheck, arm64 DMG/ZIP packaging, desktop smoke test, and final real-browser inspection pass.
 - [x] The complete isolated UI path passes: missing runtime, reviewed consent, download progress, verified activation, and explicit browser-login handoff.
+- [x] Current official release metadata resolves for Codex 0.144.6, Claude 2.1.215, Antigravity 1.1.4, Grok 0.2.106, and Droid 0.175.0 on macOS arm64.
+- [x] Droid's non-inference ACP verification was exercised against the official 0.175.0 binary and returned the authenticated classification without creating a session or prompt.
+- [x] Focused server tests cover Claude Console login, Grok login and explicit auth parsing, Droid device-pairing classification, and Antigravity PTY login plus model verification; rendered browser tests cover Claude Console, Grok, and Droid connection dispatch.
 
 ## Release gates
 
-- [ ] Prove Codex, Claude, Antigravity, and Cursor login with fresh provider accounts in a packaged app.
-- [ ] Complete the provider-specific connection work listed in the implementation matrix.
+- [ ] Prove Codex, Claude Console, Antigravity, and Cursor login with fresh provider accounts in a packaged app.
+- [ ] Keep Claude.ai subscription login unavailable unless Anthropic gives written authorization; the implemented default is the permitted Console/API route.
+- [ ] Prove Grok and Droid with fresh provider accounts in a packaged app, including browser-launch failure and restart continuity.
 - [ ] Add the signed catalog and reviewed release-monitoring pipeline.
 - [ ] Run the clean-machine matrix for every OS/architecture Scient intends to claim.
 - [ ] Record platform signing/notarization evidence and confirm managed-runtime updater behavior for each provider.

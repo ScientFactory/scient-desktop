@@ -14,9 +14,9 @@ describe("provider connection contracts", () => {
       provider: "codex",
       method: "codex_browser",
     });
-    expect(decode({ provider: "claudeAgent", method: "claude_subscription" })).toEqual({
+    expect(decode({ provider: "claudeAgent", method: "claude_console" })).toEqual({
       provider: "claudeAgent",
-      method: "claude_subscription",
+      method: "claude_console",
     });
     expect(decode({ provider: "cursor", method: "cursor_browser" })).toEqual({
       provider: "cursor",

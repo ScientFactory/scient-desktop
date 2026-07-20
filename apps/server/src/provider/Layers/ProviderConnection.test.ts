@@ -1,10 +1,17 @@
-import type { ServerProviderConnectionState, ServerProviderStatus } from "@synara/contracts";
+import type {
+  ProviderKind,
+  ServerProviderConnectionState,
+  ServerProviderRuntimeSource,
+  ServerProviderStatus,
+} from "@synara/contracts";
 import { Duration, Effect, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { describe, expect, it, vi } from "vitest";
 
 import { ServerConfig, type ServerConfigShape } from "../../config";
 import { ServerSettingsService } from "../../serverSettings";
+import { PtyAdapter, type PtyAdapterShape } from "../../terminal/Services/PTY";
+import { probeDroidAcpAuthentication } from "../acp/DroidAcpSupport";
 import { ProviderConnection } from "../Services/ProviderConnection";
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
 import {
@@ -56,6 +63,7 @@ const TEST_CONFIG: ServerConfigShape = {
 function makeHandle(input: {
   readonly code?: number;
   readonly hanging?: boolean;
+  readonly stdout?: string;
   onKill?: () => void;
 }) {
   return ChildProcessSpawner.makeHandle({
@@ -66,7 +74,9 @@ function makeHandle(input: {
     isRunning: Effect.succeed(Boolean(input.hanging)),
     kill: () => Effect.sync(() => input.onKill?.()),
     stdin: Sink.drain,
-    stdout: input.hanging ? Stream.never : Stream.make(encoder.encode("browser opened")),
+    stdout: input.hanging
+      ? Stream.never
+      : Stream.make(encoder.encode(input.stdout ?? "browser opened")),
     stderr: input.hanging ? Stream.never : Stream.empty,
     all: Stream.empty,
     getInputFd: () => Sink.drain,
@@ -77,14 +87,20 @@ function makeHandle(input: {
 function makeConnectionTestLayer(input?: {
   readonly available?: boolean;
   readonly hanging?: boolean;
+  readonly processStdout?: string;
+  readonly provider?: ProviderKind;
+  readonly runtimeSource?: ServerProviderRuntimeSource;
   readonly timeout?: Duration.Duration;
   readonly onSpawn?: (command: { command: string; args: ReadonlyArray<string> }) => void;
   readonly onKill?: () => void;
+  readonly onPtySpawn?: (input: unknown) => void;
+  readonly onPtyKill?: () => void;
+  readonly droidAuthenticationProbe?: typeof probeDroidAcpAuthentication;
 }) {
   let connectionState: ServerProviderConnectionState | undefined;
   let authenticated = false;
   const status = (): ServerProviderStatus => ({
-    provider: "claudeAgent",
+    provider: input?.provider ?? "claudeAgent",
     status: authenticated ? "ready" : "error",
     available: input?.available ?? true,
     authStatus: authenticated ? "authenticated" : "unauthenticated",
@@ -114,6 +130,7 @@ function makeConnectionTestLayer(input?: {
         makeHandle({
           ...(input?.hanging !== undefined ? { hanging: input.hanging } : {}),
           ...(input?.onKill ? { onKill: input.onKill } : {}),
+          ...(input?.processStdout ? { stdout: input.processStdout } : {}),
         }),
       );
     }),
@@ -137,7 +154,7 @@ function makeConnectionTestLayer(input?: {
       }),
     resolve: (provider, configured) =>
       Effect.succeed({
-        source: input?.available === false ? "missing" : "system",
+        source: input?.available === false ? "missing" : (input?.runtimeSource ?? "system"),
         executable:
           input?.available === false
             ? null
@@ -156,15 +173,35 @@ function makeConnectionTestLayer(input?: {
       }),
     streamChanges: Stream.empty,
   } satisfies ProviderRuntimeManagerShape);
+  const ptyLayer = Layer.succeed(PtyAdapter, {
+    spawn: (spawnInput) =>
+      Effect.sync(() => {
+        input?.onPtySpawn?.(spawnInput);
+        return {
+          pid: 42,
+          write: () => undefined,
+          resize: () => undefined,
+          kill: () => input?.onPtyKill?.(),
+          pause: () => undefined,
+          resume: () => undefined,
+          onData: () => () => undefined,
+          onExit: () => () => undefined,
+        };
+      }),
+  } satisfies PtyAdapterShape);
 
-  const layer = makeProviderConnectionLive(
-    input?.timeout ? { timeout: input.timeout } : undefined,
-  ).pipe(
+  const layer = makeProviderConnectionLive({
+    ...(input?.timeout ? { timeout: input.timeout } : {}),
+    ...(input?.droidAuthenticationProbe
+      ? { droidAuthenticationProbe: input.droidAuthenticationProbe }
+      : {}),
+  }).pipe(
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(Layer.succeed(ServerConfig, TEST_CONFIG)),
     Layer.provideMerge(providerHealthLayer),
     Layer.provideMerge(providerRuntimeLayer),
     Layer.provideMerge(spawnerLayer),
+    Layer.provideMerge(ptyLayer),
   );
   return { layer, getConnectionState: () => connectionState };
 }
@@ -175,12 +212,12 @@ describe("provider connection command allowlist", () => {
     expect(providerConnectionCommandArgs("codex", "codex_browser")).toEqual(["login"]);
   });
 
-  it("uses Claude subscription login with fixed argv", () => {
-    expect(expectedMethodForProvider("claudeAgent")).toBe("claude_subscription");
-    expect(providerConnectionCommandArgs("claudeAgent", "claude_subscription")).toEqual([
+  it("uses Claude Console login with fixed argv", () => {
+    expect(expectedMethodForProvider("claudeAgent")).toBe("claude_console");
+    expect(providerConnectionCommandArgs("claudeAgent", "claude_console")).toEqual([
       "auth",
       "login",
-      "--claudeai",
+      "--console",
     ]);
   });
 
@@ -189,19 +226,110 @@ describe("provider connection command allowlist", () => {
     expect(providerConnectionCommandArgs("cursor", "cursor_browser")).toEqual(["login"]);
   });
 
-  it("uses Antigravity's provider-owned browser authentication probe", () => {
+  it("launches Antigravity's provider-owned TTY login", () => {
     expect(expectedMethodForProvider("antigravity")).toBe("antigravity_browser");
-    expect(providerConnectionCommandArgs("antigravity", "antigravity_browser")).toEqual(["models"]);
+    expect(providerConnectionCommandArgs("antigravity", "antigravity_browser")).toEqual([]);
+  });
+
+  it("uses Grok's provider-owned browser login", () => {
+    expect(expectedMethodForProvider("grok")).toBe("grok_browser");
+    expect(providerConnectionCommandArgs("grok", "grok_browser")).toEqual(["login"]);
+  });
+
+  it("uses Droid's ACP device-pairing authentication", () => {
+    expect(expectedMethodForProvider("droid")).toBe("droid_device_pairing");
+    expect(providerConnectionCommandArgs("droid", "droid_device_pairing")).toEqual([
+      "exec",
+      "--output-format",
+      "acp",
+    ]);
   });
 
   it("does not construct commands for mismatched or unsupported providers", () => {
-    expect(providerConnectionCommandArgs("codex", "claude_subscription")).toBeNull();
+    expect(providerConnectionCommandArgs("codex", "claude_console")).toBeNull();
+    expect(providerConnectionCommandArgs("claudeAgent", "claude_subscription")).toBeNull();
     expect(providerConnectionCommandArgs("cursor", "codex_browser")).toBeNull();
     expect(expectedMethodForProvider("opencode")).toBeNull();
   });
 });
 
 describe("ProviderConnectionLive", () => {
+  it("runs managed Antigravity login in a PTY and verifies models before connecting", async () => {
+    const onPtySpawn = vi.fn();
+    const onPtyKill = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "antigravity",
+      runtimeSource: "managed",
+      processStdout: "Gemini 3.5 Flash (High)\n",
+      onPtySpawn,
+      onPtyKill,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({
+          provider: "antigravity",
+          method: "antigravity_browser",
+        });
+        yield* Effect.sleep(Duration.millis(30));
+        expect(fixture.getConnectionState()?.status).toBe("connected");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onPtySpawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shell: "agy",
+        args: [],
+        env: expect.objectContaining({ AGY_CLI_DISABLE_AUTO_UPDATE: "true" }),
+      }),
+    );
+    expect(onPtyKill).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts Grok's browser login with the resolved executable", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "grok",
+      runtimeSource: "managed",
+      onSpawn,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({ provider: "grok", method: "grok_browser" });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("connected");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "grok", args: ["--no-auto-update", "login"] }),
+    );
+  });
+
+  it("runs Droid's authentication-only ACP handshake before verification", async () => {
+    const droidAuthenticationProbe = vi.fn(() => Effect.succeed({ methodId: "device-pairing" }));
+    const fixture = makeConnectionTestLayer({
+      provider: "droid",
+      droidAuthenticationProbe,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({ provider: "droid", method: "droid_device_pairing" });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("connected");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(droidAuthenticationProbe).toHaveBeenCalledWith(
+      expect.objectContaining({ binaryPath: "droid", cwd: "/tmp" }),
+    );
+  });
+
   it("starts Claude login with fixed argv and verifies before connecting", async () => {
     const onSpawn = vi.fn();
     const fixture = makeConnectionTestLayer({ onSpawn });
@@ -211,7 +339,7 @@ describe("ProviderConnectionLive", () => {
         const connection = yield* ProviderConnection;
         const started = yield* connection.start({
           provider: "claudeAgent",
-          method: "claude_subscription",
+          method: "claude_console",
         });
         expect(started.providers[0]?.connectionState?.operationId).toBeTruthy();
         yield* Effect.sleep(Duration.millis(20));
@@ -222,7 +350,7 @@ describe("ProviderConnectionLive", () => {
     expect(onSpawn).toHaveBeenCalledTimes(1);
     expect(onSpawn.mock.calls[0]?.[0]).toMatchObject({
       command: "claude",
-      args: ["auth", "login", "--claudeai"],
+      args: ["auth", "login", "--console"],
     });
   });
 
@@ -235,7 +363,7 @@ describe("ProviderConnectionLive", () => {
         const connection = yield* ProviderConnection;
         const started = yield* connection.start({
           provider: "claudeAgent",
-          method: "claude_subscription",
+          method: "claude_console",
         });
         const operationId = started.providers[0]?.connectionState?.operationId;
         expect(operationId).toBeTruthy();
@@ -258,7 +386,7 @@ describe("ProviderConnectionLive", () => {
         return yield* Effect.result(
           connection.start({
             provider: "claudeAgent",
-            method: "claude_subscription",
+            method: "claude_console",
           }),
         );
       }).pipe(Effect.provide(fixture.layer)),
@@ -279,12 +407,12 @@ describe("ProviderConnectionLive", () => {
         const connection = yield* ProviderConnection;
         const started = yield* connection.start({
           provider: "claudeAgent",
-          method: "claude_subscription",
+          method: "claude_console",
         });
         const duplicate = yield* Effect.result(
           connection.start({
             provider: "claudeAgent",
-            method: "claude_subscription",
+            method: "claude_console",
           }),
         );
         expect(duplicate._tag).toBe("Failure");
@@ -310,7 +438,7 @@ describe("ProviderConnectionLive", () => {
         const connection = yield* ProviderConnection;
         yield* connection.start({
           provider: "claudeAgent",
-          method: "claude_subscription",
+          method: "claude_console",
         });
         yield* Effect.sleep(Duration.millis(20));
         expect(fixture.getConnectionState()?.status).toBe("failed");

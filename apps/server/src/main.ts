@@ -34,6 +34,7 @@ import { Server } from "./effectServer";
 import { ServerLoggerLive } from "./serverLogger";
 import { ServerSettingsService } from "./serverSettings";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess";
+import { PtyAdapterLayerLive } from "./terminal/runtimeLayer";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
@@ -225,7 +226,11 @@ const ServerConfigLive = (input: CliInput) =>
 const LayerLive = (input: CliInput) => {
   const runtimeServicesLayer = makeServerRuntimeServicesLayer();
   const providerLayer = makeServerProviderLayer();
-  const providerRuntimeLayer = ProviderRuntimeManagerLive;
+  const providerRuntimeLayer = ProviderRuntimeManagerLive.pipe(
+    // Packaged desktop shells often omit Homebrew and user-local directories.
+    // Hydrate PATH before the runtime manager snapshots its system search path.
+    Layer.provide(Layer.effectDiscard(Effect.sync(fixPath))),
+  );
   const providerHealthLayer = ProviderHealthLive.pipe(
     // Provider health reads persisted provider settings while constructing its
     // cache, so build it with the same runtime services layer exposed to Server.
@@ -236,6 +241,7 @@ const LayerLive = (input: CliInput) => {
   const providerConnectionLayer = ProviderConnectionLive.pipe(
     Layer.provideMerge(runtimeServicesLayer),
     Layer.provideMerge(providerHealthLayer),
+    Layer.provideMerge(PtyAdapterLayerLive),
   );
   const providerSessionReaperLayer = ProviderSessionReaperLive.pipe(
     // The reaper coordinates orchestration state with live provider sessions,

@@ -9,6 +9,7 @@ import {
   WsRpcError,
   WsRpcGroup,
   PullRequestsUnavailableError,
+  ServerProviderUpdateError,
   type GitActionProgressEvent,
   type OrchestrationEvent,
   type ProjectDevServerEvent,
@@ -294,21 +295,35 @@ export const makeWsRpcLayer = () =>
                   .resolve(status.provider, settings?.providers[status.provider].binaryPath)
                   .pipe(
                     Effect.zip(providerRuntimeManager.getSnapshot(status.provider)),
-                    Effect.map(([runtime, snapshot]) => ({
-                      ...status,
-                      runtime: {
-                        source: runtime.source,
-                        managedVersion: runtime.managedVersion,
-                        canInstall: runtime.canInstall,
-                        canRepair: runtime.canRepair,
-                        canRollback: runtime.canRollback,
-                        canRemove: runtime.canRemove,
-                        message: runtime.message,
-                      },
-                      ...(snapshot.installationState
-                        ? { installationState: snapshot.installationState }
-                        : {}),
-                    })),
+                    Effect.map(([runtime, snapshot]) => {
+                      const appManaged =
+                        runtime.source === "managed" || runtime.source === "bundled";
+                      return {
+                        ...status,
+                        ...(appManaged && status.versionAdvisory
+                          ? {
+                              versionAdvisory: {
+                                ...status.versionAdvisory,
+                                canUpdate: false,
+                                updateCommand: null,
+                                message: "Updates for this runtime are managed by Scient.",
+                              },
+                            }
+                          : {}),
+                        runtime: {
+                          source: runtime.source,
+                          managedVersion: runtime.managedVersion,
+                          canInstall: runtime.canInstall,
+                          canRepair: runtime.canRepair,
+                          canRollback: runtime.canRollback,
+                          canRemove: runtime.canRemove,
+                          message: runtime.message,
+                        },
+                        ...(snapshot.installationState
+                          ? { installationState: snapshot.installationState }
+                          : {}),
+                      };
+                    }),
                   ),
               { concurrency: "unbounded" },
             ),
@@ -1047,7 +1062,33 @@ export const makeWsRpcLayer = () =>
             Effect.andThen(providerHealth.getStatuses.pipe(Effect.flatMap(enrichProviderStatuses))),
             Effect.map((providers) => ({ providers })),
           ),
-        [WS_METHODS.serverUpdateProvider]: (input) => providerHealth.updateProvider(input),
+        [WS_METHODS.serverUpdateProvider]: (input) =>
+          serverSettings.getSettings.pipe(
+            Effect.mapError(
+              () =>
+                new ServerProviderUpdateError({
+                  provider: input.provider,
+                  reason: "Scient could not read the provider settings.",
+                }),
+            ),
+            Effect.flatMap((settings) =>
+              providerRuntimeManager.resolve(
+                input.provider,
+                settings.providers[input.provider].binaryPath,
+              ),
+            ),
+            Effect.flatMap((runtime) =>
+              runtime.source === "managed" || runtime.source === "bundled"
+                ? Effect.fail(
+                    new ServerProviderUpdateError({
+                      provider: input.provider,
+                      reason:
+                        "This runtime is managed by Scient. Use the managed install, repair, or rollback controls instead.",
+                    }),
+                  )
+                : providerHealth.updateProvider(input),
+            ),
+          ),
         [WS_METHODS.serverListWorktrees]: () => Effect.succeed({ worktrees: [] }),
         [WS_METHODS.serverListLocalServers]: () =>
           rpcEffect(

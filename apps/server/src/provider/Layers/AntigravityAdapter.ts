@@ -192,7 +192,7 @@ export async function runAntigravityHelperProcess(
   return await new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: process.env,
+      env: { ...process.env, AGY_CLI_DISABLE_AUTO_UPDATE: "true" },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -853,6 +853,7 @@ const makeAntigravityAdapter = Effect.gen(function* () {
         cwd: context.session.cwd ?? serverConfig.cwd,
         env: {
           ...process.env,
+          AGY_CLI_DISABLE_AUTO_UPDATE: "true",
           SYNARA_ANTIGRAVITY_EVENTS: eventFile,
           SYNARA_ANTIGRAVITY_HOOK_DECISION: "allow",
         },

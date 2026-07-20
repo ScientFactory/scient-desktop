@@ -58,8 +58,11 @@ import {
   DEFAULT_CURSOR_AGENT_BINARY,
   resolveCursorAgentBinaryPath,
 } from "../acp/CursorAcpCommand";
-import { hasDroidApiKeyEnv, resolveDroidCliBinaryPath } from "../acp/DroidAcpSupport";
-import { hasGrokApiKeyEnv } from "../acp/GrokAcpSupport";
+import {
+  hasDroidApiKeyEnv,
+  resolveDroidCliBinaryPath,
+  verifyDroidAcpAuthentication,
+} from "../acp/DroidAcpSupport";
 import {
   claudeAuthMetadata,
   isStructuredClaudeAuthFalseNegativeCandidate,
@@ -96,6 +99,7 @@ import {
 } from "../providerMaintenance";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText";
 import { buildCodexProcessEnv } from "../../codexProcessEnv.ts";
+import { parseAntigravityModelLines } from "./AntigravityAdapter";
 
 export { parseClaudeAuthStatusFromOutput } from "../claudeAuthStatus";
 export type { CommandResult } from "../providerCliOutput";
@@ -806,7 +810,10 @@ function cursorModelsOutputHasNoModels(output: string): boolean {
 }
 
 const runAntigravityCommand = (args: ReadonlyArray<string>, executable = "agy") =>
-  runProviderCommand(executable, args).pipe(
+  runProviderCommand(executable, args, {
+    ...process.env,
+    AGY_CLI_DISABLE_AUTO_UPDATE: "true",
+  }).pipe(
     Effect.flatMap((result) =>
       isWindowsShellCommandMissingResult({ code: result.code, stderr: result.stderr })
         ? Effect.fail(new Error(`spawn ${executable} ENOENT`))
@@ -1187,6 +1194,37 @@ export const checkClaudeProviderStatus = makeCheckClaudeProviderStatus();
 
 // ── Grok health check ───────────────────────────────────────────────
 
+export function parseGrokModelsAuthStatus(result: CommandResult): {
+  readonly authStatus: ServerProviderAuthStatus;
+  readonly authType?: "apiKey" | "oauth";
+  readonly authLabel?: string;
+} {
+  const output = `${result.stdout}\n${result.stderr}`;
+  const normalized = output.toLowerCase();
+  if (
+    normalized.includes("you are not authenticated") ||
+    normalized.includes("not signed in") ||
+    normalized.includes("session expired") ||
+    normalized.includes("authentication required")
+  ) {
+    return { authStatus: "unauthenticated" };
+  }
+  if (result.code !== 0) return { authStatus: "unknown" };
+
+  const hasModelCatalog = /available models\s*:/iu.test(output);
+  if (!hasModelCatalog) return { authStatus: "unknown" };
+  if (/you are using xai_api_key\s*\./iu.test(output)) {
+    return { authStatus: "authenticated", authType: "apiKey", authLabel: "xAI API Key" };
+  }
+  if (/you are authenticated via deployment key\s*\./iu.test(output)) {
+    return { authStatus: "authenticated", authType: "apiKey", authLabel: "xAI deployment key" };
+  }
+  if (/you are logged in with\b/iu.test(output)) {
+    return { authStatus: "authenticated", authType: "oauth", authLabel: "xAI account" };
+  }
+  return { authStatus: "unknown" };
+}
+
 export const makeCheckGrokProviderStatus = (
   binaryPath?: string,
 ): Effect.Effect<ServerProviderStatus, never, ChildProcessSpawner.ChildProcessSpawner> =>
@@ -1239,20 +1277,29 @@ export const makeCheckGrokProviderStatus = (
       } satisfies ServerProviderStatus;
     }
     const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
-    const hasApiKey = hasGrokApiKeyEnv();
+    const modelsProbe = yield* runGrokCommand(["--no-auto-update", "models"], executable).pipe(
+      Effect.timeoutOption(CLAUDE_HEALTH_TIMEOUT_MS),
+      Effect.result,
+    );
+    const parsedAuth =
+      Result.isSuccess(modelsProbe) && Option.isSome(modelsProbe.success)
+        ? parseGrokModelsAuthStatus(modelsProbe.success.value)
+        : { authStatus: "unknown" as const };
 
     return {
       provider: GROK_PROVIDER,
-      status: "ready" as const,
+      status: parsedAuth.authStatus === "authenticated" ? ("ready" as const) : ("warning" as const),
       available: true,
-      authStatus: hasApiKey ? ("authenticated" as const) : ("unknown" as const),
+      authStatus: parsedAuth.authStatus,
       version: parsedVersion,
       checkedAt,
-      ...(hasApiKey
-        ? { authType: "apiKey", authLabel: "xAI API Key" }
+      ...(parsedAuth.authType
+        ? { authType: parsedAuth.authType, authLabel: parsedAuth.authLabel }
         : {
             message:
-              "Grok CLI is installed. Run `grok` to authenticate locally, or set XAI_API_KEY before starting a session.",
+              parsedAuth.authStatus === "unauthenticated"
+                ? "Grok CLI is installed, but it is not signed in to xAI."
+                : "Grok CLI is installed, but Scient could not safely verify the xAI account.",
           }),
     } satisfies ServerProviderStatus;
   });
@@ -1266,6 +1313,8 @@ const runDroidCommand = (args: ReadonlyArray<string>, executable = "droid") =>
 
 export const makeCheckDroidProviderStatus = (
   binaryPath?: string,
+  homeDir: string = OS.homedir(),
+  authenticationProbe: typeof verifyDroidAcpAuthentication = verifyDroidAcpAuthentication,
 ): Effect.Effect<ServerProviderStatus, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.gen(function* () {
     const checkedAt = new Date().toISOString();
@@ -1317,20 +1366,32 @@ export const makeCheckDroidProviderStatus = (
     }
     const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
     const hasApiKey = hasDroidApiKeyEnv();
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const authentication = yield* authenticationProbe({
+      binaryPath: executable,
+      childProcessSpawner,
+      cwd: homeDir,
+    }).pipe(Effect.timeoutOption(CLAUDE_HEALTH_TIMEOUT_MS));
+    const authStatus = Option.getOrElse(authentication, () => "unknown" as const);
+    const verified = authStatus === "authenticated";
 
     return {
       provider: DROID_PROVIDER,
-      status: "ready" as const,
+      status: verified ? ("ready" as const) : ("warning" as const),
       available: true,
-      authStatus: hasApiKey ? ("authenticated" as const) : ("unknown" as const),
+      authStatus,
       version: parsedVersion,
       checkedAt,
-      ...(hasApiKey
+      ...(verified && hasApiKey
         ? { authType: "apiKey", authLabel: "Factory API Key" }
-        : {
-            message:
-              "Droid CLI is installed. Scient can use the CLI's cached device-pairing login; run `droid` to authenticate locally if needed, or set FACTORY_API_KEY.",
-          }),
+        : verified
+          ? { authType: "oauth", authLabel: "Factory account" }
+          : authStatus === "unauthenticated"
+            ? { message: "Droid CLI is installed, but it is not signed in to Factory." }
+            : {
+                message:
+                  "Droid CLI is installed, but Scient could not safely verify the Factory account.",
+              }),
     } satisfies ServerProviderStatus;
   });
 
@@ -1495,6 +1556,18 @@ export const checkPiProviderStatus = (
 
 // ── Antigravity CLI health check ──────────────────────────────────
 
+export function parseAntigravityModelsAuthStatus(result: CommandResult): ServerProviderAuthStatus {
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (/please sign in to view available models/iu.test(output)) return "unauthenticated";
+  if (result.code !== 0) return "unknown";
+  const models = parseAntigravityModelLines(result.stdout);
+  return models.some((model) =>
+    /^(?:claude|deepseek|gemini|gpt|grok|llama|mistral|qwen)\b/iu.test(model.slug),
+  )
+    ? "authenticated"
+    : "unknown";
+}
+
 export const checkAntigravityProviderStatus = (
   binaryPath?: string,
 ): Effect.Effect<ServerProviderStatus, never, ChildProcessSpawner.ChildProcessSpawner> =>
@@ -1557,12 +1630,11 @@ export const checkAntigravityProviderStatus = (
       Effect.timeoutOption(CLAUDE_HEALTH_TIMEOUT_MS),
       Effect.result,
     );
-    if (
-      Result.isSuccess(models) &&
-      Option.isSome(models.success) &&
-      models.success.value.code === 0 &&
-      models.success.value.stdout.trim().length > 0
-    ) {
+    const authStatus =
+      Result.isSuccess(models) && Option.isSome(models.success)
+        ? parseAntigravityModelsAuthStatus(models.success.value)
+        : "unknown";
+    if (authStatus === "authenticated") {
       return {
         provider: ANTIGRAVITY_PROVIDER,
         status: "ready",
@@ -1577,10 +1649,13 @@ export const checkAntigravityProviderStatus = (
       provider: ANTIGRAVITY_PROVIDER,
       status: "warning",
       available: true,
-      authStatus: "unknown",
+      authStatus,
       version: parsedVersion,
       checkedAt,
-      message: "Antigravity CLI is installed, but Scient could not verify login by listing models.",
+      message:
+        authStatus === "unauthenticated"
+          ? "Antigravity CLI is installed, but it is not signed in to Google."
+          : "Antigravity CLI is installed, but Scient could not safely verify login by listing models.",
     } satisfies ServerProviderStatus;
   });
 
@@ -2278,7 +2353,10 @@ export function makeProviderHealthLive(options?: { readonly providerUpdateTimeou
                 checkProviderWhenEnabled(
                   settings,
                   DROID_PROVIDER,
-                  makeCheckDroidProviderStatus(settings.providers.droid.binaryPath),
+                  makeCheckDroidProviderStatus(
+                    settings.providers.droid.binaryPath,
+                    serverConfig.homeDir,
+                  ),
                 ),
                 checkProviderWhenEnabled(
                   settings,

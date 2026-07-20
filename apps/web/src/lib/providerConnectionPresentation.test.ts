@@ -18,9 +18,11 @@ const BASE_STATUS: ServerProviderStatus = {
 describe("provider connection presentation", () => {
   it("maps supported providers to fixed browser sign-in methods", () => {
     expect(providerConnectionMethod("codex")).toBe("codex_browser");
-    expect(providerConnectionMethod("claudeAgent")).toBe("claude_subscription");
+    expect(providerConnectionMethod("claudeAgent")).toBe("claude_console");
     expect(providerConnectionMethod("cursor")).toBe("cursor_browser");
     expect(providerConnectionMethod("antigravity")).toBe("antigravity_browser");
+    expect(providerConnectionMethod("grok")).toBe("grok_browser");
+    expect(providerConnectionMethod("droid")).toBe("droid_device_pairing");
     expect(providerConnectionMethod("opencode")).toBeNull();
   });
 
