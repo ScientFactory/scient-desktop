@@ -24,7 +24,6 @@ import { buildCodexProcessEnv } from "../../codexProcessEnv";
 import { resolveBaseCodexHomePath } from "../../codexHomePaths";
 import { ServerSettingsService } from "../../serverSettings";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText";
-import { acquireClaudeAuthStatusLock } from "../claudeAuthStatusLock";
 import { buildClaudeProcessEnv } from "../claudeProcessEnv";
 import { buildCursorAgentCommand } from "../acp/CursorAcpCommand";
 import { probeDroidAcpAuthentication } from "../acp/DroidAcpSupport";
@@ -48,7 +47,6 @@ interface ConnectionCommand {
   readonly args: ReadonlyArray<string>;
   readonly env: NodeJS.ProcessEnv;
   readonly waitingMessage: string;
-  readonly lock?: "claude-auth";
   readonly strategy?: "antigravity-pty";
 }
 
@@ -59,7 +57,7 @@ export function expectedMethodForProvider(
     case "codex":
       return "codex_browser";
     case "claudeAgent":
-      return "claude_console";
+      return "claude_account";
     case "cursor":
       return "cursor_browser";
     case "antigravity":
@@ -78,6 +76,12 @@ export function providerConnectionCommandArgs(
   method: ServerProviderConnectionMethod,
 ): ReadonlyArray<string> | null {
   if (provider === "codex" && method === "codex_browser") return ["login"];
+  if (provider === "claudeAgent" && method === "claude_account") {
+    return ["auth", "login"];
+  }
+  if (provider === "claudeAgent" && method === "claude_sso") {
+    return ["auth", "login", "--sso"];
+  }
   if (provider === "claudeAgent" && method === "claude_console") {
     return ["auth", "login", "--console"];
   }
@@ -169,13 +173,6 @@ export function makeProviderConnectionLive(options?: {
             provider,
             reason: "unsupported_provider",
             message: "This provider does not yet support in-app sign in.",
-          });
-        }
-        if (method !== expectedMethod) {
-          return yield* makeConnectionError({
-            provider,
-            reason: "invalid_method",
-            message: "The selected sign-in method is not valid for this provider.",
           });
         }
         const args = providerConnectionCommandArgs(provider, method);
@@ -331,8 +328,12 @@ export function makeProviderConnectionLive(options?: {
             ...buildClaudeProcessEnv({ homeDir: serverConfig.homeDir }),
             ...(runtime.source === "managed" ? { DISABLE_AUTOUPDATER: "1" } : {}),
           },
-          waitingMessage: "Finish signing in to Claude in the browser window.",
-          lock: "claude-auth",
+          waitingMessage:
+            method === "claude_sso"
+              ? "Finish signing in with your Claude organization in the browser window."
+              : method === "claude_console"
+                ? "Finish signing in to Anthropic Console in the browser window."
+                : "Finish signing in to your Claude account in the browser window.",
         } satisfies ConnectionCommand;
       });
 
@@ -414,28 +415,15 @@ export function makeProviderConnectionLive(options?: {
           }
         }).pipe(Effect.scoped);
 
-      const runWithOptionalLock = (
-        command: ConnectionCommand,
-        run: Effect.Effect<number, unknown>,
-      ) => {
-        if (command.lock !== "claude-auth") return run;
-        return Effect.acquireUseRelease(
-          Effect.promise(() => acquireClaudeAuthStatusLock()),
-          () => run,
-          (release) => Effect.sync(release),
-        );
-      };
-
       const start: ProviderConnectionShape["start"] = Effect.fn("ProviderConnection.start")(
         function* (input) {
           const { provider, method } = input;
           const reserved = yield* reserveProvider(provider);
           if (!reserved) {
-            return yield* makeConnectionError({
-              provider,
-              reason: "already_running",
-              message: "A connection attempt is already running for this provider.",
-            });
+            // Starting the same provider is idempotent. Returning the current
+            // operation lets a reopened dialog resume or cancel it without
+            // spawning a competing credential process.
+            return { providers: yield* providerHealth.getStatuses };
           }
 
           const commandResult = yield* Effect.result(resolveCommand(provider, method));
@@ -444,6 +432,12 @@ export function makeProviderConnectionLive(options?: {
             return yield* commandResult.failure;
           }
           const command = commandResult.success;
+          const refreshedBeforeStart = yield* providerHealth.refresh;
+          const currentStatus = refreshedBeforeStart.find((status) => status.provider === provider);
+          if (currentStatus?.available && currentStatus.authStatus === "authenticated") {
+            yield* releaseProvider(provider, "");
+            return { providers: refreshedBeforeStart };
+          }
           const operationId = randomUUID();
           const startedAt = new Date().toISOString();
           const state = (input: {
@@ -469,7 +463,7 @@ export function makeProviderConnectionLive(options?: {
               provider,
               state({ status: "waiting_for_browser", message: command.waitingMessage }),
             );
-            const connectionProcess =
+            const connectionProcess: Effect.Effect<number, unknown> =
               provider === "droid"
                 ? (options?.droidAuthenticationProbe ?? probeDroidAcpAuthentication)({
                     binaryPath: command.executable,
@@ -478,7 +472,7 @@ export function makeProviderConnectionLive(options?: {
                   }).pipe(Effect.as(0))
                 : command.strategy === "antigravity-pty"
                   ? runAntigravityConnection(command)
-                  : runWithOptionalLock(command, runCommand(command).pipe(Effect.scoped));
+                  : runCommand(command).pipe(Effect.scoped);
             const exitCodeResult = yield* connectionProcess.pipe(
               Effect.timeoutOption(timeout),
               Effect.result,
@@ -592,7 +586,6 @@ export function makeProviderConnectionLive(options?: {
                 }),
               ).pipe(Effect.asVoid),
             ),
-            Effect.ensuring(releaseProvider(provider, operationId)),
           );
 
           // The gate prevents a very fast CLI exit from completing and releasing
@@ -600,6 +593,9 @@ export function makeProviderConnectionLive(options?: {
           const startGate = yield* Deferred.make<void>();
           const fiber = yield* Deferred.await(startGate).pipe(
             Effect.andThen(operation),
+            // Own the reservation at the outermost fiber boundary. A caller can
+            // cancel immediately after start returns, before `operation` begins.
+            Effect.ensuring(releaseProvider(provider, operationId)),
             Effect.forkIn(operationScope),
           );
           yield* Ref.update(activeConnectionsRef, (active) => {
@@ -624,6 +620,10 @@ export function makeProviderConnectionLive(options?: {
             });
           }
           yield* Fiber.interrupt(active.fiber);
+          // Restart callers must not race the interrupted operation's process
+          // cleanup or reservation finalizer. Do not return until both finish.
+          yield* Fiber.await(active.fiber);
+          yield* releaseProvider(input.provider, input.operationId);
           const providers = yield* providerHealth.getStatuses;
           return { providers };
         },

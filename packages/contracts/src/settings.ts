@@ -97,7 +97,17 @@ export const SkillsServerSettings = Schema.Struct({
 });
 export type SkillsServerSettings = typeof SkillsServerSettings.Type;
 
+export const TelemetryPrivacyLevel = Schema.Literals([
+  "off",
+  "essential",
+  "product",
+  "diagnostic",
+  "contribution",
+]);
+export type TelemetryPrivacyLevel = typeof TelemetryPrivacyLevel.Type;
+
 export const ServerSettings = Schema.Struct({
+  telemetryPrivacyLevel: TelemetryPrivacyLevel.pipe(Schema.withDecodingDefault(() => "essential")),
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   defaultThreadEnvMode: ThreadEnvironmentMode.pipe(Schema.withDecodingDefault(() => "local")),
@@ -138,6 +148,7 @@ const ProviderSettingsBasePatch = {
 };
 
 export const ServerSettingsPatch = Schema.Struct({
+  telemetryPrivacyLevel: Schema.optionalKey(TelemetryPrivacyLevel),
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvironmentMode),

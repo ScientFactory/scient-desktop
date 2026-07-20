@@ -1054,6 +1054,7 @@ function SettingsRouteView() {
     settings.piBinaryPath !== defaults.piBinaryPath ||
     settings.piAgentDir !== defaults.piAgentDir;
   const changedSettingLabels = [
+    ...(settings.telemetryPrivacyLevel !== defaults.telemetryPrivacyLevel ? ["Data sharing"] : []),
     ...(theme !== "system" ? ["Theme"] : []),
     ...(!isDefaultActiveTheme ? [`${resolvedTheme === "dark" ? "Dark" : "Light"} theme pack`] : []),
     ...(settings.defaultProvider !== defaults.defaultProvider ? ["Default provider"] : []),
@@ -2489,6 +2490,79 @@ function SettingsRouteView() {
     </div>
   );
 
+  const telemetryLevelDescriptions = {
+    off: "No analytics events leave this installation.",
+    essential: "Share only basic reliability signals, such as an anonymous startup heartbeat.",
+    product: "Also share feature and workflow usage so ScientFactory can improve the product.",
+    diagnostic: "Also allow bounded technical diagnostics for failures and performance problems.",
+    contribution:
+      "Allow explicitly marked contribution events in addition to diagnostics. Normal analytics still exclude research content.",
+  } as const;
+
+  const renderDataPrivacyPanel = () => (
+    <div className="space-y-6">
+      <SettingsSection title="Analytics level">
+        <SettingsRow
+          title="Data sharing"
+          description={telemetryLevelDescriptions[settings.telemetryPrivacyLevel]}
+          resetAction={
+            settings.telemetryPrivacyLevel !== defaults.telemetryPrivacyLevel ? (
+              <SettingResetButton
+                label="data sharing"
+                onClick={() =>
+                  updateSettings({ telemetryPrivacyLevel: defaults.telemetryPrivacyLevel })
+                }
+              />
+            ) : null
+          }
+          control={
+            <SettingsSelectControl
+              value={settings.telemetryPrivacyLevel}
+              onValueChange={(value) => {
+                if (
+                  value === "off" ||
+                  value === "essential" ||
+                  value === "product" ||
+                  value === "diagnostic" ||
+                  value === "contribution"
+                ) {
+                  updateSettings({ telemetryPrivacyLevel: value });
+                }
+              }}
+              ariaLabel="Telemetry privacy level"
+              valueContent={
+                {
+                  off: "Zero telemetry",
+                  essential: "Essential",
+                  product: "Product analytics",
+                  diagnostic: "Diagnostics",
+                  contribution: "Contribution",
+                }[settings.telemetryPrivacyLevel]
+              }
+            >
+              <SelectItem value="off">Zero telemetry</SelectItem>
+              <SelectItem value="essential">Essential</SelectItem>
+              <SelectItem value="product">Product analytics</SelectItem>
+              <SelectItem value="diagnostic">Diagnostics</SelectItem>
+              <SelectItem value="contribution">Contribution</SelectItem>
+            </SettingsSelectControl>
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Identity and content boundaries">
+        <SettingsRow
+          title="Installation identity"
+          description="Telemetry uses a random identifier generated and persisted in Scient's local state, then includes it only with events allowed by your selected level. It is not derived from your name, email, device fingerprint, or connected AI-provider accounts."
+        />
+        <SettingsRow
+          title="Research content"
+          description="Normal analytics never include prompts, documents, source text, filenames, file paths, or generated scientific content. Any future content contribution requires a separate explicit action."
+        />
+      </SettingsSection>
+    </div>
+  );
+
   const renderWorktreesPanel = () => {
     if (serverWorktreesQuery.isLoading) {
       return (
@@ -3668,6 +3742,8 @@ function SettingsRouteView() {
         return renderNotificationsPanel();
       case "behavior":
         return renderBehaviorPanel();
+      case "data-privacy":
+        return renderDataPrivacyPanel();
       case "appsnap":
         return renderAppSnapPanel();
       case "shortcuts":

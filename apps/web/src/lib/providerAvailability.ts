@@ -15,6 +15,19 @@ export type ProviderStatusRefresh = () => Promise<
   readonly ServerProviderStatus[] | null | undefined
 >;
 
+const PROVIDERS_REQUIRING_VERIFIED_AUTH = new Set<ProviderKind>([
+  "codex",
+  "claudeAgent",
+  "cursor",
+  "antigravity",
+  "grok",
+  "droid",
+]);
+
+export function providerRequiresVerifiedAuth(provider: ProviderKind): boolean {
+  return PROVIDERS_REQUIRING_VERIFIED_AUTH.has(provider);
+}
+
 export function normalizeCustomBinaryPath(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
     return null;
@@ -72,7 +85,10 @@ export function isProviderUsable(status: ServerProviderStatus | null | undefined
     // Missing status means the health check has not confirmed an installed provider yet.
     return false;
   }
-  return status.available && status.status === "ready" && status.authStatus !== "unauthenticated";
+  const authUsable = providerRequiresVerifiedAuth(status.provider)
+    ? status.authStatus === "authenticated"
+    : status.authStatus !== "unauthenticated";
+  return status.available && status.status === "ready" && authUsable;
 }
 
 export function providerUnavailableReason(status: ServerProviderStatus | null | undefined): string {
@@ -80,6 +96,14 @@ export function providerUnavailableReason(status: ServerProviderStatus | null | 
     return "Provider status is still loading.";
   }
   const providerLabel = PROVIDER_DISPLAY_NAMES[status.provider] ?? status.provider;
+  const connectionStatus = status.connectionState?.status;
+  if (
+    connectionStatus === "starting" ||
+    connectionStatus === "waiting_for_browser" ||
+    connectionStatus === "verifying"
+  ) {
+    return `${providerLabel} sign-in is still in progress.`;
+  }
   if (status.authStatus === "unauthenticated") {
     return `${providerLabel} is not authenticated yet.`;
   }
@@ -111,7 +135,7 @@ export function resolveProviderSendAvailability(input: {
 }
 
 function shouldRefreshBeforeBlocking(status: ServerProviderStatus | null): boolean {
-  return !status || !status.available || status.authStatus === "unauthenticated";
+  return !isProviderUsable(status);
 }
 
 // Re-check a blocked provider once before surfacing stale install/auth state to the user.

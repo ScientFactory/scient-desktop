@@ -2,6 +2,7 @@ import type { ServerProviderStatus } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  CLAUDE_CONNECTION_METHOD_OPTIONS,
   describeProviderConnection,
   providerConnectionMethod,
   providerInstallUrl,
@@ -18,7 +19,7 @@ const BASE_STATUS: ServerProviderStatus = {
 describe("provider connection presentation", () => {
   it("maps supported providers to fixed browser sign-in methods", () => {
     expect(providerConnectionMethod("codex")).toBe("codex_browser");
-    expect(providerConnectionMethod("claudeAgent")).toBe("claude_console");
+    expect(providerConnectionMethod("claudeAgent")).toBe("claude_account");
     expect(providerConnectionMethod("cursor")).toBe("cursor_browser");
     expect(providerConnectionMethod("antigravity")).toBe("antigravity_browser");
     expect(providerConnectionMethod("grok")).toBe("grok_browser");
@@ -62,21 +63,23 @@ describe("provider connection presentation", () => {
     expect(presentation.description).toContain("credentials stay with Codex");
   });
 
-  it("explains Claude's Anthropic Console requirement before sign-in", () => {
+  it("offers terminal-equivalent Claude sign-in with explicit alternatives", () => {
     const presentation = describeProviderConnection("claudeAgent", {
       ...BASE_STATUS,
       provider: "claudeAgent",
-      message:
-        "This Claude account type cannot be used by Scient. Connect through Anthropic Console instead.",
     });
     expect(presentation.primaryAction).toBe("sign_in");
-    expect(presentation.primaryLabel).toBe("Connect Anthropic Console");
-    expect(presentation.description).toContain("API billing");
-    expect(presentation.description).toContain("not a Claude.ai subscription");
+    expect(presentation.primaryLabel).toBe("Connect Claude");
+    expect(presentation.description).toContain("already connected in your terminal");
+    expect(CLAUDE_CONNECTION_METHOD_OPTIONS.map((option) => option.method)).toEqual([
+      "claude_account",
+      "claude_sso",
+      "claude_console",
+    ]);
   });
 
   it.each(["starting", "waiting_for_browser", "verifying"] as const)(
-    "keeps %s operations cancellable and non-actionable",
+    "keeps %s operations cancellable and restartable",
     (operationStatus) => {
       const presentation = describeProviderConnection("codex", {
         ...BASE_STATUS,
@@ -91,7 +94,8 @@ describe("provider connection presentation", () => {
       });
       expect(presentation.busy).toBe(true);
       expect(presentation.canCancel).toBe(true);
-      expect(presentation.primaryAction).toBe("none");
+      expect(presentation.primaryAction).toBe("done");
+      expect(presentation.canRestart).toBe(true);
     },
   );
 

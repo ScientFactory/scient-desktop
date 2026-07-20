@@ -16,11 +16,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
 import { serverQueryKeys } from "~/lib/serverReactQuery";
+import { applyProviderStatusesToCache } from "~/lib/providerStatusCache";
 import { readNativeApi } from "~/nativeApi";
 import { useProviderConnectionDialogStore } from "~/providerConnectionDialogStore";
 import { ProviderConnectionDialog } from "./ProviderConnectionDialog";
 
 const checkedAt = "2026-07-19T12:00:00.000Z";
+const systemRuntime = {
+  source: "system" as const,
+  managedVersion: null,
+  canInstall: false,
+  canRepair: false,
+  canRollback: false,
+  canRemove: false,
+  message: null,
+};
 
 function createConfig(provider: ServerProviderStatus): ServerConfig {
   return {
@@ -41,7 +51,9 @@ function createQueryClient(provider: ServerProviderStatus) {
 }
 
 function installNativeApi(overrides: {
+  refreshProviders?: ReturnType<typeof vi.fn>;
   startProviderConnection?: ReturnType<typeof vi.fn>;
+  cancelProviderConnection?: ReturnType<typeof vi.fn>;
   prepareProviderInstall?: ReturnType<typeof vi.fn>;
   installProvider?: ReturnType<typeof vi.fn>;
   openExternal?: ReturnType<typeof vi.fn>;
@@ -56,8 +68,12 @@ function installNativeApi(overrides: {
       ...baseApi,
       server: {
         ...baseApi.server,
+        ...(overrides.refreshProviders ? { refreshProviders: overrides.refreshProviders } : {}),
         ...(overrides.startProviderConnection
           ? { startProviderConnection: overrides.startProviderConnection }
+          : {}),
+        ...(overrides.cancelProviderConnection
+          ? { cancelProviderConnection: overrides.cancelProviderConnection }
           : {}),
         ...(overrides.prepareProviderInstall
           ? { prepareProviderInstall: overrides.prepareProviderInstall }
@@ -93,6 +109,7 @@ describe("ProviderConnectionDialog", () => {
       available: true,
       authStatus: "unauthenticated",
       checkedAt,
+      runtime: systemRuntime,
       connectionState: {
         operationId: "connect-codex-1",
         method: "codex_browser",
@@ -110,6 +127,7 @@ describe("ProviderConnectionDialog", () => {
       available: true,
       authStatus: "unauthenticated",
       checkedAt,
+      runtime: systemRuntime,
     });
     useProviderConnectionDialogStore.getState().openDialog("codex", "settings");
 
@@ -144,9 +162,9 @@ describe("ProviderConnectionDialog", () => {
   it.each([
     {
       provider: "claudeAgent",
-      method: "claude_console",
+      method: "claude_account",
       title: "Connect Claude",
-      primaryLabel: "Connect Anthropic Console",
+      primaryLabel: "Connect Claude",
     },
     {
       provider: "antigravity",
@@ -180,6 +198,7 @@ describe("ProviderConnectionDialog", () => {
         available: true,
         authStatus: "unauthenticated",
         checkedAt,
+        runtime: systemRuntime,
         connectionState: {
           operationId: `connect-${provider}-1`,
           method,
@@ -197,6 +216,7 @@ describe("ProviderConnectionDialog", () => {
         available: true,
         authStatus: "unauthenticated",
         checkedAt,
+        runtime: systemRuntime,
       });
       useProviderConnectionDialogStore.getState().openDialog(provider, "settings");
 
@@ -223,16 +243,22 @@ describe("ProviderConnectionDialog", () => {
     },
   );
 
-  it("opens official installation guidance when the provider is missing", async () => {
-    const openExternal = vi.fn().mockResolvedValue(undefined);
-    const restoreNativeApi = installNativeApi({ openExternal });
-    const queryClient = createQueryClient({
+  it("preserves an invalid custom executable choice instead of replacing it", async () => {
+    const unavailableProvider = {
       provider: "claudeAgent",
       status: "error",
       available: false,
       authStatus: "unknown",
       checkedAt,
-    });
+      runtime: {
+        ...systemRuntime,
+        source: "custom",
+        message: "The configured executable is unavailable.",
+      },
+    } satisfies ServerProviderStatus;
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [unavailableProvider] });
+    const restoreNativeApi = installNativeApi({ refreshProviders });
+    const queryClient = createQueryClient(unavailableProvider);
     useProviderConnectionDialogStore.getState().openDialog("claudeAgent", "provider_picker");
 
     const screen = await render(
@@ -242,10 +268,229 @@ describe("ProviderConnectionDialog", () => {
     );
 
     try {
-      await page.getByRole("button", { name: "Open installation guide" }).click();
+      await expect
+        .element(page.getByText("The configured executable is unavailable."))
+        .toBeVisible();
+      await expect
+        .element(page.getByRole("button", { name: "Open installation guide" }))
+        .not.toBeInTheDocument();
+      await page.getByRole("button", { name: "Check again" }).click();
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledTimes(2));
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("offers Claude SSO and Console as explicit alternative methods", async () => {
+    const provider = {
+      provider: "claudeAgent",
+      status: "error",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+      runtime: systemRuntime,
+    } satisfies ServerProviderStatus;
+    const waitingProvider = {
+      ...provider,
+      connectionState: {
+        operationId: "connect-claude-sso-1",
+        method: "claude_sso",
+        status: "waiting_for_browser",
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        message: "Finish organization sign-in.",
+      },
+    } satisfies ServerProviderStatus;
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [provider] });
+    const startProviderConnection = vi.fn().mockResolvedValue({ providers: [waitingProvider] });
+    const restoreNativeApi = installNativeApi({ refreshProviders, startProviderConnection });
+    const queryClient = createQueryClient(provider);
+    useProviderConnectionDialogStore.getState().openDialog("claudeAgent", "settings");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await expect
+        .element(page.getByRole("button", { name: /Work or organization SSO/u }))
+        .toBeVisible();
+      await expect
+        .element(page.getByRole("button", { name: /Anthropic Console \/ API/u }))
+        .toBeVisible();
+      await page.getByRole("button", { name: /Work or organization SSO/u }).click();
+      await vi.waitFor(() =>
+        expect(startProviderConnection).toHaveBeenCalledWith({
+          provider: "claudeAgent",
+          method: "claude_sso",
+        }),
+      );
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("refreshes on open and never starts sign-in for an existing terminal account", async () => {
+    const unauthenticated = {
+      provider: "claudeAgent",
+      status: "error",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+      runtime: systemRuntime,
+    } satisfies ServerProviderStatus;
+    const authenticated = {
+      ...unauthenticated,
+      status: "ready",
+      authStatus: "authenticated",
+      authLabel: "Claude Max Subscription",
+    } satisfies ServerProviderStatus;
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [authenticated] });
+    const startProviderConnection = vi.fn();
+    const restoreNativeApi = installNativeApi({ refreshProviders, startProviderConnection });
+    const queryClient = createQueryClient(unauthenticated);
+    useProviderConnectionDialogStore.getState().openDialog("claudeAgent", "provider_picker");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await expect.element(page.getByRole("button", { name: "Done" })).toBeVisible();
+      expect(startProviderConnection).not.toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("reopens an active attempt with cancel, restart, and timeout controls", async () => {
+    const active = {
+      provider: "claudeAgent",
+      status: "error",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+      runtime: systemRuntime,
+      connectionState: {
+        operationId: "connect-claude-active",
+        method: "claude_account",
+        status: "waiting_for_browser",
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        message: "Finish signing in to Claude.",
+      },
+    } satisfies ServerProviderStatus;
+    const cancelled = {
+      ...active,
+      connectionState: {
+        ...active.connectionState,
+        status: "cancelled",
+        finishedAt: new Date().toISOString(),
+        message: "Sign in was cancelled.",
+      },
+    } satisfies ServerProviderStatus;
+    const restarted = {
+      ...active,
+      connectionState: { ...active.connectionState, operationId: "connect-claude-restarted" },
+    } satisfies ServerProviderStatus;
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [active] });
+    const cancelProviderConnection = vi.fn().mockResolvedValue({ providers: [cancelled] });
+    const startProviderConnection = vi.fn().mockResolvedValue({ providers: [restarted] });
+    const restoreNativeApi = installNativeApi({
+      refreshProviders,
+      cancelProviderConnection,
+      startProviderConnection,
+    });
+    const queryClient = createQueryClient(active);
+    useProviderConnectionDialogStore.getState().openDialog("claudeAgent", "provider_picker");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await expect.element(page.getByRole("button", { name: "Cancel sign in" })).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "Restart sign in" })).toBeVisible();
+      await expect.element(page.getByText(/Automatic timeout in/u)).toBeVisible();
+      await page.getByRole("button", { name: "Restart sign in" }).click();
       await vi.waitFor(() => {
-        expect(openExternal).toHaveBeenCalledWith("https://code.claude.com/docs/en/installation");
+        expect(cancelProviderConnection).toHaveBeenCalledWith({
+          provider: "claudeAgent",
+          operationId: "connect-claude-active",
+        });
+        expect(startProviderConnection).toHaveBeenCalledWith({
+          provider: "claudeAgent",
+          method: "claude_account",
+        });
       });
+      expect(cancelProviderConnection.mock.invocationCallOrder[0]).toBeLessThan(
+        startProviderConnection.mock.invocationCallOrder[0]!,
+      );
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("retries the same Claude sign-in method after a failed attempt", async () => {
+    const failed = {
+      provider: "claudeAgent",
+      status: "error",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+      runtime: systemRuntime,
+      connectionState: {
+        operationId: "connect-claude-failed",
+        method: "claude_sso",
+        status: "failed",
+        startedAt: checkedAt,
+        finishedAt: checkedAt,
+        message: "Organization sign-in was not completed.",
+      },
+    } satisfies ServerProviderStatus;
+    const restarted = {
+      ...failed,
+      connectionState: {
+        ...failed.connectionState,
+        operationId: "connect-claude-retry",
+        status: "waiting_for_browser",
+        finishedAt: null,
+      },
+    } satisfies ServerProviderStatus;
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [failed] });
+    const startProviderConnection = vi.fn().mockResolvedValue({ providers: [restarted] });
+    const restoreNativeApi = installNativeApi({ refreshProviders, startProviderConnection });
+    const queryClient = createQueryClient(failed);
+    useProviderConnectionDialogStore.getState().openDialog("claudeAgent", "provider_picker");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await page.getByRole("button", { name: "Try again" }).click();
+      await vi.waitFor(() =>
+        expect(startProviderConnection).toHaveBeenCalledWith({
+          provider: "claudeAgent",
+          method: "claude_sso",
+        }),
+      );
     } finally {
       await screen.unmount();
       queryClient.clear();
@@ -334,6 +579,47 @@ describe("ProviderConnectionDialog", () => {
       await screen.unmount();
       queryClient.clear();
       restoreNativeApi();
+    }
+  });
+
+  it("keeps managed installation available after a complete provider refresh", async () => {
+    const antigravity = {
+      provider: "antigravity",
+      status: "error",
+      available: false,
+      authStatus: "unknown",
+      checkedAt,
+      runtime: {
+        source: "missing",
+        managedVersion: null,
+        canInstall: true,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: "No usable provider runtime was found.",
+      },
+    } satisfies ServerProviderStatus;
+    const queryClient = createQueryClient(antigravity);
+    useProviderConnectionDialogStore.getState().openDialog("antigravity", "settings");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await expect.element(page.getByRole("button", { name: "Install Antigravity" })).toBeVisible();
+      applyProviderStatusesToCache(queryClient, [
+        { ...antigravity, checkedAt: "2026-07-20T16:05:00.000Z" },
+      ]);
+      await expect.element(page.getByRole("button", { name: "Install Antigravity" })).toBeVisible();
+      await expect
+        .element(page.getByRole("button", { name: "Open installation guide" }))
+        .not.toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
     }
   });
 });

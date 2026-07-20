@@ -94,6 +94,8 @@ export type ServerProviderRuntimeState = typeof ServerProviderRuntimeState.Type;
 
 export const ServerProviderConnectionMethod = Schema.Literals([
   "codex_browser",
+  "claude_account",
+  "claude_sso",
   "claude_console",
   // Retained for wire compatibility with older transient status snapshots.
   // ProviderConnection no longer accepts this method for new operations.
@@ -158,6 +160,22 @@ export const ServerProviderStatus = Schema.Struct({
   connectionState: Schema.optionalKey(ServerProviderConnectionState),
 });
 export type ServerProviderStatus = typeof ServerProviderStatus.Type;
+
+/**
+ * Complete provider status projected for current client-facing RPC boundaries.
+ *
+ * `ServerProviderStatus` intentionally keeps `runtime` optional while older web
+ * and server builds can still meet over the local WebSocket transport. Current
+ * servers must project this complete shape before publishing provider status to
+ * clients so refreshes cannot erase managed-install capabilities.
+ */
+export const ServerProviderClientStatus = Schema.Struct({
+  ...ServerProviderStatus.fields,
+  runtime: ServerProviderRuntimeState,
+});
+export type ServerProviderClientStatus = typeof ServerProviderClientStatus.Type;
+
+export const ServerProviderClientStatuses = Schema.Array(ServerProviderClientStatus);
 
 export type ServerProviderVersionAdvisory = NonNullable<ServerProviderStatus["versionAdvisory"]>;
 export type ServerProviderUpdateState = NonNullable<ServerProviderStatus["updateState"]>;

@@ -27,12 +27,13 @@ import { startServerMemoryDiagnostics } from "./memoryDiagnostics";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { makeProviderHealthLive } from "./provider/Layers/ProviderHealth";
 import { ProviderConnectionLive } from "./provider/Layers/ProviderConnection";
+import { ProviderClientStatusProjectionLive } from "./provider/Layers/ProviderClientStatusProjection";
 import { ProviderRuntimeManagerLive } from "./provider/Layers/ProviderRuntimeManager";
 import { ProviderRuntimeManager } from "./provider/Services/ProviderRuntimeManager";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper";
 import { Server } from "./effectServer";
 import { ServerLoggerLive } from "./serverLogger";
-import { ServerSettingsService } from "./serverSettings";
+import { ServerSettingsLive, ServerSettingsService } from "./serverSettings";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess";
 import { PtyAdapterLayerLive } from "./terminal/runtimeLayer";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
@@ -248,6 +249,11 @@ const LayerLive = (input: CliInput) => {
     Layer.provideMerge(providerLayer),
     Layer.provideMerge(PtyAdapterLayerLive),
   );
+  const providerClientStatusProjectionLayer = ProviderClientStatusProjectionLive.pipe(
+    Layer.provideMerge(runtimeServicesLayer),
+    Layer.provideMerge(providerHealthLayer),
+    Layer.provideMerge(providerRuntimeLayer),
+  );
   const providerSessionReaperLayer = ProviderSessionReaperLive.pipe(
     // The reaper coordinates orchestration state with live provider sessions,
     // so it belongs at the top level where both layers are available.
@@ -255,16 +261,22 @@ const LayerLive = (input: CliInput) => {
     Layer.provideMerge(providerLayer),
     Layer.provideMerge(providerRuntimeLayer),
   );
+  const analyticsLayer = AnalyticsServiceLayerLive.pipe(
+    // Analytics reads the same server-authoritative privacy setting exposed to
+    // the UI and the rest of the runtime.
+    Layer.provideMerge(ServerSettingsLive),
+  );
 
   return Layer.empty.pipe(
     Layer.provideMerge(runtimeServicesLayer),
     Layer.provideMerge(providerLayer),
     Layer.provideMerge(providerHealthLayer),
     Layer.provideMerge(providerConnectionLayer),
+    Layer.provideMerge(providerClientStatusProjectionLayer),
     Layer.provideMerge(providerSessionReaperLayer),
     Layer.provideMerge(SqlitePersistence.layerConfig),
     Layer.provideMerge(ServerLoggerLive),
-    Layer.provideMerge(AnalyticsServiceLayerLive),
+    Layer.provideMerge(analyticsLayer),
     Layer.provideMerge(ServerConfigLive(input)),
   );
 };

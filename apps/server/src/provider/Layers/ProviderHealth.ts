@@ -65,6 +65,10 @@ import {
 } from "../acp/DroidAcpSupport";
 import { parseClaudeAuthStatusFromOutput } from "../claudeAuthStatus";
 import { acquireClaudeAuthStatusLock } from "../claudeAuthStatusLock";
+import {
+  probeClaudeAccountCapabilities,
+  type ClaudeAccountCapabilities,
+} from "../claudeCapabilities";
 import { buildClaudeProcessEnv } from "../claudeProcessEnv";
 import {
   detailFromResult,
@@ -957,8 +961,45 @@ export const checkCodexProviderStatus = makeCheckCodexProviderStatus();
 
 // ── Claude Agent health check ───────────────────────────────────────
 
+function claudeSubscriptionLabel(subscriptionType: string): string {
+  const normalized = toTitleCaseWords(subscriptionType)
+    .replace(/^Claude\s+/iu, "")
+    .replace(/\s+Subscription$/iu, "")
+    .replace(/\s+Plan$/iu, "")
+    .replace(/^(Max|Pro)plan$/iu, "$1");
+  return `Claude ${normalized} Subscription`;
+}
+
+function claudeAccountMetadata(input: {
+  readonly authMethod?: string;
+  readonly subscriptionType?: string;
+  readonly capabilities?: ClaudeAccountCapabilities;
+}): { readonly authType?: string; readonly authLabel: string } {
+  const authMethod = input.authMethod ?? input.capabilities?.tokenSource;
+  const subscriptionType = input.subscriptionType ?? input.capabilities?.subscriptionType;
+  const normalizedAuthMethod = authMethod?.toLowerCase().replace(/[\s_.-]+/gu, "");
+  const apiProvider = input.capabilities?.apiProvider;
+  const apiCredential =
+    normalizedAuthMethod === "apikey" || input.capabilities?.apiKeySource !== undefined;
+  if (apiCredential) return { authType: "apiKey", authLabel: "Anthropic Console" };
+  if (subscriptionType) {
+    return {
+      authType: subscriptionType,
+      authLabel: claudeSubscriptionLabel(subscriptionType),
+    };
+  }
+  if (input.capabilities?.organization) {
+    return { authType: authMethod ?? "organization", authLabel: "Claude organization account" };
+  }
+  if (apiProvider && apiProvider !== "firstParty") {
+    return { authType: apiProvider, authLabel: `Claude via ${toTitleCaseWords(apiProvider)}` };
+  }
+  const authType = authMethod ?? apiProvider;
+  return authType ? { authType, authLabel: "Claude account" } : { authLabel: "Claude account" };
+}
+
 export const makeCheckClaudeProviderStatus = (
-  _resolveSubscriptionType?: Effect.Effect<string | undefined>,
+  resolveCapabilities?: Effect.Effect<ClaudeAccountCapabilities | undefined>,
   binaryPath?: string,
   homeDir?: string,
   _options?: { readonly falseNegativeRetryDelayMs?: number },
@@ -969,6 +1010,10 @@ export const makeCheckClaudeProviderStatus = (
     const claudeEnv = buildClaudeProcessEnv(
       homeDir ? { env: process.env, homeDir } : { env: process.env },
     );
+    const resolveSdkCapabilities = () =>
+      resolveCapabilities
+        ? resolveCapabilities.pipe(Effect.catch(() => Effect.succeed(undefined)))
+        : Effect.succeed(undefined);
 
     // Probe 1: `claude --version` — is the CLI reachable?
     const versionProbe = yield* runClaudeCommand(["--version"], executable, claudeEnv).pipe(
@@ -1034,6 +1079,19 @@ export const makeCheckClaudeProviderStatus = (
 
     if (Result.isFailure(authProbe)) {
       const error = authProbe.failure;
+      const capabilities = yield* resolveSdkCapabilities();
+      if (capabilities) {
+        const metadata = claudeAccountMetadata({ capabilities });
+        return {
+          provider: CLAUDE_AGENT_PROVIDER,
+          status: "ready" as const,
+          available: true,
+          authStatus: "authenticated" as const,
+          version: parsedVersion,
+          ...metadata,
+          checkedAt,
+        } satisfies ServerProviderStatus;
+      }
       return {
         provider: CLAUDE_AGENT_PROVIDER,
         status: "warning" as const,
@@ -1049,6 +1107,19 @@ export const makeCheckClaudeProviderStatus = (
     }
 
     if (Option.isNone(authProbe.success)) {
+      const capabilities = yield* resolveSdkCapabilities();
+      if (capabilities) {
+        const metadata = claudeAccountMetadata({ capabilities });
+        return {
+          provider: CLAUDE_AGENT_PROVIDER,
+          status: "ready" as const,
+          available: true,
+          authStatus: "authenticated" as const,
+          version: parsedVersion,
+          ...metadata,
+          checkedAt,
+        } satisfies ServerProviderStatus;
+      }
       return {
         provider: CLAUDE_AGENT_PROVIDER,
         status: "warning" as const,
@@ -1062,27 +1133,25 @@ export const makeCheckClaudeProviderStatus = (
 
     const authOutput = authProbe.success.value;
     const parsed = parseClaudeAuthStatusFromOutput(authOutput);
-    const authMethod = extractClaudeAuthMethodFromOutput(authOutput);
-    const normalizedAuthMethod = authMethod?.toLowerCase().replace(/[\s_-]+/gu, "");
-    const approvedConsoleCredential = normalizedAuthMethod === "apikey";
-    const unsupportedSubscription =
-      parsed.authStatus === "authenticated" && normalizedAuthMethod === "claude.ai";
-    const effectiveParsed: ReturnType<typeof parseClaudeAuthStatusFromOutput> =
-      unsupportedSubscription
-        ? {
-            status: "warning",
-            authStatus: "unauthenticated",
-            message:
-              "This Claude account type cannot be used by Scient. Connect through Anthropic Console instead.",
-          }
-        : parsed.authStatus === "authenticated" && !approvedConsoleCredential
-          ? {
-              status: "warning",
-              authStatus: "unknown",
-              message:
-                "Claude is signed in, but Scient could not verify an Anthropic Console credential.",
-            }
-          : parsed;
+    const capabilities =
+      parsed.authStatus === "authenticated" || !resolveCapabilities
+        ? undefined
+        : yield* resolveSdkCapabilities();
+    const sdkVerified = capabilities !== undefined;
+    const effectiveParsed: ReturnType<typeof parseClaudeAuthStatusFromOutput> = sdkVerified
+      ? { status: "ready", authStatus: "authenticated" }
+      : parsed;
+    const authMethod = extractClaudeAuthMethodFromOutput(authOutput) ?? capabilities?.tokenSource;
+    const subscriptionType =
+      extractSubscriptionTypeFromOutput(authOutput) ?? capabilities?.subscriptionType;
+    const metadata =
+      effectiveParsed.authStatus === "authenticated"
+        ? claudeAccountMetadata({
+            ...(authMethod ? { authMethod } : {}),
+            ...(subscriptionType ? { subscriptionType } : {}),
+            ...(capabilities ? { capabilities } : {}),
+          })
+        : undefined;
 
     return {
       provider: CLAUDE_AGENT_PROVIDER,
@@ -1090,7 +1159,7 @@ export const makeCheckClaudeProviderStatus = (
       available: true,
       authStatus: effectiveParsed.authStatus,
       version: parsedVersion,
-      ...(approvedConsoleCredential ? { authType: "apiKey", authLabel: "Anthropic Console" } : {}),
+      ...(metadata ?? {}),
       checkedAt,
       ...(effectiveParsed.message ? { message: effectiveParsed.message } : {}),
     } satisfies ServerProviderStatus;
@@ -2270,9 +2339,24 @@ export function makeProviderHealthLive(options?: {
                     CLAUDE_AGENT_PROVIDER,
                     settings.providers.claudeAgent.binaryPath,
                   ).pipe(
-                    Effect.flatMap((binaryPath) =>
-                      makeCheckClaudeProviderStatus(undefined, binaryPath, serverConfig.homeDir),
-                    ),
+                    Effect.flatMap((binaryPath) => {
+                      const executable = nonEmptyTrimmed(binaryPath) ?? "claude";
+                      const env = buildClaudeProcessEnv({
+                        env: process.env,
+                        homeDir: serverConfig.homeDir,
+                      });
+                      return makeCheckClaudeProviderStatus(
+                        Effect.promise(() =>
+                          probeClaudeAccountCapabilities({
+                            executable,
+                            env,
+                            cwd: serverConfig.cwd,
+                          }),
+                        ),
+                        executable,
+                        serverConfig.homeDir,
+                      );
+                    }),
                   ),
                 ),
                 checkProviderWhenEnabled(
