@@ -10,6 +10,7 @@ import { SERVER_TRANSCRIBE_VOICE_CHANNEL } from "./voiceTranscription";
 import { STORAGE_MIGRATION_IPC_CHANNELS } from "./desktopStorageMigration";
 import { APPSNAP_IPC_CHANNELS } from "./appSnapIpc";
 import { DESKTOP_CONNECTION_WAKE_CHANNEL } from "./desktopConnectionWake";
+import { DESKTOP_DIAGNOSTICS_IPC_CHANNELS } from "./desktopDiagnostics";
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const SAVE_FILE_CHANNEL = "desktop:save-file";
@@ -74,6 +75,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   showInFolder: (path: string) => ipcRenderer.invoke(SHOW_IN_FOLDER_CHANNEL, path),
   shell: {
     showInFolder: (path: string) => ipcRenderer.invoke(SHOW_IN_FOLDER_CHANNEL, path),
+  },
+  diagnostics: {
+    openLogsDirectory: () => ipcRenderer.invoke(DESKTOP_DIAGNOSTICS_IPC_CHANNELS.openLogsDirectory),
   },
   clipboard: {
     writeImagePngDataUrl: (dataUrl: string) =>
