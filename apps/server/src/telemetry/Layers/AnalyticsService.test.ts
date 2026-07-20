@@ -14,8 +14,14 @@ import { AnalyticsServiceLayerLive } from "./AnalyticsService.ts";
 interface RecordedBatchRequest {
   readonly path: string;
   readonly body: {
-    readonly batch?: ReadonlyArray<{
-      readonly event?: string;
+    readonly schema_version?: number;
+    readonly source?: string;
+    readonly events?: ReadonlyArray<{
+      readonly id?: string;
+      readonly name?: string;
+      readonly distinct_id?: string;
+      readonly occurred_at?: string;
+      readonly privacy_level?: string;
       readonly properties?: {
         readonly index?: number;
         readonly clientType?: string;
@@ -25,8 +31,13 @@ interface RecordedBatchRequest {
 }
 
 interface RecordedBatchBody {
-  readonly batch: ReadonlyArray<{
-    readonly event?: string;
+  readonly schema_version: number;
+  readonly source: string;
+  readonly events: ReadonlyArray<{
+    readonly id?: string;
+    readonly name?: string;
+    readonly distinct_id?: string;
+    readonly privacy_level?: string;
     readonly properties?: {
       readonly index?: number;
       readonly clientType?: string;
@@ -46,8 +57,7 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       const configLayer = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           SYNARA_TELEMETRY_ENABLED: true,
-          SYNARA_POSTHOG_KEY: "phc_test_key",
-          SYNARA_POSTHOG_HOST: "",
+          SYNARA_TELEMETRY_ENDPOINT: "/v1/events",
           SYNARA_TELEMETRY_FLUSH_BATCH_SIZE: 20,
         }),
       );
@@ -88,16 +98,16 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
 
       const batchRequests = capturedRequests.filter(
         (request): request is RecordedBatchRequest & { readonly body: RecordedBatchBody } =>
-          Array.isArray(request.body?.batch),
+          Array.isArray(request.body?.events),
       );
       assert.equal(batchRequests.length, 3);
       assert.equal(
-        batchRequests.every((request) => request.path === "/batch/" || request.path === "/batch"),
+        batchRequests.every((request) => request.path === "/v1/events"),
         true,
       );
       const deliveredIndexes = batchRequests.flatMap((request) =>
-        request.body.batch
-          .filter((event) => event.event === "test.flush.drain")
+        request.body.events
+          .filter((event) => event.name === "test.flush.drain")
           .map((event) => event.properties?.index)
           .filter((index): index is number => typeof index === "number"),
       );
@@ -109,8 +119,17 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         Array.from({ length: 45 }, (_, index) => index),
       );
       assert.equal(
-        batchRequests.every((request) =>
-          request.body.batch.every((event) => event.properties?.clientType === "cli-web-client"),
+        batchRequests.every(
+          (request) =>
+            request.body.schema_version === 1 &&
+            request.body.source === "desktop" &&
+            request.body.events.every(
+              (event) =>
+                event.properties?.clientType === "cli-web-client" &&
+                event.privacy_level === "product" &&
+                event.distinct_id?.startsWith("installation:") === true &&
+                typeof event.id === "string",
+            ),
         ),
         true,
       );

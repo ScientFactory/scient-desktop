@@ -1,14 +1,15 @@
 /**
- * AnalyticsServiceLive - Anonymous PostHog telemetry layer.
+ * AnalyticsServiceLive - First-party ScientFactory telemetry layer.
  *
  * Persists a random installation-scoped anonymous id to state dir, buffers
- * events in memory, and flushes batches to PostHog over Effect HttpClient.
+ * events in memory, and flushes batches to the ScientFactory event gateway.
  *
  * @module AnalyticsServiceLive
  */
 
 import { Config, DateTime, Effect, Layer, Ref } from "effect";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { randomUUID } from "node:crypto";
 
 import { ServerConfig } from "../../config.ts";
 import { AnalyticsService, type AnalyticsServiceShape } from "../Services/AnalyticsService.ts";
@@ -16,17 +17,15 @@ import { getTelemetryIdentifier } from "../Identify.ts";
 import { version } from "../../../package.json" with { type: "json" };
 
 interface BufferedAnalyticsEvent {
+  readonly id: string;
   readonly event: string;
   readonly properties?: Readonly<Record<string, unknown>>;
   readonly capturedAt: string;
 }
 
 const TelemetryEnvConfig = Config.all({
-  posthogKey: Config.string("SYNARA_POSTHOG_KEY").pipe(
-    Config.withDefault("phc_XOWci4oZP4VvLiEyrFqkFjP4CZn55mjYYBMREK5Wd6m"),
-  ),
-  posthogHost: Config.string("SYNARA_POSTHOG_HOST").pipe(
-    Config.withDefault("https://us.i.posthog.com"),
+  endpoint: Config.string("SYNARA_TELEMETRY_ENDPOINT").pipe(
+    Config.withDefault("https://events.scientfactory.com/v1/events"),
   ),
   enabled: Config.boolean("SYNARA_TELEMETRY_ENABLED").pipe(Config.withDefault(true)),
   flushBatchSize: Config.number("SYNARA_TELEMETRY_FLUSH_BATCH_SIZE").pipe(Config.withDefault(20)),
@@ -49,6 +48,7 @@ const makeAnalyticsService = Effect.gen(function* () {
         const appended = [
           ...current,
           {
+            id: randomUUID(),
             event,
             ...(properties ? { properties } : {}),
             capturedAt: DateTime.formatIso(now),
@@ -75,24 +75,27 @@ const makeAnalyticsService = Effect.gen(function* () {
       if (!telemetryConfig.enabled || !identifier) return;
 
       const payload = {
-        api_key: telemetryConfig.posthogKey,
-        batch: events.map((event) => ({
-          event: event.event,
+        schema_version: 1,
+        source: "desktop",
+        sent_at: new Date().toISOString(),
+        events: events.map((event) => ({
+          id: event.id,
+          name: event.event,
           distinct_id: identifier,
+          occurred_at: event.capturedAt,
+          privacy_level: "product",
           properties: {
             ...event.properties,
-            $process_person_profile: false,
             platform: process.platform,
             wsl: process.env.WSL_DISTRO_NAME,
             arch: process.arch,
             synaraCodeVersion: version,
             clientType,
           },
-          timestamp: event.capturedAt,
         })),
       };
 
-      yield* HttpClientRequest.post(`${telemetryConfig.posthogHost}/batch/`).pipe(
+      yield* HttpClientRequest.post(telemetryConfig.endpoint).pipe(
         HttpClientRequest.bodyJson(payload),
         Effect.flatMap(httpClient.execute),
         Effect.flatMap(HttpClientResponse.filterStatusOk),
