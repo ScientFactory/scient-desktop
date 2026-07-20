@@ -1251,12 +1251,13 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       ),
     );
 
-    it.effect("rejects Claude.ai subscription authentication for third-party use", () =>
+    it.effect("accepts Claude.ai subscription authentication", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus;
-        assert.strictEqual(status.status, "warning");
-        assert.strictEqual(status.authStatus, "unauthenticated");
-        assert.match(status.message ?? "", /Anthropic Console/iu);
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.authStatus, "authenticated");
+        assert.strictEqual(status.authType, "max");
+        assert.strictEqual(status.authLabel, "Claude Max Subscription");
       }).pipe(
         Effect.provide(
           mockSpawnerLayer((args) =>
@@ -1272,7 +1273,28 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       ),
     );
 
-    it.effect("preserves Console credentials and removes direct subscription OAuth", () =>
+    it.effect("normalizes already-expanded Claude subscription labels", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus;
+        assert.strictEqual(status.authType, "Claude Max Subscription");
+        assert.strictEqual(status.authLabel, "Claude Max Subscription");
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) =>
+            args.join(" ") === "--version"
+              ? { stdout: "2.1.215\n", stderr: "", code: 0 }
+              : {
+                  stdout:
+                    '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"Claude Max Subscription"}\n',
+                  stderr: "",
+                  code: 0,
+                },
+          ),
+        ),
+      ),
+    );
+
+    it.effect("preserves Console and subscription credential sources", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1330,7 +1352,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
               assert.strictEqual(command, "claude");
               assert.strictEqual(env?.ANTHROPIC_API_KEY, "stale-api-key");
               assert.strictEqual(env?.ANTHROPIC_AUTH_TOKEN, "stale-auth-token");
-              assert.strictEqual(env?.CLAUDE_CODE_OAUTH_TOKEN, undefined);
+              assert.strictEqual(env?.CLAUDE_CODE_OAUTH_TOKEN, "stale-oauth-token");
 
               const joined = args.join(" ");
               if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
@@ -1351,7 +1373,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       }),
     );
 
-    it.effect("does not rescue Claude subscription OAuth through an SDK metadata probe", () =>
+    it.effect("rescues a Claude subscription false negative through an SDK metadata probe", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1376,7 +1398,12 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
         const status = yield* makeCheckClaudeProviderStatus(
           Effect.sync(() => {
             sdkProbeCalls += 1;
-            return "max";
+            return {
+              email: "scientist@example.test",
+              subscriptionType: "max",
+              tokenSource: "claude.ai",
+              apiProvider: "firstParty",
+            };
           }),
           "claude",
           homeDir,
@@ -1398,12 +1425,12 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
           ),
         );
 
-        assert.strictEqual(sdkProbeCalls, 0);
+        assert.strictEqual(sdkProbeCalls, 1);
         assert.strictEqual(status.provider, "claudeAgent");
-        assert.strictEqual(status.status, "error");
-        assert.strictEqual(status.authStatus, "unauthenticated");
-        assert.strictEqual(status.authType, undefined);
-        assert.strictEqual(status.authLabel, undefined);
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.authStatus, "authenticated");
+        assert.strictEqual(status.authType, "max");
+        assert.strictEqual(status.authLabel, "Claude Max Subscription");
       }),
     );
 
@@ -1688,6 +1715,32 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
             if (joined === "auth status")
               return { stdout: "", stderr: "error: unknown command 'auth'", code: 2 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("uses SDK account initialization when the auth status command is unavailable", () =>
+      Effect.gen(function* () {
+        const status = yield* makeCheckClaudeProviderStatus(
+          Effect.succeed({
+            email: "scientist@example.test",
+            organization: "Research Lab",
+            tokenSource: "oauth",
+          }),
+        );
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.authStatus, "authenticated");
+        assert.strictEqual(status.authLabel, "Claude organization account");
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            if (joined === "auth status") {
+              return { stdout: "", stderr: "error: unknown command 'auth'", code: 2 };
+            }
             throw new Error(`Unexpected args: ${joined}`);
           }),
         ),

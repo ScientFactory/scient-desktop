@@ -94,6 +94,8 @@ export type ServerProviderRuntimeState = typeof ServerProviderRuntimeState.Type;
 
 export const ServerProviderConnectionMethod = Schema.Literals([
   "codex_browser",
+  "claude_account",
+  "claude_sso",
   "claude_console",
   // Retained for wire compatibility with older transient status snapshots.
   // ProviderConnection no longer accepts this method for new operations.

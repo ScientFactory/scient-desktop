@@ -25,13 +25,38 @@ export function providerConnectionMethod(
   provider: ProviderKind,
 ): ServerProviderConnectionMethod | null {
   if (provider === "codex") return "codex_browser";
-  if (provider === "claudeAgent") return "claude_console";
+  if (provider === "claudeAgent") return "claude_account";
   if (provider === "cursor") return "cursor_browser";
   if (provider === "antigravity") return "antigravity_browser";
   if (provider === "grok") return "grok_browser";
   if (provider === "droid") return "droid_device_pairing";
   return null;
 }
+
+export const CLAUDE_CONNECTION_METHOD_OPTIONS: ReadonlyArray<{
+  readonly method: Extract<
+    ServerProviderConnectionMethod,
+    "claude_account" | "claude_sso" | "claude_console"
+  >;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  {
+    method: "claude_account",
+    label: "Claude account",
+    description: "Use the same account Claude uses in your terminal.",
+  },
+  {
+    method: "claude_sso",
+    label: "Work or organization SSO",
+    description: "Force your organization's SSO sign-in.",
+  },
+  {
+    method: "claude_console",
+    label: "Anthropic Console / API",
+    description: "Use a Console account with API billing.",
+  },
+];
 
 export function providerInstallUrl(provider: ProviderKind): string | null {
   return PROVIDER_INSTALL_URLS[provider] ?? null;
@@ -56,6 +81,7 @@ export interface ProviderConnectionPresentation {
   readonly primaryLabel: string;
   readonly busy: boolean;
   readonly canCancel: boolean;
+  readonly canRestart?: boolean;
 }
 
 export function describeProviderConnection(
@@ -90,14 +116,26 @@ export function describeProviderConnection(
     return {
       title,
       description: operation.message,
-      primaryAction: "none",
-      primaryLabel: "Working…",
+      primaryAction: "done",
+      primaryLabel: "Continue in background",
       busy: true,
       canCancel: true,
+      canRestart: true,
     };
   }
 
   if (status?.available && status.authStatus === "authenticated") {
+    if (status.status !== "ready") {
+      return {
+        title,
+        description:
+          status.message ?? `${label} is connected, but Scient cannot load it right now.`,
+        primaryAction: "check_again",
+        primaryLabel: "Check again",
+        busy: false,
+        canCancel: false,
+      };
+    }
     return {
       title,
       description: `${label} is connected and ready to use.`,
@@ -194,9 +232,9 @@ export function describeProviderConnection(
       return {
         title,
         description:
-          "Scient connects Claude through an Anthropic Console account with API billing, not a Claude.ai subscription. Anthropic handles the secure browser sign-in and keeps your credentials.",
+          "Scient uses Claude's official sign-in and automatically detects an account already connected in your terminal. Claude keeps your credentials.",
         primaryAction: "sign_in",
-        primaryLabel: "Connect Anthropic Console",
+        primaryLabel: "Connect Claude",
         busy: false,
         canCancel: false,
       };
