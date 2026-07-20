@@ -82,11 +82,18 @@ export type PiServerProviderSettings = typeof PiServerProviderSettings.Type;
 const DisabledSkillNames = Schema.Array(Schema.String.check(Schema.isMaxLength(256))).pipe(
   Schema.withDecodingDefault(() => []),
 );
+const ScientBuiltInSkillActivationOverrides = Schema.Array(
+  Schema.Struct({
+    id: Schema.String.check(Schema.isMaxLength(256)),
+    enabled: Schema.Boolean,
+  }),
+).pipe(Schema.withDecodingDefault(() => []));
 
 // User-level skill toggles. Skills are keyed by lowercased name because the
 // unified catalog dedupes provider copies of the same skill by name.
 export const SkillsServerSettings = Schema.Struct({
   disabled: DisabledSkillNames,
+  scientBuiltInActivationOverrides: ScientBuiltInSkillActivationOverrides,
 });
 export type SkillsServerSettings = typeof SkillsServerSettings.Type;
 
@@ -186,6 +193,14 @@ export const ServerSettingsPatch = Schema.Struct({
   skills: Schema.optionalKey(
     Schema.Struct({
       disabled: Schema.optionalKey(Schema.Array(Schema.String.check(Schema.isMaxLength(256)))),
+      scientBuiltInActivationOverrides: Schema.optionalKey(
+        Schema.Array(
+          Schema.Struct({
+            id: Schema.String.check(Schema.isMaxLength(256)),
+            enabled: Schema.Boolean,
+          }),
+        ),
+      ),
     }),
   ),
 });

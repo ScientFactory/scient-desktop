@@ -3,7 +3,7 @@
 // Layer: Settings UI logic
 // Exports: origin metadata, canonical skill grouping, and section ordering helpers.
 
-import type { ProviderKind, ProviderSkillDescriptor } from "@synara/contracts";
+import type { ProviderKind, ProviderSkillDescriptor, ServerSettings } from "@synara/contracts";
 import { PROVIDER_DISPLAY_NAMES } from "@synara/contracts";
 
 export interface SkillOriginInfo {
@@ -32,6 +32,9 @@ export interface SettingsSkillSection {
   readonly title: string;
   readonly groups: ReadonlyArray<SettingsSkillGroup>;
 }
+
+type ScientBuiltInActivationOverride =
+  ServerSettings["skills"]["scientBuiltInActivationOverrides"][number];
 
 const SHARED_SKILLS_SECTION = "shared";
 const PERSONAL_ORIGIN = "personal";
@@ -99,6 +102,19 @@ export function providersForSkillOrigin(origin: string): ProviderKind[] {
 
 export function settingsSkillNameKey(name: string): string {
   return name.trim().toLowerCase();
+}
+
+export function setScientBuiltInActivationOverride(input: {
+  readonly current: ReadonlyArray<ScientBuiltInActivationOverride>;
+  readonly id: string;
+  readonly defaultEnabled: boolean;
+  readonly enabled: boolean;
+}): ScientBuiltInActivationOverride[] {
+  const next = input.current.filter((override) => override.id !== input.id);
+  if (input.enabled !== input.defaultEnabled) {
+    next.push({ id: input.id, enabled: input.enabled });
+  }
+  return next.toSorted((left, right) => left.id.localeCompare(right.id));
 }
 
 export function skillDisplayName(skill: ProviderSkillDescriptor): string {

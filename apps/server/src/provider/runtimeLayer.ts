@@ -16,7 +16,7 @@ import { makeGrokAdapterLive } from "./Layers/GrokAdapter";
 import { makeKiloAdapterLive, makeOpenCodeAdapterLive } from "./Layers/OpenCodeAdapter";
 import { makePiAdapterLive } from "./Layers/PiAdapter";
 import { ProviderAdapterRegistryLive } from "./Layers/ProviderAdapterRegistry";
-import { ProviderDiscoveryServiceLive } from "./Layers/ProviderDiscoveryService";
+import { makeProviderDiscoveryServiceLive } from "./Layers/ProviderDiscoveryService";
 import { makeProviderServiceLive } from "./Layers/ProviderService";
 import { ProviderSessionDirectoryLive } from "./Layers/ProviderSessionDirectory";
 import { ProviderAdapterRegistry } from "./Services/ProviderAdapterRegistry";
@@ -24,6 +24,7 @@ import { ProviderDiscoveryService } from "./Services/ProviderDiscoveryService";
 import { ProviderService } from "./Services/ProviderService";
 import { ProviderSessionDirectory } from "./Services/ProviderSessionDirectory";
 import { ProviderSessionRuntimeRepositoryLive } from "../persistence/Layers/ProviderSessionRuntime";
+import { ProviderRuntimeManager } from "./Services/ProviderRuntimeManager";
 
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService | ProviderDiscoveryService | ProviderAdapterRegistry | ProviderSessionDirectory,
@@ -33,9 +34,11 @@ export function makeServerProviderLayer(): Layer.Layer<
   | FileSystem.FileSystem
   | Path.Path
   | AnalyticsService
+  | ProviderRuntimeManager
   | ChildProcessSpawner.ChildProcessSpawner
 > {
   return Effect.gen(function* () {
+    const providerRuntimeManager = yield* ProviderRuntimeManager;
     const { logProviderEvents, providerEventLogPath } = yield* ServerConfig;
     const nativeEventLogger = logProviderEvents
       ? yield* makeEventNdjsonLogger(providerEventLogPath, {
@@ -88,10 +91,13 @@ export function makeServerProviderLayer(): Layer.Layer<
       Layer.provide(piAdapterLayer),
       Layer.provideMerge(providerSessionDirectoryLayer),
     );
-    const providerServiceLayer = makeProviderServiceLive(
-      canonicalEventLogger ? { canonicalEventLogger } : undefined,
-    ).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer));
-    const providerDiscoveryLayer = ProviderDiscoveryServiceLive.pipe(
+    const providerServiceLayer = makeProviderServiceLive({
+      ...(canonicalEventLogger ? { canonicalEventLogger } : {}),
+      resolveProviderRuntime: providerRuntimeManager.resolve,
+    }).pipe(Layer.provide(adapterRegistryLayer), Layer.provide(providerSessionDirectoryLayer));
+    const providerDiscoveryLayer = makeProviderDiscoveryServiceLive({
+      resolveProviderRuntime: providerRuntimeManager.resolve,
+    }).pipe(
       Layer.provide(adapterRegistryLayer),
       // Skill toggles live in server settings; the shared ServerSettingsLive
       // layer is memoized so this reuses the instance built at the top level.

@@ -205,6 +205,7 @@ interface StagePackageJson {
   readonly version: string;
   readonly buildVersion: string;
   readonly scientCommitHash: string;
+  readonly scientSigned: boolean;
   readonly private: true;
   readonly description: string;
   readonly author: string;
@@ -956,6 +957,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     version: appVersion,
     buildVersion: appVersion,
     scientCommitHash: commitHash,
+    scientSigned: options.signed,
     private: true,
     description: "Scient desktop build",
     author: "Yaacov Corcos",

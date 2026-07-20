@@ -3,7 +3,10 @@ export const SCIENT_PROJECT_FILE = "PROJECT.md";
 export const SCIENT_AGENTS_FILE = "AGENTS.md";
 export const SCIENT_METADATA_DIRECTORY = ".scient";
 export const SCIENT_IDENTITY_FILE = ".scient/project.json";
+export const SCIENT_SKILLS_LOCK_FILE = ".scient/skills.lock.json";
 export const SCIENT_TRANSACTION_FILE = ".scient/init-transaction.json";
+export const SCIENT_SKILLS_LOCK_FORMAT_VERSION = 1;
+export const SCIENT_BUILT_IN_ORIGIN = "scient:builtin";
 export const LEGACY_PAPILAB_METADATA_DIRECTORY = ".papilab";
 export const LEGACY_PAPILAB_IDENTITY_FILE = ".papilab/project.json";
 
@@ -33,6 +36,7 @@ export interface InspectionIssue {
     | "empty-metadata-directory"
     | "incomplete-transaction"
     | "invalid-identity"
+    | "invalid-skills-lock"
     | "invalid-transaction"
     | "metadata-path-conflict"
     | "missing-agents-file"
@@ -50,11 +54,13 @@ export interface ProjectFolderInspection {
   readonly agentsFile: PathSnapshot;
   readonly metadataDirectory: PathSnapshot;
   readonly identityFile: PathSnapshot;
+  readonly skillsLockFile: PathSnapshot;
   readonly transactionFile: PathSnapshot;
   readonly legacyPapiLabMetadataDirectory: PathSnapshot;
   readonly legacyPapiLabIdentityFile: PathSnapshot;
   readonly legacyPapiLabIdentity: ScientProjectIdentity | null;
   readonly identity: ScientProjectIdentity | null;
+  readonly skillsLock: ScientSkillsLock | null;
   readonly issues: readonly InspectionIssue[];
 }
 
@@ -65,6 +71,33 @@ export interface InitializationRequest {
   readonly scopeIncluded?: string;
   readonly scopeExcluded?: string;
   readonly profileIds?: readonly string[];
+  readonly skillIds?: readonly string[];
+}
+
+export interface BuiltInSkillActivation {
+  readonly id: string;
+  readonly version: string;
+  readonly digest: `sha256:${string}`;
+  readonly origin: typeof SCIENT_BUILT_IN_ORIGIN;
+}
+
+export interface BuiltInSkillDescriptor extends BuiltInSkillActivation {
+  readonly displayName: string;
+  readonly description: string;
+  readonly role: "constructive" | "review" | "orientation";
+  readonly defaultSelected: boolean;
+  readonly readiness: "available" | "latent";
+  readonly prerequisites: readonly string[];
+  readonly capabilities: {
+    readonly network: boolean;
+    readonly codeExecution: boolean;
+    readonly projectWrites: "none" | "proposal-only";
+  };
+}
+
+export interface ScientSkillsLock {
+  readonly formatVersion: typeof SCIENT_SKILLS_LOCK_FORMAT_VERSION;
+  readonly skills: readonly BuiltInSkillActivation[];
 }
 
 export interface ProfileSection {
@@ -93,6 +126,7 @@ export interface NormalizedInitializationRequest {
   readonly scopeIncluded: string | null;
   readonly scopeExcluded: string | null;
   readonly profileIds: readonly string[];
+  readonly skillIds: readonly string[];
 }
 
 interface PlanOperationBase {
@@ -137,6 +171,7 @@ export interface InitializationPlan {
   readonly status: "ready" | "blocked" | "already-initialized";
   readonly request: NormalizedInitializationRequest;
   readonly profileVersions: Readonly<Record<string, number>>;
+  readonly skillActivations: readonly BuiltInSkillActivation[];
   readonly operations: readonly InitializationPlanOperation[];
 }
 
@@ -144,6 +179,7 @@ export interface InitializationPlanInput {
   readonly inspection: ProjectFolderInspection;
   readonly request: InitializationRequest;
   readonly profiles?: readonly ProjectProfileDescriptor[];
+  readonly builtInSkills?: readonly BuiltInSkillDescriptor[];
   readonly projectId?: string;
   readonly transactionId?: string;
   readonly createdAt?: string;
@@ -155,6 +191,7 @@ export interface InitializationTransaction {
   readonly projectId: string;
   readonly createdAt: string;
   readonly profileVersions: Readonly<Record<string, number>>;
+  readonly skillActivations: readonly BuiltInSkillActivation[];
   readonly operations: readonly (CreateOperation | PreserveOperation | ProposeOperation)[];
 }
 
@@ -173,6 +210,7 @@ export interface ApplyInitializationResult {
   readonly created: readonly string[];
   readonly preserved: readonly string[];
   readonly proposed: readonly string[];
+  readonly activatedSkills: readonly BuiltInSkillActivation[];
   readonly recovered: boolean;
 }
 

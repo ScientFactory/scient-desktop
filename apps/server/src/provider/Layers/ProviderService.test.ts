@@ -356,6 +356,49 @@ const routing = makeProviderServiceLayer();
 const restartRollbackRouting = makeProviderServiceLayer(undefined, {
   includeRestartRollbackDroid: true,
 });
+const exactRuntimeRouting = makeProviderServiceLayer({
+  resolveProviderRuntime: (provider) =>
+    Effect.succeed({
+      source: "managed",
+      executable: `/managed/bin/${provider === "claudeAgent" ? "claude" : provider}`,
+      managedVersion: "1.0.0",
+      canInstall: false,
+      canRepair: true,
+      canRollback: false,
+      canRemove: true,
+      message: null,
+    }),
+});
+
+exactRuntimeRouting.layer("resolved provider runtime", (it) => {
+  it.effect("uses the exact managed executable without persisting it as user settings", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = asThreadId("thread-managed-runtime");
+
+      yield* provider.startSession(threadId, {
+        provider: "codex",
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const startInput = exactRuntimeRouting.codex.startSession.mock.calls.at(-1)?.[0] as
+        | { providerOptions?: { codex?: { binaryPath?: string } } }
+        | undefined;
+      assert.equal(startInput?.providerOptions?.codex?.binaryPath, "/managed/bin/codex");
+      const binding = Option.getOrUndefined(yield* directory.getBinding(threadId));
+      assert.equal(
+        (
+          binding?.runtimePayload as
+            | { providerOptions?: { codex?: { binaryPath?: string } } }
+            | undefined
+        )?.providerOptions?.codex?.binaryPath,
+        undefined,
+      );
+    }),
+  );
+});
 it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", () =>
   Effect.gen(function* () {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "synara-provider-service-"));

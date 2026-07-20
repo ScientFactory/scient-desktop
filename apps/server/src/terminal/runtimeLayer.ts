@@ -20,6 +20,6 @@ const makeRuntimePtyAdapterLayer = () =>
     return ptyAdapterModule.layer;
   }).pipe(Layer.unwrap);
 
-export const TerminalLayerLive = TerminalManagerLive.pipe(
-  Layer.provide(makeRuntimePtyAdapterLayer()),
-);
+export const PtyAdapterLayerLive = makeRuntimePtyAdapterLayer();
+
+export const TerminalLayerLive = TerminalManagerLive.pipe(Layer.provide(PtyAdapterLayerLive));

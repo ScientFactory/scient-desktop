@@ -10,7 +10,8 @@ export type ScientProjectInitializationDecision =
   | "open-only"
   | "apply"
   | "recover"
-  | "rollback";
+  | "rollback"
+  | { readonly kind: "refresh-skills"; readonly skillIds: readonly string[] };
 
 export type ScientProjectInitializationCompletion =
   | { readonly kind: "applied"; readonly result: ScientProjectInitializationApplyResult }
@@ -31,15 +32,23 @@ export async function prepareScientProjectForOpening(input: {
   readonly onCompletion?: (completion: ScientProjectInitializationCompletion) => void;
 }): Promise<"open" | "cancel" | "already-initialized"> {
   let actionError: string | null = null;
+  let skillIds: readonly string[] | undefined;
   for (;;) {
     const preview = await input.api.scientProjectInitialization.preview({
       root: input.root,
-      request: { title: scientProjectFolderName(input.root) },
+      request: {
+        title: scientProjectFolderName(input.root),
+        ...(skillIds ? { skillIds: [...skillIds] } : {}),
+      },
     });
     if (preview.status === "already-initialized") return "already-initialized";
 
     const decision = await input.requestDecision(preview, actionError);
     actionError = null;
+    if (typeof decision === "object") {
+      skillIds = [...decision.skillIds];
+      continue;
+    }
     if (decision === "cancel") return "cancel";
     if (decision === "open-only") return "open";
 

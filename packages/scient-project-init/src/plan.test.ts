@@ -6,7 +6,11 @@ import { inspectProjectFolder } from "./inspect.ts";
 import { planProjectInitialization } from "./plan.ts";
 import { renderAgentsMarkdown } from "./templates.ts";
 import { makeTemporaryProject, TEST_IDENTITY } from "./testUtils.ts";
-import { ProjectInitializationError, type ProjectProfileDescriptor } from "./types.ts";
+import {
+  ProjectInitializationError,
+  type BuiltInSkillDescriptor,
+  type ProjectProfileDescriptor,
+} from "./types.ts";
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -28,6 +32,40 @@ async function deterministicPlan(root: string, profiles: readonly ProjectProfile
 }
 
 describe("planProjectInitialization", () => {
+  it("records an exact selected built-in identity without copying its body", async () => {
+    const fixture = await makeTemporaryProject();
+    cleanups.push(fixture.cleanup);
+    const skill: BuiltInSkillDescriptor = {
+      id: "scient.test-skill",
+      version: "0.1.0",
+      digest: `sha256:${"2".repeat(64)}`,
+      origin: "scient:builtin",
+      displayName: "Test Skill",
+      description: "A test built-in skill.",
+      role: "constructive",
+      defaultSelected: false,
+      readiness: "available",
+      prerequisites: [],
+      capabilities: { network: false, codeExecution: false, projectWrites: "proposal-only" },
+    };
+
+    const plan = await planProjectInitialization({
+      inspection: await inspectProjectFolder(fixture.root),
+      request: { skillIds: [skill.id] },
+      builtInSkills: [skill],
+      ...TEST_IDENTITY,
+    });
+
+    expect(plan.skillActivations).toEqual([
+      { id: skill.id, version: skill.version, digest: skill.digest, origin: skill.origin },
+    ]);
+    const lock = plan.operations.find((operation) => operation.path === ".scient/skills.lock.json");
+    expect(lock?.kind).toBe("create");
+    if (lock?.kind !== "create") throw new Error("Expected skills lock create operation.");
+    expect(JSON.parse(lock.contents)).toEqual({ formatVersion: 1, skills: plan.skillActivations });
+    expect(lock.contents).not.toContain("A test built-in skill.");
+  });
+
   it("renders a deterministic universal foundation with identity last", async () => {
     const fixture = await makeTemporaryProject();
     cleanups.push(fixture.cleanup);
@@ -38,6 +76,7 @@ describe("planProjectInitialization", () => {
     expect(plan.operations.map((operation) => [operation.kind, operation.path])).toEqual([
       ["create", "PROJECT.md"],
       ["create", "AGENTS.md"],
+      ["create", ".scient/skills.lock.json"],
       ["create", ".scient/project.json"],
     ]);
     const identity = plan.operations.at(-1);
@@ -63,6 +102,7 @@ describe("planProjectInitialization", () => {
     expect(plan.operations.map((operation) => [operation.kind, operation.path])).toEqual([
       ["preserve", "PROJECT.md"],
       ["propose", "AGENTS.md"],
+      ["create", ".scient/skills.lock.json"],
       ["create", ".scient/project.json"],
     ]);
     const proposal = plan.operations.find((operation) => operation.kind === "propose");

@@ -15,10 +15,41 @@ import {
   applyDroidAcpInteractionMode,
   applyDroidAcpModelSelection,
   buildDroidAcpSpawnInput,
+  classifyDroidAuthenticationProbeError,
   discoverDroidAcpModels,
   resolveDroidAcpAuthMethodId,
   resolveDroidCliBinaryPath,
 } from "./DroidAcpSupport.ts";
+
+describe("Droid authentication verification", () => {
+  const sessionId = "scient-auth-check-test";
+
+  it("recognizes Factory's authentication-required response without exposing its device code", () => {
+    const error = new EffectAcpErrors.AcpRequestError({
+      code: -32000,
+      errorMessage: "Authentication required: \n\nYour code: TEST-CODE",
+    });
+    expect(classifyDroidAuthenticationProbeError(error, sessionId)).toBe("unauthenticated");
+  });
+
+  it("treats the matching nonexistent-session response as authenticated", () => {
+    const error = new EffectAcpErrors.AcpRequestError({
+      code: -32602,
+      errorMessage: "Invalid params: Unknown session identifier",
+      data: { sessionId },
+    });
+    expect(classifyDroidAuthenticationProbeError(error, sessionId)).toBe("authenticated");
+  });
+
+  it("does not authenticate an unrelated invalid-parameter response", () => {
+    const error = new EffectAcpErrors.AcpRequestError({
+      code: -32602,
+      errorMessage: "Invalid params: Unknown session identifier",
+      data: { sessionId: "different-session" },
+    });
+    expect(classifyDroidAuthenticationProbeError(error, sessionId)).toBe("unknown");
+  });
+});
 
 function initializeWithAuthMethods(ids: ReadonlyArray<string>): EffectAcpSchema.InitializeResponse {
   return {

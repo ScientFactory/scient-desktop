@@ -418,6 +418,11 @@ export function deriveMessagesTimelineRows(input: {
       input.activeTurnInProgress === true &&
       input.activeTurnId != null &&
       timelineEntry.message.turnId === input.activeTurnId;
+    const assistantMessageIsActivelyStreaming =
+      timelineEntry.message.role === "assistant" &&
+      timelineEntry.message.streaming &&
+      input.activeTurnInProgress === true &&
+      (input.activeTurnId == null || timelineEntry.message.turnId === input.activeTurnId);
 
     nextRows.push({
       kind: "message",
@@ -431,7 +436,10 @@ export function deriveMessagesTimelineRows(input: {
       showAssistantCopyButton:
         timelineEntry.message.role === "assistant" &&
         terminalAssistantMessageIds.has(timelineEntry.message.id),
-      assistantCopyStreaming: timelineEntry.message.streaming || assistantTurnStillInProgress,
+      // Transport flags can outlive interrupted/failed turns. The turn lifecycle
+      // is authoritative for whether visible text is still changing; retain the
+      // raw flag only while that turn is actually active.
+      assistantCopyStreaming: assistantTurnStillInProgress || assistantMessageIsActivelyStreaming,
       assistantTurnInProgress: assistantTurnStillInProgress,
       assistantTurnDiffSummary:
         timelineEntry.message.role === "assistant"

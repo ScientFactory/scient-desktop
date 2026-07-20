@@ -445,7 +445,7 @@ function readXaiModelAliases(rawModel: Record<string, unknown>): string[] {
     .filter((alias) => alias.length > 0);
 }
 
-function parseGrokCliModelList(stdout: string): Array<{ slug: string; name: string }> {
+export function parseGrokCliModelList(stdout: string): Array<{ slug: string; name: string }> {
   const models: Array<{ slug: string; name: string; isDefault: boolean }> = [];
   let inAvailableModels = false;
   let fallbackDefaultModel: string | undefined;
@@ -476,7 +476,7 @@ function parseGrokCliModelList(stdout: string): Array<{ slug: string; name: stri
       continue;
     }
     const slug = modelMatch[1].trim();
-    if (!slug) {
+    if (!slug || !/^grok(?:[-_./]|$)/iu.test(slug)) {
       continue;
     }
     models.push({
@@ -486,7 +486,11 @@ function parseGrokCliModelList(stdout: string): Array<{ slug: string; name: stri
     });
   }
 
-  if (models.length === 0 && fallbackDefaultModel) {
+  if (
+    models.length === 0 &&
+    fallbackDefaultModel &&
+    /^grok(?:[-_./]|$)/iu.test(fallbackDefaultModel)
+  ) {
     models.push({
       slug: fallbackDefaultModel,
       name: formatGrokModelName(fallbackDefaultModel),
@@ -2287,7 +2291,9 @@ export function makeGrokAdapter(
         let cliError: unknown;
         let apiError: ProviderAdapterRequestError | undefined;
         const cliModels = yield* Effect.gen(function* () {
-          const prepared = prepareWindowsSafeProcess(binaryPath, ["models"], { env: process.env });
+          const prepared = prepareWindowsSafeProcess(binaryPath, ["--no-auto-update", "models"], {
+            env: process.env,
+          });
           const child = yield* childProcessSpawner.spawn(
             ChildProcess.make(prepared.command, prepared.args, {
               shell: prepared.shell,

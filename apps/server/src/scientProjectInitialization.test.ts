@@ -41,6 +41,7 @@ describe("ScientProjectInitializationService", () => {
       canApply: true,
       canRecover: false,
       canRollback: false,
+      skills: [],
     });
 
     const projectOperation = preview.operations.find(
@@ -50,12 +51,67 @@ describe("ScientProjectInitializationService", () => {
     (projectOperation as { contents?: string }).contents = "tampered browser contents\n";
 
     const result = await service.apply("preview-1");
-    expect(result.created).toEqual(["AGENTS.md", "PROJECT.md", ".scient/project.json"]);
+    expect(result.created).toEqual([
+      ".scient/skills.lock.json",
+      "AGENTS.md",
+      "PROJECT.md",
+      ".scient/project.json",
+    ]);
+    expect(result.activatedSkills).toEqual([]);
     expect(await readFile(path.join(root, "PROJECT.md"), "utf8")).toContain("Safety study");
     expect(await readFile(path.join(root, "PROJECT.md"), "utf8")).not.toContain(
       "tampered browser contents",
     );
     await expect(service.apply("preview-1")).rejects.toThrow("expired");
+  });
+
+  it("previews and records only explicitly selected researcher-facing built-ins", async () => {
+    const root = await makeProjectFolder();
+    const skill = {
+      id: "scient.test-skill",
+      version: "0.1.0",
+      digest: `sha256:${"1".repeat(64)}` as const,
+      origin: "scient:builtin" as const,
+      displayName: "Test Skill",
+      description: "A researcher-facing skill used to verify initialization selection.",
+      role: "constructive" as const,
+      defaultSelected: false,
+      readiness: "available" as const,
+      prerequisites: [],
+      capabilities: {
+        network: false,
+        codeExecution: false,
+        projectWrites: "proposal-only" as const,
+      },
+    };
+    const service = new ScientProjectInitializationService({
+      createPreviewId: () => "skills-preview",
+      builtInSkills: [skill],
+    });
+
+    const preview = await service.preview({
+      root,
+      request: { skillIds: [skill.id] },
+    });
+
+    expect(preview.skills).toEqual([
+      expect.objectContaining({ id: skill.id, selected: true, readiness: "available" }),
+    ]);
+    const result = await service.apply("skills-preview");
+    expect(result.activatedSkills).toEqual([
+      {
+        id: skill.id,
+        version: skill.version,
+        digest: skill.digest,
+        origin: skill.origin,
+      },
+    ]);
+    expect(JSON.parse(await readFile(path.join(root, ".scient/skills.lock.json"), "utf8"))).toEqual(
+      {
+        formatVersion: 1,
+        skills: result.activatedSkills,
+      },
+    );
   });
 
   it("fails safely when preview ID generation keeps colliding", async () => {

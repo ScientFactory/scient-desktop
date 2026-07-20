@@ -25,8 +25,11 @@ export function providerConnectionMethod(
   provider: ProviderKind,
 ): ServerProviderConnectionMethod | null {
   if (provider === "codex") return "codex_browser";
-  if (provider === "claudeAgent") return "claude_subscription";
+  if (provider === "claudeAgent") return "claude_console";
   if (provider === "cursor") return "cursor_browser";
+  if (provider === "antigravity") return "antigravity_browser";
+  if (provider === "grok") return "grok_browser";
+  if (provider === "droid") return "droid_device_pairing";
   return null;
 }
 
@@ -39,6 +42,7 @@ export function providerConnectionTitle(provider: ProviderKind): string {
 }
 
 export type ProviderConnectionPrimaryAction =
+  | "install"
   | "sign_in"
   | "open_install_guide"
   | "check_again"
@@ -61,6 +65,21 @@ export function describeProviderConnection(
   const title = providerConnectionTitle(provider);
   const label = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
   const operation = status?.connectionState;
+  const installation = status?.installationState;
+
+  if (
+    installation &&
+    !["installed", "succeeded", "failed", "cancelled"].includes(installation.status)
+  ) {
+    return {
+      title,
+      description: installation.message,
+      primaryAction: "none",
+      primaryLabel: "Installing…",
+      busy: true,
+      canCancel: true,
+    };
+  }
 
   if (
     operation &&
@@ -129,6 +148,26 @@ export function describeProviderConnection(
   }
 
   if (!status.available) {
+    if (status.installationState?.status === "installed" && providerConnectionMethod(provider)) {
+      return {
+        title,
+        description: `${label} is installed and verified. Continue to the provider's secure browser sign-in.`,
+        primaryAction: "sign_in",
+        primaryLabel: "Continue in browser",
+        busy: false,
+        canCancel: false,
+      };
+    }
+    if (status.runtime?.canInstall) {
+      return {
+        title,
+        description: `${label} is not installed. Scient can download a verified, private copy for this app—no Homebrew, Node.js, npm, terminal, or administrator password required.`,
+        primaryAction: "install",
+        primaryLabel: `Install ${label}`,
+        busy: false,
+        canCancel: false,
+      };
+    }
     return {
       title,
       description: `${label} needs to be installed first. Scient will check again when you return.`,
@@ -141,6 +180,17 @@ export function describeProviderConnection(
 
   if (status.authStatus === "unauthenticated") {
     const method = providerConnectionMethod(provider);
+    if (provider === "claudeAgent" && method) {
+      return {
+        title,
+        description:
+          "Scient connects Claude through an Anthropic Console account with API billing, not a Claude.ai subscription. Anthropic handles the secure browser sign-in and keeps your credentials.",
+        primaryAction: "sign_in",
+        primaryLabel: "Connect Anthropic Console",
+        busy: false,
+        canCancel: false,
+      };
+    }
     return {
       title,
       description: method

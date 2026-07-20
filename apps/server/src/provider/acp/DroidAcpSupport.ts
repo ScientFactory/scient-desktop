@@ -3,6 +3,7 @@
  *
  * @module DroidAcpSupport
  */
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import * as nodeOs from "node:os";
 import * as nodePath from "node:path";
@@ -12,11 +13,13 @@ import {
   type ProviderListModelsResult,
   type ProviderModelDescriptor,
 } from "@synara/contracts";
-import { Effect, Layer, Scope, ServiceMap } from "effect";
+import { prepareWindowsSafeProcess } from "@synara/shared/windowsProcess";
+import { Effect, Layer, Result, Scope, ServiceMap } from "effect";
+import * as EffectAcpClient from "effect-acp/client";
 import type * as EffectAcpErrors from "effect-acp/errors";
 import * as EffectAcpErrorsRuntime from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/schema";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   AcpSessionRuntime,
@@ -174,6 +177,122 @@ export const makeDroidAcpRuntime = (
     );
     return ServiceMap.getUnsafe(acpContext, AcpSessionRuntime);
   });
+
+interface DroidAcpAuthProbeInput {
+  readonly binaryPath?: string;
+  readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  readonly cwd: string;
+}
+
+const makeDroidAcpAuthClient = (input: DroidAcpAuthProbeInput) =>
+  Effect.gen(function* () {
+    const spawnInput = buildDroidAcpSpawnInput(
+      input.binaryPath ? { binaryPath: input.binaryPath } : undefined,
+      input.cwd,
+    );
+    const prepared = prepareWindowsSafeProcess(spawnInput.command, spawnInput.args, {
+      cwd: spawnInput.cwd,
+      env: process.env,
+    });
+    const child = yield* input.childProcessSpawner
+      .spawn(
+        ChildProcess.make(prepared.command, prepared.args, {
+          cwd: spawnInput.cwd,
+          env: process.env,
+          shell: prepared.shell,
+          ...(prepared.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
+        }),
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new EffectAcpErrorsRuntime.AcpSpawnError({
+              command: spawnInput.command,
+              cause,
+            }),
+        ),
+      );
+    const acpContext = yield* Layer.build(EffectAcpClient.layerChildProcess(child));
+    const acp = ServiceMap.getUnsafe(acpContext, EffectAcpClient.AcpClient);
+    const initializeResult = yield* acp.agent.initialize({
+      protocolVersion: 1,
+      clientCapabilities: {},
+      clientInfo: { name: "Scient Connection Check", version: "0.0.0" },
+    });
+    return { acp, initializeResult };
+  });
+
+/** Starts provider-owned device pairing without creating a session or sending a prompt. */
+export const probeDroidAcpAuthentication = (
+  input: DroidAcpAuthProbeInput,
+): Effect.Effect<{ readonly methodId: string }, EffectAcpErrors.AcpError> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { acp, initializeResult } = yield* makeDroidAcpAuthClient(input);
+      if (
+        initializeResult.protocolVersion !== 1 ||
+        initializeResult.agentInfo?.name !== "@factory/cli"
+      ) {
+        return yield* new EffectAcpErrorsRuntime.AcpRequestError({
+          code: -32602,
+          errorMessage: "The selected executable is not a compatible Factory Droid CLI.",
+        });
+      }
+      const methodId = yield* resolveDroidAcpAuthMethodId(initializeResult);
+      yield* acp.agent.authenticate({ methodId, _meta: { headless: true } });
+      return { methodId };
+    }),
+  );
+
+export type DroidAcpAuthenticationStatus = "authenticated" | "unauthenticated" | "unknown";
+
+export function classifyDroidAuthenticationProbeError(
+  error: EffectAcpErrors.AcpError,
+  sessionId: string,
+): DroidAcpAuthenticationStatus {
+  if (
+    error instanceof EffectAcpErrorsRuntime.AcpRequestError &&
+    error.code === -32000 &&
+    error.errorMessage.startsWith("Authentication required:")
+  ) {
+    return "unauthenticated";
+  }
+  if (
+    error instanceof EffectAcpErrorsRuntime.AcpRequestError &&
+    error.code === -32602 &&
+    error.errorMessage === "Invalid params: Unknown session identifier" &&
+    typeof error.data === "object" &&
+    error.data !== null &&
+    "sessionId" in error.data &&
+    error.data.sessionId === sessionId
+  ) {
+    return "authenticated";
+  }
+  return "unknown";
+}
+
+/** Verifies cached credentials without authenticating, creating a session, or invoking a model. */
+export const verifyDroidAcpAuthentication = (
+  input: DroidAcpAuthProbeInput,
+): Effect.Effect<DroidAcpAuthenticationStatus, never> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { acp, initializeResult } = yield* makeDroidAcpAuthClient(input);
+      if (
+        initializeResult.protocolVersion !== 1 ||
+        initializeResult.agentInfo?.name !== "@factory/cli" ||
+        initializeResult.agentCapabilities?.sessionCapabilities?.resume === undefined
+      ) {
+        return "unknown" as const;
+      }
+      const sessionId = `scient-auth-check-${randomUUID()}`;
+      const resumed = yield* acp.raw
+        .request("session/resume", { sessionId, cwd: input.cwd, mcpServers: [] })
+        .pipe(Effect.result);
+      if (Result.isSuccess(resumed)) return "unknown" as const;
+      return classifyDroidAuthenticationProbeError(resumed.failure, sessionId);
+    }).pipe(Effect.catchCause(() => Effect.succeed("unknown" as const))),
+  );
 
 /**
  * Applies the requested model and reasoning effort over ACP. `droid exec`

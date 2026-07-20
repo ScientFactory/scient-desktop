@@ -22,10 +22,8 @@ import { ServerProviderUpdateError } from "@synara/contracts";
 import { parseCodexConfigModelProvider } from "@synara/shared/codexConfig";
 import { decodeJsonResult } from "@synara/shared/schemaJson";
 import { prepareWindowsSafeProcess } from "@synara/shared/windowsProcess";
-import { query as claudeQuery, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import {
   Array,
-  Cache,
   DateTime,
   Duration,
   Effect,
@@ -58,15 +56,16 @@ import {
   DEFAULT_CURSOR_AGENT_BINARY,
   resolveCursorAgentBinaryPath,
 } from "../acp/CursorAcpCommand";
-import { hasDroidApiKeyEnv, resolveDroidCliBinaryPath } from "../acp/DroidAcpSupport";
-import { hasGrokApiKeyEnv } from "../acp/GrokAcpSupport";
 import {
-  claudeAuthMetadata,
-  isStructuredClaudeAuthFalseNegativeCandidate,
-  parseClaudeAuthStatusFromOutput,
-} from "../claudeAuthStatus";
+  discoverDroidAcpModels,
+  hasDroidApiKeyEnv,
+  makeDroidAcpRuntime,
+  resolveDroidCliBinaryPath,
+  verifyDroidAcpAuthentication,
+} from "../acp/DroidAcpSupport";
+import { parseClaudeAuthStatusFromOutput } from "../claudeAuthStatus";
 import { acquireClaudeAuthStatusLock } from "../claudeAuthStatusLock";
-import { buildClaudeProcessEnv, readClaudeCliCredentialsSummary } from "../claudeProcessEnv";
+import { buildClaudeProcessEnv } from "../claudeProcessEnv";
 import {
   detailFromResult,
   extractAuthBoolean,
@@ -78,6 +77,7 @@ import {
   type CommandResult,
 } from "../providerCliOutput";
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
+import type { ProviderRuntimeManagerShape } from "../Services/ProviderRuntimeManager";
 import {
   orderProviderStatuses,
   readProviderStatusCache,
@@ -93,10 +93,11 @@ import {
   parseGenericCliVersion,
   resolveProviderMaintenanceCapabilitiesEffect,
   type PackageManagedProviderMaintenanceDefinition,
-  type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText";
 import { buildCodexProcessEnv } from "../../codexProcessEnv.ts";
+import { parseAntigravityModelLines } from "./AntigravityAdapter";
+import { parseGrokCliModelList } from "./GrokAdapter";
 
 export { parseClaudeAuthStatusFromOutput } from "../claudeAuthStatus";
 export type { CommandResult } from "../providerCliOutput";
@@ -430,57 +431,6 @@ function extractCodexAccountTypeFromOutput(result: CommandResult): string | unde
   return walk(parsed.success);
 }
 
-// ── Claude SDK capability probe ─────────────────────────────────────
-//
-// Spawns a lightweight Claude Agent SDK session and reads the
-// initialization result. The prompt is a never-yielding AsyncIterable so
-// no user message reaches the Anthropic API — we get account metadata
-// (including subscription type) from local IPC, then abort the
-// subprocess. Used as a fallback when `claude auth status` output
-// doesn't include subscription info.
-
-const CAPABILITIES_PROBE_TIMEOUT_MS = 8_000;
-
-function waitForAbortSignal(signal: AbortSignal): Promise<void> {
-  if (signal.aborted) return Promise.resolve();
-  return new Promise((resolve) => {
-    signal.addEventListener("abort", () => resolve(), { once: true });
-  });
-}
-
-const probeClaudeSubscription = () => {
-  const abort = new AbortController();
-  return Effect.tryPromise(async () => {
-    const q = claudeQuery({
-      // oxlint-disable-next-line require-yield
-      prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
-        await waitForAbortSignal(abort.signal);
-      })(),
-      options: {
-        persistSession: false,
-        abortController: abort,
-        settingSources: ["user", "project", "local"],
-        allowedTools: [],
-        stderr: () => {},
-      },
-    });
-    const init = await q.initializationResult();
-    return { subscriptionType: init.account?.subscriptionType };
-  }).pipe(
-    Effect.ensuring(
-      Effect.sync(() => {
-        if (!abort.signal.aborted) abort.abort();
-      }),
-    ),
-    Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
-    Effect.result,
-    Effect.map((result) => {
-      if (Result.isFailure(result)) return undefined;
-      return Option.isSome(result.success) ? result.success.value : undefined;
-    }),
-  );
-};
-
 export function parseAuthStatusFromOutput(result: CommandResult): {
   readonly status: ServerProviderStatusState;
   readonly authStatus: ServerProviderAuthStatus;
@@ -806,17 +756,11 @@ function cursorModelsOutputHasNoModels(output: string): boolean {
   return output.toLowerCase().includes("no models available");
 }
 
-const runPiCommand = (args: ReadonlyArray<string>, executable = "pi") =>
-  runProviderCommand(executable, args).pipe(
-    Effect.flatMap((result) =>
-      isWindowsShellCommandMissingResult({ code: result.code, stderr: result.stderr })
-        ? Effect.fail(new Error(`spawn ${executable} ENOENT`))
-        : Effect.succeed(result),
-    ),
-  );
-
 const runAntigravityCommand = (args: ReadonlyArray<string>, executable = "agy") =>
-  runProviderCommand(executable, args).pipe(
+  runProviderCommand(executable, args, {
+    ...process.env,
+    AGY_CLI_DISABLE_AUTO_UPDATE: "true",
+  }).pipe(
     Effect.flatMap((result) =>
       isWindowsShellCommandMissingResult({ code: result.code, stderr: result.stderr })
         ? Effect.fail(new Error(`spawn ${executable} ENOENT`))
@@ -1013,13 +957,11 @@ export const checkCodexProviderStatus = makeCheckCodexProviderStatus();
 
 // ── Claude Agent health check ───────────────────────────────────────
 
-const CLAUDE_AUTH_FALSE_NEGATIVE_RETRY_DELAY_MS = 1_000;
-
 export const makeCheckClaudeProviderStatus = (
-  resolveSubscriptionType?: Effect.Effect<string | undefined>,
+  _resolveSubscriptionType?: Effect.Effect<string | undefined>,
   binaryPath?: string,
   homeDir?: string,
-  options?: { readonly falseNegativeRetryDelayMs?: number },
+  _options?: { readonly falseNegativeRetryDelayMs?: number },
 ): Effect.Effect<ServerProviderStatus, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.gen(function* () {
     const checkedAt = new Date().toISOString();
@@ -1077,9 +1019,8 @@ export const makeCheckClaudeProviderStatus = (
     const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
 
     // Probe 2: `claude auth status` — is the user authenticated? The command can
-    // redeem a single-use rotating OAuth refresh token, so it is serialized with
-    // every other `claude auth status` invocation in this process (credential
-    // keepalive, concurrent health probes) via the shared lock.
+    // redeem a single-use rotating OAuth refresh token, so concurrent health
+    // probes are serialized via the shared lock.
     const runAuthStatusProbe = Effect.acquireUseRelease(
       Effect.promise(() => acquireClaudeAuthStatusLock()),
       () =>
@@ -1119,67 +1060,29 @@ export const makeCheckClaudeProviderStatus = (
       };
     }
 
-    let authOutput = authProbe.success.value;
-    let parsed = parseClaudeAuthStatusFromOutput(authOutput);
-    const credentialSummary = readClaudeCliCredentialsSummary(
-      homeDir ? { env: claudeEnv, homeDir } : { env: claudeEnv },
-    );
-    // A structured `loggedIn:false` with a clean exit and no local credential
-    // record to rescue it (macOS keeps OAuth in the Keychain, not on disk) is
-    // the signature of a lost refresh-token rotation race with a concurrent
-    // `claude auth status` invocation. Re-probe once after the rotation settles.
-    if (
-      !credentialSummary.usable &&
-      isStructuredClaudeAuthFalseNegativeCandidate(authOutput, parsed)
-    ) {
-      const retryDelayMs =
-        options?.falseNegativeRetryDelayMs ?? CLAUDE_AUTH_FALSE_NEGATIVE_RETRY_DELAY_MS;
-      if (retryDelayMs > 0) {
-        yield* Effect.sleep(retryDelayMs);
-      }
-      const retryProbe = yield* runAuthStatusProbe;
-      if (Result.isSuccess(retryProbe) && Option.isSome(retryProbe.success)) {
-        authOutput = retryProbe.success.value;
-        parsed = parseClaudeAuthStatusFromOutput(authOutput);
-      }
-    }
-    const structuredFalseNegative = isStructuredClaudeAuthFalseNegativeCandidate(
-      authOutput,
-      parsed,
-    );
-    const credentialProbeSubscriptionType =
-      credentialSummary.usable && structuredFalseNegative && resolveSubscriptionType
-        ? yield* resolveSubscriptionType
-        : undefined;
-    // Claude 2.1.x can report `loggedIn:false` from `auth status` while a live
-    // SDK init still reads account metadata. Token strings alone are not enough:
-    // require the SDK probe before treating the credential file as authenticated.
+    const authOutput = authProbe.success.value;
+    const parsed = parseClaudeAuthStatusFromOutput(authOutput);
+    const authMethod = extractClaudeAuthMethodFromOutput(authOutput);
+    const normalizedAuthMethod = authMethod?.toLowerCase().replace(/[\s_-]+/gu, "");
+    const approvedConsoleCredential = normalizedAuthMethod === "apikey";
+    const unsupportedSubscription =
+      parsed.authStatus === "authenticated" && normalizedAuthMethod === "claude.ai";
     const effectiveParsed: ReturnType<typeof parseClaudeAuthStatusFromOutput> =
-      credentialProbeSubscriptionType !== undefined
-        ? { status: "ready", authStatus: "authenticated" }
-        : parsed;
-    const useCredentialMetadata = credentialProbeSubscriptionType !== undefined;
-
-    // Determine subscription type from multiple sources (cheapest first):
-    // 1. JSON output of `claude auth status` (may or may not contain it)
-    // 2. Cached SDK probe (spawns a Claude process on miss, reads
-    //    `initializationResult()` for account metadata, then aborts
-    //    immediately — no API tokens are consumed)
-    let subscriptionType =
-      extractSubscriptionTypeFromOutput(authOutput) ??
-      credentialProbeSubscriptionType ??
-      (useCredentialMetadata ? credentialSummary.subscriptionType : undefined);
-    const authMethod =
-      extractClaudeAuthMethodFromOutput(authOutput) ??
-      (useCredentialMetadata ? "claude.ai" : undefined);
-    if (
-      !subscriptionType &&
-      resolveSubscriptionType &&
-      effectiveParsed.authStatus === "authenticated"
-    ) {
-      subscriptionType = yield* resolveSubscriptionType;
-    }
-    const authMetadata = claudeAuthMetadata({ subscriptionType, authMethod });
+      unsupportedSubscription
+        ? {
+            status: "warning",
+            authStatus: "unauthenticated",
+            message:
+              "This Claude account type cannot be used by Scient. Connect through Anthropic Console instead.",
+          }
+        : parsed.authStatus === "authenticated" && !approvedConsoleCredential
+          ? {
+              status: "warning",
+              authStatus: "unknown",
+              message:
+                "Claude is signed in, but Scient could not verify an Anthropic Console credential.",
+            }
+          : parsed;
 
     return {
       provider: CLAUDE_AGENT_PROVIDER,
@@ -1187,7 +1090,7 @@ export const makeCheckClaudeProviderStatus = (
       available: true,
       authStatus: effectiveParsed.authStatus,
       version: parsedVersion,
-      ...(authMetadata ? { authType: authMetadata.type, authLabel: authMetadata.label } : {}),
+      ...(approvedConsoleCredential ? { authType: "apiKey", authLabel: "Anthropic Console" } : {}),
       checkedAt,
       ...(effectiveParsed.message ? { message: effectiveParsed.message } : {}),
     } satisfies ServerProviderStatus;
@@ -1196,6 +1099,37 @@ export const makeCheckClaudeProviderStatus = (
 export const checkClaudeProviderStatus = makeCheckClaudeProviderStatus();
 
 // ── Grok health check ───────────────────────────────────────────────
+
+export function parseGrokModelsAuthStatus(result: CommandResult): {
+  readonly authStatus: ServerProviderAuthStatus;
+  readonly authType?: "apiKey" | "oauth";
+  readonly authLabel?: string;
+} {
+  const output = `${result.stdout}\n${result.stderr}`;
+  const normalized = output.toLowerCase();
+  if (
+    normalized.includes("you are not authenticated") ||
+    normalized.includes("not signed in") ||
+    normalized.includes("session expired") ||
+    normalized.includes("authentication required")
+  ) {
+    return { authStatus: "unauthenticated" };
+  }
+  if (result.code !== 0) return { authStatus: "unknown" };
+
+  const hasModelCatalog = parseGrokCliModelList(result.stdout).length > 0;
+  if (!hasModelCatalog) return { authStatus: "unknown" };
+  if (/you are using xai_api_key\s*\./iu.test(output)) {
+    return { authStatus: "authenticated", authType: "apiKey", authLabel: "xAI API Key" };
+  }
+  if (/you are authenticated via deployment key\s*\./iu.test(output)) {
+    return { authStatus: "authenticated", authType: "apiKey", authLabel: "xAI deployment key" };
+  }
+  if (/you are logged in with\b/iu.test(output)) {
+    return { authStatus: "authenticated", authType: "oauth", authLabel: "xAI account" };
+  }
+  return { authStatus: "unknown" };
+}
 
 export const makeCheckGrokProviderStatus = (
   binaryPath?: string,
@@ -1249,20 +1183,29 @@ export const makeCheckGrokProviderStatus = (
       } satisfies ServerProviderStatus;
     }
     const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
-    const hasApiKey = hasGrokApiKeyEnv();
+    const modelsProbe = yield* runGrokCommand(["--no-auto-update", "models"], executable).pipe(
+      Effect.timeoutOption(CLAUDE_HEALTH_TIMEOUT_MS),
+      Effect.result,
+    );
+    const parsedAuth =
+      Result.isSuccess(modelsProbe) && Option.isSome(modelsProbe.success)
+        ? parseGrokModelsAuthStatus(modelsProbe.success.value)
+        : { authStatus: "unknown" as const };
 
     return {
       provider: GROK_PROVIDER,
-      status: "ready" as const,
+      status: parsedAuth.authStatus === "authenticated" ? ("ready" as const) : ("warning" as const),
       available: true,
-      authStatus: hasApiKey ? ("authenticated" as const) : ("unknown" as const),
+      authStatus: parsedAuth.authStatus,
       version: parsedVersion,
       checkedAt,
-      ...(hasApiKey
-        ? { authType: "apiKey", authLabel: "xAI API Key" }
+      ...(parsedAuth.authType
+        ? { authType: parsedAuth.authType, authLabel: parsedAuth.authLabel }
         : {
             message:
-              "Grok CLI is installed. Run `grok` to authenticate locally, or set XAI_API_KEY before starting a session.",
+              parsedAuth.authStatus === "unauthenticated"
+                ? "Grok CLI is installed, but it is not signed in to xAI."
+                : "Grok CLI is installed, but Scient could not safely verify the xAI account.",
           }),
     } satisfies ServerProviderStatus;
   });
@@ -1276,6 +1219,25 @@ const runDroidCommand = (args: ReadonlyArray<string>, executable = "droid") =>
 
 export const makeCheckDroidProviderStatus = (
   binaryPath?: string,
+  homeDir: string = OS.homedir(),
+  authenticationProbe: typeof verifyDroidAcpAuthentication = verifyDroidAcpAuthentication,
+  modelProbe: (input: {
+    readonly binaryPath: string;
+    readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+    readonly cwd: string;
+  }) => Effect.Effect<boolean, never> = ({ binaryPath, childProcessSpawner, cwd }) =>
+    Effect.scoped(
+      makeDroidAcpRuntime({
+        droidSettings: { binaryPath },
+        childProcessSpawner,
+        cwd,
+        clientInfo: { name: "Scient health", version: "0.0.0" },
+      }).pipe(
+        Effect.flatMap(discoverDroidAcpModels),
+        Effect.map((catalog) => catalog.models.length > 0),
+        Effect.orElseSucceed(() => false),
+      ),
+    ),
 ): Effect.Effect<ServerProviderStatus, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.gen(function* () {
     const checkedAt = new Date().toISOString();
@@ -1327,20 +1289,46 @@ export const makeCheckDroidProviderStatus = (
     }
     const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
     const hasApiKey = hasDroidApiKeyEnv();
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const authentication = yield* authenticationProbe({
+      binaryPath: executable,
+      childProcessSpawner,
+      cwd: homeDir,
+    }).pipe(Effect.timeoutOption(CLAUDE_HEALTH_TIMEOUT_MS));
+    const authStatus = Option.getOrElse(authentication, () => "unknown" as const);
+    const modelReadiness =
+      authStatus === "authenticated"
+        ? yield* modelProbe({
+            binaryPath: executable,
+            childProcessSpawner,
+            cwd: homeDir,
+          }).pipe(Effect.timeoutOption(CLAUDE_HEALTH_TIMEOUT_MS))
+        : Option.none<boolean>();
+    const verified =
+      authStatus === "authenticated" && Option.isSome(modelReadiness) && modelReadiness.value;
 
     return {
       provider: DROID_PROVIDER,
-      status: "ready" as const,
+      status: verified ? ("ready" as const) : ("warning" as const),
       available: true,
-      authStatus: hasApiKey ? ("authenticated" as const) : ("unknown" as const),
+      authStatus,
       version: parsedVersion,
       checkedAt,
-      ...(hasApiKey
+      ...(verified && hasApiKey
         ? { authType: "apiKey", authLabel: "Factory API Key" }
-        : {
-            message:
-              "Droid CLI is installed. Scient can use the CLI's cached device-pairing login; run `droid` to authenticate locally if needed, or set FACTORY_API_KEY.",
-          }),
+        : verified
+          ? { authType: "oauth", authLabel: "Factory account" }
+          : authStatus === "unauthenticated"
+            ? { message: "Droid CLI is installed, but it is not signed in to Factory." }
+            : authStatus === "authenticated"
+              ? {
+                  message:
+                    "Droid is authenticated, but Scient could not load a usable model catalog.",
+                }
+              : {
+                  message:
+                    "Droid CLI is installed, but Scient could not safely verify the Factory account.",
+                }),
     } satisfies ServerProviderStatus;
   });
 
@@ -1487,76 +1475,31 @@ export const checkKiloProviderStatus = makeCheckKiloProviderStatus();
 
 export const checkPiProviderStatus = (
   agentDir?: string,
-  binaryPath?: string,
-): Effect.Effect<ServerProviderStatus, never, ChildProcessSpawner.ChildProcessSpawner> =>
-  Effect.gen(function* () {
-    const checkedAt = new Date().toISOString();
-    const executable = nonEmptyTrimmed(binaryPath) ?? "pi";
-
-    const versionProbe = yield* runPiCommand(["--version"], executable).pipe(
-      Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
-      Effect.result,
-    );
-
-    // Pi itself is SDK-backed in Synara. Keep this CLI probe advisory so health
-    // refreshes do not import the SDK and initialize its native clipboard module.
-    if (Result.isFailure(versionProbe)) {
-      const error = versionProbe.failure;
-      return {
-        provider: PI_PROVIDER,
-        status: "warning" as const,
-        available: true,
-        authStatus: "unknown" as const,
-        checkedAt,
-        message: isCommandMissingCause(error)
-          ? "Pi SDK is bundled, but the Pi CLI (`pi`) is not on PATH, so Scient could not verify the installed CLI version."
-          : `Pi SDK is bundled, but the CLI health check failed: ${error instanceof Error ? error.message : String(error)}.`,
-      } satisfies ServerProviderStatus;
-    }
-
-    if (Option.isNone(versionProbe.success)) {
-      return {
-        provider: PI_PROVIDER,
-        status: "warning" as const,
-        available: true,
-        authStatus: "unknown" as const,
-        checkedAt,
-        message:
-          "Pi SDK is bundled, but the CLI health check timed out before Scient could verify the installed version.",
-      } satisfies ServerProviderStatus;
-    }
-
-    const version = versionProbe.success.value;
-    if (version.code !== 0) {
-      const detail = detailFromResult(version);
-      return {
-        provider: PI_PROVIDER,
-        status: "warning" as const,
-        available: true,
-        authStatus: "unknown" as const,
-        checkedAt,
-        message: detail
-          ? `Pi SDK is bundled, but the CLI health check failed. ${detail}`
-          : "Pi SDK is bundled, but the CLI health check failed.",
-      } satisfies ServerProviderStatus;
-    }
-
-    const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
+  _binaryPath?: string,
+): Effect.Effect<ServerProviderStatus> =>
+  Effect.sync(() => {
     const configuredAgentDir = nonEmptyTrimmed(agentDir);
     return {
       provider: PI_PROVIDER,
       status: "ready" as const,
       available: true,
       authStatus: "unknown" as const,
-      version: parsedVersion,
-      checkedAt,
+      checkedAt: new Date().toISOString(),
       message: configuredAgentDir
-        ? `Pi CLI is installed. Scient will use Pi agent dir ${configuredAgentDir}.`
-        : "Pi CLI is installed. Configure provider credentials inside Pi as needed.",
+        ? `Pi is built into Scient and will use agent dir ${configuredAgentDir}.`
+        : "Pi is built into Scient. Configure a model-provider account when you use it.",
     } satisfies ServerProviderStatus;
   });
 
 // ── Antigravity CLI health check ──────────────────────────────────
+
+export function parseAntigravityModelsAuthStatus(result: CommandResult): ServerProviderAuthStatus {
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (/please sign in to view available models/iu.test(output)) return "unauthenticated";
+  if (result.code !== 0) return "unknown";
+  const models = parseAntigravityModelLines(result.stdout);
+  return models.length > 0 ? "authenticated" : "unknown";
+}
 
 export const checkAntigravityProviderStatus = (
   binaryPath?: string,
@@ -1620,12 +1563,11 @@ export const checkAntigravityProviderStatus = (
       Effect.timeoutOption(CLAUDE_HEALTH_TIMEOUT_MS),
       Effect.result,
     );
-    if (
-      Result.isSuccess(models) &&
-      Option.isSome(models.success) &&
-      models.success.value.code === 0 &&
-      models.success.value.stdout.trim().length > 0
-    ) {
+    const authStatus =
+      Result.isSuccess(models) && Option.isSome(models.success)
+        ? parseAntigravityModelsAuthStatus(models.success.value)
+        : "unknown";
+    if (authStatus === "authenticated") {
       return {
         provider: ANTIGRAVITY_PROVIDER,
         status: "ready",
@@ -1640,10 +1582,13 @@ export const checkAntigravityProviderStatus = (
       provider: ANTIGRAVITY_PROVIDER,
       status: "warning",
       available: true,
-      authStatus: "unknown",
+      authStatus,
       version: parsedVersion,
       checkedAt,
-      message: "Antigravity CLI is installed, but Scient could not verify login by listing models.",
+      message:
+        authStatus === "unauthenticated"
+          ? "Antigravity CLI is installed, but it is not signed in to Google."
+          : "Antigravity CLI is installed, but Scient could not safely verify login by listing models.",
     } satisfies ServerProviderStatus;
   });
 
@@ -2032,7 +1977,10 @@ export function projectProviderStatusesForSettings(
 
 // ── Layer ───────────────────────────────────────────────────────────
 
-export function makeProviderHealthLive(options?: { readonly providerUpdateTimeoutMs?: number }) {
+export function makeProviderHealthLive(options?: {
+  readonly providerUpdateTimeoutMs?: number;
+  readonly resolveProviderRuntime?: ProviderRuntimeManagerShape["resolve"];
+}) {
   const providerUpdateTimeoutMs = options?.providerUpdateTimeoutMs ?? PROVIDER_UPDATE_TIMEOUT_MS;
   return Layer.effect(
     ProviderHealth,
@@ -2096,19 +2044,6 @@ export function makeProviderHealthLive(options?: { readonly providerUpdateTimeou
           }),
       });
 
-      // 5-minute TTL cache for the Claude SDK subscription probe. The probe
-      // spawns a short-lived `claude` subprocess to read account metadata
-      // from the local init handshake; capacity=1 because the probe has no
-      // parameters.
-      const claudeSubscriptionCache = yield* Cache.make({
-        capacity: 1,
-        timeToLive: Duration.minutes(5),
-        lookup: (_: "claude") => probeClaudeSubscription(),
-      });
-      const resolveClaudeSubscription = Cache.get(claudeSubscriptionCache, "claude").pipe(
-        Effect.map((probe) => probe?.subscriptionType),
-      );
-
       const getProviderBinaryPath = (provider: ProviderKind, settings: ServerSettings) => {
         switch (provider) {
           case "codex":
@@ -2130,6 +2065,16 @@ export function makeProviderHealthLive(options?: { readonly providerUpdateTimeou
           case "pi":
             return settings.providers.pi.binaryPath;
         }
+      };
+
+      const resolveProviderBinaryPath = (
+        provider: ProviderKind,
+        configuredExecutable?: string,
+      ): Effect.Effect<string | undefined> => {
+        if (!options?.resolveProviderRuntime) return Effect.succeed(configuredExecutable);
+        return options
+          .resolveProviderRuntime(provider, configuredExecutable)
+          .pipe(Effect.map((runtime) => runtime.executable ?? configuredExecutable));
       };
 
       const getProviderMaintenanceCapabilities = Effect.fn("getProviderMaintenanceCapabilities")(
@@ -2309,18 +2254,25 @@ export function makeProviderHealthLive(options?: { readonly providerUpdateTimeou
                 checkProviderWhenEnabled(
                   settings,
                   CODEX_PROVIDER,
-                  makeCheckCodexProviderStatus(
+                  resolveProviderBinaryPath(
+                    CODEX_PROVIDER,
                     settings.providers.codex.binaryPath,
-                    settings.providers.codex.homePath,
+                  ).pipe(
+                    Effect.flatMap((binaryPath) =>
+                      makeCheckCodexProviderStatus(binaryPath, settings.providers.codex.homePath),
+                    ),
                   ),
                 ),
                 checkProviderWhenEnabled(
                   settings,
                   CLAUDE_AGENT_PROVIDER,
-                  makeCheckClaudeProviderStatus(
-                    resolveClaudeSubscription,
+                  resolveProviderBinaryPath(
+                    CLAUDE_AGENT_PROVIDER,
                     settings.providers.claudeAgent.binaryPath,
-                    serverConfig.homeDir,
+                  ).pipe(
+                    Effect.flatMap((binaryPath) =>
+                      makeCheckClaudeProviderStatus(undefined, binaryPath, serverConfig.homeDir),
+                    ),
                   ),
                 ),
                 checkProviderWhenEnabled(
@@ -2331,17 +2283,29 @@ export function makeProviderHealthLive(options?: { readonly providerUpdateTimeou
                 checkProviderWhenEnabled(
                   settings,
                   ANTIGRAVITY_PROVIDER,
-                  checkAntigravityProviderStatus(settings.providers.antigravity.binaryPath),
+                  resolveProviderBinaryPath(
+                    ANTIGRAVITY_PROVIDER,
+                    settings.providers.antigravity.binaryPath,
+                  ).pipe(Effect.flatMap(checkAntigravityProviderStatus)),
                 ),
                 checkProviderWhenEnabled(
                   settings,
                   GROK_PROVIDER,
-                  makeCheckGrokProviderStatus(settings.providers.grok.binaryPath),
+                  resolveProviderBinaryPath(GROK_PROVIDER, settings.providers.grok.binaryPath).pipe(
+                    Effect.flatMap(makeCheckGrokProviderStatus),
+                  ),
                 ),
                 checkProviderWhenEnabled(
                   settings,
                   DROID_PROVIDER,
-                  makeCheckDroidProviderStatus(settings.providers.droid.binaryPath),
+                  resolveProviderBinaryPath(
+                    DROID_PROVIDER,
+                    settings.providers.droid.binaryPath,
+                  ).pipe(
+                    Effect.flatMap((binaryPath) =>
+                      makeCheckDroidProviderStatus(binaryPath, serverConfig.homeDir),
+                    ),
+                  ),
                 ),
                 checkProviderWhenEnabled(
                   settings,
@@ -2403,10 +2367,6 @@ export function makeProviderHealthLive(options?: { readonly providerUpdateTimeou
         );
 
       const refreshNow = Effect.gen(function* () {
-        // Drop the cached Claude subscription probe so switching accounts (login
-        // / logout / add account outside the app) is reflected on the next
-        // refresh instead of being pinned to the old account for up to 5 minutes.
-        yield* Cache.invalidate(claudeSubscriptionCache, "claude");
         const loadedStatuses = yield* loadProviderStatuses;
         const previousRawStatuses = yield* Ref.get(statusesRef);
         const previousStatuses = yield* projectStatusesForCurrentSettings(previousRawStatuses);

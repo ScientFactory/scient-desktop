@@ -132,6 +132,12 @@ import type {
   ServerProviderConnectionCancelInput,
   ServerProviderConnectionResult,
   ServerProviderConnectionStartInput,
+  ServerProviderInstallCancelInput,
+  ServerProviderInstallInput,
+  ServerProviderInstallPlanInput,
+  ServerProviderInstallPlanResult,
+  ServerProviderInstallationResult,
+  ServerProviderRuntimeMutationInput,
   ServerProviderUpdateInput,
   ServerProviderUpdateResult,
   ServerRefreshProvidersResult,
@@ -218,6 +224,7 @@ export type DesktopUpdateStatus =
 
 export type DesktopRuntimeArch = "arm64" | "x64" | "other";
 export type DesktopTheme = "light" | "dark" | "system";
+export type DesktopUpdateInstallMode = "automatic" | "manual";
 
 export interface DesktopRuntimeInfo {
   hostArch: DesktopRuntimeArch;
@@ -227,6 +234,7 @@ export interface DesktopRuntimeInfo {
 
 export interface DesktopUpdateState {
   enabled: boolean;
+  installMode: DesktopUpdateInstallMode;
   status: DesktopUpdateStatus;
   currentVersion: string;
   hostArch: DesktopRuntimeArch;
@@ -637,6 +645,24 @@ export interface NativeApi {
     cancelProviderConnection: (
       input: ServerProviderConnectionCancelInput,
     ) => Promise<ServerProviderConnectionResult>;
+    prepareProviderInstall: (
+      input: ServerProviderInstallPlanInput,
+    ) => Promise<ServerProviderInstallPlanResult>;
+    installProvider: (
+      input: ServerProviderInstallInput,
+    ) => Promise<ServerProviderInstallationResult>;
+    cancelProviderInstall: (
+      input: ServerProviderInstallCancelInput,
+    ) => Promise<ServerProviderInstallationResult>;
+    repairProvider: (
+      input: ServerProviderRuntimeMutationInput,
+    ) => Promise<ServerProviderInstallationResult>;
+    rollbackProvider: (
+      input: ServerProviderRuntimeMutationInput,
+    ) => Promise<ServerProviderInstallationResult>;
+    removeManagedProvider: (
+      input: ServerProviderRuntimeMutationInput,
+    ) => Promise<ServerProviderInstallationResult>;
     updateProvider: (input: ServerProviderUpdateInput) => Promise<ServerProviderUpdateResult>;
     listWorktrees: () => Promise<ServerListWorktreesResult>;
     listLocalServers: () => Promise<ServerListLocalServersResult>;

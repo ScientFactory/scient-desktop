@@ -5,7 +5,11 @@
 import type { ProviderSkillDescriptor } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
-import { buildSettingsSkillGroups, buildSettingsSkillSections } from "./skillsSettingsModel";
+import {
+  buildSettingsSkillGroups,
+  buildSettingsSkillSections,
+  setScientBuiltInActivationOverride,
+} from "./skillsSettingsModel";
 
 function skill(partial: Partial<ProviderSkillDescriptor>): ProviderSkillDescriptor {
   return {
@@ -89,5 +93,46 @@ describe("buildSettingsSkillSections", () => {
 
     expect(sections.map((section) => section.title)).toEqual(["Shared skills", "From Cursor"]);
     expect(sections[0]?.groups.map((group) => group.key)).toEqual(["logic-consolidator"]);
+  });
+});
+
+describe("setScientBuiltInActivationOverride", () => {
+  it("stores only a departure from the built-in default", () => {
+    expect(
+      setScientBuiltInActivationOverride({
+        current: [],
+        id: "scient.skill-authoring",
+        defaultEnabled: true,
+        enabled: false,
+      }),
+    ).toEqual([{ id: "scient.skill-authoring", enabled: false }]);
+  });
+
+  it("removes an override when the user returns to the built-in default", () => {
+    expect(
+      setScientBuiltInActivationOverride({
+        current: [
+          { id: "scient.future-skill", enabled: true },
+          { id: "scient.skill-authoring", enabled: false },
+        ],
+        id: "scient.skill-authoring",
+        defaultEnabled: true,
+        enabled: true,
+      }),
+    ).toEqual([{ id: "scient.future-skill", enabled: true }]);
+  });
+
+  it("supports future built-ins that are disabled by default", () => {
+    expect(
+      setScientBuiltInActivationOverride({
+        current: [{ id: "scient.zeta", enabled: false }],
+        id: "scient.alpha",
+        defaultEnabled: false,
+        enabled: true,
+      }),
+    ).toEqual([
+      { id: "scient.alpha", enabled: true },
+      { id: "scient.zeta", enabled: false },
+    ]);
   });
 });

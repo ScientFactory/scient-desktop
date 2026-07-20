@@ -18,8 +18,11 @@ const BASE_STATUS: ServerProviderStatus = {
 describe("provider connection presentation", () => {
   it("maps supported providers to fixed browser sign-in methods", () => {
     expect(providerConnectionMethod("codex")).toBe("codex_browser");
-    expect(providerConnectionMethod("claudeAgent")).toBe("claude_subscription");
+    expect(providerConnectionMethod("claudeAgent")).toBe("claude_console");
     expect(providerConnectionMethod("cursor")).toBe("cursor_browser");
+    expect(providerConnectionMethod("antigravity")).toBe("antigravity_browser");
+    expect(providerConnectionMethod("grok")).toBe("grok_browser");
+    expect(providerConnectionMethod("droid")).toBe("droid_device_pairing");
     expect(providerConnectionMethod("opencode")).toBeNull();
   });
 
@@ -33,11 +36,43 @@ describe("provider connection presentation", () => {
     expect(providerInstallUrl("codex")).toMatch(/^https:\/\//u);
   });
 
+  it("offers dependency-free managed installation when a reviewed artifact exists", () => {
+    const presentation = describeProviderConnection("codex", {
+      ...BASE_STATUS,
+      available: false,
+      authStatus: "unknown",
+      runtime: {
+        source: "missing",
+        managedVersion: null,
+        canInstall: true,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: "No usable provider runtime was found.",
+      },
+    });
+    expect(presentation.primaryAction).toBe("install");
+    expect(presentation.description).toContain("no Homebrew");
+  });
+
   it("offers browser login without asking for credentials", () => {
     const presentation = describeProviderConnection("codex", BASE_STATUS);
     expect(presentation.primaryAction).toBe("sign_in");
     expect(presentation.primaryLabel).toBe("Continue in browser");
     expect(presentation.description).toContain("credentials stay with Codex");
+  });
+
+  it("explains Claude's Anthropic Console requirement before sign-in", () => {
+    const presentation = describeProviderConnection("claudeAgent", {
+      ...BASE_STATUS,
+      provider: "claudeAgent",
+      message:
+        "This Claude account type cannot be used by Scient. Connect through Anthropic Console instead.",
+    });
+    expect(presentation.primaryAction).toBe("sign_in");
+    expect(presentation.primaryLabel).toBe("Connect Anthropic Console");
+    expect(presentation.description).toContain("API billing");
+    expect(presentation.description).toContain("not a Claude.ai subscription");
   });
 
   it.each(["starting", "waiting_for_browser", "verifying"] as const)(
