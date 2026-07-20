@@ -24,6 +24,14 @@
       "types": "./src/logging.ts",
       "import": "./src/logging.ts"
     },
+    "./privatePathPermissions": {
+      "types": "./src/privatePathPermissions.ts",
+      "import": "./src/privatePathPermissions.ts"
+    },
+    "./scientDataDirectories": {
+      "types": "./src/scientDataDirectories.ts",
+      "import": "./src/scientDataDirectories.ts"
+    },
     "./errorMessages": {
       "types": "./src/errorMessages.ts",
       "import": "./src/errorMessages.ts"
