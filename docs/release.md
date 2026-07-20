@@ -154,11 +154,27 @@ Notes:
 - `APPLE_API_KEY` is stored as raw key text in secrets.
 - The workflow writes it to a temporary `AuthKey_<id>.p8` file at runtime.
 
-## 3) Azure Trusted Signing setup (Windows)
+## 3) Windows signing setup
 
-When any Azure signing secret is absent, build-only validation continues with an
-unsigned NSIS installer, but public release publication fails. Signing is enabled
-only when all of the following secrets are present:
+Public releases require exactly one complete Windows signing provider. Build-only
+validation may continue with an unsigned NSIS installer when neither provider is
+configured, but publication fails closed.
+
+### Option A: standard Authenticode certificate
+
+This path supports an OV/EV code-signing certificate accepted by electron-builder.
+Add both secrets:
+
+- `WIN_CSC_LINK`: a base64-encoded certificate file, local file path, or supported URL
+- `WIN_CSC_KEY_PASSWORD`: the certificate password
+
+Use this option for a certificate from a generally available CA or compatible
+managed signing service. Confirm the resulting `.exe` has a valid Authenticode
+signature before publication.
+
+### Option B: Azure Trusted Signing
+
+Azure signing is enabled only when all of the following secrets are present:
 
 - `AZURE_TENANT_ID`
 - `AZURE_CLIENT_ID`
@@ -168,7 +184,7 @@ only when all of the following secrets are present:
 - `AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME`
 - `AZURE_TRUSTED_SIGNING_PUBLISHER_NAME`
 
-Optional signing checklist:
+Azure signing checklist:
 
 1. Create Azure Trusted Signing account and certificate profile.
 2. Record ATS values:
@@ -182,8 +198,10 @@ Optional signing checklist:
 6. Add Azure secrets listed above in GitHub Actions secrets.
 7. Re-run a build-only workflow and confirm the Windows installer is signed.
 
-If Windows signing is not yet configured, leave the secrets absent and use only
-build-only validation. Do not publish a public release until signing is configured.
+Do not mix the standard certificate and Azure secrets. Partial or conflicting
+configuration remains unsigned in build-only mode and fails public publication.
+If Windows signing is not yet configured, leave all provider secrets absent and
+use only build-only validation.
 
 ## 4) Ongoing release checklist
 
@@ -191,7 +209,7 @@ build-only validation. Do not publish a public release until signing is configur
 2. Promote `main` to `release/stable` through a protected PR.
 3. Run build-only native validation for the exact `release/stable` head and version.
 4. Install and smoke-test the produced artifacts; updater changes require the full check/download/button/install/restart path.
-5. Confirm all required Apple and Azure signing secrets are configured before publication.
+5. Confirm all required Apple secrets and exactly one Windows signing provider are configured before publication.
 6. Confirm `gh api repos/OWNER/REPO/releases/latest --jq .tag_name` returns the current stable release.
 7. Either create and push `vX.Y.Z` at the exact `release/stable` head or manually dispatch that branch with `publish_release=true`.
 8. Verify workflow steps:
@@ -207,7 +225,8 @@ build-only validation. Do not publish a public release until signing is configur
 - macOS build unsigned when expected signed:
   - Check all Apple secrets are populated and non-empty.
 - Windows build unsigned when expected signed:
-  - Check all Azure ATS and auth secrets are populated and non-empty.
+  - Check both standard certificate secrets or all Azure secrets are populated and non-empty.
+  - Ensure secrets from the unused Windows provider are absent.
 - Build fails with signing error:
   - Use a build-only run while credentials are incomplete; public release runs intentionally fail closed.
   - Re-check certificate/profile names and tenant/client credentials.
