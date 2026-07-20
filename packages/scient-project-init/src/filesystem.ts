@@ -8,6 +8,7 @@ import { ProjectInitializationError, type PathSnapshot } from "./types.ts";
 export const MAX_MANAGED_TEXT_BYTES = 1_048_576;
 export const MAX_TRANSACTION_BYTES = 4_194_304;
 export const MAX_IDENTITY_BYTES = 65_536;
+export const MAX_SKILLS_LOCK_BYTES = 1_048_576;
 
 export async function snapshotPath(targetPath: string): Promise<PathSnapshot> {
   try {

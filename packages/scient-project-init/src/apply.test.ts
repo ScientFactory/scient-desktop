@@ -46,9 +46,16 @@ describe("applyProjectInitialization", () => {
     });
 
     expect(result.projectId).toBe(TEST_IDENTITY.projectId);
-    expect(result.created).toEqual(["AGENTS.md", "PROJECT.md", ".scient/project.json"]);
+    expect(result.created).toEqual([
+      ".scient/skills.lock.json",
+      "AGENTS.md",
+      "PROJECT.md",
+      ".scient/project.json",
+    ]);
+    expect(result.activatedSkills).toEqual([]);
     expect(steps).toEqual([
       "marker-written:.scient/init-transaction.json",
+      "file-created:.scient/skills.lock.json",
       "file-created:AGENTS.md",
       "file-created:PROJECT.md",
       "file-created:.scient/project.json",
@@ -57,6 +64,7 @@ describe("applyProjectInitialization", () => {
     expect(await inspectProjectFolder(fixture.root)).toMatchObject({
       state: "initialized-compatible",
       identity: { projectId: TEST_IDENTITY.projectId },
+      skillsLock: { formatVersion: 1, skills: [] },
     });
     expect(
       await readFile(path.join(fixture.root, SCIENT_TRANSACTION_FILE)).catch(() => null),
@@ -74,7 +82,7 @@ describe("applyProjectInitialization", () => {
     expect(secondPlan.status).toBe("already-initialized");
     expect(secondResult.created).toEqual([]);
     expect(secondResult.projectId).toBe(TEST_IDENTITY.projectId);
-    expect(secondResult.preserved).toEqual(["PROJECT.md", "AGENTS.md"]);
+    expect(secondResult.preserved).toEqual(["PROJECT.md", "AGENTS.md", ".scient/skills.lock.json"]);
   });
 
   it("migrates a PapiLab identity additively and preserves rollback metadata", async () => {
@@ -170,6 +178,38 @@ describe("applyProjectInitialization", () => {
       expect(recovered.recovered).toBe(true);
       expect((await inspectProjectFolder(fixture.root)).state).toBe("initialized-compatible");
     }
+  });
+
+  it("recovers a legacy in-flight initialization without inventing skill activation", async () => {
+    const fixture = await makeTemporaryProject();
+    cleanups.push(fixture.cleanup);
+    await expect(
+      applyProjectInitialization(await makePlan(fixture.root), {
+        onStep: (step) => {
+          if (step.kind === "marker-written") throw new Error("simulated pre-skills crash");
+        },
+      }),
+    ).rejects.toThrow("simulated pre-skills crash");
+
+    const transactionPath = path.join(fixture.root, SCIENT_TRANSACTION_FILE);
+    const transaction = JSON.parse(await readFile(transactionPath, "utf8")) as {
+      skillActivations?: unknown;
+      operations: Array<{ path: string }>;
+    };
+    delete transaction.skillActivations;
+    transaction.operations = transaction.operations.filter(
+      (operation) => operation.path !== ".scient/skills.lock.json",
+    );
+    await writeFile(transactionPath, `${JSON.stringify(transaction, null, 2)}\n`);
+
+    const recovered = await recoverProjectInitialization(fixture.root);
+
+    expect(recovered).toMatchObject({ recovered: true, activatedSkills: [] });
+    expect(await inspectProjectFolder(fixture.root)).toMatchObject({
+      state: "initialized-compatible",
+      skillsLockFile: { kind: "missing" },
+      skillsLock: null,
+    });
   });
 
   it("removes an attributable stale temporary hard link during recovery", async () => {

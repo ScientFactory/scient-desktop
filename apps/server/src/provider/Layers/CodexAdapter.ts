@@ -58,6 +58,7 @@ import { extractProposedPlanMarkdown } from "../planMode.ts";
 import { appendFileAttachmentsPromptBlock } from "../attachmentProjection.ts";
 import { readProviderPromptImage } from "../promptAttachments.ts";
 import { synaraSkillsDir } from "../skillsCatalog.ts";
+import { scientBuiltInSkillsActiveRoot } from "../../scientBuiltInSkills.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "codex" as const;
@@ -1610,6 +1611,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
           options?.makeManager?.(services) ??
           new CodexAppServerManager(services, {
             synaraSkillsDir: synaraSkillsDir(serverConfig.baseDir),
+            scientBuiltInSkillsDir: scientBuiltInSkillsActiveRoot(serverConfig.baseDir),
           })
         );
       }),
