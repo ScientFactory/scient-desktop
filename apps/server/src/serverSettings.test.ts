@@ -30,6 +30,7 @@ describe("ServerSettingsService", () => {
     expect(settings.providers.grok.binaryPath).toBe("grok");
     expect(settings.defaultThreadEnvMode).toBe("local");
     expect(settings.enableProviderUpdateChecks).toBe(true);
+    expect(settings.telemetryPrivacyLevel).toBe("essential");
   });
 
   it("persists updates and reloads them", async () => {
@@ -41,6 +42,7 @@ describe("ServerSettingsService", () => {
         yield* service.start;
 
         const updated = yield* service.updateSettings({
+          telemetryPrivacyLevel: "product",
           enableAssistantStreaming: true,
           enableProviderUpdateChecks: false,
           providers: {
@@ -56,9 +58,11 @@ describe("ServerSettingsService", () => {
     );
 
     expect(result.updated.enableAssistantStreaming).toBe(true);
+    expect(result.updated.telemetryPrivacyLevel).toBe("product");
     expect(result.updated.enableProviderUpdateChecks).toBe(false);
     expect(result.updated.providers.codex.binaryPath).toBe("/usr/local/bin/codex");
     expect(result.parsed).toMatchObject({
+      telemetryPrivacyLevel: "product",
       enableAssistantStreaming: true,
       enableProviderUpdateChecks: false,
       providers: {

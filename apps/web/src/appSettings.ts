@@ -15,6 +15,7 @@ import {
   type ProviderStartOptions,
   type ServerSettings,
   type ServerSettingsPatch,
+  TelemetryPrivacyLevel,
 } from "@synara/contracts";
 import {
   getDefaultModel,
@@ -156,6 +157,7 @@ const PersistedProviderKind = Schema.Literals([
 );
 
 export const AppSettingsSchema = Schema.Struct({
+  telemetryPrivacyLevel: TelemetryPrivacyLevel.pipe(withDefaults(() => "essential" as const)),
   claudeBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
   uiDensity: UiDensity.pipe(withDefaults(() => DEFAULT_UI_DENSITY)),
   chatFontSizePx: Schema.Number.pipe(withDefaults(() => DEFAULT_CHAT_FONT_SIZE_PX)),
@@ -510,6 +512,7 @@ function normalizeAppSettings(settings: AppSettings): AppSettings {
 
 function serverSettingsToAppSettings(settings: ServerSettings): Partial<AppSettings> {
   return {
+    telemetryPrivacyLevel: settings.telemetryPrivacyLevel,
     claudeBinaryPath: settings.providers.claudeAgent.binaryPath,
     codexBinaryPath: settings.providers.codex.binaryPath,
     codexHomePath: settings.providers.codex.homePath,
@@ -575,6 +578,10 @@ function touchesProviderDiscoverySettings(patch: Partial<AppSettings>): boolean 
 function appSettingsPatchToServerSettingsPatch(patch: Partial<AppSettings>): ServerSettingsPatch {
   const providers: MutableServerSettingsProvidersPatch = {};
   const serverPatch: MutableServerSettingsPatch = {};
+
+  if (patch.telemetryPrivacyLevel !== undefined) {
+    serverPatch.telemetryPrivacyLevel = patch.telemetryPrivacyLevel;
+  }
 
   if (hasOwn(patch, "enableAssistantStreaming")) {
     serverPatch.enableAssistantStreaming = Boolean(patch.enableAssistantStreaming);
@@ -722,6 +729,7 @@ function buildInitialServerSettingsMigrationPatch(settings: AppSettings): Server
   const defaults = DEFAULT_APP_SETTINGS;
 
   for (const key of [
+    "telemetryPrivacyLevel",
     "claudeBinaryPath",
     "codexBinaryPath",
     "codexHomePath",

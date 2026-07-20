@@ -9,6 +9,7 @@ export const SETTINGS_SECTION_IDS = [
   "appearance",
   "notifications",
   "behavior",
+  "data-privacy",
   "appsnap",
   "shortcuts",
   "worktrees",
@@ -95,6 +96,14 @@ export const SETTINGS_NAV_ITEMS: readonly SettingsNavItem[] = [
     description: "Streaming, diff handling, and destructive confirmations.",
     icon: "settings-slider-hor",
     eyebrow: "Interaction rules",
+  },
+  {
+    id: "data-privacy",
+    group: "app",
+    label: "Data & Privacy",
+    description: "Choose which product and reliability data Scient may share.",
+    icon: "shield-check",
+    eyebrow: "Data controls",
   },
   {
     id: "appsnap",

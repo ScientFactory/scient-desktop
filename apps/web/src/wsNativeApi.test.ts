@@ -286,6 +286,7 @@ describe("wsNativeApi", () => {
 
     const payload = {
       settings: {
+        telemetryPrivacyLevel: "essential",
         enableAssistantStreaming: true,
         enableProviderUpdateChecks: true,
         defaultThreadEnvMode: "local",
