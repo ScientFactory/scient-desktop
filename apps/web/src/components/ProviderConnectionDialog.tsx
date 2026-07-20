@@ -2,12 +2,8 @@
 // Purpose: One plain-language setup and recovery flow for AI providers.
 // Layer: Shared UI component
 
-import type {
-  ServerConfig,
-  ServerProviderInstallPlan,
-  ServerProviderStatus,
-} from "@synara/contracts";
-import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import type { ServerProviderInstallPlan } from "@synara/contracts";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
 import {
@@ -15,7 +11,8 @@ import {
   providerConnectionMethod,
   providerInstallUrl,
 } from "~/lib/providerConnectionPresentation";
-import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
+import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
+import { applyProviderStatusesToCache } from "~/lib/providerStatusCache";
 import { ensureNativeApi } from "~/nativeApi";
 import { useProviderConnectionDialogStore } from "~/providerConnectionDialogStore";
 import { PROVIDER_ICON_COMPONENT_BY_PROVIDER } from "./ProviderIcon";
@@ -30,16 +27,6 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Spinner } from "./ui/spinner";
-
-function updateProviderStatuses(
-  queryClient: QueryClient,
-  providers: ReadonlyArray<ServerProviderStatus>,
-) {
-  const current = queryClient.getQueryData<ServerConfig>(serverQueryKeys.config());
-  if (current) {
-    queryClient.setQueryData(serverQueryKeys.config(), { ...current, providers });
-  }
-}
 
 export function ProviderConnectionDialog() {
   const { isOpen, provider, setOpen } = useProviderConnectionDialogStore();
@@ -80,7 +67,7 @@ export function ProviderConnectionDialog() {
   const refresh = () =>
     runAction(async () => {
       const result = await ensureNativeApi().server.refreshProviders();
-      updateProviderStatuses(queryClient, result.providers);
+      applyProviderStatusesToCache(queryClient, result.providers);
     });
 
   const startSignIn = () =>
@@ -88,7 +75,7 @@ export function ProviderConnectionDialog() {
       const method = providerConnectionMethod(provider);
       if (!method) throw new Error("In-app sign in is not supported for this provider yet.");
       const result = await ensureNativeApi().server.startProviderConnection({ provider, method });
-      updateProviderStatuses(queryClient, result.providers);
+      applyProviderStatusesToCache(queryClient, result.providers);
     });
 
   const cancelSignIn = () => {
@@ -99,7 +86,7 @@ export function ProviderConnectionDialog() {
         provider,
         operationId,
       });
-      updateProviderStatuses(queryClient, result.providers);
+      applyProviderStatusesToCache(queryClient, result.providers);
     });
   };
 
@@ -115,7 +102,7 @@ export function ProviderConnectionDialog() {
         planToken: installPlan.planToken,
       });
       setInstallPlan(null);
-      updateProviderStatuses(queryClient, result.providers);
+      applyProviderStatusesToCache(queryClient, result.providers);
     });
 
   const cancelInstall = () => {
@@ -126,7 +113,7 @@ export function ProviderConnectionDialog() {
         provider,
         operationId,
       });
-      updateProviderStatuses(queryClient, result.providers);
+      applyProviderStatusesToCache(queryClient, result.providers);
     });
   };
 
