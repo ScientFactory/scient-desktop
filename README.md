@@ -19,12 +19,18 @@ It brings chats, terminals, browser previews, diffs, branches, provider sessions
 > You need to have [Codex CLI](https://github.com/openai/codex) installed and authorized for Codex sessions to work.
 
 No public Scient Desktop release is available yet. While the project is still
-early, build and run the current source locally:
+early, run the current source as a local application:
 
 ```sh
 bun install
 bun run dev
 ```
+
+The development runner prints and opens a `localhost` URL. This is the normal
+way to test product and UI changes; downloading or packaging the desktop app is
+only necessary for desktop-specific behavior. See
+[Local app testing](./docs/local-testing.md) for the isolated workflow and
+testing boundaries.
 
 ## Privacy
 
