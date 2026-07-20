@@ -22,6 +22,7 @@ import {
   Notification,
   nativeImage,
   nativeTheme,
+  powerMonitor,
   protocol,
   screen,
   session,
@@ -36,6 +37,7 @@ import type {
 } from "electron";
 import * as Effect from "effect/Effect";
 import type {
+  DesktopConnectionWakeReason,
   DesktopTheme,
   DesktopUpdateActionResult,
   DesktopUpdateState,
@@ -76,6 +78,7 @@ import {
 } from "./bundleSwapDetection";
 import { waitForBackendStartupReady } from "./backendStartupReadiness";
 import { showDesktopConfirmDialog } from "./confirmDialog";
+import { DESKTOP_CONNECTION_WAKE_CHANNEL } from "./desktopConnectionWake";
 import {
   LSREGISTER_PATH,
   parseLastLaunchVersion,
@@ -467,6 +470,13 @@ function emitDesktopWindowState(window: BrowserWindow | null = mainWindow): void
   window.webContents.send(WINDOW_STATE_CHANNEL, getDesktopWindowState(window));
 }
 
+function emitDesktopConnectionWake(reason: DesktopConnectionWakeReason): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed() || window.webContents.isDestroyed()) continue;
+    window.webContents.send(DESKTOP_CONNECTION_WAKE_CHANNEL, reason);
+  }
+}
+
 function isSaveFileInput(input: unknown): input is {
   defaultFilename: string;
   contents: string;
@@ -564,7 +574,14 @@ async function waitForBackendWindowReady(baseUrl: string): Promise<"listening" |
   return source;
 }
 
-function ensureInitialBackendWindowOpen(baseUrl: string): void {
+function restartBackendAfterReadinessFailure(generation: number): void {
+  writeDesktopLogHeader(
+    `backend generation=${generation} readiness failed; scheduling replacement`,
+  );
+  void backendSupervisor?.restartGeneration(generation, "readiness check failed");
+}
+
+function ensureInitialBackendWindowOpen(baseUrl: string, generation?: number): void {
   openInitialBackendWindow({
     isDevelopment,
     baseUrl,
@@ -583,6 +600,11 @@ function ensureInitialBackendWindowOpen(baseUrl: string): void {
     warn: (message, error) => {
       console.warn(message, error);
     },
+    ...(generation === undefined
+      ? {}
+      : {
+          onReadinessFailure: () => restartBackendAfterReadinessFailure(generation),
+        }),
   });
 }
 
@@ -2819,6 +2841,7 @@ function handleBackendGenerationStarted(generation: DesktopBackendGeneration): v
           `backend generation=${generation.number} readiness warning message=${formatErrorMessage(error)}`,
         );
         console.warn("[desktop] backend readiness check timed out", error);
+        restartBackendAfterReadinessFailure(generation.number);
         if (!mainWindow) {
           mainWindow = createWindow();
           writeDesktopLogHeader("bootstrap main window created after readiness warning");
@@ -2828,7 +2851,7 @@ function handleBackendGenerationStarted(generation: DesktopBackendGeneration): v
   }
 
   const hadWindow = (mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null) !== null;
-  ensureInitialBackendWindowOpen(backendHttpUrl);
+  ensureInitialBackendWindowOpen(backendHttpUrl, generation.number);
   if (hadWindow && backendInitialWindowOpenInFlight === null) {
     void waitForBackendWindowReady(backendHttpUrl)
       .then((source) => {
@@ -2837,6 +2860,7 @@ function handleBackendGenerationStarted(generation: DesktopBackendGeneration): v
       .catch((error) => {
         if (isBackendReadinessAborted(error)) return;
         console.warn("[desktop] restarted backend readiness check timed out", error);
+        restartBackendAfterReadinessFailure(generation.number);
       });
   }
 }
@@ -2890,6 +2914,11 @@ function getBackendSupervisor(): DesktopBackendSupervisor {
     classifyStartFailure: (error) =>
       error instanceof MissingBackendEntryError ? "fatal" : "retry",
     onFatalStartFailure: (error) => handleFatalStartupError("backend", error),
+    onUnrecoverableGeneration: ({ error, generation, reason }) =>
+      handleFatalStartupError(
+        `backend generation ${generation.number} recovery (${reason})`,
+        error,
+      ),
     gracefulShutdownTimeoutMs: BACKEND_FORCE_KILL_DELAY_MS,
     forcedExitTimeoutMs: BACKEND_SHUTDOWN_TIMEOUT_MS - BACKEND_FORCE_KILL_DELAY_MS,
   });
@@ -3631,10 +3660,16 @@ if (hasSingleInstanceLock) {
 
       app.on("browser-window-focus", () => {
         handleDesktopAppForegrounded();
+        emitDesktopConnectionWake("window-focus");
+      });
+
+      powerMonitor.on("resume", () => {
+        emitDesktopConnectionWake("system-resume");
       });
 
       app.on("activate", () => {
         handleDesktopAppForegrounded();
+        emitDesktopConnectionWake("app-activate");
         if (BrowserWindow.getAllWindows().length === 0) {
           if (!isDevelopment) {
             ensureInitialBackendWindowOpen(backendHttpUrl);

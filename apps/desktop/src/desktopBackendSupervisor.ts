@@ -37,6 +37,11 @@ export interface DesktopBackendSupervisorOptions {
   }) => void;
   readonly classifyStartFailure?: (error: unknown) => "fatal" | "retry";
   readonly onFatalStartFailure?: (error: unknown) => void;
+  readonly onUnrecoverableGeneration?: (input: {
+    readonly error: Error;
+    readonly generation: DesktopBackendGeneration;
+    readonly reason: string;
+  }) => void;
   readonly onError?: (error: unknown, context: string) => void;
   readonly setTimer?: typeof setTimeout;
   readonly clearTimer?: typeof clearTimeout;
@@ -103,7 +108,9 @@ export class DesktopBackendSupervisor {
     this.#desiredRunning = false;
     if (this.#active) this.#stoppingGenerations.add(this.#active.number);
     this.#clearRestartTimer();
-    return this.#enqueue(() => this.#stopActive(reason));
+    return this.#enqueue(async () => {
+      await this.#stopActive(reason);
+    });
   }
 
   markReady(generation: number): void {
@@ -116,6 +123,37 @@ export class DesktopBackendSupervisor {
       return;
     }
     this.#restartAttempt = 0;
+  }
+
+  restartGeneration(generation: number, reason: string): Promise<void> {
+    return this.#enqueue(async () => {
+      if (
+        !this.#desiredRunning ||
+        !this.#active ||
+        this.#active.number !== generation ||
+        this.#active.closed
+      ) {
+        return;
+      }
+      const target = { child: this.#active.child, number: generation };
+      const exited = await this.#stopActive(reason);
+      if (exited && this.#desiredRunning) {
+        this.#scheduleRestart(reason);
+      } else if (!exited) {
+        // A replacement must never overlap an old process that ignored force
+        // termination. Stop automatic recovery and surface a fatal lifecycle
+        // failure instead of leaving the app in an unreported half-alive state.
+        const error = new Error("Backend remained alive after force termination.");
+        this.#desiredRunning = false;
+        this.#clearRestartTimer();
+        this.#options.onError?.(error, `generation ${generation} restart blocked`);
+        this.#options.onUnrecoverableGeneration?.({
+          error,
+          generation: target,
+          reason,
+        });
+      }
+    });
   }
 
   #enqueue(action: () => Promise<void>): Promise<void> {
@@ -195,13 +233,13 @@ export class DesktopBackendSupervisor {
     this.#restartTimer = null;
   }
 
-  async #stopActive(reason: string): Promise<void> {
+  async #stopActive(reason: string): Promise<boolean> {
     const active = this.#active;
-    if (!active) return;
+    if (!active) return true;
     this.#stoppingGenerations.add(active.number);
     if (childHasExited(active.child)) {
       this.#handleGenerationClosed(active, "already exited");
-      return;
+      return true;
     }
 
     const gracefulTimeoutMs =
@@ -218,7 +256,7 @@ export class DesktopBackendSupervisor {
       }
       return sent;
     });
-    if (exitedGracefully) return;
+    if (exitedGracefully) return true;
 
     try {
       await this.#options.forceTerminateTree(active.child);
@@ -226,9 +264,8 @@ export class DesktopBackendSupervisor {
       this.#options.onError?.(error, `generation ${active.number} force termination`);
     }
     const exitedAfterForce = await this.#waitForExit(active, forcedExitTimeoutMs);
-    if (!exitedAfterForce) {
-      this.#handleGenerationClosed(active, "force termination timed out");
-    }
+    if (!exitedAfterForce) return false;
+    return true;
   }
 
   async #waitForExit(

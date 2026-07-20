@@ -26,6 +26,7 @@ import { getRouter } from "../router";
 import { useStore } from "../store";
 import {
   createShellSnapshotFromReadModel,
+  createTestEnvironmentDescriptor,
   flattenEffectRpcRequestPayload,
   readEffectRpcClientMessage,
   sendEffectRpcChunk,
@@ -54,6 +55,10 @@ interface EffectRpcStreamHandle {
   acknowledgedChunkCount: number;
 }
 
+interface ClosableEffectRpcWebSocketClient extends EffectRpcWebSocketClient {
+  readonly close: (code?: number, reason?: string) => void;
+}
+
 let fixture: TestFixture;
 let serverLifecycleStream: EffectRpcStreamHandle | null = null;
 let shellStream: EffectRpcStreamHandle | null = null;
@@ -68,6 +73,7 @@ const subscribeThreadRequestCountById = new Map<ThreadId, number>();
 let subscribeThreadRequests: ThreadId[] = [];
 let replayEvents: OrchestrationEvent[] = [];
 let replayRequestCursors: number[] = [];
+let activeWsClient: ClosableEffectRpcWebSocketClient | null = null;
 const mountedAppCleanups = new Set<() => Promise<void>>();
 
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
@@ -233,6 +239,9 @@ function resolveWsRpc(tag: string, body?: unknown): unknown {
   if (tag === WS_METHODS.serverGetConfig) {
     return fixture.serverConfig;
   }
+  if (tag === WS_METHODS.serverGetEnvironment) {
+    return createTestEnvironmentDescriptor();
+  }
   if (tag === WS_METHODS.gitListBranches) {
     return {
       isRepo: true,
@@ -275,6 +284,7 @@ function resolveWsRpc(tag: string, body?: unknown): unknown {
 
 const worker = setupWorker(
   wsLink.addEventListener("connection", ({ client }) => {
+    activeWsClient = client;
     client.addEventListener("message", (event) => {
       if (typeof event.data !== "string") {
         return;
@@ -495,6 +505,7 @@ describe("EventRouter scoped orchestration sync", () => {
     document.body.innerHTML = "";
     serverLifecycleStream = null;
     shellStream = null;
+    activeWsClient = null;
     threadStreamByThreadId.clear();
     delayNextThreadSnapshot = false;
     localStorage.clear();
@@ -1251,6 +1262,117 @@ describe("EventRouter scoped orchestration sync", () => {
       expect(subscribeShellRequestCount).toBe(1);
       expect(subscribeThreadRequestCountById.get(THREAD_ID)).toBe(1);
     } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("reconnects once and rebuilds scoped subscriptions from fresh server snapshots", async () => {
+    const mounted = await mountApp();
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(subscribeShellRequestCount).toBe(1);
+          expect(subscribeThreadRequestCountById.get(THREAD_ID)).toBe(1);
+          expect(activeWsClient).not.toBeNull();
+        },
+        { timeout: 4_000, interval: 16 },
+      );
+
+      fixture = {
+        ...fixture,
+        snapshot: {
+          ...fixture.snapshot,
+          snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+          threads: fixture.snapshot.threads.map((thread) =>
+            thread.id === THREAD_ID ? { ...thread, title: "Recovered after reconnect" } : thread,
+          ),
+        },
+      };
+      activeWsClient?.close(1012, "test server restart");
+
+      await vi.waitFor(
+        () => {
+          expect(subscribeShellRequestCount).toBe(2);
+          expect(subscribeThreadRequestCountById.get(THREAD_ID)).toBe(2);
+          expect(getThreadFromState(useStore.getState(), THREAD_ID)?.title).toBe(
+            "Recovered after reconnect",
+          );
+        },
+        { timeout: 5_000, interval: 16 },
+      );
+    } finally {
+      fixture = buildFixture();
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not let an older reconnect snapshot overwrite already-applied events", async () => {
+    const mounted = await mountApp();
+    const latestMessageId = MessageId.makeUnsafe("msg-before-reconnect-boundary");
+
+    try {
+      await sendShellEventPush({
+        kind: "thread-upserted",
+        sequence: 3,
+        thread: {
+          ...createShellSnapshotFromReadModel(fixture.snapshot).threads[0]!,
+          title: "Newest local title",
+        },
+      });
+      await sendThreadEventPush({
+        sequence: 3,
+        eventId: EventId.makeUnsafe("event-before-reconnect-boundary"),
+        aggregateKind: "thread",
+        aggregateId: THREAD_ID,
+        occurredAt: "2026-03-04T12:00:05.000Z",
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "thread.message-sent",
+        payload: {
+          threadId: THREAD_ID,
+          messageId: latestMessageId,
+          role: "assistant",
+          text: "Already applied before reconnect",
+          turnId: TurnId.makeUnsafe("turn-before-reconnect-boundary"),
+          source: "native",
+          streaming: false,
+          createdAt: "2026-03-04T12:00:05.000Z",
+          updatedAt: "2026-03-04T12:00:05.000Z",
+        },
+      });
+      await vi.waitFor(() => {
+        const thread = getThreadFromState(useStore.getState(), THREAD_ID);
+        expect(thread?.title).toBe("Newest local title");
+        expect(thread?.messages.some((message) => message.id === latestMessageId)).toBe(true);
+      });
+
+      fixture = {
+        ...fixture,
+        snapshot: {
+          ...fixture.snapshot,
+          snapshotSequence: 2,
+          threads: fixture.snapshot.threads.map((thread) =>
+            thread.id === THREAD_ID ? { ...thread, title: "Older reconnect title" } : thread,
+          ),
+        },
+      };
+      activeWsClient?.close(1012, "test stale reconnect snapshot");
+
+      await vi.waitFor(
+        () => {
+          expect(subscribeShellRequestCount).toBe(2);
+          expect(subscribeThreadRequestCountById.get(THREAD_ID)).toBe(2);
+          const thread = getThreadFromState(useStore.getState(), THREAD_ID);
+          expect(thread?.title).toBe("Newest local title");
+          expect(thread?.messages.some((message) => message.id === latestMessageId)).toBe(true);
+        },
+        { timeout: 5_000, interval: 16 },
+      );
+    } finally {
+      fixture = buildFixture();
       await mounted.cleanup();
     }
   });

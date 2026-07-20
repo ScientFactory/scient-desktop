@@ -11,6 +11,8 @@ describe("runProjectCommandInTerminal", () => {
       status: "running",
       pid: 1234,
       history: "",
+      outputEpoch: "epoch-1",
+      outputSequence: 0,
       exitCode: null,
       exitSignal: null,
       updatedAt: "2026-01-01T00:00:00.000Z",

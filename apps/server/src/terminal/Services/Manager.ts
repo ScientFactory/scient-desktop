@@ -63,6 +63,10 @@ export interface TerminalSessionState {
   pendingOutputChunks: string[];
   /** Total UTF-8 byte length of buffered output chunks. */
   pendingOutputLength: number;
+  /** Monotonic barrier for emitted output batches and reconnect snapshots. */
+  outputSequence: number;
+  /** Identifies the server process that owns the output-sequence namespace. */
+  outputEpoch: string;
   /** Timer handle for the next scheduled output flush. */
   outputFlushTimer: ReturnType<typeof setTimeout> | null;
   /**

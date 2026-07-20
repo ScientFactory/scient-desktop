@@ -5,6 +5,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebglAddon } from "@xterm/addon-webgl";
+import type { TerminalEvent } from "@synara/contracts";
 import { type TerminalActivityState, type TerminalCliKind } from "@synara/shared/terminalThreads";
 import { Terminal, type IDisposable } from "@xterm/xterm";
 import type { TerminalLinkMatch } from "../../terminal-links";
@@ -48,7 +49,44 @@ export interface TerminalPendingWrite {
   queuedAt: number;
 }
 
+export type TerminalOutputEvent = Extract<TerminalEvent, { type: "output" }>;
+
 export type TerminalRuntimeStatus = "connecting" | "replaying" | "ready" | "error";
+
+export interface TerminalOutputBarrier {
+  lastOutputEpoch: string | null;
+  lastOutputSequence: number;
+}
+
+/** Advances a live-output barrier, resetting its sequence namespace after a server restart. */
+export function acceptTerminalOutputSequence(
+  barrier: TerminalOutputBarrier,
+  outputEpoch: string,
+  outputSequence: number,
+): boolean {
+  if (outputEpoch !== barrier.lastOutputEpoch) {
+    barrier.lastOutputEpoch = outputEpoch;
+    barrier.lastOutputSequence = 0;
+  }
+  if (outputSequence <= barrier.lastOutputSequence) return false;
+  barrier.lastOutputSequence = outputSequence;
+  return true;
+}
+
+/** Applies an authoritative snapshot unless a newer event in the same epoch already arrived. */
+export function acceptTerminalSnapshotBarrier(
+  barrier: TerminalOutputBarrier,
+  outputEpoch: string,
+  outputSequence: number,
+): boolean {
+  if (outputEpoch !== barrier.lastOutputEpoch) {
+    barrier.lastOutputEpoch = outputEpoch;
+    barrier.lastOutputSequence = 0;
+  }
+  if (outputSequence < barrier.lastOutputSequence) return false;
+  barrier.lastOutputSequence = outputSequence;
+  return true;
+}
 
 export interface TerminalRuntimeEntry {
   runtimeKey: string;
@@ -83,8 +121,12 @@ export interface TerminalRuntimeEntry {
   pendingWriteLength: number;
   pendingWriteBytes: number;
   linkMatchCache: Map<string, TerminalLinkMatch[]>;
-  outputEventVersion: number;
+  lastOutputEpoch: string | null;
+  lastOutputSequence: number;
+  snapshotReconcileActive: boolean;
+  snapshotBufferedOutputEvents: TerminalOutputEvent[];
   snapshotReconcileRequestId: number;
+  snapshotReconcileTimer: number | null;
   webglLoadFrame: number | null;
   themeRefreshFrame: number;
   themeObserver: MutationObserver | null;

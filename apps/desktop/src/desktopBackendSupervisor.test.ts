@@ -134,6 +134,39 @@ describe("DesktopBackendSupervisor", () => {
     expect(harness.restarts).toHaveLength(1);
   });
 
+  it("restarts an alive generation that never becomes ready", async () => {
+    const harness = makeHarness({
+      gracefulShutdownTimeoutMs: 100,
+      forcedExitTimeoutMs: 50,
+    });
+    await harness.supervisor.start();
+    const first = harness.children[0]!;
+
+    const restarting = harness.supervisor.restartGeneration(1, "readiness timed out");
+    await Promise.resolve();
+    first.exit(0);
+    await restarting;
+
+    expect(first.sent).toEqual([
+      { type: "scient.backend.shutdown", reason: "readiness timed out" },
+    ]);
+    expect(harness.restarts).toEqual([{ attempt: 0, delayMs: 500, reason: "readiness timed out" }]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(harness.supervisor.currentGeneration?.number).toBe(2);
+  });
+
+  it("ignores a readiness timeout reported by a stale generation", async () => {
+    const harness = makeHarness();
+    await harness.supervisor.start();
+    harness.children[0]!.exit(1);
+    await vi.advanceTimersByTimeAsync(500);
+
+    await harness.supervisor.restartGeneration(1, "late readiness timeout");
+
+    expect(harness.supervisor.currentGeneration?.number).toBe(2);
+    expect(harness.restarts).toHaveLength(1);
+  });
+
   it("uses graceful IPC and does not force-kill a backend that exits", async () => {
     const harness = makeHarness();
     await harness.supervisor.start();
@@ -179,6 +212,44 @@ describe("DesktopBackendSupervisor", () => {
 
     expect(harness.forceTerminateTree).toHaveBeenCalledOnce();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("does not overlap a replacement with a backend that survived force termination", async () => {
+    const onError = vi.fn();
+    const onUnrecoverableGeneration = vi.fn();
+    const harness = makeHarness({
+      gracefulShutdownTimeoutMs: 10,
+      forcedExitTimeoutMs: 10,
+      forceTerminateTree: vi.fn(async () => undefined),
+      onError,
+      onUnrecoverableGeneration,
+    });
+    await harness.supervisor.start();
+    const first = harness.children[0]!;
+
+    const restarting = harness.supervisor.restartGeneration(1, "readiness timed out");
+    await vi.advanceTimersByTimeAsync(20);
+    await restarting;
+
+    expect(harness.supervisor.currentGeneration?.number).toBe(1);
+    expect(harness.children).toHaveLength(1);
+    expect(harness.restarts).toHaveLength(0);
+    expect(harness.supervisor.desiredRunning).toBe(false);
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Backend remained alive after force termination." }),
+      "generation 1 restart blocked",
+    );
+    expect(onUnrecoverableGeneration).toHaveBeenCalledWith({
+      error: expect.objectContaining({
+        message: "Backend remained alive after force termination.",
+      }),
+      generation: { child: first, number: 1 },
+      reason: "readiness timed out",
+    });
+
+    first.exit(1);
+    expect(harness.restarts).toHaveLength(0);
+    expect(harness.supervisor.currentGeneration).toBeNull();
   });
 
   it("does not restart a start failure classified as fatal", async () => {
