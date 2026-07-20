@@ -300,6 +300,7 @@ function containsForbiddenIdentity(value: string): boolean {
 const legacyPapiLabCompatibilityPaths = new Set([
   "apps/desktop/src/desktopStorageMigration.ts",
   "apps/desktop/src/desktopStorageMigration.test.ts",
+  "apps/desktop/src/desktopScientDataDirectories.test.ts",
   "apps/desktop/src/desktopUserDataProfile.ts",
   "apps/desktop/src/desktopUserDataProfile.test.ts",
   "apps/desktop/src/legacyPapiLabHomeMigration.ts",
