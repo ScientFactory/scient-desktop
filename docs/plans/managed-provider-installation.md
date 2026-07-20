@@ -145,7 +145,7 @@ The installation service must:
 - Smoke test: `grok --version`.
 - Authentication now: `grok login --oauth`, which opens xAI's direct browser authorization flow
   and avoids the terminal-only device-code prompt used by plain `grok login`.
-- Device-code/browser-launch fallback is not yet exposed by Scient and remains a packaged release follow-up.
+- If automatic browser launch fails, Scient exposes only the validated transient xAI OAuth URL so the user can reopen the same sign-in without a terminal. Device-code fallback remains a separate release follow-up because it requires a code handoff.
 - Auth verification: `grok models` must return an explicit positive account/key marker and a usable model catalog; signed-out output is never mistaken for success.
 - Managed and ACP invocations suppress Grok's native auto-update path.
 - Other operating systems and architectures remain safely unsupported until their artifacts and checksums are reviewed.
@@ -199,7 +199,7 @@ The installation service must:
 ## Missing optional capabilities
 
 - Missing Git does not block installation, authentication, ordinary projects, or conversations. Git-dependent agent features are described as optional capabilities.
-- Missing browser support must eventually fall back to device-code login where the provider offers it, with copy-link and copy-code actions. That fallback is not part of the current implementation.
+- Missing browser support can use a validated reopen-link action for Grok's direct OAuth flow. Providers that require device-code login still need dedicated copy-link and copy-code actions.
 - Missing `xdg-open`, PowerShell scripts, shell profile, curl, tar, unzip, or checksum utilities is handled inside Scient.
 - Offline, proxy, TLS, disk-space, permission, and unsupported-target failures preserve the active runtime and provide actionable recovery.
 
@@ -262,7 +262,7 @@ For every released OS/architecture combination, use a clean VM or clean account 
 - [ ] Prove Codex, Claude Console, Antigravity, and Cursor login with fresh provider accounts in a packaged app.
 - [ ] Keep Claude.ai subscription login unavailable unless Anthropic gives written authorization; the implemented default is the permitted Console/API route.
 - [ ] Prove Grok and Droid with fresh provider accounts in a packaged app, including browser-launch failure and restart continuity.
-- [ ] Add and package-test device-code/copy-link fallback for Codex and Grok where supported.
+- [ ] Package-test Grok's validated OAuth reopen-link fallback and add device-code/copy-link fallback for providers that still require code handoff.
 - [ ] Add the signed catalog and reviewed release-monitoring pipeline.
 - [ ] Run the clean-machine matrix for every OS/architecture Scient intends to claim.
 - [ ] Record platform signing/notarization evidence and confirm managed-runtime updater behavior for each provider.

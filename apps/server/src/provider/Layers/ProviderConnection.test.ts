@@ -26,6 +26,7 @@ import {
 import {
   expectedMethodForProvider,
   makeProviderConnectionLive,
+  parseGrokOAuthAuthorizationUrl,
   providerConnectionCommandArgs,
 } from "./ProviderConnection";
 
@@ -79,7 +80,9 @@ function makeHandle(input: {
     kill: () => Effect.sync(() => input.onKill?.()),
     stdin: Sink.drain,
     stdout: input.hanging
-      ? Stream.never
+      ? input.stdout
+        ? Stream.concat(Stream.make(encoder.encode(input.stdout)), Stream.never)
+        : Stream.never
       : Stream.make(encoder.encode(input.stdout ?? "browser opened")),
     stderr: input.hanging ? Stream.never : Stream.empty,
     all: Stream.empty,
@@ -299,6 +302,31 @@ describe("provider connection command allowlist", () => {
   });
 });
 
+describe("Grok OAuth authorization URL parsing", () => {
+  const authorizationUrl =
+    "https://auth.x.ai/oauth2/authorize?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A50418%2Fcallback&state=test-state&code_challenge=test-challenge";
+
+  it("accepts the exact xAI authorization route with a loopback callback", () => {
+    expect(parseGrokOAuthAuthorizationUrl(`Open this URL:\n${authorizationUrl}\n`)).toBe(
+      authorizationUrl,
+    );
+  });
+
+  it("rejects lookalike hosts and callbacks that are not local", () => {
+    expect(
+      parseGrokOAuthAuthorizationUrl(
+        authorizationUrl.replace("auth.x.ai", "auth.x.ai.example.com"),
+      ),
+    ).toBeNull();
+    expect(
+      parseGrokOAuthAuthorizationUrl(
+        authorizationUrl.replace("127.0.0.1%3A50418", "example.com%3A50418"),
+      ),
+    ).toBeNull();
+    expect(parseGrokOAuthAuthorizationUrl(`${authorizationUrl}#unexpected-fragment`)).toBeNull();
+  });
+});
+
 describe("ProviderConnectionLive", () => {
   it("runs managed Antigravity login in a PTY and verifies models before connecting", async () => {
     const onPtySpawn = vi.fn();
@@ -373,6 +401,28 @@ describe("ProviderConnectionLive", () => {
 
     expect(onSpawn).toHaveBeenCalledWith(
       expect.objectContaining({ command: "grok", args: ["login", "--oauth"] }),
+    );
+  });
+
+  it("publishes only a validated transient Grok OAuth URL while sign-in is active", async () => {
+    const authorizationUrl =
+      "https://auth.x.ai/oauth2/authorize?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A50418%2Fcallback&state=test-state&code_challenge=test-challenge";
+    const fixture = makeConnectionTestLayer({
+      provider: "grok",
+      hanging: true,
+      processStdout: `Complete sign-in at:\n${authorizationUrl}\n`,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const started = yield* connection.start({ provider: "grok", method: "grok_browser" });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        yield* Effect.sleep(Duration.millis(10));
+        expect(fixture.getConnectionState()?.authorizationUrl).toBe(authorizationUrl);
+        yield* connection.cancel({ provider: "grok", operationId: operationId! });
+        expect(fixture.getConnectionState()?.authorizationUrl).toBeUndefined();
+      }).pipe(Effect.provide(fixture.layer)),
     );
   });
 

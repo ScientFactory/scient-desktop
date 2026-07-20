@@ -445,6 +445,47 @@ describe("ProviderConnectionDialog", () => {
     }
   });
 
+  it("reopens the validated xAI authorization page without terminal use", async () => {
+    const authorizationUrl =
+      "https://auth.x.ai/oauth2/authorize?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A50418%2Fcallback&state=test-state&code_challenge=test-challenge";
+    const active = {
+      provider: "grok",
+      status: "error",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+      runtime: systemRuntime,
+      connectionState: {
+        operationId: "connect-grok-active",
+        method: "grok_browser",
+        status: "waiting_for_browser",
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        message: "Finish signing in to Grok.",
+        authorizationUrl,
+      },
+    } satisfies ServerProviderStatus;
+    const openExternal = vi.fn().mockResolvedValue(undefined);
+    const restoreNativeApi = installNativeApi({ openExternal });
+    const queryClient = createQueryClient(active);
+    useProviderConnectionDialogStore.getState().openDialog("grok", "provider_picker");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await page.getByRole("button", { name: "Open xAI sign-in again" }).click();
+      await vi.waitFor(() => expect(openExternal).toHaveBeenCalledWith(authorizationUrl));
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
   it("retries the same Claude sign-in method after a failed attempt", async () => {
     const failed = {
       provider: "claudeAgent",
