@@ -32,6 +32,7 @@ import { ProviderRuntimeManager } from "./provider/Services/ProviderRuntimeManag
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper";
 import { Server } from "./effectServer";
 import { ServerLoggerLive } from "./serverLogger";
+import { ServerSettingsService } from "./serverSettings";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess";
 import { PtyAdapterLayerLive } from "./terminal/runtimeLayer";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
@@ -294,6 +295,7 @@ const makeServerProgram = (input: CliInput) =>
     const cliConfig = yield* CliConfig;
     const { start, stopSignal } = yield* Server;
     const openDeps = yield* Open;
+    const serverSettings = yield* ServerSettingsService;
     yield* cliConfig.fixPath;
 
     const config = yield* ServerConfig;
