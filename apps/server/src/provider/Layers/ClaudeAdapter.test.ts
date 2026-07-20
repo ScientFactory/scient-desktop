@@ -313,6 +313,77 @@ const THREAD_ID = ThreadId.makeUnsafe("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.makeUnsafe("thread-claude-resume");
 
 describe("ClaudeAdapterLive", () => {
+  it.effect("uses the configured Claude executable for temporary command discovery", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listCommands) {
+        return assert.fail("Claude adapter should support command discovery.");
+      }
+
+      yield* adapter.listCommands({
+        provider: "claudeAgent",
+        cwd: "/tmp/claude-adapter-test",
+        binaryPath: "/managed/claude",
+      });
+
+      assert.equal(
+        harness.getLastCreateQueryInput()?.options.pathToClaudeCodeExecutable,
+        "/managed/claude",
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("uses the configured Claude executable for pre-session model discovery", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listModels) {
+        return assert.fail("Claude adapter should support model discovery.");
+      }
+
+      yield* adapter.listModels({
+        provider: "claudeAgent",
+        cwd: "/tmp/claude-model-discovery",
+        binaryPath: "/managed/claude-models",
+      });
+
+      assert.equal(
+        harness.getLastCreateQueryInput()?.options.pathToClaudeCodeExecutable,
+        "/managed/claude-models",
+      );
+      assert.equal(harness.query.closeCalls, 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("disables Claude self-updates only for a Scient-managed executable", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+        providerOptions: {
+          claudeAgent: {
+            binaryPath: "/tmp/userdata/provider-runtimes/claudeAgent/releases/v1/bin/claude",
+          },
+        },
+      });
+
+      assert.equal(harness.getLastCreateQueryInput()?.options.env?.DISABLE_AUTOUPDATER, "1");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("returns validation error for non-claude provider on startSession", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

@@ -24,15 +24,14 @@ import { Open } from "./open";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
 import { startServerMemoryDiagnostics } from "./memoryDiagnostics";
-import { startClaudeCredentialKeepalive } from "./provider/claudeCredentialKeepalive";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
-import { ProviderHealthLive } from "./provider/Layers/ProviderHealth";
+import { makeProviderHealthLive } from "./provider/Layers/ProviderHealth";
 import { ProviderConnectionLive } from "./provider/Layers/ProviderConnection";
 import { ProviderRuntimeManagerLive } from "./provider/Layers/ProviderRuntimeManager";
+import { ProviderRuntimeManager } from "./provider/Services/ProviderRuntimeManager";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper";
 import { Server } from "./effectServer";
 import { ServerLoggerLive } from "./serverLogger";
-import { ServerSettingsService } from "./serverSettings";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess";
 import { PtyAdapterLayerLive } from "./terminal/runtimeLayer";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
@@ -225,22 +224,26 @@ const ServerConfigLive = (input: CliInput) =>
 
 const LayerLive = (input: CliInput) => {
   const runtimeServicesLayer = makeServerRuntimeServicesLayer();
-  const providerLayer = makeServerProviderLayer();
   const providerRuntimeLayer = ProviderRuntimeManagerLive.pipe(
     // Packaged desktop shells often omit Homebrew and user-local directories.
     // Hydrate PATH before the runtime manager snapshots its system search path.
     Layer.provide(Layer.effectDiscard(Effect.sync(fixPath))),
   );
-  const providerHealthLayer = ProviderHealthLive.pipe(
-    // Provider health reads persisted provider settings while constructing its
-    // cache, so build it with the same runtime services layer exposed to Server.
-    Layer.provideMerge(runtimeServicesLayer),
-    // Managed executable directories must be active before the first health probe.
-    Layer.provideMerge(providerRuntimeLayer),
-  );
+  const providerLayer = makeServerProviderLayer().pipe(Layer.provideMerge(providerRuntimeLayer));
+  const providerHealthLayer = Effect.gen(function* () {
+    const providerRuntimeManager = yield* ProviderRuntimeManager;
+    return makeProviderHealthLive({
+      resolveProviderRuntime: providerRuntimeManager.resolve,
+    }).pipe(
+      // Provider health reads persisted provider settings while constructing its
+      // cache, so build it with the same runtime services layer exposed to Server.
+      Layer.provideMerge(runtimeServicesLayer),
+    );
+  }).pipe(Layer.unwrap, Layer.provideMerge(providerRuntimeLayer));
   const providerConnectionLayer = ProviderConnectionLive.pipe(
     Layer.provideMerge(runtimeServicesLayer),
     Layer.provideMerge(providerHealthLayer),
+    Layer.provideMerge(providerLayer),
     Layer.provideMerge(PtyAdapterLayerLive),
   );
   const providerSessionReaperLayer = ProviderSessionReaperLive.pipe(
@@ -290,7 +293,6 @@ const makeServerProgram = (input: CliInput) =>
     const cliConfig = yield* CliConfig;
     const { start, stopSignal } = yield* Server;
     const openDeps = yield* Open;
-    const serverSettings = yield* ServerSettingsService;
     yield* cliConfig.fixPath;
 
     const config = yield* ServerConfig;
@@ -313,25 +315,6 @@ const makeServerProgram = (input: CliInput) =>
     // existing history first, then hide inactive threads from the app in the background.
     yield* startThreadRetentionJob(orchestrationEngine, projectionSnapshotQuery);
     yield* Effect.forkChild(recordStartupHeartbeat);
-    // Optional Claude OAuth keepalive. Disabled by default because it touches
-    // Claude Code auth data in the background; users can opt in with
-    // SYNARA_CLAUDE_KEEPALIVE=1.
-    yield* Effect.forkChild(
-      Effect.gen(function* () {
-        const settings = yield* serverSettings.getSettings;
-        if (settings.providers.claudeAgent.enabled === false) {
-          return;
-        }
-        yield* Effect.sync(() =>
-          startClaudeCredentialKeepalive({
-            binaryPath: settings.providers.claudeAgent.binaryPath,
-            homeDir: config.homeDir,
-            log: (message) => Effect.runFork(Effect.logInfo(message)),
-          }),
-        );
-      }),
-    );
-
     const localUrl = `http://localhost:${config.port}`;
     const bindUrl =
       config.host && !isWildcardHost(config.host)

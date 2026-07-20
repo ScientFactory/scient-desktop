@@ -339,9 +339,14 @@ export function parseAntigravityModelLines(output: string): ProviderListModelsRe
   const groups = new Map<string, string[]>();
   for (const line of output.split(/\r?\n/g)) {
     const parsed = parseAntigravityCliModelLabel(line);
-    if (!parsed) continue;
+    if (
+      !parsed?.effort ||
+      !/^(?:claude|deepseek|gemini|gpt|grok|llama|mistral|qwen)\b/iu.test(parsed.model)
+    ) {
+      continue;
+    }
     const efforts = groups.get(parsed.model) ?? [];
-    if (parsed.effort && !efforts.includes(parsed.effort)) efforts.push(parsed.effort);
+    if (!efforts.includes(parsed.effort)) efforts.push(parsed.effort);
     groups.set(parsed.model, efforts);
   }
   return [...groups.entries()].map(([model, discoveredEfforts]) => {

@@ -1219,7 +1219,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
             if (joined === "auth status")
               return {
-                stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                stdout: '{"loggedIn":true,"authMethod":"apiKey"}\n',
                 stderr: "",
                 code: 0,
               };
@@ -1241,7 +1241,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
             if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
             if (joined === "auth status")
               return {
-                stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                stdout: '{"loggedIn":true,"authMethod":"apiKey"}\n',
                 stderr: "",
                 code: 0,
               };
@@ -1251,88 +1251,107 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       ),
     );
 
-    it.effect(
-      "strips stale direct Claude credentials from health probes when local OAuth is usable",
-      () =>
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const homeDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "provider-health-claude-home-",
-          });
-          const claudeDir = path.join(homeDir, ".claude");
-          yield* fileSystem.makeDirectory(claudeDir, { recursive: true });
-          yield* fileSystem.writeFileString(
-            path.join(claudeDir, ".credentials.json"),
-            JSON.stringify({
-              claudeAiOauth: {
-                accessToken: "local-access-token",
-                expiresAt: Date.now() + 60_000,
-              },
-            }),
-          );
-
-          const envKeys = [
-            "ANTHROPIC_API_KEY",
-            "ANTHROPIC_AUTH_TOKEN",
-            "CLAUDE_CODE_OAUTH_TOKEN",
-            "ANTHROPIC_BASE_URL",
-            "CLAUDE_CODE_USE_BEDROCK",
-            "CLAUDE_CODE_USE_VERTEX",
-            "CLAUDE_CODE_USE_ANTHROPIC_AWS",
-          ] as const;
-          yield* Effect.acquireRelease(
-            Effect.sync(() => {
-              const previous = new Map<string, string | undefined>();
-              for (const key of envKeys) {
-                previous.set(key, process.env[key]);
-                delete process.env[key];
-              }
-              process.env.ANTHROPIC_API_KEY = "stale-api-key";
-              process.env.ANTHROPIC_AUTH_TOKEN = "stale-auth-token";
-              process.env.CLAUDE_CODE_OAUTH_TOKEN = "stale-oauth-token";
-              return previous;
-            }),
-            (previous) =>
-              Effect.sync(() => {
-                for (const [key, value] of previous) {
-                  if (value === undefined) {
-                    delete process.env[key];
-                  } else {
-                    process.env[key] = value;
-                  }
-                }
-              }),
-          );
-
-          const status = yield* makeCheckClaudeProviderStatus(undefined, "claude", homeDir).pipe(
-            Effect.provide(
-              mockSpawnerLayer((args, command, env) => {
-                assert.strictEqual(command, "claude");
-                assert.strictEqual(env?.ANTHROPIC_API_KEY, undefined);
-                assert.strictEqual(env?.ANTHROPIC_AUTH_TOKEN, undefined);
-                assert.strictEqual(env?.CLAUDE_CODE_OAUTH_TOKEN, undefined);
-
-                const joined = args.join(" ");
-                if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
-                if (joined === "auth status")
-                  return {
-                    stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
-                    stderr: "",
-                    code: 0,
-                  };
-                throw new Error(`Unexpected args: ${joined}`);
-              }),
-            ),
-          );
-
-          assert.strictEqual(status.provider, "claudeAgent");
-          assert.strictEqual(status.status, "ready");
-          assert.strictEqual(status.authStatus, "authenticated");
-        }),
+    it.effect("rejects Claude.ai subscription authentication for third-party use", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus;
+        assert.strictEqual(status.status, "warning");
+        assert.strictEqual(status.authStatus, "unauthenticated");
+        assert.match(status.message ?? "", /Anthropic Console/iu);
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) =>
+            args.join(" ") === "--version"
+              ? { stdout: "2.1.215\n", stderr: "", code: 0 }
+              : {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}\n',
+                  stderr: "",
+                  code: 0,
+                },
+          ),
+        ),
+      ),
     );
 
-    it.effect("trusts usable Claude OAuth credentials after the SDK probe validates them", () =>
+    it.effect("preserves Console credentials and removes direct subscription OAuth", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const homeDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "provider-health-claude-home-",
+        });
+        const claudeDir = path.join(homeDir, ".claude");
+        yield* fileSystem.makeDirectory(claudeDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(claudeDir, ".credentials.json"),
+          JSON.stringify({
+            claudeAiOauth: {
+              accessToken: "local-access-token",
+              expiresAt: Date.now() + 60_000,
+            },
+          }),
+        );
+
+        const envKeys = [
+          "ANTHROPIC_API_KEY",
+          "ANTHROPIC_AUTH_TOKEN",
+          "CLAUDE_CODE_OAUTH_TOKEN",
+          "ANTHROPIC_BASE_URL",
+          "CLAUDE_CODE_USE_BEDROCK",
+          "CLAUDE_CODE_USE_VERTEX",
+          "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+        ] as const;
+        yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            const previous = new Map<string, string | undefined>();
+            for (const key of envKeys) {
+              previous.set(key, process.env[key]);
+              delete process.env[key];
+            }
+            process.env.ANTHROPIC_API_KEY = "stale-api-key";
+            process.env.ANTHROPIC_AUTH_TOKEN = "stale-auth-token";
+            process.env.CLAUDE_CODE_OAUTH_TOKEN = "stale-oauth-token";
+            return previous;
+          }),
+          (previous) =>
+            Effect.sync(() => {
+              for (const [key, value] of previous) {
+                if (value === undefined) {
+                  delete process.env[key];
+                } else {
+                  process.env[key] = value;
+                }
+              }
+            }),
+        );
+
+        const status = yield* makeCheckClaudeProviderStatus(undefined, "claude", homeDir).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args, command, env) => {
+              assert.strictEqual(command, "claude");
+              assert.strictEqual(env?.ANTHROPIC_API_KEY, "stale-api-key");
+              assert.strictEqual(env?.ANTHROPIC_AUTH_TOKEN, "stale-auth-token");
+              assert.strictEqual(env?.CLAUDE_CODE_OAUTH_TOKEN, undefined);
+
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"apiKey"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        );
+
+        assert.strictEqual(status.provider, "claudeAgent");
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.authStatus, "authenticated");
+      }),
+    );
+
+    it.effect("does not rescue Claude subscription OAuth through an SDK metadata probe", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1379,13 +1398,12 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
           ),
         );
 
-        assert.strictEqual(sdkProbeCalls, 1);
+        assert.strictEqual(sdkProbeCalls, 0);
         assert.strictEqual(status.provider, "claudeAgent");
-        assert.strictEqual(status.status, "ready");
-        assert.strictEqual(status.authStatus, "authenticated");
-        assert.strictEqual(status.authType, "max");
-        assert.strictEqual(status.authLabel, "Claude Max Subscription");
-        assert.strictEqual(status.message, undefined);
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.authStatus, "unauthenticated");
+        assert.strictEqual(status.authType, undefined);
+        assert.strictEqual(status.authLabel, undefined);
       }),
     );
 
@@ -1486,53 +1504,51 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
         }),
     );
 
-    it.effect(
-      "re-probes auth status once when a structured false negative has no credential file to rescue it",
-      () =>
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const homeDir = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "provider-health-claude-auth-retry-",
-          });
+    it.effect("does not retry or rescue a structured subscription-auth false negative", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const homeDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "provider-health-claude-auth-retry-",
+        });
 
-          let authStatusCalls = 0;
-          const status = yield* makeCheckClaudeProviderStatus(undefined, "claude", homeDir, {
-            falseNegativeRetryDelayMs: 0,
-          }).pipe(
-            Effect.provide(
-              mockSpawnerLayer((args) => {
-                const joined = args.join(" ");
-                if (joined === "--version") {
-                  return { stdout: "2.1.197\n", stderr: "", code: 0 };
-                }
-                if (joined === "auth status") {
-                  authStatusCalls += 1;
-                  // First probe loses a refresh-token rotation race; the retry
-                  // observes the settled, rotated token.
-                  return authStatusCalls === 1
-                    ? {
-                        stdout: '{"loggedIn":false,"authMethod":"none"}\n',
-                        stderr: "",
-                        code: 0,
-                      }
-                    : {
-                        stdout:
-                          '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}\n',
-                        stderr: "",
-                        code: 0,
-                      };
-                }
-                throw new Error(`Unexpected args: ${joined}`);
-              }),
-            ),
-          );
+        let authStatusCalls = 0;
+        const status = yield* makeCheckClaudeProviderStatus(undefined, "claude", homeDir, {
+          falseNegativeRetryDelayMs: 0,
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") {
+                return { stdout: "2.1.197\n", stderr: "", code: 0 };
+              }
+              if (joined === "auth status") {
+                authStatusCalls += 1;
+                // First probe loses a refresh-token rotation race; the retry
+                // observes the settled, rotated token.
+                return authStatusCalls === 1
+                  ? {
+                      stdout: '{"loggedIn":false,"authMethod":"none"}\n',
+                      stderr: "",
+                      code: 0,
+                    }
+                  : {
+                      stdout:
+                        '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}\n',
+                      stderr: "",
+                      code: 0,
+                    };
+              }
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        );
 
-          assert.strictEqual(authStatusCalls, 2);
-          assert.strictEqual(status.provider, "claudeAgent");
-          assert.strictEqual(status.status, "ready");
-          assert.strictEqual(status.authStatus, "authenticated");
-          assert.strictEqual(status.authType, "max");
-        }),
+        assert.strictEqual(authStatusCalls, 1);
+        assert.strictEqual(status.provider, "claudeAgent");
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.authStatus, "unauthenticated");
+        assert.strictEqual(status.authType, undefined);
+      }),
     );
 
     it.effect(
@@ -1567,7 +1583,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
             ),
           );
 
-          assert.strictEqual(authStatusCalls, 2);
+          assert.strictEqual(authStatusCalls, 1);
           assert.strictEqual(status.provider, "claudeAgent");
           assert.strictEqual(status.status, "error");
           assert.strictEqual(status.authStatus, "unauthenticated");
@@ -1897,6 +1913,26 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       ),
     );
 
+    it.effect("does not treat Antigravity status prose as a model catalog", () =>
+      Effect.gen(function* () {
+        const status = yield* checkAntigravityProviderStatus();
+        assert.strictEqual(status.status, "warning");
+        assert.strictEqual(status.authStatus, "unknown");
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) =>
+            args.join(" ") === "--version"
+              ? { stdout: "Antigravity CLI 1.1.4\n", stderr: "", code: 0 }
+              : {
+                  stdout: "Gemini service temporarily unavailable.\n",
+                  stderr: "",
+                  code: 0,
+                },
+          ),
+        ),
+      ),
+    );
+
     it.effect("uses the configured Antigravity binary", () =>
       Effect.gen(function* () {
         const status = yield* checkAntigravityProviderStatus("/custom/bin/agy");
@@ -2078,6 +2114,47 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       ),
     );
 
+    it.effect("does not authenticate Grok with an empty model catalog", () =>
+      Effect.gen(function* () {
+        const status = yield* checkGrokProviderStatus;
+        assert.strictEqual(status.status, "warning");
+        assert.strictEqual(status.authStatus, "unknown");
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) =>
+            args.join(" ") === "--version"
+              ? { stdout: "grok 0.1.0\n", stderr: "", code: 0 }
+              : {
+                  stdout: "You are logged in with user@example.com.\nAvailable models:\n",
+                  stderr: "",
+                  code: 0,
+                },
+          ),
+        ),
+      ),
+    );
+
+    it.effect("does not authenticate Grok when catalog prose is not a model row", () =>
+      Effect.gen(function* () {
+        const status = yield* checkGrokProviderStatus;
+        assert.strictEqual(status.status, "warning");
+        assert.strictEqual(status.authStatus, "unknown");
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) =>
+            args.join(" ") === "--version"
+              ? { stdout: "grok 0.1.0\n", stderr: "", code: 0 }
+              : {
+                  stdout:
+                    "You are logged in with user@example.com.\nAvailable models:\nService temporarily unavailable.\n",
+                  stderr: "",
+                  code: 0,
+                },
+          ),
+        ),
+      ),
+    );
+
     it.effect("returns unavailable when Grok CLI is missing", () =>
       Effect.gen(function* () {
         const status = yield* checkGrokProviderStatus;
@@ -2093,8 +2170,11 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
   describe("checkDroidProviderStatus", () => {
     it.effect("marks Droid ready only after the non-inference ACP verification succeeds", () =>
       Effect.gen(function* () {
-        const status = yield* makeCheckDroidProviderStatus("/custom/bin/droid", "/tmp", () =>
-          Effect.succeed("authenticated"),
+        const status = yield* makeCheckDroidProviderStatus(
+          "/custom/bin/droid",
+          "/tmp",
+          () => Effect.succeed("authenticated"),
+          () => Effect.succeed(true),
         );
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.available, true);
@@ -2112,11 +2192,30 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
 
     it.effect("reports Droid unauthenticated when Factory requires device pairing", () =>
       Effect.gen(function* () {
-        const status = yield* makeCheckDroidProviderStatus("/custom/bin/droid", "/tmp", () =>
-          Effect.succeed("unauthenticated"),
+        const status = yield* makeCheckDroidProviderStatus(
+          "/custom/bin/droid",
+          "/tmp",
+          () => Effect.succeed("unauthenticated"),
+          () => Effect.succeed(false),
         );
         assert.strictEqual(status.status, "warning");
         assert.strictEqual(status.authStatus, "unauthenticated");
+      }).pipe(
+        Effect.provide(mockSpawnerLayer(() => ({ stdout: "0.175.0\n", stderr: "", code: 0 }))),
+      ),
+    );
+
+    it.effect("keeps authenticated Droid in warning state when no models are available", () =>
+      Effect.gen(function* () {
+        const status = yield* makeCheckDroidProviderStatus(
+          "/custom/bin/droid",
+          "/tmp",
+          () => Effect.succeed("authenticated"),
+          () => Effect.succeed(false),
+        );
+        assert.strictEqual(status.status, "warning");
+        assert.strictEqual(status.authStatus, "authenticated");
+        assert.match(status.message ?? "", /model catalog/iu);
       }).pipe(
         Effect.provide(mockSpawnerLayer(() => ({ stdout: "0.175.0\n", stderr: "", code: 0 }))),
       ),

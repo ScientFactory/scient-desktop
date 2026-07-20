@@ -62,6 +62,19 @@ describe("provider connection presentation", () => {
     expect(presentation.description).toContain("credentials stay with Codex");
   });
 
+  it("explains Claude's Anthropic Console requirement before sign-in", () => {
+    const presentation = describeProviderConnection("claudeAgent", {
+      ...BASE_STATUS,
+      provider: "claudeAgent",
+      message:
+        "This Claude account type cannot be used by Scient. Connect through Anthropic Console instead.",
+    });
+    expect(presentation.primaryAction).toBe("sign_in");
+    expect(presentation.primaryLabel).toBe("Connect Anthropic Console");
+    expect(presentation.description).toContain("API billing");
+    expect(presentation.description).toContain("not a Claude.ai subscription");
+  });
+
   it.each(["starting", "waiting_for_browser", "verifying"] as const)(
     "keeps %s operations cancellable and non-actionable",
     (operationStatus) => {

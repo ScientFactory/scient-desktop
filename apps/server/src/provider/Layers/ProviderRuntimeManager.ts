@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { constants as FS_CONSTANTS } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { constants as FS_CONSTANTS, createReadStream } from "node:fs";
 import FS from "node:fs/promises";
 import Path from "node:path";
 import { delimiter as pathDelimiter } from "node:path";
@@ -111,6 +111,7 @@ function isCurrentRecord(
     record.smokeArgs.every((arg) => typeof arg === "string") &&
     (record.digestAlgorithm === "sha256" || record.digestAlgorithm === "sha512") &&
     typeof record.digest === "string" &&
+    (record.executableDigest === undefined || typeof record.executableDigest === "string") &&
     typeof record.sourceUrl === "string" &&
     typeof record.catalogRevision === "string" &&
     typeof record.installedAt === "string"
@@ -253,6 +254,17 @@ async function smokeTestExecutable(input: {
   });
 }
 
+async function hashExecutable(filePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  await new Promise<void>((resolve, reject) => {
+    const stream = createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", resolve);
+  });
+  return hash.digest("hex");
+}
+
 function errorMessage(cause: unknown): string {
   return cause instanceof Error && cause.message.trim() ? cause.message.trim() : String(cause);
 }
@@ -266,6 +278,8 @@ export const ProviderRuntimeManagerLive = Layer.effect(
     const installationStates = new Map<ProviderKind, ServerProviderInstallationState>();
     const plans = new Map<string, PreparedInstall>();
     const active = new Map<ProviderKind, ActiveOperation>();
+    const verifiedManagedReleases = new Set<string>();
+    const managedVerificationPromises = new Map<string, Promise<void>>();
     const basePath = process.env.PATH ?? "";
     const managedDirectoriesAdded = new Set<string>();
     let lastAssignedPath = basePath;
@@ -298,9 +312,9 @@ export const ProviderRuntimeManagerLive = Layer.effect(
     }
 
     const refreshProcessPath = () => {
-      const managedDirectories = Array.from(records.values()).map((record) =>
-        Path.dirname(record.executablePath),
-      );
+      const managedDirectories = Array.from(records.values())
+        .filter((record) => verifiedManagedReleases.has(`${record.provider}:${record.releaseId}`))
+        .map((record) => Path.dirname(record.executablePath));
       for (const directory of managedDirectories) managedDirectoriesAdded.add(directory);
       lastAssignedPath = [basePath, ...new Set(managedDirectories)]
         .filter(Boolean)
@@ -363,6 +377,40 @@ export const ProviderRuntimeManagerLive = Layer.effect(
           : {}),
       });
       publish();
+    };
+
+    const verifyManagedRecord = async (
+      provider: ProviderKind,
+      record: ProviderRuntimeCurrentRecord,
+    ): Promise<void> => {
+      const verificationKey = `${provider}:${record.releaseId}`;
+      if (verifiedManagedReleases.has(verificationKey)) return;
+      const existing = managedVerificationPromises.get(verificationKey);
+      if (existing) return existing;
+      const verification = (async () => {
+        const executableDigest = await hashExecutable(record.executablePath);
+        if (record.executableDigest && record.executableDigest !== executableDigest) {
+          throw new Error("Managed provider executable checksum changed after installation.");
+        }
+        await smokeTestExecutable({
+          executable: record.executablePath,
+          args: record.smokeArgs,
+          signal: AbortSignal.timeout(SMOKE_TIMEOUT_MS),
+        });
+        if (!record.executableDigest) {
+          const upgraded = { ...record, executableDigest } satisfies ProviderRuntimeCurrentRecord;
+          records.set(provider, upgraded);
+          await writeCurrentRecord(config.stateDir, provider, upgraded);
+          await writeFileStringAtomically({
+            filePath: releaseRecordPath(config.stateDir, provider, record.releaseId),
+            contents: `${JSON.stringify({ ...upgraded, previousReleaseId: null }, null, 2)}\n`,
+          }).pipe(Effect.runPromise);
+        }
+        verifiedManagedReleases.add(verificationKey);
+        refreshProcessPath();
+      })().finally(() => managedVerificationPromises.delete(verificationKey));
+      managedVerificationPromises.set(verificationKey, verification);
+      return verification;
     };
 
     const startOperation = (input: {
@@ -567,6 +615,7 @@ export const ProviderRuntimeManagerLive = Layer.effect(
           smokeArgs: artifact.smokeArgs,
           digestAlgorithm: artifact.digestAlgorithm,
           digest: artifact.digest,
+          executableDigest: await hashExecutable(finalExecutable),
           sourceUrl: artifact.url,
           catalogRevision: artifact.catalogRevision,
           installedAt: new Date().toISOString(),
@@ -577,6 +626,7 @@ export const ProviderRuntimeManagerLive = Layer.effect(
         }).pipe(Effect.runPromise);
         await writeCurrentRecord(config.stateDir, provider, record);
         records.set(provider, record);
+        verifiedManagedReleases.add(`${provider}:${record.releaseId}`);
         refreshProcessPath();
         setInstallationState(provider, {
           operationId,
@@ -749,10 +799,12 @@ export const ProviderRuntimeManagerLive = Layer.effect(
               ...previousMetadata,
               releaseId: current.previousReleaseId!,
               previousReleaseId: current.releaseId,
+              executableDigest: await hashExecutable(previousExecutable),
               installedAt: new Date().toISOString(),
             };
             await writeCurrentRecord(config.stateDir, input.provider, previousRecord);
             records.set(input.provider, previousRecord);
+            verifiedManagedReleases.add(`${input.provider}:${previousRecord.releaseId}`);
             refreshProcessPath();
             setInstallationState(input.provider, {
               operationId,
@@ -781,6 +833,9 @@ export const ProviderRuntimeManagerLive = Layer.effect(
           run: async ({ operationId, startedAt }) => {
             await removeCurrentRecord(config.stateDir, input.provider);
             records.delete(input.provider);
+            for (const key of verifiedManagedReleases) {
+              if (key.startsWith(`${input.provider}:`)) verifiedManagedReleases.delete(key);
+            }
             refreshProcessPath();
             setInstallationState(input.provider, {
               operationId,
@@ -816,6 +871,32 @@ export const ProviderRuntimeManagerLive = Layer.effect(
               : recipe.bundled
                 ? "bundled"
                 : "missing";
+        if (source === "managed" && record) {
+          try {
+            await verifyManagedRecord(provider, record);
+          } catch (cause) {
+            const now = new Date().toISOString();
+            setInstallationState(provider, {
+              operationId: `verify-${record.releaseId}`,
+              operation: "repair",
+              status: "failed",
+              startedAt: now,
+              finishedAt: now,
+              message: `The managed provider runtime is damaged and must be repaired. ${errorMessage(cause)}`,
+              version: record.runtimeVersion,
+            });
+            return {
+              source: "missing",
+              executable: null,
+              managedVersion: record.runtimeVersion,
+              canInstall: false,
+              canRepair: true,
+              canRollback: Boolean(record.previousReleaseId),
+              canRemove: true,
+              message: "The Scient-managed runtime failed integrity verification.",
+            };
+          }
+        }
         return {
           source,
           executable:

@@ -6,7 +6,7 @@ Status: IMPLEMENTED LOCALLY; CROSS-PLATFORM RELEASE GATES REMAIN
 
 Make every provider that Scient currently exposes understandable and usable from a clean computer without requiring the user to install Homebrew, npm, Node.js, curl, wget, tar, unzip, Git, or a provider CLI.
 
-The primary flow is one action: **Install and connect**. Scient downloads an approved provider runtime, verifies and installs it in user-owned application data, starts provider-owned authentication, verifies the result, and reports that the provider is ready. Existing user-managed installations and credentials remain untouched.
+The primary flow is one guided setup: the user confirms the reviewed download, Scient installs it in user-owned application data, and the dialog continues to provider-owned authentication. Scient then verifies both account status and a usable model catalog before reporting that the provider is ready. Existing user-managed installations and credentials remain untouched.
 
 The runtime-installation half of this design is now implemented for every provider: eight providers have app-managed recipes and Pi is bundled. A user does not need Homebrew, npm, Node.js, curl, wget, tar, unzip, Git, an administrator password, or a shell-profile change. Connection is automated only where the provider exposes a reviewed, non-secret browser-login command and a reliable verification probe. Scient deliberately does not simulate success for providers whose account or model-provider choice is unresolved.
 
@@ -114,7 +114,8 @@ The installation service must:
 - Targets: official macOS, Linux, and Windows targets.
 - Verification now: exact GitHub release tag plus GitHub's SHA-256 asset digest.
 - Smoke test: `codex --version`.
-- Authentication: `codex login`; fallback `codex login --device-auth`.
+- Authentication now: `codex login`, which opens provider-owned browser sign-in.
+- Device-code fallback: supported by the CLI but not yet exposed by Scient; keep it as a release follow-up with copy-link and copy-code UI.
 - Auth verification: `codex login status`.
 - Preserve `CODEX_HOME`; executable updates must not modify conversation, configuration, or credential data.
 
@@ -126,7 +127,7 @@ The installation service must:
 - Authentication: `claude auth login --console`, which uses the provider-owned Console/API billing path Anthropic permits for third-party products.
 - Auth verification: `claude auth status`.
 - Claude.ai Free, Pro, Max, Team, and Enterprise subscription login is not exposed by Scient unless Anthropic gives written authorization for this product.
-- Managed updates run through Scient's runtime manager; independent-updater suppression still requires provider-specific release validation.
+- Managed updates run through Scient's runtime manager. Scient passes Anthropic's documented `DISABLE_AUTOUPDATER=1` only to its managed Claude runtime; user-managed Claude installations retain their own updater behavior.
 
 ### 3. Antigravity
 
@@ -142,7 +143,8 @@ The installation service must:
 - Source: official xAI native stable artifact.
 - Verification now: pinned macOS arm64 URL, byte size, and reviewed SHA-256; Scient does not execute the vendor installer script.
 - Smoke test: `grok --version`.
-- Authentication: `grok login`; fallback `grok login --device-auth`.
+- Authentication now: `grok login`, which opens provider-owned browser sign-in.
+- Device-code/browser-launch fallback is not yet exposed by Scient and remains a packaged release follow-up.
 - Auth verification: `grok models` must return an explicit positive account/key marker and a usable model catalog; signed-out output is never mistaken for success.
 - Managed and ACP invocations suppress Grok's native auto-update path.
 - Other operating systems and architectures remain safely unsupported until their artifacts and checksums are reviewed.
@@ -196,7 +198,7 @@ The installation service must:
 ## Missing optional capabilities
 
 - Missing Git does not block installation, authentication, ordinary projects, or conversations. Git-dependent agent features are described as optional capabilities.
-- Missing browser support falls back to device-code login when the provider offers it, with copy-link and copy-code actions.
+- Missing browser support must eventually fall back to device-code login where the provider offers it, with copy-link and copy-code actions. That fallback is not part of the current implementation.
 - Missing `xdg-open`, PowerShell scripts, shell profile, curl, tar, unzip, or checksum utilities is handled inside Scient.
 - Offline, proxy, TLS, disk-space, permission, and unsupported-target failures preserve the active runtime and provide actionable recovery.
 
@@ -242,6 +244,9 @@ For every released OS/architecture combination, use a clean VM or clean account 
 - [x] Pi health no longer requires an external CLI.
 - [x] Consent, progress, cancellation, safe extraction, digest verification, smoke testing, activation, persistence, repair, rollback, and deferred removal are implemented.
 - [x] Managed executable paths stay server-side; credentials and raw login output are not persisted or sent to the renderer.
+- [x] The exact resolved executable is used for health, discovery, new sessions, recovery, and native forks without persisting a managed path as user configuration.
+- [x] A managed executable is re-hashed and smoke-tested after restart before it is trusted or added to the process PATH; damage produces a repairable failure.
+- [x] All five guided connection flows require a non-empty provider model catalog before reporting ready.
 - [x] Focused contracts, server, web presentation, and browser tests pass.
 - [x] Full repository test suite passes locally.
 - [x] A real Antigravity artifact completed download, verification, extraction, smoke test, activation, resolution, and persisted-record checks in an isolated state directory.
@@ -249,13 +254,14 @@ For every released OS/architecture combination, use a clean VM or clean account 
 - [x] The complete isolated UI path passes: missing runtime, reviewed consent, download progress, verified activation, and explicit browser-login handoff.
 - [x] Current official release metadata resolves for Codex 0.144.6, Claude 2.1.215, Antigravity 1.1.4, Grok 0.2.106, and Droid 0.175.0 on macOS arm64.
 - [x] Droid's non-inference ACP verification was exercised against the official 0.175.0 binary and returned the authenticated classification without creating a session or prompt.
-- [x] Focused server tests cover Claude Console login, Grok login and explicit auth parsing, Droid device-pairing classification, and Antigravity PTY login plus model verification; rendered browser tests cover Claude Console, Grok, and Droid connection dispatch.
+- [x] Focused server tests cover Codex, Claude Console, Antigravity, Grok, and Droid exact-runtime connection and readiness behavior; rendered browser tests cover all five connection dispatches.
 
 ## Release gates
 
 - [ ] Prove Codex, Claude Console, Antigravity, and Cursor login with fresh provider accounts in a packaged app.
 - [ ] Keep Claude.ai subscription login unavailable unless Anthropic gives written authorization; the implemented default is the permitted Console/API route.
 - [ ] Prove Grok and Droid with fresh provider accounts in a packaged app, including browser-launch failure and restart continuity.
+- [ ] Add and package-test device-code/copy-link fallback for Codex and Grok where supported.
 - [ ] Add the signed catalog and reviewed release-monitoring pipeline.
 - [ ] Run the clean-machine matrix for every OS/architecture Scient intends to claim.
 - [ ] Record platform signing/notarization evidence and confirm managed-runtime updater behavior for each provider.

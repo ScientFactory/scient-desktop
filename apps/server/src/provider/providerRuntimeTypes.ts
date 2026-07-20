@@ -49,6 +49,7 @@ export interface ProviderRuntimeCurrentRecord {
   readonly smokeArgs: ReadonlyArray<string>;
   readonly digestAlgorithm: ProviderRuntimeArtifact["digestAlgorithm"];
   readonly digest: string;
+  readonly executableDigest?: string;
   readonly sourceUrl: string;
   readonly catalogRevision: string;
   readonly installedAt: string;

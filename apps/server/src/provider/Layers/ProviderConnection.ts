@@ -29,6 +29,7 @@ import { buildClaudeProcessEnv } from "../claudeProcessEnv";
 import { buildCursorAgentCommand } from "../acp/CursorAcpCommand";
 import { probeDroidAcpAuthentication } from "../acp/DroidAcpSupport";
 import { ProviderConnection, type ProviderConnectionShape } from "../Services/ProviderConnection";
+import { ProviderDiscoveryService } from "../Services/ProviderDiscoveryService";
 import { ProviderHealth } from "../Services/ProviderHealth";
 import { ProviderRuntimeManager } from "../Services/ProviderRuntimeManager";
 import { PtyAdapter } from "../../terminal/Services/PTY";
@@ -110,6 +111,7 @@ export function makeProviderConnectionLive(options?: {
       const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
       const providerHealth = yield* ProviderHealth;
+      const providerDiscovery = yield* ProviderDiscoveryService;
       const providerRuntimeManager = yield* ProviderRuntimeManager;
       const ptyAdapter = yield* PtyAdapter;
       const operationScope = yield* Scope.make("sequential");
@@ -318,14 +320,17 @@ export function makeProviderConnectionLive(options?: {
             message: "Claude is disabled in Scient settings.",
           });
         }
-        const executable = yield* resolveExecutable(
+        const runtime = yield* resolveRuntime(
           settings.providers.claudeAgent.binaryPath.trim() || undefined,
-          "claude",
         );
+        const executable = runtime.executable ?? "claude";
         return {
           executable,
           args,
-          env: buildClaudeProcessEnv({ homeDir: serverConfig.homeDir }),
+          env: {
+            ...buildClaudeProcessEnv({ homeDir: serverConfig.homeDir }),
+            ...(runtime.source === "managed" ? { DISABLE_AUTOUPDATER: "1" } : {}),
+          },
           waitingMessage: "Finish signing in to Claude in the browser window.",
           lock: "claude-auth",
         } satisfies ConnectionCommand;
@@ -530,6 +535,29 @@ export function makeProviderConnectionLive(options?: {
                 state({
                   status: "failed",
                   message: "Sign in finished, but Scient could not verify the account.",
+                  finished: true,
+                }),
+              );
+              return;
+            }
+            const modelReadiness = yield* providerDiscovery
+              .listModels({
+                provider,
+                binaryPath: command.executable,
+                cwd: serverConfig.cwd,
+              })
+              .pipe(Effect.timeoutOption(Duration.seconds(30)), Effect.result);
+            if (
+              Result.isFailure(modelReadiness) ||
+              Option.isNone(modelReadiness.success) ||
+              modelReadiness.success.value.models.length === 0
+            ) {
+              yield* publishState(
+                provider,
+                state({
+                  status: "failed",
+                  message:
+                    "The account is authenticated, but Scient could not load a usable model catalog.",
                   finished: true,
                 }),
               );

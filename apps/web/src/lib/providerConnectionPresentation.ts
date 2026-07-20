@@ -180,6 +180,17 @@ export function describeProviderConnection(
 
   if (status.authStatus === "unauthenticated") {
     const method = providerConnectionMethod(provider);
+    if (provider === "claudeAgent" && method) {
+      return {
+        title,
+        description:
+          "Scient connects Claude through an Anthropic Console account with API billing, not a Claude.ai subscription. Anthropic handles the secure browser sign-in and keeps your credentials.",
+        primaryAction: "sign_in",
+        primaryLabel: "Connect Anthropic Console",
+        busy: false,
+        canCancel: false,
+      };
+    }
     return {
       title,
       description: method

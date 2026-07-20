@@ -13,6 +13,10 @@ import { ServerSettingsService } from "../../serverSettings";
 import { PtyAdapter, type PtyAdapterShape } from "../../terminal/Services/PTY";
 import { probeDroidAcpAuthentication } from "../acp/DroidAcpSupport";
 import { ProviderConnection } from "../Services/ProviderConnection";
+import {
+  ProviderDiscoveryService,
+  type ProviderDiscoveryServiceShape,
+} from "../Services/ProviderDiscoveryService";
 import { ProviderHealth, type ProviderHealthShape } from "../Services/ProviderHealth";
 import {
   ProviderRuntimeManager,
@@ -96,6 +100,11 @@ function makeConnectionTestLayer(input?: {
   readonly onPtySpawn?: (input: unknown) => void;
   readonly onPtyKill?: () => void;
   readonly droidAuthenticationProbe?: typeof probeDroidAcpAuthentication;
+  readonly modelsAvailable?: boolean;
+  readonly onListModels?: (input: {
+    readonly provider: ProviderKind;
+    readonly binaryPath?: string;
+  }) => void;
 }) {
   let connectionState: ServerProviderConnectionState | undefined;
   let authenticated = false;
@@ -121,6 +130,26 @@ function makeConnectionTestLayer(input?: {
       }),
     streamChanges: Stream.empty,
   } satisfies ProviderHealthShape);
+  const providerDiscoveryLayer = Layer.succeed(ProviderDiscoveryService, {
+    getComposerCapabilities: () => Effect.die("unused"),
+    listCommands: () => Effect.die("unused"),
+    listSkills: () => Effect.die("unused"),
+    listPlugins: () => Effect.die("unused"),
+    readPlugin: () => Effect.die("unused"),
+    listModels: ({ provider, binaryPath }) =>
+      Effect.sync(() => {
+        input?.onListModels?.({ provider, ...(binaryPath ? { binaryPath } : {}) });
+        return {
+          models:
+            input?.modelsAvailable === false
+              ? []
+              : [{ slug: `${provider}-test-model`, name: `${provider} test model` }],
+          source: "test",
+          cached: false,
+        };
+      }),
+    listAgents: () => Effect.die("unused"),
+  } satisfies ProviderDiscoveryServiceShape);
   const spawnerLayer = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
@@ -199,6 +228,7 @@ function makeConnectionTestLayer(input?: {
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(Layer.succeed(ServerConfig, TEST_CONFIG)),
     Layer.provideMerge(providerHealthLayer),
+    Layer.provideMerge(providerDiscoveryLayer),
     Layer.provideMerge(providerRuntimeLayer),
     Layer.provideMerge(spawnerLayer),
     Layer.provideMerge(ptyLayer),
@@ -332,7 +362,8 @@ describe("ProviderConnectionLive", () => {
 
   it("starts Claude login with fixed argv and verifies before connecting", async () => {
     const onSpawn = vi.fn();
-    const fixture = makeConnectionTestLayer({ onSpawn });
+    const onListModels = vi.fn();
+    const fixture = makeConnectionTestLayer({ onSpawn, onListModels });
 
     await Effect.runPromise(
       Effect.gen(function* () {
@@ -352,6 +383,27 @@ describe("ProviderConnectionLive", () => {
       command: "claude",
       args: ["auth", "login", "--console"],
     });
+    expect(onListModels).toHaveBeenCalledWith({
+      provider: "claudeAgent",
+      binaryPath: "claude",
+    });
+  });
+
+  it("does not report connected when authenticated model discovery is empty", async () => {
+    const fixture = makeConnectionTestLayer({ modelsAvailable: false });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({
+          provider: "claudeAgent",
+          method: "claude_console",
+        });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("failed");
+        expect(fixture.getConnectionState()?.message).toContain("model catalog");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
   });
 
   it("cancels an active sign-in and kills its process", async () => {

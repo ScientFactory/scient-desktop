@@ -142,61 +142,86 @@ describe("ProviderConnectionDialog", () => {
   });
 
   it.each([
-    { provider: "claudeAgent", method: "claude_console", title: "Connect Claude" },
-    { provider: "grok", method: "grok_browser", title: "Connect Grok" },
-    { provider: "droid", method: "droid_device_pairing", title: "Connect Droid" },
+    {
+      provider: "claudeAgent",
+      method: "claude_console",
+      title: "Connect Claude",
+      primaryLabel: "Connect Anthropic Console",
+    },
+    {
+      provider: "antigravity",
+      method: "antigravity_browser",
+      title: "Connect Antigravity",
+      primaryLabel: "Continue in browser",
+    },
+    {
+      provider: "grok",
+      method: "grok_browser",
+      title: "Connect Grok",
+      primaryLabel: "Continue in browser",
+    },
+    {
+      provider: "droid",
+      method: "droid_device_pairing",
+      title: "Connect Droid",
+      primaryLabel: "Continue in browser",
+    },
   ] satisfies ReadonlyArray<{
     provider: ProviderKind;
     method: ServerProviderConnectionMethod;
     title: string;
-  }>)("starts the guided $provider connection flow", async ({ provider, method, title }) => {
-    const waitingProvider = {
-      provider,
-      status: "warning",
-      available: true,
-      authStatus: "unauthenticated",
-      checkedAt,
-      connectionState: {
-        operationId: `connect-${provider}-1`,
-        method,
-        status: "waiting_for_browser",
-        startedAt: checkedAt,
-        finishedAt: null,
-        message: "Finish the provider sign-in in your browser.",
-      },
-    } satisfies ServerProviderStatus;
-    const startProviderConnection = vi.fn().mockResolvedValue({ providers: [waitingProvider] });
-    const restoreNativeApi = installNativeApi({ startProviderConnection });
-    const queryClient = createQueryClient({
-      provider,
-      status: "warning",
-      available: true,
-      authStatus: "unauthenticated",
-      checkedAt,
-    });
-    useProviderConnectionDialogStore.getState().openDialog(provider, "settings");
-
-    const screen = await render(
-      <QueryClientProvider client={queryClient}>
-        <ProviderConnectionDialog />
-      </QueryClientProvider>,
-    );
-
-    try {
-      await expect.element(page.getByRole("heading", { name: title })).toBeVisible();
-      await page.getByRole("button", { name: "Continue in browser" }).click();
-      await vi.waitFor(() => {
-        expect(startProviderConnection).toHaveBeenCalledWith({ provider, method });
+    primaryLabel: string;
+  }>)(
+    "starts the guided $provider connection flow",
+    async ({ provider, method, title, primaryLabel }) => {
+      const waitingProvider = {
+        provider,
+        status: "warning",
+        available: true,
+        authStatus: "unauthenticated",
+        checkedAt,
+        connectionState: {
+          operationId: `connect-${provider}-1`,
+          method,
+          status: "waiting_for_browser",
+          startedAt: checkedAt,
+          finishedAt: null,
+          message: "Finish the provider sign-in in your browser.",
+        },
+      } satisfies ServerProviderStatus;
+      const startProviderConnection = vi.fn().mockResolvedValue({ providers: [waitingProvider] });
+      const restoreNativeApi = installNativeApi({ startProviderConnection });
+      const queryClient = createQueryClient({
+        provider,
+        status: "warning",
+        available: true,
+        authStatus: "unauthenticated",
+        checkedAt,
       });
-      await expect
-        .element(page.getByText("Finish the provider sign-in in your browser."))
-        .toBeVisible();
-    } finally {
-      await screen.unmount();
-      queryClient.clear();
-      restoreNativeApi();
-    }
-  });
+      useProviderConnectionDialogStore.getState().openDialog(provider, "settings");
+
+      const screen = await render(
+        <QueryClientProvider client={queryClient}>
+          <ProviderConnectionDialog />
+        </QueryClientProvider>,
+      );
+
+      try {
+        await expect.element(page.getByRole("heading", { name: title })).toBeVisible();
+        await page.getByRole("button", { name: primaryLabel }).click();
+        await vi.waitFor(() => {
+          expect(startProviderConnection).toHaveBeenCalledWith({ provider, method });
+        });
+        await expect
+          .element(page.getByText("Finish the provider sign-in in your browser."))
+          .toBeVisible();
+      } finally {
+        await screen.unmount();
+        queryClient.clear();
+        restoreNativeApi();
+      }
+    },
+  );
 
   it("opens official installation guidance when the provider is missing", async () => {
     const openExternal = vi.fn().mockResolvedValue(undefined);
