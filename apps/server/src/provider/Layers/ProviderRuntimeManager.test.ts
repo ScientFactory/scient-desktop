@@ -16,7 +16,7 @@ function sha256(filePath: string): string {
   return createHash("sha256").update(readFileSync(filePath)).digest("hex");
 }
 
-function resolveAntigravity(baseDir: string) {
+function resolveAntigravity(baseDir: string, configuredExecutable?: string) {
   const configLayer = ServerConfig.layerTest(baseDir, baseDir).pipe(
     Layer.provide(NodeServices.layer),
   );
@@ -26,11 +26,29 @@ function resolveAntigravity(baseDir: string) {
   ).pipe(Layer.provide(NodeServices.layer));
   return Effect.gen(function* () {
     const manager = yield* ProviderRuntimeManager;
-    return yield* manager.resolve("antigravity");
+    return yield* manager.resolve("antigravity", configuredExecutable);
   }).pipe(Effect.provide(layer), Effect.scoped);
 }
 
 describe("ProviderRuntimeManager managed integrity", () => {
+  it("preserves an invalid custom executable as an explicit configuration error", async () => {
+    const baseDir = mkdtempSync(path.join(os.tmpdir(), "scient-runtime-custom-"));
+    try {
+      const configuredExecutable = path.join(baseDir, "missing", "agy");
+      const resolved = await Effect.runPromise(resolveAntigravity(baseDir, configuredExecutable));
+
+      expect(resolved).toMatchObject({
+        source: "custom",
+        executable: null,
+        canInstall: false,
+      });
+      expect(resolved.message).toContain(configuredExecutable);
+      expect(resolved.message).toContain("Change or reset this custom path");
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
   it("revalidates the executable after restart and rejects later corruption", async () => {
     const baseDir = mkdtempSync(path.join(os.tmpdir(), "scient-runtime-integrity-"));
     const previousPath = process.env.PATH;

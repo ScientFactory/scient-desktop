@@ -57,6 +57,7 @@ import { discoverSkillsCatalog, synaraSkillsDir } from "./provider/skillsCatalog
 import { ProviderAdapterRegistry } from "./provider/Services/ProviderAdapterRegistry";
 import { ProviderHealth } from "./provider/Services/ProviderHealth";
 import { ProviderConnection } from "./provider/Services/ProviderConnection";
+import { ProviderClientStatusProjection } from "./provider/Services/ProviderClientStatusProjection";
 import { ProviderRuntimeManager } from "./provider/Services/ProviderRuntimeManager";
 import { ProviderService } from "./provider/Services/ProviderService";
 import { listProviderUsage } from "./providerUsage";
@@ -275,6 +276,7 @@ export const makeWsRpcLayer = () =>
       const providerDiscoveryService = yield* ProviderDiscoveryService;
       const providerHealth = yield* ProviderHealth;
       const providerConnection = yield* ProviderConnection;
+      const providerClientStatusProjection = yield* ProviderClientStatusProjection;
       const providerRuntimeManager = yield* ProviderRuntimeManager;
       const providerService = yield* ProviderService;
       const lifecycleEvents = yield* ServerLifecycleEvents;
@@ -286,54 +288,6 @@ export const makeWsRpcLayer = () =>
       const workspaceEntries = yield* WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem;
       const scientProjectInitialization = new ScientProjectInitializationService();
-
-      const enrichProviderStatuses = (
-        statuses: ReadonlyArray<import("@synara/contracts").ServerProviderStatus>,
-      ) =>
-        serverSettings.getSettings.pipe(
-          Effect.catch(() => Effect.succeed(null)),
-          Effect.flatMap((settings) =>
-            Effect.forEach(
-              statuses,
-              (status) =>
-                providerRuntimeManager
-                  .resolve(status.provider, settings?.providers[status.provider].binaryPath)
-                  .pipe(
-                    Effect.zip(providerRuntimeManager.getSnapshot(status.provider)),
-                    Effect.map(([runtime, snapshot]) => {
-                      const appManaged =
-                        runtime.source === "managed" || runtime.source === "bundled";
-                      return {
-                        ...status,
-                        ...(appManaged && status.versionAdvisory
-                          ? {
-                              versionAdvisory: {
-                                ...status.versionAdvisory,
-                                canUpdate: false,
-                                updateCommand: null,
-                                message: "Updates for this runtime are managed by Scient.",
-                              },
-                            }
-                          : {}),
-                        runtime: {
-                          source: runtime.source,
-                          managedVersion: runtime.managedVersion,
-                          canInstall: runtime.canInstall,
-                          canRepair: runtime.canRepair,
-                          canRollback: runtime.canRollback,
-                          canRemove: runtime.canRemove,
-                          message: runtime.message,
-                        },
-                        ...(snapshot.installationState
-                          ? { installationState: snapshot.installationState }
-                          : {}),
-                      };
-                    }),
-                  ),
-              { concurrency: "unbounded" },
-            ),
-          ),
-        );
 
       const isGlobalGitHubCliError = (error: unknown): error is GitHubCliError =>
         error instanceof GitHubCliError &&
@@ -525,9 +479,7 @@ export const makeWsRpcLayer = () =>
 
       const loadServerConfig = Effect.gen(function* () {
         const keybindingsConfig = yield* keybindings.loadConfigState;
-        const providerStatuses = yield* providerHealth.getStatuses.pipe(
-          Effect.flatMap(enrichProviderStatuses),
-        );
+        const providerStatuses = yield* providerClientStatusProjection.getStatuses;
         return {
           cwd: config.cwd,
           homeDir: config.homeDir,
@@ -1082,36 +1034,46 @@ export const makeWsRpcLayer = () =>
           ),
         [WS_METHODS.serverRefreshProviders]: () =>
           rpcEffect(
-            providerHealth.refresh.pipe(Effect.map((providers) => ({ providers }))),
+            providerClientStatusProjection.refreshStatuses.pipe(
+              Effect.map((providers) => ({ providers })),
+            ),
             "Failed to refresh providers",
           ),
-        [WS_METHODS.serverStartProviderConnection]: (input) => providerConnection.start(input),
-        [WS_METHODS.serverCancelProviderConnection]: (input) => providerConnection.cancel(input),
+        [WS_METHODS.serverStartProviderConnection]: (input) =>
+          providerConnection.start(input).pipe(
+            Effect.andThen(providerClientStatusProjection.getStatuses),
+            Effect.map((providers) => ({ providers })),
+          ),
+        [WS_METHODS.serverCancelProviderConnection]: (input) =>
+          providerConnection.cancel(input).pipe(
+            Effect.andThen(providerClientStatusProjection.getStatuses),
+            Effect.map((providers) => ({ providers })),
+          ),
         [WS_METHODS.serverPrepareProviderInstall]: (input) =>
           providerRuntimeManager.prepareInstall(input.provider),
         [WS_METHODS.serverInstallProvider]: (input) =>
           providerRuntimeManager.install(input).pipe(
-            Effect.andThen(providerHealth.getStatuses.pipe(Effect.flatMap(enrichProviderStatuses))),
+            Effect.andThen(providerClientStatusProjection.getStatuses),
             Effect.map((providers) => ({ providers })),
           ),
         [WS_METHODS.serverCancelProviderInstall]: (input) =>
           providerRuntimeManager.cancel(input).pipe(
-            Effect.andThen(providerHealth.getStatuses.pipe(Effect.flatMap(enrichProviderStatuses))),
+            Effect.andThen(providerClientStatusProjection.getStatuses),
             Effect.map((providers) => ({ providers })),
           ),
         [WS_METHODS.serverRepairProvider]: (input) =>
           providerRuntimeManager.repair(input).pipe(
-            Effect.andThen(providerHealth.getStatuses.pipe(Effect.flatMap(enrichProviderStatuses))),
+            Effect.andThen(providerClientStatusProjection.getStatuses),
             Effect.map((providers) => ({ providers })),
           ),
         [WS_METHODS.serverRollbackProvider]: (input) =>
           providerRuntimeManager.rollback(input).pipe(
-            Effect.andThen(providerHealth.getStatuses.pipe(Effect.flatMap(enrichProviderStatuses))),
+            Effect.andThen(providerClientStatusProjection.getStatuses),
             Effect.map((providers) => ({ providers })),
           ),
         [WS_METHODS.serverRemoveManagedProvider]: (input) =>
           providerRuntimeManager.remove(input).pipe(
-            Effect.andThen(providerHealth.getStatuses.pipe(Effect.flatMap(enrichProviderStatuses))),
+            Effect.andThen(providerClientStatusProjection.getStatuses),
             Effect.map((providers) => ({ providers })),
           ),
         [WS_METHODS.serverUpdateProvider]: (input) =>
@@ -1138,7 +1100,10 @@ export const makeWsRpcLayer = () =>
                         "This runtime is managed by Scient. Use the managed install, repair, or rollback controls instead.",
                     }),
                   )
-                : providerHealth.updateProvider(input),
+                : providerHealth.updateProvider(input).pipe(
+                    Effect.andThen(providerClientStatusProjection.getStatuses),
+                    Effect.map((providers) => ({ providers })),
+                  ),
             ),
           ),
         [WS_METHODS.serverListWorktrees]: () => Effect.succeed({ worktrees: [] }),
@@ -1303,7 +1268,7 @@ export const makeWsRpcLayer = () =>
                 })),
               ),
               Stream.merge(
-                bufferLiveUiStream(providerHealth.streamChanges, {
+                bufferLiveUiStream(providerClientStatusProjection.streamChanges, {
                   label: "server.provider-statuses",
                   onDroppedEvents: failLiveUiStreamForSnapshotResync,
                 }).pipe(
@@ -1327,23 +1292,14 @@ export const makeWsRpcLayer = () =>
         [WS_METHODS.subscribeServerProviderStatuses]: () =>
           Stream.concat(
             Stream.fromEffect(
-              providerHealth.getStatuses.pipe(
-                Effect.flatMap(enrichProviderStatuses),
+              providerClientStatusProjection.getStatuses.pipe(
                 Effect.map((providers) => ({ providers })),
               ),
             ),
-            Stream.merge(
-              bufferLiveUiStream(providerHealth.streamChanges, {
-                label: "server.provider-statuses",
-                onDroppedEvents: failLiveUiStreamForSnapshotResync,
-              }),
-              providerRuntimeManager.streamChanges.pipe(
-                Stream.mapEffect(() => providerHealth.getStatuses),
-              ),
-            ).pipe(
-              Stream.mapEffect(enrichProviderStatuses),
-              Stream.map((providers) => ({ providers })),
-            ),
+            bufferLiveUiStream(providerClientStatusProjection.streamChanges, {
+              label: "server.provider-statuses",
+              onDroppedEvents: failLiveUiStreamForSnapshotResync,
+            }).pipe(Stream.map((providers) => ({ providers }))),
           ),
         [WS_METHODS.subscribeServerSettings]: () =>
           Stream.concat(

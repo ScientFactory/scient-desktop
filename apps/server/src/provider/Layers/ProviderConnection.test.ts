@@ -101,13 +101,15 @@ function makeConnectionTestLayer(input?: {
   readonly onPtyKill?: () => void;
   readonly droidAuthenticationProbe?: typeof probeDroidAcpAuthentication;
   readonly modelsAvailable?: boolean;
+  readonly initiallyAuthenticated?: boolean;
   readonly onListModels?: (input: {
     readonly provider: ProviderKind;
     readonly binaryPath?: string;
   }) => void;
 }) {
   let connectionState: ServerProviderConnectionState | undefined;
-  let authenticated = false;
+  let authenticated = input?.initiallyAuthenticated ?? false;
+  let refreshCalls = 0;
   const status = (): ServerProviderStatus => ({
     provider: input?.provider ?? "claudeAgent",
     status: authenticated ? "ready" : "error",
@@ -119,7 +121,10 @@ function makeConnectionTestLayer(input?: {
   const providerHealthLayer = Layer.succeed(ProviderHealth, {
     getStatuses: Effect.sync(() => [status()]),
     refresh: Effect.sync(() => {
-      authenticated = true;
+      refreshCalls += 1;
+      // The first refresh is the preflight. A completed sign-in is verified by
+      // the following refresh, unless the fixture began authenticated.
+      if (refreshCalls > 1 && input?.hanging !== true) authenticated = true;
       return [status()];
     }),
     updateProvider: () => Effect.die("unused"),
@@ -242,8 +247,17 @@ describe("provider connection command allowlist", () => {
     expect(providerConnectionCommandArgs("codex", "codex_browser")).toEqual(["login"]);
   });
 
-  it("uses Claude Console login with fixed argv", () => {
-    expect(expectedMethodForProvider("claudeAgent")).toBe("claude_console");
+  it("uses normal Claude account login by default and keeps explicit alternatives", () => {
+    expect(expectedMethodForProvider("claudeAgent")).toBe("claude_account");
+    expect(providerConnectionCommandArgs("claudeAgent", "claude_account")).toEqual([
+      "auth",
+      "login",
+    ]);
+    expect(providerConnectionCommandArgs("claudeAgent", "claude_sso")).toEqual([
+      "auth",
+      "login",
+      "--sso",
+    ]);
     expect(providerConnectionCommandArgs("claudeAgent", "claude_console")).toEqual([
       "auth",
       "login",
@@ -360,7 +374,7 @@ describe("ProviderConnectionLive", () => {
     );
   });
 
-  it("starts Claude login with fixed argv and verifies before connecting", async () => {
+  it("starts terminal-equivalent Claude login and verifies before connecting", async () => {
     const onSpawn = vi.fn();
     const onListModels = vi.fn();
     const fixture = makeConnectionTestLayer({ onSpawn, onListModels });
@@ -370,7 +384,7 @@ describe("ProviderConnectionLive", () => {
         const connection = yield* ProviderConnection;
         const started = yield* connection.start({
           provider: "claudeAgent",
-          method: "claude_console",
+          method: "claude_account",
         });
         expect(started.providers[0]?.connectionState?.operationId).toBeTruthy();
         yield* Effect.sleep(Duration.millis(20));
@@ -381,7 +395,7 @@ describe("ProviderConnectionLive", () => {
     expect(onSpawn).toHaveBeenCalledTimes(1);
     expect(onSpawn.mock.calls[0]?.[0]).toMatchObject({
       command: "claude",
-      args: ["auth", "login", "--console"],
+      args: ["auth", "login"],
     });
     expect(onListModels).toHaveBeenCalledWith({
       provider: "claudeAgent",
@@ -451,7 +465,7 @@ describe("ProviderConnectionLive", () => {
     expect(onSpawn).not.toHaveBeenCalled();
   });
 
-  it("rejects a duplicate operation for the same provider", async () => {
+  it("returns the existing operation for a duplicate start", async () => {
     const fixture = makeConnectionTestLayer({ hanging: true });
 
     await Effect.runPromise(
@@ -461,20 +475,70 @@ describe("ProviderConnectionLive", () => {
           provider: "claudeAgent",
           method: "claude_console",
         });
-        const duplicate = yield* Effect.result(
-          connection.start({
-            provider: "claudeAgent",
-            method: "claude_console",
-          }),
-        );
-        expect(duplicate._tag).toBe("Failure");
-        if (duplicate._tag === "Failure") {
-          expect(duplicate.failure.reason).toBe("already_running");
-        }
+        const duplicate = yield* connection.start({
+          provider: "claudeAgent",
+          method: "claude_account",
+        });
         const operationId = started.providers[0]?.connectionState?.operationId;
+        expect(duplicate.providers[0]?.connectionState?.operationId).toBe(operationId);
         yield* connection.cancel({ provider: "claudeAgent", operationId: operationId! });
       }).pipe(Effect.provide(fixture.layer)),
     );
+  });
+
+  it("does not spawn sign-in when a fresh preflight finds an existing account", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({ initiallyAuthenticated: true, onSpawn });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* connection.start({ provider: "claudeAgent", method: "claude_account" });
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result.providers[0]?.authStatus).toBe("authenticated");
+    expect(result.providers[0]?.connectionState).toBeUndefined();
+    expect(onSpawn).not.toHaveBeenCalled();
+  });
+
+  it("can start a fresh operation after cancellation fully releases the provider", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({ hanging: true, onSpawn });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const first = yield* connection.start({
+          provider: "claudeAgent",
+          method: "claude_account",
+        });
+        const firstOperationId = first.providers[0]?.connectionState?.operationId;
+        yield* Effect.sleep(Duration.millis(5));
+        yield* connection.cancel({
+          provider: "claudeAgent",
+          operationId: firstOperationId!,
+        });
+
+        const second = yield* connection.start({
+          provider: "claudeAgent",
+          method: "claude_sso",
+        });
+        const secondOperationId = second.providers[0]?.connectionState?.operationId;
+        expect(secondOperationId).toBeTruthy();
+        expect(secondOperationId).not.toBe(firstOperationId);
+        yield* Effect.sleep(Duration.millis(5));
+        yield* connection.cancel({
+          provider: "claudeAgent",
+          operationId: secondOperationId!,
+        });
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onSpawn).toHaveBeenCalledTimes(2);
+    expect(onSpawn.mock.calls[1]?.[0]).toMatchObject({
+      args: ["auth", "login", "--sso"],
+    });
   });
 
   it("times out and kills a sign-in that never finishes", async () => {
