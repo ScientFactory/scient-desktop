@@ -79,6 +79,7 @@ import {
 import { waitForBackendStartupReady } from "./backendStartupReadiness";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { DESKTOP_CONNECTION_WAKE_CHANNEL } from "./desktopConnectionWake";
+import { DESKTOP_DIAGNOSTICS_IPC_CHANNELS, openDesktopLogsDirectory } from "./desktopDiagnostics";
 import {
   LSREGISTER_PATH,
   parseLastLaunchVersion,
@@ -3223,6 +3224,11 @@ function registerIpcHandlers(): void {
     }
 
     shell.showItemInFolder(resolvedPath);
+  });
+
+  ipcMain.removeHandler(DESKTOP_DIAGNOSTICS_IPC_CHANNELS.openLogsDirectory);
+  ipcMain.handle(DESKTOP_DIAGNOSTICS_IPC_CHANNELS.openLogsDirectory, async () => {
+    await openDesktopLogsDirectory(LOG_DIR, (path) => shell.openPath(path));
   });
 
   ipcMain.removeHandler(WINDOW_MINIMIZE_CHANNEL);

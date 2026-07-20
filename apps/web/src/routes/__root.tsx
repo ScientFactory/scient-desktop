@@ -26,6 +26,7 @@ import { AppSnapCoordinator } from "../components/AppSnapCoordinator";
 import { AppSnapWelcomeDialog } from "../components/AppSnapWelcomeDialog";
 import { FeedbackDialog } from "../components/FeedbackDialog";
 import { ProviderConnectionDialog } from "../components/ProviderConnectionDialog";
+import { ConnectionRecoveryNotifications } from "../components/ConnectionRecoveryNotifications";
 import { SETTINGS_TARGETS } from "../settingsNavigation";
 import ShortcutsDialog from "../components/ShortcutsDialog";
 import WhatsNewDialog from "../components/WhatsNewDialog";
@@ -202,6 +203,7 @@ function RootRouteView() {
           <GlobalShortcutsDialog />
           <GlobalFeedbackDialog />
           <ProviderConnectionDialog />
+          <ConnectionRecoveryNotifications />
           <GlobalWhatsNewSurface />
           <TaskCompletionNotifications />
           <AppSnapWelcomeDialog />

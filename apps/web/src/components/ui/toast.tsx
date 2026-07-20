@@ -34,6 +34,7 @@ import {
 
 type ThreadToastData = {
   allowCrossThreadVisibility?: boolean;
+  copyLabel?: string;
   copyText?: string;
   onClose?: () => void;
   secondaryActionProps?: React.ComponentProps<typeof Button>;
@@ -209,32 +210,44 @@ function ThreadToastVisibleAutoDismiss({
 
 function ToastActions({
   actionProps,
+  copyLabel,
   copyText,
   secondaryActionProps,
 }: {
   actionProps: ToastObject<ThreadToastData>["actionProps"];
+  copyLabel: string | undefined;
   copyText: string | undefined;
   secondaryActionProps: ThreadToastData["secondaryActionProps"];
 }) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard();
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: copyLabel ? `Could not copy ${copyLabel}` : "Could not copy text",
+        description: error.message,
+      });
+    },
+  });
 
   if (!actionProps && !copyText && !secondaryActionProps) return null;
+
+  const copyActionLabel = copyLabel ? `Copy ${copyLabel}` : "Copy error message";
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1.5">
       {copyText && (
         <Button
-          aria-label={isCopied ? "Copied error message" : "Copy error message"}
+          aria-label={isCopied ? `Copied ${copyLabel ?? "error message"}` : copyActionLabel}
           className="self-start rounded-md border-[var(--notification-fg)]/20 bg-[var(--notification-fg)]/10 text-[var(--notification-fg)] hover:bg-[var(--notification-fg)]/20"
           onClick={() => {
             copyToClipboard(copyText, undefined);
           }}
           size="xs"
-          title={isCopied ? "Copied error message" : "Copy error message"}
+          title={isCopied ? `Copied ${copyLabel ?? "error message"}` : copyActionLabel}
           variant="outline"
         >
           {isCopied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
-          <span>{isCopied ? "Copied" : "Copy"}</span>
+          <span>{isCopied ? "Copied" : copyLabel ? `Copy ${copyLabel}` : "Copy"}</span>
         </Button>
       )}
       {actionProps && (
@@ -436,6 +449,7 @@ function ToastSurface({
         {!compact ? (
           <ToastActions
             actionProps={toast.actionProps}
+            copyLabel={toast.data?.copyLabel}
             copyText={toast.data?.copyText}
             secondaryActionProps={toast.data?.secondaryActionProps}
           />

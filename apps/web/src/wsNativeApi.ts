@@ -322,7 +322,7 @@ export function createWsNativeApi(): NativeApi {
   }
 
   const transport = new WsTransport();
-  transport.onStateChange((state) => emitWsTransportState(state));
+  transport.onStateChange((state) => emitWsTransportState(state), { replayCurrent: true });
 
   transport.subscribe(WS_CHANNELS.serverWelcome, (message) => {
     const payload = message.data;

@@ -440,6 +440,10 @@ export interface DesktopBridge {
   shell?: {
     showInFolder: (path: string) => Promise<void>;
   };
+  diagnostics?: {
+    /** Opens Scient's local logs without depending on the backend connection. */
+    openLogsDirectory: () => Promise<void>;
+  };
   clipboard?: {
     writeImagePngDataUrl: (dataUrl: string) => Promise<boolean>;
   };
