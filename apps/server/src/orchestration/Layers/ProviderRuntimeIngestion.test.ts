@@ -429,6 +429,187 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.activeTurnId).toBeNull();
   });
 
+  it("settles every streaming assistant message when the session closes the turn", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-session-interrupted");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-session-interrupted"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId,
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.status === "running" && thread.session.activeTurnId === turnId,
+    );
+
+    for (const [messageId, delta] of [
+      ["assistant-session-interrupted-a", "First partial reply"],
+      ["assistant-session-interrupted-b", "Second partial reply"],
+    ] as const) {
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.makeUnsafe(`cmd-delta-${messageId}`),
+          threadId: asThreadId("thread-1"),
+          messageId: asMessageId(messageId),
+          turnId,
+          delta,
+          createdAt: new Date().toISOString(),
+        }),
+      );
+    }
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.messages.filter(
+          (message: ProviderRuntimeTestMessage) =>
+            message.role === "assistant" && message.turnId === turnId && message.streaming,
+        ).length === 2,
+    );
+
+    const interruptedAt = new Date().toISOString();
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-session-interrupted-without-turn-aborted"),
+        threadId: asThreadId("thread-1"),
+        session: {
+          threadId: asThreadId("thread-1"),
+          status: "interrupted",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: interruptedAt,
+        },
+        createdAt: interruptedAt,
+      }),
+    );
+
+    const settled = await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "interrupted" &&
+        thread.session.activeTurnId === null &&
+        thread.messages.filter(
+          (message: ProviderRuntimeTestMessage) =>
+            message.role === "assistant" &&
+            message.turnId === turnId &&
+            message.streaming === false,
+        ).length === 2,
+    );
+    expect(
+      settled.messages
+        .filter(
+          (message: ProviderRuntimeTestMessage) =>
+            message.role === "assistant" && message.turnId === turnId,
+        )
+        .map((message: ProviderRuntimeTestMessage) => message.text),
+    ).toEqual(["First partial reply", "Second partial reply"]);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-duplicate-session-interrupted"),
+        threadId: asThreadId("thread-1"),
+        session: settled.session!,
+        createdAt: interruptedAt,
+      }),
+    );
+    const afterDuplicate = await Effect.runPromise(harness.engine.getReadModel());
+    const afterDuplicateThread = afterDuplicate.threads.find(
+      (thread) => thread.id === asThreadId("thread-1"),
+    );
+    expect(
+      afterDuplicateThread?.messages.filter(
+        (message) => message.role === "assistant" && message.turnId === turnId,
+      ),
+    ).toHaveLength(2);
+    expect(
+      afterDuplicateThread?.messages.some(
+        (message) => message.role === "assistant" && message.turnId === turnId && message.streaming,
+      ),
+    ).toBe(false);
+  });
+
+  it("accepts a late assistant tail without reopening its terminal message", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-late-terminal-delta");
+    const messageId = asMessageId("assistant-late-terminal-delta");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-late-terminal-delta"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId,
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.makeUnsafe("cmd-initial-late-terminal-delta"),
+        threadId: asThreadId("thread-1"),
+        messageId,
+        turnId,
+        delta: "Stable",
+        createdAt: new Date().toISOString(),
+      }),
+    );
+    await waitForThread(harness.engine, (thread) =>
+      thread.messages.some((message: ProviderRuntimeTestMessage) => message.id === messageId),
+    );
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-ready-before-late-terminal-delta"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      turnId,
+      payload: { state: "ready" },
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "ready" &&
+        thread.messages.some(
+          (message: ProviderRuntimeTestMessage) =>
+            message.id === messageId && message.streaming === false,
+        ),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.makeUnsafe("cmd-actual-late-terminal-delta"),
+        threadId: asThreadId("thread-1"),
+        messageId,
+        turnId,
+        delta: " tail",
+        createdAt: new Date().toISOString(),
+      }),
+    );
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message: ProviderRuntimeTestMessage) =>
+          message.id === messageId && message.text === "Stable tail" && message.streaming === false,
+      ),
+    );
+    const message = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) => entry.id === messageId,
+    );
+    expect(message?.streaming).toBe(false);
+    expect(thread.latestTurn?.state).toBe("completed");
+  });
+
   it("does not clear active turn when session/thread started arrives mid-turn", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

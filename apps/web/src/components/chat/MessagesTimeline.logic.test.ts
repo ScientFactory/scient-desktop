@@ -862,6 +862,47 @@ describe("deriveMessagesTimelineRows", () => {
   const collapsedSignature = (row: MessageTimelineRow): string[] =>
     (row.collapsedTurnItems ?? []).map((item) => `${item.kind}:${String(item.id)}`);
 
+  it("treats a stale streaming flag as settled after its turn is no longer active", () => {
+    const rows = deriveMessagesTimelineRows({
+      ...baseInput,
+      activeTurnInProgress: false,
+      activeTurnId: null,
+      timelineEntries: [
+        userEntry("u1", "2026-01-01T00:00:00Z"),
+        assistantEntry("a1", "2026-01-01T00:00:01Z", {
+          turnId: "t1",
+          text: "Stable interrupted reply",
+          streaming: true,
+        }),
+      ],
+    });
+
+    const terminal = messageRow(rows, "a1");
+    expect(terminal?.showAssistantCopyButton).toBe(true);
+    expect(terminal?.assistantCopyStreaming).toBe(false);
+  });
+
+  it("keeps copy unavailable while the owning assistant turn is genuinely active", () => {
+    const rows = deriveMessagesTimelineRows({
+      ...baseInput,
+      isWorking: true,
+      activeTurnInProgress: true,
+      activeTurnId: TurnId.makeUnsafe("t1"),
+      timelineEntries: [
+        userEntry("u1", "2026-01-01T00:00:00Z"),
+        assistantEntry("a1", "2026-01-01T00:00:01Z", {
+          turnId: "t1",
+          text: "Still changing",
+          streaming: true,
+        }),
+      ],
+    });
+
+    const terminal = messageRow(rows, "a1");
+    expect(terminal?.showAssistantCopyButton).toBe(true);
+    expect(terminal?.assistantCopyStreaming).toBe(true);
+  });
+
   it("folds a settled turn's narration and work into one collapsed group on the terminal message", () => {
     const rows = deriveMessagesTimelineRows({
       ...baseInput,
