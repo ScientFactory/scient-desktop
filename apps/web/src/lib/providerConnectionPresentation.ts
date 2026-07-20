@@ -158,6 +158,16 @@ export function describeProviderConnection(
         canCancel: false,
       };
     }
+    if (status.runtime?.source === "custom" && status.runtime.message) {
+      return {
+        title,
+        description: status.runtime.message,
+        primaryAction: "check_again",
+        primaryLabel: "Check again",
+        busy: false,
+        canCancel: false,
+      };
+    }
     if (status.runtime?.canInstall) {
       return {
         title,
