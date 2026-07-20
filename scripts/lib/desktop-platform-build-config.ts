@@ -10,6 +10,7 @@ export const MAC_INHERITED_ENTITLEMENTS_PATH =
   "apps/desktop/resources/entitlements.mac.inherit.plist";
 export const MAC_APPSNAP_HELPER_STAGE_PATH =
   "apps/desktop/native/appsnap/build/scient-appsnap-helper";
+export const MAC_ADHOC_SIGN_HOOK_PATH = "scripts/adhoc-sign-mac-app.cjs";
 export const MAC_APPSNAP_HELPER_ASAR_EXCLUSION = "!apps/desktop/native/appsnap/build/**";
 export const MAC_APPSNAP_HELPER_BUNDLE_PATH = "Contents/Helpers/scient-appsnap-helper";
 export const WINDOWS_INSTALLER_GUID = "368107a8-afe6-5db5-ab3b-d4f331684868";
@@ -17,6 +18,7 @@ const MAC_DMG_ICON_PATH = "icon.icns";
 export const NODE_PTY_ASAR_UNPACK_GLOBS = ["node_modules/node-pty/**"] as const;
 
 export interface DesktopPlatformBuildConfig {
+  readonly afterPack?: string;
   readonly asarUnpack?: ReadonlyArray<string>;
   readonly extraFiles?: ReadonlyArray<Record<string, string>>;
   readonly files?: ReadonlyArray<string>;
@@ -28,6 +30,7 @@ export interface DesktopPlatformBuildConfig {
 
 export interface CreateDesktopPlatformBuildConfigInput {
   readonly platform: "linux" | "mac" | "win";
+  readonly signed?: boolean;
   readonly target: string;
   readonly windowsAzureSignOptions?: Record<string, string>;
 }
@@ -84,7 +87,8 @@ export function createDesktopPlatformBuildConfig(
 
     return {
       ...nativePackaging,
-      files: ["**/*", MAC_APPSNAP_HELPER_ASAR_EXCLUSION],
+      ...(input.signed === true ? {} : { afterPack: MAC_ADHOC_SIGN_HOOK_PATH }),
+      files: ["**/*", MAC_APPSNAP_HELPER_ASAR_EXCLUSION, `!${MAC_ADHOC_SIGN_HOOK_PATH}`],
       extraFiles: [
         {
           from: MAC_APPSNAP_HELPER_STAGE_PATH,

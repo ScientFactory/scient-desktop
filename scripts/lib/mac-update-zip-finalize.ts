@@ -26,6 +26,7 @@ import {
   resolveSingleTopLevelMacAppBundle,
   updateMacUpdateManifestZipEntry,
 } from "./mac-update-zip.ts";
+import { verifyMacAppSignature } from "./mac-artifact-signature.ts";
 
 export interface FinalizeMacUpdateZipOptions {
   readonly stageDistDir: string;
@@ -122,14 +123,6 @@ function assertMacZipFrameworkSymlinks(zipPath: string): string {
     }
   }
   return appBundleName;
-}
-
-function verifyMacAppSignature(appBundlePath: string, requireSignature: boolean): void {
-  const codeResourcesPath = join(appBundlePath, "Contents", "_CodeSignature", "CodeResources");
-  if (!requireSignature && !existsSync(codeResourcesPath)) {
-    return;
-  }
-  runTextCommand("codesign", ["--verify", "--deep", "--strict", "--verbose=4", appBundlePath]);
 }
 
 function computeSha512Base64(filePath: string): Promise<string> {
