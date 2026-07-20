@@ -32,7 +32,7 @@ import { ProviderRuntimeManager } from "./provider/Services/ProviderRuntimeManag
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper";
 import { Server } from "./effectServer";
 import { ServerLoggerLive } from "./serverLogger";
-import { ServerSettingsService } from "./serverSettings";
+import { ServerSettingsLive, ServerSettingsService } from "./serverSettings";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess";
 import { PtyAdapterLayerLive } from "./terminal/runtimeLayer";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
@@ -255,6 +255,11 @@ const LayerLive = (input: CliInput) => {
     Layer.provideMerge(providerLayer),
     Layer.provideMerge(providerRuntimeLayer),
   );
+  const analyticsLayer = AnalyticsServiceLayerLive.pipe(
+    // Analytics reads the same server-authoritative privacy setting exposed to
+    // the UI and the rest of the runtime.
+    Layer.provideMerge(ServerSettingsLive),
+  );
 
   return Layer.empty.pipe(
     Layer.provideMerge(runtimeServicesLayer),
@@ -264,7 +269,7 @@ const LayerLive = (input: CliInput) => {
     Layer.provideMerge(providerSessionReaperLayer),
     Layer.provideMerge(SqlitePersistence.layerConfig),
     Layer.provideMerge(ServerLoggerLive),
-    Layer.provideMerge(AnalyticsServiceLayerLive),
+    Layer.provideMerge(analyticsLayer),
     Layer.provideMerge(ServerConfigLive(input)),
   );
 };

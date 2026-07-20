@@ -6,7 +6,13 @@
  *
  * @module AnalyticsService
  */
+import type { TelemetryPrivacyLevel } from "@synara/contracts";
 import { Effect, Layer, ServiceMap } from "effect";
+
+export interface AnalyticsRecordOptions {
+  /** Minimum user-selected level required before this event may leave the device. */
+  readonly privacyLevel?: Exclude<TelemetryPrivacyLevel, "off">;
+}
 
 export interface AnalyticsServiceShape {
   /**
@@ -15,6 +21,7 @@ export interface AnalyticsServiceShape {
   readonly record: (
     event: string,
     properties?: Readonly<Record<string, unknown>>,
+    options?: AnalyticsRecordOptions,
   ) => Effect.Effect<void, never>;
 
   /**
