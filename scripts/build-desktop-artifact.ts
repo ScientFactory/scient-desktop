@@ -28,6 +28,7 @@ import {
   RELEASE_WORKSPACE_MANIFEST_PATHS,
 } from "./lib/release-workspace-manifests.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
+import { resolveWindowsSigningProvider } from "./lib/windows-signing.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -730,8 +731,28 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     ];
   }
 
+  const windowsSigningProvider =
+    platform === "win" && signed
+      ? yield* Effect.try({
+          try: () => resolveWindowsSigningProvider(process.env),
+          catch: (cause) =>
+            new BuildScriptError({
+              message:
+                cause instanceof Error
+                  ? cause.message
+                  : "Could not resolve the Windows signing provider.",
+              cause,
+            }),
+        })
+      : null;
+  if (platform === "win" && signed && windowsSigningProvider === null) {
+    return yield* new BuildScriptError({
+      message:
+        "Signed Windows builds require a standard Authenticode certificate or Azure Trusted Signing configuration.",
+    });
+  }
   const windowsAzureSignOptions =
-    platform === "win" && signed ? yield* AzureTrustedSigningOptionsConfig : undefined;
+    windowsSigningProvider === "azure" ? yield* AzureTrustedSigningOptionsConfig : undefined;
 
   const platformBuildConfigInput = {
     platform,
@@ -981,6 +1002,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = "false";
     delete buildEnv.CSC_LINK;
     delete buildEnv.CSC_KEY_PASSWORD;
+    delete buildEnv.WIN_CSC_LINK;
+    delete buildEnv.WIN_CSC_KEY_PASSWORD;
     delete buildEnv.APPLE_API_KEY;
     delete buildEnv.APPLE_API_KEY_ID;
     delete buildEnv.APPLE_API_ISSUER;
