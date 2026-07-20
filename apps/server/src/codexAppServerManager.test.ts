@@ -965,7 +965,11 @@ describe("startSession", () => {
     const second = getOrCreateDiscoverySession("/repo");
 
     expect(createDiscoverySession).toHaveBeenCalledTimes(1);
-    expect(createDiscoverySession).toHaveBeenCalledWith("/repo");
+    expect(createDiscoverySession).toHaveBeenCalledWith(
+      "/repo",
+      "codex",
+      JSON.stringify({ cwd: "/repo", binaryPath: "codex" }),
+    );
     resolveStart(discoveryContext);
     await expect(Promise.all([first, second])).resolves.toEqual([
       discoveryContext,
@@ -1566,7 +1570,7 @@ describe("CodexAppServerManager discovery", () => {
       threadId: "thread_missing",
     });
 
-    expect(getOrCreateDiscoverySession).toHaveBeenCalledWith("/repo-b");
+    expect(getOrCreateDiscoverySession).toHaveBeenCalledWith("/repo-b", undefined);
     expect(sendRequest).toHaveBeenCalledWith(discoveryContext, "skills/list", {
       cwds: ["/repo-b"],
     });

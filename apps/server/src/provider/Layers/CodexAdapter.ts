@@ -58,6 +58,7 @@ import { extractProposedPlanMarkdown } from "../planMode.ts";
 import { appendFileAttachmentsPromptBlock } from "../attachmentProjection.ts";
 import { readProviderPromptImage } from "../promptAttachments.ts";
 import { synaraSkillsDir } from "../skillsCatalog.ts";
+import { scientBuiltInSkillsActiveRoot } from "../../scientBuiltInSkills.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "codex" as const;
@@ -1610,6 +1611,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
           options?.makeManager?.(services) ??
           new CodexAppServerManager(services, {
             synaraSkillsDir: synaraSkillsDir(serverConfig.baseDir),
+            scientBuiltInSkillsDir: scientBuiltInSkillsActiveRoot(serverConfig.baseDir),
           })
         );
       }),
@@ -2008,9 +2010,13 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
           }),
       }).pipe(Effect.map((result) => result satisfies ProviderReadPluginResult));
 
-    const listModels: NonNullable<CodexAdapterShape["listModels"]> = (_input) =>
+    const listModels: NonNullable<CodexAdapterShape["listModels"]> = (input) =>
       Effect.tryPromise({
-        try: () => manager.listModels(),
+        try: () =>
+          manager.listModels(undefined, {
+            ...(input.binaryPath ? { binaryPath: input.binaryPath } : {}),
+            ...(input.cwd ? { cwd: input.cwd } : {}),
+          }),
         catch: (cause) =>
           new ProviderAdapterRequestError({
             provider: PROVIDER,

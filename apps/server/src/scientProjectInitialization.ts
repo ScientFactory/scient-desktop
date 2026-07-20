@@ -9,7 +9,9 @@ import {
   rollbackProjectInitialization,
   type InitializationPlan,
   type InitializationRequest,
+  type BuiltInSkillDescriptor,
 } from "@scientfactory/project-init";
+import { listProjectActivatableBuiltInSkillReleases } from "@scientfactory/scient-skills";
 import type {
   ScientProjectInitializationApplyResult,
   ScientProjectInitializationOperation,
@@ -37,6 +39,29 @@ export interface ScientProjectInitializationServiceOptions {
   readonly createPreviewId?: () => string;
   readonly previewTtlMs?: number;
   readonly maxPreviews?: number;
+  readonly builtInSkills?: readonly BuiltInSkillDescriptor[];
+}
+
+function defaultBuiltInSkills(): readonly BuiltInSkillDescriptor[] {
+  return listProjectActivatableBuiltInSkillReleases().map((release) => ({
+    id: release.id,
+    version: release.version,
+    digest: release.digest,
+    origin: release.origin,
+    displayName: release.displayName,
+    description: release.description,
+    role: release.role,
+    defaultSelected: false,
+    readiness:
+      release.requirements.projectObjects.length > 0 || release.requirements.operations.length > 0
+        ? "latent"
+        : "available",
+    prerequisites: [
+      ...release.requirements.projectObjects.map((object) => `Project object: ${object}`),
+      ...release.requirements.operations.map((operation) => `Operation: ${operation}`),
+    ],
+    capabilities: release.capabilities,
+  }));
 }
 
 function toPreviewOperation(
@@ -78,6 +103,7 @@ function toInitializationRequest(
     ...(request.question !== undefined ? { question: request.question } : {}),
     ...(request.scopeIncluded !== undefined ? { scopeIncluded: request.scopeIncluded } : {}),
     ...(request.scopeExcluded !== undefined ? { scopeExcluded: request.scopeExcluded } : {}),
+    ...(request.skillIds !== undefined ? { skillIds: request.skillIds } : {}),
   };
 }
 
@@ -96,6 +122,7 @@ export class ScientProjectInitializationService {
   readonly #createPreviewId: () => string;
   readonly #previewTtlMs: number;
   readonly #maxPreviews: number;
+  readonly #builtInSkills: readonly BuiltInSkillDescriptor[];
   readonly #previews = new Map<string, StoredPreview>();
 
   constructor(options: ScientProjectInitializationServiceOptions = {}) {
@@ -103,6 +130,7 @@ export class ScientProjectInitializationService {
     this.#createPreviewId = options.createPreviewId ?? randomUUID;
     this.#previewTtlMs = options.previewTtlMs ?? DEFAULT_PREVIEW_TTL_MS;
     this.#maxPreviews = options.maxPreviews ?? DEFAULT_MAX_PREVIEWS;
+    this.#builtInSkills = options.builtInSkills ?? defaultBuiltInSkills();
     if (!Number.isSafeInteger(this.#previewTtlMs) || this.#previewTtlMs <= 0) {
       throw new Error("Project initialization preview TTL must be a positive integer.");
     }
@@ -133,6 +161,7 @@ export class ScientProjectInitializationService {
         canRecover: false,
         canRollback: false,
         operations: [],
+        skills: [],
         issues: [
           {
             code: "invalid-folder",
@@ -162,6 +191,7 @@ export class ScientProjectInitializationService {
         canRecover: true,
         canRollback: true,
         operations: [],
+        skills: [],
         issues: toPreviewIssues(inspection.issues),
       };
     }
@@ -169,6 +199,7 @@ export class ScientProjectInitializationService {
     const plan = await planProjectInitialization({
       inspection,
       request: toInitializationRequest(input),
+      builtInSkills: this.#builtInSkills,
     });
     const canApply = plan.status === "ready";
     const stored = canApply
@@ -189,6 +220,20 @@ export class ScientProjectInitializationService {
       canRecover: false,
       canRollback: false,
       operations: plan.operations.map(toPreviewOperation),
+      skills: this.#builtInSkills.map((skill) => ({
+        id: skill.id,
+        version: skill.version,
+        digest: skill.digest,
+        origin: skill.origin,
+        displayName: skill.displayName,
+        description: skill.description,
+        role: skill.role,
+        selected: plan.skillActivations.some((activation) => activation.id === skill.id),
+        defaultSelected: skill.defaultSelected,
+        readiness: skill.readiness,
+        prerequisites: [...skill.prerequisites],
+        capabilities: { ...skill.capabilities },
+      })),
       issues: toPreviewIssues(inspection.issues),
     };
   }

@@ -4,7 +4,7 @@
 // a skill comes from, and lets the user enable/disable each one. Disabled skills are
 // hidden from the composer skill picker on every provider.
 
-import type { ProviderKind, ServerSettings } from "@synara/contracts";
+import type { ProviderKind, ProviderSkillsCatalogResult, ServerSettings } from "@synara/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 
@@ -22,6 +22,7 @@ import {
   buildSettingsSkillGroups,
   buildSettingsSkillSections,
   providerDisplayName,
+  setScientBuiltInActivationOverride,
   settingsSkillNameKey,
 } from "./skillsSettingsModel";
 
@@ -70,6 +71,7 @@ export function SkillsSettingsPanel() {
   const skillSections = useMemo(() => {
     return buildSettingsSkillSections(catalogQuery.data?.skills ?? []);
   }, [catalogQuery.data?.skills]);
+  const scientBuiltInSkills = catalogQuery.data?.scientBuiltInSkills ?? [];
 
   const setSkillEnabled = (skillName: string, enabled: boolean) => {
     // Read through the query cache (not the render closure) so rapid toggles
@@ -88,7 +90,10 @@ export function SkillsSettingsPanel() {
       // Optimistic flip; a failed patch invalidates back to the server state.
       queryClient.setQueryData(serverQueryKeys.settings(), {
         ...latestSettings,
-        skills: { disabled },
+        skills: {
+          ...latestSettings.skills,
+          disabled,
+        },
       });
     }
     void ensureNativeApi()
@@ -103,12 +108,111 @@ export function SkillsSettingsPanel() {
       });
   };
 
+  const setScientBuiltInSkillEnabled = (
+    skillId: string,
+    defaultEnabled: boolean,
+    enabled: boolean,
+  ) => {
+    const latestSettings = queryClient.getQueryData<ServerSettings>(serverQueryKeys.settings());
+    const currentOverrides =
+      latestSettings?.skills.scientBuiltInActivationOverrides ??
+      serverSettingsQuery.data?.skills.scientBuiltInActivationOverrides ??
+      [];
+    const nextOverrides = setScientBuiltInActivationOverride({
+      current: currentOverrides,
+      id: skillId,
+      defaultEnabled,
+      enabled,
+    });
+
+    if (latestSettings) {
+      queryClient.setQueryData(serverQueryKeys.settings(), {
+        ...latestSettings,
+        skills: {
+          ...latestSettings.skills,
+          scientBuiltInActivationOverrides: nextOverrides,
+        },
+      });
+    }
+    queryClient.setQueryData<ProviderSkillsCatalogResult>(
+      providerDiscoveryQueryKeys.skillsCatalog(null),
+      (current) =>
+        current
+          ? {
+              ...current,
+              scientBuiltInSkills: current.scientBuiltInSkills.map((skill) =>
+                skill.id === skillId ? { ...skill, enabled } : skill,
+              ),
+            }
+          : current,
+    );
+    void ensureNativeApi()
+      .server.updateSettings({
+        skills: { scientBuiltInActivationOverrides: nextOverrides },
+      })
+      .then((nextSettings) => {
+        queryClient.setQueryData(serverQueryKeys.settings(), nextSettings);
+        void queryClient.invalidateQueries({
+          queryKey: providerDiscoveryQueryKeys.skillsCatalog(null),
+        });
+        void queryClient.invalidateQueries({ queryKey: providerDiscoveryQueryKeys.all });
+      })
+      .catch(() => {
+        void queryClient.invalidateQueries({ queryKey: serverQueryKeys.settings() });
+        void queryClient.invalidateQueries({
+          queryKey: providerDiscoveryQueryKeys.skillsCatalog(null),
+        });
+      });
+  };
+
   const totalSkills = skillGroups.length;
   const enabledSkills = skillGroups.filter((group) => !disabledSkillNames.has(group.key)).length;
   const synaraSkillsDir = catalogQuery.data?.synaraSkillsDir;
 
   return (
     <div className="space-y-8">
+      {scientBuiltInSkills.length > 0 ? (
+        <SettingsSection title="Built into Scient">
+          {scientBuiltInSkills.map((skill) => (
+            <SettingsRow
+              key={`${skill.id}@${skill.version}`}
+              title={
+                <span className="inline-flex min-w-0 items-center gap-1.5">
+                  <SkillCubeIcon
+                    aria-hidden="true"
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                  />
+                  <span className="truncate">{skill.displayName}</span>
+                </span>
+              }
+              description={skill.description}
+              status={
+                <span className="flex flex-wrap gap-x-2 gap-y-1">
+                  <span>Scient · v{skill.version}</span>
+                  <span>{skill.kind === "meta" ? "Meta-skill" : "Scientific skill"}</span>
+                  <span>
+                    {skill.capabilities.network ? "Network" : "No network"} ·{" "}
+                    {skill.capabilities.codeExecution ? "Code execution" : "No code execution"} ·{" "}
+                    {skill.capabilities.projectWrites === "proposal-only"
+                      ? "Proposal-only changes"
+                      : "No project writes"}
+                  </span>
+                </span>
+              }
+              control={
+                <Switch
+                  checked={skill.enabled}
+                  onCheckedChange={(checked) =>
+                    setScientBuiltInSkillEnabled(skill.id, skill.defaultEnabled, Boolean(checked))
+                  }
+                  aria-label={`${skill.enabled ? "Deactivate" : "Activate"} the ${skill.displayName} skill`}
+                />
+              }
+            />
+          ))}
+        </SettingsSection>
+      ) : null}
+
       <SettingsSection title="Portable skills">
         <SettingsRow
           title="Scient skills folder"
@@ -137,7 +241,10 @@ export function SkillsSettingsPanel() {
         </SettingsSection>
       ) : null}
 
-      {!catalogQuery.isLoading && !catalogQuery.isError && totalSkills === 0 ? (
+      {!catalogQuery.isLoading &&
+      !catalogQuery.isError &&
+      totalSkills === 0 &&
+      scientBuiltInSkills.length === 0 ? (
         <SettingsSection title="Skills">
           <SettingsRow
             title="No skills found"

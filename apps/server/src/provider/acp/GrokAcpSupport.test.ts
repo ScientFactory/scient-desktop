@@ -20,7 +20,7 @@ describe("buildGrokAcpSpawnInput", () => {
   it("builds the default Grok ACP command", () => {
     expect(buildGrokAcpSpawnInput(undefined, "/tmp/project")).toEqual({
       command: "grok",
-      args: ["agent", "--no-leader", "stdio"],
+      args: ["--no-auto-update", "agent", "--no-leader", "stdio"],
       cwd: "/tmp/project",
     });
   });
@@ -28,7 +28,7 @@ describe("buildGrokAcpSpawnInput", () => {
   it("uses the configured Grok binary path", () => {
     expect(buildGrokAcpSpawnInput({ binaryPath: "/usr/local/bin/grok" }, "/tmp/project")).toEqual({
       command: "/usr/local/bin/grok",
-      args: ["agent", "--no-leader", "stdio"],
+      args: ["--no-auto-update", "agent", "--no-leader", "stdio"],
       cwd: "/tmp/project",
     });
   });
@@ -47,6 +47,7 @@ describe("buildGrokAcpSpawnInput", () => {
     ).toEqual({
       command: "/usr/local/bin/grok",
       args: [
+        "--no-auto-update",
         "agent",
         "--no-leader",
         "--always-approve",
@@ -78,24 +79,30 @@ describe("resolveGrokAcpAuthMethodId", () => {
     }
   });
 
-  it("prefers the xAI API key auth method when XAI_API_KEY is present", async () => {
+  it("prefers the cached account token when both supported methods are available", async () => {
     process.env.XAI_API_KEY = "xai-test-key";
 
     await expect(
       Effect.runPromise(
         resolveGrokAcpAuthMethodId(initializeWithAuthMethods(["cached_token", "xai.api_key"])),
       ),
+    ).resolves.toBe("cached_token");
+  });
+
+  it("uses XAI_API_KEY when no cached-token method is available", async () => {
+    process.env.XAI_API_KEY = "xai-test-key";
+
+    await expect(
+      Effect.runPromise(resolveGrokAcpAuthMethodId(initializeWithAuthMethods(["xai.api_key"]))),
     ).resolves.toBe("xai.api_key");
   });
 
-  it("still accepts the legacy Grok API key env var", async () => {
+  it("still accepts the legacy Grok API key env var when needed", async () => {
     delete process.env.XAI_API_KEY;
     process.env.GROK_CODE_XAI_API_KEY = "xai-test-key";
 
     await expect(
-      Effect.runPromise(
-        resolveGrokAcpAuthMethodId(initializeWithAuthMethods(["cached_token", "xai.api_key"])),
-      ),
+      Effect.runPromise(resolveGrokAcpAuthMethodId(initializeWithAuthMethods(["xai.api_key"]))),
     ).resolves.toBe("xai.api_key");
   });
 

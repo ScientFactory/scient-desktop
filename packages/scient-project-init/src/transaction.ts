@@ -3,7 +3,10 @@ import {
   SCIENT_AGENTS_FILE,
   SCIENT_IDENTITY_FILE,
   SCIENT_PROJECT_FILE,
+  SCIENT_SKILLS_LOCK_FILE,
+  SCIENT_SKILLS_LOCK_FORMAT_VERSION,
   ProjectInitializationError,
+  type BuiltInSkillActivation,
   type CreateOperation,
   type InitializationTransaction,
   type PathSnapshot,
@@ -15,6 +18,7 @@ import {
   assertProjectId,
   validatePortableRelativePath,
   validateProjectIdentity,
+  validateSkillsLock,
 } from "./validation.ts";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
@@ -29,7 +33,8 @@ function validateOperationPath(value: unknown): string {
   if (
     value === SCIENT_PROJECT_FILE ||
     value === SCIENT_AGENTS_FILE ||
-    value === SCIENT_IDENTITY_FILE
+    value === SCIENT_IDENTITY_FILE ||
+    value === SCIENT_SKILLS_LOCK_FILE
   ) {
     return value;
   }
@@ -175,6 +180,24 @@ export function validateInitializationTransaction(value: unknown): Initializatio
     profileVersions[profileId] = version as number;
   }
   const operations = candidate.operations.map(validateOperation);
+  const hasSkillActivationRecord = candidate.skillActivations !== undefined;
+  let skillActivations: BuiltInSkillActivation[] = [];
+  if (hasSkillActivationRecord) {
+    try {
+      skillActivations = [
+        ...validateSkillsLock({
+          formatVersion: SCIENT_SKILLS_LOCK_FORMAT_VERSION,
+          skills: candidate.skillActivations,
+        }).skills,
+      ];
+    } catch (error) {
+      throw new ProjectInitializationError(
+        "INVALID_TRANSACTION",
+        "Transaction contains an invalid built-in skill activation record.",
+        { cause: error },
+      );
+    }
+  }
   const paths = new Set<string>();
   for (const operation of operations) {
     if (paths.has(operation.path)) {
@@ -227,12 +250,43 @@ export function validateInitializationTransaction(value: unknown): Initializatio
       "Transaction identity does not match its project metadata.",
     );
   }
+  const skillsLockOperations = operations.filter(
+    (operation): operation is CreateOperation =>
+      operation.kind === "create" && operation.path === SCIENT_SKILLS_LOCK_FILE,
+  );
+  if (skillsLockOperations.length !== (hasSkillActivationRecord ? 1 : 0)) {
+    throw new ProjectInitializationError(
+      "INVALID_TRANSACTION",
+      hasSkillActivationRecord
+        ? "Transaction must contain exactly one built-in skills lock creation."
+        : "Legacy transaction cannot contain a built-in skills lock creation.",
+    );
+  }
+  if (hasSkillActivationRecord) {
+    let skillsLock;
+    try {
+      skillsLock = validateSkillsLock(JSON.parse(skillsLockOperations[0]!.contents));
+    } catch (error) {
+      throw new ProjectInitializationError(
+        "INVALID_TRANSACTION",
+        "Transaction contains an invalid built-in skills lock.",
+        { cause: error },
+      );
+    }
+    if (JSON.stringify(skillsLock.skills) !== JSON.stringify(skillActivations)) {
+      throw new ProjectInitializationError(
+        "INVALID_TRANSACTION",
+        "Transaction skill activations do not match its built-in skills lock.",
+      );
+    }
+  }
   return {
     transactionVersion: 1,
     transactionId,
     projectId,
     createdAt,
     profileVersions,
+    skillActivations,
     operations,
   };
 }

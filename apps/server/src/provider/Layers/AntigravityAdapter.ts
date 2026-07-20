@@ -192,7 +192,7 @@ export async function runAntigravityHelperProcess(
   return await new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: process.env,
+      env: { ...process.env, AGY_CLI_DISABLE_AUTO_UPDATE: "true" },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -339,9 +339,14 @@ export function parseAntigravityModelLines(output: string): ProviderListModelsRe
   const groups = new Map<string, string[]>();
   for (const line of output.split(/\r?\n/g)) {
     const parsed = parseAntigravityCliModelLabel(line);
-    if (!parsed) continue;
+    if (
+      !parsed?.effort ||
+      !/^(?:claude|deepseek|gemini|gpt|grok|llama|mistral|qwen)\b/iu.test(parsed.model)
+    ) {
+      continue;
+    }
     const efforts = groups.get(parsed.model) ?? [];
-    if (parsed.effort && !efforts.includes(parsed.effort)) efforts.push(parsed.effort);
+    if (!efforts.includes(parsed.effort)) efforts.push(parsed.effort);
     groups.set(parsed.model, efforts);
   }
   return [...groups.entries()].map(([model, discoveredEfforts]) => {
@@ -853,6 +858,7 @@ const makeAntigravityAdapter = Effect.gen(function* () {
         cwd: context.session.cwd ?? serverConfig.cwd,
         env: {
           ...process.env,
+          AGY_CLI_DISABLE_AUTO_UPDATE: "true",
           SYNARA_ANTIGRAVITY_EVENTS: eventFile,
           SYNARA_ANTIGRAVITY_HOOK_DECISION: "allow",
         },

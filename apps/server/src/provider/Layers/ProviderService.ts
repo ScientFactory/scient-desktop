@@ -24,6 +24,7 @@ import {
   ProviderSessionStartInput,
   ProviderStopSessionInput,
   ProviderStartOptions,
+  type ProviderKind,
   type ProviderRuntimeEvent,
   type ProviderSession,
 } from "@synara/contracts";
@@ -40,11 +41,17 @@ import {
 } from "../Services/ProviderSessionDirectory.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
+import {
+  configuredProviderExecutable,
+  withResolvedProviderExecutable,
+} from "../providerRuntimeOptions.ts";
+import type { ProviderRuntimeManagerShape } from "../Services/ProviderRuntimeManager.ts";
 
 export interface ProviderServiceLiveOptions {
   readonly canonicalEventLogPath?: string;
   readonly canonicalEventLogger?: EventNdjsonLogger;
   readonly runtimeIdleStopMs?: number;
+  readonly resolveProviderRuntime?: ProviderRuntimeManagerShape["resolve"];
 }
 
 const DEFAULT_PROVIDER_RUNTIME_IDLE_STOP_MS = 10 * 60 * 1000;
@@ -255,6 +262,21 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
 
     const registry = yield* ProviderAdapterRegistry;
     const directory = yield* ProviderSessionDirectory;
+    const resolveLaunchProviderOptions = (
+      provider: ProviderKind,
+      providerOptions: ProviderStartOptions | undefined,
+    ): Effect.Effect<ProviderStartOptions | undefined> => {
+      if (!options?.resolveProviderRuntime) return Effect.succeed(providerOptions);
+      return options
+        .resolveProviderRuntime(provider, configuredProviderExecutable(provider, providerOptions))
+        .pipe(
+          Effect.map((runtime) =>
+            runtime.executable
+              ? withResolvedProviderExecutable(provider, providerOptions, runtime.executable)
+              : providerOptions,
+          ),
+        );
+    };
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
     const runtimeIdleTimers = new Map<ThreadId, ReturnType<typeof setTimeout>>();
     // Fired idle callbacks outlive their timer map entry, so use generations to
@@ -661,13 +683,17 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
         const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
         const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
         const persistedProviderOptions = readPersistedProviderOptions(input.binding.runtimePayload);
+        const launchProviderOptions = yield* resolveLaunchProviderOptions(
+          input.binding.provider,
+          persistedProviderOptions,
+        );
 
         const resumed = yield* adapter.startSession({
           threadId: input.binding.threadId,
           provider: input.binding.provider,
           ...(persistedCwd ? { cwd: persistedCwd } : {}),
           ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
-          ...(persistedProviderOptions ? { providerOptions: persistedProviderOptions } : {}),
+          ...(launchProviderOptions ? { providerOptions: launchProviderOptions } : {}),
           ...(hasPersistedResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
           runtimeMode: input.binding.runtimeMode ?? "full-access",
         });
@@ -762,11 +788,15 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
           (persistedBinding?.provider === input.provider
             ? readPersistedProviderOptions(persistedBinding.runtimePayload)
             : undefined);
+        const launchProviderOptions = yield* resolveLaunchProviderOptions(
+          input.provider,
+          effectiveProviderOptions,
+        );
         const adapter = yield* registry.getByProvider(input.provider);
         const session = yield* adapter.startSession({
           ...input,
-          ...(effectiveProviderOptions !== undefined
-            ? { providerOptions: effectiveProviderOptions }
+          ...(launchProviderOptions !== undefined
+            ? { providerOptions: launchProviderOptions }
             : {}),
           ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
         });
@@ -819,6 +849,10 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
 
         const effectiveProviderOptions =
           input.providerOptions ?? readPersistedProviderOptions(sourceBinding.runtimePayload);
+        const launchProviderOptions = yield* resolveLaunchProviderOptions(
+          sourceBinding.provider,
+          effectiveProviderOptions,
+        );
         const sourceCwd = readPersistedCwd(sourceBinding.runtimePayload);
 
         const adapter = yield* registry.getByProvider(sourceBinding.provider);
@@ -838,8 +872,8 @@ const makeProviderService = (options?: ProviderServiceLiveOptions) =>
             ...input,
             threadId: input.threadId,
             sourceThreadId: input.sourceThreadId,
-            ...(effectiveProviderOptions !== undefined
-              ? { providerOptions: effectiveProviderOptions }
+            ...(launchProviderOptions !== undefined
+              ? { providerOptions: launchProviderOptions }
               : {}),
             ...(sourceBinding.resumeCursor !== null && sourceBinding.resumeCursor !== undefined
               ? { sourceResumeCursor: sourceBinding.resumeCursor }

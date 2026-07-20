@@ -157,6 +157,13 @@ import {
   ServerProviderConnectionError,
   ServerProviderConnectionResult,
   ServerProviderConnectionStartInput,
+  ServerProviderInstallCancelInput,
+  ServerProviderInstallInput,
+  ServerProviderInstallPlanInput,
+  ServerProviderInstallPlanResult,
+  ServerProviderInstallationError,
+  ServerProviderInstallationResult,
+  ServerProviderRuntimeMutationInput,
   ServerProviderUpdateError,
   ServerProviderUpdateInput,
   ServerProviderUpdateResult,
@@ -707,6 +714,42 @@ export const WsServerCancelProviderConnectionRpc = Rpc.make(
   },
 );
 
+export const WsServerInstallProviderRpc = Rpc.make(WS_METHODS.serverInstallProvider, {
+  payload: ServerProviderInstallInput,
+  success: ServerProviderInstallationResult,
+  error: ServerProviderInstallationError,
+});
+
+export const WsServerPrepareProviderInstallRpc = Rpc.make(WS_METHODS.serverPrepareProviderInstall, {
+  payload: ServerProviderInstallPlanInput,
+  success: ServerProviderInstallPlanResult,
+  error: ServerProviderInstallationError,
+});
+
+export const WsServerCancelProviderInstallRpc = Rpc.make(WS_METHODS.serverCancelProviderInstall, {
+  payload: ServerProviderInstallCancelInput,
+  success: ServerProviderInstallationResult,
+  error: ServerProviderInstallationError,
+});
+
+export const WsServerRepairProviderRpc = Rpc.make(WS_METHODS.serverRepairProvider, {
+  payload: ServerProviderRuntimeMutationInput,
+  success: ServerProviderInstallationResult,
+  error: ServerProviderInstallationError,
+});
+
+export const WsServerRollbackProviderRpc = Rpc.make(WS_METHODS.serverRollbackProvider, {
+  payload: ServerProviderRuntimeMutationInput,
+  success: ServerProviderInstallationResult,
+  error: ServerProviderInstallationError,
+});
+
+export const WsServerRemoveManagedProviderRpc = Rpc.make(WS_METHODS.serverRemoveManagedProvider, {
+  payload: ServerProviderRuntimeMutationInput,
+  success: ServerProviderInstallationResult,
+  error: ServerProviderInstallationError,
+});
+
 export const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvider, {
   payload: ServerProviderUpdateInput,
   success: ServerProviderUpdateResult,
@@ -1011,6 +1054,12 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshProvidersRpc,
   WsServerStartProviderConnectionRpc,
   WsServerCancelProviderConnectionRpc,
+  WsServerPrepareProviderInstallRpc,
+  WsServerInstallProviderRpc,
+  WsServerCancelProviderInstallRpc,
+  WsServerRepairProviderRpc,
+  WsServerRollbackProviderRpc,
+  WsServerRemoveManagedProviderRpc,
   WsServerUpdateProviderRpc,
   WsServerListWorktreesRpc,
   WsServerListLocalServersRpc,

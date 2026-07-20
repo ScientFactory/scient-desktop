@@ -2,7 +2,11 @@
 // Purpose: One plain-language setup and recovery flow for AI providers.
 // Layer: Shared UI component
 
-import type { ServerConfig, ServerProviderStatus } from "@synara/contracts";
+import type {
+  ServerConfig,
+  ServerProviderInstallPlan,
+  ServerProviderStatus,
+} from "@synara/contracts";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
@@ -43,6 +47,7 @@ export function ProviderConnectionDialog() {
   const queryClient = useQueryClient();
   const [actionPending, setActionPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [installPlan, setInstallPlan] = useState<ServerProviderInstallPlan | null>(null);
 
   const status = provider
     ? configQuery.data?.providers.find((entry) => entry.provider === provider)
@@ -53,6 +58,7 @@ export function ProviderConnectionDialog() {
   useEffect(() => {
     setActionPending(false);
     setActionError(null);
+    setInstallPlan(null);
   }, [isOpen, provider]);
 
   if (!provider || !presentation || !Icon) return null;
@@ -97,8 +103,37 @@ export function ProviderConnectionDialog() {
     });
   };
 
+  const install = () =>
+    runAction(async () => {
+      if (!installPlan) {
+        const plan = await ensureNativeApi().server.prepareProviderInstall({ provider });
+        setInstallPlan(plan);
+        return;
+      }
+      const result = await ensureNativeApi().server.installProvider({
+        provider,
+        planToken: installPlan.planToken,
+      });
+      setInstallPlan(null);
+      updateProviderStatuses(queryClient, result.providers);
+    });
+
+  const cancelInstall = () => {
+    const operationId = status?.installationState?.operationId;
+    if (!operationId) return Promise.resolve();
+    return runAction(async () => {
+      const result = await ensureNativeApi().server.cancelProviderInstall({
+        provider,
+        operationId,
+      });
+      updateProviderStatuses(queryClient, result.providers);
+    });
+  };
+
   const handlePrimary = () => {
     switch (presentation.primaryAction) {
+      case "install":
+        return install();
       case "sign_in":
         return startSignIn();
       case "check_again":
@@ -144,6 +179,18 @@ export function ProviderConnectionDialog() {
             </div>
           ) : null}
 
+          {installPlan ? (
+            <div className="space-y-1.5 rounded-xl border border-[color:var(--color-border)] bg-[var(--color-background-elevated-secondary)] px-3 py-2.5 text-sm">
+              <p className="font-medium">Ready to install version {installPlan.version}</p>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {installPlan.downloadBytes
+                  ? `${(installPlan.downloadBytes / 1_048_576).toFixed(1)} MB from ${installPlan.sourceHost}`
+                  : `Verified download from ${installPlan.sourceHost}`}
+                {`. Installed only inside Scient for ${installPlan.target}.`}
+              </p>
+            </div>
+          ) : null}
+
           {actionError ? (
             <p
               className="rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-sm text-destructive"
@@ -162,14 +209,19 @@ export function ProviderConnectionDialog() {
 
         <DialogFooter className="px-5 pb-5">
           {presentation.canCancel ? (
-            <Button type="button" variant="outline" disabled={actionPending} onClick={cancelSignIn}>
-              Cancel sign in
+            <Button
+              type="button"
+              variant="outline"
+              disabled={actionPending}
+              onClick={status?.installationState ? cancelInstall : cancelSignIn}
+            >
+              {status?.installationState ? "Cancel installation" : "Cancel sign in"}
             </Button>
           ) : null}
           {presentation.primaryAction !== "none" ? (
             <Button type="button" disabled={actionPending} onClick={handlePrimary}>
               {actionPending ? <Spinner /> : null}
-              {presentation.primaryLabel}
+              {installPlan ? "Download and install" : presentation.primaryLabel}
             </Button>
           ) : null}
         </DialogFooter>

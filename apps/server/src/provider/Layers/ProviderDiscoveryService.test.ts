@@ -32,7 +32,10 @@ import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderDiscoveryService } from "../Services/ProviderDiscoveryService.ts";
 import { clearSkillsCatalogCacheForTests } from "../skillsCatalog.ts";
-import { ProviderDiscoveryServiceLive } from "./ProviderDiscoveryService.ts";
+import {
+  makeProviderDiscoveryServiceLive,
+  ProviderDiscoveryServiceLive,
+} from "./ProviderDiscoveryService.ts";
 
 let root: string;
 let homeDir: string;
@@ -197,5 +200,47 @@ describe("ProviderDiscoveryService.getComposerCapabilities", () => {
 
     expect(capabilities.supportsSkillDiscovery).toBe(true);
     expect(capabilities.supportsSkillMentions).toBe(true);
+  });
+});
+
+describe("ProviderDiscoveryService runtime resolution", () => {
+  it("injects the exact resolved executable into model discovery", async () => {
+    let receivedBinaryPath: string | undefined;
+    const baseLayer = Layer.mergeAll(
+      makeConfigLayer(),
+      ServerSettingsService.layerTest(),
+      makeRegistryLayer({
+        listModels: (input) => {
+          receivedBinaryPath = input.binaryPath;
+          return Effect.succeed({
+            models: [{ slug: "model-1", name: "Model 1" }],
+            source: "test",
+            cached: false,
+          });
+        },
+      }),
+    ).pipe(Layer.provideMerge(NodeServices.layer));
+    const testLayer = makeProviderDiscoveryServiceLive({
+      resolveProviderRuntime: () =>
+        Effect.succeed({
+          source: "managed",
+          executable: "/managed/bin/claude",
+          managedVersion: "1.0.0",
+          canInstall: false,
+          canRepair: true,
+          canRollback: false,
+          canRemove: true,
+          message: null,
+        }),
+    }).pipe(Layer.provideMerge(baseLayer));
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const discovery = yield* ProviderDiscoveryService;
+        yield* discovery.listModels({ provider: "claudeAgent", cwd });
+      }).pipe(Effect.provide(testLayer)),
+    );
+
+    expect(receivedBinaryPath).toBe("/managed/bin/claude");
   });
 });

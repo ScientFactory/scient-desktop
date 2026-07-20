@@ -24,19 +24,22 @@ import { Open } from "./open";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
 import { makeServerProviderLayer, makeServerRuntimeServicesLayer } from "./serverLayers";
 import { startServerMemoryDiagnostics } from "./memoryDiagnostics";
-import { startClaudeCredentialKeepalive } from "./provider/claudeCredentialKeepalive";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
-import { ProviderHealthLive } from "./provider/Layers/ProviderHealth";
+import { makeProviderHealthLive } from "./provider/Layers/ProviderHealth";
 import { ProviderConnectionLive } from "./provider/Layers/ProviderConnection";
+import { ProviderRuntimeManagerLive } from "./provider/Layers/ProviderRuntimeManager";
+import { ProviderRuntimeManager } from "./provider/Services/ProviderRuntimeManager";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper";
 import { Server } from "./effectServer";
 import { ServerLoggerLive } from "./serverLogger";
 import { ServerSettingsService } from "./serverSettings";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess";
+import { PtyAdapterLayerLive } from "./terminal/runtimeLayer";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { startThreadRetentionJob } from "./threadRetention";
+import { synchronizeScientBuiltInSkills } from "./scientBuiltInSkills";
 
 export class StartupError extends Data.TaggedError("StartupError")<{
   readonly message: string;
@@ -223,21 +226,34 @@ const ServerConfigLive = (input: CliInput) =>
 
 const LayerLive = (input: CliInput) => {
   const runtimeServicesLayer = makeServerRuntimeServicesLayer();
-  const providerLayer = makeServerProviderLayer();
-  const providerHealthLayer = ProviderHealthLive.pipe(
-    // Provider health reads persisted provider settings while constructing its
-    // cache, so build it with the same runtime services layer exposed to Server.
-    Layer.provideMerge(runtimeServicesLayer),
+  const providerRuntimeLayer = ProviderRuntimeManagerLive.pipe(
+    // Packaged desktop shells often omit Homebrew and user-local directories.
+    // Hydrate PATH before the runtime manager snapshots its system search path.
+    Layer.provide(Layer.effectDiscard(Effect.sync(fixPath))),
   );
+  const providerLayer = makeServerProviderLayer().pipe(Layer.provideMerge(providerRuntimeLayer));
+  const providerHealthLayer = Effect.gen(function* () {
+    const providerRuntimeManager = yield* ProviderRuntimeManager;
+    return makeProviderHealthLive({
+      resolveProviderRuntime: providerRuntimeManager.resolve,
+    }).pipe(
+      // Provider health reads persisted provider settings while constructing its
+      // cache, so build it with the same runtime services layer exposed to Server.
+      Layer.provideMerge(runtimeServicesLayer),
+    );
+  }).pipe(Layer.unwrap, Layer.provideMerge(providerRuntimeLayer));
   const providerConnectionLayer = ProviderConnectionLive.pipe(
     Layer.provideMerge(runtimeServicesLayer),
     Layer.provideMerge(providerHealthLayer),
+    Layer.provideMerge(providerLayer),
+    Layer.provideMerge(PtyAdapterLayerLive),
   );
   const providerSessionReaperLayer = ProviderSessionReaperLive.pipe(
     // The reaper coordinates orchestration state with live provider sessions,
     // so it belongs at the top level where both layers are available.
     Layer.provideMerge(runtimeServicesLayer),
     Layer.provideMerge(providerLayer),
+    Layer.provideMerge(providerRuntimeLayer),
   );
 
   return Layer.empty.pipe(
@@ -285,6 +301,22 @@ const makeServerProgram = (input: CliInput) =>
     const config = yield* ServerConfig;
     yield* Effect.sync(() => startServerMemoryDiagnostics({ mode: config.mode }));
 
+    // Built-in delivery must reflect persisted user activation before any
+    // provider session can observe the managed skill root.
+    yield* serverSettings.start;
+    const initialSettings = yield* serverSettings.getSettings;
+    yield* Effect.tryPromise(() =>
+      synchronizeScientBuiltInSkills({ baseDir: config.baseDir, settings: initialSettings }),
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StartupError({
+            message: "Failed to prepare enabled Scient built-in skills.",
+            cause,
+          }),
+      ),
+    );
+
     if (!config.devUrl && !config.staticDir) {
       yield* Effect.logWarning(
         "web bundle missing and no VITE_DEV_SERVER_URL; web UI unavailable",
@@ -302,25 +334,6 @@ const makeServerProgram = (input: CliInput) =>
     // existing history first, then hide inactive threads from the app in the background.
     yield* startThreadRetentionJob(orchestrationEngine, projectionSnapshotQuery);
     yield* Effect.forkChild(recordStartupHeartbeat);
-    // Optional Claude OAuth keepalive. Disabled by default because it touches
-    // Claude Code auth data in the background; users can opt in with
-    // SYNARA_CLAUDE_KEEPALIVE=1.
-    yield* Effect.forkChild(
-      Effect.gen(function* () {
-        const settings = yield* serverSettings.getSettings;
-        if (settings.providers.claudeAgent.enabled === false) {
-          return;
-        }
-        yield* Effect.sync(() =>
-          startClaudeCredentialKeepalive({
-            binaryPath: settings.providers.claudeAgent.binaryPath,
-            homeDir: config.homeDir,
-            log: (message) => Effect.runFork(Effect.logInfo(message)),
-          }),
-        );
-      }),
-    );
-
     const localUrl = `http://localhost:${config.port}`;
     const bindUrl =
       config.host && !isWildcardHost(config.host)

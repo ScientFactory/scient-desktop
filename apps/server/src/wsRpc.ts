@@ -9,6 +9,7 @@ import {
   WsRpcError,
   WsRpcGroup,
   PullRequestsUnavailableError,
+  ServerProviderUpdateError,
   type GitActionProgressEvent,
   type OrchestrationEvent,
   type ProjectDevServerEvent,
@@ -56,11 +57,17 @@ import { discoverSkillsCatalog, synaraSkillsDir } from "./provider/skillsCatalog
 import { ProviderAdapterRegistry } from "./provider/Services/ProviderAdapterRegistry";
 import { ProviderHealth } from "./provider/Services/ProviderHealth";
 import { ProviderConnection } from "./provider/Services/ProviderConnection";
+import { ProviderRuntimeManager } from "./provider/Services/ProviderRuntimeManager";
 import { ProviderService } from "./provider/Services/ProviderService";
 import { listProviderUsage } from "./providerUsage";
 import { getProviderUsageSnapshot } from "./providerUsageSnapshot";
 import { ProfileStatsQuery } from "./profileStats";
 import { ScientProjectInitializationService } from "./scientProjectInitialization";
+import {
+  haveSameScientBuiltInSkillActivation,
+  listScientBuiltInSkillCatalogEntries,
+  synchronizeScientBuiltInSkills,
+} from "./scientBuiltInSkills";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
@@ -268,6 +275,7 @@ export const makeWsRpcLayer = () =>
       const providerDiscoveryService = yield* ProviderDiscoveryService;
       const providerHealth = yield* ProviderHealth;
       const providerConnection = yield* ProviderConnection;
+      const providerRuntimeManager = yield* ProviderRuntimeManager;
       const providerService = yield* ProviderService;
       const lifecycleEvents = yield* ServerLifecycleEvents;
       const runtimeStartup = yield* ServerRuntimeStartup;
@@ -278,6 +286,54 @@ export const makeWsRpcLayer = () =>
       const workspaceEntries = yield* WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem;
       const scientProjectInitialization = new ScientProjectInitializationService();
+
+      const enrichProviderStatuses = (
+        statuses: ReadonlyArray<import("@synara/contracts").ServerProviderStatus>,
+      ) =>
+        serverSettings.getSettings.pipe(
+          Effect.catch(() => Effect.succeed(null)),
+          Effect.flatMap((settings) =>
+            Effect.forEach(
+              statuses,
+              (status) =>
+                providerRuntimeManager
+                  .resolve(status.provider, settings?.providers[status.provider].binaryPath)
+                  .pipe(
+                    Effect.zip(providerRuntimeManager.getSnapshot(status.provider)),
+                    Effect.map(([runtime, snapshot]) => {
+                      const appManaged =
+                        runtime.source === "managed" || runtime.source === "bundled";
+                      return {
+                        ...status,
+                        ...(appManaged && status.versionAdvisory
+                          ? {
+                              versionAdvisory: {
+                                ...status.versionAdvisory,
+                                canUpdate: false,
+                                updateCommand: null,
+                                message: "Updates for this runtime are managed by Scient.",
+                              },
+                            }
+                          : {}),
+                        runtime: {
+                          source: runtime.source,
+                          managedVersion: runtime.managedVersion,
+                          canInstall: runtime.canInstall,
+                          canRepair: runtime.canRepair,
+                          canRollback: runtime.canRollback,
+                          canRemove: runtime.canRemove,
+                          message: runtime.message,
+                        },
+                        ...(snapshot.installationState
+                          ? { installationState: snapshot.installationState }
+                          : {}),
+                      };
+                    }),
+                  ),
+              { concurrency: "unbounded" },
+            ),
+          ),
+        );
 
       const isGlobalGitHubCliError = (error: unknown): error is GitHubCliError =>
         error instanceof GitHubCliError &&
@@ -469,7 +525,9 @@ export const makeWsRpcLayer = () =>
 
       const loadServerConfig = Effect.gen(function* () {
         const keybindingsConfig = yield* keybindings.loadConfigState;
-        const providerStatuses = yield* providerHealth.getStatuses;
+        const providerStatuses = yield* providerHealth.getStatuses.pipe(
+          Effect.flatMap(enrichProviderStatuses),
+        );
         return {
           cwd: config.cwd,
           homeDir: config.homeDir,
@@ -974,7 +1032,54 @@ export const makeWsRpcLayer = () =>
         [WS_METHODS.serverGetSettings]: () =>
           rpcEffect(serverSettings.getSettings, "Failed to load server settings"),
         [WS_METHODS.serverUpdateSettings]: (input) =>
-          rpcEffect(serverSettings.updateSettings(input), "Failed to update server settings"),
+          rpcEffect(
+            Effect.gen(function* () {
+              const previous = yield* serverSettings.getSettings;
+              const next = yield* serverSettings.updateSettings(input);
+              if (input.skills?.scientBuiltInActivationOverrides === undefined) {
+                return next;
+              }
+              return yield* Effect.tryPromise(() =>
+                synchronizeScientBuiltInSkills({ baseDir: config.baseDir, settings: next }),
+              ).pipe(
+                Effect.andThen(
+                  Effect.gen(function* () {
+                    const latest = yield* serverSettings.getSettings;
+                    if (!haveSameScientBuiltInSkillActivation(next, latest)) {
+                      yield* Effect.tryPromise(() =>
+                        synchronizeScientBuiltInSkills({
+                          baseDir: config.baseDir,
+                          settings: latest,
+                        }),
+                      );
+                    }
+                    return latest;
+                  }),
+                ),
+                Effect.catch((cause) =>
+                  serverSettings
+                    .updateSettings({
+                      skills: {
+                        scientBuiltInActivationOverrides:
+                          previous.skills.scientBuiltInActivationOverrides,
+                      },
+                    })
+                    .pipe(
+                      Effect.tap((restored) =>
+                        Effect.tryPromise(() =>
+                          synchronizeScientBuiltInSkills({
+                            baseDir: config.baseDir,
+                            settings: restored,
+                          }),
+                        ),
+                      ),
+                      Effect.andThen(Effect.fail(cause)),
+                    ),
+                ),
+              );
+            }),
+            "Failed to update server settings",
+          ),
         [WS_METHODS.serverRefreshProviders]: () =>
           rpcEffect(
             providerHealth.refresh.pipe(Effect.map((providers) => ({ providers }))),
@@ -982,7 +1087,60 @@ export const makeWsRpcLayer = () =>
           ),
         [WS_METHODS.serverStartProviderConnection]: (input) => providerConnection.start(input),
         [WS_METHODS.serverCancelProviderConnection]: (input) => providerConnection.cancel(input),
-        [WS_METHODS.serverUpdateProvider]: (input) => providerHealth.updateProvider(input),
+        [WS_METHODS.serverPrepareProviderInstall]: (input) =>
+          providerRuntimeManager.prepareInstall(input.provider),
+        [WS_METHODS.serverInstallProvider]: (input) =>
+          providerRuntimeManager.install(input).pipe(
+            Effect.andThen(providerHealth.getStatuses.pipe(Effect.flatMap(enrichProviderStatuses))),
+            Effect.map((providers) => ({ providers })),
+          ),
+        [WS_METHODS.serverCancelProviderInstall]: (input) =>
+          providerRuntimeManager.cancel(input).pipe(
+            Effect.andThen(providerHealth.getStatuses.pipe(Effect.flatMap(enrichProviderStatuses))),
+            Effect.map((providers) => ({ providers })),
+          ),
+        [WS_METHODS.serverRepairProvider]: (input) =>
+          providerRuntimeManager.repair(input).pipe(
+            Effect.andThen(providerHealth.getStatuses.pipe(Effect.flatMap(enrichProviderStatuses))),
+            Effect.map((providers) => ({ providers })),
+          ),
+        [WS_METHODS.serverRollbackProvider]: (input) =>
+          providerRuntimeManager.rollback(input).pipe(
+            Effect.andThen(providerHealth.getStatuses.pipe(Effect.flatMap(enrichProviderStatuses))),
+            Effect.map((providers) => ({ providers })),
+          ),
+        [WS_METHODS.serverRemoveManagedProvider]: (input) =>
+          providerRuntimeManager.remove(input).pipe(
+            Effect.andThen(providerHealth.getStatuses.pipe(Effect.flatMap(enrichProviderStatuses))),
+            Effect.map((providers) => ({ providers })),
+          ),
+        [WS_METHODS.serverUpdateProvider]: (input) =>
+          serverSettings.getSettings.pipe(
+            Effect.mapError(
+              () =>
+                new ServerProviderUpdateError({
+                  provider: input.provider,
+                  reason: "Scient could not read the provider settings.",
+                }),
+            ),
+            Effect.flatMap((settings) =>
+              providerRuntimeManager.resolve(
+                input.provider,
+                settings.providers[input.provider].binaryPath,
+              ),
+            ),
+            Effect.flatMap((runtime) =>
+              runtime.source === "managed" || runtime.source === "bundled"
+                ? Effect.fail(
+                    new ServerProviderUpdateError({
+                      provider: input.provider,
+                      reason:
+                        "This runtime is managed by Scient. Use the managed install, repair, or rollback controls instead.",
+                    }),
+                  )
+                : providerHealth.updateProvider(input),
+            ),
+          ),
         [WS_METHODS.serverListWorktrees]: () => Effect.succeed({ worktrees: [] }),
         [WS_METHODS.serverListLocalServers]: () =>
           rpcEffect(
@@ -1169,12 +1327,23 @@ export const makeWsRpcLayer = () =>
         [WS_METHODS.subscribeServerProviderStatuses]: () =>
           Stream.concat(
             Stream.fromEffect(
-              providerHealth.getStatuses.pipe(Effect.map((providers) => ({ providers }))),
+              providerHealth.getStatuses.pipe(
+                Effect.flatMap(enrichProviderStatuses),
+                Effect.map((providers) => ({ providers })),
+              ),
             ),
-            bufferLiveUiStream(providerHealth.streamChanges, {
-              label: "server.provider-statuses",
-              onDroppedEvents: failLiveUiStreamForSnapshotResync,
-            }).pipe(Stream.map((providers) => ({ providers }))),
+            Stream.merge(
+              bufferLiveUiStream(providerHealth.streamChanges, {
+                label: "server.provider-statuses",
+                onDroppedEvents: failLiveUiStreamForSnapshotResync,
+              }),
+              providerRuntimeManager.streamChanges.pipe(
+                Stream.mapEffect(() => providerHealth.getStatuses),
+              ),
+            ).pipe(
+              Stream.mapEffect(enrichProviderStatuses),
+              Stream.map((providers) => ({ providers })),
+            ),
           ),
         [WS_METHODS.subscribeServerSettings]: () =>
           Stream.concat(
@@ -1200,19 +1369,24 @@ export const makeWsRpcLayer = () =>
           rpcEffect(providerDiscoveryService.listSkills(input), "Failed to list skills"),
         [WS_METHODS.providerListSkillsCatalog]: (input) =>
           rpcEffect(
-            Effect.tryPromise(() =>
-              discoverSkillsCatalog({
-                cwd: input.cwd ?? null,
-                homeDir: config.homeDir,
-                synaraBaseDir: config.baseDir,
-                includeDuplicateOrigins: true,
-              }),
-            ).pipe(
-              Effect.map((skills) => ({
+            Effect.gen(function* () {
+              const [skills, settings] = yield* Effect.all([
+                Effect.tryPromise(() =>
+                  discoverSkillsCatalog({
+                    cwd: input.cwd ?? null,
+                    homeDir: config.homeDir,
+                    synaraBaseDir: config.baseDir,
+                    includeDuplicateOrigins: true,
+                  }),
+                ),
+                serverSettings.getSettings,
+              ]);
+              return {
                 skills,
+                scientBuiltInSkills: listScientBuiltInSkillCatalogEntries(settings),
                 synaraSkillsDir: synaraSkillsDir(config.baseDir),
-              })),
-            ),
+              };
+            }),
             "Failed to list the skills catalog",
           ),
         [WS_METHODS.providerListPlugins]: (input) =>
