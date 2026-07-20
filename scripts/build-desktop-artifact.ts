@@ -15,11 +15,13 @@ import serverPackageJson from "../apps/server/package.json" with { type: "json" 
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
 import {
   createDesktopPlatformBuildConfig,
+  MAC_ADHOC_SIGN_HOOK_PATH,
   MAC_APPSNAP_HELPER_STAGE_PATH,
   validateDesktopNativeBuildHost,
 } from "./lib/desktop-platform-build-config.ts";
 import { SCIENT_PRODUCTION_BUNDLE_ID } from "@synara/shared/desktopIdentity";
 import { parseBooleanEnvValue } from "./lib/env-bool.ts";
+import { verifySingleMacDmgSignature } from "./lib/mac-artifact-signature.ts";
 import { finalizeMacUpdateZip } from "./lib/mac-update-zip-finalize.ts";
 import {
   createReleaseInstallManifest,
@@ -757,6 +759,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
 
   const platformBuildConfigInput = {
     platform,
+    signed,
     target,
     ...(windowsAzureSignOptions ? { windowsAzureSignOptions } : {}),
   } as const;
@@ -947,6 +950,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   if (options.platform === "mac") {
     yield* stageMacAppSnapHelper(stageAppDir, options.arch, options.verbose);
+    if (!options.signed) {
+      const hookSourcePath = path.join(repoRoot, MAC_ADHOC_SIGN_HOOK_PATH);
+      const hookStagePath = path.join(stageAppDir, MAC_ADHOC_SIGN_HOOK_PATH);
+      yield* fs.makeDirectory(path.dirname(hookStagePath), { recursive: true });
+      yield* fs.copyFile(hookSourcePath, hookStagePath);
+    }
   }
 
   // electron-builder is filtering out stageResourcesDir directory in the AppImage for production
@@ -1068,6 +1077,23 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         `[desktop-artifact] Removed stale macOS zip blockmap (${path.basename(finalizedZip.removedZipBlockmapPath)}).`,
       );
     }
+  }
+
+  if (options.platform === "mac" && options.target === "dmg") {
+    yield* Effect.log("[desktop-artifact] Verifying final macOS DMG signature...");
+    yield* Effect.try({
+      try: () =>
+        verifySingleMacDmgSignature({
+          stageDistDir,
+          requireDeveloperSignature: options.signed,
+          verbose: options.verbose,
+        }),
+      catch: (cause) =>
+        new BuildScriptError({
+          message: "macOS DMG signature verification failed.",
+          cause,
+        }),
+    });
   }
 
   const stageEntries = yield* fs.readDirectory(stageDistDir);

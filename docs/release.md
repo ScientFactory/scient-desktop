@@ -57,7 +57,7 @@ This document covers build-only native validation, promotion through the protect
 - macOS metadata note:
   - The build initially emits `latest-mac.yml` for both Intel and Apple Silicon.
   - The workflow merges the per-arch macOS metadata, then keeps the merged manifest as `latest-mac.yml` and copies it to `scient-mac.yml` for stable releases.
-  - The desktop build script repacks the macOS update `.zip` with `ditto`, verifies Electron framework symlinks, extracts the zip, validates the extracted app signature, patches the matching `latest-mac*.yml` hash/size, and removes the stale `.zip.blockmap`.
+  - The desktop build script gives unsigned early-access apps a complete ad-hoc signature before packaging, repacks the macOS update `.zip` with `ditto`, verifies Electron framework symlinks and both source/extracted app signatures, validates the app inside the final DMG, patches the matching `latest-mac*.yml` hash/size, and removes the stale `.zip.blockmap`.
   - macOS updater downloads intentionally use the full zip payload so Squirrel.Mac installs the exact signed archive validated by release build.
 - Local smoke test:
   - Run `bun run release:smoke:mac-update -- --skip-build --build-version 0.1.5` on macOS after local desktop/server/web dist files exist.
@@ -137,6 +137,9 @@ Unsigned behavior is platform-specific:
   Unknown Publisher or SmartScreen warning before installation continues.
 - macOS checks and downloads the update inside Scient, then opens the downloaded
   ZIP in Finder. The user must replace Scient in Applications and reopen it.
+  Early-access bundles are ad-hoc signed so macOS can verify their internal
+  integrity, but they remain unnotarized and can still show an unidentified
+  developer warning that the user must explicitly bypass once.
 - Linux keeps the existing AppImage behavior.
 
 Never enable unsigned publication while a platform has a partial signing-secret

@@ -5,6 +5,7 @@ import {
   MAC_APPSNAP_HELPER_ASAR_EXCLUSION,
   MAC_APPSNAP_HELPER_BUNDLE_PATH,
   MAC_APPSNAP_HELPER_STAGE_PATH,
+  MAC_ADHOC_SIGN_HOOK_PATH,
   MAC_ENTITLEMENTS_PATH,
   MAC_INHERITED_ENTITLEMENTS_PATH,
   MICROPHONE_USAGE_DESCRIPTION,
@@ -18,12 +19,14 @@ describe("createDesktopPlatformBuildConfig", () => {
   it("adds explicit microphone entitlements to macOS builds", () => {
     const config = createDesktopPlatformBuildConfig({
       platform: "mac",
+      signed: false,
       target: "dmg",
     });
     const mac = config.mac as Record<string, unknown>;
     const extendInfo = mac.extendInfo as Record<string, unknown>;
 
     assert.deepStrictEqual(mac.target, ["dmg", "zip"]);
+    assert.equal(config.afterPack, MAC_ADHOC_SIGN_HOOK_PATH);
     assert.equal(mac.icon, "icon.icns");
     assert.deepStrictEqual(config.asarUnpack, ["node_modules/node-pty/**"]);
     assert.equal(mac.hardenedRuntime, true);
@@ -37,7 +40,11 @@ describe("createDesktopPlatformBuildConfig", () => {
       "apps/desktop/native/appsnap/build/scient-appsnap-helper",
     );
     assert.equal(MAC_APPSNAP_HELPER_ASAR_EXCLUSION, "!apps/desktop/native/appsnap/build/**");
-    assert.deepStrictEqual(config.files, ["**/*", MAC_APPSNAP_HELPER_ASAR_EXCLUSION]);
+    assert.deepStrictEqual(config.files, [
+      "**/*",
+      MAC_APPSNAP_HELPER_ASAR_EXCLUSION,
+      `!${MAC_ADHOC_SIGN_HOOK_PATH}`,
+    ]);
     assert.deepStrictEqual(config.extraFiles, [
       {
         from: "apps/desktop/native/appsnap/build/scient-appsnap-helper",
@@ -46,6 +53,22 @@ describe("createDesktopPlatformBuildConfig", () => {
     ]);
     assert.equal(extendInfo.NSMicrophoneUsageDescription, MICROPHONE_USAGE_DESCRIPTION);
     assert.equal(extendInfo.NSScreenCaptureUsageDescription, undefined);
+  });
+
+  it("uses ad-hoc sealing only for unsigned macOS bundles", () => {
+    const unsigned = createDesktopPlatformBuildConfig({
+      platform: "mac",
+      signed: false,
+      target: "dmg",
+    });
+    const signed = createDesktopPlatformBuildConfig({
+      platform: "mac",
+      signed: true,
+      target: "dmg",
+    });
+
+    assert.equal(unsigned.afterPack, MAC_ADHOC_SIGN_HOOK_PATH);
+    assert.equal(signed.afterPack, undefined);
   });
 
   it("keeps non-macOS platform configs complete", () => {
