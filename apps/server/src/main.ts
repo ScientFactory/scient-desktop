@@ -11,6 +11,7 @@ import { Config, Data, Effect, FileSystem, Layer, Option, Path, Schema, ServiceM
 import { Command, Flag } from "effect/unstable/cli";
 import { NetService } from "@synara/shared/Net";
 import { ensurePrivateScientDirectoriesSync } from "@synara/shared/scientDataDirectories";
+import { waitForDesktopParentShutdown } from "./desktopParentShutdown";
 import {
   DEFAULT_PORT,
   deriveServerPaths,
@@ -371,7 +372,9 @@ const makeServerProgram = (input: CliInput) =>
       );
     }
 
-    return yield* stopSignal;
+    return yield* config.mode === "desktop"
+      ? Effect.raceFirst(stopSignal, waitForDesktopParentShutdown())
+      : stopSignal;
   }).pipe(Effect.provide(LayerLive(input)));
 
 /**

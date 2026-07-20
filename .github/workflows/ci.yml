@@ -140,6 +140,11 @@ jobs:
           bun run --cwd apps/server test src/serverPrivateDirectories.test.ts
           bun run --cwd apps/desktop test src/desktopScientDataDirectories.test.ts
 
+      - name: Test Windows backend lifecycle
+        run: |
+          bun run --cwd apps/desktop test src/desktopBackendSupervisor.test.ts src/backendProcessTree.test.ts
+          bun run --cwd apps/server test src/desktopParentShutdown.test.ts
+
       - name: Exercise Windows release staging
         run: bun run release:smoke
 
