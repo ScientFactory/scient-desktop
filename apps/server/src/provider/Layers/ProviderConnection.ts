@@ -87,7 +87,7 @@ export function providerConnectionCommandArgs(
   }
   if (provider === "cursor" && method === "cursor_browser") return ["login"];
   if (provider === "antigravity" && method === "antigravity_browser") return [];
-  if (provider === "grok" && method === "grok_browser") return ["login"];
+  if (provider === "grok" && method === "grok_browser") return ["login", "--oauth"];
   if (provider === "droid" && method === "droid_device_pairing") {
     return ["exec", "--output-format", "acp"];
   }
@@ -287,7 +287,8 @@ export function makeProviderConnectionLive(options?: {
             executable: runtime.executable ?? "grok",
             args: runtime.source === "managed" ? ["--no-auto-update", ...args] : args,
             env: process.env,
-            waitingMessage: "Finish signing in to xAI in the browser window.",
+            waitingMessage:
+              "Finish authorizing Grok in the xAI browser window. No terminal code is required.",
           } satisfies ConnectionCommand;
         }
 
@@ -505,7 +506,10 @@ export function makeProviderConnectionLive(options?: {
                 provider,
                 state({
                   status: "failed",
-                  message: "Sign in was not completed. No credentials were saved by Scient.",
+                  message:
+                    provider === "grok"
+                      ? "Grok authorization was not completed. Cancel any old xAI page, then try again to start a fresh secure browser sign-in."
+                      : "Sign in was not completed. No credentials were saved by Scient.",
                   finished: true,
                 }),
               );

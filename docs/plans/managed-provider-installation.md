@@ -143,7 +143,8 @@ The installation service must:
 - Source: official xAI native stable artifact.
 - Verification now: pinned macOS arm64 URL, byte size, and reviewed SHA-256; Scient does not execute the vendor installer script.
 - Smoke test: `grok --version`.
-- Authentication now: `grok login`, which opens provider-owned browser sign-in.
+- Authentication now: `grok login --oauth`, which opens xAI's direct browser authorization flow
+  and avoids the terminal-only device-code prompt used by plain `grok login`.
 - Device-code/browser-launch fallback is not yet exposed by Scient and remains a packaged release follow-up.
 - Auth verification: `grok models` must return an explicit positive account/key marker and a usable model catalog; signed-out output is never mistaken for success.
 - Managed and ACP invocations suppress Grok's native auto-update path.
