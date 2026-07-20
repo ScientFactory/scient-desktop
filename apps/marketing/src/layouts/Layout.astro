@@ -11,12 +11,14 @@ interface Props {
   title?: string;
   description?: string;
   theme?: "dark" | "light";
+  robots?: string;
 }
 
 const {
   title = "Scient",
   description = "One intelligent workspace for every stage of research.",
   theme = "dark",
+  robots,
 } = Astro.props;
 
 const canonicalURL = new URL(Astro.url.pathname, "https://scientfactory.com");
@@ -34,6 +36,7 @@ const primaryLinks = [
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content={description} />
+    {robots && <meta name="robots" content={robots} />}
     <meta name="theme-color" content={theme === "light" ? "#ffffff" : "#09090b"} />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="ScientFactory" />
