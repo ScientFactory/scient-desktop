@@ -29,6 +29,7 @@ import { Cause, Data, Effect, Exit, Layer, ManagedRuntime, Scope, Stream } from 
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 
+import { ConnectionSupervisor, type ConnectionSupervisorSession } from "./connectionSupervisor";
 import type { WsTransportState } from "./wsTransportEvents";
 
 type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void;
@@ -43,7 +44,15 @@ type RpcClientInstance =
 type SessionHandle = {
   readonly client: RpcClientInstance;
   readonly runtime: ManagedRuntime.ManagedRuntime<RpcClient.Protocol, never>;
+  readonly clientScope: Scope.Closeable;
 };
+
+type ActiveSession = ConnectionSupervisorSession<SessionHandle>;
+
+interface StreamCleanup {
+  readonly generation: number;
+  readonly cancel: () => void;
+}
 
 class WsTransportRpcError extends Data.TaggedError("WsTransportRpcError")<{
   readonly message: string;
@@ -60,6 +69,8 @@ const makeRpcClient = RpcClient.make(WsRpcGroup);
 // opts out for known long-running calls (git actions, compaction, provider
 // updates) whose duration is bounded elsewhere.
 const REQUEST_TIMEOUT_MS = 60_000;
+const SESSION_VALIDATION_TIMEOUT_MS = 15_000;
+const WAKE_PROBE_TIMEOUT_MS = 5_000;
 
 function resolveRpcUrl(rawUrl: string): string {
   const url = new URL(rawUrl);
@@ -95,6 +106,19 @@ function makeProtocolLayer(url: string) {
 function causeToError(cause: Cause.Cause<unknown>): Error {
   const error = Cause.squash(cause);
   return error instanceof Error ? error : new Error(String(error));
+}
+
+function connectionErrorSummary(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const socketCloseCode = message.match(/SocketCloseError:\s*(\d{4})/i)?.[1];
+  if (socketCloseCode) return `socket closed (${socketCloseCode})`;
+  if (/timed?\s*out|timeout/i.test(message)) return "connection timed out";
+  if (/schema|decode|encode|protocol/i.test(message)) return "protocol validation failed";
+  if (/ECONNREFUSED|connection refused|server unavailable/i.test(message)) {
+    return "server unavailable";
+  }
+  if (/disposed|interrupt/i.test(message)) return "connection closed";
+  return "connection operation failed";
 }
 
 function omitNullUserInputAnswers(input: unknown): unknown {
@@ -135,24 +159,37 @@ export class WsTransport {
   private readonly stateListeners = new Set<(state: WsTransportState) => void>();
   private readonly latestPushByChannel = new Map<string, WsPush>();
   private sequence = 0;
-  private sessionVersion = 0;
   private state: WsTransportState = "connecting";
   private disposed = false;
-  private runtime: ManagedRuntime.ManagedRuntime<RpcClient.Protocol, never>;
-  private clientScope: Scope.Closeable;
-  private clientPromise: Promise<SessionHandle>;
-  private reconnectPromise: Promise<SessionHandle> | null = null;
-  private reconnectFailures = 0;
-  private readonly streamCleanups = new Map<string, () => void>();
+  private readonly supervisor: ConnectionSupervisor<SessionHandle>;
+  private readonly streamCleanups = new Map<string, StreamCleanup>();
+  private readonly wakeCleanups: Array<() => void> = [];
   private shellSubscribed = false;
   private readonly threadSubscriptions = new Map<string, unknown>();
 
   constructor(url?: string) {
     this.explicitUrl = url ?? null;
-    const session = this.createSession();
-    this.runtime = session.runtime;
-    this.clientScope = session.clientScope;
-    this.clientPromise = session.clientPromise;
+    this.supervisor = new ConnectionSupervisor({
+      connect: () => this.createValidatedSession(),
+      close: ({ value }) => this.closeSession(value),
+      probe: ({ value }) =>
+        this.validateSession(value, WAKE_PROBE_TIMEOUT_MS, WS_METHODS.serverGetEnvironment),
+      onReady: (session) => this.restoreStreams(session),
+      onInvalidated: (session) => this.stopGenerationStreams(session.generation),
+      onSnapshot: (snapshot) => {
+        if (snapshot.phase === "ready") this.setState("open");
+        else if (snapshot.phase === "reconnecting") this.setState("reconnecting");
+        else if (snapshot.phase === "connecting") this.setState("connecting");
+        else this.setState("disposed");
+      },
+      onError: (error, context) => {
+        if (!this.disposed) {
+          console.warn(`[scient-connection] ${context}: ${connectionErrorSummary(error)}`);
+        }
+      },
+    });
+    this.installWakeRecovery();
+    this.supervisor.start();
   }
 
   async request<T = unknown>(
@@ -161,14 +198,12 @@ export class WsTransport {
     options?: { readonly timeoutMs?: number | null },
   ): Promise<T> {
     if (this.disposed) throw new Error("Transport disposed");
-    const session = await this.getSession();
-
-    if (method === WS_METHODS.gitRunStackedAction) {
-      return (await this.runGitActionStream(session, params)) as T;
-    }
+    const timeoutMs = options?.timeoutMs === undefined ? REQUEST_TIMEOUT_MS : options.timeoutMs;
 
     if (method === ORCHESTRATION_WS_METHODS.subscribeShell) {
       this.shellSubscribed = true;
+      const session = await this.getSession(REQUEST_TIMEOUT_MS);
+      if (!this.shellSubscribed) return undefined as T;
       this.startShellStream(session);
       return undefined as T;
     }
@@ -180,6 +215,8 @@ export class WsTransport {
     if (method === ORCHESTRATION_WS_METHODS.subscribeThread) {
       const threadId = (params as { threadId: string }).threadId;
       this.threadSubscriptions.set(threadId, params);
+      const session = await this.getSession(REQUEST_TIMEOUT_MS);
+      if (this.threadSubscriptions.get(threadId) !== params) return undefined as T;
       this.startThreadStream(session, threadId, params as never);
       return undefined as T;
     }
@@ -190,19 +227,24 @@ export class WsTransport {
       return undefined as T;
     }
 
+    const session = await this.getSession(REQUEST_TIMEOUT_MS);
+
+    if (method === WS_METHODS.gitRunStackedAction) {
+      return (await this.runGitActionStream(session, params)) as T;
+    }
+
     const rpcInput =
       method === ORCHESTRATION_WS_METHODS.dispatchCommand
         ? (params as { command: unknown }).command
         : (params ?? {});
     const normalizedRpcInput = omitNullUserInputAnswers(rpcInput);
     const call = (
-      session.client as unknown as Record<
+      session.value.client as unknown as Record<
         string,
         (input: unknown) => Effect.Effect<unknown, WsTransportRpcError, never>
       >
     )[method];
     if (!call) throw new WsTransportRpcError({ message: `Unknown RPC method: ${method}` });
-    const timeoutMs = options?.timeoutMs === undefined ? REQUEST_TIMEOUT_MS : options.timeoutMs;
     const rpcEffect =
       timeoutMs === null
         ? call(normalizedRpcInput)
@@ -215,7 +257,7 @@ export class WsTransport {
                 }),
               ),
           });
-    return (await session.runtime.runPromise(rpcEffect)) as T;
+    return (await session.value.runtime.runPromise(rpcEffect)) as T;
   }
 
   subscribe<C extends WsPushChannel>(
@@ -273,79 +315,76 @@ export class WsTransport {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
-    this.setState("disposed");
-    for (const cleanup of this.streamCleanups.values()) cleanup();
+    for (const cleanup of this.wakeCleanups.splice(0)) cleanup();
+    for (const cleanup of this.streamCleanups.values()) cleanup.cancel();
     this.streamCleanups.clear();
-    // Dispose can race with initial connection or reconnect promises. Mark them
-    // handled before closing the runtime so test/browser teardown stays quiet.
-    void this.clientPromise.catch(() => undefined);
-    void this.reconnectPromise?.catch(() => undefined);
-    const runtime = this.runtime;
-    const clientScope = this.clientScope;
-    void runtime
-      .runPromise(Scope.close(clientScope, Exit.void))
-      .catch(() => undefined)
-      .finally(() => {
-        void runtime.dispose().catch(() => undefined);
-      });
+    this.supervisor.dispose();
   }
 
-  private createSession() {
-    const sessionVersion = ++this.sessionVersion;
+  private async createValidatedSession(): Promise<SessionHandle> {
     const runtime = ManagedRuntime.make(makeProtocolLayer(makeSocketUrl(this.explicitUrl)));
     const clientScope = runtime.runSync(Scope.make());
-    const clientPromise = runtime
-      .runPromise(Scope.provide(clientScope)(makeRpcClient))
-      .then((client): SessionHandle => {
-        if (!this.disposed && this.sessionVersion === sessionVersion) {
-          this.setState("open");
-        }
-        return { client, runtime };
-      })
-      .catch((error) => {
-        if (!this.disposed && this.sessionVersion === sessionVersion) {
-          this.setState("closed");
-        }
-        throw error;
-      });
-    return { runtime, clientScope, clientPromise };
-  }
-
-  private async getSession(): Promise<SessionHandle> {
     try {
-      const session = await this.clientPromise;
-      if (this.disposed) {
-        throw new Error("Transport disposed");
-      }
+      const client = await runtime.runPromise(Scope.provide(clientScope)(makeRpcClient));
+      const session = { client, clientScope, runtime } satisfies SessionHandle;
+      await this.validateSession(
+        session,
+        SESSION_VALIDATION_TIMEOUT_MS,
+        WS_METHODS.serverGetConfig,
+      );
       return session;
-    } catch {
-      if (this.disposed) throw new Error("Transport disposed");
-      return this.reconnect();
+    } catch (error) {
+      await this.closeRuntime(runtime, clientScope);
+      throw error;
     }
   }
 
-  private reconnect(): Promise<SessionHandle> {
-    if (this.reconnectPromise) return this.reconnectPromise;
+  private validateSession(
+    session: SessionHandle,
+    timeoutMs: number,
+    method: string,
+  ): Promise<void> {
+    const validate = (
+      session.client as unknown as Record<
+        string,
+        (input: unknown) => Effect.Effect<unknown, WsTransportRpcError, never>
+      >
+    )[method];
+    if (!validate)
+      return Promise.reject(new Error(`Connection validation RPC unavailable: ${method}`));
+    const validation = validate({}).pipe(
+      Effect.timeoutOrElse({
+        duration: timeoutMs,
+        onTimeout: () =>
+          Effect.fail(
+            new WsTransportRpcError({
+              message: `Connection validation timed out after ${timeoutMs}ms: ${method}`,
+            }),
+          ),
+      }),
+      Effect.asVoid,
+    );
+    return session.runtime.runPromise(validation);
+  }
 
-    const oldRuntime = this.runtime;
-    const oldClientScope = this.clientScope;
-    const staleStreamCleanups = [...this.streamCleanups.values()];
-    this.streamCleanups.clear();
-    for (const cleanup of staleStreamCleanups) cleanup();
+  private closeSession(session: SessionHandle): Promise<void> {
+    return this.closeRuntime(session.runtime, session.clientScope);
+  }
 
-    this.setState("connecting");
+  private async closeRuntime(
+    runtime: ManagedRuntime.ManagedRuntime<RpcClient.Protocol, never>,
+    clientScope: Scope.Closeable,
+  ): Promise<void> {
+    try {
+      await runtime.runPromise(Scope.close(clientScope, Exit.void)).catch(() => undefined);
+    } finally {
+      await runtime.dispose().catch(() => undefined);
+    }
+  }
 
-    void oldRuntime
-      .runPromise(Scope.close(oldClientScope, Exit.void))
-      .catch(() => undefined)
-      .finally(() => {
-        void oldRuntime.dispose().catch(() => undefined);
-      });
-
-    this.reconnectPromise = this.openReconnectSession().finally(() => {
-      this.reconnectPromise = null;
-    });
-    return this.reconnectPromise;
+  private getSession(timeoutMs: number): Promise<ActiveSession> {
+    if (this.disposed) return Promise.reject(new Error("Transport disposed"));
+    return this.supervisor.waitForSession({ timeoutMs });
   }
 
   private setState(state: WsTransportState): void {
@@ -360,31 +399,41 @@ export class WsTransport {
     }
   }
 
-  private async openReconnectSession(): Promise<SessionHandle> {
-    const delayMs = Math.min(500 * 2 ** this.reconnectFailures, 5_000);
-    this.reconnectFailures += 1;
-    await new Promise((resolve) => window.setTimeout(resolve, delayMs));
-
-    const session = this.createSession();
-    this.runtime = session.runtime;
-    this.clientScope = session.clientScope;
-    this.clientPromise = session.clientPromise;
-
-    const handle = await session.clientPromise;
-    if (this.disposed) {
-      throw new Error("Transport disposed");
-    }
-    this.reconnectFailures = 0;
+  private restoreStreams(session: ActiveSession): void {
+    if (this.disposed || this.supervisor.currentSession?.generation !== session.generation) return;
     for (const channel of this.listeners.keys()) {
       this.startChannelStream(channel as WsPushChannel);
     }
     if (this.shellSubscribed) {
-      this.startShellStream(handle);
+      this.startShellStream(session);
     }
     for (const [threadId, input] of this.threadSubscriptions) {
-      this.startThreadStream(handle, threadId, input);
+      this.startThreadStream(session, threadId, input);
     }
-    return handle;
+  }
+
+  private installWakeRecovery(): void {
+    const probe = (reason: string) => {
+      void this.supervisor.probe(reason);
+    };
+    if (typeof window.addEventListener === "function") {
+      const handleFocus = () => probe("window focus");
+      window.addEventListener("focus", handleFocus);
+      this.wakeCleanups.push(() => window.removeEventListener("focus", handleFocus));
+    }
+    if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === "visible") probe("document visible");
+      };
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+      this.wakeCleanups.push(() =>
+        document.removeEventListener("visibilitychange", handleVisibilityChange),
+      );
+    }
+    const onConnectionWake = window.desktopBridge?.onConnectionWake;
+    if (onConnectionWake) {
+      this.wakeCleanups.push(onConnectionWake((reason) => probe(`desktop ${reason}`)));
+    }
   }
 
   private emit<C extends WsPushChannel>(channel: C, data: WsPushMessage<C>["data"]): void {
@@ -407,9 +456,17 @@ export class WsTransport {
   }
 
   private startChannelStream(channel: WsPushChannel): void {
-    void this.getSession()
+    void this.supervisor
+      .waitForSession()
       .then((session) => {
-        const { client } = session;
+        if (
+          this.disposed ||
+          !this.listeners.has(channel) ||
+          this.supervisor.currentSession?.generation !== session.generation
+        ) {
+          return;
+        }
+        const { client } = session.value;
 
         if (isServerLifecyclePushChannel(channel)) {
           this.startLifecycleStream(session);
@@ -477,8 +534,9 @@ export class WsTransport {
       })
       .catch((error) => {
         if (!this.disposed && this.listeners.has(channel)) {
-          console.warn("WebSocket RPC channel failed to start", error);
-          window.setTimeout(() => this.startChannelStream(channel), 500);
+          console.warn(
+            `[scient-connection] channel ${channel} failed to start: ${connectionErrorSummary(error)}`,
+          );
         }
       });
   }
@@ -501,11 +559,11 @@ export class WsTransport {
     return shouldKeepServerLifecycleStream(new Set(this.listeners.keys()));
   }
 
-  private startLifecycleStream(session: SessionHandle): void {
+  private startLifecycleStream(session: ActiveSession): void {
     this.startStream(
       session,
       "server.lifecycle",
-      session.client[WS_METHODS.subscribeServerLifecycle]({}),
+      session.value.client[WS_METHODS.subscribeServerLifecycle]({}),
       (event: ServerLifecycleStreamEvent) => {
         if (event.type === "welcome") {
           this.emit(WS_CHANNELS.serverWelcome, event.payload);
@@ -516,94 +574,111 @@ export class WsTransport {
     );
   }
 
-  private startShellStream(session: SessionHandle): void {
+  private startShellStream(session: ActiveSession): void {
     this.startStream(
       session,
       "orchestration.shell",
-      session.client[ORCHESTRATION_WS_METHODS.subscribeShell]({}),
+      session.value.client[ORCHESTRATION_WS_METHODS.subscribeShell]({}),
       (event: OrchestrationShellStreamItem) =>
         this.emit(ORCHESTRATION_WS_CHANNELS.shellEvent, event),
     );
   }
 
-  private startThreadStream(session: SessionHandle, threadId: string, input: unknown): void {
+  private startThreadStream(session: ActiveSession, threadId: string, input: unknown): void {
+    if (this.supervisor.currentSession?.generation !== session.generation) return;
     const key = `orchestration.thread:${threadId}`;
     this.stopStream(key);
     this.startStream(
       session,
       key,
-      session.client[ORCHESTRATION_WS_METHODS.subscribeThread](input as never),
+      session.value.client[ORCHESTRATION_WS_METHODS.subscribeThread](input as never),
       (event: OrchestrationThreadStreamItem) =>
         this.emit(ORCHESTRATION_WS_CHANNELS.threadEvent, event),
     );
   }
 
   private startStream<T>(
-    session: SessionHandle,
+    session: ActiveSession,
     key: string,
     stream: unknown,
     listener: (event: T) => void,
   ): void {
-    if (this.streamCleanups.has(key)) return;
+    if (this.supervisor.currentSession?.generation !== session.generation) return;
+    const existing = this.streamCleanups.get(key);
+    if (existing?.generation === session.generation) return;
+    if (existing) {
+      this.streamCleanups.delete(key);
+      existing.cancel();
+    }
     const runnableStream = stream as Stream.Stream<T, WsTransportRpcError, never>;
-    const cancel = session.runtime.runCallback(
-      Stream.runForEach(runnableStream, (event) => Effect.sync(() => listener(event))),
+    const cancel = session.value.runtime.runCallback(
+      Stream.runForEach(runnableStream, (event) =>
+        Effect.sync(() => {
+          if (this.supervisor.currentSession?.generation !== session.generation) return;
+          listener(event);
+        }),
+      ),
       {
         onExit: (exit) => {
           // A replacement or intentional stop removes this exact cleanup from
           // the map before cancellation. Ignore that stale stream's later exit;
           // otherwise it can reconnect over the replacement and lose events.
-          if (this.streamCleanups.get(key) !== cancel || this.disposed) {
+          if (this.streamCleanups.get(key)?.cancel !== cancel || this.disposed) {
             return;
           }
           this.streamCleanups.delete(key);
           if (Exit.isFailure(exit)) {
             const interrupted = Cause.hasInterruptsOnly(exit.cause);
             if (!interrupted) {
-              console.warn("WebSocket RPC stream failed", causeToError(exit.cause));
+              console.warn(
+                `[scient-connection] stream ${key} failed: ${connectionErrorSummary(causeToError(exit.cause))}`,
+              );
             }
-            window.setTimeout(
-              () => {
-                if (!this.disposed && !this.streamCleanups.has(key)) {
-                  // Reconnecting restores every active channel, shell, and thread
-                  // subscription. Restarting this stream again would replace the
-                  // restored subscription and could drop its first event.
-                  void this.reconnect().catch((error) => {
-                    if (!this.disposed) {
-                      console.warn("WebSocket RPC stream reconnect failed", error);
-                    }
-                  });
-                }
-              },
-              interrupted ? 0 : 500,
+            this.supervisor.invalidate(
+              session.generation,
+              interrupted ? `stream ${key} interrupted` : `stream ${key} failed`,
             );
+          } else {
+            this.supervisor.invalidate(session.generation, `stream ${key} completed`);
           }
         },
       },
     );
-    this.streamCleanups.set(key, cancel);
+    this.streamCleanups.set(key, { generation: session.generation, cancel });
   }
 
   private stopStream(key: string): void {
     const cleanup = this.streamCleanups.get(key);
     if (!cleanup) return;
     this.streamCleanups.delete(key);
-    cleanup();
+    cleanup.cancel();
+  }
+
+  private stopGenerationStreams(generation: number): void {
+    for (const [key, cleanup] of this.streamCleanups) {
+      if (cleanup.generation !== generation) continue;
+      this.streamCleanups.delete(key);
+      cleanup.cancel();
+    }
   }
 
   private async runGitActionStream(
-    session: SessionHandle,
+    session: ActiveSession,
     params: unknown,
   ): Promise<GitRunStackedActionResult> {
     let result: GitRunStackedActionResult | null = null;
-    await session.runtime.runPromise(
-      Stream.runForEach(session.client[WS_METHODS.gitRunStackedAction](params as never), (event) =>
-        Effect.sync(() => {
-          this.emit(WS_CHANNELS.gitActionProgress, event as GitActionProgressEvent);
-          if ((event as GitActionProgressEvent).kind === "action_finished") {
-            result = (event as Extract<GitActionProgressEvent, { kind: "action_finished" }>).result;
-          }
-        }),
+    await session.value.runtime.runPromise(
+      Stream.runForEach(
+        session.value.client[WS_METHODS.gitRunStackedAction](params as never),
+        (event) =>
+          Effect.sync(() => {
+            if (this.supervisor.currentSession?.generation !== session.generation) return;
+            this.emit(WS_CHANNELS.gitActionProgress, event as GitActionProgressEvent);
+            if ((event as GitActionProgressEvent).kind === "action_finished") {
+              result = (event as Extract<GitActionProgressEvent, { kind: "action_finished" }>)
+                .result;
+            }
+          }),
       ),
     );
     if (!result) throw new Error("Git action stream completed without a final result.");

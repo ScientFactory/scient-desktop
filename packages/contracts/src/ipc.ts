@@ -406,6 +406,8 @@ export interface DesktopWindowState {
   isFullscreen: boolean;
 }
 
+export type DesktopConnectionWakeReason = "app-activate" | "window-focus" | "system-resume";
+
 export interface ScientStorageSnapshot {
   readonly version: 1;
   readonly exportedAt: string;
@@ -414,6 +416,8 @@ export interface ScientStorageSnapshot {
 
 export interface DesktopBridge {
   getWsUrl: () => string | null;
+  /** Native wake signals that should verify an apparently-open server connection. */
+  onConnectionWake?: (listener: (reason: DesktopConnectionWakeReason) => void) => () => void;
   /**
    * Absolute filesystem path for a File from drag/drop or file inputs.
    * Electron only (`webUtils.getPathForFile`). Returns null when unavailable.

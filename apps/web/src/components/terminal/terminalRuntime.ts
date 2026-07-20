@@ -46,10 +46,13 @@ import {
   writeSystemMessage,
 } from "./terminalRuntimeAppearance";
 import { terminalEventDispatcher } from "./terminalEventDispatcher";
-import type {
-  TerminalRuntimeConfig,
-  TerminalRuntimeEntry,
-  TerminalRuntimeViewState,
+import {
+  acceptTerminalOutputSequence,
+  acceptTerminalSnapshotBarrier,
+  type TerminalOutputEvent,
+  type TerminalRuntimeConfig,
+  type TerminalRuntimeEntry,
+  type TerminalRuntimeViewState,
 } from "./terminalRuntimeTypes";
 import { waitForTerminalFontReady } from "./terminalFontSettle";
 import { observeTerminalWriteParsed } from "./terminalPerformance";
@@ -682,46 +685,88 @@ async function sendTerminalInput(
   }
 }
 
+function beginTerminalSnapshotCapture(entry: TerminalRuntimeEntry): number {
+  entry.snapshotReconcileActive = true;
+  entry.snapshotBufferedOutputEvents.length = 0;
+  return ++entry.snapshotReconcileRequestId;
+}
+
+function deliverTerminalOutputEvent(entry: TerminalRuntimeEntry, event: TerminalOutputEvent): void {
+  if (!acceptTerminalOutputSequence(entry, event.outputEpoch, event.outputSequence)) {
+    acknowledgeParsedOutput(entry, event.byteLength ?? terminalByteLength(event.data));
+    return;
+  }
+  setRuntimeStatus(entry, "ready");
+  scheduleWrite(entry, event.data, event.byteLength ?? terminalByteLength(event.data));
+}
+
+function finishTerminalSnapshotCapture(entry: TerminalRuntimeEntry, requestId: number): void {
+  if (entry.disposed || entry.snapshotReconcileRequestId !== requestId) return;
+  entry.snapshotReconcileActive = false;
+  const buffered = entry.snapshotBufferedOutputEvents
+    .splice(0)
+    .toSorted((left, right) => left.outputSequence - right.outputSequence);
+  for (const event of buffered) deliverTerminalOutputEvent(entry, event);
+}
+
+function completeTerminalSnapshotCapture(
+  entry: TerminalRuntimeEntry,
+  requestId: number,
+  snapshot: TerminalSessionSnapshot,
+  onComplete?: () => void,
+): void {
+  if (entry.disposed || entry.snapshotReconcileRequestId !== requestId) {
+    return;
+  }
+  if (!entry.opened || entry.hasHandledExit) {
+    finishTerminalSnapshotCapture(entry, requestId);
+    return;
+  }
+
+  const finish = () => {
+    if (entry.disposed || entry.snapshotReconcileRequestId !== requestId) return;
+    finishTerminalSnapshotCapture(entry, requestId);
+    setRuntimeStatus(entry, "ready");
+    onComplete?.();
+  };
+
+  // The sequence is the server-side barrier for this exact history. Live
+  // output is buffered while the snapshot RPC is in flight and only events
+  // newer than the barrier are appended after the authoritative replay.
+  if (acceptTerminalSnapshotBarrier(entry, snapshot.outputEpoch, snapshot.outputSequence)) {
+    if (snapshotHasReplayPayload(snapshot)) {
+      replaySnapshot(entry, snapshot, finish);
+      return;
+    }
+  }
+  finish();
+}
+
 function reconcileTerminalSnapshot(entry: TerminalRuntimeEntry): void {
-  if (entry.disposed || !entry.opened || entry.hasHandledExit) return;
+  if (entry.disposed || !entry.opened || entry.hasHandledExit || entry.snapshotReconcileActive) {
+    return;
+  }
   const api = readNativeApi();
   if (!api) return;
 
-  const outputEventVersionAtRequest = entry.outputEventVersion;
-  const requestId = ++entry.snapshotReconcileRequestId;
+  if (entry.snapshotReconcileTimer !== null) {
+    window.clearTimeout(entry.snapshotReconcileTimer);
+    entry.snapshotReconcileTimer = null;
+  }
+
+  const requestId = beginTerminalSnapshotCapture(entry);
   setRuntimeStatus(entry, "connecting");
 
   void api.terminal
     .open(buildOpenInput(entry))
     .then((snapshot) => {
-      if (
-        entry.disposed ||
-        !entry.opened ||
-        entry.hasHandledExit ||
-        entry.snapshotReconcileRequestId !== requestId
-      ) {
-        return;
-      }
-
-      if (entry.outputEventVersion !== outputEventVersionAtRequest) {
-        return;
-      }
-
-      if (snapshotHasReplayPayload(snapshot)) {
-        replaySnapshot(entry, snapshot, () => {
-          if (!entry.disposed && entry.snapshotReconcileRequestId === requestId) {
-            setRuntimeStatus(entry, "ready");
-          }
-        });
-        return;
-      }
-
-      setRuntimeStatus(entry, "ready");
+      completeTerminalSnapshotCapture(entry, requestId, snapshot);
     })
     .catch((error) => {
       if (entry.disposed || !entry.opened || entry.snapshotReconcileRequestId !== requestId) {
         return;
       }
+      finishTerminalSnapshotCapture(entry, requestId);
       setRuntimeStatus(entry, "error");
       writeSystemMessage(
         entry.terminal,
@@ -822,8 +867,12 @@ export function createRuntimeEntry(config: TerminalRuntimeConfig): TerminalRunti
     pendingWriteLength: 0,
     pendingWriteBytes: 0,
     linkMatchCache: new Map(),
-    outputEventVersion: 0,
+    lastOutputEpoch: null,
+    lastOutputSequence: 0,
+    snapshotReconcileActive: false,
+    snapshotBufferedOutputEvents: [],
     snapshotReconcileRequestId: 0,
+    snapshotReconcileTimer: null,
     webglLoadFrame: null,
     themeRefreshFrame: 0,
     themeObserver: null,
@@ -870,7 +919,7 @@ export function createRuntimeEntry(config: TerminalRuntimeConfig): TerminalRunti
       reconcileTerminalSnapshot(entry);
       return;
     }
-    if (state === "connecting" || state === "closed") {
+    if (state === "connecting" || state === "reconnecting") {
       setRuntimeStatus(entry, "connecting");
     }
   });
@@ -1006,14 +1055,19 @@ export function createRuntimeEntry(config: TerminalRuntimeConfig): TerminalRunti
     entry.terminalId,
     (event) => {
       if (event.type === "output") {
-        setRuntimeStatus(entry, "ready");
-        entry.outputEventVersion += 1;
-        scheduleWrite(entry, event.data, event.byteLength ?? terminalByteLength(event.data));
+        if (entry.snapshotReconcileActive) {
+          entry.snapshotBufferedOutputEvents.push(event);
+        } else {
+          deliverTerminalOutputEvent(entry, event);
+        }
         return;
       }
 
       if (event.type === "started" || event.type === "restarted") {
         entry.hasHandledExit = false;
+        if (entry.snapshotReconcileActive) return;
+        entry.lastOutputEpoch = event.snapshot.outputEpoch;
+        entry.lastOutputSequence = event.snapshot.outputSequence;
         const shouldReplaySnapshot =
           event.type === "restarted" || snapshotHasReplayPayload(event.snapshot);
         if (shouldReplaySnapshot) {
@@ -1091,53 +1145,30 @@ function openTerminal(entry: TerminalRuntimeEntry): void {
   entry.lastSentResize = null;
   entry.opened = true;
   setRuntimeStatus(entry, "connecting");
-  const outputEventVersionAtOpen = entry.outputEventVersion;
   const openInput = buildOpenInput(entry);
+  const requestId = beginTerminalSnapshotCapture(entry);
 
   void api.terminal
     .open(openInput)
     .then((snapshot) => {
-      if (entry.disposed) return;
-      if (
-        snapshotHasReplayPayload(snapshot) &&
-        entry.outputEventVersion === outputEventVersionAtOpen
-      ) {
-        replaySnapshot(entry, snapshot, () => setRuntimeStatus(entry, "ready"));
-      } else if (entry.outputEventVersion === outputEventVersionAtOpen) {
-        setRuntimeStatus(entry, "ready");
-        window.setTimeout(() => {
-          if (
-            entry.disposed ||
-            !entry.opened ||
-            entry.outputEventVersion !== outputEventVersionAtOpen
-          ) {
-            return;
-          }
-          void api.terminal
-            .open(openInput)
-            .then((nextSnapshot) => {
-              if (
-                entry.disposed ||
-                entry.outputEventVersion !== outputEventVersionAtOpen ||
-                !snapshotHasReplayPayload(nextSnapshot)
-              ) {
-                return;
-              }
-              replaySnapshot(entry, nextSnapshot, () => setRuntimeStatus(entry, "ready"));
-            })
-            .catch(() => {
-              // Best-effort recovery only; the original open already succeeded.
-            });
-        }, OPEN_SNAPSHOT_RECONCILE_DELAY_MS);
-      }
-      if (entry.viewState.autoFocus) {
-        window.requestAnimationFrame(() => {
-          entry.terminal.focus();
-        });
-      }
+      const shouldReconcileEmptySnapshot = !snapshotHasReplayPayload(snapshot);
+      completeTerminalSnapshotCapture(entry, requestId, snapshot, () => {
+        if (shouldReconcileEmptySnapshot && entry.lastOutputSequence === snapshot.outputSequence) {
+          entry.snapshotReconcileTimer = window.setTimeout(() => {
+            entry.snapshotReconcileTimer = null;
+            reconcileTerminalSnapshot(entry);
+          }, OPEN_SNAPSHOT_RECONCILE_DELAY_MS);
+        }
+        if (entry.viewState.autoFocus) {
+          window.requestAnimationFrame(() => {
+            entry.terminal.focus();
+          });
+        }
+      });
     })
     .catch((error) => {
       if (entry.disposed) return;
+      finishTerminalSnapshotCapture(entry, requestId);
       entry.opened = false;
       setRuntimeStatus(entry, "error");
       writeSystemMessage(entry.terminal, describeErrorMessage(error, "Failed to open terminal"));
@@ -1209,6 +1240,12 @@ export function disposeRuntimeEntry(entry: TerminalRuntimeEntry): void {
   // Closing a terminal should not synchronously paint queued output into a buffer
   // that is about to be destroyed; acknowledge and drop it to keep close latency low.
   clearPendingWrites(entry);
+  if (entry.snapshotReconcileTimer !== null) {
+    window.clearTimeout(entry.snapshotReconcileTimer);
+    entry.snapshotReconcileTimer = null;
+  }
+  entry.snapshotReconcileActive = false;
+  entry.snapshotBufferedOutputEvents.length = 0;
   entry.unsubscribeTerminalEvents?.();
   entry.unsubscribeTerminalEvents = null;
   entry.querySuppressionDispose?.();

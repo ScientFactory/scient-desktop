@@ -9,6 +9,7 @@ import {
 import { SERVER_TRANSCRIBE_VOICE_CHANNEL } from "./voiceTranscription";
 import { STORAGE_MIGRATION_IPC_CHANNELS } from "./desktopStorageMigration";
 import { APPSNAP_IPC_CHANNELS } from "./appSnapIpc";
+import { DESKTOP_CONNECTION_WAKE_CHANNEL } from "./desktopConnectionWake";
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const SAVE_FILE_CHANNEL = "desktop:save-file";
@@ -45,6 +46,16 @@ function getDesktopWsUrl(): string | null {
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: getDesktopWsUrl,
+  onConnectionWake: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, reason: unknown) => {
+      if (reason !== "app-activate" && reason !== "window-focus" && reason !== "system-resume") {
+        return;
+      }
+      listener(reason);
+    };
+    ipcRenderer.on(DESKTOP_CONNECTION_WAKE_CHANNEL, wrappedListener);
+    return () => ipcRenderer.removeListener(DESKTOP_CONNECTION_WAKE_CHANNEL, wrappedListener);
+  },
   // Absolute path for OS-dropped File objects (folders with spaces/parens, etc.).
   getPathForFile: (file: File) => {
     try {
