@@ -23,6 +23,10 @@ import {
 import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
+import {
+  collectAssistantMessagesToSettle,
+  isAssistantTurnTerminal,
+} from "./assistantMessageLifecycle.ts";
 import { hasNativeHandoffMessages } from "./handoff.ts";
 import { resolveStableMessageTurnId } from "./messageTurnId.ts";
 import {
@@ -1459,12 +1463,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.session.set": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
-      return {
+      const sessionEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -1478,6 +1482,39 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           session: command.session,
         },
       };
+      const settlement = collectAssistantMessagesToSettle({
+        thread,
+        nextSession: command.session,
+      });
+      if (settlement === null) {
+        return sessionEvent;
+      }
+
+      const completionEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
+      for (const message of settlement.messages) {
+        completionEvents.push({
+          ...withEventBase({
+            aggregateKind: "thread",
+            aggregateId: command.threadId,
+            occurredAt: command.createdAt,
+            commandId: command.commandId,
+          }),
+          type: "thread.message-sent" as const,
+          payload: {
+            threadId: command.threadId,
+            messageId: message.id,
+            role: "assistant" as const,
+            text: message.text,
+            turnId: settlement.turnId,
+            streaming: false,
+            source: message.source,
+            createdAt: message.createdAt,
+            updatedAt: command.session.updatedAt,
+          },
+        });
+      }
+
+      return [...completionEvents, sessionEvent];
     }
 
     case "thread.messages.import": {
@@ -1516,6 +1553,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const existingMessage = thread.messages.find((message) => message.id === command.messageId);
+      const turnId = resolveStableMessageTurnId({
+        existingTurnId: existingMessage?.turnId,
+        incomingTurnId: command.turnId,
+      });
+      const turnIsTerminal = isAssistantTurnTerminal(thread, turnId);
       return {
         ...withEventBase({
           aggregateKind: "thread",
@@ -1528,12 +1570,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           messageId: command.messageId,
           role: "assistant",
-          text: command.delta,
-          turnId: resolveStableMessageTurnId({
-            existingTurnId: existingMessage?.turnId,
-            incomingTurnId: command.turnId,
-          }),
-          streaming: true,
+          // Provider events can race with terminal lifecycle events. Preserve a
+          // real late tail without allowing it to reopen a settled message.
+          text: turnIsTerminal ? `${existingMessage?.text ?? ""}${command.delta}` : command.delta,
+          turnId,
+          streaming: !turnIsTerminal,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
