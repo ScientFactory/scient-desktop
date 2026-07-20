@@ -139,19 +139,6 @@ const requiredScientIdentityText = new Map<string, readonly string[]>([
     "apps/web/src/whatsNew/entries.ts",
     ["export const WHATS_NEW_ENTRIES: readonly WhatsNewEntry[] = [];"],
   ],
-  [
-    "apps/marketing/src/lib/releases.ts",
-    ["ScientFactory/scient-desktop", '"scient-latest-release-v2"'],
-  ],
-  [
-    "apps/marketing/src/pages/index.astro",
-    ["ScientFactory — One intelligent workspace for research"],
-  ],
-  ["apps/marketing/src/pages/download.astro", ["Download Scient for macOS, Windows, and Linux"]],
-  [
-    "apps/marketing/src/layouts/Layout.astro",
-    ["One intelligent workspace for every stage of research."],
-  ],
   [".gitignore", ["/.scient/electron-dev", "/.scient-*/"]],
 ]);
 
@@ -173,10 +160,6 @@ const scientOnlySurfacePaths = new Set([
   "KEYBINDINGS.md",
   "REMOTE.md",
   "SECURITY.md",
-  "apps/marketing/src/layouts/Layout.astro",
-  "apps/marketing/src/lib/releases.ts",
-  "apps/marketing/src/pages/download.astro",
-  "apps/marketing/src/pages/index.astro",
   "apps/desktop/scripts/dev-electron.mjs",
   "apps/desktop/src/appSnapManager.ts",
   "apps/desktop/src/browserUsePipeServer.ts",
