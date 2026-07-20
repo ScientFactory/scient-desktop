@@ -212,7 +212,12 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     workflow,
-    "Public Windows releases require all Azure Trusted Signing secrets.",
+    "WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}",
+    "Expected the release workflow to accept a standard Windows signing certificate.",
+  );
+  assertContains(
+    workflow,
+    "Public Windows releases require a standard Authenticode certificate or Azure Trusted Signing.",
     "Expected public Windows releases to fail closed without signing.",
   );
   assertContains(

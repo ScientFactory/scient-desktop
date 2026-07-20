@@ -244,6 +244,8 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
@@ -271,6 +273,15 @@ jobs:
             return 0
           }
 
+          has_any() {
+            for value in "$@"; do
+              if [[ -n "$value" ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
           if [[ "${{ matrix.platform }}" == "mac" ]]; then
             if has_all "$CSC_LINK" "$CSC_KEY_PASSWORD" "$APPLE_API_KEY" "$APPLE_API_KEY_ID" "$APPLE_API_ISSUER"; then
               key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
@@ -286,22 +297,35 @@ jobs:
             fi
           elif [[ "${{ matrix.platform }}" == "win" ]]; then
             # Build-only validation may produce an unsigned installer. Public
-            # releases fail closed unless Trusted Signing is fully configured.
-            if has_all \
-              "$AZURE_TENANT_ID" \
-              "$AZURE_CLIENT_ID" \
-              "$AZURE_CLIENT_SECRET" \
-              "$AZURE_TRUSTED_SIGNING_ENDPOINT" \
-              "$AZURE_TRUSTED_SIGNING_ACCOUNT_NAME" \
-              "$AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME" \
-              "$AZURE_TRUSTED_SIGNING_PUBLISHER_NAME"; then
+            # releases fail closed unless exactly one signing provider is complete.
+            certificate_values=("$WIN_CSC_LINK" "$WIN_CSC_KEY_PASSWORD")
+            azure_values=(
+              "$AZURE_TENANT_ID"
+              "$AZURE_CLIENT_ID"
+              "$AZURE_CLIENT_SECRET"
+              "$AZURE_TRUSTED_SIGNING_ENDPOINT"
+              "$AZURE_TRUSTED_SIGNING_ACCOUNT_NAME"
+              "$AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME"
+              "$AZURE_TRUSTED_SIGNING_PUBLISHER_NAME"
+            )
+
+            if has_all "${certificate_values[@]}" && ! has_any "${azure_values[@]}"; then
+              echo "Windows signing enabled (standard Authenticode certificate)."
+              args+=(--signed)
+            elif has_all "${azure_values[@]}" && ! has_any "${certificate_values[@]}"; then
               echo "Windows signing enabled (Azure Trusted Signing)."
               args+=(--signed)
+            elif has_any "${certificate_values[@]}" || has_any "${azure_values[@]}"; then
+              if [[ "$PUBLISH_RELEASE" == "true" ]]; then
+                echo "Public Windows releases require exactly one complete signing provider: WIN_CSC_LINK plus WIN_CSC_KEY_PASSWORD, or all Azure Trusted Signing secrets." >&2
+                exit 1
+              fi
+              echo "Build-only Windows signing disabled because the signing configuration is incomplete or conflicting."
             elif [[ "$PUBLISH_RELEASE" == "true" ]]; then
-              echo "Public Windows releases require all Azure Trusted Signing secrets." >&2
+              echo "Public Windows releases require a standard Authenticode certificate or Azure Trusted Signing." >&2
               exit 1
             else
-              echo "Build-only Windows signing disabled because one or more Azure Trusted Signing secrets are missing."
+              echo "Build-only Windows signing disabled because no signing provider is configured."
             fi
           else
             echo "Signing disabled for ${{ matrix.platform }}."
