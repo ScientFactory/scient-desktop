@@ -84,6 +84,10 @@
       "types": "./src/browserSession.ts",
       "import": "./src/browserSession.ts"
     },
+    "./backendControl": {
+      "types": "./src/backendControl.ts",
+      "import": "./src/backendControl.ts"
+    },
     "./conversationEdit": {
       "types": "./src/conversationEdit.ts",
       "import": "./src/conversationEdit.ts"
