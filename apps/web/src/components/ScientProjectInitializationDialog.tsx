@@ -38,6 +38,10 @@ const SCIENT_PROJECT_FILES = [
     path: ".scient/project.json",
     description: "A portable Scient project identity.",
   },
+  {
+    path: ".scient/skills.lock.json",
+    description: "Exact identities of the built-in skills selected for this project.",
+  },
 ] as const;
 
 function InitializationError({ error }: { readonly error: string | null }) {
@@ -66,11 +70,11 @@ function ReadyProjectChoice(props: {
     return (
       <>
         <DialogHeader className="pr-10">
-          <DialogTitle className="text-xl">What is a Scient project?</DialogTitle>
+          <DialogTitle className="text-xl">Set up “{name}”</DialogTitle>
           <DialogDescription>
             A Scient project adds a small portable foundation that helps agents understand your
-            project and follow the right instructions. You can update or delete these files whenever
-            you want.
+            project and records any built-in skills you explicitly select. Setup does not run a
+            skill. You can update or delete these files whenever you want.
           </DialogDescription>
         </DialogHeader>
 
@@ -88,6 +92,68 @@ function ReadyProjectChoice(props: {
           <p className="text-xs leading-relaxed text-muted-foreground">
             Existing files are never overwritten.
           </p>
+          {props.preview.skills.length > 0 ? (
+            <section className="space-y-2">
+              <div>
+                <div className="text-sm font-medium text-foreground">Built-in skills</div>
+                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                  Select the procedures this project should activate. Activation does not execute
+                  them.
+                </p>
+              </div>
+              <div className="divide-y divide-[color:var(--color-border)] overflow-hidden rounded-xl border border-[color:var(--color-border)] bg-[var(--color-background-elevated-primary-opaque)]">
+                {props.preview.skills.map((skill) => (
+                  <label key={`${skill.id}@${skill.version}`} className="flex gap-3 px-3.5 py-3">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 size-4 accent-[var(--color-primary)]"
+                      checked={skill.selected}
+                      onChange={(event) =>
+                        props.onDecision({
+                          kind: "refresh-skills",
+                          skillIds: props.preview.skills.flatMap((candidate) =>
+                            candidate.id === skill.id
+                              ? event.currentTarget.checked
+                                ? [candidate.id]
+                                : []
+                              : candidate.selected
+                                ? [candidate.id]
+                                : [],
+                          ),
+                        })
+                      }
+                    />
+                    <span className="min-w-0">
+                      <span className="flex flex-wrap items-center gap-2 text-sm font-medium text-foreground">
+                        {skill.displayName}
+                        {skill.readiness === "latent" ? (
+                          <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium text-secondary-foreground">
+                            Needs foundations
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+                        {skill.description}
+                      </span>
+                      {skill.readiness === "latent" && skill.prerequisites.length > 0 ? (
+                        <span className="mt-1 block text-[11px] leading-relaxed text-muted-foreground">
+                          Needs: {skill.prerequisites.join("; ")}
+                        </span>
+                      ) : null}
+                      <span className="mt-1.5 block text-[11px] leading-relaxed text-muted-foreground">
+                        {skill.capabilities.network ? "Network" : "No network"} ·{" "}
+                        {skill.capabilities.codeExecution ? "Code execution" : "No code execution"}{" "}
+                        ·{" "}
+                        {skill.capabilities.projectWrites === "proposal-only"
+                          ? "Proposal-only changes"
+                          : "No project writes"}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </section>
+          ) : null}
         </DialogPanel>
 
         <DialogFooter>
@@ -116,7 +182,7 @@ function ReadyProjectChoice(props: {
           <button
             type="button"
             disabled={!props.preview.canApply}
-            onClick={() => props.onDecision("apply")}
+            onClick={() => setShowInformation(true)}
             className="group flex min-h-32 cursor-pointer items-center gap-3.5 rounded-xl border border-[color:var(--color-border)] bg-[var(--color-background-elevated-primary-opaque)] p-4 text-left outline-none transition-colors hover:bg-[var(--color-background-elevated-secondary)] focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span className="relative flex size-12 shrink-0 items-center justify-center rounded-full bg-secondary text-foreground">
@@ -276,7 +342,7 @@ export function ScientProjectInitializationDialog(props: {
         {preview ? (
           ready ? (
             <ReadyProjectChoice
-              key={`${preview.previewId}:${preview.root}`}
+              key={preview.root}
               preview={preview}
               error={props.error}
               onDecision={props.onDecision}

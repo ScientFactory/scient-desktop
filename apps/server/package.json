@@ -43,6 +43,7 @@
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
     "@scientfactory/project-init": "workspace:*",
+    "@scientfactory/scient-skills": "workspace:*",
     "@synara/contracts": "workspace:*",
     "@synara/shared": "workspace:*",
     "@synara/web": "workspace:*",

@@ -1,0 +1,27 @@
+{
+  "id": "scient.skill-authoring",
+  "version": "0.1.0",
+  "displayName": "Skill Authoring",
+  "kind": "meta",
+  "role": "constructive",
+  "scope": "universal",
+  "visibility": "user",
+  "activation": {
+    "scope": "user",
+    "defaultEnabled": true
+  },
+  "maintainer": "ScientFactory",
+  "capabilities": {
+    "network": false,
+    "codeExecution": false,
+    "projectWrites": "proposal-only"
+  },
+  "requirements": {
+    "projectObjects": [],
+    "operations": []
+  },
+  "limitations": [
+    "Does not activate, publish, install, approve, or independently validate an authored skill.",
+    "User-activated meta-capability; excluded from ordinary scientific project initialization."
+  ]
+}

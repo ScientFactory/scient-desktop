@@ -2671,7 +2671,7 @@ export default function Sidebar() {
       const resolve = projectInitializationDecisionRef.current;
       if (!resolve) return;
       projectInitializationDecisionRef.current = null;
-      setProjectInitializationPreview(null);
+      if (typeof decision !== "object") setProjectInitializationPreview(null);
       setProjectInitializationError(null);
       resolve(decision);
     },

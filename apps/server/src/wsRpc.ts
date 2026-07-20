@@ -61,6 +61,11 @@ import { listProviderUsage } from "./providerUsage";
 import { getProviderUsageSnapshot } from "./providerUsageSnapshot";
 import { ProfileStatsQuery } from "./profileStats";
 import { ScientProjectInitializationService } from "./scientProjectInitialization";
+import {
+  haveSameScientBuiltInSkillActivation,
+  listScientBuiltInSkillCatalogEntries,
+  synchronizeScientBuiltInSkills,
+} from "./scientBuiltInSkills";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup";
@@ -974,7 +979,54 @@ export const makeWsRpcLayer = () =>
         [WS_METHODS.serverGetSettings]: () =>
           rpcEffect(serverSettings.getSettings, "Failed to load server settings"),
         [WS_METHODS.serverUpdateSettings]: (input) =>
-          rpcEffect(serverSettings.updateSettings(input), "Failed to update server settings"),
+          rpcEffect(
+            Effect.gen(function* () {
+              const previous = yield* serverSettings.getSettings;
+              const next = yield* serverSettings.updateSettings(input);
+              if (input.skills?.scientBuiltInActivationOverrides === undefined) {
+                return next;
+              }
+              return yield* Effect.tryPromise(() =>
+                synchronizeScientBuiltInSkills({ baseDir: config.baseDir, settings: next }),
+              ).pipe(
+                Effect.andThen(
+                  Effect.gen(function* () {
+                    const latest = yield* serverSettings.getSettings;
+                    if (!haveSameScientBuiltInSkillActivation(next, latest)) {
+                      yield* Effect.tryPromise(() =>
+                        synchronizeScientBuiltInSkills({
+                          baseDir: config.baseDir,
+                          settings: latest,
+                        }),
+                      );
+                    }
+                    return latest;
+                  }),
+                ),
+                Effect.catch((cause) =>
+                  serverSettings
+                    .updateSettings({
+                      skills: {
+                        scientBuiltInActivationOverrides:
+                          previous.skills.scientBuiltInActivationOverrides,
+                      },
+                    })
+                    .pipe(
+                      Effect.tap((restored) =>
+                        Effect.tryPromise(() =>
+                          synchronizeScientBuiltInSkills({
+                            baseDir: config.baseDir,
+                            settings: restored,
+                          }),
+                        ),
+                      ),
+                      Effect.andThen(Effect.fail(cause)),
+                    ),
+                ),
+              );
+            }),
+            "Failed to update server settings",
+          ),
         [WS_METHODS.serverRefreshProviders]: () =>
           rpcEffect(
             providerHealth.refresh.pipe(Effect.map((providers) => ({ providers }))),
@@ -1200,19 +1252,24 @@ export const makeWsRpcLayer = () =>
           rpcEffect(providerDiscoveryService.listSkills(input), "Failed to list skills"),
         [WS_METHODS.providerListSkillsCatalog]: (input) =>
           rpcEffect(
-            Effect.tryPromise(() =>
-              discoverSkillsCatalog({
-                cwd: input.cwd ?? null,
-                homeDir: config.homeDir,
-                synaraBaseDir: config.baseDir,
-                includeDuplicateOrigins: true,
-              }),
-            ).pipe(
-              Effect.map((skills) => ({
+            Effect.gen(function* () {
+              const [skills, settings] = yield* Effect.all([
+                Effect.tryPromise(() =>
+                  discoverSkillsCatalog({
+                    cwd: input.cwd ?? null,
+                    homeDir: config.homeDir,
+                    synaraBaseDir: config.baseDir,
+                    includeDuplicateOrigins: true,
+                  }),
+                ),
+                serverSettings.getSettings,
+              ]);
+              return {
                 skills,
+                scientBuiltInSkills: listScientBuiltInSkillCatalogEntries(settings),
                 synaraSkillsDir: synaraSkillsDir(config.baseDir),
-              })),
-            ),
+              };
+            }),
             "Failed to list the skills catalog",
           ),
         [WS_METHODS.providerListPlugins]: (input) =>
