@@ -14,10 +14,15 @@ const require = createRequire(import.meta.url);
 const {
   SCIENT_APPSNAP_HELPER_BUNDLE_PATH,
   SCIENT_APPSNAP_HELPER_IDENTIFIER,
+  SCIENT_ELECTRON_HELPERS,
   SCIENT_MAC_BUNDLE_IDENTIFIER,
 } = require("./mac-signing-policy.cjs") as {
   readonly SCIENT_APPSNAP_HELPER_BUNDLE_PATH: string;
   readonly SCIENT_APPSNAP_HELPER_IDENTIFIER: string;
+  readonly SCIENT_ELECTRON_HELPERS: ReadonlyArray<{
+    readonly bundlePath: string;
+    readonly identifier: string;
+  }>;
   readonly SCIENT_MAC_BUNDLE_IDENTIFIER: string;
 };
 const FORBIDDEN_APPSNAP_ENTITLEMENTS = [
@@ -31,37 +36,79 @@ function signatureField(details: string, field: string): string | null {
   return details.match(new RegExp(`^${field}=(.+)$`, "m"))?.[1]?.trim() ?? null;
 }
 
+function hasEnabledEntitlement(entitlements: string, entitlement: string): boolean {
+  const keyIndex = entitlements.indexOf(`<key>${entitlement}</key>`);
+  if (keyIndex < 0) return false;
+  return /<true\s*\/>/.test(entitlements.slice(keyIndex, keyIndex + 256));
+}
+
+function assertDeveloperIdentity(
+  details: string,
+  expectedIdentifier: string,
+  expectedTeamIdentifier: string | null,
+  label: string,
+): string {
+  const identifier = signatureField(details, "Identifier");
+  const teamIdentifier = signatureField(details, "TeamIdentifier");
+  if (
+    identifier !== expectedIdentifier ||
+    !details.includes("Authority=Developer ID Application:") ||
+    !details.includes("Timestamp=") ||
+    !details.includes("runtime") ||
+    !teamIdentifier ||
+    teamIdentifier === "not set" ||
+    (expectedTeamIdentifier && teamIdentifier !== expectedTeamIdentifier)
+  ) {
+    throw new Error(`${label} does not have Scient's stable hardened Developer ID identity.`);
+  }
+  return teamIdentifier;
+}
+
 export function assertSignedMacIdentityDetails(input: {
   readonly appDetails: string;
+  readonly appEntitlements?: string;
   readonly appSnapDetails: string;
   readonly appSnapEntitlements: string;
+  readonly electronHelpers?: ReadonlyArray<{
+    readonly details: string;
+    readonly entitlements: string;
+    readonly identifier: string;
+  }>;
 }): void {
-  const appIdentifier = signatureField(input.appDetails, "Identifier");
-  const appTeamIdentifier = signatureField(input.appDetails, "TeamIdentifier");
-  if (
-    appIdentifier !== SCIENT_MAC_BUNDLE_IDENTIFIER ||
-    !input.appDetails.includes("Authority=Developer ID Application:") ||
-    !appTeamIdentifier ||
-    appTeamIdentifier === "not set"
-  ) {
-    throw new Error("Signed macOS app does not have Scient's stable Developer ID identity.");
+  const appTeamIdentifier = assertDeveloperIdentity(
+    input.appDetails,
+    SCIENT_MAC_BUNDLE_IDENTIFIER,
+    null,
+    "Signed macOS app",
+  );
+  if (hasEnabledEntitlement(input.appEntitlements ?? "", "com.apple.security.get-task-allow")) {
+    throw new Error("Signed macOS app enables the development-only get-task-allow entitlement.");
   }
 
-  const appSnapIdentifier = signatureField(input.appSnapDetails, "Identifier");
-  const appSnapTeamIdentifier = signatureField(input.appSnapDetails, "TeamIdentifier");
-  if (
-    appSnapIdentifier !== SCIENT_APPSNAP_HELPER_IDENTIFIER ||
-    !input.appSnapDetails.includes("Authority=Developer ID Application:") ||
-    appSnapTeamIdentifier !== appTeamIdentifier
-  ) {
-    throw new Error("AppSnap helper does not inherit Scient's stable Developer ID identity.");
-  }
+  assertDeveloperIdentity(
+    input.appSnapDetails,
+    SCIENT_APPSNAP_HELPER_IDENTIFIER,
+    appTeamIdentifier,
+    "AppSnap helper",
+  );
 
   const forbiddenEntitlement = FORBIDDEN_APPSNAP_ENTITLEMENTS.find((entitlement) =>
     input.appSnapEntitlements.includes(`<key>${entitlement}</key>`),
   );
   if (forbiddenEntitlement) {
     throw new Error(`AppSnap helper carries forbidden entitlement ${forbiddenEntitlement}.`);
+  }
+
+  for (const helper of input.electronHelpers ?? []) {
+    assertDeveloperIdentity(
+      helper.details,
+      helper.identifier,
+      appTeamIdentifier,
+      `Electron helper ${helper.identifier}`,
+    );
+    if (hasEnabledEntitlement(helper.entitlements, "com.apple.security.get-task-allow")) {
+      throw new Error(`Electron helper ${helper.identifier} enables get-task-allow.`);
+    }
   }
 }
 
@@ -112,10 +159,25 @@ export function verifyMacAppSignature(
       ":-",
       appSnapHelperPath,
     ]);
+    const appEntitlements = runCommand("codesign", ["-d", "--entitlements", ":-", appBundlePath]);
+    const electronHelpers = SCIENT_ELECTRON_HELPERS.map((helper) => {
+      const helperPath = join(appBundlePath, helper.bundlePath);
+      if (!existsSync(helperPath)) {
+        throw new Error(`Signed macOS app is missing Electron helper: ${helperPath}`);
+      }
+      runCommand("codesign", ["--verify", "--strict", "--verbose=4", helperPath]);
+      return {
+        identifier: helper.identifier,
+        details: runCommand("codesign", ["-dv", "--verbose=4", helperPath]),
+        entitlements: runCommand("codesign", ["-d", "--entitlements", ":-", helperPath]),
+      };
+    });
     assertSignedMacIdentityDetails({
       appDetails: details,
+      appEntitlements,
       appSnapDetails,
       appSnapEntitlements,
+      electronHelpers,
     });
     runCommand("xcrun", ["stapler", "validate", "--verbose", appBundlePath]);
     runCommand("spctl", ["--assess", "--type", "execute", "--verbose=4", appBundlePath]);

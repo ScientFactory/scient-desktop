@@ -276,6 +276,15 @@ jobs:
             "${{ matrix.arch }}" \
             "${{ needs.preflight.outputs.version }}"
 
+      - name: Upload macOS notarization evidence
+        if: ${{ always() && matrix.platform == 'mac' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: notarization-${{ matrix.arch }}
+          path: release/notarization-*.json
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Build Linux desktop artifact
         if: matrix.platform == 'linux'
         shell: bash
@@ -447,6 +456,8 @@ jobs:
           required_assets=(
             "Scient-${RELEASE_VERSION}-arm64.dmg"
             "Scient-${RELEASE_VERSION}-x64.dmg"
+            "Scient-${RELEASE_VERSION}-arm64.zip"
+            "Scient-${RELEASE_VERSION}-x64.zip"
             "Scient-${RELEASE_VERSION}-x64.exe"
             "Scient-${RELEASE_VERSION}-x86_64.AppImage"
             "latest-mac.yml"
@@ -468,6 +479,8 @@ jobs:
           required_payloads=(
             "Scient-${RELEASE_VERSION}-arm64.dmg"
             "Scient-${RELEASE_VERSION}-x64.dmg"
+            "Scient-${RELEASE_VERSION}-arm64.zip"
+            "Scient-${RELEASE_VERSION}-x64.zip"
             "Scient-${RELEASE_VERSION}-x64.exe"
             "Scient-${RELEASE_VERSION}-x86_64.AppImage"
           )
@@ -640,10 +653,71 @@ jobs:
             exit 1
           fi
 
+  verify_published_macos:
+    name: Verify published macOS ${{ matrix.arch }}
+    if: ${{ needs.preflight.outputs.publish_release == 'true' }}
+    needs: [preflight, release]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-14
+          - arch: x64
+            runner: macos-15-intel
+    steps:
+      - name: Checkout exact release source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: package.json
+
+      - name: Download published macOS artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p published-macos
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "Scient-${RELEASE_VERSION}-${{ matrix.arch }}.dmg" \
+            --pattern "Scient-${RELEASE_VERSION}-${{ matrix.arch }}.zip" \
+            --pattern SHA256SUMS.txt \
+            --dir published-macos
+
+      - name: Verify checksum and delivered macOS identity
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          for extension in dmg zip; do
+            asset="Scient-${RELEASE_VERSION}-${{ matrix.arch }}.${extension}"
+            expected_line="$(grep -F "  ${asset}" published-macos/SHA256SUMS.txt | head -n 1 || true)"
+            if [[ -z "$expected_line" ]]; then
+              echo "Published checksum manifest is missing $asset." >&2
+              exit 1
+            fi
+            (
+              cd published-macos
+              printf '%s\n' "$expected_line" | shasum -a 256 -c -
+            )
+          done
+          bun scripts/verify-mac-release-artifact.ts published-macos
+
   finalize:
     name: Finalize release
     if: ${{ needs.preflight.outputs.publish_release == 'true' && vars.SCIENT_FINALIZE_RELEASE == '1' }}
-    needs: [preflight, release]
+    needs: [preflight, verify_published_macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
