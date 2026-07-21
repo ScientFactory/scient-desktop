@@ -203,6 +203,10 @@ async function addProjectByTypedPath(page, workspacePath) {
   const pathInput = folderDialog.getByPlaceholder("Enter project path (e.g. ~/projects/my-app)");
   await pathInput.waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
   await pathInput.fill(workspacePath);
+  await folderDialog
+    .getByText(basename(workspacePath), { exact: true })
+    .first()
+    .waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
   const addButton = folderDialog.getByRole("button", { name: "Add", exact: true });
   await addButton.waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
   if (
@@ -238,33 +242,38 @@ async function waitForPersistedProject(databasePath, workspacePath) {
   });
 }
 
-function terminateProcessGroup(child, signal = "SIGTERM") {
-  if (!child.pid) return;
+function processGroupIsAlive(processGroupId) {
   try {
-    process.kill(-child.pid, signal);
+    process.kill(-processGroupId, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+function signalProcessGroup(processGroupId, signal) {
+  try {
+    process.kill(-processGroupId, signal);
   } catch (error) {
     if (error?.code !== "ESRCH") throw error;
   }
 }
 
 async function stopPackagedApp(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  const waitForExit = async (timeoutMs) => {
-    if (child.exitCode !== null || child.signalCode !== null) return true;
-    let onExit;
-    const exitPromise = new Promise((resolveExit) => {
-      onExit = () => resolveExit(true);
-      child.once("exit", onExit);
-    });
-    const exited = await Promise.race([exitPromise, delay(timeoutMs).then(() => false)]);
-    if (!exited && onExit) child.off("exit", onExit);
-    return exited;
-  };
-  terminateProcessGroup(child, "SIGTERM");
-  const exited = await waitForExit(5_000);
-  if (!exited) {
-    terminateProcessGroup(child, "SIGKILL");
-    await waitForExit(5_000);
+  if (!child.pid || !processGroupIsAlive(child.pid)) return;
+  const waitForGroupExit = (timeoutMs) =>
+    waitFor(
+      "packaged Electron process group exit",
+      () => !processGroupIsAlive(child.pid),
+      timeoutMs,
+    ).catch(() => false);
+
+  signalProcessGroup(child.pid, "SIGTERM");
+  if (await waitForGroupExit(5_000)) return;
+  signalProcessGroup(child.pid, "SIGKILL");
+  if (!(await waitForGroupExit(5_000))) {
+    throw new Error(`Packaged Electron process group ${child.pid} survived SIGKILL.`);
   }
 }
 
@@ -274,6 +283,7 @@ async function preserveFailureDiagnostics({
   output,
   desktopLogPath,
   serverLogPath,
+  runtimeStatePath,
 }) {
   await mkdir(DIAGNOSTIC_DIR, { recursive: true });
   await writeFile(join(DIAGNOSTIC_DIR, `${scenarioName}-process.log`), `${output}\n`, "utf8");
@@ -286,6 +296,10 @@ async function preserveFailureDiagnostics({
   await copyFile(serverLogPath, join(DIAGNOSTIC_DIR, `${scenarioName}-server-child.log`)).catch(
     () => undefined,
   );
+  await copyFile(
+    runtimeStatePath,
+    join(DIAGNOSTIC_DIR, `${scenarioName}-server-runtime.json`),
+  ).catch(() => undefined);
 }
 
 async function runScenario(appImagePath, scenario) {
@@ -306,6 +320,8 @@ async function runScenario(appImagePath, scenario) {
   let child;
   let page;
   let output = "";
+  let scenarioError;
+  const cleanupErrors = [];
 
   try {
     await mkdir(homeDir, { recursive: true });
@@ -366,6 +382,12 @@ async function runScenario(appImagePath, scenario) {
     const renderer = await connectToPackagedRenderer(debuggingPort, () => output);
     browser = renderer.browser;
     page = renderer.page;
+    page.on("console", (message) => {
+      recordOutput(`\n[renderer:${message.type()}] ${message.text()}`);
+    });
+    page.on("pageerror", (error) => {
+      recordOutput(`\n[renderer:pageerror] ${error.stack || error.message}`);
+    });
     const initialRuntime = await waitForRuntimeState(runtimeStatePath);
     await waitFor(
       "first packaged backend generation readiness",
@@ -422,15 +444,26 @@ async function runScenario(appImagePath, scenario) {
       output,
       desktopLogPath,
       serverLogPath,
+      runtimeStatePath,
     }).catch(() => undefined);
-    throw new Error(
+    scenarioError = new Error(
       `${scenario.name} failed: ${error instanceof Error ? error.stack || error.message : String(error)}\nPackaged process output:\n${output}`,
       { cause: error },
     );
   } finally {
     await browser?.close().catch(() => undefined);
-    if (child) await stopPackagedApp(child).catch(() => undefined);
-    await rm(scenarioRoot, { recursive: true, force: true });
+    if (child) {
+      await stopPackagedApp(child).catch((error) => cleanupErrors.push(error));
+    }
+    await rm(scenarioRoot, { recursive: true, force: true }).catch((error) =>
+      cleanupErrors.push(error),
+    );
+  }
+  if (scenarioError || cleanupErrors.length > 0) {
+    const errors = [scenarioError, ...cleanupErrors].filter(Boolean);
+    throw errors.length === 1
+      ? errors[0]
+      : new AggregateError(errors, `${scenario.name} failed and cleanup was incomplete.`);
   }
 }
 
