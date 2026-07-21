@@ -52,6 +52,7 @@ import {
   sanitizeNestedCodexGeneratedImagePayloads,
 } from "../../codexGeneratedImages.ts";
 import { isNonFatalCodexErrorMessage } from "../../codexErrorClassification.ts";
+import { isCodexAuthenticationError } from "../../codexAuthenticationError.ts";
 import { ServerConfig } from "../../config.ts";
 import { makeRuntimeTaskListItem } from "../runtimeTaskList.ts";
 import { extractProposedPlanMarkdown } from "../planMode.ts";
@@ -164,6 +165,12 @@ function providerErrorMapsToWarning(event: ProviderEvent): boolean {
         typeof event.message === "string" &&
         isNonFatalCodexErrorMessage(event.message)))
   );
+}
+
+function codexRuntimeErrorClass(message: string, detail: unknown) {
+  return isCodexAuthenticationError({ message, detail })
+    ? ("authentication_error" as const)
+    : ("provider_error" as const);
 }
 
 function normalizeCodexTokenUsage(value: unknown): ThreadTokenUsageSnapshot | undefined {
@@ -842,7 +849,9 @@ function mapToRuntimeEvents(
         type: treatAsWarning ? "runtime.warning" : "runtime.error",
         payload: {
           message: event.message,
-          ...(!treatAsWarning ? { class: "provider_error" as const } : {}),
+          ...(!treatAsWarning
+            ? { class: codexRuntimeErrorClass(event.message, event.payload) }
+            : {}),
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },
@@ -1535,7 +1544,7 @@ function mapToRuntimeEvents(
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           message,
-          ...(!treatAsWarning ? { class: "provider_error" as const } : {}),
+          ...(!treatAsWarning ? { class: codexRuntimeErrorClass(message, event.payload) } : {}),
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },

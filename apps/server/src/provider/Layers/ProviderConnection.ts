@@ -434,7 +434,13 @@ export function makeProviderConnectionLive(options?: {
           const command = commandResult.success;
           const refreshedBeforeStart = yield* providerHealth.refresh;
           const currentStatus = refreshedBeforeStart.find((status) => status.provider === provider);
-          if (currentStatus?.available && currentStatus.authStatus === "authenticated") {
+          const forceCodexReauthentication =
+            provider === "codex" && input.mode === "reauthenticate";
+          if (
+            !forceCodexReauthentication &&
+            currentStatus?.available &&
+            currentStatus.authStatus === "authenticated"
+          ) {
             yield* releaseProvider(provider, "");
             return { providers: refreshedBeforeStart };
           }

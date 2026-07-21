@@ -21,7 +21,7 @@ import {
   TurnId,
 } from "@synara/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -68,6 +68,7 @@ type LegacyProviderRuntimeEvent = {
 function createProviderServiceHarness() {
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
   const runtimeSessions: ProviderSession[] = [];
+  const stopRuntimeSession = vi.fn((_input: { readonly threadId: ThreadId }) => Effect.void);
 
   const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
   const service: ProviderServiceShape = {
@@ -80,6 +81,7 @@ function createProviderServiceHarness() {
     respondToRequest: () => unsupported(),
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
+    stopRuntimeSession,
     listSessions: () => Effect.succeed([...runtimeSessions]),
     getCapabilities: (provider) =>
       Effect.succeed({
@@ -108,6 +110,7 @@ function createProviderServiceHarness() {
     service,
     emit,
     setSession,
+    stopRuntimeSession,
   };
 }
 
@@ -256,6 +259,7 @@ describe("ProviderRuntimeIngestion", () => {
       engine,
       emit: provider.emit,
       setProviderSession: provider.setSession,
+      stopRuntimeSession: provider.stopRuntimeSession,
       drain,
     };
   }
@@ -4077,6 +4081,35 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime exploded");
+    expect(harness.stopRuntimeSession).not.toHaveBeenCalled();
+  });
+
+  it("stops only the stale Codex runtime after a classified authentication error", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-runtime-authentication-error"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-authentication-error"),
+      payload: {
+        message: "Authentication required",
+        class: "authentication_error",
+      },
+    });
+
+    await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "error" && entry.session?.lastError === "Authentication required",
+    );
+    await vi.waitFor(() => expect(harness.stopRuntimeSession).toHaveBeenCalledTimes(1));
+    expect(harness.stopRuntimeSession).toHaveBeenCalledWith({
+      threadId: asThreadId("thread-1"),
+    });
   });
 
   it("keeps the session running when a runtime.warning arrives during an active turn", async () => {

@@ -991,6 +991,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.available, true);
         assert.strictEqual(status.authStatus, "unknown");
+        assert.strictEqual(status.requiresProviderAccount, false);
         assert.strictEqual(
           status.message,
           "Using a custom Codex model provider; OpenAI login check skipped.",

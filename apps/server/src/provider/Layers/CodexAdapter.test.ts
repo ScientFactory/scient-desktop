@@ -788,6 +788,64 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("classifies structured Codex unauthorized errors for guided recovery", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-authentication-error"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "error",
+        turnId: asTurnId("turn-1"),
+        payload: {
+          error: {
+            message: "Request failed",
+            codexErrorInfo: "unauthorized",
+          },
+          willRetry: false,
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "runtime.error") return;
+      assert.equal(firstEvent.value.payload.class, "authentication_error");
+    }),
+  );
+
+  it.effect("keeps unrelated Codex runtime failures classified as provider errors", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-provider-error"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "error",
+        turnId: asTurnId("turn-1"),
+        payload: {
+          error: {
+            message: "Server is busy",
+            codexErrorInfo: "serverOverloaded",
+          },
+          willRetry: false,
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "runtime.error") return;
+      assert.equal(firstEvent.value.payload.class, "provider_error");
+    }),
+  );
+
   it.effect("maps non-fatal Codex error notifications to runtime.warning", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;

@@ -502,6 +502,52 @@ describe("ProviderConnectionLive", () => {
     expect(onSpawn).not.toHaveBeenCalled();
   });
 
+  it("never applies the Codex-only reauthentication override to another provider", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({ initiallyAuthenticated: true, onSpawn });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* connection.start({
+          provider: "claudeAgent",
+          method: "claude_account",
+          mode: "reauthenticate",
+        });
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result.providers[0]?.authStatus).toBe("authenticated");
+    expect(result.providers[0]?.connectionState).toBeUndefined();
+    expect(onSpawn).not.toHaveBeenCalled();
+  });
+
+  it("starts a fresh Codex login when runtime recovery explicitly requests reauthentication", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      initiallyAuthenticated: true,
+      onSpawn,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({
+          provider: "codex",
+          method: "codex_browser",
+          mode: "reauthenticate",
+        });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("connected");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "codex", args: ["login"] }),
+    );
+  });
+
   it("can start a fresh operation after cancellation fully releases the provider", async () => {
     const onSpawn = vi.fn();
     const fixture = makeConnectionTestLayer({ hanging: true, onSpawn });

@@ -40,24 +40,38 @@ function formatRemainingTime(startedAt: string, nowMs: number): string {
 }
 
 export function ProviderConnectionDialog() {
-  const { isOpen, provider, setOpen } = useProviderConnectionDialogStore();
+  const { isOpen, provider, source, setOpen } = useProviderConnectionDialogStore();
   const configQuery = useQuery({ ...serverConfigQueryOptions(), enabled: isOpen });
   const queryClient = useQueryClient();
   const [actionPending, setActionPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [installPlan, setInstallPlan] = useState<ServerProviderInstallPlan | null>(null);
   const [clockMs, setClockMs] = useState(() => Date.now());
+  const [runtimeReconnectStarted, setRuntimeReconnectStarted] = useState(false);
+  const runtimeReconnectRequired =
+    isOpen &&
+    provider === "codex" &&
+    source === "runtime_authentication_error" &&
+    !runtimeReconnectStarted;
 
   const status = provider
     ? configQuery.data?.providers.find((entry) => entry.provider === provider)
     : undefined;
-  const presentation = provider ? describeProviderConnection(provider, status) : null;
+  const presentation = provider
+    ? describeProviderConnection(provider, status, {
+        forceReconnect: runtimeReconnectRequired,
+      })
+    : null;
   const Icon = provider ? PROVIDER_ICON_COMPONENT_BY_PROVIDER[provider] : null;
   const activeConnection =
     status?.connectionState &&
     ["starting", "waiting_for_browser", "verifying"].includes(status.connectionState.status)
       ? status.connectionState
       : null;
+
+  useEffect(() => {
+    setRuntimeReconnectStarted(false);
+  }, [isOpen, provider, source]);
 
   useEffect(() => {
     setActionPending(false);
@@ -123,8 +137,19 @@ export function ProviderConnectionDialog() {
       (previousMethod !== "claude_subscription" ? previousMethod : undefined) ??
       providerConnectionMethod(provider);
     if (!method) throw new Error("In-app sign in is not supported for this provider yet.");
-    const result = await ensureNativeApi().server.startProviderConnection({ provider, method });
-    applyProviderStatusesToCache(queryClient, result.providers);
+    const reauthenticate = provider === "codex" && runtimeReconnectRequired;
+    if (reauthenticate) setRuntimeReconnectStarted(true);
+    try {
+      const result = await ensureNativeApi().server.startProviderConnection({
+        provider,
+        method,
+        ...(reauthenticate ? { mode: "reauthenticate" as const } : {}),
+      });
+      applyProviderStatusesToCache(queryClient, result.providers);
+    } catch (error) {
+      if (reauthenticate) setRuntimeReconnectStarted(false);
+      throw error;
+    }
   };
 
   const startSignIn = (method?: ServerProviderConnectionMethod) =>

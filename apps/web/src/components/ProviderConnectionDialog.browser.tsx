@@ -159,6 +159,61 @@ describe("ProviderConnectionDialog", () => {
     }
   });
 
+  it("forces a fresh Codex login after a classified runtime auth failure", async () => {
+    const authenticatedProvider = {
+      provider: "codex",
+      status: "ready",
+      available: true,
+      authStatus: "authenticated",
+      requiresProviderAccount: true,
+      checkedAt,
+      runtime: systemRuntime,
+    } satisfies ServerProviderStatus;
+    const waitingProvider = {
+      ...authenticatedProvider,
+      status: "warning",
+      authStatus: "unauthenticated",
+      connectionState: {
+        operationId: "reconnect-codex-1",
+        method: "codex_browser",
+        status: "waiting_for_browser",
+        startedAt: checkedAt,
+        finishedAt: null,
+        message: "Finish reconnecting Codex in the browser window.",
+      },
+    } satisfies ServerProviderStatus;
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [authenticatedProvider] });
+    const startProviderConnection = vi.fn().mockResolvedValue({ providers: [waitingProvider] });
+    const restoreNativeApi = installNativeApi({ refreshProviders, startProviderConnection });
+    const queryClient = createQueryClient(authenticatedProvider);
+    useProviderConnectionDialogStore.getState().openDialog("codex", "runtime_authentication_error");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await expect.element(page.getByRole("button", { name: "Reconnect Codex" })).toBeVisible();
+      await page.getByRole("button", { name: "Reconnect Codex" }).click();
+      await vi.waitFor(() => {
+        expect(startProviderConnection).toHaveBeenCalledWith({
+          provider: "codex",
+          method: "codex_browser",
+          mode: "reauthenticate",
+        });
+      });
+      await expect
+        .element(page.getByText("Finish reconnecting Codex in the browser window."))
+        .toBeVisible();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
   it.each([
     {
       provider: "claudeAgent",

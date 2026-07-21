@@ -3126,6 +3126,7 @@ const make = Effect.gen(function* () {
 
       if (event.type === "runtime.error") {
         const runtimeErrorMessage = runtimeErrorMessageFromEvent(event) ?? "Provider runtime error";
+        const runtimeErrorClass = asString(runtimePayloadRecord(event)?.class);
         const erroredTurnId = eventTurnId ?? activeTurnId ?? undefined;
 
         if (erroredTurnId) {
@@ -3151,6 +3152,23 @@ const make = Effect.gen(function* () {
           : activeTurnId === null || eventTurnId === undefined || sameId(activeTurnId, eventTurnId);
 
         if (shouldApplyRuntimeError) {
+          if (
+            event.provider === "codex" &&
+            runtimeErrorClass === "authentication_error" &&
+            providerService.stopRuntimeSession
+          ) {
+            // Kill only the stale app-server process. ProviderService preserves
+            // the binding and resume cursor so the next explicit Send can safely
+            // restart the same thread after the user reconnects.
+            yield* providerService.stopRuntimeSession({ threadId: thread.id }).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Could not stop Codex runtime after authentication loss", {
+                  threadId: thread.id,
+                  error,
+                }),
+              ),
+            );
+          }
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
             commandId: providerCommandId(event, "runtime-error-session-set"),
