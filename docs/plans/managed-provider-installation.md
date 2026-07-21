@@ -6,7 +6,7 @@ Status: IMPLEMENTED LOCALLY; CROSS-PLATFORM RELEASE GATES REMAIN
 
 Make every provider that Scient currently exposes understandable and usable from a clean computer without requiring the user to install Homebrew, npm, Node.js, curl, wget, tar, unzip, Git, or a provider CLI.
 
-The primary flow is one guided setup: the user confirms the reviewed download, Scient installs it in user-owned application data, and the dialog continues to provider-owned authentication. Scient then verifies both account status and a usable model catalog before reporting that the provider is ready. Existing user-managed installations and credentials remain untouched.
+The primary flow is one guided setup: the user confirms the trusted provider download, Scient installs it in user-owned application data, and the dialog continues to provider-owned authentication. Scient then verifies both account status and a usable model catalog before reporting that the provider is ready. Existing user-managed installations and credentials remain untouched.
 
 The runtime-installation half of this design is now implemented for every provider: eight providers have app-managed recipes and Pi is bundled. A user does not need Homebrew, npm, Node.js, curl, wget, tar, unzip, Git, an administrator password, or a shell-profile change. Connection is automated only where the provider exposes a reviewed, non-secret browser-login command and a reliable verification probe. Scient deliberately does not simulate success for providers whose account or model-provider choice is unresolved.
 
@@ -16,7 +16,7 @@ The runtime-installation half of this design is now implemented for every provid
 | ----------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | Codex       | Yes, pinned official standalone release          | Official browser login and status verification                                                                                           | Clean-machine proof on every claimed OS/architecture                                                        |
 | Claude      | Yes, pinned native release and manifest checksum | Authorized Claude Console browser login and status verification                                                                          | Fresh Console account and billing-onboarding proof; subscription login stays disabled without authorization |
-| Antigravity | Yes, pinned manifest release                     | Sandboxed `agy --print` runs in a private PTY from neutral state, accepts the transient Google code in-app, and `agy models` verifies it | Clean-account authentication proof; other targets need packaged proof                                       |
+| Antigravity | Yes, verified official stable channel            | Sandboxed `agy --print` runs in a private PTY from neutral state, accepts the transient Google code in-app, and `agy models` verifies it | Clean-account authentication proof; other targets need packaged proof                                       |
 | Cursor      | Yes, pinned macOS arm64 archive                  | Official browser login and health verification                                                                                           | Managed installation is intentionally gated off on other targets until reviewed                             |
 | Grok        | Yes, pinned macOS arm64 binary                   | Official xAI browser login plus explicit model/auth verification                                                                         | Fresh-account packaged proof; review other targets                                                          |
 | Droid       | Yes, pinned native binary and vendor SHA-256     | Authentication-only ACP device pairing plus non-inference verification                                                                   | Fresh-account packaged proof on macOS, Windows, and Linux                                                   |
@@ -62,13 +62,13 @@ Runtime sources are:
 
 ## Runtime catalog and trust
 
-The current implementation uses a typed, compiled recipe registry. Each resolved artifact contains provider, pinned version, target, official URL, optional expected byte size, SHA-256 or SHA-512 digest, archive format, executable relative path, smoke-test arguments, and a catalog revision. Recipes reject a vendor's newer unreviewed release instead of silently installing it.
+The current implementation uses a typed, compiled recipe registry. Each resolved artifact contains provider, version, target, official URL, optional expected byte size, SHA-256 or SHA-512 digest, archive format, executable relative path, smoke-test arguments, and a catalog revision. Most recipes pin an exact reviewed version. Antigravity instead follows its first-party stable manifest while enforcing a compatible stable semantic version, exact official metadata and artifact hosts, URL/version coherence, and the manifest SHA-512 digest.
 
 The app accepts only allowlisted HTTPS hosts and exact catalog entries. It never executes a downloaded installer script. Archives are extracted in-process with file-count and expanded-size limits, path traversal rejection, and unsafe-link rejection.
 
-The compiled recipes are trusted as part of the signed Scient application. GitHub recipes read the digest attached to one exact release tag; Claude, Antigravity, and Droid use their vendor manifests or checksum endpoints; Grok and Cursor use reviewed digests pinned in source. This is materially safer than executing an upstream installer script, but it is not yet a separately signed Scient catalog. A future remote catalog must be signed with a dedicated Scient release key, pin complete artifact metadata, and include rollback protection.
+The compiled recipes and explicit channel policies are trusted as part of the signed Scient application. GitHub recipes read the digest attached to one exact release tag; Claude and Droid use pinned vendor manifests or checksum endpoints; Antigravity follows its first-party stable manifest under the stricter channel boundary above; Grok and Cursor use reviewed digests pinned in source. This is materially safer than executing an upstream installer script, but it is not yet a separately signed Scient catalog. A future remote catalog must be signed with a dedicated Scient release key, pin complete artifact metadata, and include rollback protection.
 
-Provider release monitoring and catalog-update CI are release follow-ups. They should download each candidate, check upstream evidence, record the digest, smoke-test the executable on its target, and require review before publication. The current code already refuses an unreviewed upstream version where a vendor exposes a moving version endpoint.
+Provider release monitoring and catalog-update CI remain release follow-ups for pinned channels. They should download each candidate, check upstream evidence, record the digest, smoke-test the executable on its target, and require review before publication. Antigravity is the deliberate exception: its trusted first-party stable manifest may advance without a Scient release, but installation still fails closed on an incompatible version, unexpected host or URL, invalid digest, failed download verification, or failed smoke test.
 
 ## Shared installation lifecycle
 
@@ -132,11 +132,11 @@ The installation service must:
 ### 3. Antigravity
 
 - Source: official platform manifest and native artifact.
-- Verification now: pinned manifest version and manifest SHA-512.
+- Verification now: stable semantic version 1.1.4 or newer, exact official manifest and artifact hosts, artifact URL/version coherence, and manifest SHA-512.
 - Smoke test: `agy --version`.
-- Authentication now: Antigravity 1.1.4 or newer runs sandboxed `agy --print` in a private PTY from Scient's neutral state directory and opens provider-owned Google sign-in. Scient validates the Google URL, forwards one redacted one-time code to that process, discards raw output, polls the separate model verifier, keeps Antigravity's 60-second OAuth window, and allows only a hidden five-second grace for the final local verification probe.
+- Authentication now: Antigravity 1.1.4 or newer runs sandboxed `agy --print` in a private PTY from Scient's neutral state directory and opens provider-owned Google sign-in. Scient validates the Google URL, forwards one redacted one-time code to that process, discards raw output, polls the separate model verifier, keeps the authorization flow open for ten minutes, and allows a hidden 30-second grace period for credentials to settle before reporting failure.
 - Auth verification: `agy models` returns models.
-- Managed invocations disable AGY's native self-updater so updates stay inside Scient's reviewed runtime lifecycle.
+- Managed invocations disable AGY's native self-updater so updates stay inside Scient's staged, verified, smoke-tested, atomic runtime lifecycle with rollback. The managed update flow refuses downgrades while preserving same-version repair.
 
 ### 4. Grok
 
@@ -206,7 +206,7 @@ The installation service must:
 ## Implementation and release phases
 
 1. [x] Add contracts for runtime source, installation state, progress, errors, and operations.
-2. [x] Add the typed, pinned provider recipe registry.
+2. [x] Add the typed provider recipe registry, with exact pins for reviewed releases and an explicit trusted-stable-channel policy for Antigravity.
 3. [x] Implement target detection, safe downloading, hashing, extraction, activation, rollback, and cleanup.
 4. [x] Integrate managed runtime resolution into provider health and process startup.
 5. [x] Add prepare, install, cancel, repair, rollback, and remove RPCs.
@@ -252,8 +252,8 @@ For every released OS/architecture combination, use a clean VM or clean account 
 - [x] Full repository test suite passes locally.
 - [x] A real Antigravity artifact completed download, verification, extraction, smoke test, activation, resolution, and persisted-record checks in an isolated state directory.
 - [x] Formatting, lint (0 errors), full typecheck, arm64 DMG/ZIP packaging, desktop smoke test, and final real-browser inspection pass.
-- [x] The complete isolated UI path passes: missing runtime, reviewed consent, download progress, verified activation, and explicit browser-login handoff.
-- [x] Current official release metadata resolves for Codex 0.144.6, Claude 2.1.215, Antigravity 1.1.4, Grok 0.2.106, and Droid 0.175.0 on macOS arm64.
+- [x] The complete isolated UI path passes: missing runtime, trusted-source consent, download progress, verified activation, and explicit browser-login handoff.
+- [x] Current official release metadata resolves for Codex 0.144.6, Claude 2.1.215, Antigravity 1.1.5, Grok 0.2.106, and Droid 0.175.0 on macOS arm64.
 - [x] Droid's non-inference ACP verification was exercised against the official 0.175.0 binary and returned the authenticated classification without creating a session or prompt.
 - [x] Focused server tests cover Codex, Claude Console, Antigravity, Grok, and Droid exact-runtime connection and readiness behavior; rendered browser tests cover all five connection dispatches.
 

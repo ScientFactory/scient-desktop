@@ -1231,8 +1231,13 @@ function SettingsRouteView() {
   );
 
   const runProviderUpdate = useCallback(
-    async (provider: ProviderKind) => {
+    async (providerStatus: ServerProviderStatus) => {
+      const provider = providerStatus.provider;
       if (updatingProviders.has(provider)) {
+        return;
+      }
+      if (providerStatus.runtime?.source === "managed") {
+        useProviderConnectionDialogStore.getState().openDialog(provider, "managed_update");
         return;
       }
       setUpdatingProviders((current) => new Set(current).add(provider));
@@ -3082,7 +3087,7 @@ function SettingsRouteView() {
                   updateState === "running" ||
                   updatingProviders.has(providerStatus.provider);
                 const canUpdateProvider =
-                  updateAdvisory?.canUpdate === true && !isProviderUpdateActive;
+                  shouldOfferProviderUpdateAction(providerStatus) && !isProviderUpdateActive;
                 const updateLabel = providerUpdateStatusLabel(providerStatus);
 
                 return (
@@ -3091,18 +3096,18 @@ function SettingsRouteView() {
                     title={PROVIDER_DISPLAY_NAMES[providerStatus.provider]}
                     description={updateLabel || undefined}
                     actions={
-                      updateAdvisory?.canUpdate ? (
+                      shouldOfferProviderUpdateAction(providerStatus) ? (
                         <Button
                           type="button"
                           size="xs"
                           variant="outline"
                           disabled={!canUpdateProvider}
                           title={
-                            updateAdvisory.updateCommand
+                            updateAdvisory?.updateCommand
                               ? `Run ${updateAdvisory.updateCommand}`
                               : undefined
                           }
-                          onClick={() => void runProviderUpdate(providerStatus.provider)}
+                          onClick={() => void runProviderUpdate(providerStatus)}
                         >
                           {isProviderUpdateActive ? (
                             <Loader2Icon className="size-3.5 animate-spin" />
@@ -3331,7 +3336,7 @@ function SettingsRouteView() {
                             }
                             onClick={(event) => {
                               event.stopPropagation();
-                              void runProviderUpdate(providerSettings.provider);
+                              if (providerStatus) void runProviderUpdate(providerStatus);
                             }}
                           >
                             {isProviderUpdateActive ? (

@@ -261,8 +261,8 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       });
 
       assert.deepStrictEqual(capabilities.update, {
-        command: "agy update",
-        executable: "agy",
+        command: "/Users/test/.local/bin/agy update",
+        executable: "/Users/test/.local/bin/agy",
         args: ["update"],
         lockKey: "antigravity-native",
         pathPrepend: "/Users/test/.local/bin",
@@ -2090,6 +2090,35 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
             if (joined === "models") {
               return {
                 stdout: "Gemini 3.5 Flash (Medium)\nClaude Sonnet 4.6 (Thinking)\n",
+                stderr: "",
+                code: 0,
+              };
+            }
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("returns ready for Antigravity 1.1.5 machine model output", () =>
+      Effect.gen(function* () {
+        const status = yield* checkAntigravityProviderStatus();
+        assert.strictEqual(status.provider, "antigravity");
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.available, true);
+        assert.strictEqual(status.authStatus, "authenticated");
+        assert.strictEqual(status.version, "1.1.5");
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args, command) => {
+            assert.strictEqual(command, "agy");
+            const joined = args.join(" ");
+            if (joined === "--version") {
+              return { stdout: "1.1.5\n", stderr: "", code: 0 };
+            }
+            if (joined === "models") {
+              return {
+                stdout: "gemini-3.5-flash-medium\ngemini-3.5-flash-high\nclaude-sonnet-4-6\n",
                 stderr: "",
                 code: 0,
               };

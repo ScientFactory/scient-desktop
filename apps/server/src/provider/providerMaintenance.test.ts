@@ -1,9 +1,12 @@
 import { describe, it, assert } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { Effect } from "effect";
 
 import {
   createProviderVersionAdvisory,
   deriveNpmGlobalPrefix,
   parseGenericCliVersion,
+  resolveProviderMaintenanceCapabilitiesEffect,
   resolvePackageManagedProviderMaintenance,
   type PackageManagedProviderMaintenanceDefinition,
 } from "./providerMaintenance";
@@ -113,14 +116,63 @@ describe("providerMaintenance", () => {
     });
 
     assert.deepStrictEqual(capabilities.update, {
-      command: "opencode upgrade --method pnpm",
-      executable: "opencode",
+      command: "/Users/test/.local/share/pnpm/opencode upgrade --method pnpm",
+      executable: "/Users/test/.local/share/pnpm/opencode",
       args: ["upgrade", "--method", "pnpm"],
       lockKey: "opencode-native",
     });
     assert.deepStrictEqual(capabilities.latestVersionSource, {
       kind: "npm",
       name: "opencode-ai",
+    });
+  });
+
+  it.effect("does not invent an update command for a missing bare executable", () =>
+    Effect.gen(function* () {
+      const definition = {
+        provider: "antigravity",
+        binaryName: "agy",
+        npmPackageName: null,
+        homebrew: null,
+        nativeUpdate: {
+          executable: "agy",
+          args: () => ["update"],
+          lockKey: "antigravity-native",
+          strategy: "always",
+        },
+      } as const satisfies PackageManagedProviderMaintenanceDefinition;
+      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(definition, {
+        binaryPath: "agy",
+        env: { PATH: "" },
+        platform: "darwin",
+      });
+
+      assert.strictEqual(capabilities.update, null);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it("uses the resolved absolute executable for provider-native updates", () => {
+    const definition = {
+      provider: "antigravity",
+      binaryName: "agy",
+      npmPackageName: null,
+      homebrew: null,
+      nativeUpdate: {
+        executable: "agy",
+        args: () => ["update"],
+        lockKey: "antigravity-native",
+        strategy: "always",
+      },
+    } as const satisfies PackageManagedProviderMaintenanceDefinition;
+    const capabilities = resolvePackageManagedProviderMaintenance(definition, {
+      binaryPath: "/Users/test/.local/bin/agy",
+    });
+
+    assert.deepStrictEqual(capabilities.update, {
+      command: "/Users/test/.local/bin/agy update",
+      executable: "/Users/test/.local/bin/agy",
+      args: ["update"],
+      lockKey: "antigravity-native",
     });
   });
 
