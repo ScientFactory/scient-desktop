@@ -257,16 +257,6 @@ async function waitForPersistedProject(databasePath, workspacePath) {
   });
 }
 
-function processGroupIsAlive(processGroupId) {
-  try {
-    process.kill(-processGroupId, 0);
-    return true;
-  } catch (error) {
-    if (error?.code === "ESRCH") return false;
-    throw error;
-  }
-}
-
 function signalProcess(processId, signal) {
   try {
     process.kill(processId, signal);
@@ -380,17 +370,47 @@ async function findPackagedElectronProcess(launcherProcessId, debuggingPort) {
   });
 }
 
+async function captureProcessGroupMembers(processGroupIds) {
+  const processGroupIdSet = new Set(processGroupIds);
+  const membersByProcessGroup = new Map(
+    processGroupIds.map((processGroupId) => [processGroupId, []]),
+  );
+  const processEntries = (await readdir("/proc", { withFileTypes: true })).filter(
+    (entry) => entry.isDirectory() && /^\d+$/u.test(entry.name),
+  );
+  await Promise.all(
+    processEntries.map(async (entry) => {
+      try {
+        const processInfo = await readLinuxProcessInfo(Number(entry.name));
+        if (processGroupIdSet.has(processInfo.processGroupId)) {
+          membersByProcessGroup.get(processInfo.processGroupId)?.push(processInfo);
+        }
+      } catch {
+        // Processes can exit while /proc is being inspected.
+      }
+    }),
+  );
+  return membersByProcessGroup;
+}
+
 async function stopPackagedApp(child, electronProcess, backendProcessGroupId) {
   if (!child.pid) return;
   const processGroupIds = [
     ...new Set([child.pid, electronProcess?.processGroupId, backendProcessGroupId].filter(Boolean)),
   ];
-  const livingProcessGroups = () =>
-    processGroupIds.filter((processGroupId) => processGroupIsAlive(processGroupId));
+  const trackedProcessGroups = await captureProcessGroupMembers(processGroupIds);
+  const livingProcessGroups = async () => {
+    const living = [];
+    for (const [processGroupId, originalMembers] of trackedProcessGroups) {
+      const identityMatches = await Promise.all(originalMembers.map(processIdentityMatches));
+      if (identityMatches.some(Boolean)) living.push(processGroupId);
+    }
+    return living;
+  };
   const waitForAllGroupsToExit = (timeoutMs) =>
     waitFor(
       "packaged Electron and backend process groups to exit",
-      () => livingProcessGroups().length === 0,
+      async () => (await livingProcessGroups()).length === 0,
       timeoutMs,
     ).catch(() => false);
 
@@ -399,17 +419,17 @@ async function stopPackagedApp(child, electronProcess, backendProcessGroupId) {
   }
   if (await waitForAllGroupsToExit(GRACEFUL_APP_SHUTDOWN_TIMEOUT_MS)) return;
 
-  const gracefulSurvivors = livingProcessGroups();
+  const gracefulSurvivors = await livingProcessGroups();
   for (const processGroupId of gracefulSurvivors) {
     signalProcessGroup(processGroupId, "SIGTERM");
   }
   if (!(await waitForAllGroupsToExit(5_000))) {
-    for (const processGroupId of livingProcessGroups()) {
+    for (const processGroupId of await livingProcessGroups()) {
       signalProcessGroup(processGroupId, "SIGKILL");
     }
     if (!(await waitForAllGroupsToExit(5_000))) {
       throw new Error(
-        `Packaged process groups ${livingProcessGroups().join(", ")} survived SIGKILL.`,
+        `Packaged process groups ${(await livingProcessGroups()).join(", ")} survived SIGKILL.`,
       );
     }
   }
