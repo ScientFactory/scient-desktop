@@ -26,6 +26,10 @@ import {
   readReleaseUpdatePolicyConfig,
   resolveReleaseUpdatePolicy,
 } from "./lib/release-update-policy.ts";
+import {
+  assertPackagedLaunchCommandSafety,
+  createLinuxPackagedLaunchCommand,
+} from "./verify-packaged-desktop-startup.ts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -93,6 +97,17 @@ function assertContains(haystack: string, needle: string, message: string): void
 function assertNotContains(haystack: string, needle: string, message: string): void {
   if (haystack.includes(needle)) {
     throw new Error(message);
+  }
+}
+
+function assertOrdered(haystack: string, needles: ReadonlyArray<string>, message: string): void {
+  let previousIndex = -1;
+  for (const needle of needles) {
+    const index = haystack.indexOf(needle, previousIndex + 1);
+    if (index < 0 || index <= previousIndex) {
+      throw new Error(message);
+    }
+    previousIndex = index;
   }
 }
 
@@ -244,6 +259,86 @@ function verifyReleaseWorkflowSafety(): void {
     workflow,
     'node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"\n          bun install --lockfile-only --ignore-scripts',
     "Expected artifact builds to refresh lockfile metadata after aligning workspace versions.",
+  );
+  assertContains(
+    workflow,
+    "Smoke exact packaged desktop startup",
+    "Expected every native builder to launch its exact collected desktop payload.",
+  );
+  assertContains(
+    workflow,
+    "node scripts/verify-packaged-desktop-startup.ts \\" +
+      "\n            --assets-dir release-publish",
+    "Expected packaged startup verification to read from the exact release-publish payload.",
+  );
+  assertContains(
+    workflow,
+    "if: ${{ matrix.platform == 'linux' }}\n        shell: bash\n        env:\n          DEBIAN_FRONTEND: noninteractive",
+    "Expected Linux-only packaged smoke dependencies.",
+  );
+  assertContains(
+    workflow,
+    "./apps/web/node_modules/.bin/playwright install-deps chromium\n          sudo apt-get install --no-install-recommends --yes libfuse2t64",
+    "Expected the Linux release runner to install only the browser-system and AppImage runtime dependencies.",
+  );
+  assertContains(
+    workflow,
+    "SCIENT_LINUX_ARTIFACT_DIR: release-publish\n          SCIENT_LINUX_SMOKE_ARTIFACT_DIR: test-results/linux-release-appimage",
+    "Expected the deep Linux lifecycle smoke to exercise the exact collected AppImage.",
+  );
+  assertContains(
+    workflow,
+    "run: node apps/web/scripts/linux-appimage-smoke.mjs",
+    "Expected Linux release builds to run the existing packaged lifecycle test.",
+  );
+  assertOrdered(
+    workflow,
+    [
+      "- name: Collect release assets",
+      "- name: Smoke exact packaged desktop startup",
+      "- name: Exercise exact packaged Linux lifecycle",
+      "- name: Upload build artifacts",
+    ],
+    "Expected exact-artifact startup and Linux lifecycle verification before artifact upload.",
+  );
+
+  const packagedStartupVerifier = readFileSync(
+    resolve(repoRoot, "scripts/verify-packaged-desktop-startup.ts"),
+    "utf8",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    "SCIENT_HOME: scientHome",
+    "Expected packaged startup verification to use isolated Scient state.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    'delete env.SYNARA_AUTH_TOKEN;\n  delete env.ELECTRON_RUN_AS_NODE;',
+    "Expected packaged startup verification to remove inherited backend authority and Electron Node mode.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    "Scient\\.exe",
+    "Expected packaged Windows verification to require Scient.exe.",
+  );
+  assertNotContains(
+    packagedStartupVerifier,
+    "Synara\\.exe",
+    "Packaged startup verification must not retain the Synara executable identity.",
+  );
+
+  const packagedLinuxLaunch = createLinuxPackagedLaunchCommand(
+    "/release-publish/squashfs-root/AppRun",
+    "/release-publish/squashfs-root",
+  );
+  assertPackagedLaunchCommandSafety(packagedLinuxLaunch);
+  if (packagedLinuxLaunch.args.some((argument) => argument.startsWith("--no-sandbox"))) {
+    throw new Error("Exact packaged Linux verification must not disable Electron's sandbox.");
+  }
+  assertContains(
+    packagedStartupVerifier,
+    "assertPackagedLaunchCommandSafety(launch);",
+    "Expected every packaged platform command to fail closed if sandbox bypass is introduced.",
   );
 }
 

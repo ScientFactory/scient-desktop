@@ -201,7 +201,7 @@ jobs:
     name: Build ${{ matrix.label }}
     needs: preflight
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
@@ -412,6 +412,40 @@ jobs:
               mv release-publish/latest-mac.yml "release-publish/latest-mac-${{ matrix.arch }}.yml"
             fi
           fi
+
+      - name: Install Linux packaged smoke dependencies
+        if: ${{ matrix.platform == 'linux' }}
+        shell: bash
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          ./apps/web/node_modules/.bin/playwright install-deps chromium
+          sudo apt-get install --no-install-recommends --yes libfuse2t64
+
+      - name: Smoke exact packaged desktop startup
+        shell: bash
+        run: |
+          node scripts/verify-packaged-desktop-startup.ts \
+            --assets-dir release-publish \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ matrix.arch }}" \
+            --version "${{ needs.preflight.outputs.version }}"
+
+      - name: Exercise exact packaged Linux lifecycle
+        if: ${{ matrix.platform == 'linux' }}
+        env:
+          SCIENT_LINUX_ARTIFACT_DIR: release-publish
+          SCIENT_LINUX_SMOKE_ARTIFACT_DIR: test-results/linux-release-appimage
+        run: node apps/web/scripts/linux-appimage-smoke.mjs
+
+      - name: Upload packaged Linux smoke diagnostics
+        if: ${{ failure() && matrix.platform == 'linux' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: release-linux-packaged-diagnostics-${{ matrix.arch }}
+          path: test-results/linux-release-appimage
+          if-no-files-found: ignore
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
