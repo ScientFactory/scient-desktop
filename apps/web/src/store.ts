@@ -315,7 +315,9 @@ function threadSessionsEqual(
     left.activeTurnId === right.activeTurnId &&
     left.createdAt === right.createdAt &&
     left.updatedAt === right.updatedAt &&
-    left.lastError === right.lastError
+    left.lastError === right.lastError &&
+    left.lastErrorEventId === right.lastErrorEventId &&
+    left.lastErrorClass === right.lastErrorClass
   );
 }
 
@@ -1126,6 +1128,8 @@ function readModelSessionFromThreadSession(
     runtimeMode: previousThread?.runtimeMode ?? incomingSession?.runtimeMode ?? "full-access",
     activeTurnId: previousSession.activeTurnId ?? null,
     lastError: previousSession.lastError ?? null,
+    lastErrorEventId: previousSession.lastErrorEventId ?? null,
+    lastErrorClass: previousSession.lastErrorClass ?? null,
     updatedAt: previousSession.updatedAt,
   };
 }
@@ -1577,6 +1581,8 @@ function normalizeThreadSession(
     createdAt: incoming.updatedAt,
     updatedAt: incoming.updatedAt,
     ...(nextLastError ? { lastError: nextLastError } : {}),
+    ...(incoming.lastErrorEventId ? { lastErrorEventId: incoming.lastErrorEventId } : {}),
+    ...(incoming.lastErrorClass ? { lastErrorClass: incoming.lastErrorClass } : {}),
   } satisfies NonNullable<Thread["session"]>;
   if (
     previous &&
@@ -1586,7 +1592,9 @@ function normalizeThreadSession(
     previous.activeTurnId === nextSession.activeTurnId &&
     previous.createdAt === nextSession.createdAt &&
     previous.updatedAt === nextSession.updatedAt &&
-    previous.lastError === nextSession.lastError
+    previous.lastError === nextSession.lastError &&
+    previous.lastErrorEventId === nextSession.lastErrorEventId &&
+    previous.lastErrorClass === nextSession.lastErrorClass
   ) {
     return previous;
   }

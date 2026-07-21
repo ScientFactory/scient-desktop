@@ -8,6 +8,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse as parseYaml } from "yaml";
 
 import {
   SCIENT_DESKTOP_UPDATES_ENABLED,
@@ -96,6 +97,30 @@ function assertNotContains(haystack: string, needle: string, message: string): v
   }
 }
 
+interface ReleaseWorkflowStep {
+  readonly env?: Record<string, unknown>;
+  readonly if?: string;
+  readonly name?: string;
+}
+
+function assertScopedSigningEnvironment(
+  step: ReleaseWorkflowStep,
+  expectedNames: ReadonlyArray<string>,
+  forbiddenNames: ReadonlyArray<string>,
+): void {
+  const environment = step.env ?? {};
+  for (const name of expectedNames) {
+    if (!(name in environment)) {
+      throw new Error(`Expected ${step.name} to receive ${name}.`);
+    }
+  }
+  for (const name of forbiddenNames) {
+    if (name in environment) {
+      throw new Error(`${step.name} must not receive ${name}.`);
+    }
+  }
+}
+
 function verifyCanonicalIdentity(): void {
   const serverPackage = JSON.parse(
     readFileSync(resolve(repoRoot, "apps/server/package.json"), "utf8"),
@@ -150,6 +175,75 @@ function verifyReleaseWorkflowSafety(): void {
     resolve(repoRoot, ".github/workflows/release.yml"),
     "utf8",
   ).replaceAll("\r\n", "\n");
+  const releaseBuildScript = readFileSync(
+    resolve(repoRoot, "scripts/build-release-desktop-artifact.sh"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  const notarizationHelper = readFileSync(
+    resolve(repoRoot, "scripts/lib/mac-notarization.cjs"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  const parsedWorkflow = parseYaml(workflow) as {
+    jobs?: {
+      build?: { steps?: Array<ReleaseWorkflowStep> };
+    };
+  };
+  const buildSteps = parsedWorkflow.jobs?.build?.steps ?? [];
+  const requireBuildStep = (name: string) => {
+    const step = buildSteps.find((candidate) => candidate.name === name);
+    if (!step) {
+      throw new Error(`Expected release workflow build step: ${name}.`);
+    }
+    return step;
+  };
+  const macBuildStep = requireBuildStep("Build macOS desktop artifact");
+  const linuxBuildStep = requireBuildStep("Build Linux desktop artifact");
+  const windowsBuildStep = requireBuildStep("Build Windows desktop artifact");
+  const appleSigningNames = [
+    "CSC_LINK",
+    "CSC_KEY_PASSWORD",
+    "APPLE_API_KEY",
+    "APPLE_API_KEY_ID",
+    "APPLE_API_ISSUER",
+  ];
+  const windowsSigningNames = [
+    "WIN_CSC_LINK",
+    "WIN_CSC_KEY_PASSWORD",
+    "AZURE_TENANT_ID",
+    "AZURE_CLIENT_ID",
+    "AZURE_CLIENT_SECRET",
+    "AZURE_TRUSTED_SIGNING_ENDPOINT",
+    "AZURE_TRUSTED_SIGNING_ACCOUNT_NAME",
+    "AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME",
+    "AZURE_TRUSTED_SIGNING_PUBLISHER_NAME",
+  ];
+  if (macBuildStep.if !== "matrix.platform == 'mac'") {
+    throw new Error("Expected macOS signing credentials to be gated to macOS builders.");
+  }
+  if (linuxBuildStep.if !== "matrix.platform == 'linux'") {
+    throw new Error("Expected the unsigned Linux build to be gated to Linux builders.");
+  }
+  if (windowsBuildStep.if !== "matrix.platform == 'win'") {
+    throw new Error("Expected Windows signing credentials to be gated to Windows builders.");
+  }
+  assertScopedSigningEnvironment(macBuildStep, appleSigningNames, windowsSigningNames);
+  assertScopedSigningEnvironment(windowsBuildStep, windowsSigningNames, appleSigningNames);
+  assertScopedSigningEnvironment(
+    linuxBuildStep,
+    [],
+    [...appleSigningNames, ...windowsSigningNames],
+  );
+  const expectedSigningStep = new Map<string, string>([
+    ...appleSigningNames.map((name) => [name, macBuildStep.name ?? ""] as const),
+    ...windowsSigningNames.map((name) => [name, windowsBuildStep.name ?? ""] as const),
+  ]);
+  for (const step of buildSteps) {
+    for (const name of [...appleSigningNames, ...windowsSigningNames]) {
+      if (name in (step.env ?? {}) && step.name !== expectedSigningStep.get(name)) {
+        throw new Error(`${step.name ?? "Unnamed build step"} must not receive ${name}.`);
+      }
+    }
+  }
   assertContains(
     workflow,
     "if: ${{ vars.SCIENT_DESKTOP_RELEASES_ENABLED == 'true' }}",
@@ -206,9 +300,93 @@ function verifyReleaseWorkflowSafety(): void {
     "Expected publication to require the exact release/stable head.",
   );
   assertContains(
-    workflow,
+    releaseBuildScript,
     "Public macOS releases require all Apple signing and notarization secrets.",
     "Expected public macOS releases to fail closed without signing and notarization.",
+  );
+  const macReleasePolicy = releaseBuildScript.slice(
+    releaseBuildScript.indexOf('if [[ "$platform" == "mac" ]]'),
+    releaseBuildScript.indexOf('elif [[ "$platform" == "win" ]]'),
+  );
+  assertNotContains(
+    macReleasePolicy,
+    "ALLOW_UNSIGNED_RELEASE",
+    "Public macOS releases must not expose an unsigned publication bypass.",
+  );
+  assertContains(
+    workflow,
+    "timeout-minutes: ${{ matrix.timeout_minutes }}",
+    "Expected platform-specific release timeouts.",
+  );
+  assertContains(
+    workflow,
+    "timeout_minutes: 120",
+    "Expected macOS signing and notarization to tolerate bounded Apple service delays.",
+  );
+  assertContains(
+    workflow,
+    "name: Upload macOS notarization evidence",
+    "Expected macOS builders to preserve notarization evidence even when packaging fails.",
+  );
+  assertContains(
+    workflow,
+    "path: release/notarization-*.json",
+    "Expected macOS builders to upload Apple submission evidence and logs.",
+  );
+  assertContains(
+    workflow,
+    "verify_published_macos:",
+    "Expected public macOS DMGs to be independently downloaded and verified.",
+  );
+  assertContains(
+    workflow,
+    'gh release download "$RELEASE_TAG"',
+    "Expected post-publication checks to download the public release artifact.",
+  );
+  assertContains(
+    workflow,
+    "bun scripts/verify-mac-release-artifact.ts published-macos",
+    "Expected post-publication checks to validate the delivered macOS identity.",
+  );
+  assertContains(
+    notarizationHelper,
+    '"--no-wait"',
+    "Expected notarization to capture Apple's submission ID before polling.",
+  );
+  assertNotContains(
+    notarizationHelper,
+    '"--wait"',
+    "Controlled notarization must not return to Apple's opaque wait mode.",
+  );
+  assertContains(
+    notarizationHelper,
+    "processingMs: 90 * 60 * 1000",
+    "Expected Apple processing to have an inner deadline below the macOS job limit.",
+  );
+  assertContains(
+    notarizationHelper,
+    'args: ["notarytool", "info", submissionId',
+    "Expected notarization to poll Apple explicitly.",
+  );
+  assertContains(
+    notarizationHelper,
+    'args: ["notarytool", "log", submissionId',
+    "Expected notarization to preserve Apple's completed submission log.",
+  );
+  assertNotContains(
+    releaseBuildScript,
+    "max_attempts=3",
+    "macOS release builds must not retry the whole notarization workflow.",
+  );
+  assertContains(
+    releaseBuildScript,
+    'chmod 600 "$apple_key_path"',
+    "Expected the temporary Apple API key to have owner-only permissions.",
+  );
+  assertContains(
+    releaseBuildScript,
+    "trap cleanup_sensitive_files EXIT",
+    "Expected the temporary Apple API key to be removed when the build exits.",
   );
   assertContains(
     workflow,
@@ -216,7 +394,7 @@ function verifyReleaseWorkflowSafety(): void {
     "Expected the release workflow to accept a standard Windows signing certificate.",
   );
   assertContains(
-    workflow,
+    releaseBuildScript,
     "Public Windows releases require a standard Authenticode certificate or Azure Trusted Signing.",
     "Expected public Windows releases to fail closed without signing.",
   );
@@ -291,6 +469,22 @@ function verifyDesktopStageLockAuthority(): void {
     buildScript,
     ")`bun run install`,",
     "Expected node-pty staging to run its pinned install and postinstall lifecycle.",
+  );
+  const signingIsolationIndex = buildScript.indexOf("isolateDesktopSigningEnvironment(");
+  const firstBuildSubprocessIndex = buildScript.indexOf(")`bun run build:desktop`,");
+  if (
+    signingIsolationIndex === -1 ||
+    firstBuildSubprocessIndex === -1 ||
+    signingIsolationIndex > firstBuildSubprocessIndex
+  ) {
+    throw new Error(
+      "Expected desktop signing credentials to be removed before the first build subprocess.",
+    );
+  }
+  assertContains(
+    buildScript,
+    "...signingEnvironment",
+    "Expected signing credentials to be restored only for the electron-builder environment.",
   );
   const rootPackage = readFileSync(resolve(repoRoot, "package.json"), "utf8");
   assertContains(

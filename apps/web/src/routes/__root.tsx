@@ -26,6 +26,7 @@ import { AppSnapCoordinator } from "../components/AppSnapCoordinator";
 import { AppSnapWelcomeDialog } from "../components/AppSnapWelcomeDialog";
 import { FeedbackDialog } from "../components/FeedbackDialog";
 import { ProviderConnectionDialog } from "../components/ProviderConnectionDialog";
+import { ConnectionRecoveryNotifications } from "../components/ConnectionRecoveryNotifications";
 import { SETTINGS_TARGETS } from "../settingsNavigation";
 import ShortcutsDialog from "../components/ShortcutsDialog";
 import WhatsNewDialog from "../components/WhatsNewDialog";
@@ -83,7 +84,6 @@ import { useNativeFontSmoothing } from "../hooks/useNativeFontSmoothing";
 import { invalidateGitQueries, invalidateGitQueriesForCwds } from "../lib/gitReactQuery";
 import { hasLiveThreadsWithMissingProjects } from "../lib/desktopProjectRecovery";
 import { useDiffRouteSearch } from "../hooks/useDiffRouteSearch";
-import { useProviderAuthRefreshOnFocus } from "../hooks/useProviderAuthRefreshOnFocus";
 import { useProviderStatusRefresh } from "../hooks/useProviderStatusRefresh";
 import { resolveSplitViewThreadIds, selectSplitView, useSplitViewStore } from "../splitViewStore";
 import { providerModelDiscoveryInvalidationFingerprint } from "../lib/providerDiscoveryInvalidation";
@@ -203,6 +203,7 @@ function RootRouteView() {
           <GlobalShortcutsDialog />
           <GlobalFeedbackDialog />
           <ProviderConnectionDialog />
+          <ConnectionRecoveryNotifications />
           <GlobalWhatsNewSurface />
           <TaskCompletionNotifications />
           <AppSnapWelcomeDialog />
@@ -230,9 +231,10 @@ function ProviderStatusRefreshCoordinator() {
   const providerUpdateChecksEnabled =
     serverSettingsQuery.data !== undefined && settings.enableProviderUpdateChecks;
 
-  useProviderAuthRefreshOnFocus();
   // Provider latest-version checks are slow/network-backed, so keep this cadence
-  // coarse while still honoring the automatic update-check setting.
+  // coarse while still honoring the automatic update-check setting. Provider
+  // auth is refreshed by explicit connection flows and server status events;
+  // returning to the app must not launch every provider CLI in the background.
   useProviderStatusRefresh({
     enabled: providerUpdateChecksEnabled,
     initialDelayMs: PROVIDER_UPDATE_INITIAL_REFRESH_DELAY_MS,
@@ -1245,6 +1247,9 @@ function EventRouter() {
 
     const unsubShellEvent = api.orchestration.onShellEvent((item) => {
       if (item.kind === "snapshot") {
+        if (item.snapshot.snapshotSequence < shellSnapshotSequence) {
+          return;
+        }
         shellSnapshotSequence = item.snapshot.snapshotSequence;
         syncServerShellSnapshot(item.snapshot);
         reconcilePromotedDraftsFromShellThreads(item.snapshot.threads);

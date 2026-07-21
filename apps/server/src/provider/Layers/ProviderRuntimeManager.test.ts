@@ -10,7 +10,10 @@ import { describe, expect, it } from "vitest";
 import { ServerConfig } from "../../config";
 import { ProviderRuntimeManager } from "../Services/ProviderRuntimeManager";
 import type { ProviderRuntimeCurrentRecord } from "../providerRuntimeTypes";
-import { ProviderRuntimeManagerLive } from "./ProviderRuntimeManager";
+import {
+  canActivateManagedRuntimeVersion,
+  ProviderRuntimeManagerLive,
+} from "./ProviderRuntimeManager";
 
 function sha256(filePath: string): string {
   return createHash("sha256").update(readFileSync(filePath)).digest("hex");
@@ -31,6 +34,21 @@ function resolveAntigravity(baseDir: string, configuredExecutable?: string) {
 }
 
 describe("ProviderRuntimeManager managed integrity", () => {
+  it("allows install or repair at the current version but never downgrades", () => {
+    expect(
+      canActivateManagedRuntimeVersion({ currentVersion: null, candidateVersion: "1.1.5" }),
+    ).toBe(true);
+    expect(
+      canActivateManagedRuntimeVersion({ currentVersion: "1.1.4", candidateVersion: "1.1.5" }),
+    ).toBe(true);
+    expect(
+      canActivateManagedRuntimeVersion({ currentVersion: "1.1.5", candidateVersion: "1.1.5" }),
+    ).toBe(true);
+    expect(
+      canActivateManagedRuntimeVersion({ currentVersion: "1.1.5", candidateVersion: "1.1.4" }),
+    ).toBe(false);
+  });
+
   it("preserves an invalid custom executable as an explicit configuration error", async () => {
     const baseDir = mkdtempSync(path.join(os.tmpdir(), "scient-runtime-custom-"));
     try {

@@ -54,6 +54,7 @@
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules scripts/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo"
   },
   "devDependencies": {
+    "@electron/osx-sign": "1.3.3",
     "@types/node": "catalog:",
     "electron-builder": "26.15.3",
     "node-gyp": "12.4.0",

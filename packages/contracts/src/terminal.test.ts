@@ -205,6 +205,8 @@ describe("TerminalSessionSnapshot", () => {
         status: "running",
         pid: 1234,
         history: "hello\n",
+        outputEpoch: "epoch-1",
+        outputSequence: 4,
         replayPreamble: "\u001b[?2004h\u001b[=7;1u",
         exitCode: null,
         exitSignal: null,
@@ -223,6 +225,8 @@ describe("TerminalEvent", () => {
         terminalId: DEFAULT_TERMINAL_ID,
         createdAt: new Date().toISOString(),
         data: "line\n",
+        outputEpoch: "epoch-1",
+        outputSequence: 1,
       }),
     ).toBe(true);
   });
@@ -235,6 +239,8 @@ describe("TerminalEvent", () => {
         terminalId: DEFAULT_TERMINAL_ID,
         createdAt: new Date().toISOString(),
         data: "line\n",
+        outputEpoch: "epoch-1",
+        outputSequence: 2,
         byteLength: 5,
       }),
     ).toBe(true);

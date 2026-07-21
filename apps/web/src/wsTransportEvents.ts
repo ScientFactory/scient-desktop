@@ -3,7 +3,7 @@
 // Layer: Web transport utility
 // Exports: event helpers used by wsNativeApi and terminal runtime recovery.
 
-export type WsTransportState = "connecting" | "open" | "closed" | "disposed";
+export type WsTransportState = "connecting" | "reconnecting" | "open" | "disposed";
 
 export const SYNARA_WS_TRANSPORT_STATE_EVENT = "scient:ws-transport-state";
 
@@ -11,8 +11,15 @@ export interface WsTransportStateEventDetail {
   state: WsTransportState;
 }
 
+let latestWsTransportState: WsTransportState = "connecting";
+
+export function getLatestWsTransportState(): WsTransportState {
+  return latestWsTransportState;
+}
+
 // Emits a browser-local event without leaking transport internals into UI code.
 export function emitWsTransportState(state: WsTransportState): void {
+  latestWsTransportState = state;
   if (
     typeof window === "undefined" ||
     typeof window.dispatchEvent !== "function" ||
@@ -31,7 +38,9 @@ export function emitWsTransportState(state: WsTransportState): void {
 // Subscribes to the shared transport state event. Returns an idempotent cleanup.
 export function addWsTransportStateListener(
   listener: (state: WsTransportState) => void,
+  options?: { readonly replayLatest?: boolean },
 ): () => void {
+  if (options?.replayLatest) listener(latestWsTransportState);
   if (typeof window === "undefined" || typeof window.addEventListener !== "function") {
     return () => undefined;
   }

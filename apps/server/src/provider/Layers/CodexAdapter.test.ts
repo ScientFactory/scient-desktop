@@ -14,7 +14,7 @@ import {
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterAll, it, vi } from "@effect/vitest";
 
-import { Effect, Fiber, Layer, Option, Stream } from "effect";
+import { Effect, Fiber, FileSystem, Layer, Option, Stream } from "effect";
 
 import {
   CodexAppServerManager,
@@ -785,6 +785,187 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       }
       assert.equal(firstEvent.value.turnId, "turn-1");
       assert.equal(firstEvent.value.payload.message, "Reconnecting... 2/5");
+    }),
+  );
+
+  it.effect("classifies structured Codex unauthorized errors for guided recovery", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const codexHome = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "scient-codex-account-provider-",
+      });
+      const threadId = asThreadId("thread-account-provider");
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId,
+        providerOptions: { codex: { homePath: codexHome } },
+        runtimeMode: "full-access",
+      });
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-authentication-error"),
+        kind: "notification",
+        provider: "codex",
+        threadId,
+        createdAt: new Date().toISOString(),
+        method: "error",
+        turnId: asTurnId("turn-1"),
+        payload: {
+          error: {
+            message: "Request failed",
+            codexErrorInfo: "unauthorized",
+          },
+          willRetry: false,
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "runtime.error") return;
+      assert.equal(firstEvent.value.payload.class, "authentication_error");
+    }),
+  );
+
+  it.effect("treats a mixed-case OpenAI provider as custom for unauthorized errors", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const codexHome = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "scient-codex-custom-provider-",
+      });
+      yield* fileSystem.writeFileString(`${codexHome}/config.toml`, 'model_provider = "OpenAI"\n');
+      const threadId = asThreadId("thread-custom-provider");
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId,
+        providerOptions: { codex: { homePath: codexHome } },
+        runtimeMode: "full-access",
+      });
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-custom-provider-unauthorized"),
+        kind: "notification",
+        provider: "codex",
+        threadId,
+        createdAt: new Date().toISOString(),
+        method: "error",
+        turnId: asTurnId("turn-custom-provider"),
+        payload: {
+          error: {
+            message: "Unauthorized",
+            codexErrorInfo: "unauthorized",
+          },
+          willRetry: false,
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "runtime.error") return;
+      assert.equal(firstEvent.value.payload.class, "provider_error");
+    }),
+  );
+
+  it.effect("fails closed when the Codex provider config cannot be read", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const codexHome = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "scient-codex-unreadable-provider-",
+      });
+      yield* fileSystem.makeDirectory(`${codexHome}/config.toml`);
+      const threadId = asThreadId("thread-unreadable-provider");
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId,
+        providerOptions: { codex: { homePath: codexHome } },
+        runtimeMode: "full-access",
+      });
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-unreadable-provider-unauthorized"),
+        kind: "notification",
+        provider: "codex",
+        threadId,
+        createdAt: new Date().toISOString(),
+        method: "error",
+        turnId: asTurnId("turn-unreadable-provider"),
+        payload: {
+          error: {
+            message: "Unauthorized",
+            codexErrorInfo: "unauthorized",
+          },
+          willRetry: false,
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "runtime.error") return;
+      assert.equal(firstEvent.value.payload.class, "provider_error");
+    }),
+  );
+
+  it.effect("fails closed for unauthorized errors from an untracked Codex thread", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const threadId = asThreadId("thread-untracked-provider");
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-untracked-provider-unauthorized"),
+        kind: "notification",
+        provider: "codex",
+        threadId,
+        createdAt: new Date().toISOString(),
+        method: "error",
+        turnId: asTurnId("turn-untracked-provider"),
+        payload: {
+          error: {
+            message: "Unauthorized",
+            codexErrorInfo: "unauthorized",
+          },
+          willRetry: false,
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "runtime.error") return;
+      assert.equal(firstEvent.value.payload.class, "provider_error");
+    }),
+  );
+
+  it.effect("keeps unrelated Codex runtime failures classified as provider errors", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-provider-error"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        method: "error",
+        turnId: asTurnId("turn-1"),
+        payload: {
+          error: {
+            message: "Server is busy",
+            codexErrorInfo: "serverOverloaded",
+          },
+          willRetry: false,
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "runtime.error") return;
+      assert.equal(firstEvent.value.payload.class, "provider_error");
     }),
   );
 

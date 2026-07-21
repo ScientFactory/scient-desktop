@@ -4,6 +4,7 @@ import { Schema } from "effect";
 import {
   ServerProviderConnectionCancelInput,
   ServerProviderConnectionStartInput,
+  ServerProviderConnectionSubmitAuthorizationCodeInput,
   ServerProviderStatus,
 } from "./server";
 
@@ -13,6 +14,11 @@ describe("provider connection contracts", () => {
     expect(decode({ provider: "codex", method: "codex_browser" })).toEqual({
       provider: "codex",
       method: "codex_browser",
+    });
+    expect(decode({ provider: "codex", method: "codex_browser", mode: "reauthenticate" })).toEqual({
+      provider: "codex",
+      method: "codex_browser",
+      mode: "reauthenticate",
     });
     expect(decode({ provider: "claudeAgent", method: "claude_account" })).toEqual({
       provider: "claudeAgent",
@@ -40,11 +46,47 @@ describe("provider connection contracts", () => {
       }),
     ).toThrow();
     expect(() =>
+      Schema.decodeUnknownSync(ServerProviderConnectionStartInput)({
+        provider: "codex",
+        method: "codex_browser",
+        mode: "force",
+      }),
+    ).toThrow();
+    expect(() =>
       Schema.decodeUnknownSync(ServerProviderConnectionCancelInput)({
         provider: "codex",
         operationId: "   ",
       }),
     ).toThrow();
+  });
+
+  it("accepts a bounded one-time authorization code and rejects control characters", () => {
+    const decode = Schema.decodeUnknownSync(ServerProviderConnectionSubmitAuthorizationCodeInput);
+    expect(
+      decode({
+        provider: "antigravity",
+        operationId: "operation-1",
+        authorizationCode: "  4/test_code-123  ",
+      }),
+    ).toEqual({
+      provider: "antigravity",
+      operationId: "operation-1",
+      authorizationCode: "4/test_code-123",
+    });
+    const rejectedCode = "4/test-code\nsecond-line";
+    let diagnostic = "";
+    try {
+      decode({
+        provider: "antigravity",
+        operationId: "operation-1",
+        authorizationCode: rejectedCode,
+      });
+    } catch (error) {
+      diagnostic = String(error);
+    }
+    expect(diagnostic).not.toBe("");
+    expect(diagnostic).not.toContain(rejectedCode);
+    expect(diagnostic).not.toContain("test-code");
   });
 
   it("keeps connection progress optional for old provider snapshots", () => {
@@ -68,15 +110,18 @@ describe("provider connection contracts", () => {
       checkedAt: "2026-07-19T10:00:00.000Z",
       connectionState: {
         operationId: "operation-1",
-        method: "codex_browser",
+        method: "grok_browser",
         status: "waiting_for_browser",
         startedAt: "2026-07-19T10:00:00.000Z",
         finishedAt: null,
         message: "Finish signing in in the browser.",
+        authorizationUrl:
+          "https://auth.x.ai/oauth2/authorize?response_type=code&state=transient-test-state",
       },
     });
 
     expect(decoded.connectionState?.status).toBe("waiting_for_browser");
+    expect(decoded.connectionState?.authorizationUrl).toContain("https://auth.x.ai/");
     expect(Object.keys(decoded.connectionState ?? {})).not.toContain("token");
     expect(Object.keys(decoded.connectionState ?? {})).not.toContain("output");
   });

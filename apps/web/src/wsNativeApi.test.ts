@@ -26,6 +26,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestMock = vi.fn<(...args: Array<unknown>) => Promise<unknown>>();
+const onStateChangeMock = vi.fn(() => () => undefined);
 const showContextMenuFallbackMock =
   vi.fn<
     <T extends string>(
@@ -62,9 +63,7 @@ vi.mock("./wsTransport", () => {
     WsTransport: class MockWsTransport {
       request = requestMock;
       subscribe = subscribeMock;
-      onStateChange() {
-        return () => undefined;
-      }
+      onStateChange = onStateChangeMock;
       getLatestPush(channel: string) {
         return latestPushByChannel.get(channel) ?? null;
       }
@@ -116,6 +115,7 @@ const defaultProviders: ReadonlyArray<ServerProviderStatus> = [
 beforeEach(() => {
   vi.resetModules();
   requestMock.mockReset();
+  onStateChangeMock.mockClear();
   showContextMenuFallbackMock.mockReset();
   subscribeMock.mockClear();
   channelListeners.clear();
@@ -130,6 +130,16 @@ afterEach(() => {
 });
 
 describe("wsNativeApi", () => {
+  it("seeds renderer transport state from the new transport immediately", async () => {
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    createWsNativeApi();
+
+    expect(onStateChangeMock).toHaveBeenCalledWith(expect.any(Function), {
+      replayCurrent: true,
+    });
+  });
+
   it("delivers and caches valid server.welcome payloads", async () => {
     const { createWsNativeApi, onServerWelcome } = await import("./wsNativeApi");
 
@@ -348,6 +358,8 @@ describe("wsNativeApi", () => {
       createdAt: "2026-02-24T00:00:00.000Z",
       type: "output",
       data: "hello",
+      outputEpoch: "epoch-1",
+      outputSequence: 1,
     } as const;
     emitPush(WS_CHANNELS.terminalEvent, terminalEvent);
 
@@ -598,7 +610,7 @@ describe("wsNativeApi", () => {
     expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverGetEnvironment);
   });
 
-  it("forwards provider connection start and cancel requests", async () => {
+  it("forwards provider connection start, code submission, and cancel requests", async () => {
     requestMock.mockResolvedValue({ providers: defaultProviders });
     const { createWsNativeApi } = await import("./wsNativeApi");
     const api = createWsNativeApi();
@@ -611,6 +623,11 @@ describe("wsNativeApi", () => {
       provider: "codex",
       operationId: "operation-1",
     });
+    await api.server.submitProviderConnectionAuthorizationCode({
+      provider: "antigravity",
+      operationId: "operation-2",
+      authorizationCode: "4/test-code-123",
+    });
 
     expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverStartProviderConnection, {
       provider: "codex",
@@ -620,6 +637,14 @@ describe("wsNativeApi", () => {
       provider: "codex",
       operationId: "operation-1",
     });
+    expect(requestMock).toHaveBeenCalledWith(
+      WS_METHODS.serverSubmitProviderConnectionAuthorizationCode,
+      {
+        provider: "antigravity",
+        operationId: "operation-2",
+        authorizationCode: "4/test-code-123",
+      },
+    );
   });
 
   it("fetches auth session state over HTTP", async () => {

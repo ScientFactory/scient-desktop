@@ -105,6 +105,21 @@ export function gitStatusQueryOptions(cwd: string | null) {
   });
 }
 
+/**
+ * Passive status for compact/background surfaces. It loads once and still
+ * responds to scoped git/file invalidations, but never touches a project merely
+ * because the app regained focus or a timer fired.
+ */
+export function passiveGitStatusQueryOptions(
+  cwd: string | null,
+): ReturnType<typeof gitStatusQueryOptions> {
+  return {
+    ...gitStatusQueryOptions(cwd),
+    refetchOnWindowFocus: false as const,
+    refetchInterval: false as const,
+  };
+}
+
 export function gitGithubRepositoryQueryOptions(cwd: string | null, enabled = true) {
   return queryOptions({
     queryKey: gitQueryKeys.githubRepository(cwd),

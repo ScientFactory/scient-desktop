@@ -322,7 +322,7 @@ export function createWsNativeApi(): NativeApi {
   }
 
   const transport = new WsTransport();
-  transport.onStateChange((state) => emitWsTransportState(state));
+  transport.onStateChange((state) => emitWsTransportState(state), { replayCurrent: true });
 
   transport.subscribe(WS_CHANNELS.serverWelcome, (message) => {
     const payload = message.data;
@@ -647,6 +647,8 @@ export function createWsNativeApi(): NativeApi {
         transport.request(WS_METHODS.serverStartProviderConnection, input),
       cancelProviderConnection: (input) =>
         transport.request(WS_METHODS.serverCancelProviderConnection, input),
+      submitProviderConnectionAuthorizationCode: (input) =>
+        transport.request(WS_METHODS.serverSubmitProviderConnectionAuthorizationCode, input),
       prepareProviderInstall: (input) =>
         transport.request(WS_METHODS.serverPrepareProviderInstall, input),
       installProvider: (input) => transport.request(WS_METHODS.serverInstallProvider, input),

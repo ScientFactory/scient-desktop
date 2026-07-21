@@ -21,7 +21,7 @@ import {
   TurnId,
 } from "@synara/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -30,6 +30,7 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import { ProviderSessionDirectoryPersistenceError } from "../../provider/Errors.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -68,6 +69,9 @@ type LegacyProviderRuntimeEvent = {
 function createProviderServiceHarness() {
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
   const runtimeSessions: ProviderSession[] = [];
+  const stopRuntimeSession = vi.fn<NonNullable<ProviderServiceShape["stopRuntimeSession"]>>(
+    (_input) => Effect.void,
+  );
 
   const unsupported = () => Effect.die(new Error("Unsupported provider call in test")) as never;
   const service: ProviderServiceShape = {
@@ -80,6 +84,7 @@ function createProviderServiceHarness() {
     respondToRequest: () => unsupported(),
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
+    stopRuntimeSession,
     listSessions: () => Effect.succeed([...runtimeSessions]),
     getCapabilities: (provider) =>
       Effect.succeed({
@@ -108,6 +113,7 @@ function createProviderServiceHarness() {
     service,
     emit,
     setSession,
+    stopRuntimeSession,
   };
 }
 
@@ -256,6 +262,7 @@ describe("ProviderRuntimeIngestion", () => {
       engine,
       emit: provider.emit,
       setProviderSession: provider.setSession,
+      stopRuntimeSession: provider.stopRuntimeSession,
       drain,
     };
   }
@@ -4077,6 +4084,352 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime exploded");
+    expect(thread.session?.lastErrorEventId).toBe("evt-runtime-error");
+    expect(thread.session?.lastErrorClass).toBeNull();
+    expect(harness.stopRuntimeSession).not.toHaveBeenCalled();
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-runtime-error-exited"),
+      provider: "codex",
+      createdAt: new Date(Date.parse(now) + 1).toISOString(),
+      threadId: asThreadId("thread-1"),
+      payload: { reason: "Session stopped" },
+    });
+
+    const stoppedThread = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.status === "stopped",
+    );
+    expect(stoppedThread.session?.lastErrorEventId).toBeUndefined();
+    expect(stoppedThread.session?.lastErrorClass).toBeUndefined();
+  });
+
+  it("stops only the stale Codex runtime after a classified authentication error", async () => {
+    const harness = await createHarness();
+    const now = "2026-07-21T10:00:00.000Z";
+    harness.stopRuntimeSession.mockImplementation(({ threadId }) =>
+      Effect.sync(() => {
+        harness.emit({
+          type: "session.exited",
+          eventId: asEventId("evt-runtime-authentication-stop-exited"),
+          provider: "codex",
+          createdAt: "2026-07-21T10:00:00.001Z",
+          threadId,
+          payload: { reason: "Session stopped" },
+        });
+      }),
+    );
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-runtime-authentication-error"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-authentication-error"),
+      payload: {
+        message: "Authentication required",
+        class: "authentication_error",
+      },
+    });
+
+    await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "error" &&
+        entry.session?.activeTurnId === null &&
+        entry.session?.lastError === "Authentication required",
+    );
+    await vi.waitFor(() => expect(harness.stopRuntimeSession).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await harness.drain();
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "error" &&
+        entry.session?.activeTurnId === null &&
+        entry.session?.lastError === "Authentication required",
+    );
+    expect(harness.stopRuntimeSession).toHaveBeenCalledWith({
+      threadId: asThreadId("thread-1"),
+    });
+    expect(thread.session?.updatedAt).toBe(now);
+    expect(thread.session?.lastErrorEventId).toBe("evt-runtime-authentication-error");
+    expect(thread.session?.lastErrorClass).toBe("authentication_error");
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-later-unrelated-session-exit"),
+      provider: "codex",
+      createdAt: "2026-07-21T10:00:00.002Z",
+      threadId: asThreadId("thread-1"),
+      payload: { reason: "Later session stopped" },
+    });
+    const stoppedThread = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.status === "stopped",
+    );
+    expect(stoppedThread.session?.lastErrorEventId).toBeUndefined();
+    expect(stoppedThread.session?.lastErrorClass).toBeUndefined();
+  });
+
+  it("preserves authentication metadata through its matching failed turn settlement", async () => {
+    const harness = await createHarness();
+    const errorAt = "2026-07-21T10:00:30.000Z";
+    const settledAt = "2026-07-21T10:00:30.001Z";
+    harness.stopRuntimeSession.mockImplementation(({ threadId }) =>
+      Effect.sync(() => {
+        harness.emit({
+          type: "turn.completed",
+          eventId: asEventId("evt-authentication-turn-failed"),
+          provider: "codex",
+          createdAt: settledAt,
+          threadId,
+          turnId: asTurnId("turn-authentication-settlement"),
+          payload: {
+            state: "failed",
+            errorMessage: "Unauthorized",
+          },
+        });
+        harness.emit({
+          type: "session.exited",
+          eventId: asEventId("evt-authentication-settlement-cleanup-exited"),
+          provider: "codex",
+          createdAt: "2026-07-21T10:00:30.002Z",
+          threadId,
+          payload: { reason: "Session stopped" },
+        });
+      }),
+    );
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-authentication-error-before-settlement"),
+      provider: "codex",
+      createdAt: errorAt,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-authentication-settlement"),
+      payload: {
+        message: "Authentication required",
+        class: "authentication_error",
+      },
+    });
+
+    await vi.waitFor(() => expect(harness.stopRuntimeSession).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await harness.drain();
+    const authenticationErrorThread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "error" &&
+        entry.session.lastErrorEventId === "evt-authentication-error-before-settlement",
+    );
+    expect(authenticationErrorThread.session?.lastError).toBe("Authentication required");
+    expect(authenticationErrorThread.session?.lastErrorClass).toBe("authentication_error");
+    expect(authenticationErrorThread.session?.updatedAt).toBe(settledAt);
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-after-authentication-settlement-unrelated-exit"),
+      provider: "codex",
+      createdAt: "2026-07-21T10:00:30.003Z",
+      threadId: asThreadId("thread-1"),
+      payload: { reason: "Later unrelated exit" },
+    });
+
+    const stoppedThread = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.status === "stopped",
+    );
+    expect(stoppedThread.session?.lastErrorEventId).toBeUndefined();
+    expect(stoppedThread.session?.lastErrorClass).toBeUndefined();
+  });
+
+  it("preserves matching authentication settlement when cleanup exit arrives first", async () => {
+    const harness = await createHarness();
+    const settledAt = "2026-07-21T10:00:35.002Z";
+    harness.stopRuntimeSession.mockImplementation(({ threadId }) =>
+      Effect.sync(() => {
+        harness.emit({
+          type: "session.exited",
+          eventId: asEventId("evt-authentication-reordered-cleanup-exited"),
+          provider: "codex",
+          createdAt: "2026-07-21T10:00:35.001Z",
+          threadId,
+          payload: { reason: "Session stopped" },
+        });
+        harness.emit({
+          type: "turn.completed",
+          eventId: asEventId("evt-authentication-reordered-turn-failed"),
+          provider: "codex",
+          createdAt: settledAt,
+          threadId,
+          turnId: asTurnId("turn-authentication-reordered-settlement"),
+          payload: {
+            state: "failed",
+            errorMessage: "Unauthorized",
+          },
+        });
+      }),
+    );
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-authentication-error-before-reordered-settlement"),
+      provider: "codex",
+      createdAt: "2026-07-21T10:00:35.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-authentication-reordered-settlement"),
+      payload: {
+        message: "Authentication required",
+        class: "authentication_error",
+      },
+    });
+
+    await vi.waitFor(() => expect(harness.stopRuntimeSession).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await harness.drain();
+    const authenticationErrorThread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "error" &&
+        entry.session.lastErrorEventId === "evt-authentication-error-before-reordered-settlement",
+    );
+    expect(authenticationErrorThread.session?.lastError).toBe("Authentication required");
+    expect(authenticationErrorThread.session?.lastErrorClass).toBe("authentication_error");
+    expect(authenticationErrorThread.session?.updatedAt).toBe(settledAt);
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-after-reordered-authentication-settlement-exit"),
+      provider: "codex",
+      createdAt: "2026-07-21T10:00:35.003Z",
+      threadId: asThreadId("thread-1"),
+      payload: { reason: "Later unrelated exit" },
+    });
+
+    const stoppedThread = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.status === "stopped",
+    );
+    expect(stoppedThread.session?.lastErrorEventId).toBeUndefined();
+    expect(stoppedThread.session?.lastErrorClass).toBeUndefined();
+  });
+
+  it("clears authentication metadata when the matching turn later succeeds", async () => {
+    const harness = await createHarness();
+    harness.stopRuntimeSession.mockImplementation(({ threadId }) =>
+      Effect.sync(() => {
+        harness.emit({
+          type: "turn.completed",
+          eventId: asEventId("evt-authentication-turn-succeeded"),
+          provider: "codex",
+          createdAt: "2026-07-21T10:00:40.001Z",
+          threadId,
+          turnId: asTurnId("turn-authentication-success"),
+          payload: { state: "completed" },
+        });
+      }),
+    );
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-authentication-error-before-success"),
+      provider: "codex",
+      createdAt: "2026-07-21T10:00:40.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-authentication-success"),
+      payload: {
+        message: "Authentication required",
+        class: "authentication_error",
+      },
+    });
+
+    await vi.waitFor(() => expect(harness.stopRuntimeSession).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await harness.drain();
+    const readyThread = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.status === "ready",
+    );
+    expect(readyThread.session?.lastError).toBeNull();
+    expect(readyThread.session?.lastErrorEventId).toBeUndefined();
+    expect(readyThread.session?.lastErrorClass).toBeUndefined();
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-after-authentication-success-cleanup-exit"),
+      provider: "codex",
+      createdAt: "2026-07-21T10:00:40.002Z",
+      threadId: asThreadId("thread-1"),
+      payload: { reason: "Cleanup after successful settlement" },
+    });
+    await waitForThread(harness.engine, (entry) => entry.session?.status === "stopped");
+  });
+
+  it("preserves authentication state when runtime cleanup emits before stop persistence fails", async () => {
+    const harness = await createHarness();
+    const now = "2026-07-21T10:01:00.000Z";
+    harness.stopRuntimeSession.mockImplementation(({ threadId }) =>
+      Effect.gen(function* () {
+        harness.emit({
+          type: "session.exited",
+          eventId: asEventId("evt-failed-stop-cleanup-exited"),
+          provider: "codex",
+          createdAt: "2026-07-21T10:01:00.001Z",
+          threadId,
+          payload: { reason: "Session stopped before directory persistence failed" },
+        });
+        return yield* Effect.fail(
+          new ProviderSessionDirectoryPersistenceError({
+            operation: "ProviderService.stopRuntimeSession",
+            detail: "simulated directory persistence failure",
+          }),
+        );
+      }),
+    );
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-authentication-error-before-failed-stop"),
+      provider: "codex",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        message: "Authentication required",
+        class: "authentication_error",
+      },
+    });
+
+    await vi.waitFor(() => expect(harness.stopRuntimeSession).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await harness.drain();
+    const authenticationErrorThread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "error" &&
+        entry.session.lastErrorEventId === "evt-authentication-error-before-failed-stop",
+    );
+    expect(authenticationErrorThread.session?.lastError).toBe("Authentication required");
+    expect(authenticationErrorThread.session?.lastErrorClass).toBe("authentication_error");
+    expect(authenticationErrorThread.session?.updatedAt).toBe(now);
+
+    harness.emit({
+      type: "session.exited",
+      eventId: asEventId("evt-after-failed-stop-unrelated-exit"),
+      provider: "codex",
+      createdAt: "2026-07-21T10:01:00.002Z",
+      threadId: asThreadId("thread-1"),
+      payload: { reason: "Later unrelated exit" },
+    });
+
+    const stoppedThread = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.status === "stopped",
+    );
+    expect(stoppedThread.session?.lastErrorEventId).toBeUndefined();
+    expect(stoppedThread.session?.lastErrorClass).toBeUndefined();
   });
 
   it("keeps the session running when a runtime.warning arrives during an active turn", async () => {

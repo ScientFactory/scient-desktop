@@ -5,8 +5,9 @@
 
 const { execFileSync, spawnSync } = require("node:child_process");
 const { join, resolve } = require("node:path");
+const { SCIENT_MAC_BUNDLE_IDENTIFIER } = require("./lib/mac-signing-policy.cjs");
 
-const EXPECTED_BUNDLE_IDENTIFIER = "com.scientfactory.scient";
+const EXPECTED_BUNDLE_IDENTIFIER = SCIENT_MAC_BUNDLE_IDENTIFIER;
 
 module.exports = async function adhocSignMacApp(context) {
   if (context.electronPlatformName !== "darwin") {

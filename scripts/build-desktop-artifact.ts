@@ -17,8 +17,10 @@ import {
   createDesktopPlatformBuildConfig,
   MAC_ADHOC_SIGN_HOOK_PATH,
   MAC_APPSNAP_HELPER_STAGE_PATH,
+  MAC_SIGNING_POLICY_PATH,
   validateDesktopNativeBuildHost,
 } from "./lib/desktop-platform-build-config.ts";
+import { isolateDesktopSigningEnvironment } from "./lib/desktop-signing-environment.ts";
 import { SCIENT_PRODUCTION_BUNDLE_ID } from "@synara/shared/desktopIdentity";
 import { parseBooleanEnvValue } from "./lib/env-bool.ts";
 import { verifySingleMacDmgSignature } from "./lib/mac-artifact-signature.ts";
@@ -714,6 +716,8 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   mockUpdates: boolean,
   mockUpdateServerPort: string | undefined,
 ) {
+  const repoRoot = yield* RepoRoot;
+  const path = yield* Path.Path;
   const buildConfig: Record<string, unknown> = {
     appId: SCIENT_PRODUCTION_BUNDLE_ID,
     productName,
@@ -761,6 +765,12 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     platform,
     signed,
     target,
+    ...(platform === "mac" && signed
+      ? {
+          macNotarizeHookPath: path.join(repoRoot, "scripts/notarize-mac-app.cjs"),
+          macSignHookPath: path.join(repoRoot, "scripts/sign-mac-app.cjs"),
+        }
+      : {}),
     ...(windowsAzureSignOptions ? { windowsAzureSignOptions } : {}),
   } as const;
 
@@ -842,6 +852,19 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   const electronVersion = desktopPackageJson.dependencies.electron;
+  const platformBuildConfig = yield* createBuildConfig(
+    options.platform,
+    options.target,
+    desktopPackageJson.productName ?? "Scient",
+    options.signed,
+    options.mockUpdates,
+    options.mockUpdateServerPort,
+  );
+  const signingEnvironment = isolateDesktopSigningEnvironment(
+    process.env,
+    options.platform,
+    options.signed,
+  );
 
   const serverDependencies = serverPackageJson.dependencies;
   if (!serverDependencies || Object.keys(serverDependencies).length === 0) {
@@ -953,8 +976,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     if (!options.signed) {
       const hookSourcePath = path.join(repoRoot, MAC_ADHOC_SIGN_HOOK_PATH);
       const hookStagePath = path.join(stageAppDir, MAC_ADHOC_SIGN_HOOK_PATH);
+      const policySourcePath = path.join(repoRoot, MAC_SIGNING_POLICY_PATH);
+      const policyStagePath = path.join(stageAppDir, MAC_SIGNING_POLICY_PATH);
       yield* fs.makeDirectory(path.dirname(hookStagePath), { recursive: true });
+      yield* fs.makeDirectory(path.dirname(policyStagePath), { recursive: true });
       yield* fs.copyFile(hookSourcePath, hookStagePath);
+      yield* fs.copyFile(policySourcePath, policyStagePath);
     }
   }
 
@@ -971,14 +998,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     description: "Scient desktop build",
     author: "Yaacov Corcos",
     main: "apps/desktop/dist-electron/main.js",
-    build: yield* createBuildConfig(
-      options.platform,
-      options.target,
-      desktopPackageJson.productName ?? "Scient",
-      options.signed,
-      options.mockUpdates,
-      options.mockUpdateServerPort,
-    ),
+    build: platformBuildConfig,
     dependencies: {
       ...resolvedServerDependencies,
       ...resolvedDesktopRuntimeDependencies,
@@ -1003,6 +1023,15 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   const buildEnv: NodeJS.ProcessEnv = {
     ...process.env,
+    ...signingEnvironment,
+    ...(options.platform === "mac" && options.signed
+      ? {
+          SCIENT_NOTARIZATION_ARCH: options.arch,
+          SCIENT_NOTARIZATION_COMMIT: commitHash,
+          SCIENT_NOTARIZATION_EVIDENCE_DIR: options.outputDir,
+          SCIENT_NOTARIZATION_VERSION: appVersion,
+        }
+      : {}),
   };
   for (const [key, value] of Object.entries(buildEnv)) {
     if (value === "") {
@@ -1011,13 +1040,6 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
   if (!options.signed) {
     buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = "false";
-    delete buildEnv.CSC_LINK;
-    delete buildEnv.CSC_KEY_PASSWORD;
-    delete buildEnv.WIN_CSC_LINK;
-    delete buildEnv.WIN_CSC_KEY_PASSWORD;
-    delete buildEnv.APPLE_API_KEY;
-    delete buildEnv.APPLE_API_KEY_ID;
-    delete buildEnv.APPLE_API_ISSUER;
   }
 
   if (process.platform === "win32") {

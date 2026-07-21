@@ -188,6 +188,73 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
+  it.effect("rebuilds durable session error correlation metadata from events", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.makeUnsafe("thread-session-error-rebuild");
+      const occurredAt = "2026-07-21T10:00:00.000Z";
+
+      yield* eventStore.append({
+        type: "thread.session-set",
+        eventId: EventId.makeUnsafe("event-session-error-rebuild"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt,
+        commandId: CommandId.makeUnsafe("command-session-error-rebuild"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("command-session-error-rebuild"),
+        metadata: {},
+        payload: {
+          threadId,
+          session: {
+            threadId,
+            status: "error",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: "Authentication required",
+            lastErrorEventId: EventId.makeUnsafe("event-runtime-authentication-error"),
+            lastErrorClass: "authentication_error",
+            updatedAt: occurredAt,
+          },
+        },
+      });
+
+      const readPersistedMetadata = () =>
+        sql<{
+          readonly lastErrorEventId: string | null;
+          readonly lastErrorClass: string | null;
+        }>`
+          SELECT
+            last_error_event_id AS "lastErrorEventId",
+            last_error_class AS "lastErrorClass"
+          FROM projection_thread_sessions
+          WHERE thread_id = ${threadId}
+        `;
+      const expectedMetadata = [
+        {
+          lastErrorEventId: "event-runtime-authentication-error",
+          lastErrorClass: "authentication_error",
+        },
+      ];
+
+      yield* projectionPipeline.bootstrap;
+      assert.deepEqual(yield* readPersistedMetadata(), expectedMetadata);
+
+      yield* sql`DELETE FROM projection_thread_sessions WHERE thread_id = ${threadId}`;
+      yield* sql`
+        DELETE FROM projection_state
+        WHERE projector = ${ORCHESTRATION_PROJECTOR_NAMES.threadSessions}
+      `;
+      assert.deepEqual(yield* readPersistedMetadata(), []);
+
+      yield* projectionPipeline.bootstrap;
+      assert.deepEqual(yield* readPersistedMetadata(), expectedMetadata);
+    }),
+  );
+
   it.effect("persists turn-start thread settings into projection rows", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;

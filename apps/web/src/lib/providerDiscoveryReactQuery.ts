@@ -45,6 +45,11 @@ const EMPTY_PLUGINS_RESULT: ProviderListPluginsResult = {
   cached: false,
 };
 
+// Provider discovery can spawn CLIs and inspect provider/project configuration.
+// Refresh it through explicit UI actions and domain invalidation, never as a
+// side effect of returning to the Scient window.
+const PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS = false;
+
 export const providerDiscoveryQueryKeys = {
   all: ["provider-discovery"] as const,
   composerCapabilities: (provider: ProviderKind) =>
@@ -91,6 +96,7 @@ export function providerComposerCapabilitiesQueryOptions(provider: ProviderKind)
       return api.provider.getComposerCapabilities({ provider });
     },
     staleTime: Infinity,
+    refetchOnWindowFocus: PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS,
   });
 }
 
@@ -117,6 +123,7 @@ export function providerSkillsQueryOptions(input: {
     },
     enabled: (input.enabled ?? true) && input.cwd !== null,
     staleTime: 30_000,
+    refetchOnWindowFocus: PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS,
     placeholderData: (previous) => previous ?? EMPTY_SKILLS_RESULT,
   });
 }
@@ -134,6 +141,7 @@ export function skillsCatalogQueryOptions(input?: { cwd?: string | null; enabled
     },
     enabled: input?.enabled ?? true,
     staleTime: 30_000,
+    refetchOnWindowFocus: PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS,
     placeholderData: (previous) => previous,
   });
 }
@@ -183,6 +191,7 @@ export function providerCommandsQueryOptions(input: {
     },
     enabled: (input.enabled ?? true) && input.cwd !== null,
     staleTime: 30_000,
+    refetchOnWindowFocus: PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS,
     placeholderData: (previous) => previous ?? EMPTY_COMMANDS_RESULT,
   });
 }
@@ -232,7 +241,7 @@ export function providerModelsQueryOptions(input: {
     // fast so the picker settles to static options instead of spinning (#103).
     retry: input.provider === "droid" || input.provider === "cursor" ? 0 : 3,
     staleTime: input.provider === "droid" ? 5 * 60_000 : 60_000,
-    ...(input.provider === "droid" ? { refetchOnWindowFocus: false } : {}),
+    refetchOnWindowFocus: PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS,
     placeholderData: (previous) => previous ?? EMPTY_MODELS_RESULT,
   });
 }
@@ -259,6 +268,7 @@ export function providerAgentsQueryOptions(input: {
     },
     enabled: input.enabled ?? true,
     staleTime: 60_000,
+    refetchOnWindowFocus: PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS,
     placeholderData: (previous) => previous ?? EMPTY_AGENTS_RESULT,
   });
 }
@@ -281,6 +291,7 @@ export function providerPluginsQueryOptions(input: {
     },
     enabled: input.enabled ?? true,
     staleTime: 30_000,
+    refetchOnWindowFocus: PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS,
     placeholderData: (previous) => previous ?? EMPTY_PLUGINS_RESULT,
   });
 }
@@ -313,6 +324,7 @@ export function providerReadPluginQueryOptions(input: {
     },
     enabled: input.enabled ?? true,
     staleTime: 60_000,
+    refetchOnWindowFocus: PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS,
   });
 }
 
