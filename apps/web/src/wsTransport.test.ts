@@ -94,7 +94,7 @@ function makeStreamHarness() {
     disposed: boolean;
     supervisor: typeof supervisor;
     startStream: (
-      session: typeof session,
+      activeSession: typeof session,
       key: string,
       streamFactory: () => unknown,
       listener: (event: unknown) => void,

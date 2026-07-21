@@ -34,6 +34,7 @@ import {
   ManagedRuntime,
   Option,
   Schedule,
+  Schema,
   Scope,
   Stream,
 } from "effect";
@@ -161,7 +162,7 @@ export function isConnectionTransportFailure(error: unknown): boolean {
     if (!value || typeof value !== "object") return false;
     if (seen.has(value)) return false;
     seen.add(value);
-    if (Socket.isSocketError(value) || value instanceof RpcClientError.RpcClientError) return true;
+    if (Socket.isSocketError(value) || Schema.is(RpcClientError.RpcClientError)(value)) return true;
     const record = value as Record<string, unknown>;
     // A server-declared RPC failure is stream-local even when its diagnostic
     // cause resembles a transport error from the server's own dependencies.

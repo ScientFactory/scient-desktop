@@ -276,7 +276,7 @@ export class ConnectionSupervisor<T> {
     const timeoutMs = Math.max(0, this.#options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS);
     let acceptResult = true;
     let timeout: ReturnType<typeof setTimeout> | null = null;
-    let removeAbortListener = () => undefined;
+    let removeAbortListener: () => void = () => undefined;
     const connect = (async () => {
       if (this.#closeInFlight) await this.#closeInFlight;
       if (controller.signal.aborted) throw controller.signal.reason;
