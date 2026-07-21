@@ -5,6 +5,7 @@ import Path from "node:path";
 import { delimiter as pathDelimiter } from "node:path";
 
 import {
+  PROVIDER_DISPLAY_NAMES,
   type ProviderKind,
   ServerProviderInstallationError,
   type ServerProviderInstallationState,
@@ -48,6 +49,24 @@ export function canActivateManagedRuntimeVersion(input: {
     input.currentVersion === null ||
     compareSemverVersions(input.candidateVersion, input.currentVersion) >= 0
   );
+}
+
+function managedRuntimeDowngradeMessage(input: {
+  readonly provider: ProviderKind;
+  readonly currentVersion: string;
+  readonly candidateVersion: string;
+  readonly operation: "install" | "repair";
+}): string | null {
+  if (
+    canActivateManagedRuntimeVersion({
+      currentVersion: input.currentVersion,
+      candidateVersion: input.candidateVersion,
+    })
+  ) {
+    return null;
+  }
+  const action = input.operation === "repair" ? "repair" : "replace";
+  return `Scient will not ${action} ${PROVIDER_DISPLAY_NAMES[input.provider]} ${input.currentVersion} with older version ${input.candidateVersion}.`;
 }
 
 const PROVIDERS: ReadonlyArray<ProviderKind> = [
@@ -627,6 +646,17 @@ export const ProviderRuntimeManagerLive = Layer.effect(
           signal: controller.signal,
         });
 
+        const current = records.get(provider) ?? null;
+        const downgradeMessage = current
+          ? managedRuntimeDowngradeMessage({
+              provider,
+              currentVersion: current.runtimeVersion,
+              candidateVersion: artifact.version,
+              operation,
+            })
+          : null;
+        if (downgradeMessage) throw new Error(downgradeMessage);
+
         await FS.mkdir(Path.dirname(finalRelease), { recursive: true });
         const existingFinal = await FS.stat(finalRelease).catch(() => null);
         if (existingFinal) {
@@ -634,7 +664,6 @@ export const ProviderRuntimeManagerLive = Layer.effect(
           finalRelease = releaseRoot(config.stateDir, provider, releaseId);
         }
         await FS.rename(stagedRelease, finalRelease);
-        const current = records.get(provider) ?? null;
         const finalExecutable = Path.join(finalRelease, managedExecutableRelativePath);
         const record: ProviderRuntimeCurrentRecord = {
           version: 1,
@@ -733,18 +762,20 @@ export const ProviderRuntimeManagerLive = Layer.effect(
           });
         }
         const current = records.get(input.provider);
-        if (
-          current &&
-          !canActivateManagedRuntimeVersion({
-            currentVersion: current.runtimeVersion,
-            candidateVersion: plan.artifact.version,
-          })
-        ) {
+        const downgradeMessage = current
+          ? managedRuntimeDowngradeMessage({
+              provider: input.provider,
+              currentVersion: current.runtimeVersion,
+              candidateVersion: plan.artifact.version,
+              operation: "install",
+            })
+          : null;
+        if (downgradeMessage) {
           plans.delete(input.planToken);
           return yield* installationError({
             provider: input.provider,
             reason: "managed_runtime_unavailable",
-            message: `Scient will not replace ${input.provider} ${current.runtimeVersion} with older version ${plan.artifact.version}.`,
+            message: downgradeMessage,
           });
         }
         plans.delete(input.planToken);
@@ -778,7 +809,8 @@ export const ProviderRuntimeManagerLive = Layer.effect(
 
     const repair: ProviderRuntimeManagerShape["repair"] = (input) =>
       Effect.gen(function* () {
-        if (!records.has(input.provider)) {
+        const current = records.get(input.provider);
+        if (!current) {
           return yield* installationError({
             provider: input.provider,
             reason: "managed_runtime_unavailable",
@@ -800,6 +832,19 @@ export const ProviderRuntimeManagerLive = Layer.effect(
               message: errorMessage(cause),
             }),
         });
+        const downgradeMessage = managedRuntimeDowngradeMessage({
+          provider: input.provider,
+          currentVersion: current.runtimeVersion,
+          candidateVersion: artifact.version,
+          operation: "repair",
+        });
+        if (downgradeMessage) {
+          return yield* installationError({
+            provider: input.provider,
+            reason: "managed_runtime_unavailable",
+            message: downgradeMessage,
+          });
+        }
         yield* startOperation({
           provider: input.provider,
           operation: "repair",

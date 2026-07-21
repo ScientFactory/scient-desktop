@@ -123,6 +123,20 @@ export function describeManagedProviderUpdate(input: {
       canCancel: false,
     };
   }
+  if (
+    input.updateStarted &&
+    !input.plan &&
+    (installation?.status === "failed" || installation?.status === "cancelled")
+  ) {
+    return {
+      title,
+      description: installation.message,
+      primaryAction: "install",
+      primaryLabel: "Try again",
+      busy: false,
+      canCancel: false,
+    };
+  }
   const currentVersion = input.status.runtime?.managedVersion;
   if (input.plan && currentVersion) {
     const comparison = compareSemverVersions(input.plan.version, currentVersion);

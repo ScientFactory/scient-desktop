@@ -184,7 +184,7 @@ export function parseAntigravityOAuthAuthorizationUrl(output: string): string | 
 }
 
 /**
- * Antigravity 1.1.4 has no login subcommand, and its hidden bare TUI does not
+ * Antigravity 1.1.4 and newer have no login subcommand, and the hidden bare TUI does not
  * advance to authentication. Print mode reaches provider-owned OAuth before
  * model selection. A per-operation impossible model plus sandboxed plan mode
  * prevents a real turn; the models health probe stops the process after auth.

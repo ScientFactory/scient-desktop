@@ -83,6 +83,36 @@ describe("provider connection presentation", () => {
     }
   });
 
+  it.each(["failed", "cancelled"] as const)(
+    "shows the managed update %s message and offers a safe retry",
+    (status) => {
+      const presentation = describeManagedProviderUpdate({
+        provider: "antigravity",
+        status: {
+          ...managedAntigravityStatus,
+          installationState: {
+            operationId: "operation-1",
+            operation: "install",
+            status,
+            startedAt: "2026-07-21T11:00:00.000Z",
+            finishedAt: "2026-07-21T11:01:00.000Z",
+            message:
+              status === "failed"
+                ? "The verified runtime failed its smoke test."
+                : "The update was cancelled.",
+          },
+        },
+        plan: null,
+        updateStarted: true,
+      });
+
+      expect(presentation.description).toContain(status === "failed" ? "smoke test" : "cancelled");
+      expect(presentation.primaryAction).toBe("install");
+      expect(presentation.primaryLabel).toBe("Try again");
+      expect(presentation.canCancel).toBe(false);
+    },
+  );
+
   it("maps supported providers to fixed browser sign-in methods", () => {
     expect(providerConnectionMethod("codex")).toBe("codex_browser");
     expect(providerConnectionMethod("claudeAgent")).toBe("claude_account");

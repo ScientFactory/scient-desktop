@@ -134,7 +134,7 @@ The installation service must:
 - Source: official platform manifest and native artifact.
 - Verification now: stable semantic version 1.1.4 or newer, exact official manifest and artifact hosts, artifact URL/version coherence, and manifest SHA-512.
 - Smoke test: `agy --version`.
-- Authentication now: Antigravity 1.1.4 or newer runs sandboxed `agy --print` in a private PTY from Scient's neutral state directory and opens provider-owned Google sign-in. Scient validates the Google URL, forwards one redacted one-time code to that process, discards raw output, polls the separate model verifier, keeps Antigravity's 60-second OAuth window, and allows only a hidden five-second grace for the final local verification probe.
+- Authentication now: Antigravity 1.1.4 or newer runs sandboxed `agy --print` in a private PTY from Scient's neutral state directory and opens provider-owned Google sign-in. Scient validates the Google URL, forwards one redacted one-time code to that process, discards raw output, polls the separate model verifier, keeps the authorization flow open for ten minutes, and allows a hidden 30-second grace period for credentials to settle before reporting failure.
 - Auth verification: `agy models` returns models.
 - Managed invocations disable AGY's native self-updater so updates stay inside Scient's staged, verified, smoke-tested, atomic runtime lifecycle with rollback. The managed update flow refuses downgrades while preserving same-version repair.
 
@@ -206,7 +206,7 @@ The installation service must:
 ## Implementation and release phases
 
 1. [x] Add contracts for runtime source, installation state, progress, errors, and operations.
-2. [x] Add the typed, pinned provider recipe registry.
+2. [x] Add the typed provider recipe registry, with exact pins for reviewed releases and an explicit trusted-stable-channel policy for Antigravity.
 3. [x] Implement target detection, safe downloading, hashing, extraction, activation, rollback, and cleanup.
 4. [x] Integrate managed runtime resolution into provider health and process startup.
 5. [x] Add prepare, install, cancel, repair, rollback, and remove RPCs.
