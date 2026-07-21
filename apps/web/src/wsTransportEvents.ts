@@ -3,7 +3,7 @@
 // Layer: Web transport utility
 // Exports: event helpers used by wsNativeApi and terminal runtime recovery.
 
-export type WsTransportState = "connecting" | "open" | "closed" | "disposed";
+export type WsTransportState = "connecting" | "reconnecting" | "open" | "disposed";
 
 export const SYNARA_WS_TRANSPORT_STATE_EVENT = "scient:ws-transport-state";
 

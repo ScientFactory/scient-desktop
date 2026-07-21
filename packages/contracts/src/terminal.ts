@@ -100,6 +100,10 @@ export const TerminalSessionSnapshot = Schema.Struct({
   status: TerminalSessionStatus,
   pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   history: Schema.String,
+  /** Identifies the server process that owns this sequence namespace. */
+  outputEpoch: Schema.String.check(Schema.isNonEmpty()),
+  /** Monotonic output-event barrier captured with this authoritative history. */
+  outputSequence: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   replayPreamble: Schema.optional(Schema.String.check(Schema.isMaxLength(4_096))),
   exitCode: Schema.NullOr(Schema.Int),
   exitSignal: Schema.NullOr(Schema.Int),
@@ -123,6 +127,10 @@ const TerminalOutputEvent = Schema.Struct({
   ...TerminalEventBaseSchema.fields,
   type: Schema.Literal("output"),
   data: Schema.String,
+  /** Identifies the server process that owns this sequence namespace. */
+  outputEpoch: Schema.String.check(Schema.isNonEmpty()),
+  /** Monotonic sequence within this server-side terminal session. */
+  outputSequence: Schema.Int.check(Schema.isGreaterThan(0)),
   byteLength: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 

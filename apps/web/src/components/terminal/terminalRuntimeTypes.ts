@@ -5,6 +5,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebglAddon } from "@xterm/addon-webgl";
+import type { TerminalEvent } from "@synara/contracts";
 import { type TerminalActivityState, type TerminalCliKind } from "@synara/shared/terminalThreads";
 import { Terminal, type IDisposable } from "@xterm/xterm";
 import type { TerminalLinkMatch } from "../../terminal-links";
@@ -48,7 +49,91 @@ export interface TerminalPendingWrite {
   queuedAt: number;
 }
 
+export type TerminalOutputEvent = Extract<TerminalEvent, { type: "output" }>;
+
+export interface TerminalSnapshotCaptureState {
+  snapshotReconcileActive: boolean;
+  snapshotBufferedOutputEvents: TerminalOutputEvent[];
+  snapshotReconcileQueued: boolean;
+  snapshotReconcileRequestId: number;
+}
+
+/** Coalesces an open-state reconcile signal instead of dropping it behind an active capture. */
+export function requestTerminalSnapshotReconcile(state: TerminalSnapshotCaptureState): boolean {
+  if (!state.snapshotReconcileActive) {
+    state.snapshotReconcileQueued = false;
+    return true;
+  }
+  state.snapshotReconcileQueued = true;
+  return false;
+}
+
+/** Finishes one capture and reports whether a coalesced replacement must now run. */
+export function finishTerminalSnapshotReconcile(state: TerminalSnapshotCaptureState): boolean {
+  state.snapshotReconcileActive = false;
+  const shouldRetry = state.snapshotReconcileQueued;
+  state.snapshotReconcileQueued = false;
+  return shouldRetry;
+}
+
+/**
+ * A clear/restart/start event is authoritative and causally supersedes an
+ * in-flight snapshot. Cancel that capture so its older history can never be
+ * painted after the control event.
+ */
+export function supersedeTerminalSnapshotCapture(state: TerminalSnapshotCaptureState): boolean {
+  if (!state.snapshotReconcileActive) return false;
+  supersedeTerminalSnapshotCaptureAndTakeBuffered(state);
+  return true;
+}
+
+/** Invalidates one capture and returns its buffered output for ordered flush or explicit ACK. */
+export function supersedeTerminalSnapshotCaptureAndTakeBuffered(
+  state: TerminalSnapshotCaptureState,
+): TerminalOutputEvent[] {
+  if (!state.snapshotReconcileActive) return [];
+  state.snapshotReconcileActive = false;
+  state.snapshotReconcileQueued = false;
+  state.snapshotReconcileRequestId += 1;
+  return state.snapshotBufferedOutputEvents.splice(0);
+}
+
 export type TerminalRuntimeStatus = "connecting" | "replaying" | "ready" | "error";
+
+export interface TerminalOutputBarrier {
+  lastOutputEpoch: string | null;
+  lastOutputSequence: number;
+}
+
+/** Advances a live-output barrier, resetting its sequence namespace after a server restart. */
+export function acceptTerminalOutputSequence(
+  barrier: TerminalOutputBarrier,
+  outputEpoch: string,
+  outputSequence: number,
+): boolean {
+  if (outputEpoch !== barrier.lastOutputEpoch) {
+    barrier.lastOutputEpoch = outputEpoch;
+    barrier.lastOutputSequence = 0;
+  }
+  if (outputSequence <= barrier.lastOutputSequence) return false;
+  barrier.lastOutputSequence = outputSequence;
+  return true;
+}
+
+/** Applies an authoritative snapshot unless a newer event in the same epoch already arrived. */
+export function acceptTerminalSnapshotBarrier(
+  barrier: TerminalOutputBarrier,
+  outputEpoch: string,
+  outputSequence: number,
+): boolean {
+  if (outputEpoch !== barrier.lastOutputEpoch) {
+    barrier.lastOutputEpoch = outputEpoch;
+    barrier.lastOutputSequence = 0;
+  }
+  if (outputSequence < barrier.lastOutputSequence) return false;
+  barrier.lastOutputSequence = outputSequence;
+  return true;
+}
 
 export interface TerminalRuntimeEntry {
   runtimeKey: string;
@@ -83,8 +168,13 @@ export interface TerminalRuntimeEntry {
   pendingWriteLength: number;
   pendingWriteBytes: number;
   linkMatchCache: Map<string, TerminalLinkMatch[]>;
-  outputEventVersion: number;
+  lastOutputEpoch: string | null;
+  lastOutputSequence: number;
+  snapshotReconcileActive: boolean;
+  snapshotBufferedOutputEvents: TerminalOutputEvent[];
+  snapshotReconcileQueued: boolean;
   snapshotReconcileRequestId: number;
+  snapshotReconcileTimer: number | null;
   webglLoadFrame: number | null;
   themeRefreshFrame: number;
   themeObserver: MutationObserver | null;

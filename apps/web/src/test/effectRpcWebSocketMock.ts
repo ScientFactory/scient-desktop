@@ -3,7 +3,12 @@
 // Layer: Web test utility
 // Exports: helpers for request parsing plus Exit/Chunk/Pong responses.
 
-import type { OrchestrationReadModel, OrchestrationShellSnapshot } from "@synara/contracts";
+import {
+  EnvironmentId,
+  type ExecutionEnvironmentDescriptor,
+  type OrchestrationReadModel,
+  type OrchestrationShellSnapshot,
+} from "@synara/contracts";
 
 export interface EffectRpcWebSocketClient {
   readonly send: (data: string) => void;
@@ -155,5 +160,15 @@ export function createShellSnapshotFromReadModel(
         session: thread.session,
       })),
     updatedAt: snapshot.updatedAt,
+  };
+}
+
+export function createTestEnvironmentDescriptor(): ExecutionEnvironmentDescriptor {
+  return {
+    environmentId: EnvironmentId.makeUnsafe("test-environment"),
+    label: "Browser test",
+    platform: { os: "linux", arch: "x64" },
+    serverVersion: "0.0.0-test",
+    capabilities: { repositoryIdentity: true },
   };
 }

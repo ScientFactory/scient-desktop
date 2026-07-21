@@ -313,6 +313,46 @@ describe("DesktopBackendSupervisor", () => {
     expect(harness.restarts).toHaveLength(0);
   });
 
+  it("does not overlap a replacement with a backend that survived force termination", async () => {
+    const onError = vi.fn();
+    const onUnrecoverableGeneration = vi.fn();
+    const harness = makeHarness({
+      gracefulShutdownTimeoutMs: 10,
+      forcedExitTimeoutMs: 10,
+      forceTerminateTree: vi.fn(async () => undefined),
+      onError,
+      onUnrecoverableGeneration,
+    });
+    await harness.supervisor.start();
+    const first = harness.children[0]!;
+
+    const restarting = harness.supervisor.restartGeneration(1, "readiness timed out");
+    await vi.advanceTimersByTimeAsync(20);
+    await restarting;
+
+    expect(harness.supervisor.currentGeneration?.number).toBe(1);
+    expect(harness.children).toHaveLength(1);
+    expect(harness.restarts).toHaveLength(0);
+    expect(harness.supervisor.desiredRunning).toBe(false);
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Backend generation 1 remained alive after force termination.",
+      }),
+      "generation 1 restart blocked",
+    );
+    expect(onUnrecoverableGeneration).toHaveBeenCalledWith({
+      error: expect.objectContaining({
+        message: "Backend generation 1 remained alive after force termination.",
+      }),
+      generation: { child: first, number: 1 },
+      reason: "readiness timed out",
+    });
+
+    first.exit(1);
+    expect(harness.restarts).toHaveLength(0);
+    expect(harness.supervisor.currentGeneration).toBeNull();
+  });
+
   it("does not restart a start failure classified as fatal", async () => {
     const fatalError = new Error("backend bundle missing");
     const onFatalStartFailure = vi.fn();
