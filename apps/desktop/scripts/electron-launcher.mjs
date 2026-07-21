@@ -165,11 +165,29 @@ export function isLinuxSetuidSandboxConfigured(
   }
 }
 
+export function isLinuxUserNamespaceSandboxAvailable({
+  platform = process.platform,
+  runUnshare = spawnSync,
+} = {}) {
+  if (platform !== "linux") {
+    return true;
+  }
+
+  const result = runUnshare("unshare", ["-Ur", "true"], {
+    shell: false,
+    stdio: "ignore",
+    timeout: 5_000,
+    windowsHide: true,
+  });
+  return !result.error && result.status === 0;
+}
+
 export class LinuxSandboxConfigurationError extends Error {
   constructor(sandboxPath) {
     super(
-      `Electron sandbox helper ${sandboxPath} must be a regular file owned by root with exact mode 4755. ` +
-        "Repair the helper before launching Scient. For an isolated local development session only, " +
+      `Electron needs either unprivileged user namespaces or a sandbox helper at ${sandboxPath} ` +
+        "that is a regular file owned by root with exact mode 4755. Enable one of those sandbox paths " +
+        "before launching Scient. For an isolated local development session only, " +
         "set SCIENT_DEV_ALLOW_NO_SANDBOX=1 to accept the unsafe fallback explicitly.",
     );
     this.name = "LinuxSandboxConfigurationError";
@@ -182,12 +200,16 @@ export function resolveLinuxSandboxArgs(
   {
     platform = process.platform,
     lstat = lstatSync,
+    runUnshare = spawnSync,
     development = isDevelopment,
     env = process.env,
     warn = console.warn,
   } = {},
 ) {
-  if (isLinuxSetuidSandboxConfigured(electronBinaryPath, { platform, lstat })) {
+  if (
+    isLinuxSetuidSandboxConfigured(electronBinaryPath, { platform, lstat }) ||
+    isLinuxUserNamespaceSandboxAvailable({ platform, runUnshare })
+  ) {
     return [];
   }
 
