@@ -38,6 +38,7 @@ export function ConnectionRecoveryNotifications() {
           data: {
             allowCrossThreadVisibility: true,
             dismissAfterVisibleMs: 3_000,
+            showDescription: true,
           },
           timeout: 0,
         });
@@ -52,21 +53,11 @@ export function ConnectionRecoveryNotifications() {
             controller.dismissCurrentOutage();
             toastIdRef.current = null;
           },
-          data: { allowCrossThreadVisibility: true },
+          data: { allowCrossThreadVisibility: true, showDescription: true },
           timeout: 0,
         });
       },
       onShowDetails: (stateStartedAt) => {
-        const diagnostics = formatConnectionRecoveryDiagnostics({
-          appVersion: APP_VERSION,
-          desktopApp: Boolean(window.desktopBridge),
-          generatedAt: new Date(),
-          navigatorOnline: typeof navigator.onLine === "boolean" ? navigator.onLine : null,
-          platform: navigator.platform,
-          state: "reconnecting",
-          stateStartedAt,
-          visibility: document.visibilityState,
-        });
         const openLogs = window.desktopBridge?.diagnostics?.openLogsDirectory;
         const nextToast = {
           type: "warning" as const,
@@ -81,7 +72,17 @@ export function ConnectionRecoveryNotifications() {
           data: {
             allowCrossThreadVisibility: true,
             copyLabel: "diagnostics",
-            copyText: diagnostics,
+            copyText: () =>
+              formatConnectionRecoveryDiagnostics({
+                appVersion: APP_VERSION,
+                desktopApp: Boolean(window.desktopBridge),
+                generatedAt: new Date(),
+                navigatorOnline: typeof navigator.onLine === "boolean" ? navigator.onLine : null,
+                platform: navigator.platform,
+                state: "reconnecting",
+                stateStartedAt,
+                visibility: document.visibilityState,
+              }),
             ...(openLogs
               ? {
                   secondaryActionProps: {

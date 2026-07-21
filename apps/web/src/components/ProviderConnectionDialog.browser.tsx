@@ -164,6 +164,258 @@ describe("ProviderConnectionDialog", () => {
     }
   });
 
+  it("forces a fresh Codex login after a classified runtime auth failure", async () => {
+    const authenticatedProvider = {
+      provider: "codex",
+      status: "ready",
+      available: true,
+      authStatus: "authenticated",
+      requiresProviderAccount: true,
+      checkedAt,
+      runtime: systemRuntime,
+    } satisfies ServerProviderStatus;
+    const waitingProvider = {
+      ...authenticatedProvider,
+      status: "warning",
+      authStatus: "unauthenticated",
+      connectionState: {
+        operationId: "reconnect-codex-1",
+        method: "codex_browser",
+        status: "waiting_for_browser",
+        startedAt: checkedAt,
+        finishedAt: null,
+        message: "Finish reconnecting Codex in the browser window.",
+      },
+    } satisfies ServerProviderStatus;
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [authenticatedProvider] });
+    const startProviderConnection = vi.fn().mockResolvedValue({ providers: [waitingProvider] });
+    const restoreNativeApi = installNativeApi({ refreshProviders, startProviderConnection });
+    const queryClient = createQueryClient(authenticatedProvider);
+    useProviderConnectionDialogStore.getState().openDialog("codex", "runtime_authentication_error");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await expect.element(page.getByRole("button", { name: "Reconnect Codex" })).toBeVisible();
+      await page.getByRole("button", { name: "Reconnect Codex" }).click();
+      await vi.waitFor(() => {
+        expect(startProviderConnection).toHaveBeenCalledWith({
+          provider: "codex",
+          method: "codex_browser",
+          mode: "reauthenticate",
+        });
+      });
+      await expect
+        .element(page.getByText("Finish reconnecting Codex in the browser window."))
+        .toBeVisible();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("does not mistake a stale connected operation for completion of the new recovery attempt", async () => {
+    const staleConnectedProvider = {
+      provider: "codex",
+      status: "ready",
+      available: true,
+      authStatus: "authenticated",
+      requiresProviderAccount: true,
+      checkedAt,
+      runtime: systemRuntime,
+      connectionState: {
+        operationId: "stale-connected-operation",
+        method: "codex_browser",
+        status: "connected",
+        startedAt: checkedAt,
+        finishedAt: checkedAt,
+        message: "An older sign-in completed.",
+      },
+    } satisfies ServerProviderStatus;
+    const newlyConnectedProvider = {
+      ...staleConnectedProvider,
+      connectionState: {
+        ...staleConnectedProvider.connectionState,
+        operationId: "new-connected-operation",
+        message: "The new sign-in completed.",
+      },
+    } satisfies ServerProviderStatus;
+    let resolveStartProviderConnection:
+      | ((value: { providers: ServerProviderStatus[] }) => void)
+      | undefined;
+    const startProviderConnection = vi.fn(
+      () =>
+        new Promise<{ providers: ServerProviderStatus[] }>((resolve) => {
+          resolveStartProviderConnection = resolve;
+        }),
+    );
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [staleConnectedProvider] });
+    const restoreNativeApi = installNativeApi({ refreshProviders, startProviderConnection });
+    const queryClient = createQueryClient(staleConnectedProvider);
+    useProviderConnectionDialogStore.getState().openDialog("codex", "runtime_authentication_error");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await page.getByRole("button", { name: "Reconnect Codex" }).click();
+      await vi.waitFor(() => expect(startProviderConnection).toHaveBeenCalledTimes(1));
+      await expect.element(page.getByRole("button", { name: "Done" })).not.toBeInTheDocument();
+
+      resolveStartProviderConnection?.({ providers: [newlyConnectedProvider] });
+      await expect.element(page.getByRole("button", { name: "Done" })).toBeVisible();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it.each(["failed", "cancelled"] as const)(
+    "keeps a %s recovery attempt retryable and forced despite stale authenticated health",
+    async (operationStatus) => {
+      const terminalProvider = {
+        provider: "codex",
+        status: "ready",
+        available: true,
+        authStatus: "authenticated",
+        requiresProviderAccount: true,
+        checkedAt,
+        runtime: systemRuntime,
+        connectionState: {
+          operationId: `reconnect-codex-${operationStatus}`,
+          method: "codex_browser",
+          status: operationStatus,
+          startedAt: checkedAt,
+          finishedAt: checkedAt,
+          message: `Codex reconnect ${operationStatus}.`,
+        },
+      } satisfies ServerProviderStatus;
+      const waitingProvider = {
+        ...terminalProvider,
+        status: "warning",
+        authStatus: "unauthenticated",
+        connectionState: {
+          ...terminalProvider.connectionState,
+          operationId: `reconnect-codex-${operationStatus}-retry`,
+          status: "waiting_for_browser",
+          finishedAt: null,
+          message: "Finish reconnecting Codex in the browser window.",
+        },
+      } satisfies ServerProviderStatus;
+      const refreshProviders = vi.fn().mockResolvedValue({ providers: [terminalProvider] });
+      const startProviderConnection = vi.fn().mockResolvedValue({ providers: [waitingProvider] });
+      const restoreNativeApi = installNativeApi({ refreshProviders, startProviderConnection });
+      const queryClient = createQueryClient(terminalProvider);
+      useProviderConnectionDialogStore
+        .getState()
+        .openDialog("codex", "runtime_authentication_error");
+
+      const screen = await render(
+        <QueryClientProvider client={queryClient}>
+          <ProviderConnectionDialog />
+        </QueryClientProvider>,
+      );
+
+      try {
+        await expect.element(page.getByRole("button", { name: "Try again" })).toBeVisible();
+        await expect.element(page.getByRole("button", { name: "Done" })).not.toBeInTheDocument();
+        await page.getByRole("button", { name: "Try again" }).click();
+        await vi.waitFor(() =>
+          expect(startProviderConnection).toHaveBeenCalledWith({
+            provider: "codex",
+            method: "codex_browser",
+            mode: "reauthenticate",
+          }),
+        );
+      } finally {
+        await screen.unmount();
+        queryClient.clear();
+        restoreNativeApi();
+      }
+    },
+  );
+
+  it("keeps restart inside an active recovery attempt in forced reauthentication mode", async () => {
+    const activeProvider = {
+      provider: "codex",
+      status: "warning",
+      available: true,
+      authStatus: "authenticated",
+      requiresProviderAccount: true,
+      checkedAt,
+      runtime: systemRuntime,
+      connectionState: {
+        operationId: "reconnect-codex-active",
+        method: "codex_browser",
+        status: "waiting_for_browser",
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        message: "Finish reconnecting Codex.",
+      },
+    } satisfies ServerProviderStatus;
+    const cancelledProvider = {
+      ...activeProvider,
+      connectionState: {
+        ...activeProvider.connectionState,
+        status: "cancelled",
+        finishedAt: new Date().toISOString(),
+        message: "Codex reconnect cancelled.",
+      },
+    } satisfies ServerProviderStatus;
+    const restartedProvider = {
+      ...activeProvider,
+      connectionState: {
+        ...activeProvider.connectionState,
+        operationId: "reconnect-codex-restarted",
+      },
+    } satisfies ServerProviderStatus;
+    const cancelProviderConnection = vi.fn().mockResolvedValue({ providers: [cancelledProvider] });
+    const startProviderConnection = vi.fn().mockResolvedValue({ providers: [restartedProvider] });
+    const restoreNativeApi = installNativeApi({
+      cancelProviderConnection,
+      startProviderConnection,
+    });
+    const queryClient = createQueryClient(activeProvider);
+    useProviderConnectionDialogStore.getState().openDialog("codex", "runtime_authentication_error");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await page.getByRole("button", { name: "Restart sign in" }).click();
+      await vi.waitFor(() => {
+        expect(cancelProviderConnection).toHaveBeenCalledWith({
+          provider: "codex",
+          operationId: "reconnect-codex-active",
+        });
+        expect(startProviderConnection).toHaveBeenCalledWith({
+          provider: "codex",
+          method: "codex_browser",
+          mode: "reauthenticate",
+        });
+      });
+      expect(cancelProviderConnection.mock.invocationCallOrder[0]).toBeLessThan(
+        startProviderConnection.mock.invocationCallOrder[0]!,
+      );
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
   it.each([
     {
       provider: "claudeAgent",

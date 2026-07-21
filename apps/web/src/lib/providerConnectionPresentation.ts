@@ -87,6 +87,7 @@ export interface ProviderConnectionPresentation {
 export function describeProviderConnection(
   provider: ProviderKind,
   status: ServerProviderStatus | null | undefined,
+  options?: { readonly forceReconnect?: boolean },
 ): ProviderConnectionPresentation {
   const title = providerConnectionTitle(provider);
   const label = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
@@ -121,6 +122,39 @@ export function describeProviderConnection(
       busy: true,
       canCancel: true,
       canRestart: true,
+    };
+  }
+
+  if (options?.forceReconnect && provider === "codex") {
+    if (status?.available && status.requiresProviderAccount === true) {
+      if (operation?.status === "failed" || operation?.status === "cancelled") {
+        return {
+          title,
+          description: operation.message,
+          primaryAction: "sign_in",
+          primaryLabel: "Try again",
+          busy: false,
+          canCancel: false,
+        };
+      }
+      return {
+        title,
+        description:
+          "Codex reported that its account session is no longer authorized. Reconnect in the browser, then press Send again; your draft and attachments stay here.",
+        primaryAction: "sign_in",
+        primaryLabel: "Reconnect Codex",
+        busy: false,
+        canCancel: false,
+      };
+    }
+    return {
+      title,
+      description:
+        "Scient needs to verify that this Codex runtime uses your OpenAI account before opening account recovery.",
+      primaryAction: "check_again",
+      primaryLabel: "Check again",
+      busy: false,
+      canCancel: false,
     };
   }
 

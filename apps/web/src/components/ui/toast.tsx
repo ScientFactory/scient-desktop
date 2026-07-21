@@ -35,7 +35,8 @@ import {
 type ThreadToastData = {
   allowCrossThreadVisibility?: boolean;
   copyLabel?: string;
-  copyText?: string;
+  copyText?: string | (() => string);
+  showDescription?: boolean;
   onClose?: () => void;
   secondaryActionProps?: React.ComponentProps<typeof Button>;
   threadId?: ThreadId | null;
@@ -61,7 +62,12 @@ const TOAST_ICONS = {
 } as const;
 
 function shouldUseCompactToast(toast: ToastObject<ThreadToastData>): boolean {
-  return !toast.data?.copyText && !toast.actionProps && !toast.data?.secondaryActionProps;
+  return (
+    !toast.data?.showDescription &&
+    !toast.data?.copyText &&
+    !toast.actionProps &&
+    !toast.data?.secondaryActionProps
+  );
 }
 
 function isArchiveUndoToast(toast: ToastObject<ThreadToastData>): boolean {
@@ -216,7 +222,7 @@ function ToastActions({
 }: {
   actionProps: ToastObject<ThreadToastData>["actionProps"];
   copyLabel: string | undefined;
-  copyText: string | undefined;
+  copyText: string | (() => string) | undefined;
   secondaryActionProps: ThreadToastData["secondaryActionProps"];
 }) {
   const { copyToClipboard, isCopied } = useCopyToClipboard({
@@ -240,7 +246,7 @@ function ToastActions({
           aria-label={isCopied ? `Copied ${copyLabel ?? "error message"}` : copyActionLabel}
           className="self-start rounded-md border-[var(--notification-fg)]/20 bg-[var(--notification-fg)]/10 text-[var(--notification-fg)] hover:bg-[var(--notification-fg)]/20"
           onClick={() => {
-            copyToClipboard(copyText, undefined);
+            copyToClipboard(typeof copyText === "function" ? copyText() : copyText, undefined);
           }}
           size="xs"
           title={isCopied ? `Copied ${copyLabel ?? "error message"}` : copyActionLabel}

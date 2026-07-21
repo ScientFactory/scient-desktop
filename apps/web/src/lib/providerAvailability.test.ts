@@ -146,6 +146,26 @@ describe("isProviderUsable", () => {
     expect(
       isProviderUsable({
         ...BASE_STATUS,
+        provider: "codex",
+        available: true,
+        status: "ready",
+        authStatus: "unknown",
+        requiresProviderAccount: false,
+      }),
+    ).toBe(true);
+    expect(
+      isProviderUsable({
+        ...BASE_STATUS,
+        provider: "codex",
+        available: true,
+        status: "ready",
+        authStatus: "unknown",
+        requiresProviderAccount: true,
+      }),
+    ).toBe(false);
+    expect(
+      isProviderUsable({
+        ...BASE_STATUS,
         provider: "opencode",
         available: true,
         status: "ready",

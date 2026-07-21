@@ -73,4 +73,17 @@ describe("forceTerminateBackendProcessTree", () => {
       },
     );
   });
+
+  it("does not treat a missing Windows root as successful descendant cleanup", async () => {
+    const process = new EventEmitter();
+    const spawnProcess = vi.fn(() => process);
+    const terminating = forceTerminateBackendProcessTree(
+      { pid: 4321 },
+      { platform: "win32", spawnProcess: spawnProcess as never },
+    );
+
+    process.emit("exit", 128, null);
+
+    await expect(terminating).rejects.toThrow("taskkill exited with status 128");
+  });
 });

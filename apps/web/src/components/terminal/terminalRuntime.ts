@@ -49,6 +49,10 @@ import { terminalEventDispatcher } from "./terminalEventDispatcher";
 import {
   acceptTerminalOutputSequence,
   acceptTerminalSnapshotBarrier,
+  finishTerminalSnapshotReconcile,
+  requestTerminalSnapshotReconcile,
+  supersedeTerminalSnapshotCapture,
+  supersedeTerminalSnapshotCaptureAndTakeBuffered,
   type TerminalOutputEvent,
   type TerminalRuntimeConfig,
   type TerminalRuntimeEntry,
@@ -702,11 +706,35 @@ function deliverTerminalOutputEvent(entry: TerminalRuntimeEntry, event: Terminal
 
 function finishTerminalSnapshotCapture(entry: TerminalRuntimeEntry, requestId: number): void {
   if (entry.disposed || entry.snapshotReconcileRequestId !== requestId) return;
-  entry.snapshotReconcileActive = false;
+  const shouldRetry = finishTerminalSnapshotReconcile(entry);
   const buffered = entry.snapshotBufferedOutputEvents
     .splice(0)
     .toSorted((left, right) => left.outputSequence - right.outputSequence);
   for (const event of buffered) deliverTerminalOutputEvent(entry, event);
+  if (shouldRetry) {
+    queueMicrotask(() => {
+      if (entry.disposed || entry.hasHandledExit) return;
+      if (entry.opened) {
+        reconcileTerminalSnapshot(entry);
+      } else {
+        openTerminal(entry);
+      }
+    });
+  }
+}
+
+function flushAndSupersedeTerminalSnapshotCapture(entry: TerminalRuntimeEntry): void {
+  const buffered = supersedeTerminalSnapshotCaptureAndTakeBuffered(entry).toSorted(
+    (left, right) => left.outputSequence - right.outputSequence,
+  );
+  for (const event of buffered) deliverTerminalOutputEvent(entry, event);
+}
+
+function acknowledgeAndSupersedeTerminalSnapshotCapture(entry: TerminalRuntimeEntry): void {
+  const buffered = supersedeTerminalSnapshotCaptureAndTakeBuffered(entry);
+  for (const event of buffered) {
+    acknowledgeParsedOutput(entry, event.byteLength ?? terminalByteLength(event.data));
+  }
 }
 
 function completeTerminalSnapshotCapture(
@@ -743,9 +771,10 @@ function completeTerminalSnapshotCapture(
 }
 
 function reconcileTerminalSnapshot(entry: TerminalRuntimeEntry): void {
-  if (entry.disposed || !entry.opened || entry.hasHandledExit || entry.snapshotReconcileActive) {
+  if (entry.disposed || !entry.opened || entry.hasHandledExit) {
     return;
   }
+  if (!requestTerminalSnapshotReconcile(entry)) return;
   const api = readNativeApi();
   if (!api) return;
 
@@ -871,6 +900,7 @@ export function createRuntimeEntry(config: TerminalRuntimeConfig): TerminalRunti
     lastOutputSequence: 0,
     snapshotReconcileActive: false,
     snapshotBufferedOutputEvents: [],
+    snapshotReconcileQueued: false,
     snapshotReconcileRequestId: 0,
     snapshotReconcileTimer: null,
     webglLoadFrame: null,
@@ -1065,7 +1095,7 @@ export function createRuntimeEntry(config: TerminalRuntimeConfig): TerminalRunti
 
       if (event.type === "started" || event.type === "restarted") {
         entry.hasHandledExit = false;
-        if (entry.snapshotReconcileActive) return;
+        supersedeTerminalSnapshotCapture(entry);
         entry.lastOutputEpoch = event.snapshot.outputEpoch;
         entry.lastOutputSequence = event.snapshot.outputSequence;
         const shouldReplaySnapshot =
@@ -1079,6 +1109,7 @@ export function createRuntimeEntry(config: TerminalRuntimeConfig): TerminalRunti
       }
 
       if (event.type === "cleared") {
+        acknowledgeAndSupersedeTerminalSnapshotCapture(entry);
         entry.titleInputBuffer = "";
         entry.linkMatchCache.clear();
         clearPendingWrites(entry);
@@ -1109,6 +1140,7 @@ export function createRuntimeEntry(config: TerminalRuntimeConfig): TerminalRunti
       }
 
       if (event.type === "exited") {
+        flushAndSupersedeTerminalSnapshotCapture(entry);
         flushPendingWrites(entry);
         const details = [
           typeof event.exitCode === "number" ? `code ${event.exitCode}` : null,
@@ -1246,6 +1278,7 @@ export function disposeRuntimeEntry(entry: TerminalRuntimeEntry): void {
   }
   entry.snapshotReconcileActive = false;
   entry.snapshotBufferedOutputEvents.length = 0;
+  entry.snapshotReconcileQueued = false;
   entry.unsubscribeTerminalEvents?.();
   entry.unsubscribeTerminalEvents = null;
   entry.querySuppressionDispose?.();

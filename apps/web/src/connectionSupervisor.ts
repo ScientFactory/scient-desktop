@@ -18,7 +18,7 @@ export interface ConnectionSupervisorSnapshot {
 }
 
 export interface ConnectionSupervisorOptions<T> {
-  readonly connect: (generation: number) => Promise<T>;
+  readonly connect: (generation: number, signal: AbortSignal) => Promise<T>;
   readonly close: (session: ConnectionSupervisorSession<T>) => Promise<void> | void;
   readonly probe: (session: ConnectionSupervisorSession<T>) => Promise<void>;
   readonly onReady?: (session: ConnectionSupervisorSession<T>) => void;
@@ -36,6 +36,10 @@ export interface ConnectionSupervisorOptions<T> {
   readonly retryBaseDelayMs?: number;
   readonly retryMaxDelayMs?: number;
   readonly retryJitterRatio?: number;
+  /** Maximum duration of one complete connection creation attempt. */
+  readonly connectTimeoutMs?: number;
+  /** Healthy time required before prior retry failures are forgiven. */
+  readonly retryResetAfterMs?: number;
   /**
    * Maximum time replacement creation waits for an old session to dispose.
    * A timed-out session remains stale by generation and may finish disposing in
@@ -53,6 +57,8 @@ const DEFAULT_RETRY_BASE_DELAY_MS = 1_000;
 const DEFAULT_RETRY_MAX_DELAY_MS = 16_000;
 const DEFAULT_RETRY_JITTER_RATIO = 0.2;
 const DEFAULT_CLOSE_TIMEOUT_MS = 5_000;
+const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
+const DEFAULT_RETRY_RESET_AFTER_MS = 30_000;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -74,9 +80,12 @@ export class ConnectionSupervisor<T> {
   #generation = 0;
   #active: ConnectionSupervisorSession<T> | null = null;
   #connectInFlight: Promise<void> | null = null;
+  #connectAbort: { readonly generation: number; readonly controller: AbortController } | null =
+    null;
   #closeInFlight: Promise<void> | null = null;
   #probeInFlight: { readonly generation: number; readonly promise: Promise<void> } | null = null;
   #retryTimer: ReturnType<typeof setTimeout> | null = null;
+  #retryResetTimer: ReturnType<typeof setTimeout> | null = null;
   #retryAttempt = 0;
   #hasBeenReady = false;
   #snapshot: ConnectionSupervisorSnapshot = {
@@ -150,6 +159,7 @@ export class ConnectionSupervisor<T> {
     if (this.#disposed || !active || active.generation !== generation) return false;
 
     this.#active = null;
+    this.#clearRetryResetTimer();
     this.#options.onInvalidated?.(active, reason);
     this.#close(active, `generation ${generation} invalidation`);
     this.#scheduleRetry(reason);
@@ -187,6 +197,9 @@ export class ConnectionSupervisor<T> {
     this.#disposed = true;
     this.#desiredRunning = false;
     this.#clearRetryTimer();
+    this.#clearRetryResetTimer();
+    this.#connectAbort?.controller.abort(new Error("Connection supervisor disposed"));
+    this.#connectAbort = null;
     this.#generation += 1;
 
     const active = this.#active;
@@ -212,6 +225,8 @@ export class ConnectionSupervisor<T> {
     }
     this.#clearRetryTimer();
     const generation = ++this.#generation;
+    const controller = new AbortController();
+    this.#connectAbort = { generation, controller };
     this.#publish({
       phase: this.#hasBeenReady ? "reconnecting" : "connecting",
       generation,
@@ -219,9 +234,7 @@ export class ConnectionSupervisor<T> {
       retryDelayMs: null,
     });
 
-    const connectResult = this.#closeInFlight
-      ? this.#closeInFlight.then(() => this.#options.connect(generation))
-      : this.#options.connect(generation);
+    const connectResult = this.#connectWithTimeout(generation, controller);
     const connecting = connectResult
       .then((value) => {
         const session = { generation, value } satisfies ConnectionSupervisorSession<T>;
@@ -231,13 +244,13 @@ export class ConnectionSupervisor<T> {
         }
         this.#active = session;
         this.#hasBeenReady = true;
-        this.#retryAttempt = 0;
         this.#publish({
           phase: "ready",
           generation,
-          retryAttempt: 0,
+          retryAttempt: this.#retryAttempt,
           retryDelayMs: null,
         });
+        this.#armRetryReset(session);
         for (const waiter of this.#waiters) waiter.resolve(session);
         this.#waiters.clear();
         this.#options.onReady?.(session);
@@ -248,6 +261,7 @@ export class ConnectionSupervisor<T> {
         this.#scheduleRetry(errorMessage(error));
       })
       .finally(() => {
+        if (this.#connectAbort?.generation === generation) this.#connectAbort = null;
         if (this.#connectInFlight === connecting) {
           this.#connectInFlight = null;
           if (!this.#disposed && this.#desiredRunning && !this.#active && !this.#retryTimer) {
@@ -256,6 +270,67 @@ export class ConnectionSupervisor<T> {
         }
       });
     this.#connectInFlight = connecting;
+  }
+
+  async #connectWithTimeout(generation: number, controller: AbortController): Promise<T> {
+    const timeoutMs = Math.max(0, this.#options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS);
+    let acceptResult = true;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    let removeAbortListener: () => void = () => undefined;
+    const connect = (async () => {
+      if (this.#closeInFlight) await this.#closeInFlight;
+      if (controller.signal.aborted) throw controller.signal.reason;
+      return this.#options.connect(generation, controller.signal);
+    })().then((value) => {
+      if (!acceptResult || controller.signal.aborted) {
+        this.#close({ generation, value }, `late abandoned generation ${generation}`);
+        throw (
+          controller.signal.reason ?? new Error(`Connection generation ${generation} abandoned`)
+        );
+      }
+      return value;
+    });
+    const aborted = new Promise<never>((_, reject) => {
+      const onAbort = () =>
+        reject(
+          controller.signal.reason ?? new Error(`Connection generation ${generation} aborted`),
+        );
+      if (controller.signal.aborted) {
+        onAbort();
+        return;
+      }
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      removeAbortListener = () => controller.signal.removeEventListener("abort", onAbort);
+    });
+    timeout = this.#setTimer(() => {
+      controller.abort(
+        new Error(`Connection generation ${generation} timed out after ${timeoutMs}ms`),
+      );
+    }, timeoutMs);
+    try {
+      return await Promise.race([connect, aborted]);
+    } finally {
+      acceptResult = false;
+      removeAbortListener();
+      if (timeout !== null) this.#clearTimer(timeout);
+    }
+  }
+
+  #armRetryReset(session: ConnectionSupervisorSession<T>): void {
+    this.#clearRetryResetTimer();
+    if (this.#retryAttempt === 0) return;
+    const delayMs = Math.max(0, this.#options.retryResetAfterMs ?? DEFAULT_RETRY_RESET_AFTER_MS);
+    this.#retryResetTimer = this.#setTimer(() => {
+      this.#retryResetTimer = null;
+      if (this.#disposed || this.#active?.generation !== session.generation) return;
+      this.#retryAttempt = 0;
+      this.#publish({
+        phase: "ready",
+        generation: session.generation,
+        retryAttempt: 0,
+        retryDelayMs: null,
+      });
+    }, delayMs);
   }
 
   #scheduleRetry(reason: string): void {
@@ -269,7 +344,10 @@ export class ConnectionSupervisor<T> {
     );
     const exponentialDelay = Math.min(baseDelay * 2 ** attempt, maxDelay);
     const jitterMultiplier = 1 + (this.#random() * 2 - 1) * jitterRatio;
-    const delayMs = Math.max(0, Math.round(exponentialDelay * jitterMultiplier));
+    const delayMs = Math.min(
+      maxDelay,
+      Math.max(0, Math.round(exponentialDelay * jitterMultiplier)),
+    );
     this.#retryAttempt += 1;
     this.#publish({
       phase: this.#hasBeenReady ? "reconnecting" : "connecting",
@@ -296,6 +374,12 @@ export class ConnectionSupervisor<T> {
     if (!this.#retryTimer) return;
     this.#clearTimer(this.#retryTimer);
     this.#retryTimer = null;
+  }
+
+  #clearRetryResetTimer(): void {
+    if (!this.#retryResetTimer) return;
+    this.#clearTimer(this.#retryResetTimer);
+    this.#retryResetTimer = null;
   }
 
   #close(session: ConnectionSupervisorSession<T>, context: string): void {

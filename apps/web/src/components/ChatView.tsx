@@ -493,6 +493,7 @@ import { ProjectPicker } from "./chat/ProjectPicker";
 import { FolderClosed } from "./FolderClosed";
 import { ProviderHealthBanner } from "./chat/ProviderHealthBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
+import { CodexAuthenticationRecoveryGate } from "./CodexAuthenticationRecoveryGate";
 import {
   RateLimitBanner,
   deriveLatestRateLimitStatus,
@@ -10843,6 +10844,13 @@ export default function ChatView({
       onDragLeave={onComposerDragLeave}
       onDrop={onComposerDrop}
     >
+      <CodexAuthenticationRecoveryGate
+        provider={selectedProvider}
+        sessionStatus={activeThread?.session?.status}
+        sessionLastErrorEventId={activeThread?.session?.lastErrorEventId}
+        sessionLastErrorClass={activeThread?.session?.lastErrorClass}
+        providerStatus={activeProviderStatus}
+      />
       {/* Subtle accent tint over the whole pane while a file is dragged anywhere over it,
           signalling that dropping it will attach the file to the composer. */}
       <div

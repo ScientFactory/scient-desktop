@@ -1,5 +1,5 @@
 // FILE: ConnectionRecoveryNotifications.browser.tsx
-// Purpose: Browser regressions for recovery-toast dismissal, visible timing, and copy errors.
+// Purpose: Browser integration coverage for connection-recovery notices and toast behavior.
 // Layer: Browser UI test
 
 import "../index.css";
@@ -10,52 +10,167 @@ import {
   createRootRoute,
   createRouter,
 } from "@tanstack/react-router";
-import { page } from "vitest/browser";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DesktopBridge } from "@synara/contracts";
+import { page, userEvent } from "vitest/browser";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
+import { emitWsTransportState } from "../wsTransportEvents";
+import { ConnectionRecoveryNotifications } from "./ConnectionRecoveryNotifications";
 import { ToastProvider, toastManager } from "./ui/toast";
 
-function ToastHarness() {
-  return <ToastProvider />;
+let activeHarnessCleanup: (() => Promise<void>) | null = null;
+
+function RecoveryHarness() {
+  return (
+    <ToastProvider>
+      <button type="button">Focus before notifications</button>
+      <ConnectionRecoveryNotifications />
+    </ToastProvider>
+  );
 }
 
-async function mountToastHarness() {
+async function mountRecoveryHarness() {
   const host = document.createElement("div");
   document.body.append(host);
-  const rootRoute = createRootRoute({ component: ToastHarness });
+  const rootRoute = createRootRoute({ component: RecoveryHarness });
   const router = createRouter({
     history: createMemoryHistory({ initialEntries: ["/"] }),
     routeTree: rootRoute,
   });
   const screen = await render(<RouterProvider router={router} />, { container: host });
 
-  return async () => {
-    toastManager.close();
+  let cleanedUp = false;
+  const cleanup = async () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
     await screen.unmount();
+    toastManager.close();
     host.remove();
+    if (activeHarnessCleanup === cleanup) activeHarnessCleanup = null;
   };
+  activeHarnessCleanup = cleanup;
+  return cleanup;
 }
 
 describe("connection recovery toast integration", () => {
-  afterEach(() => {
+  beforeEach(() => {
+    emitWsTransportState("open");
+  });
+
+  afterEach(async () => {
+    emitWsTransportState("open");
+    await activeHarnessCleanup?.();
+    Reflect.deleteProperty(window, "desktopBridge");
     vi.restoreAllMocks();
+    toastManager.close();
     document.body.innerHTML = "";
   });
 
-  it("runs the manager close callback used by swipe and Escape dismissal", async () => {
-    const cleanup = await mountToastHarness();
-    const onClose = vi.fn();
-    const toastId = toastManager.add({ onClose, title: "Reconnecting", timeout: 0 });
+  it("shows the real delayed recovery flow with accessible keyboard actions", async () => {
+    const openLogsDirectory = vi.fn(() => Promise.resolve());
+    Object.defineProperty(window, "desktopBridge", {
+      configurable: true,
+      value: {
+        diagnostics: { openLogsDirectory },
+      } as unknown as DesktopBridge,
+    });
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue(undefined);
+    const cleanup = await mountRecoveryHarness();
 
-    toastManager.close(toastId);
+    await page.getByRole("button", { name: "Focus before notifications" }).click();
+    emitWsTransportState("reconnecting");
 
-    expect(onClose).toHaveBeenCalledOnce();
+    await new Promise((resolve) => window.setTimeout(resolve, 300));
+    expect(document.body.textContent).not.toContain("Reconnecting…");
+
+    await expect
+      .poll(() => document.body.textContent, { timeout: 3_000 })
+      .toContain("Reconnecting…");
+    expect(document.body.textContent).toContain(
+      "Scient is restoring its local connection. Open chats remain on this computer.",
+    );
+    expect(document.body.textContent).not.toContain("Copy diagnostics");
+
+    const notificationRegion = document.querySelector(
+      '[role="region"][aria-label="Notifications"]',
+    );
+    expect(notificationRegion?.getAttribute("aria-live")).toBe("polite");
+    expect(notificationRegion?.getAttribute("aria-relevant")).toContain("text");
+
+    await expect
+      .poll(() => document.body.textContent, { timeout: 11_000 })
+      .toContain("Scient is still reconnecting");
+    await expect
+      .poll(() => document.body.textContent)
+      .toContain("Copy the connection summary or open the logs for details.");
+
+    const detailsDialog = page.getByRole("dialog", { name: "Scient is still reconnecting" });
+    await expect.element(detailsDialog).toBeVisible();
+
+    await page.getByRole("button", { name: "Focus before notifications" }).click();
+    await userEvent.keyboard("{Tab}");
+    expect(document.activeElement?.getAttribute("role")).toBe("dialog");
+    await userEvent.keyboard("{Tab}");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Copy diagnostics");
+    await new Promise((resolve) => window.setTimeout(resolve, 300));
+    const copyStartedAt = Date.now();
+    await userEvent.keyboard("{Enter}");
+
+    await expect.poll(() => writeText.mock.calls.length).toBe(1);
+    const copiedDiagnostics = writeText.mock.calls[0]?.[0] ?? "";
+    expect(copiedDiagnostics).toContain("Scient connection diagnostics");
+    expect(copiedDiagnostics).toContain("Transport state: reconnecting");
+    const generatedAt = copiedDiagnostics.match(/^Generated: (.+)$/m)?.[1];
+    expect(generatedAt).toBeDefined();
+    expect(new Date(generatedAt!).getTime()).toBeGreaterThanOrEqual(copyStartedAt);
+    await expect
+      .poll(() => document.activeElement?.getAttribute("aria-label"))
+      .toBe("Copied diagnostics");
+
+    await userEvent.keyboard("{Tab}");
+    expect(document.activeElement?.textContent).toContain("Open logs");
+    await userEvent.keyboard("{Enter}");
+    await expect.poll(() => openLogsDirectory.mock.calls.length).toBe(1);
+
+    emitWsTransportState("open");
+    await expect.poll(() => document.body.textContent).toContain("Reconnected");
+    expect(notificationRegion?.textContent).toContain(
+      "Scient is connected to its local service again.",
+    );
+
     await cleanup();
-  });
+  }, 20_000);
+
+  it("dismisses the real recovery notice through Escape and its close control", async () => {
+    const cleanup = await mountRecoveryHarness();
+
+    emitWsTransportState("reconnecting");
+    await expect
+      .poll(() => document.body.textContent, { timeout: 3_000 })
+      .toContain("Reconnecting…");
+    await page.getByRole("button", { name: "Focus before notifications" }).click();
+    await userEvent.keyboard("{Tab}");
+    expect(document.activeElement?.getAttribute("role")).toBe("dialog");
+    await userEvent.keyboard("{Escape}");
+    await expect.poll(() => document.body.textContent).not.toContain("Reconnecting…");
+    emitWsTransportState("open");
+    expect(document.body.textContent).not.toContain("Reconnected");
+
+    emitWsTransportState("reconnecting");
+    await expect
+      .poll(() => document.body.textContent, { timeout: 3_000 })
+      .toContain("Reconnecting…");
+    await page.getByRole("button", { name: "Dismiss toast" }).click();
+    await expect.poll(() => document.body.textContent).not.toContain("Reconnecting…");
+    emitWsTransportState("open");
+    expect(document.body.textContent).not.toContain("Reconnected");
+
+    await cleanup();
+  }, 8_000);
 
   it("counts auto-dismiss time only while the window is visible and focused", async () => {
-    const cleanup = await mountToastHarness();
+    const cleanup = await mountRecoveryHarness();
     const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(false);
     toastManager.add({
       title: "Reconnected",
@@ -73,7 +188,7 @@ describe("connection recovery toast integration", () => {
   });
 
   it("shows a visible error when diagnostic copy fails", async () => {
-    const cleanup = await mountToastHarness();
+    const cleanup = await mountRecoveryHarness();
     vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(new Error("Clipboard denied"));
     vi.spyOn(document, "execCommand").mockReturnValue(false);
     toastManager.add({

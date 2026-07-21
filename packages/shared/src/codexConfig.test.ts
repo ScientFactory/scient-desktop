@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  codexModelProviderRequiresOpenAIAccount,
   parseCodexConfigActiveProviderEnvKey,
   parseCodexConfigModelProvider,
   parseCodexConfigProviderEnvKey,
@@ -36,12 +37,28 @@ describe("parseCodexConfigModelProvider", () => {
     ).toBe("azure");
   });
 
+  it.each(['"model_provider"', "'model_provider'"])(
+    "reads a quoted top-level %s key",
+    (quotedKey) => {
+      expect(parseCodexConfigModelProvider(`${quotedKey} = "azure"\n`)).toBe("azure");
+    },
+  );
+
   it("ignores model_provider declarations inside nested sections", () => {
     expect(
       parseCodexConfigModelProvider(
         ["[model_providers.portkey]", 'model_provider = "should-be-ignored"'].join("\n"),
       ),
     ).toBeUndefined();
+  });
+});
+
+describe("codexModelProviderRequiresOpenAIAccount", () => {
+  it("recognizes only the default and exact openai provider as account-backed", () => {
+    expect(codexModelProviderRequiresOpenAIAccount(undefined)).toBe(true);
+    expect(codexModelProviderRequiresOpenAIAccount("openai")).toBe(true);
+    expect(codexModelProviderRequiresOpenAIAccount("OpenAI")).toBe(false);
+    expect(codexModelProviderRequiresOpenAIAccount("my-company-proxy")).toBe(false);
   });
 });
 
@@ -91,6 +108,19 @@ describe("parseCodexConfigActiveProviderEnvKey", () => {
 
   it("returns undefined for the default openai provider", () => {
     expect(parseCodexConfigActiveProviderEnvKey('model_provider = "openai"\n')).toBeUndefined();
+  });
+
+  it("treats a mixed-case OpenAI identifier as a custom provider", () => {
+    expect(
+      parseCodexConfigActiveProviderEnvKey(
+        [
+          'model_provider = "OpenAI"',
+          "",
+          "[model_providers.OpenAI]",
+          'env_key = "CUSTOM_OPENAI_API_KEY"',
+        ].join("\n"),
+      ),
+    ).toBe("CUSTOM_OPENAI_API_KEY");
   });
 });
 

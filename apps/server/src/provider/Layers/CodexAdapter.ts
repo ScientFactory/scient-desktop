@@ -28,7 +28,12 @@ import {
   ThreadId,
   TurnId,
 } from "@synara/contracts";
+import {
+  codexModelProviderRequiresOpenAIAccount,
+  parseCodexConfigModelProvider,
+} from "@synara/shared/codexConfig";
 import { Effect, FileSystem, Layer, Queue, Schema, ServiceMap, Stream } from "effect";
+import { join } from "node:path";
 
 import {
   ProviderAdapterProcessError,
@@ -52,6 +57,7 @@ import {
   sanitizeNestedCodexGeneratedImagePayloads,
 } from "../../codexGeneratedImages.ts";
 import { isNonFatalCodexErrorMessage } from "../../codexErrorClassification.ts";
+import { isCodexAuthenticationError } from "../../codexAuthenticationError.ts";
 import { ServerConfig } from "../../config.ts";
 import { makeRuntimeTaskListItem } from "../runtimeTaskList.ts";
 import { extractProposedPlanMarkdown } from "../planMode.ts";
@@ -164,6 +170,16 @@ function providerErrorMapsToWarning(event: ProviderEvent): boolean {
         typeof event.message === "string" &&
         isNonFatalCodexErrorMessage(event.message)))
   );
+}
+
+function codexRuntimeErrorClass(
+  message: string,
+  detail: unknown,
+  requiresProviderAccount: boolean,
+) {
+  return isCodexAuthenticationError({ message, detail, requiresProviderAccount })
+    ? ("authentication_error" as const)
+    : ("provider_error" as const);
 }
 
 function normalizeCodexTokenUsage(value: unknown): ThreadTokenUsageSnapshot | undefined {
@@ -823,6 +839,7 @@ function mapItemLifecycle(
 function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
+  requiresProviderAccount: boolean,
 ): ReadonlyArray<ProviderRuntimeEvent> {
   const payload = asObject(event.payload);
   const turn = asObject(payload?.turn);
@@ -842,7 +859,15 @@ function mapToRuntimeEvents(
         type: treatAsWarning ? "runtime.warning" : "runtime.error",
         payload: {
           message: event.message,
-          ...(!treatAsWarning ? { class: "provider_error" as const } : {}),
+          ...(!treatAsWarning
+            ? {
+                class: codexRuntimeErrorClass(
+                  event.message,
+                  event.payload,
+                  requiresProviderAccount,
+                ),
+              }
+            : {}),
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },
@@ -1535,7 +1560,11 @@ function mapToRuntimeEvents(
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
           message,
-          ...(!treatAsWarning ? { class: "provider_error" as const } : {}),
+          ...(!treatAsWarning
+            ? {
+                class: codexRuntimeErrorClass(message, event.payload, requiresProviderAccount),
+              }
+            : {}),
           ...(event.payload !== undefined ? { detail: event.payload } : {}),
         },
       },
@@ -1593,6 +1622,31 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const serverConfig = yield* Effect.service(ServerConfig);
+    const requiresProviderAccountByThread = new Map<ThreadId, boolean>();
+
+    const readRequiresProviderAccount = (homePath?: string) =>
+      Effect.gen(function* () {
+        const configuredHome =
+          homePath?.trim() ||
+          process.env.CODEX_HOME?.trim() ||
+          join(serverConfig.homeDir, ".codex");
+        const configPath = join(configuredHome, "config.toml");
+        const existence = yield* Effect.option(fileSystem.exists(configPath));
+        if (existence._tag === "None") {
+          return false;
+        }
+        if (!existence.value) {
+          return true;
+        }
+
+        const content = yield* Effect.option(fileSystem.readFileString(configPath));
+        if (content._tag === "None") {
+          return false;
+        }
+        return codexModelProviderRequiresOpenAIAccount(
+          parseCodexConfigModelProvider(content.value),
+        );
+      });
     const nativeEventLogger =
       options?.nativeEventLogger ??
       (options?.nativeEventLogPath !== undefined
@@ -1655,16 +1709,29 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
           : {}),
       };
 
-      return Effect.tryPromise({
-        try: () => manager.startSession(managerInput),
-        catch: (cause) =>
-          new ProviderAdapterProcessError({
-            provider: PROVIDER,
-            threadId: input.threadId,
-            detail: toMessage(cause, "Failed to start Codex adapter session."),
-            cause,
-          }),
-      }).pipe(Effect.map((session) => session));
+      return Effect.gen(function* () {
+        const requiresProviderAccount = yield* readRequiresProviderAccount(
+          input.providerOptions?.codex?.homePath,
+        );
+        requiresProviderAccountByThread.set(input.threadId, requiresProviderAccount);
+
+        return yield* Effect.tryPromise({
+          try: () => manager.startSession(managerInput),
+          catch: (cause) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId: input.threadId,
+              detail: toMessage(cause, "Failed to start Codex adapter session."),
+              cause,
+            }),
+        }).pipe(
+          Effect.tapError(() =>
+            Effect.sync(() => {
+              requiresProviderAccountByThread.delete(input.threadId);
+            }),
+          ),
+        );
+      });
     };
 
     const sendTurn: CodexAdapterShape["sendTurn"] = (input) =>
@@ -1913,9 +1980,22 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
       });
 
     const forkThread: CodexAdapterShape["forkThread"] = (input) =>
-      Effect.tryPromise({
-        try: () => manager.forkThread(input),
-        catch: (cause) => toRequestError(input.sourceThreadId, "thread/fork", cause),
+      Effect.gen(function* () {
+        const requiresProviderAccount = yield* readRequiresProviderAccount(
+          input.providerOptions?.codex?.homePath,
+        );
+        requiresProviderAccountByThread.set(input.threadId, requiresProviderAccount);
+
+        return yield* Effect.tryPromise({
+          try: () => manager.forkThread(input),
+          catch: (cause) => toRequestError(input.sourceThreadId, "thread/fork", cause),
+        }).pipe(
+          Effect.tapError(() =>
+            Effect.sync(() => {
+              requiresProviderAccountByThread.delete(input.threadId);
+            }),
+          ),
+        );
       });
 
     const respondToRequest: CodexAdapterShape["respondToRequest"] = (
@@ -1941,6 +2021,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
     const stopSession: CodexAdapterShape["stopSession"] = (threadId) =>
       Effect.sync(() => {
         manager.stopSession(threadId);
+        requiresProviderAccountByThread.delete(threadId);
       });
 
     const listSessions: CodexAdapterShape["listSessions"] = () =>
@@ -1952,6 +2033,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
     const stopAll: CodexAdapterShape["stopAll"] = () =>
       Effect.sync(() => {
         manager.stopAll();
+        requiresProviderAccountByThread.clear();
       });
 
     const getComposerCapabilities: NonNullable<CodexAdapterShape["getComposerCapabilities"]> = () =>
@@ -2054,7 +2136,11 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
         const listener = (event: ProviderEvent) =>
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            const runtimeEvents = mapToRuntimeEvents(
+              event,
+              event.threadId,
+              requiresProviderAccountByThread.get(event.threadId) === true,
+            );
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,

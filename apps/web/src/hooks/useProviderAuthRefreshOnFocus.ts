@@ -14,6 +14,7 @@ const PROVIDER_AUTH_REFRESH_INTERVAL_MS = 5 * 60_000;
 
 export function useProviderAuthRefreshOnFocus(): void {
   useProviderStatusRefresh({
+    initialDelayMs: 0,
     intervalMs: PROVIDER_AUTH_REFRESH_INTERVAL_MS,
     minIntervalMs: PROVIDER_AUTH_REFRESH_MIN_INTERVAL_MS,
     refreshOnFocus: true,

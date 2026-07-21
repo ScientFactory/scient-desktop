@@ -18,6 +18,7 @@ import type {
   ProjectScript as ContractProjectScript,
   ThreadId,
   ProjectId,
+  EventId,
   TurnId,
   MessageId,
   ProviderMentionReference,
@@ -317,5 +318,7 @@ export interface ThreadSession {
   createdAt: string;
   updatedAt: string;
   lastError?: string;
+  lastErrorEventId?: EventId;
+  lastErrorClass?: string;
   orchestrationStatus: OrchestrationSessionStatus;
 }

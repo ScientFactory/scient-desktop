@@ -130,6 +130,10 @@ export const ServerProviderStatus = Schema.Struct({
   status: ServerProviderStatusState,
   available: Schema.Boolean,
   authStatus: ServerProviderAuthStatus,
+  // `false` means this runtime owns authentication outside the provider's
+  // account flow (for example a custom Codex model provider). Older servers
+  // omit the field, so clients retain their provider-specific default.
+  requiresProviderAccount: Schema.optional(Schema.Boolean),
   authType: Schema.optional(TrimmedNonEmptyString),
   authLabel: Schema.optional(TrimmedNonEmptyString),
   voiceTranscriptionAvailable: Schema.optional(Schema.Boolean),
@@ -594,6 +598,7 @@ export type ServerProviderInstallationResult = typeof ServerProviderInstallation
 export const ServerProviderConnectionStartInput = Schema.Struct({
   provider: ProviderKind,
   method: ServerProviderConnectionMethod,
+  mode: Schema.optional(Schema.Literals(["connect", "reauthenticate"])),
 });
 export type ServerProviderConnectionStartInput = typeof ServerProviderConnectionStartInput.Type;
 
