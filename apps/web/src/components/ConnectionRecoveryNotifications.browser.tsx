@@ -113,12 +113,17 @@ describe("connection recovery toast integration", () => {
     expect(document.activeElement?.getAttribute("role")).toBe("dialog");
     await userEvent.keyboard("{Tab}");
     expect(document.activeElement?.getAttribute("aria-label")).toBe("Copy diagnostics");
+    await new Promise((resolve) => window.setTimeout(resolve, 300));
+    const copyStartedAt = Date.now();
     await userEvent.keyboard("{Enter}");
 
     await expect.poll(() => writeText.mock.calls.length).toBe(1);
     const copiedDiagnostics = writeText.mock.calls[0]?.[0] ?? "";
     expect(copiedDiagnostics).toContain("Scient connection diagnostics");
     expect(copiedDiagnostics).toContain("Transport state: reconnecting");
+    const generatedAt = copiedDiagnostics.match(/^Generated: (.+)$/m)?.[1];
+    expect(generatedAt).toBeDefined();
+    expect(new Date(generatedAt!).getTime()).toBeGreaterThanOrEqual(copyStartedAt);
     await expect
       .poll(() => document.activeElement?.getAttribute("aria-label"))
       .toBe("Copied diagnostics");
@@ -137,16 +142,32 @@ describe("connection recovery toast integration", () => {
     await cleanup();
   }, 20_000);
 
-  it("runs the manager close callback used by swipe and Escape dismissal", async () => {
+  it("dismisses the real recovery notice through Escape and its close control", async () => {
     const cleanup = await mountRecoveryHarness();
-    const onClose = vi.fn();
-    const toastId = toastManager.add({ onClose, title: "Reconnecting", timeout: 0 });
 
-    toastManager.close(toastId);
+    emitWsTransportState("reconnecting");
+    await expect
+      .poll(() => document.body.textContent, { timeout: 3_000 })
+      .toContain("Reconnecting…");
+    await page.getByRole("button", { name: "Focus before notifications" }).click();
+    await userEvent.keyboard("{Tab}");
+    expect(document.activeElement?.getAttribute("role")).toBe("dialog");
+    await userEvent.keyboard("{Escape}");
+    await expect.poll(() => document.body.textContent).not.toContain("Reconnecting…");
+    emitWsTransportState("open");
+    expect(document.body.textContent).not.toContain("Reconnected");
 
-    expect(onClose).toHaveBeenCalledOnce();
+    emitWsTransportState("reconnecting");
+    await expect
+      .poll(() => document.body.textContent, { timeout: 3_000 })
+      .toContain("Reconnecting…");
+    await page.getByRole("button", { name: "Dismiss toast" }).click();
+    await expect.poll(() => document.body.textContent).not.toContain("Reconnecting…");
+    emitWsTransportState("open");
+    expect(document.body.textContent).not.toContain("Reconnected");
+
     await cleanup();
-  });
+  }, 8_000);
 
   it("counts auto-dismiss time only while the window is visible and focused", async () => {
     const cleanup = await mountRecoveryHarness();

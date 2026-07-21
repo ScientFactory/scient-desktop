@@ -58,16 +58,6 @@ export function ConnectionRecoveryNotifications() {
         });
       },
       onShowDetails: (stateStartedAt) => {
-        const diagnostics = formatConnectionRecoveryDiagnostics({
-          appVersion: APP_VERSION,
-          desktopApp: Boolean(window.desktopBridge),
-          generatedAt: new Date(),
-          navigatorOnline: typeof navigator.onLine === "boolean" ? navigator.onLine : null,
-          platform: navigator.platform,
-          state: "reconnecting",
-          stateStartedAt,
-          visibility: document.visibilityState,
-        });
         const openLogs = window.desktopBridge?.diagnostics?.openLogsDirectory;
         const nextToast = {
           type: "warning" as const,
@@ -82,7 +72,17 @@ export function ConnectionRecoveryNotifications() {
           data: {
             allowCrossThreadVisibility: true,
             copyLabel: "diagnostics",
-            copyText: diagnostics,
+            copyText: () =>
+              formatConnectionRecoveryDiagnostics({
+                appVersion: APP_VERSION,
+                desktopApp: Boolean(window.desktopBridge),
+                generatedAt: new Date(),
+                navigatorOnline: typeof navigator.onLine === "boolean" ? navigator.onLine : null,
+                platform: navigator.platform,
+                state: "reconnecting",
+                stateStartedAt,
+                visibility: document.visibilityState,
+              }),
             ...(openLogs
               ? {
                   secondaryActionProps: {
