@@ -28,6 +28,7 @@ import { startServerMemoryDiagnostics } from "./memoryDiagnostics";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { makeProviderHealthLive } from "./provider/Layers/ProviderHealth";
 import { ProviderConnectionLive } from "./provider/Layers/ProviderConnection";
+import { ProviderClientStatusProjectionLive } from "./provider/Layers/ProviderClientStatusProjection";
 import { ProviderRuntimeManagerLive } from "./provider/Layers/ProviderRuntimeManager";
 import { ProviderRuntimeManager } from "./provider/Services/ProviderRuntimeManager";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper";
@@ -257,6 +258,11 @@ const LayerLive = (input: CliInput) => {
     Layer.provideMerge(providerLayer),
     Layer.provideMerge(PtyAdapterLayerLive),
   );
+  const providerClientStatusProjectionLayer = ProviderClientStatusProjectionLive.pipe(
+    Layer.provideMerge(runtimeServicesLayer),
+    Layer.provideMerge(providerHealthLayer),
+    Layer.provideMerge(providerRuntimeLayer),
+  );
   const providerSessionReaperLayer = ProviderSessionReaperLive.pipe(
     // The reaper coordinates orchestration state with live provider sessions,
     // so it belongs at the top level where both layers are available.
@@ -275,6 +281,7 @@ const LayerLive = (input: CliInput) => {
     Layer.provideMerge(providerLayer),
     Layer.provideMerge(providerHealthLayer),
     Layer.provideMerge(providerConnectionLayer),
+    Layer.provideMerge(providerClientStatusProjectionLayer),
     Layer.provideMerge(providerSessionReaperLayer),
     Layer.provideMerge(SqlitePersistence.layerConfig),
     Layer.provideMerge(ServerLoggerLive),

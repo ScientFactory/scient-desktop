@@ -46,6 +46,7 @@ import {
 } from "../../lib/modelFavorites";
 import { Skeleton } from "../ui/skeleton";
 import { useProviderConnectionDialogStore } from "~/providerConnectionDialogStore";
+import { isProviderUsable } from "~/lib/providerAvailability";
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
   value: ProviderKind;
@@ -73,10 +74,29 @@ function resolveLiveProviderAvailability(provider: ServerProviderStatus | undefi
     };
   }
 
+  const connectionStatus = provider.connectionState?.status;
+  if (
+    connectionStatus === "starting" ||
+    connectionStatus === "waiting_for_browser" ||
+    connectionStatus === "verifying"
+  ) {
+    return {
+      disabled: true,
+      label: "Connecting",
+    };
+  }
+
   if (provider.authStatus === "unauthenticated") {
     return {
       disabled: true,
       label: "Sign in",
+    };
+  }
+
+  if (!isProviderUsable(provider)) {
+    return {
+      disabled: true,
+      label: "Check connection",
     };
   }
 
