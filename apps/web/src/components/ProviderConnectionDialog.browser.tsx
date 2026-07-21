@@ -992,7 +992,7 @@ describe("ProviderConnectionDialog", () => {
     }
   });
 
-  it("requires reviewed consent before starting a managed installation", async () => {
+  it("requires explicit consent before installing the trusted latest release", async () => {
     const initialProvider = {
       provider: "antigravity",
       status: "error",
@@ -1030,16 +1030,16 @@ describe("ProviderConnectionDialog", () => {
         status: "downloading",
         startedAt: checkedAt,
         finishedAt: null,
-        message: "Downloading Antigravity 1.1.4.",
-        version: "1.1.4",
+        message: "Downloading Antigravity 1.1.5.",
+        version: "1.1.5",
         bytesDownloaded: 0,
         totalBytes: 46_664_998,
       },
     } satisfies ServerProviderStatus;
     const prepareProviderInstall = vi.fn().mockResolvedValue({
       provider: "antigravity",
-      planToken: "reviewed-plan-1",
-      version: "1.1.4",
+      planToken: "trusted-plan-1",
+      version: "1.1.5",
       target: "darwin-arm64",
       sourceHost: "storage.googleapis.com",
       downloadBytes: 46_664_998,
@@ -1063,17 +1063,105 @@ describe("ProviderConnectionDialog", () => {
 
     try {
       await page.getByRole("button", { name: "Install Antigravity" }).click();
-      await expect.element(page.getByText("Ready to install version 1.1.4")).toBeVisible();
+      await expect.element(page.getByText("Ready to install version 1.1.5")).toBeVisible();
       expect(installProvider).not.toHaveBeenCalled();
 
       await page.getByRole("button", { name: "Download and install" }).click();
       await vi.waitFor(() => {
         expect(installProvider).toHaveBeenCalledWith({
           provider: "antigravity",
-          planToken: "reviewed-plan-1",
+          planToken: "trusted-plan-1",
         });
       });
-      await expect.element(page.getByText("Downloading Antigravity 1.1.4.")).toBeVisible();
+      await expect.element(page.getByText("Downloading Antigravity 1.1.5.")).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "Cancel installation" })).toBeVisible();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("updates a managed runtime through the verified install lifecycle", async () => {
+    const currentProvider = {
+      provider: "antigravity",
+      status: "ready",
+      available: true,
+      authStatus: "authenticated",
+      version: "1.1.4",
+      checkedAt,
+      runtime: {
+        source: "managed",
+        managedVersion: "1.1.4",
+        canInstall: false,
+        canRepair: true,
+        canRollback: false,
+        canRemove: true,
+        message: null,
+      },
+      versionAdvisory: {
+        status: "unknown",
+        currentVersion: "1.1.4",
+        latestVersion: null,
+        updateCommand: null,
+        canUpdate: false,
+        checkedAt,
+        message: "Updates for this runtime are managed by Scient.",
+      },
+    } satisfies ServerProviderStatus;
+    const updatingProvider = {
+      ...currentProvider,
+      installationState: {
+        operationId: "update-antigravity-1",
+        operation: "install",
+        status: "downloading",
+        startedAt: checkedAt,
+        finishedAt: null,
+        message: "Downloading Antigravity 1.1.5.",
+        version: "1.1.5",
+        bytesDownloaded: 0,
+        totalBytes: null,
+      },
+    } satisfies ServerProviderStatus;
+    const prepareProviderInstall = vi.fn().mockResolvedValue({
+      provider: "antigravity",
+      planToken: "managed-update-plan-1",
+      version: "1.1.5",
+      target: "darwin-arm64",
+      sourceHost: "storage.googleapis.com",
+      downloadBytes: null,
+      expiresAt: "2026-07-21T12:10:00.000Z",
+    });
+    const installProvider = vi.fn().mockResolvedValue({ providers: [updatingProvider] });
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [currentProvider] });
+    const restoreNativeApi = installNativeApi({
+      refreshProviders,
+      prepareProviderInstall,
+      installProvider,
+    });
+    const queryClient = createQueryClient(currentProvider);
+    useProviderConnectionDialogStore.getState().openDialog("antigravity", "managed_update");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await expect.element(page.getByRole("heading", { name: "Update Antigravity" })).toBeVisible();
+      await page.getByRole("button", { name: "Check latest version" }).click();
+      await expect.element(page.getByText("Ready to update from 1.1.4 to 1.1.5")).toBeVisible();
+      expect(installProvider).not.toHaveBeenCalled();
+
+      await page.getByRole("button", { name: "Download and update" }).click();
+      await vi.waitFor(() => {
+        expect(installProvider).toHaveBeenCalledWith({
+          provider: "antigravity",
+          planToken: "managed-update-plan-1",
+        });
+      });
+      await expect.element(page.getByText("Downloading Antigravity 1.1.5.")).toBeVisible();
       await expect.element(page.getByRole("button", { name: "Cancel installation" })).toBeVisible();
     } finally {
       await screen.unmount();

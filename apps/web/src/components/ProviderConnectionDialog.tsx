@@ -3,12 +3,14 @@
 // Layer: Shared UI component
 
 import type { ServerProviderConnectionMethod, ServerProviderInstallPlan } from "@synara/contracts";
+import { compareSemverVersions } from "@synara/shared/providerVersions";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import {
   CLAUDE_CONNECTION_METHOD_OPTIONS,
   describeProviderConnection,
+  describeManagedProviderUpdate,
   providerConnectionMethod,
   providerInstallUrl,
 } from "~/lib/providerConnectionPresentation";
@@ -48,6 +50,7 @@ export function ProviderConnectionDialog() {
   const [actionPending, setActionPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [installPlan, setInstallPlan] = useState<ServerProviderInstallPlan | null>(null);
+  const [managedUpdateStarted, setManagedUpdateStarted] = useState(false);
   const [clockMs, setClockMs] = useState(() => Date.now());
   const [runtimeReconnectBaselineOperationId, setRuntimeReconnectBaselineOperationId] = useState<
     string | null | undefined
@@ -69,11 +72,22 @@ export function ProviderConnectionDialog() {
     status?.connectionState?.status === "connected" &&
     status.connectionState.operationId !== runtimeReconnectBaselineOperationId;
   const runtimeReconnectRequired = runtimeReauthenticationFlow && !runtimeReconnectCompleted;
-  const presentation = provider
+  const connectionPresentation = provider
     ? describeProviderConnection(provider, status, {
         forceReconnect: runtimeReconnectRequired,
       })
     : null;
+  const managedUpdateFlow =
+    source === "managed_update" && status?.runtime?.source === "managed" && provider !== null;
+  const presentation =
+    managedUpdateFlow && provider && status
+      ? describeManagedProviderUpdate({
+          provider,
+          status,
+          plan: installPlan,
+          updateStarted: managedUpdateStarted,
+        })
+      : connectionPresentation;
   const Icon = provider ? PROVIDER_ICON_COMPONENT_BY_PROVIDER[provider] : null;
   const activeConnection =
     status?.connectionState &&
@@ -84,6 +98,7 @@ export function ProviderConnectionDialog() {
 
   useEffect(() => {
     setRuntimeReconnectBaselineOperationId(undefined);
+    setManagedUpdateStarted(false);
   }, [isOpen, provider, source]);
 
   useEffect(() => {
@@ -291,6 +306,7 @@ export function ProviderConnectionDialog() {
         provider,
         planToken: installPlan.planToken,
       });
+      if (managedUpdateFlow) setManagedUpdateStarted(true);
       setInstallPlan(null);
       applyProviderStatusesToCache(queryClient, result.providers);
     });
@@ -457,7 +473,13 @@ export function ProviderConnectionDialog() {
 
           {installPlan ? (
             <div className="space-y-1.5 rounded-xl border border-[color:var(--color-border)] bg-[var(--color-background-elevated-secondary)] px-3 py-2.5 text-sm">
-              <p className="font-medium">Ready to install version {installPlan.version}</p>
+              <p className="font-medium">
+                {managedUpdateFlow && status?.runtime?.managedVersion
+                  ? compareSemverVersions(installPlan.version, status.runtime.managedVersion) > 0
+                    ? `Ready to update from ${status.runtime.managedVersion} to ${installPlan.version}`
+                    : `Latest stable version: ${installPlan.version}`
+                  : `Ready to install version ${installPlan.version}`}
+              </p>
               <p className="text-xs leading-relaxed text-muted-foreground">
                 {installPlan.downloadBytes
                   ? `${(installPlan.downloadBytes / 1_048_576).toFixed(1)} MB from ${installPlan.sourceHost}`
@@ -477,11 +499,13 @@ export function ProviderConnectionDialog() {
           ) : null}
 
           <p className="text-xs leading-relaxed text-muted-foreground">
-            {provider === "antigravity" && startsProviderSignIn
-              ? "Passwords and account tokens stay with Google. Scient sends this one-time code only to the local Antigravity process and never stores it."
-              : startsProviderSignIn
-                ? "Scient starts the provider's official sign-in. Passwords and account tokens stay with the provider and are never stored in Scient."
-                : "Installation and sign-in happen directly with the provider. Passwords and account tokens are never entered into or stored in Scient."}
+            {managedUpdateFlow
+              ? "Scient downloads the latest compatible release from the provider's trusted stable channel, verifies its digest, tests it, and keeps the previous working release available for rollback."
+              : provider === "antigravity" && startsProviderSignIn
+                ? "Passwords and account tokens stay with Google. Scient sends this one-time code only to the local Antigravity process and never stores it."
+                : startsProviderSignIn
+                  ? "Scient starts the provider's official sign-in. Passwords and account tokens stay with the provider and are never stored in Scient."
+                  : "Installation and sign-in happen directly with the provider. Passwords and account tokens are never entered into or stored in Scient."}
           </p>
         </DialogPanel>
 
@@ -509,7 +533,11 @@ export function ProviderConnectionDialog() {
           {presentation.primaryAction !== "none" ? (
             <Button type="button" disabled={actionPending} onClick={handlePrimary}>
               {actionPending ? <Spinner /> : null}
-              {installPlan ? "Download and install" : presentation.primaryLabel}
+              {installPlan && managedUpdateFlow
+                ? "Download and update"
+                : installPlan
+                  ? "Download and install"
+                  : presentation.primaryLabel}
             </Button>
           ) : null}
         </DialogFooter>

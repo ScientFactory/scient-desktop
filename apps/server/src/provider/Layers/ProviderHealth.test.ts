@@ -261,8 +261,8 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       });
 
       assert.deepStrictEqual(capabilities.update, {
-        command: "agy update",
-        executable: "agy",
+        command: "/Users/test/.local/bin/agy update",
+        executable: "/Users/test/.local/bin/agy",
         args: ["update"],
         lockKey: "antigravity-native",
         pathPrepend: "/Users/test/.local/bin",

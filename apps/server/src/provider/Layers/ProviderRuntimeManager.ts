@@ -10,6 +10,7 @@ import {
   type ServerProviderInstallationState,
   type ServerProviderRuntimeSource,
 } from "@synara/contracts";
+import { compareSemverVersions } from "@synara/shared/providerVersions";
 import { Effect, Layer, PubSub, Stream } from "effect";
 
 import { ServerConfig } from "../../config";
@@ -38,6 +39,16 @@ import {
   providerRuntimeReleaseId,
   providerRuntimeTargetId,
 } from "../providerRuntimeTypes";
+
+export function canActivateManagedRuntimeVersion(input: {
+  readonly currentVersion: string | null;
+  readonly candidateVersion: string;
+}): boolean {
+  return (
+    input.currentVersion === null ||
+    compareSemverVersions(input.candidateVersion, input.currentVersion) >= 0
+  );
+}
 
 const PROVIDERS: ReadonlyArray<ProviderKind> = [
   "codex",
@@ -719,6 +730,21 @@ export const ProviderRuntimeManagerLive = Layer.effect(
             provider: input.provider,
             reason: "operation_not_found",
             message: "The installation plan expired. Review the provider download again.",
+          });
+        }
+        const current = records.get(input.provider);
+        if (
+          current &&
+          !canActivateManagedRuntimeVersion({
+            currentVersion: current.runtimeVersion,
+            candidateVersion: plan.artifact.version,
+          })
+        ) {
+          plans.delete(input.planToken);
+          return yield* installationError({
+            provider: input.provider,
+            reason: "managed_runtime_unavailable",
+            message: `Scient will not replace ${input.provider} ${current.runtimeVersion} with older version ${plan.artifact.version}.`,
           });
         }
         plans.delete(input.planToken);

@@ -73,6 +73,7 @@ import {
   type ClaudeAccountCapabilities,
 } from "../claudeCapabilities";
 import { buildClaudeProcessEnv } from "../claudeProcessEnv";
+import { MINIMUM_ANTIGRAVITY_CLI_VERSION } from "../antigravityReleaseChannel";
 import {
   detailFromResult,
   extractAuthBoolean,
@@ -92,6 +93,7 @@ import {
   writeProviderStatusCache,
 } from "../providerStatusCache";
 import { makeProviderMaintenanceCommandCoordinator } from "../providerMaintenanceCommandCoordinator";
+import { providerExternalUpdateBlockReason } from "../providerUpdateRuntimePolicy";
 import {
   enrichProviderStatusWithVersionAdvisory,
   compareSemverVersions,
@@ -123,8 +125,6 @@ const OPENCODE_PROVIDER = "opencode" as const;
 const PI_PROVIDER = "pi" as const;
 type ProviderStatuses = ReadonlyArray<ServerProviderStatus>;
 const DISABLED_PROVIDER_STATUS_MESSAGE = "Provider is disabled in Scient settings.";
-const MINIMUM_ANTIGRAVITY_CLI_VERSION = "1.1.4";
-
 const PROVIDERS = [
   CODEX_PROVIDER,
   CLAUDE_AGENT_PROVIDER,
@@ -2231,8 +2231,22 @@ export function makeProviderHealthLive(options?: {
               updateLockKey: null,
             });
           }
+          const configuredExecutable = getProviderBinaryPath(provider, settings);
+          const runtime = options?.resolveProviderRuntime
+            ? yield* options.resolveProviderRuntime(provider, configuredExecutable)
+            : null;
+          if (runtime && !runtime.executable) {
+            return makeProviderMaintenanceCapabilities({
+              provider,
+              packageName: definition.npmPackageName,
+              latestVersionSource: definition.latestVersionSource ?? null,
+              updateExecutable: null,
+              updateArgs: [],
+              updateLockKey: null,
+            });
+          }
           return yield* resolveProviderMaintenanceCapabilitiesEffect(definition, {
-            binaryPath: getProviderBinaryPath(provider, settings),
+            binaryPath: runtime?.executable ?? configuredExecutable,
             env: process.env,
             platform: process.platform,
           }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
@@ -2647,6 +2661,18 @@ export function makeProviderHealthLive(options?: {
             provider,
             reason: "Provider is disabled in Scient settings.",
           });
+        }
+        if (options?.resolveProviderRuntime) {
+          const runtime = yield* options
+            .resolveProviderRuntime(provider, getProviderBinaryPath(provider, settings))
+            .pipe(Effect.mapError(toUpdateError));
+          const blockReason = providerExternalUpdateBlockReason(provider, runtime);
+          if (blockReason) {
+            return yield* new ServerProviderUpdateError({
+              provider,
+              reason: blockReason,
+            });
+          }
         }
         const capabilities = yield* getProviderMaintenanceCapabilities(provider).pipe(
           Effect.mapError(toUpdateError),

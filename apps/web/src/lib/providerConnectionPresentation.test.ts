@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   CLAUDE_CONNECTION_METHOD_OPTIONS,
   describeProviderConnection,
+  describeManagedProviderUpdate,
   providerConnectionMethod,
   providerInstallUrl,
 } from "./providerConnectionPresentation";
@@ -17,6 +18,71 @@ const BASE_STATUS: ServerProviderStatus = {
 };
 
 describe("provider connection presentation", () => {
+  const managedAntigravityStatus = {
+    ...BASE_STATUS,
+    provider: "antigravity",
+    status: "ready",
+    authStatus: "authenticated",
+    version: "1.1.4",
+    runtime: {
+      source: "managed",
+      managedVersion: "1.1.4",
+      canInstall: false,
+      canRepair: true,
+      canRollback: false,
+      canRemove: true,
+      message: null,
+    },
+  } as const satisfies ServerProviderStatus;
+
+  it("reviews a newer trusted managed release before updating", () => {
+    const checking = describeManagedProviderUpdate({
+      provider: "antigravity",
+      status: managedAntigravityStatus,
+      plan: null,
+      updateStarted: false,
+    });
+    const ready = describeManagedProviderUpdate({
+      provider: "antigravity",
+      status: managedAntigravityStatus,
+      plan: {
+        provider: "antigravity",
+        planToken: "plan-1",
+        version: "1.1.5",
+        target: "darwin-arm64",
+        sourceHost: "storage.googleapis.com",
+        downloadBytes: null,
+        expiresAt: "2026-07-21T11:00:00.000Z",
+      },
+      updateStarted: false,
+    });
+
+    expect(checking.primaryLabel).toBe("Check latest version");
+    expect(ready.primaryAction).toBe("install");
+    expect(ready.primaryLabel).toBe("Update Antigravity");
+    expect(ready.description).toContain("trusted stable channel");
+  });
+
+  it("does not reinstall or downgrade a managed provider", () => {
+    for (const version of ["1.1.4", "1.1.3"]) {
+      const presentation = describeManagedProviderUpdate({
+        provider: "antigravity",
+        status: managedAntigravityStatus,
+        plan: {
+          provider: "antigravity",
+          planToken: `plan-${version}`,
+          version,
+          target: "darwin-arm64",
+          sourceHost: "storage.googleapis.com",
+          downloadBytes: null,
+          expiresAt: "2026-07-21T11:00:00.000Z",
+        },
+        updateStarted: false,
+      });
+      expect(presentation.primaryAction).toBe("done");
+    }
+  });
+
   it("maps supported providers to fixed browser sign-in methods", () => {
     expect(providerConnectionMethod("codex")).toBe("codex_browser");
     expect(providerConnectionMethod("claudeAgent")).toBe("claude_account");

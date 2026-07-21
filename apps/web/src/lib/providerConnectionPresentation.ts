@@ -6,8 +6,10 @@ import {
   PROVIDER_DISPLAY_NAMES,
   type ProviderKind,
   type ServerProviderConnectionMethod,
+  type ServerProviderInstallPlan,
   type ServerProviderStatus,
 } from "@synara/contracts";
+import { compareSemverVersions } from "@synara/shared/providerVersions";
 
 const PROVIDER_INSTALL_URLS: Partial<Record<ProviderKind, string>> = {
   codex: "https://help.openai.com/en/articles/11096431",
@@ -82,6 +84,72 @@ export interface ProviderConnectionPresentation {
   readonly busy: boolean;
   readonly canCancel: boolean;
   readonly canRestart?: boolean;
+}
+
+export function describeManagedProviderUpdate(input: {
+  readonly provider: ProviderKind;
+  readonly status: ServerProviderStatus;
+  readonly plan: ServerProviderInstallPlan | null;
+  readonly updateStarted: boolean;
+}): ProviderConnectionPresentation {
+  const label = PROVIDER_DISPLAY_NAMES[input.provider] ?? input.provider;
+  const title = `Update ${label}`;
+  const installation = input.status.installationState;
+  if (
+    input.updateStarted &&
+    installation &&
+    !["installed", "succeeded", "failed", "cancelled"].includes(installation.status)
+  ) {
+    return {
+      title,
+      description: installation.message,
+      primaryAction: "none",
+      primaryLabel: "Updating…",
+      busy: true,
+      canCancel: true,
+    };
+  }
+  if (input.updateStarted && installation?.status === "installed") {
+    return {
+      title,
+      description:
+        `${label} ${installation.version ?? ""} is installed, verified, and ready to use.`.replace(
+          /\s+/gu,
+          " ",
+        ),
+      primaryAction: "done",
+      primaryLabel: "Done",
+      busy: false,
+      canCancel: false,
+    };
+  }
+  const currentVersion = input.status.runtime?.managedVersion;
+  if (input.plan && currentVersion) {
+    const comparison = compareSemverVersions(input.plan.version, currentVersion);
+    if (comparison <= 0) {
+      return {
+        title,
+        description:
+          comparison === 0
+            ? `${label} ${currentVersion} is already the latest stable version.`
+            : `${label} ${currentVersion} is newer than the provider's current stable version ${input.plan.version}. Scient will not downgrade it.`,
+        primaryAction: "done",
+        primaryLabel: "Done",
+        busy: false,
+        canCancel: false,
+      };
+    }
+  }
+  return {
+    title,
+    description: input.plan
+      ? `Scient found ${label} ${input.plan.version} on the provider's trusted stable channel. The verified download is ready below.`
+      : `Scient will check ${label}'s trusted stable channel and prepare the latest compatible version.`,
+    primaryAction: "install",
+    primaryLabel: input.plan ? `Update ${label}` : "Check latest version",
+    busy: false,
+    canCancel: false,
+  };
 }
 
 export function describeProviderConnection(
