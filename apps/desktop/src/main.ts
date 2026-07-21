@@ -155,6 +155,7 @@ import {
   repairBrowserProfileFromBridgeManifest,
   seedDesktopUserDataProfileFromPapiLab,
 } from "./desktopUserDataProfile";
+import { ensurePrivateDesktopScientDataDirectoriesSync } from "./desktopScientDataDirectories";
 import { seedScientHomeFromPapiLab } from "./legacyPapiLabHomeMigration";
 import { isBrokenPipeError } from "./desktopProcessErrors";
 import {
@@ -229,7 +230,11 @@ if (legacyPapiLabHome) {
   }
 }
 const BASE_DIR = resolvedScientHome;
-const STATE_DIR = Path.join(BASE_DIR, "userdata");
+// Migration must run before this call because it atomically renames a staged
+// legacy home into a non-existent target. From this point onward every desktop
+// writer and the backend child see the same secured Scient-owned boundaries.
+const SCIENT_DATA_DIRECTORIES = ensurePrivateDesktopScientDataDirectoriesSync(BASE_DIR);
+const STATE_DIR = SCIENT_DATA_DIRECTORIES.stateDir;
 const DESKTOP_WINDOW_STATE_PATH = Path.join(STATE_DIR, "desktop-window-state.json");
 const DESKTOP_SCHEME = SCIENT_DESKTOP_SCHEME;
 const LEGACY_PAPILAB_DESKTOP_SCHEME = "papilab";
@@ -240,7 +245,7 @@ const APP_DISPLAY_NAME = isDevelopment ? `${SCIENT_APP_NAME} (Dev)` : SCIENT_APP
 const APP_USER_MODEL_ID = scientBundleId(isDevelopment);
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
-const LOG_DIR = Path.join(STATE_DIR, "logs");
+const LOG_DIR = SCIENT_DATA_DIRECTORIES.logsDir;
 const LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const LOG_FILE_MAX_FILES = 10;
 const APP_RUN_ID = Crypto.randomBytes(6).toString("hex");

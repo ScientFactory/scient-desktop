@@ -16,6 +16,7 @@ import { NetService } from "@synara/shared/Net";
 import { ServerConfig, type ServerConfigShape } from "./config";
 import { Open, type OpenShape } from "./open";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
+import { PRIVATE_DIRECTORY_MODE } from "./privatePathPermissions";
 import { ServerSettingsService } from "./serverSettings";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
 import { Server, type ServerShape } from "./effectServer";
@@ -143,6 +144,20 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(resolvedConfig?.autoBootstrapProjectFromCwd, false);
       assert.equal(resolvedConfig?.logProviderEvents, false);
       assert.equal(resolvedConfig?.logWebSocketEvents, false);
+      if (process.platform !== "win32" && resolvedConfig) {
+        for (const directoryPath of [
+          resolvedConfig.baseDir,
+          resolvedConfig.stateDir,
+          resolvedConfig.secretsDir,
+          resolvedConfig.worktreesDir,
+          resolvedConfig.attachmentsDir,
+          resolvedConfig.logsDir,
+          resolvedConfig.providerLogsDir,
+          resolvedConfig.terminalLogsDir,
+        ]) {
+          assert.equal(fs.statSync(directoryPath).mode & 0o777, PRIVATE_DIRECTORY_MODE);
+        }
+      }
       assert.equal(stop.mock.calls.length, 1);
     }),
   );
@@ -237,6 +252,64 @@ it.layer(testLayer)("server CLI command", (it) => {
       assert.equal(resolvedConfig?.port, 3773);
       assert.equal(resolvedConfig?.host, "127.0.0.1");
       assert.equal(resolvedConfig?.mode, "desktop");
+    }),
+  );
+
+  it.effect("secures every Scient-owned state directory before server startup", () =>
+    Effect.gen(function* () {
+      const preexistingLogsDir = path.join(defaultScientHome, "userdata", "logs");
+      fs.mkdirSync(preexistingLogsDir, { recursive: true });
+      fs.chmodSync(defaultScientHome, 0o775);
+      fs.chmodSync(path.join(defaultScientHome, "userdata"), 0o775);
+      fs.chmodSync(preexistingLogsDir, 0o775);
+
+      const previousUmask = process.umask(0o002);
+      try {
+        yield* runCli([], {
+          SYNARA_MODE: "desktop",
+          SYNARA_NO_BROWSER: "true",
+        });
+      } finally {
+        process.umask(previousUmask);
+      }
+
+      assert.equal(start.mock.calls.length, 1);
+      const config = resolvedConfig;
+      if (!config) throw new Error("Expected server config to resolve before startup");
+      const privateDirectories = [
+        config.baseDir,
+        config.stateDir,
+        config.secretsDir,
+        config.worktreesDir,
+        config.attachmentsDir,
+        config.logsDir,
+        config.providerLogsDir,
+        config.terminalLogsDir,
+      ];
+      for (const directoryPath of privateDirectories) {
+        assert.equal(fs.statSync(directoryPath).mode & 0o777, PRIVATE_DIRECTORY_MODE);
+      }
+    }),
+  );
+
+  it.effect("does not start when SCIENT_HOME is a symlink", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return;
+      const container = makeTempHome("scient-main-symlink-");
+      const target = path.join(container, "target");
+      const symlink = path.join(container, "scient-home");
+      fs.mkdirSync(target);
+      fs.chmodSync(target, 0o775);
+      fs.symlinkSync(target, symlink, "dir");
+
+      yield* runCli([], {
+        SCIENT_HOME: symlink,
+        SYNARA_MODE: "desktop",
+        SYNARA_NO_BROWSER: "true",
+      }).pipe(Effect.catch(() => Effect.void));
+
+      assert.equal(start.mock.calls.length, 0);
+      assert.equal(fs.statSync(target).mode & 0o777, 0o775);
     }),
   );
 

@@ -135,6 +135,11 @@ jobs:
       - name: Test Effect Windows process spawn
         run: bun run --cwd apps/server test src/windowsProcessEffect.test.ts
 
+      - name: Test Windows private state initialization
+        run: |
+          bun run --cwd apps/server test src/serverPrivateDirectories.test.ts
+          bun run --cwd apps/desktop test src/desktopScientDataDirectories.test.ts
+
       - name: Exercise Windows release staging
         run: bun run release:smoke
 
