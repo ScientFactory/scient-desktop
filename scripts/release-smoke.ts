@@ -305,7 +305,7 @@ function verifyReleaseWorkflowSafety(): void {
   const packagedStartupVerifier = readFileSync(
     resolve(repoRoot, "scripts/verify-packaged-desktop-startup.ts"),
     "utf8",
-  );
+  ).replaceAll("\r\n", "\n");
   assertContains(
     packagedStartupVerifier,
     "SCIENT_HOME: scientHome",
@@ -313,13 +313,8 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     packagedStartupVerifier,
-    'name.endsWith("_AUTH_TOKEN") || name.endsWith("_HOME")',
-    "Expected packaged startup verification to remove inherited product homes and authentication tokens.",
-  );
-  assertContains(
-    packagedStartupVerifier,
-    "delete env.ELECTRON_RUN_AS_NODE;",
-    "Expected packaged startup verification to remove inherited Electron Node mode.",
+    "PACKAGED_SMOKE_INHERITED_ENVIRONMENT_ALLOWLIST",
+    "Expected packaged startup verification to inherit only explicitly allowed native host variables.",
   );
   assertContains(
     packagedStartupVerifier,
@@ -344,6 +339,46 @@ function verifyReleaseWorkflowSafety(): void {
     packagedStartupVerifier,
     "assertPackagedLaunchCommandSafety(launch);",
     "Expected every packaged platform command to fail closed if sandbox bypass is introduced.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    'log.includes("renderer main frame loaded")',
+    "Expected cross-platform packaged startup proof to require successful renderer loading.",
+  );
+
+  const packagedLinuxLifecycleSmoke = readFileSync(
+    resolve(repoRoot, "apps/web/scripts/linux-appimage-smoke.mjs"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  assertContains(
+    packagedLinuxLifecycleSmoke,
+    "...sanitizePackagedDesktopInheritedEnvironment(process.env)",
+    "Expected deep packaged Linux verification to use the same inherited-environment allowlist.",
+  );
+  assertNotContains(
+    packagedLinuxLifecycleSmoke,
+    "...process.env",
+    "Deep packaged Linux verification must not inherit credentials or developer runtime overrides.",
+  );
+  assertContains(
+    packagedLinuxLifecycleSmoke,
+    "assertSandboxedPackagedArguments(electronProcess.commandLine);",
+    "Expected packaged Linux acceptance to validate the actual mounted Electron process arguments.",
+  );
+
+  const desktopMain = readFileSync(
+    resolve(repoRoot, "apps/desktop/src/main.ts"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  assertContains(
+    desktopMain,
+    'writeDesktopLogHeader("renderer main frame loaded")',
+    "Expected the desktop process to record successful renderer main-frame loading.",
+  );
+  assertContains(
+    desktopMain,
+    '"did-fail-load"',
+    "Expected renderer main-frame load failures to be recorded for packaged diagnostics.",
   );
 }
 

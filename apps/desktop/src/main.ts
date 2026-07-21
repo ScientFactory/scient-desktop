@@ -3474,9 +3474,19 @@ function createWindow(): BrowserWindow {
     window.setTitle(APP_DISPLAY_NAME);
   });
   window.webContents.on("did-finish-load", () => {
+    writeDesktopLogHeader("renderer main frame loaded");
     window.setTitle(APP_DISPLAY_NAME);
     emitUpdateState();
   });
+  window.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+      if (!isMainFrame) return;
+      writeDesktopLogHeader(
+        `renderer main frame load failed code=${errorCode} url=${validatedUrl} message=${errorDescription}`,
+      );
+    },
+  );
   window.once("ready-to-show", () => {
     // Preserve the original first-launch behavior, then respect the state saved
     // by subsequent closes. Normal bounds are restored before maximizing so the

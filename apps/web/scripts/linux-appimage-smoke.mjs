@@ -20,6 +20,8 @@ import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
 
+import { sanitizePackagedDesktopInheritedEnvironment } from "../../../scripts/verify-packaged-desktop-startup.ts";
+
 import {
   assertSandboxedPackagedArguments,
   fetchWithinDeadline,
@@ -574,7 +576,7 @@ async function runScenario(appImagePath, scenario) {
       child = spawn("xvfb-run", ["-a", appImagePath, ...packagedArguments], {
         detached: true,
         env: {
-          ...process.env,
+          ...sanitizePackagedDesktopInheritedEnvironment(process.env),
           HOME: homeDir,
           SCIENT_HOME: scientHome,
           SYNARA_DISABLE_AUTO_UPDATE: "1",
@@ -603,6 +605,7 @@ async function runScenario(appImagePath, scenario) {
     browser = renderer.browser;
     page = renderer.page;
     electronProcess = await findPackagedElectronProcess(child.pid, debuggingPort);
+    assertSandboxedPackagedArguments(electronProcess.commandLine);
     page.on("console", (message) => {
       recordOutput(`\n[renderer:${message.type()}] ${message.text()}`);
     });

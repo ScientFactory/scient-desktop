@@ -108,15 +108,36 @@ function findFiles(root: string, predicate: (path: string) => boolean): string[]
       }
     }
   }
-  return matches.sort((left, right) => left.localeCompare(right));
+  return matches.toSorted((left, right) => left.localeCompare(right));
 }
 
-function requireSingleAsset(directory: string, suffix: string): string {
-  const matches = readdirSync(directory)
-    .map((entry) => join(directory, entry))
-    .filter((candidate) => statSync(candidate).isFile() && candidate.endsWith(suffix));
+export function expectedPackagedDesktopStartupAssetName(
+  platform: PackagedDesktopPlatform,
+  arch: string,
+  version: string,
+): string {
+  const artifactArch = platform === "linux" && arch === "x64" ? "x86_64" : arch;
+  const extension = platform === "mac" ? ".zip" : platform === "linux" ? ".AppImage" : ".exe";
+  return `Scient-${version}-${artifactArch}${extension}`;
+}
+
+export function resolveExactPackagedDesktopStartupAsset(
+  directory: string,
+  expectedName: string,
+): string {
+  const suffix = expectedName.slice(expectedName.lastIndexOf("."));
+  const matches = readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(suffix))
+    .map((entry) => join(directory, entry.name));
   if (matches.length !== 1) {
-    throw new Error(`Expected one ${suffix} release asset, found ${matches.length}.`);
+    throw new Error(
+      `Expected exactly ${expectedName}; found ${matches.length} ${suffix} payloads: ${matches.map((match) => basename(match)).join(", ") || "none"}.`,
+    );
+  }
+  if (basename(matches[0]!) !== expectedName) {
+    throw new Error(
+      `Expected exact release asset ${expectedName}, found ${basename(matches[0]!)}.`,
+    );
   }
   return matches[0]!;
 }
@@ -141,8 +162,9 @@ export function assertPackagedLaunchCommandSafety(launch: PackagedDesktopLaunchC
 function prepareMacLaunch(
   assetsDirectory: string,
   extractionRoot: string,
+  expectedAssetName: string,
 ): PackagedDesktopLaunchCommand {
-  const archive = requireSingleAsset(assetsDirectory, ".zip");
+  const archive = resolveExactPackagedDesktopStartupAsset(assetsDirectory, expectedAssetName);
   runCommand("ditto", ["-x", "-k", archive, extractionRoot]);
   const appBundles = readdirSync(extractionRoot).filter((entry) => entry.endsWith(".app"));
   if (appBundles.length !== 1) {
@@ -172,8 +194,12 @@ export function createLinuxPackagedLaunchCommand(
 function prepareLinuxLaunch(
   assetsDirectory: string,
   extractionRoot: string,
+  expectedAssetName: string,
 ): PackagedDesktopLaunchCommand {
-  const collectedAppImage = requireSingleAsset(assetsDirectory, ".AppImage");
+  const collectedAppImage = resolveExactPackagedDesktopStartupAsset(
+    assetsDirectory,
+    expectedAssetName,
+  );
   const appImage = join(extractionRoot, basename(collectedAppImage));
   copyFileSync(collectedAppImage, appImage);
   chmodSync(appImage, 0o755);
@@ -193,8 +219,9 @@ export function isScientWindowsExecutable(candidate: string): boolean {
 function prepareWindowsLaunch(
   assetsDirectory: string,
   extractionRoot: string,
+  expectedAssetName: string,
 ): PackagedDesktopLaunchCommand {
-  const installer = requireSingleAsset(assetsDirectory, ".exe");
+  const installer = resolveExactPackagedDesktopStartupAsset(assetsDirectory, expectedAssetName);
   const installerRoot = join(extractionRoot, "installer");
   const applicationRoot = join(extractionRoot, "application");
   mkdirSync(installerRoot, { recursive: true });
@@ -220,13 +247,18 @@ function prepareLaunch(
   options: PackagedDesktopStartupOptions,
   extractionRoot: string,
 ): PackagedDesktopLaunchCommand {
+  const expectedAssetName = expectedPackagedDesktopStartupAssetName(
+    options.platform,
+    options.arch,
+    options.version,
+  );
   let launch: PackagedDesktopLaunchCommand;
   if (options.platform === "mac") {
-    launch = prepareMacLaunch(options.assetsDirectory, extractionRoot);
+    launch = prepareMacLaunch(options.assetsDirectory, extractionRoot, expectedAssetName);
   } else if (options.platform === "linux") {
-    launch = prepareLinuxLaunch(options.assetsDirectory, extractionRoot);
+    launch = prepareLinuxLaunch(options.assetsDirectory, extractionRoot, expectedAssetName);
   } else {
-    launch = prepareWindowsLaunch(options.assetsDirectory, extractionRoot);
+    launch = prepareWindowsLaunch(options.assetsDirectory, extractionRoot, expectedAssetName);
   }
   assertPackagedLaunchCommandSafety(launch);
   return launch;
@@ -239,10 +271,7 @@ export function createPackagedDesktopSmokeEnvironment(
 ): NodeJS.ProcessEnv {
   const isolatedHome = join(root, "home");
   const scientHome = join(root, "scient-home");
-  const env: NodeJS.ProcessEnv = { ...inheritedEnvironment };
-  for (const name of Object.keys(env)) {
-    if (name.endsWith("_AUTH_TOKEN") || name.endsWith("_HOME")) delete env[name];
-  }
+  const env = sanitizePackagedDesktopInheritedEnvironment(inheritedEnvironment);
   Object.assign(env, {
     HOME: isolatedHome,
     USERPROFILE: isolatedHome,
@@ -256,8 +285,6 @@ export function createPackagedDesktopSmokeEnvironment(
     SYNARA_DISABLE_AUTO_UPDATE: "1",
     ELECTRON_ENABLE_LOGGING: "1",
   });
-  delete env.ELECTRON_RUN_AS_NODE;
-
   for (const path of [
     env.HOME,
     env.APPDATA,
@@ -285,48 +312,153 @@ export function createPackagedDesktopSmokeEnvironment(
   return env;
 }
 
+const PACKAGED_SMOKE_INHERITED_ENVIRONMENT_ALLOWLIST = new Set([
+  "COMSPEC",
+  "ComSpec",
+  "DBUS_SESSION_BUS_ADDRESS",
+  "DISPLAY",
+  "LANG",
+  "LC_ALL",
+  "LC_CTYPE",
+  "PATH",
+  "PATHEXT",
+  "Path",
+  "SYSTEMROOT",
+  "SystemRoot",
+  "TEMP",
+  "TMP",
+  "TMPDIR",
+  "WAYLAND_DISPLAY",
+  "WINDIR",
+  "XAUTHORITY",
+  "XDG_CURRENT_DESKTOP",
+  "XDG_DATA_DIRS",
+  "XDG_SESSION_TYPE",
+  "windir",
+]);
+
+export function sanitizePackagedDesktopInheritedEnvironment(
+  inheritedEnvironment: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(inheritedEnvironment).filter(
+      ([name, value]) =>
+        value !== undefined && PACKAGED_SMOKE_INHERITED_ENVIRONMENT_ALLOWLIST.has(name),
+    ),
+  );
+}
+
 export function resolvePackagedDesktopLogPath(environment: NodeJS.ProcessEnv): string {
   const scientHome = environment.SCIENT_HOME;
   if (!scientHome) throw new Error("Packaged startup smoke requires an isolated SCIENT_HOME.");
   return join(scientHome, "userdata", "logs", "desktop-main.log");
 }
 
-function waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+export interface ProcessTerminationTarget {
+  readonly pid: number;
+  readonly processGroup: boolean;
+}
+
+export interface ProcessTerminationDependencies {
+  readonly platform?: NodeJS.Platform;
+  readonly runTaskkill?: (pid: number) => {
+    readonly error?: Error;
+    readonly status: number | null;
+  };
+  readonly sendSignal?: (target: ProcessTerminationTarget, signal: NodeJS.Signals) => void;
+  readonly waitForTargetsExit?: (
+    targets: ReadonlyArray<ProcessTerminationTarget>,
+    timeoutMs: number,
+  ) => Promise<boolean>;
+}
+
+function processTerminationTargetIsAlive(target: ProcessTerminationTarget): boolean {
+  try {
+    process.kill(target.processGroup ? -target.pid : target.pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+function waitForProcessTerminationTargets(
+  targets: ReadonlyArray<ProcessTerminationTarget>,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
   return new Promise((resolveExit) => {
-    const finish = (exited: boolean) => {
-      clearTimeout(timer);
-      child.off("exit", onExit);
-      resolveExit(exited);
+    const poll = () => {
+      if (targets.every((target) => !processTerminationTargetIsAlive(target))) {
+        resolveExit(true);
+        return;
+      }
+      if (Date.now() >= deadline) {
+        resolveExit(false);
+        return;
+      }
+      setTimeout(poll, 100);
     };
-    const onExit = () => finish(true);
-    const timer = setTimeout(() => finish(false), timeoutMs);
-    child.once("exit", onExit);
+    poll();
   });
 }
 
-async function terminateProcessTree(child: ChildProcess): Promise<void> {
-  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
-  if (process.platform === "win32") {
-    spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
-      stdio: "ignore",
-      windowsHide: true,
-    });
-    await waitForExit(child, 5_000);
-    return;
-  }
+function sendProcessTreeSignal(target: ProcessTerminationTarget, signal: NodeJS.Signals): void {
   try {
-    process.kill(-child.pid, "SIGTERM");
-  } catch {
-    child.kill("SIGTERM");
+    process.kill(target.processGroup ? -target.pid : target.pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
   }
-  if (await waitForExit(child, 5_000)) return;
-  try {
-    process.kill(-child.pid, "SIGKILL");
-  } catch {
-    child.kill("SIGKILL");
+}
+
+export async function terminateProcessTree(
+  child: ChildProcess,
+  dependencies: ProcessTerminationDependencies = {},
+  additionalProcessIds: ReadonlyArray<number> = [],
+): Promise<void> {
+  const platform = dependencies.platform ?? process.platform;
+  const childCanStillOwnProcesses =
+    platform !== "win32" || (child.exitCode === null && child.signalCode === null);
+  const targets = [
+    ...(child.pid && childCanStillOwnProcesses
+      ? [{ pid: child.pid, processGroup: platform !== "win32" }]
+      : []),
+    ...additionalProcessIds.map((pid) => ({ pid, processGroup: platform !== "win32" })),
+  ].filter(
+    (target, index, allTargets) =>
+      target.pid > 0 && allTargets.findIndex((candidate) => candidate.pid === target.pid) === index,
+  );
+  if (targets.length === 0) return;
+  const awaitTargetsExit = dependencies.waitForTargetsExit ?? waitForProcessTerminationTargets;
+  if (platform === "win32") {
+    const taskkillResults = targets.map((target) => ({
+      pid: target.pid,
+      result:
+        dependencies.runTaskkill?.(target.pid) ??
+        spawnSync("taskkill", ["/pid", String(target.pid), "/t", "/f"], {
+          stdio: "ignore",
+          windowsHide: true,
+        }),
+    }));
+    if (await awaitTargetsExit(targets, 5_000)) return;
+    const taskkillResult = taskkillResults
+      .map(({ pid, result }) =>
+        result.error
+          ? `${pid}: could not start (${result.error.message})`
+          : `${pid}: status ${result.status ?? "unknown"}`,
+      )
+      .join(", ");
+    throw new Error(
+      `Packaged process trees survived Windows cleanup; taskkill results: ${taskkillResult}.`,
+    );
   }
-  await waitForExit(child, 2_000);
+  const sendSignal = dependencies.sendSignal ?? sendProcessTreeSignal;
+  for (const target of targets) sendSignal(target, "SIGTERM");
+  if (await awaitTargetsExit(targets, 5_000)) return;
+  for (const target of targets) sendSignal(target, "SIGKILL");
+  if (await awaitTargetsExit(targets, 2_000)) return;
+  throw new Error(
+    `Packaged process trees ${targets.map(({ pid }) => pid).join(", ")} survived SIGTERM and SIGKILL.`,
+  );
 }
 
 function hasStartupProof(logPath: string): boolean {
@@ -335,11 +467,71 @@ function hasStartupProof(logPath: string): boolean {
     return (
       log.includes("app ready") &&
       log.includes("bootstrap main window created") &&
+      log.includes("renderer main frame loaded") &&
       log.includes("bootstrap backend ready source=")
     );
   } catch {
     return false;
   }
+}
+
+function readPackagedBackendProcessId(environment: NodeJS.ProcessEnv | null): number | null {
+  const scientHome = environment?.SCIENT_HOME;
+  if (!scientHome) return null;
+  try {
+    const state = JSON.parse(
+      readFileSync(join(scientHome, "userdata", "server-runtime.json"), "utf8"),
+    ) as { readonly pid?: unknown };
+    return Number.isInteger(state.pid) && Number(state.pid) > 0 ? Number(state.pid) : null;
+  } catch {
+    return null;
+  }
+}
+
+export interface PackagedDesktopChildOutcome {
+  readonly exited: { readonly code: number | null; readonly signal: NodeJS.Signals | null } | null;
+  readonly launchError: Error | null;
+}
+
+interface PackagedStartupProofWaitOptions {
+  readonly timeoutMs: number;
+  readonly hasProof: () => boolean;
+  readonly readOutcome: () => PackagedDesktopChildOutcome;
+  readonly now?: () => number;
+  readonly delay?: (milliseconds: number) => Promise<void>;
+  readonly stableForMs?: number;
+}
+
+export async function waitForPackagedStartupProof({
+  timeoutMs,
+  hasProof,
+  readOutcome,
+  now = Date.now,
+  delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds)),
+  stableForMs = 1_000,
+}: PackagedStartupProofWaitOptions): Promise<void> {
+  const deadline = now() + timeoutMs;
+  let proofObservedAt: number | null = null;
+  while (now() < deadline) {
+    const outcome = readOutcome();
+    if (outcome.launchError) {
+      throw new Error(`Packaged app could not start: ${outcome.launchError.message}`);
+    }
+    if (outcome.exited) {
+      throw new Error(
+        `Packaged app exited before stable startup proof (code=${outcome.exited.code ?? "null"}, signal=${outcome.exited.signal ?? "null"}).`,
+      );
+    }
+    const currentTime = now();
+    if (hasProof()) {
+      proofObservedAt ??= currentTime;
+      if (currentTime - proofObservedAt >= stableForMs) return;
+    } else {
+      proofObservedAt = null;
+    }
+    await delay(Math.min(200, Math.max(1, deadline - currentTime)));
+  }
+  throw new Error(`Packaged startup proof timed out after ${timeoutMs}ms.`);
 }
 
 export function resolveNativePackagedDesktopPlatform(
@@ -365,22 +557,23 @@ export async function verifyPackagedDesktopStartup(
   mkdirSync(extractionRoot, { recursive: true });
 
   let child: ChildProcess | null = null;
+  let environment: NodeJS.ProcessEnv | null = null;
   let output = "";
   try {
     const launch = prepareLaunch(options, extractionRoot);
-    const env = createPackagedDesktopSmokeEnvironment(join(temporaryRoot, "state"), options);
-    const logPath = resolvePackagedDesktopLogPath(env);
+    environment = createPackagedDesktopSmokeEnvironment(join(temporaryRoot, "state"), options);
+    const logPath = resolvePackagedDesktopLogPath(environment);
     child = spawn(launch.command, [...launch.args], {
       cwd: launch.cwd,
-      env,
+      env: environment,
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
 
     const childOutcome: {
-      exited: { code: number | null; signal: NodeJS.Signals | null } | null;
-      launchError: Error | null;
+      exited: PackagedDesktopChildOutcome["exited"];
+      launchError: PackagedDesktopChildOutcome["launchError"];
     } = { exited: null, launchError: null };
     child.once("exit", (code, signal) => {
       childOutcome.exited = { code, signal };
@@ -394,36 +587,28 @@ export async function verifyPackagedDesktopStartup(
     child.stdout?.on("data", recordOutput);
     child.stderr?.on("data", recordOutput);
 
-    const deadline = Date.now() + options.timeoutMs;
-    while (Date.now() < deadline) {
-      if (hasStartupProof(logPath)) {
-        console.log(
-          `Packaged ${options.platform}/${options.arch} startup smoke passed from isolated Scient state.`,
-        );
-        return;
-      }
-      if (childOutcome.launchError) {
-        throw new Error(`Packaged app could not start: ${childOutcome.launchError.message}`);
-      }
-      if (childOutcome.exited) {
-        throw new Error(
-          `Packaged app exited before startup proof (code=${childOutcome.exited.code ?? "null"}, signal=${childOutcome.exited.signal ?? "null"}).`,
-        );
-      }
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 200));
-    }
-    throw new Error(`Packaged startup proof timed out after ${options.timeoutMs}ms.`);
+    await waitForPackagedStartupProof({
+      timeoutMs: options.timeoutMs,
+      hasProof: () => hasStartupProof(logPath),
+      readOutcome: () => childOutcome,
+    });
+    console.log(
+      `Packaged ${options.platform}/${options.arch} startup smoke passed from isolated Scient state.`,
+    );
   } catch (error) {
     const detail = output.trim() ? `\nPackaged process output:\n${output.trim()}` : "";
-    throw new Error(
-      `${error instanceof Error ? error.message : String(error)}${detail}`,
-      error instanceof Error ? { cause: error } : undefined,
-    );
+    throw new Error(`${error instanceof Error ? error.message : String(error)}${detail}`, {
+      cause: error,
+    });
   } finally {
-    if (child) {
-      await terminateProcessTree(child);
+    try {
+      if (child) {
+        const backendProcessId = readPackagedBackendProcessId(environment);
+        await terminateProcessTree(child, {}, backendProcessId === null ? [] : [backendProcessId]);
+      }
+    } finally {
+      rmSync(temporaryRoot, { recursive: true, force: true });
     }
-    rmSync(temporaryRoot, { recursive: true, force: true });
   }
 }
 
