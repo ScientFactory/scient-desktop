@@ -189,6 +189,27 @@ describe("DesktopBackendSupervisor", () => {
     expect(harness.restarts).toHaveLength(1);
   });
 
+  it("replaces only the generation whose semantic readiness failed", async () => {
+    const harness = makeHarness();
+    await harness.supervisor.start();
+    const first = harness.children[0]!;
+
+    const restarting = harness.supervisor.restartGeneration(1, "readiness check failed");
+    await settleLifecycle();
+    first.exit(0);
+    await restarting;
+
+    expect(harness.restarts).toEqual([
+      { attempt: 0, delayMs: 500, reason: "readiness check failed" },
+    ]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(harness.supervisor.currentGeneration?.number).toBe(2);
+
+    await harness.supervisor.restartGeneration(1, "stale readiness timeout");
+    expect(harness.supervisor.currentGeneration?.number).toBe(2);
+    expect(harness.restarts).toHaveLength(1);
+  });
+
   it("uses graceful IPC and does not force-kill a backend that exits", async () => {
     const harness = makeHarness();
     await harness.supervisor.start();

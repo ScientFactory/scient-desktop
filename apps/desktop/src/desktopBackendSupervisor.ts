@@ -144,6 +144,36 @@ export class DesktopBackendSupervisor {
     this.#restartAttempt = 0;
   }
 
+  restartGeneration(generation: number, reason: string): Promise<void> {
+    return this.#enqueue(async () => {
+      if (
+        !this.#desiredRunning ||
+        !this.#active ||
+        this.#active.number !== generation ||
+        this.#active.closed
+      ) {
+        return;
+      }
+      const target = { child: this.#active.child, number: generation };
+      const exited = await this.#stopActive(reason);
+      if (exited && this.#desiredRunning) {
+        this.#scheduleRestart(reason);
+        return;
+      }
+      if (exited) return;
+
+      const error = new DesktopBackendTerminationError(target, reason);
+      this.#desiredRunning = false;
+      this.#clearRestartTimer();
+      this.#options.onError?.(error, `generation ${generation} restart blocked`);
+      this.#options.onUnrecoverableGeneration?.({
+        error,
+        generation: target,
+        reason,
+      });
+    });
+  }
+
   #enqueue(action: () => Promise<void>): Promise<void> {
     const next = this.#transition.then(action, action);
     this.#transition = next.catch((error: unknown) => {

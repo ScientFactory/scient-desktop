@@ -4,6 +4,7 @@ export interface WaitForBackendStartupReadyOptions {
   readonly listeningPromise?: Promise<void> | null;
   readonly waitForHttpReady: () => Promise<void>;
   readonly onHttpReady?: () => void;
+  readonly onHttpFailure?: (error: unknown) => void;
 }
 
 export async function waitForBackendStartupReady(
@@ -13,9 +14,14 @@ export async function waitForBackendStartupReady(
   const listeningPromise = options.listeningPromise;
 
   if (!listeningPromise) {
-    await httpReadyPromise;
-    options.onHttpReady?.();
-    return "http";
+    try {
+      await httpReadyPromise;
+      options.onHttpReady?.();
+      return "http";
+    } catch (error) {
+      if (!isBackendReadinessAborted(error)) options.onHttpFailure?.(error);
+      throw error;
+    }
   }
 
   return await new Promise<"listening" | "http">((resolve, reject) => {
@@ -47,9 +53,7 @@ export async function waitForBackendStartupReady(
         settleResolve("http");
       },
       (error) => {
-        if (settled && isBackendReadinessAborted(error)) {
-          return;
-        }
+        if (!isBackendReadinessAborted(error)) options.onHttpFailure?.(error);
         settleReject(error);
       },
     );

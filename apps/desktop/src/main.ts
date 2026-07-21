@@ -561,6 +561,14 @@ async function waitForBackendWindowReady(baseUrl: string): Promise<"listening" |
     onHttpReady: () => {
       if (generation !== null) backendSupervisor?.markReady(generation);
     },
+    onHttpFailure: (error) => {
+      if (generation === null) return;
+      const message = formatErrorMessage(error);
+      writeDesktopLogHeader(
+        `backend generation=${generation} semantic readiness failed message=${message}`,
+      );
+      void backendSupervisor?.restartGeneration(generation, `readiness failed: ${message}`);
+    },
   });
   return source;
 }

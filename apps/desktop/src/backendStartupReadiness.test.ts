@@ -47,6 +47,30 @@ describe("waitForBackendStartupReady", () => {
     await vi.waitFor(() => expect(onHttpReady).toHaveBeenCalledTimes(1));
   });
 
+  it("reports semantic readiness failure after the listening signal already opened the window", async () => {
+    let resolveListening!: () => void;
+    let rejectHttp!: (error: Error) => void;
+    const listeningPromise = new Promise<void>((resolve) => {
+      resolveListening = resolve;
+    });
+    const onHttpFailure = vi.fn();
+    const resultPromise = waitForBackendStartupReady({
+      listeningPromise,
+      waitForHttpReady: () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectHttp = reject;
+        }),
+      onHttpFailure,
+    });
+
+    resolveListening();
+    await expect(resultPromise).resolves.toBe("listening");
+
+    const error = new Error("startup readiness timed out");
+    rejectHttp(error);
+    await vi.waitFor(() => expect(onHttpFailure).toHaveBeenCalledWith(error));
+  });
+
   it("rejects when the listening promise fails before http is ready", async () => {
     const error = new Error("backend exited");
 
