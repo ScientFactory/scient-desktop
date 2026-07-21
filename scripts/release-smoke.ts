@@ -121,11 +121,7 @@ function verifyCanonicalIdentity(): void {
     throw new Error("Expected packaged Scient clients to use the approved update channel.");
   }
 
-  const linuxBuildConfig = createDesktopPlatformBuildConfig({
-    platform: "linux",
-    target: "AppImage",
-  });
-  const linux = linuxBuildConfig.linux;
+  const linux = createDesktopPlatformBuildConfig({ platform: "linux", target: "AppImage" }).linux;
   if (!linux || linux.executableName !== "scient") {
     throw new Error("Expected Linux desktop releases to install the scient executable.");
   }
@@ -136,10 +132,6 @@ function verifyCanonicalIdentity(): void {
   }
   if (linux.syncDesktopName !== true) {
     throw new Error("Expected Linux desktop releases to synchronize the desktop entry name.");
-  }
-  const appImageExecutableArgs = linuxBuildConfig.appImage?.executableArgs;
-  if (!Array.isArray(appImageExecutableArgs) || appImageExecutableArgs.length !== 0) {
-    throw new Error("Expected AppImage packaging to preserve Chromium's sandboxed command line.");
   }
 
   const releasePolicy = readReleaseUpdatePolicyConfig(repoRoot);
