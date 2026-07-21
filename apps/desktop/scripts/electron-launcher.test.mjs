@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   isLinuxSetuidSandboxConfigured,
+  isLinuxUserNamespaceSandboxAvailable,
   LinuxSandboxConfigurationError,
   resolveLinuxSandboxArgs,
 } from "./electron-launcher.mjs";
@@ -12,17 +13,46 @@ const SANDBOX_PATH = "/repo/node_modules/electron/dist/chrome-sandbox";
 describe("Linux Electron sandbox launch policy", () => {
   it("leaves non-Linux launches unchanged without inspecting chrome-sandbox", () => {
     const lstat = vi.fn();
+    const runUnshare = vi.fn();
 
-    expect(resolveLinuxSandboxArgs(ELECTRON_PATH, { platform: "darwin", lstat })).toEqual([]);
+    expect(
+      resolveLinuxSandboxArgs(ELECTRON_PATH, { platform: "darwin", lstat, runUnshare }),
+    ).toEqual([]);
     expect(lstat).not.toHaveBeenCalled();
+    expect(runUnshare).not.toHaveBeenCalled();
   });
 
   it("keeps Chromium's sandbox when chrome-sandbox is root-owned setuid 4755", () => {
     const lstat = vi.fn(() => ({ isFile: () => true, mode: 0o104755, uid: 0 }));
+    const runUnshare = vi.fn();
 
     expect(isLinuxSetuidSandboxConfigured(ELECTRON_PATH, { platform: "linux", lstat })).toBe(true);
-    expect(resolveLinuxSandboxArgs(ELECTRON_PATH, { platform: "linux", lstat })).toEqual([]);
+    expect(
+      resolveLinuxSandboxArgs(ELECTRON_PATH, { platform: "linux", lstat, runUnshare }),
+    ).toEqual([]);
     expect(lstat).toHaveBeenCalledWith(SANDBOX_PATH);
+    expect(runUnshare).not.toHaveBeenCalled();
+  });
+
+  it("keeps Chromium's sandbox when unprivileged user namespaces work without a helper", () => {
+    const runUnshare = vi.fn(() => ({ status: 0 }));
+
+    expect(
+      resolveLinuxSandboxArgs(ELECTRON_PATH, {
+        platform: "linux",
+        lstat: () => {
+          throw new Error("ENOENT");
+        },
+        runUnshare,
+      }),
+    ).toEqual([]);
+    expect(runUnshare).toHaveBeenCalledWith("unshare", ["-Ur", "true"], {
+      shell: false,
+      stdio: "ignore",
+      timeout: 5_000,
+      windowsHide: true,
+    });
+    expect(isLinuxUserNamespaceSandboxAvailable({ platform: "linux", runUnshare })).toBe(true);
   });
 
   it.each([
@@ -36,17 +66,19 @@ describe("Linux Electron sandbox launch policy", () => {
       resolveLinuxSandboxArgs(ELECTRON_PATH, {
         platform: "linux",
         lstat: () => metadata,
+        runUnshare: () => ({ status: 1 }),
       }),
     ).toThrow(LinuxSandboxConfigurationError);
   });
 
-  it("fails closed when chrome-sandbox is missing", () => {
+  it("fails closed when both chrome-sandbox and unprivileged user namespaces are unavailable", () => {
     expect(() =>
       resolveLinuxSandboxArgs(ELECTRON_PATH, {
         platform: "linux",
         lstat: () => {
           throw new Error("ENOENT");
         },
+        runUnshare: () => ({ status: 1 }),
       }),
     ).toThrow(expect.objectContaining({ sandboxPath: SANDBOX_PATH }));
   });
@@ -58,6 +90,7 @@ describe("Linux Electron sandbox launch policy", () => {
       resolveLinuxSandboxArgs(ELECTRON_PATH, {
         platform: "linux",
         lstat: () => ({ isFile: () => false, mode: 0, uid: 1000 }),
+        runUnshare: () => ({ status: 1 }),
         development: true,
         env: { SCIENT_DEV_ALLOW_NO_SANDBOX: "1" },
         warn,
@@ -71,6 +104,7 @@ describe("Linux Electron sandbox launch policy", () => {
       resolveLinuxSandboxArgs(ELECTRON_PATH, {
         platform: "linux",
         lstat: () => ({ isFile: () => false, mode: 0, uid: 1000 }),
+        runUnshare: () => ({ status: 1 }),
         development: false,
         env: { SCIENT_DEV_ALLOW_NO_SANDBOX: "1" },
       }),
