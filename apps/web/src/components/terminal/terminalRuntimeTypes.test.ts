@@ -8,12 +8,42 @@ import {
   acceptTerminalOutputSequence,
   acceptTerminalSnapshotBarrier,
   buildTerminalRuntimeKey,
+  supersedeTerminalSnapshotCapture,
 } from "./terminalRuntimeTypes";
 
 describe("buildTerminalRuntimeKey", () => {
   it("builds a thread-scoped runtime key for terminal persistence", () => {
     expect(buildTerminalRuntimeKey("thread-123", "terminal-abc")).toBe("thread-123::terminal-abc");
   });
+});
+
+describe("terminal snapshot capture", () => {
+  it.each(["clear", "restart"])(
+    "makes an in-flight snapshot stale when a %s event wins the race",
+    () => {
+      const capture = {
+        snapshotReconcileActive: true,
+        snapshotBufferedOutputEvents: [
+          {
+            type: "output" as const,
+            threadId: "thread-1",
+            terminalId: "terminal-1",
+            createdAt: new Date().toISOString(),
+            data: "stale",
+            outputEpoch: "epoch-1",
+            outputSequence: 1,
+          },
+        ],
+        snapshotReconcileRequestId: 7,
+      };
+
+      expect(supersedeTerminalSnapshotCapture(capture)).toBe(true);
+      expect(capture.snapshotReconcileActive).toBe(false);
+      expect(capture.snapshotBufferedOutputEvents).toEqual([]);
+      expect(capture.snapshotReconcileRequestId).toBe(8);
+      expect(supersedeTerminalSnapshotCapture(capture)).toBe(false);
+    },
+  );
 });
 
 describe("terminal output barriers", () => {

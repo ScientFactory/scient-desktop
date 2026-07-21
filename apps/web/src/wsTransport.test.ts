@@ -9,8 +9,10 @@ import { Exit, Stream } from "effect";
 
 import {
   EFFECT_RPC_RETRY_CONFIG,
+  isConnectionProtocolFailure,
   isConnectionTransportFailure,
   shouldKeepServerLifecycleStream,
+  streamRestartDelayMs,
   WsTransport,
 } from "./wsTransport";
 
@@ -100,6 +102,7 @@ function makeStreamHarness() {
       listener: (event: unknown) => void,
       options: { readonly isDesired: () => boolean; readonly replace?: boolean },
     ) => void;
+    stopStream: (key: string) => void;
   };
   internals.disposed = false;
   internals.supervisor = supervisor;
@@ -108,7 +111,8 @@ function makeStreamHarness() {
       isDesired: () => true,
       replace,
     });
-  return { cancels, exits, runtime, start, supervisor, transport };
+  const stop = () => internals.stopStream("test.stream");
+  return { cancels, exits, runtime, start, stop, supervisor, transport };
 }
 
 beforeEach(() => {
@@ -162,6 +166,14 @@ describe("WsTransport", () => {
     ).toBe(false);
   });
 
+  it("recognizes only structured protocol failures and computes bounded jittered backoff", () => {
+    expect(isConnectionProtocolFailure({ _tag: "ParseError" })).toBe(true);
+    expect(isConnectionProtocolFailure(new Error("ParseError in domain text"))).toBe(false);
+    expect(streamRestartDelayMs(0, () => 0.5)).toBe(250);
+    expect(streamRestartDelayMs(1, () => 0.5)).toBe(500);
+    expect(streamRestartDelayMs(99, () => 0.5)).toBe(10_000);
+  });
+
   it("waits for exact old-stream settlement before installing a replacement", async () => {
     const harness = makeStreamHarness();
     harness.start();
@@ -177,8 +189,24 @@ describe("WsTransport", () => {
     harness.transport.dispose();
   });
 
+  it("waits for stream settlement across an unsubscribe-resubscribe race", async () => {
+    const harness = makeStreamHarness();
+    harness.start();
+    await vi.waitFor(() => expect(harness.runtime.runCallback).toHaveBeenCalledTimes(1));
+
+    harness.stop();
+    harness.start();
+    await vi.waitFor(() => expect(harness.cancels[0]).toHaveBeenCalledTimes(1));
+    expect(harness.runtime.runCallback).toHaveBeenCalledTimes(1);
+
+    harness.exits[0]!(Exit.void);
+    await vi.waitFor(() => expect(harness.runtime.runCallback).toHaveBeenCalledTimes(2));
+    harness.transport.dispose();
+  });
+
   it("restarts a domain-failed stream without replacing its healthy session", async () => {
     vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
     const harness = makeStreamHarness();
     harness.start();
     await vi.advanceTimersByTimeAsync(0);
@@ -193,6 +221,7 @@ describe("WsTransport", () => {
 
   it("restarts a normally completed stream without replacing its healthy session", async () => {
     vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
     const harness = makeStreamHarness();
     harness.start();
     await vi.advanceTimersByTimeAsync(0);
@@ -202,6 +231,45 @@ describe("WsTransport", () => {
 
     expect(harness.supervisor.invalidate).not.toHaveBeenCalled();
     expect(harness.runtime.runCallback).toHaveBeenCalledTimes(2);
+    harness.transport.dispose();
+  });
+
+  it("backs off repeated stream-local failures and resets after a sustained stream", async () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const harness = makeStreamHarness();
+    harness.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    harness.exits[0]!(Exit.fail({ _tag: "SnapshotOutOfDate" }));
+    await vi.advanceTimersByTimeAsync(250);
+    harness.exits[1]!(Exit.fail({ _tag: "SnapshotOutOfDate" }));
+    await vi.advanceTimersByTimeAsync(499);
+    expect(harness.runtime.runCallback).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.runtime.runCallback).toHaveBeenCalledTimes(3);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    harness.exits[2]!(Exit.fail({ _tag: "SnapshotOutOfDate" }));
+    await vi.advanceTimersByTimeAsync(249);
+    expect(harness.runtime.runCallback).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(harness.runtime.runCallback).toHaveBeenCalledTimes(4);
+    harness.transport.dispose();
+  });
+
+  it("invalidates the session for a structured protocol stream failure", async () => {
+    const harness = makeStreamHarness();
+    harness.start();
+    await vi.waitFor(() => expect(harness.runtime.runCallback).toHaveBeenCalledTimes(1));
+
+    harness.exits[0]!(Exit.fail({ _tag: "ParseError" }));
+    await vi.waitFor(() => expect(harness.supervisor.invalidate).toHaveBeenCalledTimes(1));
+
+    expect(harness.supervisor.invalidate).toHaveBeenCalledWith(
+      1,
+      "stream test.stream protocol failed",
+    );
     harness.transport.dispose();
   });
 

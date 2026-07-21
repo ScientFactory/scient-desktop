@@ -51,6 +51,25 @@ export interface TerminalPendingWrite {
 
 export type TerminalOutputEvent = Extract<TerminalEvent, { type: "output" }>;
 
+export interface TerminalSnapshotCaptureState {
+  snapshotReconcileActive: boolean;
+  snapshotBufferedOutputEvents: TerminalOutputEvent[];
+  snapshotReconcileRequestId: number;
+}
+
+/**
+ * A clear/restart/start event is authoritative and causally supersedes an
+ * in-flight snapshot. Cancel that capture so its older history can never be
+ * painted after the control event.
+ */
+export function supersedeTerminalSnapshotCapture(state: TerminalSnapshotCaptureState): boolean {
+  if (!state.snapshotReconcileActive) return false;
+  state.snapshotReconcileActive = false;
+  state.snapshotBufferedOutputEvents.length = 0;
+  state.snapshotReconcileRequestId += 1;
+  return true;
+}
+
 export type TerminalRuntimeStatus = "connecting" | "replaying" | "ready" | "error";
 
 export interface TerminalOutputBarrier {

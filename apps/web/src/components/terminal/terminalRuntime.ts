@@ -49,6 +49,7 @@ import { terminalEventDispatcher } from "./terminalEventDispatcher";
 import {
   acceptTerminalOutputSequence,
   acceptTerminalSnapshotBarrier,
+  supersedeTerminalSnapshotCapture,
   type TerminalOutputEvent,
   type TerminalRuntimeConfig,
   type TerminalRuntimeEntry,
@@ -1065,7 +1066,7 @@ export function createRuntimeEntry(config: TerminalRuntimeConfig): TerminalRunti
 
       if (event.type === "started" || event.type === "restarted") {
         entry.hasHandledExit = false;
-        if (entry.snapshotReconcileActive) return;
+        supersedeTerminalSnapshotCapture(entry);
         entry.lastOutputEpoch = event.snapshot.outputEpoch;
         entry.lastOutputSequence = event.snapshot.outputSequence;
         const shouldReplaySnapshot =
@@ -1079,6 +1080,7 @@ export function createRuntimeEntry(config: TerminalRuntimeConfig): TerminalRunti
       }
 
       if (event.type === "cleared") {
+        supersedeTerminalSnapshotCapture(entry);
         entry.titleInputBuffer = "";
         entry.linkMatchCache.clear();
         clearPendingWrites(entry);

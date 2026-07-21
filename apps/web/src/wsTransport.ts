@@ -66,6 +66,7 @@ interface StreamCleanup {
   readonly identity: symbol;
   readonly cancel: () => void;
   readonly settled: Promise<void>;
+  readonly healthyTimer: ReturnType<typeof setTimeout>;
 }
 
 interface StreamStartToken {
@@ -95,12 +96,26 @@ const makeRpcClient = RpcClient.make(WsRpcGroup);
 const REQUEST_TIMEOUT_MS = 60_000;
 const SESSION_VALIDATION_TIMEOUT_MS = 15_000;
 const WAKE_PROBE_TIMEOUT_MS = 5_000;
-const STREAM_RESTART_DELAY_MS = 250;
+const STREAM_RESTART_BASE_DELAY_MS = 250;
+const STREAM_RESTART_MAX_DELAY_MS = 10_000;
+const STREAM_RESTART_JITTER_RATIO = 0.2;
+const STREAM_RESTART_RESET_AFTER_MS = 30_000;
+const STREAM_SETTLEMENT_TIMEOUT_MS = 2_000;
 
 export const EFFECT_RPC_RETRY_CONFIG = {
   retryTransientErrors: false,
   retryCount: 0,
 } as const;
+
+export function streamRestartDelayMs(attempt: number, random = Math.random): number {
+  const boundedAttempt = Math.max(0, Math.floor(attempt));
+  const exponential = Math.min(
+    STREAM_RESTART_BASE_DELAY_MS * 2 ** boundedAttempt,
+    STREAM_RESTART_MAX_DELAY_MS,
+  );
+  const jitter = 1 + (random() * 2 - 1) * STREAM_RESTART_JITTER_RATIO;
+  return Math.max(0, Math.round(exponential * jitter));
+}
 
 function resolveRpcUrl(rawUrl: string): string {
   const url = new URL(rawUrl);
@@ -180,6 +195,23 @@ export function isConnectionTransportFailure(error: unknown): boolean {
   return visit(error);
 }
 
+export function isConnectionProtocolFailure(error: unknown): boolean {
+  const seen = new Set<object>();
+  const visit = (value: unknown): boolean => {
+    if (!value || typeof value !== "object" || seen.has(value)) return false;
+    seen.add(value);
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record._tag === "string" &&
+      /^(?:ParseError|SchemaError|DecodeError|EncodeError|ProtocolError)$/.test(record._tag)
+    ) {
+      return true;
+    }
+    return [record.cause, record.reason, record.error, record.failure].some(visit);
+  };
+  return visit(error);
+}
+
 function omitNullUserInputAnswers(input: unknown): unknown {
   if (!input || typeof input !== "object") {
     return input;
@@ -225,6 +257,10 @@ export class WsTransport {
   private readonly streamStartTokens = new Map<string, StreamStartToken>();
   private readonly streamTransitions = new Map<string, Promise<void>>();
   private readonly streamRestartTimers = new Map<string, StreamRestartTimer>();
+  private readonly streamRestartAttempts = new Map<
+    string,
+    { readonly generation: number; readonly attempt: number }
+  >();
   private readonly wakeCleanups: Array<() => void> = [];
   private shellSubscribed = false;
   private readonly threadSubscriptions = new Map<string, unknown>();
@@ -729,8 +765,9 @@ export class WsTransport {
     const existing = this.streamCleanups.get(key);
     if (existing) {
       this.streamCleanups.delete(key);
+      clearTimeout(existing.healthyTimer);
       existing.cancel();
-      await existing.settled;
+      await this.waitForStreamSettlement(existing.settled);
     }
     if (
       this.disposed ||
@@ -772,7 +809,12 @@ export class WsTransport {
           },
         },
       );
-      cleanup = { generation: session.generation, identity, cancel, settled };
+      const healthyTimer = setTimeout(() => {
+        if (this.streamCleanups.get(key) === cleanup) {
+          this.streamRestartAttempts.delete(key);
+        }
+      }, STREAM_RESTART_RESET_AFTER_MS);
+      cleanup = { generation: session.generation, identity, cancel, settled, healthyTimer };
       this.streamCleanups.set(key, cleanup);
       if (this.streamStartTokens.get(key)?.identity === identity) {
         this.streamStartTokens.delete(key);
@@ -800,6 +842,7 @@ export class WsTransport {
   ): void {
     if (this.streamCleanups.get(key) !== cleanup || this.disposed) return;
     this.streamCleanups.delete(key);
+    clearTimeout(cleanup.healthyTimer);
     if (Exit.isFailure(exit)) {
       const error = causeToError(exit.cause);
       const failure = Cause.findErrorOption(exit.cause);
@@ -808,6 +851,13 @@ export class WsTransport {
         isConnectionTransportFailure(error)
       ) {
         this.supervisor.invalidate(session.generation, `stream ${key} transport failed`);
+        return;
+      }
+      if (
+        (Option.isSome(failure) && isConnectionProtocolFailure(failure.value)) ||
+        isConnectionProtocolFailure(error)
+      ) {
+        this.supervisor.invalidate(session.generation, `stream ${key} protocol failed`);
         return;
       }
       if (!Cause.hasInterruptsOnly(exit.cause)) {
@@ -834,6 +884,10 @@ export class WsTransport {
       this.supervisor.invalidate(session.generation, `stream ${key} transport failed to start`);
       return;
     }
+    if (isConnectionProtocolFailure(error)) {
+      this.supervisor.invalidate(session.generation, `stream ${key} protocol failed to start`);
+      return;
+    }
     console.warn(
       `[scient-connection] stream ${key} failed to start without closing the session: ${connectionErrorSummary(error)}`,
     );
@@ -858,6 +912,11 @@ export class WsTransport {
       return;
     }
     this.clearStreamRestartTimer(key);
+    const previousAttempt = this.streamRestartAttempts.get(key);
+    const attempt =
+      previousAttempt?.generation === session.generation ? previousAttempt.attempt + 1 : 0;
+    this.streamRestartAttempts.set(key, { generation: session.generation, attempt });
+    const delayMs = streamRestartDelayMs(attempt);
     const timer = setTimeout(() => {
       if (this.streamRestartTimers.get(key)?.timer !== timer) return;
       this.streamRestartTimers.delete(key);
@@ -869,17 +928,45 @@ export class WsTransport {
         return;
       }
       this.startStream(session, key, streamFactory, listener, options);
-    }, STREAM_RESTART_DELAY_MS);
+    }, delayMs);
     this.streamRestartTimers.set(key, { generation: session.generation, timer });
   }
 
   private stopStream(key: string): void {
     this.streamStartTokens.delete(key);
     this.clearStreamRestartTimer(key);
-    const cleanup = this.streamCleanups.get(key);
-    if (!cleanup) return;
-    this.streamCleanups.delete(key);
-    cleanup.cancel();
+    this.streamRestartAttempts.delete(key);
+    const previous = this.streamTransitions.get(key) ?? Promise.resolve();
+    const transition = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const cleanup = this.streamCleanups.get(key);
+        if (!cleanup) return;
+        this.streamCleanups.delete(key);
+        clearTimeout(cleanup.healthyTimer);
+        cleanup.cancel();
+        await this.waitForStreamSettlement(cleanup.settled);
+      })
+      .finally(() => {
+        if (this.streamTransitions.get(key) === transition) {
+          this.streamTransitions.delete(key);
+        }
+      });
+    this.streamTransitions.set(key, transition);
+  }
+
+  private async waitForStreamSettlement(settled: Promise<void>): Promise<void> {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    try {
+      await Promise.race([
+        settled,
+        new Promise<void>((resolve) => {
+          timeout = setTimeout(resolve, STREAM_SETTLEMENT_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeout !== null) clearTimeout(timeout);
+    }
   }
 
   private clearStreamRestartTimer(key: string): void {
