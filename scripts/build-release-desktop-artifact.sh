@@ -53,8 +53,6 @@ if [[ "$platform" == "mac" ]]; then
       exit 1
     fi
     echo "Build-only macOS signing disabled because the Apple signing configuration is incomplete."
-  elif [[ "$PUBLISH_RELEASE" == "true" && "$ALLOW_UNSIGNED_RELEASE" == "true" ]]; then
-    echo "Unsigned macOS early-access publication explicitly enabled."
   elif [[ "$PUBLISH_RELEASE" == "true" ]]; then
     echo "Public macOS releases require all Apple signing and notarization secrets." >&2
     exit 1
