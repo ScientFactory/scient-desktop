@@ -1,5 +1,5 @@
 // FILE: useProviderStatusRefresh.ts
-// Purpose: Shared provider-status refresh hooks — focus/periodic version checks plus an
+// Purpose: Shared provider-status refresh hooks — scheduled version checks plus an
 //          imperative refresh callback for UI affordances (voice auth retry, banners).
 // Layer: Web hooks
 // Exports: useProviderStatusRefresh, useRefreshProviderStatusesNow
@@ -53,8 +53,6 @@ type ProviderStatusRefreshOptions = {
   readonly enabled?: boolean;
   readonly initialDelayMs?: number;
   readonly intervalMs?: number;
-  readonly minIntervalMs?: number;
-  readonly refreshOnFocus?: boolean;
 };
 
 export function useProviderStatusRefresh(options: ProviderStatusRefreshOptions): void {
@@ -62,8 +60,6 @@ export function useProviderStatusRefresh(options: ProviderStatusRefreshOptions):
   const enabled = options.enabled ?? true;
   const initialDelayMs = options.initialDelayMs;
   const intervalMs = options.intervalMs;
-  const minIntervalMs = options.minIntervalMs ?? 0;
-  const refreshOnFocus = options.refreshOnFocus ?? false;
 
   useEffect(() => {
     if (!enabled || typeof window === "undefined" || typeof document === "undefined") {
@@ -71,20 +67,14 @@ export function useProviderStatusRefresh(options: ProviderStatusRefreshOptions):
     }
 
     let disposed = false;
-    let lastRefreshAtMs = 0;
     const refreshProviderStatuses = () => {
       if (document.visibilityState !== "visible") {
-        return;
-      }
-      const nowMs = Date.now();
-      if (minIntervalMs > 0 && nowMs - lastRefreshAtMs < minIntervalMs) {
         return;
       }
       const api = readNativeApi();
       if (!api) {
         return;
       }
-      lastRefreshAtMs = nowMs;
       void api.server
         .refreshProviders()
         .then((result) => {
@@ -105,11 +95,6 @@ export function useProviderStatusRefresh(options: ProviderStatusRefreshOptions):
         ? window.setInterval(refreshProviderStatuses, intervalMs)
         : null;
 
-    if (refreshOnFocus) {
-      window.addEventListener("focus", refreshProviderStatuses);
-      document.addEventListener("visibilitychange", refreshProviderStatuses);
-    }
-
     return () => {
       disposed = true;
       if (initialRefreshId !== null) {
@@ -118,10 +103,6 @@ export function useProviderStatusRefresh(options: ProviderStatusRefreshOptions):
       if (refreshIntervalId !== null) {
         window.clearInterval(refreshIntervalId);
       }
-      if (refreshOnFocus) {
-        window.removeEventListener("focus", refreshProviderStatuses);
-        document.removeEventListener("visibilitychange", refreshProviderStatuses);
-      }
     };
-  }, [enabled, initialDelayMs, intervalMs, minIntervalMs, queryClient, refreshOnFocus]);
+  }, [enabled, initialDelayMs, intervalMs, queryClient]);
 }

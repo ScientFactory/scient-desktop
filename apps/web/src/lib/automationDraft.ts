@@ -99,8 +99,8 @@ export function buildAutomationDraftWarnings(input: {
   if (input.runtimeMode === "full-access") {
     warnings.push({
       id: "full-access",
-      title: "Full access",
-      detail: "Scheduled full-access runs can make changes without per-step approval.",
+      title: "Unrestricted agent",
+      detail: "Scheduled unrestricted runs can make changes without per-step approval.",
       requiresAcknowledgement: true,
     });
   }

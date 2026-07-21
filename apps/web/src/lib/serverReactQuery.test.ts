@@ -36,7 +36,7 @@ describe("serverLocalServersQueryOptions", () => {
 
     expect(options.enabled).toBe(true);
     expect(options.refetchInterval).toBe(false);
-    expect(options.refetchOnWindowFocus).toBe(true);
+    expect(options.refetchOnWindowFocus).toBe(false);
   });
 
   it("uses visible polling while a Synara-owned project run is active", () => {
