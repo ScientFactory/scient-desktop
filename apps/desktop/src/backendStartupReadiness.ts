@@ -3,7 +3,7 @@ import { isBackendReadinessAborted } from "./backendReadiness";
 export interface WaitForBackendStartupReadyOptions {
   readonly listeningPromise?: Promise<void> | null;
   readonly waitForHttpReady: () => Promise<void>;
-  readonly cancelHttpWait: () => void;
+  readonly onHttpReady?: () => void;
 }
 
 export async function waitForBackendStartupReady(
@@ -14,6 +14,7 @@ export async function waitForBackendStartupReady(
 
   if (!listeningPromise) {
     await httpReadyPromise;
+    options.onHttpReady?.();
     return "http";
   }
 
@@ -25,9 +26,6 @@ export async function waitForBackendStartupReady(
         return;
       }
       settled = true;
-      if (source === "listening") {
-        options.cancelHttpWait();
-      }
       resolve(source);
     };
 
@@ -44,7 +42,10 @@ export async function waitForBackendStartupReady(
       (error) => settleReject(error),
     );
     httpReadyPromise.then(
-      () => settleResolve("http"),
+      () => {
+        options.onHttpReady?.();
+        settleResolve("http");
+      },
       (error) => {
         if (settled && isBackendReadinessAborted(error)) {
           return;

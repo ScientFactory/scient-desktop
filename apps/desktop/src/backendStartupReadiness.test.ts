@@ -5,37 +5,46 @@ import { waitForBackendStartupReady } from "./backendStartupReadiness";
 describe("waitForBackendStartupReady", () => {
   it("resolves from http when no listening promise is provided", async () => {
     const waitForHttpReady = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
-    const cancelHttpWait = vi.fn();
+    const onHttpReady = vi.fn();
 
     await expect(
       waitForBackendStartupReady({
         waitForHttpReady,
-        cancelHttpWait,
+        onHttpReady,
       }),
     ).resolves.toBe("http");
 
     expect(waitForHttpReady).toHaveBeenCalledTimes(1);
-    expect(cancelHttpWait).not.toHaveBeenCalled();
+    expect(onHttpReady).toHaveBeenCalledTimes(1);
   });
 
-  it("prefers the listening signal and cancels the http wait", async () => {
+  it("opens from the listening signal without declaring semantic readiness", async () => {
     let resolveListening!: () => void;
+    let resolveHttp!: () => void;
     const listeningPromise = new Promise<void>((resolve) => {
       resolveListening = resolve;
     });
-    const waitForHttpReady = vi.fn(() => new Promise<void>(() => {}));
-    const cancelHttpWait = vi.fn();
+    const waitForHttpReady = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveHttp = resolve;
+        }),
+    );
+    const onHttpReady = vi.fn();
 
     const resultPromise = waitForBackendStartupReady({
       listeningPromise,
       waitForHttpReady,
-      cancelHttpWait,
+      onHttpReady,
     });
 
     resolveListening();
 
     await expect(resultPromise).resolves.toBe("listening");
-    expect(cancelHttpWait).toHaveBeenCalledTimes(1);
+    expect(onHttpReady).not.toHaveBeenCalled();
+
+    resolveHttp();
+    await vi.waitFor(() => expect(onHttpReady).toHaveBeenCalledTimes(1));
   });
 
   it("rejects when the listening promise fails before http is ready", async () => {
@@ -45,7 +54,6 @@ describe("waitForBackendStartupReady", () => {
       waitForBackendStartupReady({
         listeningPromise: Promise.reject(error),
         waitForHttpReady: () => new Promise<void>(() => {}),
-        cancelHttpWait: vi.fn(),
       }),
     ).rejects.toThrow("backend exited");
   });
