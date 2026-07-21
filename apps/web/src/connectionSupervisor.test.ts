@@ -93,6 +93,26 @@ describe("ConnectionSupervisor", () => {
     harness.supervisor.dispose();
   });
 
+  it("never lets positive jitter exceed the configured retry ceiling", async () => {
+    const supervisor = new ConnectionSupervisor<TestSession>({
+      connect: async () => {
+        throw new Error("offline");
+      },
+      close: () => undefined,
+      probe: async () => undefined,
+      random: () => 1,
+      retryBaseDelayMs: 16_000,
+      retryJitterRatio: 0.2,
+      retryMaxDelayMs: 16_000,
+    });
+
+    supervisor.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(supervisor.snapshot.retryDelayMs).toBe(16_000);
+    supervisor.dispose();
+  });
+
   it("keeps escalating across short-lived ready connections", async () => {
     const harness = makeHarness();
     const first = await harness.supervisor.waitForSession();

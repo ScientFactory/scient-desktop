@@ -172,6 +172,7 @@ describe("WsTransport", () => {
     expect(streamRestartDelayMs(0, () => 0.5)).toBe(250);
     expect(streamRestartDelayMs(1, () => 0.5)).toBe(500);
     expect(streamRestartDelayMs(99, () => 0.5)).toBe(10_000);
+    expect(streamRestartDelayMs(99, () => 1)).toBe(10_000);
   });
 
   it("waits for exact old-stream settlement before installing a replacement", async () => {

@@ -114,7 +114,7 @@ export function streamRestartDelayMs(attempt: number, random = Math.random): num
     STREAM_RESTART_MAX_DELAY_MS,
   );
   const jitter = 1 + (random() * 2 - 1) * STREAM_RESTART_JITTER_RATIO;
-  return Math.max(0, Math.round(exponential * jitter));
+  return Math.min(STREAM_RESTART_MAX_DELAY_MS, Math.max(0, Math.round(exponential * jitter)));
 }
 
 function resolveRpcUrl(rawUrl: string): string {

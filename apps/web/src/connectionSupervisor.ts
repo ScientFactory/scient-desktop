@@ -344,7 +344,10 @@ export class ConnectionSupervisor<T> {
     );
     const exponentialDelay = Math.min(baseDelay * 2 ** attempt, maxDelay);
     const jitterMultiplier = 1 + (this.#random() * 2 - 1) * jitterRatio;
-    const delayMs = Math.max(0, Math.round(exponentialDelay * jitterMultiplier));
+    const delayMs = Math.min(
+      maxDelay,
+      Math.max(0, Math.round(exponentialDelay * jitterMultiplier)),
+    );
     this.#retryAttempt += 1;
     this.#publish({
       phase: this.#hasBeenReady ? "reconnecting" : "connecting",
