@@ -20,6 +20,8 @@ import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
 
+import { fetchWithinDeadline, waitFor } from "./linux-appimage-smoke-support.mjs";
+
 const SCRIPT_DIR = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = resolve(SCRIPT_DIR, "../../..");
 const RELEASE_DIR = resolve(REPO_ROOT, process.env.SCIENT_LINUX_ARTIFACT_DIR || "release");
@@ -31,26 +33,11 @@ const STARTUP_TIMEOUT_MS = 45_000;
 const ACTION_TIMEOUT_MS = 20_000;
 const RECOVERY_TIMEOUT_MS = 30_000;
 const GRACEFUL_APP_SHUTDOWN_TIMEOUT_MS = 12_000;
+const DIAGNOSTIC_CAPTURE_TIMEOUT_MS = 5_000;
 const PRIVATE_DIRECTORY_MODE = 0o700;
 
 function delay(milliseconds) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
-}
-
-async function waitFor(description, operation, timeoutMs = ACTION_TIMEOUT_MS) {
-  const deadline = Date.now() + timeoutMs;
-  let lastError;
-  while (Date.now() < deadline) {
-    try {
-      const result = await operation();
-      if (result !== null && result !== false && result !== undefined) return result;
-    } catch (error) {
-      lastError = error;
-    }
-    await delay(100);
-  }
-  const detail = lastError instanceof Error ? `: ${lastError.message}` : "";
-  throw new Error(`Timed out waiting for ${description}${detail}`);
 }
 
 async function reservePort() {
@@ -108,12 +95,15 @@ async function waitForRuntimeState(runtimeStatePath, predicate = () => true) {
 async function waitForBackendReady(runtimeState, description, timeoutMs = STARTUP_TIMEOUT_MS) {
   return waitFor(
     description,
-    async () => {
-      const response = await fetch(`${runtimeState.origin}/health`);
-      if (!response.ok) return null;
-      const health = await response.json();
-      return health?.status === "ok" && health?.startupReady === true ? health : null;
-    },
+    ({ deadline }) =>
+      fetchWithinDeadline(`${runtimeState.origin}/health`, {
+        deadline,
+        consume: async (response) => {
+          if (!response.ok) return null;
+          const health = await response.json();
+          return health?.status === "ok" && health?.startupReady === true ? health : null;
+        },
+      }),
     timeoutMs,
   );
 }
@@ -185,10 +175,11 @@ async function connectToPackagedRenderer(debuggingPort, processOutput) {
   const endpoint = `http://127.0.0.1:${debuggingPort}`;
   await waitFor(
     "Electron remote-debugging endpoint",
-    async () => {
-      const response = await fetch(`${endpoint}/json/version`);
-      return response.ok;
-    },
+    ({ deadline }) =>
+      fetchWithinDeadline(`${endpoint}/json/version`, {
+        deadline,
+        consume: (response) => response.ok,
+      }),
     STARTUP_TIMEOUT_MS,
   ).catch((error) => {
     throw new Error(`${error.message}\nPackaged process output:\n${processOutput()}`);
@@ -393,46 +384,89 @@ async function captureProcessGroupMembers(processGroupIds) {
   return membersByProcessGroup;
 }
 
-async function stopPackagedApp(child, electronProcess, backendProcessGroupId) {
+function serializeError(error) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+  return { name: "NonError", message: String(error) };
+}
+
+function serializeProcessGroups(membersByProcessGroup) {
+  return [...membersByProcessGroup].map(([processGroupId, members]) => ({
+    processGroupId,
+    members,
+  }));
+}
+
+async function stopPackagedApp(child, electronProcess, backendProcessGroupId, cleanupDiagnostics) {
   if (!child.pid) return;
+  cleanupDiagnostics.launcherProcessId = child.pid;
+  cleanupDiagnostics.launcherProcess = await readLinuxProcessInfo(child.pid).catch((error) => {
+    cleanupDiagnostics.identityReadErrors.push({
+      processId: child.pid,
+      error: serializeError(error),
+    });
+    return null;
+  });
+  cleanupDiagnostics.electronProcess = electronProcess ?? null;
+  cleanupDiagnostics.backendProcessGroupId = backendProcessGroupId ?? null;
   const processGroupIds = [
     ...new Set([child.pid, electronProcess?.processGroupId, backendProcessGroupId].filter(Boolean)),
   ];
+  cleanupDiagnostics.processGroupIds = processGroupIds;
   const trackedProcessGroups = await captureProcessGroupMembers(processGroupIds);
-  const livingProcessGroups = async () => {
-    const living = [];
+  cleanupDiagnostics.trackedProcessGroups = serializeProcessGroups(trackedProcessGroups);
+  const captureLivingProcessGroups = async (phase) => {
+    const livingGroups = [];
     for (const [processGroupId, originalMembers] of trackedProcessGroups) {
       const identityMatches = await Promise.all(originalMembers.map(processIdentityMatches));
-      if (identityMatches.some(Boolean)) living.push(processGroupId);
+      const livingMembers = originalMembers.filter((_, index) => identityMatches[index]);
+      if (livingMembers.length > 0) {
+        livingGroups.push({ processGroupId, members: livingMembers });
+      }
     }
-    return living;
+    cleanupDiagnostics.survivors[phase] = livingGroups;
+    return livingGroups.map(({ processGroupId }) => processGroupId);
   };
   const waitForAllGroupsToExit = (timeoutMs) =>
     waitFor(
       "packaged Electron and backend process groups to exit",
-      async () => (await livingProcessGroups()).length === 0,
+      async () => (await captureLivingProcessGroups("latest-poll")).length === 0,
       timeoutMs,
     ).catch(() => false);
 
   if (electronProcess && (await processIdentityMatches(electronProcess))) {
+    cleanupDiagnostics.signals.push({ target: electronProcess.processId, signal: "SIGTERM" });
     signalProcess(electronProcess.processId, "SIGTERM");
   }
-  if (await waitForAllGroupsToExit(GRACEFUL_APP_SHUTDOWN_TIMEOUT_MS)) return;
+  if (await waitForAllGroupsToExit(GRACEFUL_APP_SHUTDOWN_TIMEOUT_MS)) {
+    cleanupDiagnostics.result = "graceful";
+    await captureLivingProcessGroups("after-graceful-window");
+    return;
+  }
 
-  const gracefulSurvivors = await livingProcessGroups();
+  const gracefulSurvivors = await captureLivingProcessGroups("after-graceful-window");
   for (const processGroupId of gracefulSurvivors) {
+    cleanupDiagnostics.signals.push({ target: -processGroupId, signal: "SIGTERM" });
     signalProcessGroup(processGroupId, "SIGTERM");
   }
   if (!(await waitForAllGroupsToExit(5_000))) {
-    for (const processGroupId of await livingProcessGroups()) {
+    const termSurvivors = await captureLivingProcessGroups("after-group-sigterm");
+    for (const processGroupId of termSurvivors) {
+      cleanupDiagnostics.signals.push({ target: -processGroupId, signal: "SIGKILL" });
       signalProcessGroup(processGroupId, "SIGKILL");
     }
     if (!(await waitForAllGroupsToExit(5_000))) {
-      throw new Error(
-        `Packaged process groups ${(await livingProcessGroups()).join(", ")} survived SIGKILL.`,
-      );
+      const killSurvivors = await captureLivingProcessGroups("after-group-sigkill");
+      cleanupDiagnostics.result = "survived-sigkill";
+      throw new Error(`Packaged process groups ${killSurvivors.join(", ")} survived SIGKILL.`);
     }
   }
+  cleanupDiagnostics.result = "forced-cleanup";
   throw new Error(
     `Packaged application required forced cleanup after its ${GRACEFUL_APP_SHUTDOWN_TIMEOUT_MS}ms graceful shutdown window; surviving process groups: ${gracefulSurvivors.join(", ")}.`,
   );
@@ -440,17 +474,23 @@ async function stopPackagedApp(child, electronProcess, backendProcessGroupId) {
 
 async function preserveFailureDiagnostics({
   scenarioName,
-  page,
+  screenshot,
   output,
   desktopLogPath,
   serverLogPath,
   runtimeStatePath,
+  cleanupDiagnostics,
 }) {
   await mkdir(DIAGNOSTIC_DIR, { recursive: true });
   await writeFile(join(DIAGNOSTIC_DIR, `${scenarioName}-process.log`), `${output}\n`, "utf8");
-  await page
-    ?.screenshot({ path: join(DIAGNOSTIC_DIR, `${scenarioName}.png`), fullPage: true })
-    .catch(() => undefined);
+  if (screenshot) {
+    await writeFile(join(DIAGNOSTIC_DIR, `${scenarioName}.png`), screenshot);
+  }
+  await writeFile(
+    join(DIAGNOSTIC_DIR, `${scenarioName}-cleanup.json`),
+    `${JSON.stringify(cleanupDiagnostics, null, 2)}\n`,
+    "utf8",
+  );
   await copyFile(desktopLogPath, join(DIAGNOSTIC_DIR, `${scenarioName}-desktop-main.log`)).catch(
     () => undefined,
   );
@@ -484,7 +524,24 @@ async function runScenario(appImagePath, scenario) {
   let backendProcessGroupId;
   let output = "";
   let scenarioError;
+  let finalScreenshot;
   const cleanupErrors = [];
+  const cleanupDiagnostics = {
+    scenarioName: scenario.name,
+    launcherProcessId: null,
+    launcherProcess: null,
+    electronProcess: null,
+    backendProcessGroupId: null,
+    processGroupIds: [],
+    trackedProcessGroups: [],
+    survivors: {},
+    signals: [],
+    identityReadErrors: [],
+    screenshotError: null,
+    scenarioError: null,
+    errors: [],
+    result: "not-started",
+  };
 
   try {
     await mkdir(homeDir, { recursive: true });
@@ -598,38 +655,64 @@ async function runScenario(appImagePath, scenario) {
 
     console.log(`Packaged Linux scenario passed: ${scenario.name}`);
   } catch (error) {
-    await preserveFailureDiagnostics({
-      scenarioName: scenario.name,
-      page,
-      output,
-      desktopLogPath,
-      serverLogPath,
-      runtimeStatePath,
-    }).catch(() => undefined);
     scenarioError = new Error(
       `${scenario.name} failed: ${error instanceof Error ? error.stack || error.message : String(error)}\nPackaged process output:\n${output}`,
       { cause: error },
     );
+    cleanupDiagnostics.scenarioError = serializeError(scenarioError);
   } finally {
+    finalScreenshot = await page
+      ?.screenshot({ fullPage: true, timeout: DIAGNOSTIC_CAPTURE_TIMEOUT_MS })
+      .catch((error) => {
+        cleanupDiagnostics.screenshotError = serializeError(error);
+        return undefined;
+      });
     await browser?.close().catch((error) => cleanupErrors.push(error));
     if (child) {
-      await stopPackagedApp(child, electronProcess, backendProcessGroupId).catch((error) =>
-        cleanupErrors.push(error),
-      );
+      await stopPackagedApp(
+        child,
+        electronProcess,
+        backendProcessGroupId,
+        cleanupDiagnostics,
+      ).catch((error) => cleanupErrors.push(error));
     }
-    if (cleanupErrors.length > 0) {
+    cleanupDiagnostics.errors = cleanupErrors.map(serializeError);
+    let diagnosticsPreserved = false;
+    if (scenarioError || cleanupErrors.length > 0) {
       await preserveFailureDiagnostics({
         scenarioName: scenario.name,
-        page,
+        screenshot: finalScreenshot,
         output,
         desktopLogPath,
         serverLogPath,
         runtimeStatePath,
+        cleanupDiagnostics,
       }).catch(() => undefined);
+      diagnosticsPreserved = true;
     }
     await rm(scenarioRoot, { recursive: true, force: true }).catch((error) =>
       cleanupErrors.push(error),
     );
+    if (cleanupDiagnostics.errors.length !== cleanupErrors.length) {
+      cleanupDiagnostics.errors = cleanupErrors.map(serializeError);
+      if (diagnosticsPreserved) {
+        await writeFile(
+          join(DIAGNOSTIC_DIR, `${scenario.name}-cleanup.json`),
+          `${JSON.stringify(cleanupDiagnostics, null, 2)}\n`,
+          "utf8",
+        ).catch(() => undefined);
+      } else {
+        await preserveFailureDiagnostics({
+          scenarioName: scenario.name,
+          screenshot: finalScreenshot,
+          output,
+          desktopLogPath,
+          serverLogPath,
+          runtimeStatePath,
+          cleanupDiagnostics,
+        }).catch(() => undefined);
+      }
+    }
   }
   if (scenarioError || cleanupErrors.length > 0) {
     const errors = [scenarioError, ...cleanupErrors].filter(Boolean);
