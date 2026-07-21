@@ -85,6 +85,9 @@ describe("createDesktopPlatformBuildConfig", () => {
     assert.equal(linux.mac, undefined);
     assert.equal(linux.extraFiles, undefined);
     assert.deepStrictEqual(linux.asarUnpack, ["node_modules/node-pty/**"]);
+    assert.deepStrictEqual(linux.appImage, {
+      executableArgs: [],
+    });
     assert.deepStrictEqual(linux.linux, {
       target: ["AppImage"],
       executableName: "scient",

@@ -19,6 +19,7 @@ export const NODE_PTY_ASAR_UNPACK_GLOBS = ["node_modules/node-pty/**"] as const;
 
 export interface DesktopPlatformBuildConfig {
   readonly afterPack?: string;
+  readonly appImage?: Record<string, unknown>;
   readonly asarUnpack?: ReadonlyArray<string>;
   readonly extraFiles?: ReadonlyArray<Record<string, string>>;
   readonly files?: ReadonlyArray<string>;
@@ -102,6 +103,11 @@ export function createDesktopPlatformBuildConfig(
   if (input.platform === "linux") {
     return {
       ...nativePackaging,
+      // electron-builder's legacy AppImage target otherwise injects --no-sandbox
+      // into AppRun. An explicit empty list preserves Chromium's real sandbox.
+      appImage: {
+        executableArgs: [],
+      },
       linux: {
         target: [input.target],
         executableName: "scient",
