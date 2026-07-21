@@ -155,6 +155,12 @@ export function ProviderConnectionDialog() {
     });
   };
 
+  const reopenAuthorization = () => {
+    const authorizationUrl = activeConnection?.authorizationUrl;
+    if (!authorizationUrl) return Promise.resolve();
+    return runAction(() => ensureNativeApi().shell.openExternal(authorizationUrl));
+  };
+
   const install = () =>
     runAction(async () => {
       if (!installPlan) {
@@ -240,6 +246,18 @@ export function ProviderConnectionDialog() {
                 </p>
               ) : null}
             </div>
+          ) : null}
+
+          {provider === "grok" && activeConnection?.authorizationUrl ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              disabled={actionPending}
+              onClick={reopenAuthorization}
+            >
+              Open xAI sign-in again
+            </Button>
           ) : null}
 
           {provider === "claudeAgent" && presentation.primaryAction === "sign_in" ? (

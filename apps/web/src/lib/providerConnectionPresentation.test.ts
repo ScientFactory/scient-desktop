@@ -142,4 +142,23 @@ describe("provider connection presentation", () => {
     expect(presentation.primaryAction).toBe("sign_in");
     expect(presentation.primaryLabel).toBe("Try again");
   });
+
+  it("turns a rejected Grok OAuth operation into a fresh browser retry", () => {
+    const presentation = describeProviderConnection("grok", {
+      ...BASE_STATUS,
+      provider: "grok",
+      connectionState: {
+        operationId: "grok-oauth-1",
+        method: "grok_browser",
+        status: "failed",
+        startedAt: "2026-07-21T00:00:00.000Z",
+        finishedAt: "2026-07-21T00:01:00.000Z",
+        message: "Grok authorization was not completed.",
+      },
+    });
+
+    expect(presentation.primaryAction).toBe("sign_in");
+    expect(presentation.primaryLabel).toBe("Try again");
+    expect(presentation.description).toContain("Grok authorization");
+  });
 });
