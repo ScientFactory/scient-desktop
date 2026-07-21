@@ -239,8 +239,11 @@ export function createPackagedDesktopSmokeEnvironment(
 ): NodeJS.ProcessEnv {
   const isolatedHome = join(root, "home");
   const scientHome = join(root, "scient-home");
-  const env: NodeJS.ProcessEnv = {
-    ...inheritedEnvironment,
+  const env: NodeJS.ProcessEnv = { ...inheritedEnvironment };
+  for (const name of Object.keys(env)) {
+    if (name.endsWith("_AUTH_TOKEN") || name.endsWith("_HOME")) delete env[name];
+  }
+  Object.assign(env, {
     HOME: isolatedHome,
     USERPROFILE: isolatedHome,
     APPDATA: join(root, "appdata"),
@@ -252,10 +255,7 @@ export function createPackagedDesktopSmokeEnvironment(
     SCIENT_HOME: scientHome,
     SYNARA_DISABLE_AUTO_UPDATE: "1",
     ELECTRON_ENABLE_LOGGING: "1",
-  };
-  delete env.SYNARA_HOME;
-  delete env.PAPILAB_HOME;
-  delete env.SYNARA_AUTH_TOKEN;
+  });
   delete env.ELECTRON_RUN_AS_NODE;
 
   for (const path of [

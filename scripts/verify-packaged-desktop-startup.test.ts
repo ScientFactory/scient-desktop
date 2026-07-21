@@ -69,16 +69,14 @@ describe("packaged desktop startup verification", () => {
       {
         PATH: process.env.PATH,
         SCIENT_HOME: "/must/not/leak",
-        SYNARA_HOME: "/must/not/leak-either",
-        PAPILAB_HOME: "/must/not/leak-either",
-        SYNARA_AUTH_TOKEN: "must-not-leak",
+        LEGACY_PRODUCT_HOME: "/must/not/leak-either",
+        PROVIDER_AUTH_TOKEN: "must-not-leak",
         ELECTRON_RUN_AS_NODE: "1",
       },
     );
 
-    expect(env.SYNARA_HOME).toBeUndefined();
-    expect(env.PAPILAB_HOME).toBeUndefined();
-    expect(env.SYNARA_AUTH_TOKEN).toBeUndefined();
+    expect(env.LEGACY_PRODUCT_HOME).toBeUndefined();
+    expect(env.PROVIDER_AUTH_TOKEN).toBeUndefined();
     expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined();
     for (const name of [
       "HOME",

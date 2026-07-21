@@ -313,8 +313,13 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     packagedStartupVerifier,
-    "delete env.SYNARA_AUTH_TOKEN;\n  delete env.ELECTRON_RUN_AS_NODE;",
-    "Expected packaged startup verification to remove inherited backend authority and Electron Node mode.",
+    'name.endsWith("_AUTH_TOKEN") || name.endsWith("_HOME")',
+    "Expected packaged startup verification to remove inherited product homes and authentication tokens.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    "delete env.ELECTRON_RUN_AS_NODE;",
+    "Expected packaged startup verification to remove inherited Electron Node mode.",
   );
   assertContains(
     packagedStartupVerifier,
