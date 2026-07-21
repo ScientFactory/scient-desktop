@@ -5,7 +5,6 @@ import { render } from "vitest-browser-react";
 
 import { serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
-import { useProviderAuthRefreshOnFocus } from "./useProviderAuthRefreshOnFocus";
 import { useProviderStatusRefresh } from "./useProviderStatusRefresh";
 
 const runtime = {
@@ -42,12 +41,12 @@ function config(provider: ServerProviderStatus): ServerConfig {
 }
 
 function RefreshHarness() {
-  useProviderStatusRefresh({ refreshOnFocus: true });
+  useProviderStatusRefresh({});
   return null;
 }
 
-function AuthRefreshHarness() {
-  useProviderAuthRefreshOnFocus();
+function ScheduledRefreshHarness() {
+  useProviderStatusRefresh({ initialDelayMs: 0 });
   return null;
 }
 
@@ -56,24 +55,13 @@ afterEach(() => {
 });
 
 describe("useProviderStatusRefresh", () => {
-  it("immediately refreshes durable provider-account ownership on first launch", async () => {
+  it("does not launch provider probes merely because the app regains focus", async () => {
     const queryClient = new QueryClient();
-    const cachedCodex = {
-      provider: "codex",
-      status: "ready",
-      available: true,
-      authStatus: "authenticated",
-      requiresProviderAccount: false,
-      checkedAt: "2026-07-20T16:00:00.000Z",
-      runtime: { ...runtime, source: "system" as const, canInstall: false, message: null },
-    } satisfies ServerProviderStatus;
-    const refreshedCodex = {
-      ...cachedCodex,
-      requiresProviderAccount: true,
-      checkedAt: "2026-07-20T16:05:00.000Z",
-    } satisfies ServerProviderStatus;
-    queryClient.setQueryData(serverQueryKeys.config(), config(cachedCodex));
-    const refreshProviders = vi.fn().mockResolvedValue({ providers: [refreshedCodex] });
+    queryClient.setQueryData(
+      serverQueryKeys.config(),
+      config(antigravity("2026-07-20T16:00:00.000Z")),
+    );
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [] });
     const previousNativeApi = window.nativeApi;
     const baseApi = readNativeApi();
     if (!baseApi) throw new Error("Expected browser native API fixture.");
@@ -87,16 +75,15 @@ describe("useProviderStatusRefresh", () => {
 
     const screen = await render(
       <QueryClientProvider client={queryClient}>
-        <AuthRefreshHarness />
+        <RefreshHarness />
       </QueryClientProvider>,
     );
 
     try {
-      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledTimes(1));
-      expect(
-        queryClient.getQueryData<ServerConfig>(serverQueryKeys.config())?.providers[0]
-          ?.requiresProviderAccount,
-      ).toBe(true);
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      await new Promise((resolve) => window.setTimeout(resolve, 25));
+      expect(refreshProviders).not.toHaveBeenCalled();
     } finally {
       await screen.unmount();
       queryClient.clear();
@@ -107,7 +94,7 @@ describe("useProviderStatusRefresh", () => {
     }
   });
 
-  it("preserves managed-install capability after a window-focus refresh", async () => {
+  it("preserves managed-install capability after a scheduled refresh", async () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData(
       serverQueryKeys.config(),
@@ -129,12 +116,11 @@ describe("useProviderStatusRefresh", () => {
 
     const screen = await render(
       <QueryClientProvider client={queryClient}>
-        <RefreshHarness />
+        <ScheduledRefreshHarness />
       </QueryClientProvider>,
     );
 
     try {
-      window.dispatchEvent(new Event("focus"));
       await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledTimes(1));
       expect(
         queryClient.getQueryData<ServerConfig>(serverQueryKeys.config())?.providers[0]?.runtime

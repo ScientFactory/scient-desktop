@@ -132,7 +132,7 @@ import {
 import {
   gitRemoveWorktreeMutationOptions,
   gitResolvePullRequestQueryOptions,
-  gitStatusQueryOptions,
+  passiveGitStatusQueryOptions,
 } from "../lib/gitReactQuery";
 import {
   providerComposerCapabilitiesQueryOptions,
@@ -5101,9 +5101,8 @@ export default function Sidebar() {
   );
   const threadGitStatusQueries = useQueries({
     queries: threadGitStatusCwds.map((cwd) => ({
-      ...gitStatusQueryOptions(cwd),
+      ...passiveGitStatusQueryOptions(cwd),
       staleTime: 30_000,
-      refetchInterval: 60_000,
     })),
   });
   const threadStoredPrTargets = useMemo(

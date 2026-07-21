@@ -36,6 +36,7 @@ import {
   parseGrokOAuthAuthorizationUrl,
   providerConnectionCommandArgs,
 } from "./ProviderConnection";
+import { resolveProviderProbeCwd } from "./ProviderHealth";
 
 const encoder = new TextEncoder();
 
@@ -80,6 +81,7 @@ const TEST_CONFIG: ServerConfigShape = {
   anonymousIdPath: "/tmp/scient-test/anonymous-id",
   environmentIdPath: "/tmp/scient-test/environment-id",
 };
+const TEST_PROVIDER_PROBE_CWD = resolveProviderProbeCwd(TEST_CONFIG.stateDir);
 
 function makeHandle(input: {
   readonly code?: number;
@@ -577,7 +579,7 @@ describe("ProviderConnectionLive", () => {
     )?.[0] as CapturedCommand | undefined;
     expect(authenticationSpawn).toMatchObject({
       command: "agy",
-      options: { cwd: TEST_CONFIG.stateDir },
+      options: { cwd: TEST_PROVIDER_PROBE_CWD },
     });
     expect(authenticationSpawn?.args).toEqual(
       expect.arrayContaining(["--sandbox", "--mode", "plan", "--model", "--print"]),
@@ -590,7 +592,7 @@ describe("ProviderConnectionLive", () => {
     ).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          options: expect.objectContaining({ cwd: TEST_CONFIG.stateDir }),
+          options: expect.objectContaining({ cwd: TEST_PROVIDER_PROBE_CWD }),
         }),
       ]),
     );
@@ -598,7 +600,7 @@ describe("ProviderConnectionLive", () => {
     expect(onListModels).toHaveBeenCalledWith({
       provider: "antigravity",
       binaryPath: "agy",
-      cwd: TEST_CONFIG.stateDir,
+      cwd: TEST_PROVIDER_PROBE_CWD,
     });
   });
 
@@ -1265,7 +1267,7 @@ describe("ProviderConnectionLive", () => {
     );
 
     expect(droidAuthenticationProbe).toHaveBeenCalledWith(
-      expect.objectContaining({ binaryPath: "droid", cwd: "/tmp" }),
+      expect.objectContaining({ binaryPath: "droid", cwd: TEST_PROVIDER_PROBE_CWD }),
     );
   });
 
@@ -1295,7 +1297,7 @@ describe("ProviderConnectionLive", () => {
     expect(onListModels).toHaveBeenCalledWith({
       provider: "claudeAgent",
       binaryPath: "claude",
-      cwd: TEST_CONFIG.cwd,
+      cwd: TEST_PROVIDER_PROBE_CWD,
     });
   });
 
