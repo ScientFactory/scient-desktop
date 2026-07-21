@@ -49,12 +49,16 @@ import { ProviderRuntimeManager } from "../Services/ProviderRuntimeManager";
 import { parseAntigravityModelsAuthStatus, resolveProviderProbeCwd } from "./ProviderHealth";
 
 const CONNECTION_TIMEOUT = Duration.minutes(10);
-const ANTIGRAVITY_CODE_WINDOW_TIMEOUT = Duration.seconds(60);
+const ANTIGRAVITY_AUTHORIZATION_WINDOW_SECONDS = 10 * 60;
+const ANTIGRAVITY_CODE_WINDOW_TIMEOUT = Duration.seconds(ANTIGRAVITY_AUTHORIZATION_WINDOW_SECONDS);
 const ANTIGRAVITY_AUTHENTICATION_PROBE_INTERVAL = Duration.millis(500);
-// Antigravity keeps the provider-owned code window at 60 seconds. The local
-// supervisor gets a small hidden grace period so a CLI exit at that boundary
-// can still complete one bounded authentication probe.
-const ANTIGRAVITY_CONNECTION_TIMEOUT = Duration.seconds(65);
+const ANTIGRAVITY_AUTHENTICATION_SETTLE_TIMEOUT = Duration.seconds(30);
+// Keep the provider-owned browser/code window aligned with the CLI print
+// timeout, then allow a short hidden grace period for credentials written by
+// the browser callback to become visible to `agy models`.
+const ANTIGRAVITY_CONNECTION_TIMEOUT = Duration.seconds(
+  ANTIGRAVITY_AUTHORIZATION_WINDOW_SECONDS + 30,
+);
 const CONNECTION_OUTPUT_MAX_BYTES = 64 * 1024;
 
 interface ActiveConnection {
@@ -181,7 +185,7 @@ export function parseAntigravityOAuthAuthorizationUrl(output: string): string | 
 }
 
 /**
- * Antigravity 1.1.4 has no login subcommand, and its hidden bare TUI does not
+ * Antigravity 1.1.4 and newer have no login subcommand, and the hidden bare TUI does not
  * advance to authentication. Print mode reaches provider-owned OAuth before
  * model selection. A per-operation impossible model plus sandboxed plan mode
  * prevents a real turn; the models health probe stops the process after auth.
@@ -194,7 +198,7 @@ export function antigravityAuthenticationCommandArgs(operationId: string): Reado
     "--model",
     `__scient_auth_only_${operationId}`,
     "--print-timeout",
-    "60s",
+    `${ANTIGRAVITY_AUTHORIZATION_WINDOW_SECONDS}s`,
     "--print",
     ANTIGRAVITY_AUTH_PROMPT,
   ];
@@ -258,6 +262,7 @@ export function makeProviderConnectionLive(options?: {
   readonly antigravityCodeWindowCloseSignal?: Effect.Effect<void>;
   readonly antigravityTimeout?: Duration.Duration;
   readonly antigravityAuthenticationProbeInterval?: Duration.Duration;
+  readonly antigravityAuthenticationSettleTimeout?: Duration.Duration;
   readonly beforeAntigravityOutputPublication?: Effect.Effect<void>;
   readonly afterAntigravityCodeWindowInputClosed?: Effect.Effect<void>;
   readonly droidAuthenticationProbe?: typeof probeDroidAcpAuthentication;
@@ -268,6 +273,8 @@ export function makeProviderConnectionLive(options?: {
   const antigravityTimeout = options?.antigravityTimeout ?? ANTIGRAVITY_CONNECTION_TIMEOUT;
   const antigravityAuthenticationProbeInterval =
     options?.antigravityAuthenticationProbeInterval ?? ANTIGRAVITY_AUTHENTICATION_PROBE_INTERVAL;
+  const antigravityAuthenticationSettleTimeout =
+    options?.antigravityAuthenticationSettleTimeout ?? ANTIGRAVITY_AUTHENTICATION_SETTLE_TIMEOUT;
 
   return Layer.effect(
     ProviderConnection,
@@ -673,6 +680,19 @@ export function makeProviderConnectionLive(options?: {
                 if (yield* authenticationProbe) {
                   yield* Deferred.succeed(authorizationCodeAccepted, undefined);
                   return 0;
+                }
+                // A validated OAuth URL means the provider-owned browser flow
+                // may still be committing credentials when the bootstrap PTY
+                // exits. Keep probing briefly instead of publishing a false
+                // failure while that callback finishes.
+                const authorizationStarted = yield* Effect.sync(() => outputPublicationClaimed);
+                if (authorizationStarted) {
+                  const settledAuthentication = yield* waitForAuthentication.pipe(
+                    Effect.timeoutOption(antigravityAuthenticationSettleTimeout),
+                  );
+                  if (Option.isSome(settledAuthentication)) {
+                    return settledAuthentication.value;
+                  }
                 }
                 return code || 1;
               }),

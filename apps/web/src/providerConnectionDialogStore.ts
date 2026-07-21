@@ -12,7 +12,8 @@ export type ProviderConnectionSource =
   | "settings"
   | "empty_state"
   | "runtime_error"
-  | "runtime_authentication_error";
+  | "runtime_authentication_error"
+  | "managed_update";
 
 interface ProviderConnectionDialogStore {
   isOpen: boolean;

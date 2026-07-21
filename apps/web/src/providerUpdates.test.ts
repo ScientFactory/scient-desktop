@@ -269,4 +269,80 @@ describe("shouldOfferProviderUpdateAction", () => {
       ),
     ).toBe(true);
   });
+
+  it("never offers an update action when the provider executable is unavailable", () => {
+    expect(
+      shouldOfferProviderUpdateAction(
+        providerStatus("antigravity", {
+          available: false,
+          status: "error",
+          authStatus: "unknown",
+          version: null,
+          versionAdvisory: {
+            status: "unknown",
+            currentVersion: null,
+            latestVersion: null,
+            updateCommand: "agy update",
+            canUpdate: true,
+            checkedAt: "2026-07-21T10:00:00.000Z",
+            message: null,
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("routes an available Scient-managed runtime through its managed update flow", () => {
+    expect(
+      shouldOfferProviderUpdateAction(
+        providerStatus("antigravity", {
+          runtime: {
+            source: "managed",
+            managedVersion: "1.1.4",
+            canInstall: false,
+            canRepair: true,
+            canRollback: false,
+            canRemove: true,
+            message: null,
+          },
+          versionAdvisory: {
+            status: "unknown",
+            currentVersion: "1.1.4",
+            latestVersion: null,
+            updateCommand: null,
+            canUpdate: false,
+            checkedAt: "2026-07-21T10:00:00.000Z",
+            message: "Updates for this runtime are managed by Scient.",
+          },
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not broaden managed latest-channel updates to other providers", () => {
+    expect(
+      shouldOfferProviderUpdateAction(
+        providerStatus("grok", {
+          runtime: {
+            source: "managed",
+            managedVersion: "0.1.0",
+            canInstall: false,
+            canRepair: true,
+            canRollback: false,
+            canRemove: true,
+            message: null,
+          },
+          versionAdvisory: {
+            status: "unknown",
+            currentVersion: "0.1.0",
+            latestVersion: null,
+            updateCommand: null,
+            canUpdate: false,
+            checkedAt: "2026-07-21T10:00:00.000Z",
+            message: "Updates for this runtime are managed by Scient.",
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
 });

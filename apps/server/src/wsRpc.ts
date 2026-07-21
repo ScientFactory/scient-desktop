@@ -58,6 +58,7 @@ import { ProviderAdapterRegistry } from "./provider/Services/ProviderAdapterRegi
 import { ProviderHealth } from "./provider/Services/ProviderHealth";
 import { ProviderConnection } from "./provider/Services/ProviderConnection";
 import { ProviderClientStatusProjection } from "./provider/Services/ProviderClientStatusProjection";
+import { providerExternalUpdateBlockReason } from "./provider/providerUpdateRuntimePolicy";
 import { ProviderRuntimeManager } from "./provider/Services/ProviderRuntimeManager";
 import { ProviderService } from "./provider/Services/ProviderService";
 import { listProviderUsage } from "./providerUsage";
@@ -1096,20 +1097,20 @@ export const makeWsRpcLayer = () =>
                 settings.providers[input.provider].binaryPath,
               ),
             ),
-            Effect.flatMap((runtime) =>
-              runtime.source === "managed" || runtime.source === "bundled"
+            Effect.flatMap((runtime) => {
+              const blockReason = providerExternalUpdateBlockReason(input.provider, runtime);
+              return blockReason
                 ? Effect.fail(
                     new ServerProviderUpdateError({
                       provider: input.provider,
-                      reason:
-                        "This runtime is managed by Scient. Use the managed install, repair, or rollback controls instead.",
+                      reason: blockReason,
                     }),
                   )
                 : providerHealth.updateProvider(input).pipe(
                     Effect.andThen(providerClientStatusProjection.getStatuses),
                     Effect.map((providers) => ({ providers })),
-                  ),
-            ),
+                  );
+            }),
           ),
         [WS_METHODS.serverListWorktrees]: () => Effect.succeed({ worktrees: [] }),
         [WS_METHODS.serverListLocalServers]: () =>

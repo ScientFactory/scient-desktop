@@ -131,6 +131,7 @@ function makeConnectionTestLayer(input?: {
   readonly antigravityCodeWindowCloseSignal?: Effect.Effect<void>;
   readonly antigravityTimeout?: Duration.Duration;
   readonly antigravityAuthenticationProbeInterval?: Duration.Duration;
+  readonly antigravityAuthenticationSettleTimeout?: Duration.Duration;
   readonly beforeAntigravityOutputPublication?: Effect.Effect<void>;
   readonly afterAntigravityCodeWindowInputClosed?: Effect.Effect<void>;
   readonly onSpawn?: (command: CapturedCommand) => void;
@@ -373,6 +374,11 @@ function makeConnectionTestLayer(input?: {
           antigravityAuthenticationProbeInterval: input.antigravityAuthenticationProbeInterval,
         }
       : {}),
+    ...(input?.antigravityAuthenticationSettleTimeout
+      ? {
+          antigravityAuthenticationSettleTimeout: input.antigravityAuthenticationSettleTimeout,
+        }
+      : {}),
     ...(input?.beforeAntigravityOutputPublication
       ? { beforeAntigravityOutputPublication: input.beforeAntigravityOutputPublication }
       : {}),
@@ -527,7 +533,7 @@ describe("Antigravity OAuth authorization URL parsing", () => {
       "--model",
       "__scient_auth_only_operation-1",
       "--print-timeout",
-      "60s",
+      "600s",
       "--print",
       "Authenticate this Antigravity CLI only. Do not inspect or modify files and do not perform a task.",
     ]);
@@ -892,6 +898,48 @@ describe("ProviderConnectionLive", () => {
 
     expect(Buffer.concat(submittedChunks.map((chunk) => Buffer.from(chunk))).toString("utf8")).toBe(
       "4/test-code-before-deadline\n",
+    );
+  });
+
+  it("accepts authentication that settles just after Antigravity's browser process exits", async () => {
+    const authorizationUrl =
+      "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&client_id=test-client&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
+    let authenticationVisible = false;
+    const fixture = makeConnectionTestLayer({
+      provider: "antigravity",
+      antigravityTimeout: Duration.millis(250),
+      antigravityAuthenticationProbeInterval: Duration.millis(5),
+      antigravityAuthenticationSettleTimeout: Duration.millis(150),
+      processForCommand: ({ args }) =>
+        args.includes("--print")
+          ? {
+              code: 1,
+              delayMs: 20,
+              stdout: `Authentication required:\n${authorizationUrl}\n`,
+            }
+          : authenticationVisible
+            ? { code: 0, stdout: "Gemini 3.5 Flash (High)\n" }
+            : {
+                code: 1,
+                stdout: "Please sign in to view available models.\n",
+              },
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const connectedPublished = fixture.waitForConnectionState(
+          (state) => state?.status === "connected",
+        );
+        yield* connection.start({
+          provider: "antigravity",
+          method: "antigravity_browser",
+        });
+        yield* Effect.sleep(Duration.millis(45));
+        authenticationVisible = true;
+        yield* Effect.promise(() => connectedPublished);
+        expect(fixture.getConnectionState()?.status).toBe("connected");
+      }).pipe(Effect.provide(fixture.layer)),
     );
   });
 
