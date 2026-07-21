@@ -1,37 +1,36 @@
 // Purpose: Bridge a classified Codex runtime authentication failure into the
 // single global provider-connection dialog without changing composer state.
 
-import type {
-  OrchestrationThreadActivity,
-  ProviderKind,
-  ServerProviderStatus,
-} from "@synara/contracts";
-import { useEffect, useMemo, useRef } from "react";
+import type { ProviderKind, ServerProviderStatus } from "@synara/contracts";
+import { useEffect } from "react";
 
 import { findCodexAuthenticationRecoveryActivityId } from "~/lib/codexAuthRecovery";
 import { useProviderConnectionDialogStore } from "~/providerConnectionDialogStore";
 
+// Recovery is offered once per durable runtime-error event for the lifetime of
+// the renderer. Do not evict old ids: a thread can be remounted long after its
+// activity window has rolled over, and evicting would reopen an already handled
+// authentication prompt.
+const handledRecoveryEventIds = new Set<string>();
+
+function claimRecoveryEvent(eventId: string): boolean {
+  if (handledRecoveryEventIds.has(eventId)) return false;
+  handledRecoveryEventIds.add(eventId);
+  return true;
+}
+
 export function CodexAuthenticationRecoveryGate(props: {
   readonly provider: ProviderKind;
   readonly sessionStatus: string | null | undefined;
-  readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
+  readonly sessionLastErrorEventId: string | null | undefined;
+  readonly sessionLastErrorClass: string | null | undefined;
   readonly providerStatus: ServerProviderStatus | null | undefined;
 }) {
-  const handledActivityIdsRef = useRef<Set<string>>(new Set());
-  const recoveryActivityId = useMemo(
-    () => findCodexAuthenticationRecoveryActivityId(props),
-    [props.activities, props.provider, props.providerStatus, props.sessionStatus],
-  );
+  const recoveryActivityId = findCodexAuthenticationRecoveryActivityId(props);
 
   useEffect(() => {
     if (!recoveryActivityId) return;
-    const handledIds = handledActivityIdsRef.current;
-    if (handledIds.has(recoveryActivityId)) return;
-    if (handledIds.size >= 50) {
-      const oldestId = handledIds.values().next().value;
-      if (oldestId) handledIds.delete(oldestId);
-    }
-    handledIds.add(recoveryActivityId);
+    if (!claimRecoveryEvent(recoveryActivityId)) return;
     useProviderConnectionDialogStore.getState().openDialog("codex", "runtime_authentication_error");
   }, [recoveryActivityId]);
 

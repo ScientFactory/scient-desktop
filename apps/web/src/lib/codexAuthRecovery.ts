@@ -1,38 +1,22 @@
-import type {
-  OrchestrationThreadActivity,
-  ProviderKind,
-  ServerProviderStatus,
-} from "@synara/contracts";
-
-function asObject(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  return value as Record<string, unknown>;
-}
+import type { ProviderKind, ServerProviderStatus } from "@synara/contracts";
 
 export function findCodexAuthenticationRecoveryActivityId(input: {
   readonly provider: ProviderKind;
   readonly sessionStatus: string | null | undefined;
-  readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
+  readonly sessionLastErrorEventId: string | null | undefined;
+  readonly sessionLastErrorClass: string | null | undefined;
   readonly providerStatus: ServerProviderStatus | null | undefined;
 }): string | null {
   if (
     input.provider !== "codex" ||
     input.sessionStatus !== "error" ||
+    !input.sessionLastErrorEventId ||
+    input.sessionLastErrorClass !== "authentication_error" ||
     !input.providerStatus ||
-    input.providerStatus.requiresProviderAccount === false
+    input.providerStatus.requiresProviderAccount !== true
   ) {
     return null;
   }
 
-  for (let index = input.activities.length - 1; index >= 0; index -= 1) {
-    const activity = input.activities[index];
-    if (activity?.kind !== "runtime.error") continue;
-    return asObject(activity.payload)?.class === "authentication_error"
-      ? String(activity.id)
-      : null;
-  }
-
-  return null;
+  return input.sessionLastErrorEventId;
 }

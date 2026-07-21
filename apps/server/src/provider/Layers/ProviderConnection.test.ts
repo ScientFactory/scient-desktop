@@ -102,6 +102,7 @@ function makeConnectionTestLayer(input?: {
   readonly droidAuthenticationProbe?: typeof probeDroidAcpAuthentication;
   readonly modelsAvailable?: boolean;
   readonly initiallyAuthenticated?: boolean;
+  readonly requiresProviderAccount?: boolean | null;
   readonly onListModels?: (input: {
     readonly provider: ProviderKind;
     readonly binaryPath?: string;
@@ -115,6 +116,13 @@ function makeConnectionTestLayer(input?: {
     status: authenticated ? "ready" : "error",
     available: input?.available ?? true,
     authStatus: authenticated ? "authenticated" : "unauthenticated",
+    ...(input?.requiresProviderAccount === null
+      ? {}
+      : input?.requiresProviderAccount !== undefined
+        ? { requiresProviderAccount: input.requiresProviderAccount }
+        : input?.provider === "codex"
+          ? { requiresProviderAccount: true }
+          : {}),
     checkedAt: new Date().toISOString(),
     ...(connectionState ? { connectionState } : {}),
   });
@@ -546,6 +554,64 @@ describe("ProviderConnectionLive", () => {
     expect(onSpawn).toHaveBeenCalledWith(
       expect.objectContaining({ command: "codex", args: ["login"] }),
     );
+  });
+
+  it("refuses official Codex reauthentication for a custom Codex provider", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      initiallyAuthenticated: true,
+      requiresProviderAccount: false,
+      onSpawn,
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* Effect.result(
+          connection.start({
+            provider: "codex",
+            method: "codex_browser",
+            mode: "reauthenticate",
+          }),
+        );
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure.reason).toBe("invalid_method");
+    }
+    expect(onSpawn).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when Codex account ownership is unknown", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      initiallyAuthenticated: true,
+      requiresProviderAccount: null,
+      onSpawn,
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* Effect.result(
+          connection.start({
+            provider: "codex",
+            method: "codex_browser",
+            mode: "reauthenticate",
+          }),
+        );
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure.reason).toBe("invalid_method");
+    }
+    expect(onSpawn).not.toHaveBeenCalled();
   });
 
   it("can start a fresh operation after cancellation fully releases the provider", async () => {

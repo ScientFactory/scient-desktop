@@ -1,17 +1,8 @@
-import { EventId, type OrchestrationThreadActivity } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
 import { findCodexAuthenticationRecoveryActivityId } from "./codexAuthRecovery";
 
-const authenticationActivity = {
-  id: EventId.makeUnsafe("auth-activity"),
-  createdAt: "2026-07-21T10:00:00.000Z",
-  tone: "error",
-  kind: "runtime.error",
-  summary: "Provider runtime error",
-  payload: { message: "Authentication required", class: "authentication_error" },
-  turnId: null,
-} satisfies OrchestrationThreadActivity;
+const authenticationEventId = "auth-event";
 
 const standardCodexStatus = {
   provider: "codex",
@@ -28,10 +19,11 @@ describe("findCodexAuthenticationRecoveryActivityId", () => {
       findCodexAuthenticationRecoveryActivityId({
         provider: "codex",
         sessionStatus: "error",
-        activities: [authenticationActivity],
+        sessionLastErrorEventId: authenticationEventId,
+        sessionLastErrorClass: "authentication_error",
         providerStatus: standardCodexStatus,
       }),
-    ).toBe("auth-activity");
+    ).toBe(authenticationEventId);
   });
 
   it("does not reopen recovery after the thread session has recovered", () => {
@@ -39,7 +31,29 @@ describe("findCodexAuthenticationRecoveryActivityId", () => {
       findCodexAuthenticationRecoveryActivityId({
         provider: "codex",
         sessionStatus: "ready",
-        activities: [authenticationActivity],
+        sessionLastErrorEventId: authenticationEventId,
+        sessionLastErrorClass: "authentication_error",
+        providerStatus: standardCodexStatus,
+      }),
+    ).toBeNull();
+  });
+
+  it("requires both durable error identity and the persisted authentication class", () => {
+    expect(
+      findCodexAuthenticationRecoveryActivityId({
+        provider: "codex",
+        sessionStatus: "error",
+        sessionLastErrorEventId: null,
+        sessionLastErrorClass: "authentication_error",
+        providerStatus: standardCodexStatus,
+      }),
+    ).toBeNull();
+    expect(
+      findCodexAuthenticationRecoveryActivityId({
+        provider: "codex",
+        sessionStatus: "error",
+        sessionLastErrorEventId: authenticationEventId,
+        sessionLastErrorClass: null,
         providerStatus: standardCodexStatus,
       }),
     ).toBeNull();
@@ -50,24 +64,20 @@ describe("findCodexAuthenticationRecoveryActivityId", () => {
       findCodexAuthenticationRecoveryActivityId({
         provider: "codex",
         sessionStatus: "error",
-        activities: [authenticationActivity],
+        sessionLastErrorEventId: authenticationEventId,
+        sessionLastErrorClass: "authentication_error",
         providerStatus: { ...standardCodexStatus, requiresProviderAccount: false },
       }),
     ).toBeNull();
   });
 
   it("ignores generic runtime errors and non-Codex providers", () => {
-    const genericError = {
-      ...authenticationActivity,
-      id: EventId.makeUnsafe("generic-error"),
-      payload: { message: "Provider failed", class: "provider_error" },
-    } satisfies OrchestrationThreadActivity;
-
     expect(
       findCodexAuthenticationRecoveryActivityId({
         provider: "codex",
         sessionStatus: "error",
-        activities: [genericError],
+        sessionLastErrorEventId: "generic-error",
+        sessionLastErrorClass: "provider_error",
         providerStatus: standardCodexStatus,
       }),
     ).toBeNull();
@@ -75,25 +85,32 @@ describe("findCodexAuthenticationRecoveryActivityId", () => {
       findCodexAuthenticationRecoveryActivityId({
         provider: "claudeAgent",
         sessionStatus: "error",
-        activities: [authenticationActivity],
+        sessionLastErrorEventId: authenticationEventId,
+        sessionLastErrorClass: "authentication_error",
         providerStatus: { ...standardCodexStatus, provider: "claudeAgent" },
       }),
     ).toBeNull();
   });
 
   it("does not revive an old auth failure after a newer unrelated runtime error", () => {
-    const newerGenericError = {
-      ...authenticationActivity,
-      id: EventId.makeUnsafe("newer-generic-error"),
-      createdAt: "2026-07-21T10:01:00.000Z",
-      payload: { message: "Provider failed", class: "provider_error" },
-    } satisfies OrchestrationThreadActivity;
-
     expect(
       findCodexAuthenticationRecoveryActivityId({
         provider: "codex",
         sessionStatus: "error",
-        activities: [authenticationActivity, newerGenericError],
+        sessionLastErrorEventId: "newer-generic-error",
+        sessionLastErrorClass: "provider_error",
+        providerStatus: standardCodexStatus,
+      }),
+    ).toBeNull();
+  });
+
+  it("does not reopen an old auth failure after a later failed turn", () => {
+    expect(
+      findCodexAuthenticationRecoveryActivityId({
+        provider: "codex",
+        sessionStatus: "error",
+        sessionLastErrorEventId: "later-failed-turn",
+        sessionLastErrorClass: null,
         providerStatus: standardCodexStatus,
       }),
     ).toBeNull();

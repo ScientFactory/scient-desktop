@@ -28,7 +28,10 @@ import {
   ThreadId,
   TurnId,
 } from "@synara/contracts";
-import { parseCodexConfigModelProvider } from "@synara/shared/codexConfig";
+import {
+  codexModelProviderRequiresOpenAIAccount,
+  parseCodexConfigModelProvider,
+} from "@synara/shared/codexConfig";
 import { Effect, FileSystem, Layer, Queue, Schema, ServiceMap, Stream } from "effect";
 import { join } from "node:path";
 
@@ -1627,12 +1630,22 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
           homePath?.trim() ||
           process.env.CODEX_HOME?.trim() ||
           join(serverConfig.homeDir, ".codex");
-        const content = yield* fileSystem
-          .readFileString(join(configuredHome, "config.toml"))
-          .pipe(Effect.orElseSucceed(() => undefined));
-        const modelProvider =
-          content === undefined ? undefined : parseCodexConfigModelProvider(content);
-        return modelProvider === undefined || modelProvider.trim().toLowerCase() === "openai";
+        const configPath = join(configuredHome, "config.toml");
+        const existence = yield* Effect.option(fileSystem.exists(configPath));
+        if (existence._tag === "None") {
+          return false;
+        }
+        if (!existence.value) {
+          return true;
+        }
+
+        const content = yield* Effect.option(fileSystem.readFileString(configPath));
+        if (content._tag === "None") {
+          return false;
+        }
+        return codexModelProviderRequiresOpenAIAccount(
+          parseCodexConfigModelProvider(content.value),
+        );
       });
     const nativeEventLogger =
       options?.nativeEventLogger ??
@@ -2126,7 +2139,7 @@ const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
             const runtimeEvents = mapToRuntimeEvents(
               event,
               event.threadId,
-              requiresProviderAccountByThread.get(event.threadId) !== false,
+              requiresProviderAccountByThread.get(event.threadId) === true,
             );
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {

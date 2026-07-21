@@ -8,6 +8,7 @@ describe("isCodexAuthenticationError", () => {
       isCodexAuthenticationError({
         message: "Request failed",
         detail: { error: { codexErrorInfo: "unauthorized" } },
+        requiresProviderAccount: true,
       }),
     ).toBe(true);
   });
@@ -24,7 +25,16 @@ describe("isCodexAuthenticationError", () => {
     "Permission denied while reading a file",
     "Response stream disconnected",
   ])("does not infer account state from provider text: %s", (message) => {
-    expect(isCodexAuthenticationError({ message })).toBe(false);
+    expect(isCodexAuthenticationError({ message, requiresProviderAccount: true })).toBe(false);
+  });
+
+  it("fails closed when account ownership is omitted at runtime", () => {
+    expect(
+      isCodexAuthenticationError({
+        message: "Request failed",
+        detail: { error: { codexErrorInfo: "unauthorized" } },
+      } as Parameters<typeof isCodexAuthenticationError>[0]),
+    ).toBe(false);
   });
 
   it("does not reinterpret structured upstream authorization failures for custom providers", () => {
@@ -42,6 +52,7 @@ describe("isCodexAuthenticationError", () => {
       isCodexAuthenticationError({
         message: "Server is busy",
         detail: { error: { codexErrorInfo: "serverOverloaded" } },
+        requiresProviderAccount: true,
       }),
     ).toBe(false);
   });

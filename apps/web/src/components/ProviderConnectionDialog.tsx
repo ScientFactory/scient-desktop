@@ -47,16 +47,19 @@ export function ProviderConnectionDialog() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [installPlan, setInstallPlan] = useState<ServerProviderInstallPlan | null>(null);
   const [clockMs, setClockMs] = useState(() => Date.now());
-  const [runtimeReconnectStarted, setRuntimeReconnectStarted] = useState(false);
-  const runtimeReconnectRequired =
-    isOpen &&
-    provider === "codex" &&
-    source === "runtime_authentication_error" &&
-    !runtimeReconnectStarted;
-
+  const [runtimeReconnectBaselineOperationId, setRuntimeReconnectBaselineOperationId] = useState<
+    string | null | undefined
+  >(undefined);
   const status = provider
     ? configQuery.data?.providers.find((entry) => entry.provider === provider)
     : undefined;
+  const runtimeReauthenticationFlow =
+    isOpen && provider === "codex" && source === "runtime_authentication_error";
+  const runtimeReconnectCompleted =
+    runtimeReconnectBaselineOperationId !== undefined &&
+    status?.connectionState?.status === "connected" &&
+    status.connectionState.operationId !== runtimeReconnectBaselineOperationId;
+  const runtimeReconnectRequired = runtimeReauthenticationFlow && !runtimeReconnectCompleted;
   const presentation = provider
     ? describeProviderConnection(provider, status, {
         forceReconnect: runtimeReconnectRequired,
@@ -70,7 +73,7 @@ export function ProviderConnectionDialog() {
       : null;
 
   useEffect(() => {
-    setRuntimeReconnectStarted(false);
+    setRuntimeReconnectBaselineOperationId(undefined);
   }, [isOpen, provider, source]);
 
   useEffect(() => {
@@ -137,8 +140,10 @@ export function ProviderConnectionDialog() {
       (previousMethod !== "claude_subscription" ? previousMethod : undefined) ??
       providerConnectionMethod(provider);
     if (!method) throw new Error("In-app sign in is not supported for this provider yet.");
-    const reauthenticate = provider === "codex" && runtimeReconnectRequired;
-    if (reauthenticate) setRuntimeReconnectStarted(true);
+    const reauthenticate = runtimeReauthenticationFlow;
+    if (reauthenticate) {
+      setRuntimeReconnectBaselineOperationId(status?.connectionState?.operationId ?? null);
+    }
     try {
       const result = await ensureNativeApi().server.startProviderConnection({
         provider,
@@ -147,7 +152,7 @@ export function ProviderConnectionDialog() {
       });
       applyProviderStatusesToCache(queryClient, result.providers);
     } catch (error) {
-      if (reauthenticate) setRuntimeReconnectStarted(false);
+      if (reauthenticate) setRuntimeReconnectBaselineOperationId(undefined);
       throw error;
     }
   };

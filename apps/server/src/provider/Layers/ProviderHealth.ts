@@ -19,7 +19,10 @@ import type {
   ServerProviderUpdateState,
 } from "@synara/contracts";
 import { ServerProviderUpdateError } from "@synara/contracts";
-import { parseCodexConfigModelProvider } from "@synara/shared/codexConfig";
+import {
+  codexModelProviderRequiresOpenAIAccount,
+  parseCodexConfigModelProvider,
+} from "@synara/shared/codexConfig";
 import { decodeJsonResult } from "@synara/shared/schemaJson";
 import { prepareWindowsSafeProcess } from "@synara/shared/windowsProcess";
 import {
@@ -536,15 +539,6 @@ export function parseAuthStatusFromOutput(result: CommandResult): {
 // ── Codex CLI config detection ──────────────────────────────────────
 
 /**
- * Providers that use OpenAI-native authentication via `codex login`.
- * When the configured `model_provider` is one of these, the `codex login
- * status` probe still runs. For any other provider value the auth probe
- * is skipped because authentication is handled externally (e.g. via
- * environment variables like `PORTKEY_API_KEY` or `AZURE_API_KEY`).
- */
-const OPENAI_AUTH_PROVIDERS = new Set(["openai"]);
-
-/**
  * Read the `model_provider` value from the Codex CLI config file.
  *
  * Looks for the file at `$CODEX_HOME/config.toml` (falls back to
@@ -552,7 +546,8 @@ const OPENAI_AUTH_PROVIDERS = new Set(["openai"]);
  * a full TOML parser to avoid adding a dependency for a single key.
  *
  * Returns `undefined` when the file does not exist or does not set
- * `model_provider`.
+ * `model_provider`. Other filesystem failures remain failures so callers cannot
+ * mistake an unreadable configuration for the default OpenAI provider.
  */
 export const readCodexConfigModelProvider = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -560,13 +555,10 @@ export const readCodexConfigModelProvider = Effect.gen(function* () {
   const codexHome = process.env.CODEX_HOME || path.join(OS.homedir(), ".codex");
   const configPath = path.join(codexHome, "config.toml");
 
-  const content = yield* fileSystem
-    .readFileString(configPath)
-    .pipe(Effect.orElseSucceed(() => undefined));
-  if (content === undefined) {
+  if (!(yield* fileSystem.exists(configPath))) {
     return undefined;
   }
-
+  const content = yield* fileSystem.readFileString(configPath);
   return parseCodexConfigModelProvider(content);
 });
 
@@ -578,7 +570,7 @@ export const readCodexConfigModelProvider = Effect.gen(function* () {
  */
 export const hasCustomModelProvider = Effect.map(
   readCodexConfigModelProvider,
-  (provider) => provider !== undefined && !OPENAI_AUTH_PROVIDERS.has(provider),
+  (provider) => !codexModelProviderRequiresOpenAIAccount(provider),
 );
 
 // ── Effect-native command execution ─────────────────────────────────
@@ -788,21 +780,12 @@ const readCodexConfigModelProviderForEnv = (env: NodeJS.ProcessEnv) =>
     const codexHome = env.CODEX_HOME?.trim() || path.join(OS.homedir(), ".codex");
     const configPath = path.join(codexHome, "config.toml");
 
-    const content = yield* fileSystem
-      .readFileString(configPath)
-      .pipe(Effect.orElseSucceed(() => undefined));
-    if (content === undefined) {
+    if (!(yield* fileSystem.exists(configPath))) {
       return undefined;
     }
-
+    const content = yield* fileSystem.readFileString(configPath);
     return parseCodexConfigModelProvider(content);
   });
-
-const hasCustomModelProviderForEnv = (env: NodeJS.ProcessEnv) =>
-  Effect.map(
-    readCodexConfigModelProviderForEnv(env),
-    (provider) => provider !== undefined && !OPENAI_AUTH_PROVIDERS.has(provider),
-  );
 
 export const makeCheckCodexProviderStatus = (
   binaryPath?: string,
@@ -815,7 +798,22 @@ export const makeCheckCodexProviderStatus = (
   Effect.gen(function* () {
     const checkedAt = new Date().toISOString();
     const executable = nonEmptyTrimmed(binaryPath) ?? "codex";
-    const probeEnv = yield* Effect.promise(() => makeCodexProbeEnv(homePath));
+    const probeEnvResult = yield* Effect.tryPromise({
+      try: () => makeCodexProbeEnv(homePath),
+      catch: (cause) => cause,
+    }).pipe(Effect.result);
+    if (Result.isFailure(probeEnvResult)) {
+      return {
+        provider: CODEX_PROVIDER,
+        status: "warning" as const,
+        available: false,
+        authStatus: "unknown" as const,
+        checkedAt,
+        message:
+          "Could not prepare the Codex provider environment because its configuration could not be read.",
+      } satisfies ServerProviderStatus;
+    }
+    const probeEnv = probeEnvResult.success;
 
     // Probe 1: `codex --version` — is the CLI reachable?
     const versionProbe = yield* runCodexCommand(["--version"], executable, probeEnv).pipe(
@@ -881,7 +879,23 @@ export const makeCheckCodexProviderStatus = (
     // authentication through their own environment variables, so `codex
     // login status` will report "not logged in" even when the CLI works
     // fine.  Skip the auth probe entirely for non-OpenAI providers.
-    if (yield* hasCustomModelProviderForEnv(probeEnv)) {
+    const accountRequirement = yield* readCodexConfigModelProviderForEnv(probeEnv).pipe(
+      Effect.map(codexModelProviderRequiresOpenAIAccount),
+      Effect.result,
+    );
+    if (Result.isFailure(accountRequirement)) {
+      return {
+        provider: CODEX_PROVIDER,
+        status: "warning" as const,
+        available: true,
+        authStatus: "unknown" as const,
+        version: parsedVersion,
+        checkedAt,
+        message:
+          "Could not determine whether this Codex provider uses an OpenAI account because config.toml could not be read.",
+      } satisfies ServerProviderStatus;
+    }
+    if (!accountRequirement.success) {
       return {
         provider: CODEX_PROVIDER,
         status: "ready" as const,
@@ -1892,6 +1906,7 @@ export function providerStatusesEqual(
       status.status === next.status &&
       status.available === next.available &&
       status.authStatus === next.authStatus &&
+      status.requiresProviderAccount === next.requiresProviderAccount &&
       (status.authType ?? null) === (next.authType ?? null) &&
       (status.authLabel ?? null) === (next.authLabel ?? null) &&
       status.voiceTranscriptionAvailable === next.voiceTranscriptionAvailable &&
@@ -1939,10 +1954,23 @@ export function stabilizeProviderStatusesAgainstTransientTimeouts(
     }
 
     // A single slow CLI probe should not make an already usable provider look broken.
-    return {
+    const stabilized = {
       ...previous,
       checkedAt: status.checkedAt,
       ...(status.updateState !== undefined ? { updateState: status.updateState } : {}),
+    };
+    if (status.provider !== CODEX_PROVIDER) {
+      return stabilized;
+    }
+
+    // Never restore stale account ownership from the cache. Reauthentication is
+    // authorized only from the current config read, including false or unknown.
+    const { requiresProviderAccount: _staleOwnership, ...withoutStaleOwnership } = stabilized;
+    return {
+      ...withoutStaleOwnership,
+      ...(status.requiresProviderAccount !== undefined
+        ? { requiresProviderAccount: status.requiresProviderAccount }
+        : {}),
     };
   });
 }

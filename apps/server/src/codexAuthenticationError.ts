@@ -19,10 +19,10 @@ function structuredCodexErrorInfo(detail: unknown): unknown {
 export function isCodexAuthenticationError(input: {
   readonly message: string;
   readonly detail?: unknown;
-  readonly requiresProviderAccount?: boolean;
+  readonly requiresProviderAccount: boolean;
 }): boolean {
   return (
-    input.requiresProviderAccount !== false &&
+    input.requiresProviderAccount === true &&
     structuredCodexErrorInfo(input.detail) === "unauthorized"
   );
 }

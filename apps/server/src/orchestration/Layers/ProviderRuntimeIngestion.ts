@@ -1672,6 +1672,82 @@ const make = Effect.gen(function* () {
     lookup: () => Effect.succeed(undefined),
   });
   const providerDiffPlaceholdersRef = yield* Ref.make(new Map<string, ProviderDiffPlaceholder>());
+  const codexAuthenticationRecoveryStopsRef = yield* Ref.make<
+    ReadonlyMap<
+      ThreadId,
+      {
+        readonly eventId: EventId;
+        readonly turnId: TurnId | null;
+        readonly cleanupExitSuppressed: boolean;
+        readonly failedTurnSettlementObserved: boolean;
+      }
+    >
+  >(new Map());
+
+  const markCodexAuthenticationRecoveryStop = (
+    threadId: ThreadId,
+    eventId: EventId,
+    turnId: TurnId | null,
+  ) =>
+    Ref.update(codexAuthenticationRecoveryStopsRef, (pending) => {
+      const next = new Map(pending);
+      next.set(threadId, {
+        eventId,
+        turnId,
+        cleanupExitSuppressed: false,
+        failedTurnSettlementObserved: false,
+      });
+      return next;
+    });
+
+  const clearCodexAuthenticationRecoveryStop = (threadId: ThreadId) =>
+    Ref.update(codexAuthenticationRecoveryStopsRef, (pending) => {
+      if (!pending.has(threadId)) return pending;
+      const next = new Map(pending);
+      next.delete(threadId);
+      return next;
+    });
+
+  const suppressCodexAuthenticationRecoveryExit = (threadId: ThreadId, eventId: EventId) =>
+    Ref.modify(codexAuthenticationRecoveryStopsRef, (pending) => {
+      const marker = pending.get(threadId);
+      if (!marker || !sameId(marker.eventId, eventId)) return [false, pending] as const;
+      const next = new Map(pending);
+      if (marker.cleanupExitSuppressed) {
+        next.delete(threadId);
+        return [false, next] as const;
+      }
+      if (marker.failedTurnSettlementObserved) {
+        next.delete(threadId);
+      } else {
+        next.set(threadId, { ...marker, cleanupExitSuppressed: true });
+      }
+      return [true, next] as const;
+    });
+
+  const recordMatchingCodexAuthenticationTurnSettlement = (
+    threadId: ThreadId,
+    eventId: EventId,
+    turnId: TurnId,
+  ) =>
+    Ref.modify(codexAuthenticationRecoveryStopsRef, (pending) => {
+      const marker = pending.get(threadId);
+      if (
+        !marker ||
+        !sameId(marker.eventId, eventId) ||
+        marker.turnId === null ||
+        !sameId(marker.turnId, turnId)
+      ) {
+        return [false, pending] as const;
+      }
+      const next = new Map(pending);
+      if (marker.cleanupExitSuppressed) {
+        next.delete(threadId);
+      } else {
+        next.set(threadId, { ...marker, failedTurnSettlementObserved: true });
+      }
+      return [true, next] as const;
+    });
 
   const dispatchActivityUpdate = Effect.fnUntraced(function* (
     event: ProviderRuntimeEvent,
@@ -2741,15 +2817,55 @@ const make = Effect.gen(function* () {
             )
           : { threadId: parentThread.id, thread: parentThread };
       const thread = targetThreadResolution.thread;
+      const codexAuthenticationErrorEventId =
+        event.type === "session.exited" &&
+        event.provider === "codex" &&
+        thread.session?.status === "error" &&
+        thread.session.lastErrorClass === "authentication_error" &&
+        thread.session.lastErrorEventId !== undefined &&
+        thread.session.lastErrorEventId !== null
+          ? thread.session.lastErrorEventId
+          : undefined;
+      const isCodexAuthenticationRecoveryExit =
+        codexAuthenticationErrorEventId !== undefined
+          ? yield* suppressCodexAuthenticationRecoveryExit(
+              thread.id,
+              codexAuthenticationErrorEventId,
+            )
+          : false;
+      if (
+        event.type === "session.started" ||
+        event.type === "thread.started" ||
+        event.type === "turn.started"
+      ) {
+        yield* clearCodexAuthenticationRecoveryStop(thread.id);
+      }
       const activeTurnId = thread.session?.activeTurnId ?? null;
       const eventTurnId = resolveTerminalTurnId(event, activeTurnId);
       const isTerminalTurnEvent = event.type === "turn.completed" || event.type === "turn.aborted";
+      const preserveCodexAuthenticationErrorThroughTurnSettlement =
+        event.type === "turn.completed" &&
+        runtimeTurnState(event) === "failed" &&
+        eventTurnId !== undefined &&
+        thread.session?.status === "error" &&
+        thread.session.lastErrorClass === "authentication_error" &&
+        thread.session.lastErrorEventId !== undefined &&
+        thread.session.lastErrorEventId !== null
+          ? yield* recordMatchingCodexAuthenticationTurnSettlement(
+              thread.id,
+              thread.session.lastErrorEventId,
+              eventTurnId,
+            )
+          : false;
 
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
       const missingTurnForActiveTurn = activeTurnId !== null && eventTurnId === undefined;
 
       const shouldApplyThreadLifecycle = (() => {
+        if (isCodexAuthenticationRecoveryExit) {
+          return false;
+        }
         if (!STRICT_PROVIDER_LIFECYCLE_GUARD) {
           return true;
         }
@@ -2820,8 +2936,9 @@ const make = Effect.gen(function* () {
               return activeTurnId !== null ? "running" : "ready";
           }
         })();
-        const lastError =
-          event.type === "session.state.changed" && event.payload.state === "error"
+        const lastError = preserveCodexAuthenticationErrorThroughTurnSettlement
+          ? (thread.session?.lastError ?? "Authentication required")
+          : event.type === "session.state.changed" && event.payload.state === "error"
             ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")
             : event.type === "turn.completed" && runtimeTurnState(event) === "failed"
               ? (runtimeTurnErrorMessage(event) ?? thread.session?.lastError ?? "Turn failed")
@@ -2830,6 +2947,9 @@ const make = Effect.gen(function* () {
                 : (thread.session?.lastError ?? null);
 
         if (shouldApplyThreadLifecycle) {
+          if (!preserveCodexAuthenticationErrorThroughTurnSettlement) {
+            yield* clearCodexAuthenticationRecoveryStop(thread.id);
+          }
           if (event.type === "turn.started" && acceptedTurnStartedSourcePlan !== null) {
             yield* markSourceProposedPlanImplemented(
               acceptedTurnStartedSourcePlan.sourceThreadId,
@@ -2861,6 +2981,12 @@ const make = Effect.gen(function* () {
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
               activeTurnId: nextActiveTurnId,
               lastError,
+              ...(preserveCodexAuthenticationErrorThroughTurnSettlement
+                ? {
+                    lastErrorEventId: thread.session?.lastErrorEventId,
+                    lastErrorClass: thread.session?.lastErrorClass,
+                  }
+                : {}),
               updatedAt: now,
             },
             createdAt: now,
@@ -3152,23 +3278,11 @@ const make = Effect.gen(function* () {
           : activeTurnId === null || eventTurnId === undefined || sameId(activeTurnId, eventTurnId);
 
         if (shouldApplyRuntimeError) {
-          if (
+          yield* clearCodexAuthenticationRecoveryStop(thread.id);
+          const shouldStopCodexAuthenticationRuntime =
             event.provider === "codex" &&
             runtimeErrorClass === "authentication_error" &&
-            providerService.stopRuntimeSession
-          ) {
-            // Kill only the stale app-server process. ProviderService preserves
-            // the binding and resume cursor so the next explicit Send can safely
-            // restart the same thread after the user reconnects.
-            yield* providerService.stopRuntimeSession({ threadId: thread.id }).pipe(
-              Effect.catch((error) =>
-                Effect.logWarning("Could not stop Codex runtime after authentication loss", {
-                  threadId: thread.id,
-                  error,
-                }),
-              ),
-            );
-          }
+            providerService.stopRuntimeSession !== undefined;
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
             commandId: providerCommandId(event, "runtime-error-session-set"),
@@ -3178,12 +3292,36 @@ const make = Effect.gen(function* () {
               status: "error",
               providerName: event.provider,
               runtimeMode: thread.session?.runtimeMode ?? "full-access",
-              activeTurnId: eventTurnId ?? null,
+              activeTurnId: shouldStopCodexAuthenticationRuntime ? null : (eventTurnId ?? null),
               lastError: runtimeErrorMessage,
+              lastErrorEventId: event.eventId,
+              lastErrorClass: runtimeErrorClass ?? null,
               updatedAt: now,
             },
             createdAt: now,
           });
+          if (shouldStopCodexAuthenticationRuntime && providerService.stopRuntimeSession) {
+            // Kill only the stale app-server process. The projected session's
+            // exact error-event correlation keeps its resulting session.exited
+            // notification from erasing the actionable authentication state.
+            yield* markCodexAuthenticationRecoveryStop(
+              thread.id,
+              event.eventId,
+              eventTurnId ?? null,
+            );
+            yield* providerService.stopRuntimeSession({ threadId: thread.id }).pipe(
+              Effect.catch((error) =>
+                // Keep the exact marker: adapter.stopSession may already have
+                // emitted session.exited before later directory/analytics work
+                // failed. The queued cleanup exit consumes this marker once;
+                // any new session/thread/turn also clears it as stale.
+                Effect.logWarning("Could not stop Codex runtime after authentication loss", {
+                  threadId: thread.id,
+                  error,
+                }),
+              ),
+            );
+          }
         }
       }
 

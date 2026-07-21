@@ -10847,7 +10847,8 @@ export default function ChatView({
       <CodexAuthenticationRecoveryGate
         provider={selectedProvider}
         sessionStatus={activeThread?.session?.status}
-        activities={threadActivities}
+        sessionLastErrorEventId={activeThread?.session?.lastErrorEventId}
+        sessionLastErrorClass={activeThread?.session?.lastErrorClass}
         providerStatus={activeProviderStatus}
       />
       {/* Subtle accent tint over the whole pane while a file is dragged anywhere over it,

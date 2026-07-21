@@ -434,8 +434,18 @@ export function makeProviderConnectionLive(options?: {
           const command = commandResult.success;
           const refreshedBeforeStart = yield* providerHealth.refresh;
           const currentStatus = refreshedBeforeStart.find((status) => status.provider === provider);
-          const forceCodexReauthentication =
+          const requestsCodexReauthentication =
             provider === "codex" && input.mode === "reauthenticate";
+          if (requestsCodexReauthentication && currentStatus?.requiresProviderAccount !== true) {
+            yield* releaseProvider(provider, "");
+            return yield* makeConnectionError({
+              provider,
+              reason: "invalid_method",
+              message:
+                "OpenAI account reauthentication is unavailable for this Codex provider configuration.",
+            });
+          }
+          const forceCodexReauthentication = requestsCodexReauthentication;
           if (
             !forceCodexReauthentication &&
             currentStatus?.available &&
