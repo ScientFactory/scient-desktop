@@ -22,9 +22,12 @@ function deferred<T>() {
 }
 
 function makeHarness(
-  connect: (generation: number) => Promise<TestSession> = async (generation) => ({
+  connect: (generation: number, signal: AbortSignal) => Promise<TestSession> = async (
+    generation,
+  ) => ({
     id: generation,
   }),
+  timing?: { readonly retryResetAfterMs?: number },
 ) {
   const closed: Array<ConnectionSupervisorSession<TestSession>> = [];
   const ready: Array<ConnectionSupervisorSession<TestSession>> = [];
@@ -37,6 +40,7 @@ function makeHarness(
     },
     probe,
     random: () => 0.5,
+    ...timing,
     onReady: (session) => ready.push(session),
     onRetryScheduled: (retry) => retries.push(retry),
   });
@@ -87,6 +91,83 @@ describe("ConnectionSupervisor", () => {
     expect(connect).toHaveBeenCalledTimes(5);
     expect(vi.getTimerCount()).toBe(1);
     harness.supervisor.dispose();
+  });
+
+  it("keeps escalating across short-lived ready connections", async () => {
+    const harness = makeHarness();
+    const first = await harness.supervisor.waitForSession();
+
+    harness.supervisor.invalidate(first.generation, "first short-lived socket");
+    await vi.advanceTimersByTimeAsync(1_000);
+    const second = await harness.supervisor.waitForSession();
+    harness.supervisor.invalidate(second.generation, "second short-lived socket");
+
+    expect(harness.retries.map(({ delayMs }) => delayMs)).toEqual([1_000, 2_000]);
+  });
+
+  it("forgives earlier failures after the injectable stable-readiness window", async () => {
+    const harness = makeHarness(undefined, { retryResetAfterMs: 25 });
+    const first = await harness.supervisor.waitForSession();
+
+    harness.supervisor.invalidate(first.generation, "brief outage");
+    await vi.advanceTimersByTimeAsync(1_000);
+    const stable = await harness.supervisor.waitForSession();
+    await vi.advanceTimersByTimeAsync(25);
+    harness.supervisor.invalidate(stable.generation, "later outage");
+
+    expect(harness.retries.map(({ delayMs }) => delayMs)).toEqual([1_000, 1_000]);
+  });
+
+  it("times out a wedged connect and closes its late result", async () => {
+    const pending = deferred<TestSession>();
+    let connectSignal: AbortSignal | undefined;
+    const harness = makeHarness((_generation, signal) => {
+      connectSignal = signal;
+      return pending.promise;
+    });
+
+    harness.supervisor.start();
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(harness.retries).toEqual([
+      {
+        attempt: 0,
+        delayMs: 1_000,
+        reason: "Connection generation 1 timed out after 15000ms",
+      },
+    ]);
+    expect(connectSignal?.aborted).toBe(true);
+
+    pending.resolve({ id: 1 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.closed).toContainEqual({ generation: 1, value: { id: 1 } });
+  });
+
+  it("bounds the whole replacement attempt while old-session cleanup is still pending", async () => {
+    const closeFinished = deferred<void>();
+    const connect = vi.fn(async (generation: number) => ({ id: generation }));
+    const retries: Array<{ attempt: number; delayMs: number; reason: string }> = [];
+    const supervisor = new ConnectionSupervisor<TestSession>({
+      connect,
+      close: () => closeFinished.promise,
+      closeTimeoutMs: 5_000,
+      connectTimeoutMs: 250,
+      probe: async () => undefined,
+      random: () => 0.5,
+      onRetryScheduled: (retry) => retries.push(retry),
+    });
+    const first = await supervisor.waitForSession();
+
+    supervisor.invalidate(first.generation, "replace");
+    await vi.advanceTimersByTimeAsync(1_250);
+
+    expect(connect).toHaveBeenCalledOnce();
+    expect(retries.at(-1)).toMatchObject({
+      delayMs: 2_000,
+      reason: "Connection generation 2 timed out after 250ms",
+    });
+    supervisor.dispose();
+    closeFinished.resolve();
   });
 
   it("settles a caller waiting on an unavailable connection without stopping recovery", async () => {
@@ -208,10 +289,15 @@ describe("ConnectionSupervisor", () => {
 
   it("closes a connect result that arrives after disposal", async () => {
     const pending = deferred<TestSession>();
-    const harness = makeHarness(() => pending.promise);
+    let connectSignal: AbortSignal | undefined;
+    const harness = makeHarness((_generation, signal) => {
+      connectSignal = signal;
+      return pending.promise;
+    });
     const waiting = harness.supervisor.waitForSession();
 
     harness.supervisor.dispose();
+    expect(connectSignal?.aborted).toBe(true);
     pending.resolve({ id: 1 });
 
     await expect(waiting).rejects.toThrow("disposed");
