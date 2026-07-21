@@ -1,8 +1,11 @@
+import fs from "node:fs";
+
 import { Effect, Layer, FileSystem, Path } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 import { ServerConfig } from "../../config.ts";
+import { ensurePrivateFileSync, repairPrivateFileSync } from "../../privatePathPermissions.ts";
 
 type RuntimeSqliteLayerConfig = {
   readonly filename: string;
@@ -43,6 +46,15 @@ const makeSetup = (filename: string) =>
       }
       yield* sql`PRAGMA foreign_keys = ON;`;
       yield* runMigrations();
+      if (filename !== ":memory:") {
+        yield* Effect.sync(() => {
+          ensurePrivateFileSync(filename);
+          for (const suffix of ["-wal", "-shm"]) {
+            const sidecarPath = `${filename}${suffix}`;
+            if (fs.existsSync(sidecarPath)) repairPrivateFileSync(sidecarPath);
+          }
+        });
+      }
     }),
   );
 
@@ -51,6 +63,7 @@ export const makeSqlitePersistenceLive = (dbPath: string) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
+    yield* Effect.sync(() => ensurePrivateFileSync(dbPath));
 
     return Layer.provideMerge(makeSetup(dbPath), makeRuntimeSqliteLayer({ filename: dbPath }));
   }).pipe(Layer.unwrap);

@@ -6,16 +6,20 @@ import {
   PRIVATE_EXECUTABLE_FILE_MODE,
   PRIVATE_FILE_MODE,
   PrivatePathPermissionError,
+  ensurePrivateFileSync,
+  repairPrivateFileSync,
   supportsPosixPermissions,
   withPrivatePathContext,
 } from "@synara/shared/privatePathPermissions";
 
 export {
   ensurePrivateDirectorySync,
+  ensurePrivateFileSync,
   PRIVATE_DIRECTORY_MODE,
   PRIVATE_EXECUTABLE_FILE_MODE,
   PRIVATE_FILE_MODE,
   PrivatePathPermissionError,
+  repairPrivateFileSync,
   supportsPosixPermissions,
 } from "@synara/shared/privatePathPermissions";
 
@@ -41,63 +45,6 @@ export async function syncDirectoryEntry(
     });
   } finally {
     await handle.close();
-  }
-}
-
-export function repairPrivateFileSync(
-  filePath: string,
-  options: {
-    readonly executable?: boolean;
-    readonly platform?: NodeJS.Platform;
-  } = {},
-): void {
-  if (!supportsPosixPermissions(options.platform)) return;
-  const targetMode = options.executable ? PRIVATE_EXECUTABLE_FILE_MODE : PRIVATE_FILE_MODE;
-  const descriptor = withPathContext("open without following symlinks", filePath, () =>
-    fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW),
-  );
-  try {
-    withPathContext("set mode on", filePath, () => {
-      if (!fs.fstatSync(descriptor).isFile()) {
-        throw new Error("Path is not a regular file");
-      }
-      fs.fchmodSync(descriptor, targetMode);
-    });
-  } finally {
-    fs.closeSync(descriptor);
-  }
-}
-
-export function ensurePrivateFileSync(
-  filePath: string,
-  options: {
-    readonly executable?: boolean;
-    readonly platform?: NodeJS.Platform;
-  } = {},
-): void {
-  if (!supportsPosixPermissions(options.platform)) {
-    withPathContext("create", filePath, () => {
-      const descriptor = fs.openSync(filePath, fs.constants.O_WRONLY | fs.constants.O_CREAT, 0o600);
-      fs.closeSync(descriptor);
-    });
-    return;
-  }
-
-  const targetMode = options.executable ? PRIVATE_EXECUTABLE_FILE_MODE : PRIVATE_FILE_MODE;
-  const flags =
-    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_APPEND | fs.constants.O_NOFOLLOW;
-  const descriptor = withPathContext("open without following symlinks", filePath, () =>
-    fs.openSync(filePath, flags, targetMode),
-  );
-  try {
-    withPathContext("set mode on", filePath, () => {
-      if (!fs.fstatSync(descriptor).isFile()) {
-        throw new Error("Path is not a regular file");
-      }
-      fs.fchmodSync(descriptor, targetMode);
-    });
-  } finally {
-    fs.closeSync(descriptor);
   }
 }
 
