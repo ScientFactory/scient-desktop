@@ -106,6 +106,7 @@ function makeConnectionTestLayer(input?: {
   readonly droidAuthenticationProbe?: typeof probeDroidAcpAuthentication;
   readonly modelsAvailable?: boolean;
   readonly initiallyAuthenticated?: boolean;
+  readonly requiresProviderAccount?: boolean | null;
   readonly onListModels?: (input: {
     readonly provider: ProviderKind;
     readonly binaryPath?: string;
@@ -119,6 +120,13 @@ function makeConnectionTestLayer(input?: {
     status: authenticated ? "ready" : "error",
     available: input?.available ?? true,
     authStatus: authenticated ? "authenticated" : "unauthenticated",
+    ...(input?.requiresProviderAccount === null
+      ? {}
+      : input?.requiresProviderAccount !== undefined
+        ? { requiresProviderAccount: input.requiresProviderAccount }
+        : input?.provider === "codex"
+          ? { requiresProviderAccount: true }
+          : {}),
     checkedAt: new Date().toISOString(),
     ...(connectionState ? { connectionState } : {}),
   });
@@ -637,6 +645,110 @@ describe("ProviderConnectionLive", () => {
 
     expect(result.providers[0]?.authStatus).toBe("authenticated");
     expect(result.providers[0]?.connectionState).toBeUndefined();
+    expect(onSpawn).not.toHaveBeenCalled();
+  });
+
+  it("never applies the Codex-only reauthentication override to another provider", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({ initiallyAuthenticated: true, onSpawn });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* connection.start({
+          provider: "claudeAgent",
+          method: "claude_account",
+          mode: "reauthenticate",
+        });
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result.providers[0]?.authStatus).toBe("authenticated");
+    expect(result.providers[0]?.connectionState).toBeUndefined();
+    expect(onSpawn).not.toHaveBeenCalled();
+  });
+
+  it("starts a fresh Codex login when runtime recovery explicitly requests reauthentication", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      initiallyAuthenticated: true,
+      onSpawn,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({
+          provider: "codex",
+          method: "codex_browser",
+          mode: "reauthenticate",
+        });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("connected");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "codex", args: ["login"] }),
+    );
+  });
+
+  it("refuses official Codex reauthentication for a custom Codex provider", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      initiallyAuthenticated: true,
+      requiresProviderAccount: false,
+      onSpawn,
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* Effect.result(
+          connection.start({
+            provider: "codex",
+            method: "codex_browser",
+            mode: "reauthenticate",
+          }),
+        );
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure.reason).toBe("invalid_method");
+    }
+    expect(onSpawn).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when Codex account ownership is unknown", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      initiallyAuthenticated: true,
+      requiresProviderAccount: null,
+      onSpawn,
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* Effect.result(
+          connection.start({
+            provider: "codex",
+            method: "codex_browser",
+            mode: "reauthenticate",
+          }),
+        );
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure.reason).toBe("invalid_method");
+    }
     expect(onSpawn).not.toHaveBeenCalled();
   });
 

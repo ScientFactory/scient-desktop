@@ -5,6 +5,7 @@ import { render } from "vitest-browser-react";
 
 import { serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
+import { useProviderAuthRefreshOnFocus } from "./useProviderAuthRefreshOnFocus";
 import { useProviderStatusRefresh } from "./useProviderStatusRefresh";
 
 const runtime = {
@@ -45,11 +46,67 @@ function RefreshHarness() {
   return null;
 }
 
+function AuthRefreshHarness() {
+  useProviderAuthRefreshOnFocus();
+  return null;
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
 
 describe("useProviderStatusRefresh", () => {
+  it("immediately refreshes durable provider-account ownership on first launch", async () => {
+    const queryClient = new QueryClient();
+    const cachedCodex = {
+      provider: "codex",
+      status: "ready",
+      available: true,
+      authStatus: "authenticated",
+      requiresProviderAccount: false,
+      checkedAt: "2026-07-20T16:00:00.000Z",
+      runtime: { ...runtime, source: "system" as const, canInstall: false, message: null },
+    } satisfies ServerProviderStatus;
+    const refreshedCodex = {
+      ...cachedCodex,
+      requiresProviderAccount: true,
+      checkedAt: "2026-07-20T16:05:00.000Z",
+    } satisfies ServerProviderStatus;
+    queryClient.setQueryData(serverQueryKeys.config(), config(cachedCodex));
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [refreshedCodex] });
+    const previousNativeApi = window.nativeApi;
+    const baseApi = readNativeApi();
+    if (!baseApi) throw new Error("Expected browser native API fixture.");
+    Object.defineProperty(window, "nativeApi", {
+      configurable: true,
+      value: {
+        ...baseApi,
+        server: { ...baseApi.server, refreshProviders },
+      },
+    });
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <AuthRefreshHarness />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledTimes(1));
+      expect(
+        queryClient.getQueryData<ServerConfig>(serverQueryKeys.config())?.providers[0]
+          ?.requiresProviderAccount,
+      ).toBe(true);
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      Object.defineProperty(window, "nativeApi", {
+        configurable: true,
+        value: previousNativeApi,
+      });
+    }
+  });
+
   it("preserves managed-install capability after a window-focus refresh", async () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData(

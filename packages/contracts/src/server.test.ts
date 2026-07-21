@@ -14,6 +14,11 @@ describe("provider connection contracts", () => {
       provider: "codex",
       method: "codex_browser",
     });
+    expect(decode({ provider: "codex", method: "codex_browser", mode: "reauthenticate" })).toEqual({
+      provider: "codex",
+      method: "codex_browser",
+      mode: "reauthenticate",
+    });
     expect(decode({ provider: "claudeAgent", method: "claude_account" })).toEqual({
       provider: "claudeAgent",
       method: "claude_account",
@@ -37,6 +42,13 @@ describe("provider connection contracts", () => {
       Schema.decodeUnknownSync(ServerProviderConnectionStartInput)({
         provider: "codex",
         method: "password",
+      }),
+    ).toThrow();
+    expect(() =>
+      Schema.decodeUnknownSync(ServerProviderConnectionStartInput)({
+        provider: "codex",
+        method: "codex_browser",
+        mode: "force",
       }),
     ).toThrow();
     expect(() =>

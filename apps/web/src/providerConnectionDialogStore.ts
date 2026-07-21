@@ -11,7 +11,8 @@ export type ProviderConnectionSource =
   | "health_banner"
   | "settings"
   | "empty_state"
-  | "runtime_error";
+  | "runtime_error"
+  | "runtime_authentication_error";
 
 interface ProviderConnectionDialogStore {
   isOpen: boolean;

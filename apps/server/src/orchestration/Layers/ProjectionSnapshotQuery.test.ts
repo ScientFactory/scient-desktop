@@ -191,17 +191,21 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           runtime_mode,
           active_turn_id,
           last_error,
+          last_error_event_id,
+          last_error_class,
           updated_at
         )
         VALUES (
           'thread-1',
-          'running',
+          'error',
           'codex',
           'provider-session-1',
           'provider-thread-1',
           'approval-required',
-          'turn-1',
           NULL,
+          'Authentication required',
+          'event-auth-error',
+          'authentication_error',
           '2026-02-24T00:00:07.000Z'
         )
       `;
@@ -436,11 +440,13 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           ],
           session: {
             threadId: ThreadId.makeUnsafe("thread-1"),
-            status: "running",
+            status: "error",
             providerName: "codex",
             runtimeMode: "approval-required",
-            activeTurnId: asTurnId("turn-1"),
-            lastError: null,
+            activeTurnId: null,
+            lastError: "Authentication required",
+            lastErrorEventId: asEventId("event-auth-error"),
+            lastErrorClass: "authentication_error",
             updatedAt: "2026-02-24T00:00:07.000Z",
           },
         },

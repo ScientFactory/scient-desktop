@@ -127,6 +127,49 @@ describe("provider connection presentation", () => {
     expect(presentation.primaryAction).toBe("done");
   });
 
+  it.each(["failed", "cancelled"] as const)(
+    "keeps a forced recovery retryable after a %s attempt despite stale authenticated health",
+    (operationStatus) => {
+      const presentation = describeProviderConnection(
+        "codex",
+        {
+          ...BASE_STATUS,
+          status: "ready",
+          authStatus: "authenticated",
+          requiresProviderAccount: true,
+          connectionState: {
+            operationId: "recovery-operation-1",
+            method: "codex_browser",
+            status: operationStatus,
+            startedAt: "2026-07-19T10:00:00.000Z",
+            finishedAt: "2026-07-19T10:01:00.000Z",
+            message: `Recovery ${operationStatus}.`,
+          },
+        },
+        { forceReconnect: true },
+      );
+
+      expect(presentation.primaryAction).toBe("sign_in");
+      expect(presentation.primaryLabel).toBe("Try again");
+    },
+  );
+
+  it("never offers account recovery when Codex account ownership is unknown or custom", () => {
+    for (const requiresProviderAccount of [undefined, false] as const) {
+      const presentation = describeProviderConnection(
+        "codex",
+        {
+          ...BASE_STATUS,
+          status: "ready",
+          authStatus: "authenticated",
+          requiresProviderAccount,
+        },
+        { forceReconnect: true },
+      );
+      expect(presentation.primaryAction).toBe("check_again");
+    }
+  });
+
   it("turns failures into a safe retry", () => {
     const presentation = describeProviderConnection("codex", {
       ...BASE_STATUS,
