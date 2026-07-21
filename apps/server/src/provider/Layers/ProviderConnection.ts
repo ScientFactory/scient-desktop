@@ -24,6 +24,7 @@ import {
   Fiber,
   Layer,
   Option,
+  Queue,
   Ref,
   Result,
   Scope,
@@ -36,6 +37,7 @@ import { buildCodexProcessEnv } from "../../codexProcessEnv";
 import { resolveBaseCodexHomePath } from "../../codexHomePaths";
 import { ServerSettingsService } from "../../serverSettings";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText";
+import { PtyAdapter } from "../../terminal/Services/PTY";
 import { buildClaudeProcessEnv } from "../claudeProcessEnv";
 import { buildCursorAgentCommand } from "../acp/CursorAcpCommand";
 import { probeDroidAcpAuthentication } from "../acp/DroidAcpSupport";
@@ -43,23 +45,27 @@ import { ProviderConnection, type ProviderConnectionShape } from "../Services/Pr
 import { ProviderDiscoveryService } from "../Services/ProviderDiscoveryService";
 import { ProviderHealth } from "../Services/ProviderHealth";
 import { ProviderRuntimeManager } from "../Services/ProviderRuntimeManager";
-import { PtyAdapter } from "../../terminal/Services/PTY";
 import { parseAntigravityModelsAuthStatus } from "./ProviderHealth";
 
 const CONNECTION_TIMEOUT = Duration.minutes(10);
+const ANTIGRAVITY_CONNECTION_TIMEOUT = Duration.seconds(60);
 const CONNECTION_OUTPUT_MAX_BYTES = 64 * 1024;
 
 interface ActiveConnection {
   readonly operationId: string;
   readonly fiber: Fiber.Fiber<void, never>;
+  readonly authorizationCodeInput: Deferred.Deferred<string>;
+  readonly authorizationCodeAccepted: Deferred.Deferred<void>;
+  readonly authorizationCodeClosed: Deferred.Deferred<void>;
 }
 
 interface ConnectionCommand {
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
   readonly env: NodeJS.ProcessEnv;
+  readonly cwd?: string;
   readonly waitingMessage: string;
-  readonly strategy?: "antigravity-pty";
+  readonly strategy?: "antigravity-browser";
 }
 
 interface ConnectionOutputObserver {
@@ -68,12 +74,27 @@ interface ConnectionOutputObserver {
 
 const GROK_OAUTH_AUTHORIZATION_ORIGIN = "https://auth.x.ai";
 const GROK_OAUTH_AUTHORIZATION_PATH = "/oauth2/authorize";
-const GROK_OAUTH_OUTPUT_BUFFER_MAX_CHARS = 16 * 1024;
+const GOOGLE_OAUTH_AUTHORIZATION_ORIGIN = "https://accounts.google.com";
+const GOOGLE_OAUTH_AUTHORIZATION_PATHS = new Set(["/o/oauth2/auth", "/o/oauth2/v2/auth"]);
+const ANTIGRAVITY_OAUTH_CALLBACK_ORIGIN = "https://antigravity.google";
+const ANTIGRAVITY_OAUTH_CALLBACK_PATH = "/oauth-callback";
+const OAUTH_OUTPUT_BUFFER_MAX_CHARS = 16 * 1024;
+const ANTIGRAVITY_AUTH_PROMPT =
+  "Authenticate this Antigravity CLI only. Do not inspect or modify files and do not perform a task.";
+const authorizationCodeEncoder = new TextEncoder();
+
+function outputUrlCandidates(output: string): ReadonlyArray<string> {
+  return (output.match(/https:\/\/[^\s<>"']+/gu) ?? []).filter(
+    (candidate) =>
+      !Array.from(candidate).some((character) => {
+        const codePoint = character.codePointAt(0) ?? 0;
+        return codePoint < 0x20 || codePoint === 0x7f;
+      }),
+  );
+}
 
 export function parseGrokOAuthAuthorizationUrl(output: string): string | null {
-  const candidates =
-    output.match(/https:\/\/auth\.x\.ai\/oauth2\/authorize\?[^\s\u0000-\u001f\u007f<>"']+/gu) ?? [];
-  for (const candidate of candidates) {
+  for (const candidate of outputUrlCandidates(output)) {
     if (candidate.length > 8_192) continue;
     try {
       const url = new URL(candidate);
@@ -110,6 +131,66 @@ export function parseGrokOAuthAuthorizationUrl(output: string): string | null {
     }
   }
   return null;
+}
+
+export function parseAntigravityOAuthAuthorizationUrl(output: string): string | null {
+  for (const candidate of outputUrlCandidates(output)) {
+    if (candidate.length > 8_192) continue;
+    try {
+      const url = new URL(candidate);
+      if (
+        url.origin !== GOOGLE_OAUTH_AUTHORIZATION_ORIGIN ||
+        !GOOGLE_OAUTH_AUTHORIZATION_PATHS.has(url.pathname) ||
+        url.hash ||
+        url.username ||
+        url.password ||
+        url.searchParams.get("response_type") !== "code" ||
+        url.searchParams.get("code_challenge_method") !== "S256" ||
+        !url.searchParams.get("client_id") ||
+        !url.searchParams.get("state") ||
+        !url.searchParams.get("code_challenge")
+      ) {
+        continue;
+      }
+      const redirectValue = url.searchParams.get("redirect_uri");
+      if (!redirectValue) continue;
+      const redirectUrl = new URL(redirectValue);
+      if (
+        redirectUrl.origin !== ANTIGRAVITY_OAUTH_CALLBACK_ORIGIN ||
+        redirectUrl.pathname !== ANTIGRAVITY_OAUTH_CALLBACK_PATH ||
+        redirectUrl.search ||
+        redirectUrl.hash ||
+        redirectUrl.username ||
+        redirectUrl.password
+      ) {
+        continue;
+      }
+      return url.toString();
+    } catch {
+      // Ignore malformed or incomplete output while the CLI is still streaming.
+    }
+  }
+  return null;
+}
+
+/**
+ * Antigravity 1.1.4 has no login subcommand, and its hidden bare TUI does not
+ * advance to authentication. Print mode reaches provider-owned OAuth before
+ * model selection. A per-operation impossible model plus sandboxed plan mode
+ * prevents a real turn; the models health probe stops the process after auth.
+ */
+export function antigravityAuthenticationCommandArgs(operationId: string): ReadonlyArray<string> {
+  return [
+    "--sandbox",
+    "--mode",
+    "plan",
+    "--model",
+    `__scient_auth_only_${operationId}`,
+    "--print-timeout",
+    "60s",
+    "--print",
+    ANTIGRAVITY_AUTH_PROMPT,
+  ];
 }
 
 export function expectedMethodForProvider(
@@ -329,8 +410,9 @@ export function makeProviderConnectionLive(options?: {
               runtime.source === "managed"
                 ? { ...process.env, AGY_CLI_DISABLE_AUTO_UPDATE: "true" }
                 : process.env,
-            waitingMessage: "Finish signing in to Google in the browser window.",
-            strategy: "antigravity-pty",
+            cwd: serverConfig.stateDir,
+            waitingMessage: "Finish signing in to Google, then paste the code here.",
+            strategy: "antigravity-browser",
           } satisfies ConnectionCommand;
         }
 
@@ -406,12 +488,14 @@ export function makeProviderConnectionLive(options?: {
       ) {
         const prepared = prepareWindowsSafeProcess(command.executable, command.args, {
           env: command.env,
+          ...(command.cwd ? { cwd: command.cwd } : {}),
         });
         const child = yield* spawner.spawn(
           ChildProcess.make(prepared.command, prepared.args, {
             shell: prepared.shell,
             ...(prepared.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
             env: command.env,
+            ...(command.cwd ? { cwd: command.cwd } : {}),
             stdin: "ignore",
           }),
         );
@@ -438,48 +522,102 @@ export function makeProviderConnectionLive(options?: {
       const runCommand = (command: ConnectionCommand, observer?: ConnectionOutputObserver) =>
         runCommandResult(command, observer).pipe(Effect.map((result) => result.code));
 
-      const runAntigravityConnection = (command: ConnectionCommand) =>
+      const runAntigravityConnection = (
+        command: ConnectionCommand,
+        operationId: string,
+        authorizationCodeInput: Deferred.Deferred<string>,
+        authorizationCodeAccepted: Deferred.Deferred<void>,
+        authorizationCodeClosed: Deferred.Deferred<void>,
+        observer?: ConnectionOutputObserver,
+      ) =>
         Effect.gen(function* () {
-          const pty = yield* ptyAdapter.spawn({
-            shell: command.executable,
-            args: [],
-            cwd: serverConfig.stateDir,
-            cols: 100,
-            rows: 30,
+          const authenticationProbe = Effect.gen(function* () {
+            const probe = yield* runCommandResult({ ...command, args: ["models"] }).pipe(
+              Effect.scoped,
+              Effect.result,
+            );
+            return (
+              Result.isSuccess(probe) &&
+              parseAntigravityModelsAuthStatus(probe.success) === "authenticated"
+            );
+          });
+          const waitForAuthentication = Effect.gen(function* () {
+            while (true) {
+              if (yield* authenticationProbe) {
+                yield* Deferred.succeed(authorizationCodeAccepted, undefined);
+                return 0;
+              }
+              yield* Effect.sleep(Duration.millis(500));
+            }
+          });
+          const prepared = prepareWindowsSafeProcess(
+            command.executable,
+            antigravityAuthenticationCommandArgs(operationId),
+            {
+              env: command.env,
+              ...(command.cwd ? { cwd: command.cwd } : {}),
+            },
+          );
+          const process = yield* ptyAdapter.spawn({
+            shell: prepared.command,
+            args: [...prepared.args],
+            cwd: command.cwd ?? serverConfig.stateDir,
+            cols: 120,
+            rows: 40,
             env: command.env,
           });
-          let exited = false;
-          const removeDataListener = pty.onData(() => undefined);
-          const removeExitListener = pty.onExit(() => {
-            exited = true;
+          const processExit = yield* Deferred.make<number>();
+          const outputQueue = yield* Queue.unbounded<Uint8Array>();
+          yield* Effect.addFinalizer(() => Queue.shutdown(outputQueue).pipe(Effect.asVoid));
+          if (observer?.onOutputChunk) {
+            yield* Stream.fromQueue(outputQueue).pipe(
+              Stream.runForEach(observer.onOutputChunk),
+              Effect.forkScoped,
+            );
+          }
+          const removeDataListener = process.onData((data) => {
+            Effect.runFork(
+              Queue.offer(outputQueue, authorizationCodeEncoder.encode(data)).pipe(Effect.asVoid),
+            );
+          });
+          const removeExitListener = process.onExit((event) => {
+            Effect.runFork(Deferred.succeed(processExit, event.exitCode).pipe(Effect.asVoid));
           });
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
               removeDataListener();
               removeExitListener();
-              try {
-                pty.kill();
-              } catch {
-                // The provider may already have exited after completing sign-in.
-              }
-            }),
+              process.kill();
+            }).pipe(Effect.ignore),
           );
-
-          while (true) {
-            if (exited) throw new Error("Antigravity sign-in exited before verification.");
-            const probe = yield* runCommandResult({ ...command, args: ["models"] }).pipe(
-              Effect.scoped,
-              Effect.result,
-            );
-            if (
-              Result.isSuccess(probe) &&
-              parseAntigravityModelsAuthStatus(probe.success) === "authenticated"
-            ) {
-              return 0;
-            }
-            yield* Effect.sleep(Duration.seconds(1));
-          }
-        }).pipe(Effect.scoped);
+          const deliverAuthorizationCode = Deferred.await(authorizationCodeInput).pipe(
+            Effect.flatMap((code) =>
+              Effect.try({
+                try: () => process.write(code),
+                catch: (cause) => cause,
+              }),
+            ),
+            Effect.flatMap(() => Effect.never),
+          );
+          const processCompletion = Effect.raceFirst(
+            Deferred.await(processExit),
+            deliverAuthorizationCode,
+          ).pipe(
+            Effect.flatMap((code) =>
+              Effect.gen(function* () {
+                if (yield* authenticationProbe) {
+                  yield* Deferred.succeed(authorizationCodeAccepted, undefined);
+                  return 0;
+                }
+                return code || 1;
+              }),
+            ),
+          );
+          return yield* Effect.raceFirst(waitForAuthentication, processCompletion);
+        }).pipe(
+          Effect.scoped,
+          Effect.ensuring(Deferred.succeed(authorizationCodeClosed, undefined).pipe(Effect.asVoid)),
+        );
 
       const start: ProviderConnectionShape["start"] = Effect.fn("ProviderConnection.start")(
         function* (input) {
@@ -521,6 +659,9 @@ export function makeProviderConnectionLive(options?: {
             return { providers: refreshedBeforeStart };
           }
           const operationId = randomUUID();
+          const authorizationCodeInput = yield* Deferred.make<string>();
+          const authorizationCodeAccepted = yield* Deferred.make<void>();
+          const authorizationCodeClosed = yield* Deferred.make<void>();
           const startedAt = new Date().toISOString();
           const state = (input: {
             readonly status: ServerProviderConnectionState["status"];
@@ -547,21 +688,25 @@ export function makeProviderConnectionLive(options?: {
               provider,
               state({ status: "waiting_for_browser", message: command.waitingMessage }),
             );
-            let grokOutputBuffer = "";
-            let publishedGrokAuthorizationUrl: string | null = null;
-            const grokOutputObserver: ConnectionOutputObserver | undefined =
-              provider === "grok"
+            let oauthOutputBuffer = "";
+            let publishedAuthorizationUrl: string | null = null;
+            const oauthOutputObserver: ConnectionOutputObserver | undefined =
+              provider === "grok" || provider === "antigravity"
                 ? {
                     onOutputChunk: (chunk) =>
                       Effect.gen(function* () {
-                        grokOutputBuffer =
-                          `${grokOutputBuffer}${Buffer.from(chunk).toString("utf8")}`.slice(
-                            -GROK_OAUTH_OUTPUT_BUFFER_MAX_CHARS,
+                        if (publishedAuthorizationUrl) return;
+                        oauthOutputBuffer =
+                          `${oauthOutputBuffer}${Buffer.from(chunk).toString("utf8")}`.slice(
+                            -OAUTH_OUTPUT_BUFFER_MAX_CHARS,
                           );
-                        const authorizationUrl = parseGrokOAuthAuthorizationUrl(grokOutputBuffer);
-                        if (!authorizationUrl || authorizationUrl === publishedGrokAuthorizationUrl)
+                        const authorizationUrl =
+                          provider === "grok"
+                            ? parseGrokOAuthAuthorizationUrl(oauthOutputBuffer)
+                            : parseAntigravityOAuthAuthorizationUrl(oauthOutputBuffer);
+                        if (!authorizationUrl || authorizationUrl === publishedAuthorizationUrl)
                           return;
-                        publishedGrokAuthorizationUrl = authorizationUrl;
+                        publishedAuthorizationUrl = authorizationUrl;
                         yield* publishState(
                           provider,
                           state({
@@ -580,11 +725,22 @@ export function makeProviderConnectionLive(options?: {
                     childProcessSpawner: spawner,
                     cwd: serverConfig.cwd,
                   }).pipe(Effect.as(0))
-                : command.strategy === "antigravity-pty"
-                  ? runAntigravityConnection(command)
-                  : runCommand(command, grokOutputObserver).pipe(Effect.scoped);
+                : command.strategy === "antigravity-browser"
+                  ? runAntigravityConnection(
+                      command,
+                      operationId,
+                      authorizationCodeInput,
+                      authorizationCodeAccepted,
+                      authorizationCodeClosed,
+                      oauthOutputObserver,
+                    )
+                  : runCommand(command, oauthOutputObserver).pipe(Effect.scoped);
+            const operationTimeout =
+              provider === "antigravity" && options?.timeout === undefined
+                ? ANTIGRAVITY_CONNECTION_TIMEOUT
+                : timeout;
             const exitCodeResult = yield* connectionProcess.pipe(
-              Effect.timeoutOption(timeout),
+              Effect.timeoutOption(operationTimeout),
               Effect.result,
             );
 
@@ -651,7 +807,7 @@ export function makeProviderConnectionLive(options?: {
               .listModels({
                 provider,
                 binaryPath: command.executable,
-                cwd: serverConfig.cwd,
+                cwd: command.cwd ?? serverConfig.cwd,
               })
               .pipe(Effect.timeoutOption(Duration.seconds(30)), Effect.result);
             if (
@@ -713,7 +869,13 @@ export function makeProviderConnectionLive(options?: {
           );
           yield* Ref.update(activeConnectionsRef, (active) => {
             const next = new Map(active);
-            next.set(provider, { operationId, fiber });
+            next.set(provider, {
+              operationId,
+              fiber,
+              authorizationCodeInput,
+              authorizationCodeAccepted,
+              authorizationCodeClosed,
+            });
             return next;
           });
           yield* Deferred.succeed(startGate, undefined);
@@ -742,7 +904,64 @@ export function makeProviderConnectionLive(options?: {
         },
       );
 
-      return { start, cancel } satisfies ProviderConnectionShape;
+      const submitAuthorizationCode: ProviderConnectionShape["submitAuthorizationCode"] = Effect.fn(
+        "ProviderConnection.submitAuthorizationCode",
+      )(function* (input) {
+        if (input.provider !== "antigravity") {
+          return yield* makeConnectionError({
+            provider: input.provider,
+            reason: "authorization_code_not_supported",
+            message: "This provider does not accept a pasted authorization code.",
+          });
+        }
+        const active = (yield* Ref.get(activeConnectionsRef)).get(input.provider);
+        if (!active || active.operationId !== input.operationId) {
+          return yield* makeConnectionError({
+            provider: input.provider,
+            reason: "operation_not_found",
+            message: "This connection attempt is no longer running.",
+          });
+        }
+        if (yield* Deferred.isDone(active.authorizationCodeInput)) {
+          return yield* makeConnectionError({
+            provider: input.provider,
+            reason: "authorization_code_already_submitted",
+            message: "A code was already submitted for this connection attempt.",
+          });
+        }
+        if (yield* Deferred.isDone(active.authorizationCodeClosed)) {
+          return yield* makeConnectionError({
+            provider: input.provider,
+            reason: "authorization_code_not_accepted",
+            message: "This connection attempt is no longer waiting for a code.",
+          });
+        }
+        const accepted = yield* Deferred.succeed(
+          active.authorizationCodeInput,
+          `${input.authorizationCode.trim()}\n`,
+        );
+        if (!accepted) {
+          return yield* makeConnectionError({
+            provider: input.provider,
+            reason: "authorization_code_already_submitted",
+            message: "A code was already submitted for this connection attempt.",
+          });
+        }
+        const acceptedByProvider = yield* Effect.raceFirst(
+          Deferred.await(active.authorizationCodeAccepted).pipe(Effect.as(true)),
+          Deferred.await(active.authorizationCodeClosed).pipe(Effect.as(false)),
+        );
+        if (!acceptedByProvider) {
+          return yield* makeConnectionError({
+            provider: input.provider,
+            reason: "authorization_code_not_accepted",
+            message: "This connection attempt stopped before it could accept the code.",
+          });
+        }
+        return { providers: yield* providerHealth.getStatuses };
+      });
+
+      return { start, cancel, submitAuthorizationCode } satisfies ProviderConnectionShape;
     }),
   );
 }

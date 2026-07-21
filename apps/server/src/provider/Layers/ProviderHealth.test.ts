@@ -73,6 +73,7 @@ function mockSpawnerLayer(
     options:
       | {
           readonly env?: NodeJS.ProcessEnv;
+          readonly cwd?: string;
           readonly windowsVerbatimArguments?: boolean;
         }
       | undefined,
@@ -90,6 +91,7 @@ function mockSpawnerLayer(
         args: ReadonlyArray<string>;
         options?: {
           env?: NodeJS.ProcessEnv;
+          cwd?: string;
           windowsVerbatimArguments?: boolean;
         };
       };
@@ -2112,12 +2114,16 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
 
     it.effect("uses the configured Antigravity binary", () =>
       Effect.gen(function* () {
-        const status = yield* checkAntigravityProviderStatus("/custom/bin/agy");
+        const status = yield* checkAntigravityProviderStatus(
+          "/custom/bin/agy",
+          "/tmp/scient-state",
+        );
         assert.strictEqual(status.status, "ready");
       }).pipe(
         Effect.provide(
-          mockSpawnerLayer((args, command) => {
+          mockSpawnerLayer((args, command, _env, options) => {
             assert.strictEqual(command, "/custom/bin/agy");
+            assert.strictEqual(options?.cwd, "/tmp/scient-state");
             return args.join(" ") === "--version"
               ? { stdout: "1.1.2\n", stderr: "", code: 0 }
               : { stdout: "GPT-OSS 120B (Medium)\n", stderr: "", code: 0 };

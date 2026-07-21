@@ -157,6 +157,7 @@ import {
   ServerProviderConnectionError,
   ServerProviderConnectionResult,
   ServerProviderConnectionStartInput,
+  ServerProviderConnectionSubmitAuthorizationCodeInput,
   ServerProviderInstallCancelInput,
   ServerProviderInstallInput,
   ServerProviderInstallPlanInput,
@@ -714,6 +715,15 @@ export const WsServerCancelProviderConnectionRpc = Rpc.make(
   },
 );
 
+export const WsServerSubmitProviderConnectionAuthorizationCodeRpc = Rpc.make(
+  WS_METHODS.serverSubmitProviderConnectionAuthorizationCode,
+  {
+    payload: ServerProviderConnectionSubmitAuthorizationCodeInput,
+    success: ServerProviderConnectionResult,
+    error: ServerProviderConnectionError,
+  },
+);
+
 export const WsServerInstallProviderRpc = Rpc.make(WS_METHODS.serverInstallProvider, {
   payload: ServerProviderInstallInput,
   success: ServerProviderInstallationResult,
@@ -1054,6 +1064,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshProvidersRpc,
   WsServerStartProviderConnectionRpc,
   WsServerCancelProviderConnectionRpc,
+  WsServerSubmitProviderConnectionAuthorizationCodeRpc,
   WsServerPrepareProviderInstallRpc,
   WsServerInstallProviderRpc,
   WsServerCancelProviderInstallRpc,

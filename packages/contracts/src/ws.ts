@@ -94,6 +94,7 @@ import {
   ServerLifecycleStreamEvent,
   ServerProviderConnectionCancelInput,
   ServerProviderConnectionStartInput,
+  ServerProviderConnectionSubmitAuthorizationCodeInput,
   ServerProviderInstallCancelInput,
   ServerProviderInstallInput,
   ServerProviderInstallPlanInput,
@@ -213,6 +214,8 @@ export const WS_METHODS = {
   serverRefreshProviders: "server.refreshProviders",
   serverStartProviderConnection: "server.startProviderConnection",
   serverCancelProviderConnection: "server.cancelProviderConnection",
+  serverSubmitProviderConnectionAuthorizationCode:
+    "server.submitProviderConnectionAuthorizationCode",
   serverPrepareProviderInstall: "server.prepareProviderInstall",
   serverInstallProvider: "server.installProvider",
   serverCancelProviderInstall: "server.cancelProviderInstall",
@@ -401,6 +404,10 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.serverRefreshProviders, Schema.Struct({})),
   tagRequestBody(WS_METHODS.serverStartProviderConnection, ServerProviderConnectionStartInput),
   tagRequestBody(WS_METHODS.serverCancelProviderConnection, ServerProviderConnectionCancelInput),
+  tagRequestBody(
+    WS_METHODS.serverSubmitProviderConnectionAuthorizationCode,
+    ServerProviderConnectionSubmitAuthorizationCodeInput,
+  ),
   tagRequestBody(WS_METHODS.serverPrepareProviderInstall, ServerProviderInstallPlanInput),
   tagRequestBody(WS_METHODS.serverInstallProvider, ServerProviderInstallInput),
   tagRequestBody(WS_METHODS.serverCancelProviderInstall, ServerProviderInstallCancelInput),

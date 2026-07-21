@@ -12,6 +12,7 @@ import type {
   ServerProviderConnectionError,
   ServerProviderConnectionResult,
   ServerProviderConnectionStartInput,
+  ServerProviderConnectionSubmitAuthorizationCodeInput,
 } from "@synara/contracts";
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
@@ -22,6 +23,9 @@ export interface ProviderConnectionShape {
   ) => Effect.Effect<ServerProviderConnectionResult, ServerProviderConnectionError>;
   readonly cancel: (
     input: ServerProviderConnectionCancelInput,
+  ) => Effect.Effect<ServerProviderConnectionResult, ServerProviderConnectionError>;
+  readonly submitAuthorizationCode: (
+    input: ServerProviderConnectionSubmitAuthorizationCodeInput,
   ) => Effect.Effect<ServerProviderConnectionResult, ServerProviderConnectionError>;
 }
 

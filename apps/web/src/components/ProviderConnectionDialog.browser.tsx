@@ -54,6 +54,7 @@ function installNativeApi(overrides: {
   refreshProviders?: ReturnType<typeof vi.fn>;
   startProviderConnection?: ReturnType<typeof vi.fn>;
   cancelProviderConnection?: ReturnType<typeof vi.fn>;
+  submitProviderConnectionAuthorizationCode?: ReturnType<typeof vi.fn>;
   prepareProviderInstall?: ReturnType<typeof vi.fn>;
   installProvider?: ReturnType<typeof vi.fn>;
   openExternal?: ReturnType<typeof vi.fn>;
@@ -74,6 +75,12 @@ function installNativeApi(overrides: {
           : {}),
         ...(overrides.cancelProviderConnection
           ? { cancelProviderConnection: overrides.cancelProviderConnection }
+          : {}),
+        ...(overrides.submitProviderConnectionAuthorizationCode
+          ? {
+              submitProviderConnectionAuthorizationCode:
+                overrides.submitProviderConnectionAuthorizationCode,
+            }
           : {}),
         ...(overrides.prepareProviderInstall
           ? { prepareProviderInstall: overrides.prepareProviderInstall }
@@ -741,6 +748,145 @@ describe("ProviderConnectionDialog", () => {
     try {
       await page.getByRole("button", { name: "Open xAI sign-in again" }).click();
       await vi.waitFor(() => expect(openExternal).toHaveBeenCalledWith(authorizationUrl));
+      await expect
+        .element(page.getByPlaceholder("Paste authorization code"))
+        .not.toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("reopens the validated Google authorization page without terminal use", async () => {
+    const authorizationUrl =
+      "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&client_id=test-client&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
+    const active = {
+      provider: "antigravity",
+      status: "error",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+      runtime: systemRuntime,
+      connectionState: {
+        operationId: "connect-antigravity-active",
+        method: "antigravity_browser",
+        status: "waiting_for_browser",
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        message: "Finish signing in to Google.",
+        authorizationUrl,
+      },
+    } satisfies ServerProviderStatus;
+    const openExternal = vi.fn().mockResolvedValue(undefined);
+    const restoreNativeApi = installNativeApi({ openExternal });
+    const queryClient = createQueryClient(active);
+    useProviderConnectionDialogStore.getState().openDialog("antigravity", "provider_picker");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await page.getByRole("button", { name: "Open Google sign-in again" }).click();
+      await vi.waitFor(() => expect(openExternal).toHaveBeenCalledWith(authorizationUrl));
+      await expect.element(page.getByText(/Automatic timeout in (?:1:00|0:5\d)/u)).toBeVisible();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("stops showing the OAuth countdown while Antigravity verifies the account", async () => {
+    const verifying = {
+      provider: "antigravity",
+      status: "error",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+      runtime: systemRuntime,
+      connectionState: {
+        operationId: "connect-antigravity-verifying",
+        method: "antigravity_browser",
+        status: "verifying",
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        message: "Verifying the connection.",
+      },
+    } satisfies ServerProviderStatus;
+    const restoreNativeApi = installNativeApi({});
+    const queryClient = createQueryClient(verifying);
+    useProviderConnectionDialogStore.getState().openDialog("antigravity", "provider_picker");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await expect.element(page.getByText("Verifying the connection.")).toBeVisible();
+      await expect.element(page.getByText(/Automatic timeout in/u)).not.toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("submits Google's one-time code even before a reopen URL is available", async () => {
+    const active = {
+      provider: "antigravity",
+      status: "error",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+      runtime: systemRuntime,
+      connectionState: {
+        operationId: "connect-antigravity-code",
+        method: "antigravity_browser",
+        status: "waiting_for_browser",
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        message: "Finish signing in to Google, then paste the code here.",
+      },
+    } satisfies ServerProviderStatus;
+    const submitProviderConnectionAuthorizationCode = vi
+      .fn()
+      .mockResolvedValue({ providers: [active] });
+    const restoreNativeApi = installNativeApi({ submitProviderConnectionAuthorizationCode });
+    const queryClient = createQueryClient(active);
+    useProviderConnectionDialogStore.getState().openDialog("antigravity", "provider_picker");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      const submitButton = page.getByRole("button", { name: "Submit code" });
+      await expect.element(submitButton).toBeDisabled();
+      await page.getByPlaceholder("Paste authorization code").fill("4/test-code-123");
+      await submitButton.click();
+      await vi.waitFor(() =>
+        expect(submitProviderConnectionAuthorizationCode).toHaveBeenCalledWith({
+          provider: "antigravity",
+          operationId: "connect-antigravity-code",
+          authorizationCode: "4/test-code-123",
+        }),
+      );
+      await expect.element(page.getByText("Code submitted. Finishing sign in.")).toBeVisible();
+      await expect
+        .element(page.getByPlaceholder("Paste authorization code"))
+        .not.toBeInTheDocument();
+      useProviderConnectionDialogStore.getState().setOpen(false);
+      useProviderConnectionDialogStore.getState().openDialog("antigravity", "provider_picker");
+      await expect.element(page.getByText("Code submitted. Finishing sign in.")).toBeVisible();
+      expect(submitProviderConnectionAuthorizationCode).toHaveBeenCalledTimes(1);
     } finally {
       await screen.unmount();
       queryClient.clear();
