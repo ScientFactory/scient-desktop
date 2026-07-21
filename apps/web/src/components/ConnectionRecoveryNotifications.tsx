@@ -38,6 +38,7 @@ export function ConnectionRecoveryNotifications() {
           data: {
             allowCrossThreadVisibility: true,
             dismissAfterVisibleMs: 3_000,
+            showDescription: true,
           },
           timeout: 0,
         });
@@ -52,7 +53,7 @@ export function ConnectionRecoveryNotifications() {
             controller.dismissCurrentOutage();
             toastIdRef.current = null;
           },
-          data: { allowCrossThreadVisibility: true },
+          data: { allowCrossThreadVisibility: true, showDescription: true },
           timeout: 0,
         });
       },

@@ -36,6 +36,7 @@ type ThreadToastData = {
   allowCrossThreadVisibility?: boolean;
   copyLabel?: string;
   copyText?: string;
+  showDescription?: boolean;
   onClose?: () => void;
   secondaryActionProps?: React.ComponentProps<typeof Button>;
   threadId?: ThreadId | null;
@@ -61,7 +62,12 @@ const TOAST_ICONS = {
 } as const;
 
 function shouldUseCompactToast(toast: ToastObject<ThreadToastData>): boolean {
-  return !toast.data?.copyText && !toast.actionProps && !toast.data?.secondaryActionProps;
+  return (
+    !toast.data?.showDescription &&
+    !toast.data?.copyText &&
+    !toast.actionProps &&
+    !toast.data?.secondaryActionProps
+  );
 }
 
 function isArchiveUndoToast(toast: ToastObject<ThreadToastData>): boolean {
