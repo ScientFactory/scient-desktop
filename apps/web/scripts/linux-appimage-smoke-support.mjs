@@ -6,6 +6,15 @@ function delay(milliseconds) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 }
 
+export function assertSandboxedPackagedArguments(args) {
+  const bypass = args.find(
+    (argument) => argument === "--no-sandbox" || argument.startsWith("--no-sandbox="),
+  );
+  if (bypass) {
+    throw new Error(`Packaged Linux smoke must not disable Electron's sandbox: ${bypass}`);
+  }
+}
+
 export async function waitFor(description, operation, timeoutMs = DEFAULT_WAIT_TIMEOUT_MS) {
   const deadline = Date.now() + timeoutMs;
   let lastError;

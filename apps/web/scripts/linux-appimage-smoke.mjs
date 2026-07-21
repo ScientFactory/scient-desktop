@@ -20,7 +20,11 @@ import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
 
-import { fetchWithinDeadline, waitFor } from "./linux-appimage-smoke-support.mjs";
+import {
+  assertSandboxedPackagedArguments,
+  fetchWithinDeadline,
+  waitFor,
+} from "./linux-appimage-smoke-support.mjs";
 
 const SCRIPT_DIR = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = resolve(SCRIPT_DIR, "../../..");
@@ -559,17 +563,17 @@ async function runScenario(appImagePath, scenario) {
     if (scenario.precreatePermissiveState) await createDirtyScientDirectories(scientHome);
 
     const debuggingPort = await reservePort();
+    const packagedArguments = [
+      `--remote-debugging-port=${debuggingPort}`,
+      "--remote-debugging-address=127.0.0.1",
+      "--disable-gpu",
+    ];
+    assertSandboxedPackagedArguments(packagedArguments);
     const previousUmask = process.umask(scenario.umask);
     try {
       child = spawn(
         "xvfb-run",
-        [
-          "-a",
-          appImagePath,
-          `--remote-debugging-port=${debuggingPort}`,
-          "--remote-debugging-address=127.0.0.1",
-          "--disable-gpu",
-        ],
+        ["-a", appImagePath, ...packagedArguments],
         {
           detached: true,
           env: {
