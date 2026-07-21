@@ -26,6 +26,7 @@ import {
 import {
   expectedMethodForProvider,
   makeProviderConnectionLive,
+  parseGrokOAuthAuthorizationUrl,
   providerConnectionCommandArgs,
 } from "./ProviderConnection";
 
@@ -79,7 +80,9 @@ function makeHandle(input: {
     kill: () => Effect.sync(() => input.onKill?.()),
     stdin: Sink.drain,
     stdout: input.hanging
-      ? Stream.never
+      ? input.stdout
+        ? Stream.concat(Stream.make(encoder.encode(input.stdout)), Stream.never)
+        : Stream.never
       : Stream.make(encoder.encode(input.stdout ?? "browser opened")),
     stderr: input.hanging ? Stream.never : Stream.empty,
     all: Stream.empty,
@@ -91,6 +94,7 @@ function makeHandle(input: {
 function makeConnectionTestLayer(input?: {
   readonly available?: boolean;
   readonly hanging?: boolean;
+  readonly processExitCode?: number;
   readonly processStdout?: string;
   readonly provider?: ProviderKind;
   readonly runtimeSource?: ServerProviderRuntimeSource;
@@ -101,13 +105,15 @@ function makeConnectionTestLayer(input?: {
   readonly onPtyKill?: () => void;
   readonly droidAuthenticationProbe?: typeof probeDroidAcpAuthentication;
   readonly modelsAvailable?: boolean;
+  readonly initiallyAuthenticated?: boolean;
   readonly onListModels?: (input: {
     readonly provider: ProviderKind;
     readonly binaryPath?: string;
   }) => void;
 }) {
   let connectionState: ServerProviderConnectionState | undefined;
-  let authenticated = false;
+  let authenticated = input?.initiallyAuthenticated ?? false;
+  let refreshCalls = 0;
   const status = (): ServerProviderStatus => ({
     provider: input?.provider ?? "claudeAgent",
     status: authenticated ? "ready" : "error",
@@ -119,7 +125,10 @@ function makeConnectionTestLayer(input?: {
   const providerHealthLayer = Layer.succeed(ProviderHealth, {
     getStatuses: Effect.sync(() => [status()]),
     refresh: Effect.sync(() => {
-      authenticated = true;
+      refreshCalls += 1;
+      // The first refresh is the preflight. A completed sign-in is verified by
+      // the following refresh, unless the fixture began authenticated.
+      if (refreshCalls > 1 && input?.hanging !== true) authenticated = true;
       return [status()];
     }),
     updateProvider: () => Effect.die("unused"),
@@ -157,6 +166,7 @@ function makeConnectionTestLayer(input?: {
       input?.onSpawn?.(captured);
       return Effect.succeed(
         makeHandle({
+          ...(input?.processExitCode !== undefined ? { code: input.processExitCode } : {}),
           ...(input?.hanging !== undefined ? { hanging: input.hanging } : {}),
           ...(input?.onKill ? { onKill: input.onKill } : {}),
           ...(input?.processStdout ? { stdout: input.processStdout } : {}),
@@ -242,8 +252,17 @@ describe("provider connection command allowlist", () => {
     expect(providerConnectionCommandArgs("codex", "codex_browser")).toEqual(["login"]);
   });
 
-  it("uses Claude Console login with fixed argv", () => {
-    expect(expectedMethodForProvider("claudeAgent")).toBe("claude_console");
+  it("uses normal Claude account login by default and keeps explicit alternatives", () => {
+    expect(expectedMethodForProvider("claudeAgent")).toBe("claude_account");
+    expect(providerConnectionCommandArgs("claudeAgent", "claude_account")).toEqual([
+      "auth",
+      "login",
+    ]);
+    expect(providerConnectionCommandArgs("claudeAgent", "claude_sso")).toEqual([
+      "auth",
+      "login",
+      "--sso",
+    ]);
     expect(providerConnectionCommandArgs("claudeAgent", "claude_console")).toEqual([
       "auth",
       "login",
@@ -263,7 +282,7 @@ describe("provider connection command allowlist", () => {
 
   it("uses Grok's provider-owned browser login", () => {
     expect(expectedMethodForProvider("grok")).toBe("grok_browser");
-    expect(providerConnectionCommandArgs("grok", "grok_browser")).toEqual(["login"]);
+    expect(providerConnectionCommandArgs("grok", "grok_browser")).toEqual(["login", "--oauth"]);
   });
 
   it("uses Droid's ACP device-pairing authentication", () => {
@@ -280,6 +299,31 @@ describe("provider connection command allowlist", () => {
     expect(providerConnectionCommandArgs("claudeAgent", "claude_subscription")).toBeNull();
     expect(providerConnectionCommandArgs("cursor", "codex_browser")).toBeNull();
     expect(expectedMethodForProvider("opencode")).toBeNull();
+  });
+});
+
+describe("Grok OAuth authorization URL parsing", () => {
+  const authorizationUrl =
+    "https://auth.x.ai/oauth2/authorize?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A50418%2Fcallback&state=test-state&code_challenge=test-challenge";
+
+  it("accepts the exact xAI authorization route with a loopback callback", () => {
+    expect(parseGrokOAuthAuthorizationUrl(`Open this URL:\n${authorizationUrl}\n`)).toBe(
+      authorizationUrl,
+    );
+  });
+
+  it("rejects lookalike hosts and callbacks that are not local", () => {
+    expect(
+      parseGrokOAuthAuthorizationUrl(
+        authorizationUrl.replace("auth.x.ai", "auth.x.ai.example.com"),
+      ),
+    ).toBeNull();
+    expect(
+      parseGrokOAuthAuthorizationUrl(
+        authorizationUrl.replace("127.0.0.1%3A50418", "example.com%3A50418"),
+      ),
+    ).toBeNull();
+    expect(parseGrokOAuthAuthorizationUrl(`${authorizationUrl}#unexpected-fragment`)).toBeNull();
   });
 });
 
@@ -335,8 +379,116 @@ describe("ProviderConnectionLive", () => {
     );
 
     expect(onSpawn).toHaveBeenCalledWith(
-      expect.objectContaining({ command: "grok", args: ["--no-auto-update", "login"] }),
+      expect.objectContaining({
+        command: "grok",
+        args: ["--no-auto-update", "login", "--oauth"],
+      }),
     );
+  });
+
+  it("uses direct OAuth with a system Grok runtime too", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({ provider: "grok", onSpawn });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({ provider: "grok", method: "grok_browser" });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("connected");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "grok", args: ["login", "--oauth"] }),
+    );
+  });
+
+  it("publishes only a validated transient Grok OAuth URL while sign-in is active", async () => {
+    const authorizationUrl =
+      "https://auth.x.ai/oauth2/authorize?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A50418%2Fcallback&state=test-state&code_challenge=test-challenge";
+    const fixture = makeConnectionTestLayer({
+      provider: "grok",
+      hanging: true,
+      processStdout: `Complete sign-in at:\n${authorizationUrl}\n`,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const started = yield* connection.start({ provider: "grok", method: "grok_browser" });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        yield* Effect.sleep(Duration.millis(10));
+        expect(fixture.getConnectionState()?.authorizationUrl).toBe(authorizationUrl);
+        yield* connection.cancel({ provider: "grok", operationId: operationId! });
+        expect(fixture.getConnectionState()?.authorizationUrl).toBeUndefined();
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
+  it("ends a rejected Grok OAuth flow with actionable retry guidance", async () => {
+    const fixture = makeConnectionTestLayer({
+      provider: "grok",
+      processExitCode: 1,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({ provider: "grok", method: "grok_browser" });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("failed");
+        expect(fixture.getConnectionState()?.message).toContain("fresh secure browser sign-in");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
+  it("cancels Grok OAuth and kills the waiting callback process", async () => {
+    const onKill = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "grok",
+      hanging: true,
+      onKill,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const started = yield* connection.start({
+          provider: "grok",
+          method: "grok_browser",
+        });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        expect(operationId).toBeTruthy();
+        yield* Effect.sleep(Duration.millis(5));
+        yield* connection.cancel({ provider: "grok", operationId: operationId! });
+        expect(fixture.getConnectionState()?.status).toBe("cancelled");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onKill).toHaveBeenCalledTimes(1);
+  });
+
+  it("times out Grok OAuth and kills the waiting callback process", async () => {
+    const onKill = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "grok",
+      hanging: true,
+      timeout: Duration.millis(5),
+      onKill,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({ provider: "grok", method: "grok_browser" });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("failed");
+        expect(fixture.getConnectionState()?.message).toContain("timed out");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onKill).toHaveBeenCalledTimes(1);
   });
 
   it("runs Droid's authentication-only ACP handshake before verification", async () => {
@@ -360,7 +512,7 @@ describe("ProviderConnectionLive", () => {
     );
   });
 
-  it("starts Claude login with fixed argv and verifies before connecting", async () => {
+  it("starts terminal-equivalent Claude login and verifies before connecting", async () => {
     const onSpawn = vi.fn();
     const onListModels = vi.fn();
     const fixture = makeConnectionTestLayer({ onSpawn, onListModels });
@@ -370,7 +522,7 @@ describe("ProviderConnectionLive", () => {
         const connection = yield* ProviderConnection;
         const started = yield* connection.start({
           provider: "claudeAgent",
-          method: "claude_console",
+          method: "claude_account",
         });
         expect(started.providers[0]?.connectionState?.operationId).toBeTruthy();
         yield* Effect.sleep(Duration.millis(20));
@@ -381,7 +533,7 @@ describe("ProviderConnectionLive", () => {
     expect(onSpawn).toHaveBeenCalledTimes(1);
     expect(onSpawn.mock.calls[0]?.[0]).toMatchObject({
       command: "claude",
-      args: ["auth", "login", "--console"],
+      args: ["auth", "login"],
     });
     expect(onListModels).toHaveBeenCalledWith({
       provider: "claudeAgent",
@@ -451,7 +603,7 @@ describe("ProviderConnectionLive", () => {
     expect(onSpawn).not.toHaveBeenCalled();
   });
 
-  it("rejects a duplicate operation for the same provider", async () => {
+  it("returns the existing operation for a duplicate start", async () => {
     const fixture = makeConnectionTestLayer({ hanging: true });
 
     await Effect.runPromise(
@@ -461,20 +613,70 @@ describe("ProviderConnectionLive", () => {
           provider: "claudeAgent",
           method: "claude_console",
         });
-        const duplicate = yield* Effect.result(
-          connection.start({
-            provider: "claudeAgent",
-            method: "claude_console",
-          }),
-        );
-        expect(duplicate._tag).toBe("Failure");
-        if (duplicate._tag === "Failure") {
-          expect(duplicate.failure.reason).toBe("already_running");
-        }
+        const duplicate = yield* connection.start({
+          provider: "claudeAgent",
+          method: "claude_account",
+        });
         const operationId = started.providers[0]?.connectionState?.operationId;
+        expect(duplicate.providers[0]?.connectionState?.operationId).toBe(operationId);
         yield* connection.cancel({ provider: "claudeAgent", operationId: operationId! });
       }).pipe(Effect.provide(fixture.layer)),
     );
+  });
+
+  it("does not spawn sign-in when a fresh preflight finds an existing account", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({ initiallyAuthenticated: true, onSpawn });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* connection.start({ provider: "claudeAgent", method: "claude_account" });
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result.providers[0]?.authStatus).toBe("authenticated");
+    expect(result.providers[0]?.connectionState).toBeUndefined();
+    expect(onSpawn).not.toHaveBeenCalled();
+  });
+
+  it("can start a fresh operation after cancellation fully releases the provider", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({ hanging: true, onSpawn });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const first = yield* connection.start({
+          provider: "claudeAgent",
+          method: "claude_account",
+        });
+        const firstOperationId = first.providers[0]?.connectionState?.operationId;
+        yield* Effect.sleep(Duration.millis(5));
+        yield* connection.cancel({
+          provider: "claudeAgent",
+          operationId: firstOperationId!,
+        });
+
+        const second = yield* connection.start({
+          provider: "claudeAgent",
+          method: "claude_sso",
+        });
+        const secondOperationId = second.providers[0]?.connectionState?.operationId;
+        expect(secondOperationId).toBeTruthy();
+        expect(secondOperationId).not.toBe(firstOperationId);
+        yield* Effect.sleep(Duration.millis(5));
+        yield* connection.cancel({
+          provider: "claudeAgent",
+          operationId: secondOperationId!,
+        });
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onSpawn).toHaveBeenCalledTimes(2);
+    expect(onSpawn.mock.calls[1]?.[0]).toMatchObject({
+      args: ["auth", "login", "--sso"],
+    });
   });
 
   it("times out and kills a sign-in that never finishes", async () => {

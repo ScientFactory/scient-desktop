@@ -606,7 +606,7 @@ describe("ProviderModelPicker", () => {
     }
   });
 
-  it("keeps warning providers selectable when they are still available", async () => {
+  it("routes unknown Claude authentication through a fresh connection check", async () => {
     const mounted = await mountPicker({
       provider: "codex",
       model: "gpt-5-codex",
@@ -637,8 +637,62 @@ describe("ProviderModelPicker", () => {
         expect(document.body.textContent ?? "").toContain("Claude");
       });
 
-      await expect.element(page.getByText("Sign in")).not.toBeInTheDocument();
-      await expect.element(page.getByText("Unavailable")).not.toBeInTheDocument();
+      await expect.element(page.getByText("Check connection")).toBeInTheDocument();
+      await page.getByRole("menuitem", { name: /Claude.*Check connection/u }).click();
+      await vi.waitFor(() => {
+        expect(useProviderConnectionDialogStore.getState()).toMatchObject({
+          isOpen: true,
+          provider: "claudeAgent",
+          source: "provider_picker",
+        });
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("reopens an active Claude sign-in from the same provider row", async () => {
+    const mounted = await mountPicker({
+      provider: "codex",
+      model: "gpt-5-codex",
+      lockedProvider: null,
+      providers: [
+        {
+          provider: "codex",
+          status: "ready",
+          available: true,
+          authStatus: "authenticated",
+          checkedAt: "2026-04-10T10:00:00.000Z",
+        },
+        {
+          provider: "claudeAgent",
+          status: "error",
+          available: true,
+          authStatus: "unauthenticated",
+          checkedAt: "2026-04-10T10:00:00.000Z",
+          connectionState: {
+            operationId: "claude-connect-1",
+            method: "claude_account",
+            status: "waiting_for_browser",
+            startedAt: "2026-04-10T10:00:00.000Z",
+            finishedAt: null,
+            message: "Finish signing in.",
+          },
+        },
+      ],
+    });
+
+    try {
+      await page.getByRole("button").click();
+      await expect.element(page.getByText("Connecting")).toBeInTheDocument();
+      await page.getByRole("menuitem", { name: /Claude.*Connecting/u }).click();
+      await vi.waitFor(() => {
+        expect(useProviderConnectionDialogStore.getState()).toMatchObject({
+          isOpen: true,
+          provider: "claudeAgent",
+          source: "provider_picker",
+        });
+      });
     } finally {
       await mounted.cleanup();
     }

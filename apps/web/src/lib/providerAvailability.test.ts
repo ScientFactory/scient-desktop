@@ -142,6 +142,15 @@ describe("isProviderUsable", () => {
     ).toBe(false);
     expect(
       isProviderUsable({ ...BASE_STATUS, available: true, status: "ready", authStatus: "unknown" }),
+    ).toBe(false);
+    expect(
+      isProviderUsable({
+        ...BASE_STATUS,
+        provider: "opencode",
+        available: true,
+        status: "ready",
+        authStatus: "unknown",
+      }),
     ).toBe(true);
     expect(
       isProviderUsable({
@@ -196,6 +205,19 @@ describe("resolveProviderSendAvailabilityWithRefresh", () => {
     expect(refreshStatuses).toHaveBeenCalledTimes(1);
   });
 
+  it("rechecks unknown authentication before blocking an explicit-auth provider", async () => {
+    const refreshStatuses = vi.fn(async () => [READY_STATUS]);
+
+    await expect(
+      resolveProviderSendAvailabilityWithRefresh({
+        provider: "antigravity",
+        statuses: [{ ...READY_STATUS, authStatus: "unknown" }],
+        refreshStatuses,
+      }),
+    ).resolves.toMatchObject({ usable: true });
+    expect(refreshStatuses).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the original blocked reason when refresh fails", async () => {
     await expect(
       resolveProviderSendAvailabilityWithRefresh({
@@ -218,5 +240,19 @@ describe("providerUnavailableReason", () => {
       "Antigravity is not authenticated yet.",
     );
     expect(providerUnavailableReason(BASE_STATUS)).toBe(BASE_STATUS.message);
+    expect(
+      providerUnavailableReason({
+        ...READY_STATUS,
+        authStatus: "unknown",
+        connectionState: {
+          operationId: "connection-1",
+          method: "antigravity_browser",
+          status: "waiting_for_browser",
+          startedAt: BASE_STATUS.checkedAt,
+          finishedAt: null,
+          message: "Waiting for browser.",
+        },
+      }),
+    ).toBe("Antigravity sign-in is still in progress.");
   });
 });

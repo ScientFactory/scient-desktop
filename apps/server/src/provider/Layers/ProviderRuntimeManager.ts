@@ -241,6 +241,30 @@ function findExecutableOnPath(input: {
   })();
 }
 
+async function resolveConfiguredExecutable(input: {
+  readonly command: string;
+  readonly pathValue: string;
+}): Promise<string | null> {
+  const hasPathSeparator =
+    Path.isAbsolute(input.command) ||
+    input.command.includes(Path.sep) ||
+    (process.platform === "win32" && input.command.includes("/"));
+  if (!hasPathSeparator) {
+    return findExecutableOnPath(input);
+  }
+
+  const stat = await FS.stat(input.command).catch(() => null);
+  if (!stat?.isFile()) return null;
+  if (process.platform !== "win32") {
+    try {
+      await FS.access(input.command, FS_CONSTANTS.X_OK);
+    } catch {
+      return null;
+    }
+  }
+  return FS.realpath(input.command).catch(() => input.command);
+}
+
 async function smokeTestExecutable(input: {
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
@@ -860,7 +884,7 @@ export const ProviderRuntimeManagerLive = Layer.effect(
         const explicitCustom = configured.length > 0 && configured !== recipe.executableName;
         const record = records.get(provider) ?? null;
         const systemExecutable = explicitCustom
-          ? configured
+          ? await resolveConfiguredExecutable({ command: configured, pathValue: basePath })
           : await findExecutableOnPath({ command: recipe.executableName, pathValue: basePath });
         const source: ServerProviderRuntimeSource = explicitCustom
           ? "custom"
@@ -913,9 +937,11 @@ export const ProviderRuntimeManagerLive = Layer.effect(
           message:
             source === "bundled"
               ? "Built into Scient."
-              : source === "missing"
-                ? "No usable provider runtime was found."
-                : null,
+              : source === "custom" && !systemExecutable
+                ? `The configured executable '${configured}' is unavailable or not executable. Change or reset this custom path in provider settings.`
+                : source === "missing"
+                  ? "No usable provider runtime was found."
+                  : null,
         };
       });
 
