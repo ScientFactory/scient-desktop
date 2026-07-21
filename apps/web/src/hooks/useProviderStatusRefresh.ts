@@ -5,11 +5,11 @@
 // Exports: useProviderStatusRefresh, useRefreshProviderStatusesNow
 
 import { useCallback, useEffect } from "react";
-import { type QueryClient, useQueryClient } from "@tanstack/react-query";
-import type { ServerConfig, ServerProviderStatus } from "@synara/contracts";
+import { useQueryClient } from "@tanstack/react-query";
+import type { ServerProviderStatus } from "@synara/contracts";
 import { toastManager } from "../components/ui/toast";
 import { readNativeApi } from "../nativeApi";
-import { serverQueryKeys } from "../lib/serverReactQuery";
+import { applyProviderStatusesToCache } from "../lib/providerStatusCache";
 
 export type RefreshProviderStatusesOptions = {
   readonly silent?: boolean;
@@ -18,15 +18,6 @@ export type RefreshProviderStatusesOptions = {
 export type RefreshProviderStatusesNow = (
   options?: RefreshProviderStatusesOptions,
 ) => Promise<readonly ServerProviderStatus[] | null>;
-
-function writeProviderStatusesToConfigCache(
-  queryClient: QueryClient,
-  providers: readonly ServerProviderStatus[],
-) {
-  queryClient.setQueryData<ServerConfig>(serverQueryKeys.config(), (current) =>
-    current ? { ...current, providers } : current,
-  );
-}
 
 /**
  * Imperative one-shot provider-status refresh: re-checks providers on the server
@@ -40,7 +31,7 @@ export function useRefreshProviderStatusesNow(): RefreshProviderStatusesNow {
       if (!api) return null;
       try {
         const result = await api.server.refreshProviders();
-        writeProviderStatusesToConfigCache(queryClient, result.providers);
+        applyProviderStatusesToCache(queryClient, result.providers);
         return result.providers;
       } catch (error) {
         if (!options?.silent) {
@@ -100,7 +91,7 @@ export function useProviderStatusRefresh(options: ProviderStatusRefreshOptions):
           if (disposed) {
             return;
           }
-          writeProviderStatusesToConfigCache(queryClient, result.providers);
+          applyProviderStatusesToCache(queryClient, result.providers);
         })
         .catch(() => undefined);
     };
