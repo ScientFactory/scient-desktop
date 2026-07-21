@@ -146,3 +146,42 @@ export function resolveElectronPath() {
 
   return buildMacLauncher(electronBinaryPath);
 }
+
+export function isLinuxSetuidSandboxConfigured(
+  electronBinaryPath,
+  { platform = process.platform, stat = statSync } = {},
+) {
+  if (platform !== "linux") {
+    return true;
+  }
+
+  const sandboxPath = join(dirname(electronBinaryPath), "chrome-sandbox");
+  try {
+    const sandboxStat = stat(sandboxPath);
+    return sandboxStat.uid === 0 && (sandboxStat.mode & 0o4777) === 0o4755;
+  } catch {
+    return false;
+  }
+}
+
+export function resolveLinuxSandboxArgs(
+  electronBinaryPath,
+  { platform = process.platform, stat = statSync, warn = console.warn } = {},
+) {
+  if (isLinuxSetuidSandboxConfigured(electronBinaryPath, { platform, stat })) {
+    return [];
+  }
+
+  warn(
+    "[desktop-launcher] Electron chrome-sandbox is not root-owned with mode 4755; launching local Electron with --no-sandbox.",
+  );
+  return ["--no-sandbox"];
+}
+
+export function resolveElectronLaunchCommand(args = []) {
+  const electronPath = resolveElectronPath();
+  return {
+    electronPath,
+    args: [...resolveLinuxSandboxArgs(electronPath), ...args],
+  };
+}
