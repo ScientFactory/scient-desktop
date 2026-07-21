@@ -103,6 +103,19 @@ async function waitForRuntimeState(runtimeStatePath, predicate = () => true) {
   );
 }
 
+async function waitForBackendReady(runtimeState, description, timeoutMs = STARTUP_TIMEOUT_MS) {
+  return waitFor(
+    description,
+    async () => {
+      const response = await fetch(`${runtimeState.origin}/health`);
+      if (!response.ok) return null;
+      const health = await response.json();
+      return health?.status === "ok" && health?.startupReady === true ? health : null;
+    },
+    timeoutMs,
+  );
+}
+
 async function assertPackagedBackendProcess(pid) {
   const commandLine = (await readFile(`/proc/${pid}/cmdline`))
     .toString("utf8")
@@ -389,12 +402,9 @@ async function runScenario(appImagePath, scenario) {
       recordOutput(`\n[renderer:pageerror] ${error.stack || error.message}`);
     });
     const initialRuntime = await waitForRuntimeState(runtimeStatePath);
-    await waitFor(
+    await waitForBackendReady(
+      initialRuntime,
       "first packaged backend generation readiness",
-      async () => {
-        const log = await readFile(desktopLogPath, "utf8");
-        return log.includes("backend generation=1 ready") ? log : null;
-      },
       STARTUP_TIMEOUT_MS,
     );
 
@@ -410,12 +420,9 @@ async function runScenario(appImagePath, scenario) {
         runtimeStatePath,
         (state) => state.pid !== initialRuntime.pid,
       );
-      await waitFor(
+      await waitForBackendReady(
+        recoveredRuntime,
         "second packaged backend generation readiness",
-        async () => {
-          const log = await readFile(desktopLogPath, "utf8");
-          return log.includes("backend generation=2 ready") ? log : null;
-        },
         RECOVERY_TIMEOUT_MS,
       );
 
