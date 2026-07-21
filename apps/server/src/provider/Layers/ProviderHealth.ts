@@ -123,7 +123,7 @@ const OPENCODE_PROVIDER = "opencode" as const;
 const PI_PROVIDER = "pi" as const;
 type ProviderStatuses = ReadonlyArray<ServerProviderStatus>;
 const DISABLED_PROVIDER_STATUS_MESSAGE = "Provider is disabled in Scient settings.";
-const MINIMUM_ANTIGRAVITY_CLI_VERSION = "1.0.12";
+const MINIMUM_ANTIGRAVITY_CLI_VERSION = "1.1.4";
 
 const PROVIDERS = [
   CODEX_PROVIDER,

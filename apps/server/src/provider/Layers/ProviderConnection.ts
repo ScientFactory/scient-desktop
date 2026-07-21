@@ -48,7 +48,10 @@ import { ProviderRuntimeManager } from "../Services/ProviderRuntimeManager";
 import { parseAntigravityModelsAuthStatus } from "./ProviderHealth";
 
 const CONNECTION_TIMEOUT = Duration.minutes(10);
-const ANTIGRAVITY_CONNECTION_TIMEOUT = Duration.seconds(60);
+// Antigravity keeps the provider-owned code window at 60 seconds. The local
+// supervisor gets a small hidden grace period so a CLI exit at that boundary
+// can still complete one bounded authentication probe.
+const ANTIGRAVITY_CONNECTION_TIMEOUT = Duration.seconds(65);
 const CONNECTION_OUTPUT_MAX_BYTES = 64 * 1024;
 
 interface ActiveConnection {
@@ -69,7 +72,7 @@ interface ConnectionCommand {
 }
 
 interface ConnectionOutputObserver {
-  readonly onOutputChunk?: (chunk: Uint8Array) => Effect.Effect<void>;
+  readonly onOutputChunk?: (chunk: Uint8Array) => Effect.Effect<void> | undefined;
 }
 
 const GROK_OAUTH_AUTHORIZATION_ORIGIN = "https://auth.x.ai";
@@ -247,9 +250,11 @@ function makeConnectionError(input: {
 
 export function makeProviderConnectionLive(options?: {
   readonly timeout?: Duration.Duration;
+  readonly antigravityTimeout?: Duration.Duration;
   readonly droidAuthenticationProbe?: typeof probeDroidAcpAuthentication;
 }) {
   const timeout = options?.timeout ?? CONNECTION_TIMEOUT;
+  const antigravityTimeout = options?.antigravityTimeout ?? ANTIGRAVITY_CONNECTION_TIMEOUT;
 
   return Layer.effect(
     ProviderConnection,
@@ -501,7 +506,9 @@ export function makeProviderConnectionLive(options?: {
         );
         yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
         const observe = (stream: Stream.Stream<Uint8Array, unknown>) =>
-          observer?.onOutputChunk ? stream.pipe(Stream.tap(observer.onOutputChunk)) : stream;
+          observer?.onOutputChunk
+            ? stream.pipe(Stream.tap((chunk) => observer.onOutputChunk?.(chunk) ?? Effect.void))
+            : stream;
         const [stdout, stderr, exitCode] = yield* Effect.all(
           [
             collectUint8StreamText({
@@ -528,6 +535,7 @@ export function makeProviderConnectionLive(options?: {
         authorizationCodeInput: Deferred.Deferred<string>,
         authorizationCodeAccepted: Deferred.Deferred<void>,
         authorizationCodeClosed: Deferred.Deferred<void>,
+        onCodeWindowClosed: Effect.Effect<void>,
         observer?: ConnectionOutputObserver,
       ) =>
         Effect.gen(function* () {
@@ -567,18 +575,22 @@ export function makeProviderConnectionLive(options?: {
             env: command.env,
           });
           const processExit = yield* Deferred.make<number>();
-          const outputQueue = yield* Queue.unbounded<Uint8Array>();
-          yield* Effect.addFinalizer(() => Queue.shutdown(outputQueue).pipe(Effect.asVoid));
+          // The PTY callback performs only bounded synchronous parsing. It
+          // enqueues at most one validated publication effect, never raw CLI
+          // output, so noisy output cannot accumulate buffers or waiting fibers.
+          const outputEffectQueue = yield* Queue.sliding<Effect.Effect<void>>(1);
+          yield* Effect.addFinalizer(() => Queue.shutdown(outputEffectQueue).pipe(Effect.asVoid));
           if (observer?.onOutputChunk) {
-            yield* Stream.fromQueue(outputQueue).pipe(
-              Stream.runForEach(observer.onOutputChunk),
+            yield* Stream.fromQueue(outputEffectQueue).pipe(
+              Stream.runForEach((effect) => effect),
               Effect.forkScoped,
             );
           }
           const removeDataListener = process.onData((data) => {
-            Effect.runFork(
-              Queue.offer(outputQueue, authorizationCodeEncoder.encode(data)).pipe(Effect.asVoid),
-            );
+            const publication = observer?.onOutputChunk?.(authorizationCodeEncoder.encode(data));
+            if (publication) {
+              Effect.runSync(Queue.offer(outputEffectQueue, publication));
+            }
           });
           const removeExitListener = process.onExit((event) => {
             Effect.runFork(Deferred.succeed(processExit, event.exitCode).pipe(Effect.asVoid));
@@ -605,6 +617,7 @@ export function makeProviderConnectionLive(options?: {
           ).pipe(
             Effect.flatMap((code) =>
               Effect.gen(function* () {
+                yield* onCodeWindowClosed;
                 if (yield* authenticationProbe) {
                   yield* Deferred.succeed(authorizationCodeAccepted, undefined);
                   return 0;
@@ -693,29 +706,27 @@ export function makeProviderConnectionLive(options?: {
             const oauthOutputObserver: ConnectionOutputObserver | undefined =
               provider === "grok" || provider === "antigravity"
                 ? {
-                    onOutputChunk: (chunk) =>
-                      Effect.gen(function* () {
-                        if (publishedAuthorizationUrl) return;
-                        oauthOutputBuffer =
-                          `${oauthOutputBuffer}${Buffer.from(chunk).toString("utf8")}`.slice(
-                            -OAUTH_OUTPUT_BUFFER_MAX_CHARS,
-                          );
-                        const authorizationUrl =
-                          provider === "grok"
-                            ? parseGrokOAuthAuthorizationUrl(oauthOutputBuffer)
-                            : parseAntigravityOAuthAuthorizationUrl(oauthOutputBuffer);
-                        if (!authorizationUrl || authorizationUrl === publishedAuthorizationUrl)
-                          return;
-                        publishedAuthorizationUrl = authorizationUrl;
-                        yield* publishState(
-                          provider,
-                          state({
-                            status: "waiting_for_browser",
-                            message: command.waitingMessage,
-                            authorizationUrl,
-                          }),
+                    onOutputChunk: (chunk) => {
+                      if (publishedAuthorizationUrl) return undefined;
+                      oauthOutputBuffer =
+                        `${oauthOutputBuffer}${Buffer.from(chunk).toString("utf8")}`.slice(
+                          -OAUTH_OUTPUT_BUFFER_MAX_CHARS,
                         );
-                      }),
+                      const authorizationUrl =
+                        provider === "grok"
+                          ? parseGrokOAuthAuthorizationUrl(oauthOutputBuffer)
+                          : parseAntigravityOAuthAuthorizationUrl(oauthOutputBuffer);
+                      if (!authorizationUrl) return undefined;
+                      publishedAuthorizationUrl = authorizationUrl;
+                      return publishState(
+                        provider,
+                        state({
+                          status: "waiting_for_browser",
+                          message: command.waitingMessage,
+                          authorizationUrl,
+                        }),
+                      ).pipe(Effect.asVoid);
+                    },
                   }
                 : undefined;
             const connectionProcess: Effect.Effect<number, unknown> =
@@ -732,12 +743,19 @@ export function makeProviderConnectionLive(options?: {
                       authorizationCodeInput,
                       authorizationCodeAccepted,
                       authorizationCodeClosed,
+                      publishState(
+                        provider,
+                        state({
+                          status: "verifying",
+                          message: "Verifying the connection.",
+                        }),
+                      ).pipe(Effect.asVoid),
                       oauthOutputObserver,
                     )
                   : runCommand(command, oauthOutputObserver).pipe(Effect.scoped);
             const operationTimeout =
               provider === "antigravity" && options?.timeout === undefined
-                ? ANTIGRAVITY_CONNECTION_TIMEOUT
+                ? antigravityTimeout
                 : timeout;
             const exitCodeResult = yield* connectionProcess.pipe(
               Effect.timeoutOption(operationTimeout),

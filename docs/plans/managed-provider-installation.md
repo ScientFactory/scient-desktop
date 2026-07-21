@@ -134,7 +134,7 @@ The installation service must:
 - Source: official platform manifest and native artifact.
 - Verification now: pinned manifest version and manifest SHA-512.
 - Smoke test: `agy --version`.
-- Authentication now: sandboxed `agy --print` runs in a private PTY from Scient's neutral state directory and opens provider-owned Google sign-in. Scient validates the Google URL, forwards one redacted one-time code to that process, discards raw output, polls the separate model verifier, and matches Antigravity's 60-second OAuth window.
+- Authentication now: Antigravity 1.1.4 or newer runs sandboxed `agy --print` in a private PTY from Scient's neutral state directory and opens provider-owned Google sign-in. Scient validates the Google URL, forwards one redacted one-time code to that process, discards raw output, polls the separate model verifier, keeps Antigravity's 60-second OAuth window, and allows only a hidden five-second grace for the final local verification probe.
 - Auth verification: `agy models` returns models.
 - Managed invocations disable AGY's native self-updater so updates stay inside Scient's reviewed runtime lifecycle.
 

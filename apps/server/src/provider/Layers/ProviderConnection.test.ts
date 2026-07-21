@@ -83,15 +83,21 @@ const TEST_CONFIG: ServerConfigShape = {
 
 function makeHandle(input: {
   readonly code?: number;
+  readonly delayMs?: number;
   readonly hanging?: boolean;
   readonly stdout?: string;
   onKill?: () => void;
 }) {
+  const delay = input.delayMs
+    ? <A>(effect: Effect.Effect<A>) =>
+        Effect.sleep(Duration.millis(input.delayMs!)).pipe(Effect.andThen(effect))
+    : <A>(effect: Effect.Effect<A>) => effect;
+  const stdout = Stream.make(encoder.encode(input.stdout ?? "browser opened"));
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(41),
     exitCode: input.hanging
       ? Effect.never
-      : Effect.succeed(ChildProcessSpawner.ExitCode(input.code ?? 0)),
+      : delay(Effect.succeed(ChildProcessSpawner.ExitCode(input.code ?? 0))),
     isRunning: Effect.succeed(Boolean(input.hanging)),
     kill: () => Effect.sync(() => input.onKill?.()),
     stdin: Sink.drain,
@@ -99,7 +105,11 @@ function makeHandle(input: {
       ? input.stdout
         ? Stream.concat(Stream.make(encoder.encode(input.stdout)), Stream.never)
         : Stream.never
-      : Stream.make(encoder.encode(input.stdout ?? "browser opened")),
+      : input.delayMs
+        ? Stream.fromEffect(Effect.sleep(Duration.millis(input.delayMs))).pipe(
+            Stream.flatMap(() => stdout),
+          )
+        : stdout,
     stderr: input.hanging ? Stream.never : Stream.empty,
     all: Stream.empty,
     getInputFd: () => Sink.drain,
@@ -115,11 +125,14 @@ function makeConnectionTestLayer(input?: {
   readonly provider?: ProviderKind;
   readonly runtimeSource?: ServerProviderRuntimeSource;
   readonly timeout?: Duration.Duration;
+  readonly antigravityTimeout?: Duration.Duration;
   readonly onSpawn?: (command: CapturedCommand) => void;
   readonly onStdinChunk?: (command: CapturedCommand, chunk: Uint8Array) => void;
+  readonly ptyOutputChunks?: ReadonlyArray<string>;
   readonly ptyOutputDelayMs?: number;
   readonly processForCommand?: (command: CapturedCommand) => {
     readonly code?: number;
+    readonly delayMs?: number;
     readonly exitOnWrite?: boolean;
     readonly hanging?: boolean;
     readonly stdout?: string;
@@ -205,6 +218,7 @@ function makeConnectionTestLayer(input?: {
       input?.onSpawn?.(captured);
       const process = input?.processForCommand?.(captured);
       const handle = makeHandle({
+        ...(process?.delayMs !== undefined ? { delayMs: process.delayMs } : {}),
         ...(process?.code !== undefined
           ? { code: process.code }
           : input?.processExitCode !== undefined
@@ -241,6 +255,7 @@ function makeConnectionTestLayer(input?: {
         const configured = input?.processForCommand?.(captured);
         const hanging = configured?.hanging ?? input?.hanging ?? false;
         const stdout = configured?.stdout ?? input?.processStdout ?? "browser opened";
+        const outputChunks = input?.ptyOutputChunks ?? (stdout ? [stdout] : []);
         const exitCode = configured?.code ?? input?.processExitCode ?? 0;
         const onKill = configured?.onKill ?? input?.onKill;
         let exited = false;
@@ -268,8 +283,11 @@ function makeConnectionTestLayer(input?: {
           resume: () => undefined,
           onData: (listener) => {
             dataListeners.add(listener);
-            if (stdout) {
-              const emit = () => dataListeners.has(listener) && listener(stdout);
+            if (outputChunks.length > 0) {
+              const emit = () => {
+                if (!dataListeners.has(listener)) return;
+                for (const chunk of outputChunks) listener(chunk);
+              };
               if (input?.ptyOutputDelayMs) setTimeout(emit, input.ptyOutputDelayMs);
               else queueMicrotask(emit);
             }
@@ -277,7 +295,11 @@ function makeConnectionTestLayer(input?: {
           },
           onExit: (listener) => {
             exitListeners.add(listener);
-            if (!hanging) queueMicrotask(() => exitListeners.has(listener) && emitExit());
+            if (!hanging) {
+              const emit = () => exitListeners.has(listener) && emitExit();
+              if (configured?.delayMs) setTimeout(emit, configured.delayMs);
+              else queueMicrotask(emit);
+            }
             return () => exitListeners.delete(listener);
           },
         };
@@ -324,6 +346,7 @@ function makeConnectionTestLayer(input?: {
   } satisfies ProviderRuntimeManagerShape);
   const layer = makeProviderConnectionLive({
     ...(input?.timeout ? { timeout: input.timeout } : {}),
+    ...(input?.antigravityTimeout ? { antigravityTimeout: input.antigravityTimeout } : {}),
     ...(input?.droidAuthenticationProbe
       ? { droidAuthenticationProbe: input.droidAuthenticationProbe }
       : {}),
@@ -555,6 +578,71 @@ describe("ProviderConnectionLive", () => {
     );
   });
 
+  it("coalesces flooded PTY output while preserving a fragmented OAuth URL", async () => {
+    const authorizationUrl =
+      "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&client_id=test-client&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
+    const splitAt = Math.floor(authorizationUrl.length / 2);
+    const fixture = makeConnectionTestLayer({
+      provider: "antigravity",
+      hanging: true,
+      ptyOutputChunks: [
+        ...Array.from({ length: 2_000 }, (_, index) => `noise-${index}\n`),
+        authorizationUrl.slice(0, splitAt),
+        authorizationUrl.slice(splitAt),
+      ],
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const started = yield* connection.start({
+          provider: "antigravity",
+          method: "antigravity_browser",
+        });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        yield* Effect.sleep(Duration.millis(100));
+        expect(fixture.getConnectionState()?.authorizationUrl).toBe(authorizationUrl);
+        yield* connection.cancel({ provider: "antigravity", operationId: operationId! });
+        yield* Effect.sleep(Duration.millis(10));
+        expect(fixture.getConnectionState()?.status).toBe("cancelled");
+        expect(fixture.getConnectionState()?.authorizationUrl).toBeUndefined();
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
+  it("uses hidden supervisor grace for Antigravity's final boundary probe", async () => {
+    let modelProbeCount = 0;
+    const fixture = makeConnectionTestLayer({
+      provider: "antigravity",
+      antigravityTimeout: Duration.millis(80),
+      processForCommand: ({ args }) => {
+        if (args.includes("--print")) {
+          return { code: 0, delayMs: 55, stdout: "OAuth code window closed.\n" };
+        }
+        modelProbeCount += 1;
+        return modelProbeCount === 1
+          ? { code: 1, stdout: "Please sign in to view available models.\n" }
+          : { code: 0, delayMs: 10, stdout: "Gemini 3.5 Flash (High)\n" };
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({
+          provider: "antigravity",
+          method: "antigravity_browser",
+        });
+        yield* Effect.sleep(Duration.millis(60));
+        expect(fixture.getConnectionState()?.status).toBe("verifying");
+        yield* Effect.sleep(Duration.millis(30));
+        expect(fixture.getConnectionState()?.status).toBe("connected");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(modelProbeCount).toBe(2);
+  });
+
   it("delivers one transient authorization code only to the active Antigravity PTY", async () => {
     const authorizationUrl =
       "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&client_id=test-client&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
@@ -666,14 +754,17 @@ describe("ProviderConnectionLive", () => {
     );
   });
 
-  it("ignores delayed PTY output after an Antigravity attempt is cancelled", async () => {
+  it("ignores a delayed PTY flood after an Antigravity attempt is cancelled", async () => {
     const authorizationUrl =
       "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&client_id=test-client&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
     const fixture = makeConnectionTestLayer({
       provider: "antigravity",
       hanging: true,
       ptyOutputDelayMs: 30,
-      processStdout: `Authentication required:\n${authorizationUrl}\n`,
+      ptyOutputChunks: [
+        ...Array.from({ length: 20_000 }, (_, index) => `late-noise-${index}\n`),
+        `Authentication required:\n${authorizationUrl}\n`,
+      ],
     });
 
     await Effect.runPromise(
