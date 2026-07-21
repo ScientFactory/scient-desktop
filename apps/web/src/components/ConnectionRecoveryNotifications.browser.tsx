@@ -92,7 +92,9 @@ describe("connection recovery toast integration", () => {
     );
     expect(document.body.textContent).not.toContain("Copy diagnostics");
 
-    const notificationRegion = document.querySelector('[role="region"][aria-label="Notifications"]');
+    const notificationRegion = document.querySelector(
+      '[role="region"][aria-label="Notifications"]',
+    );
     expect(notificationRegion?.getAttribute("aria-live")).toBe("polite");
     expect(notificationRegion?.getAttribute("aria-relevant")).toContain("text");
 
