@@ -9,7 +9,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 function readQuotedAssignmentValue(trimmedLine: string, key: string): string | undefined {
-  const match = trimmedLine.match(new RegExp(`^${key}\\s*=\\s*(?:"([^"]+)"|'([^']+)')`));
+  const match = trimmedLine.match(
+    new RegExp(`^(?:${key}|"${key}"|'${key}')\\s*=\\s*(?:"([^"]+)"|'([^']+)')`),
+  );
   return match?.[1] ?? match?.[2];
 }
 
@@ -38,6 +40,12 @@ export function parseCodexConfigModelProvider(content: string): string | undefin
   return undefined;
 }
 
+export function codexModelProviderRequiresOpenAIAccount(
+  provider: string | undefined,
+): provider is undefined | "openai" {
+  return provider === undefined || provider === "openai";
+}
+
 export function parseCodexConfigProviderEnvKey(
   content: string,
   provider: string,
@@ -64,7 +72,7 @@ export function parseCodexConfigProviderEnvKey(
 
 export function parseCodexConfigActiveProviderEnvKey(content: string): string | undefined {
   const provider = parseCodexConfigModelProvider(content);
-  if (!provider || provider === "openai") {
+  if (codexModelProviderRequiresOpenAIAccount(provider)) {
     return undefined;
   }
 

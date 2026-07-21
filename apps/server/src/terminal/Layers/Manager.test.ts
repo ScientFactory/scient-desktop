@@ -509,6 +509,35 @@ describe("TerminalManager", () => {
     manager.dispose();
   });
 
+  it("captures an exact monotonic output barrier in reconnect snapshots", async () => {
+    const { manager, ptyAdapter } = makeManager();
+    const outputEvents: Array<Extract<TerminalEvent, { type: "output" }>> = [];
+    manager.on("event", (event) => {
+      if (event.type === "output") outputEvents.push(event);
+    });
+    const initial = await manager.open(openInput());
+    const process = ptyAdapter.processes[0];
+    expect(process).toBeDefined();
+    if (!process) return;
+
+    expect(initial.outputSequence).toBe(0);
+    expect(initial.outputEpoch).not.toBe("");
+    process.emitData("before snapshot\n");
+    await waitFor(() => outputEvents.length === 1);
+
+    const snapshot = await manager.open(openInput());
+    expect(snapshot.history).toContain("before snapshot");
+    expect(snapshot.outputSequence).toBe(1);
+    expect(snapshot.outputEpoch).toBe(initial.outputEpoch);
+
+    process.emitData("after snapshot\n");
+    await waitFor(() => outputEvents.length === 2);
+    expect(outputEvents.map((event) => event.outputSequence)).toEqual([1, 2]);
+    expect(outputEvents.every((event) => event.outputEpoch === initial.outputEpoch)).toBe(true);
+
+    manager.dispose();
+  });
+
   it("includes live terminal mode replay preamble in reattach snapshots", async () => {
     const { manager, ptyAdapter } = makeManager();
     await manager.open(openInput());

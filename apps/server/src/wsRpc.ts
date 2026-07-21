@@ -58,6 +58,7 @@ import { ProviderAdapterRegistry } from "./provider/Services/ProviderAdapterRegi
 import { ProviderHealth } from "./provider/Services/ProviderHealth";
 import { ProviderConnection } from "./provider/Services/ProviderConnection";
 import { ProviderClientStatusProjection } from "./provider/Services/ProviderClientStatusProjection";
+import { providerExternalUpdateBlockReason } from "./provider/providerUpdateRuntimePolicy";
 import { ProviderRuntimeManager } from "./provider/Services/ProviderRuntimeManager";
 import { ProviderService } from "./provider/Services/ProviderService";
 import { listProviderUsage } from "./providerUsage";
@@ -720,7 +721,7 @@ export const makeWsRpcLayer = () =>
         [WS_METHODS.projectsListDevServers]: () =>
           rpcEffect(devServerManager.list, "Failed to list dev servers"),
         [WS_METHODS.subscribeProjectDevServerEvents]: () =>
-          Stream.concat(
+          bufferLiveWhileInitialStreamLoads(
             Stream.fromEffect(
               devServerManager.list.pipe(
                 Effect.map(
@@ -1049,6 +1050,11 @@ export const makeWsRpcLayer = () =>
             Effect.andThen(providerClientStatusProjection.getStatuses),
             Effect.map((providers) => ({ providers })),
           ),
+        [WS_METHODS.serverSubmitProviderConnectionAuthorizationCode]: (input) =>
+          providerConnection.submitAuthorizationCode(input).pipe(
+            Effect.andThen(providerClientStatusProjection.getStatuses),
+            Effect.map((providers) => ({ providers })),
+          ),
         [WS_METHODS.serverPrepareProviderInstall]: (input) =>
           providerRuntimeManager.prepareInstall(input.provider),
         [WS_METHODS.serverInstallProvider]: (input) =>
@@ -1091,20 +1097,20 @@ export const makeWsRpcLayer = () =>
                 settings.providers[input.provider].binaryPath,
               ),
             ),
-            Effect.flatMap((runtime) =>
-              runtime.source === "managed" || runtime.source === "bundled"
+            Effect.flatMap((runtime) => {
+              const blockReason = providerExternalUpdateBlockReason(input.provider, runtime);
+              return blockReason
                 ? Effect.fail(
                     new ServerProviderUpdateError({
                       provider: input.provider,
-                      reason:
-                        "This runtime is managed by Scient. Use the managed install, repair, or rollback controls instead.",
+                      reason: blockReason,
                     }),
                   )
                 : providerHealth.updateProvider(input).pipe(
                     Effect.andThen(providerClientStatusProjection.getStatuses),
                     Effect.map((providers) => ({ providers })),
-                  ),
-            ),
+                  );
+            }),
           ),
         [WS_METHODS.serverListWorktrees]: () => Effect.succeed({ worktrees: [] }),
         [WS_METHODS.serverListLocalServers]: () =>
@@ -1224,7 +1230,7 @@ export const makeWsRpcLayer = () =>
             "Failed to update keybinding",
           ),
         [WS_METHODS.subscribeServerLifecycle]: () =>
-          Stream.concat(
+          bufferLiveWhileInitialStreamLoads(
             Stream.fromEffect(
               lifecycleEvents.snapshot.pipe(
                 Effect.map((snapshot) =>
@@ -1249,7 +1255,7 @@ export const makeWsRpcLayer = () =>
             ),
           ),
         [WS_METHODS.subscribeServerConfig]: () =>
-          Stream.concat(
+          bufferLiveWhileInitialStreamLoads(
             Stream.fromEffect(
               loadServerConfig.pipe(
                 Effect.map(
@@ -1290,7 +1296,7 @@ export const makeWsRpcLayer = () =>
             ),
           ).pipe(Stream.mapError((cause) => toWsRpcError(cause, "Server config stream failed"))),
         [WS_METHODS.subscribeServerProviderStatuses]: () =>
-          Stream.concat(
+          bufferLiveWhileInitialStreamLoads(
             Stream.fromEffect(
               providerClientStatusProjection.getStatuses.pipe(
                 Effect.map((providers) => ({ providers })),
@@ -1302,7 +1308,7 @@ export const makeWsRpcLayer = () =>
             }).pipe(Stream.map((providers) => ({ providers }))),
           ),
         [WS_METHODS.subscribeServerSettings]: () =>
-          Stream.concat(
+          bufferLiveWhileInitialStreamLoads(
             Stream.fromEffect(
               serverSettings.getSettings.pipe(Effect.map((settings) => ({ settings }))),
             ),
@@ -1370,7 +1376,7 @@ export const makeWsRpcLayer = () =>
         [WS_METHODS.automationArchiveRun]: (input) =>
           rpcEffect(automationService.archiveRun(input), "Failed to update automation run"),
         [WS_METHODS.subscribeAutomationEvents]: () =>
-          Stream.merge(
+          bufferLiveWhileInitialStreamLoads(
             Stream.fromEffect(
               automationService.list({}).pipe(
                 Effect.map(({ definitions, runs }) => ({

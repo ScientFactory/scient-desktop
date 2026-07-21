@@ -41,7 +41,12 @@ function config(provider: ServerProviderStatus): ServerConfig {
 }
 
 function RefreshHarness() {
-  useProviderStatusRefresh({ refreshOnFocus: true });
+  useProviderStatusRefresh({});
+  return null;
+}
+
+function ScheduledRefreshHarness() {
+  useProviderStatusRefresh({ initialDelayMs: 0 });
   return null;
 }
 
@@ -50,7 +55,46 @@ afterEach(() => {
 });
 
 describe("useProviderStatusRefresh", () => {
-  it("preserves managed-install capability after a window-focus refresh", async () => {
+  it("does not launch provider probes merely because the app regains focus", async () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(
+      serverQueryKeys.config(),
+      config(antigravity("2026-07-20T16:00:00.000Z")),
+    );
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [] });
+    const previousNativeApi = window.nativeApi;
+    const baseApi = readNativeApi();
+    if (!baseApi) throw new Error("Expected browser native API fixture.");
+    Object.defineProperty(window, "nativeApi", {
+      configurable: true,
+      value: {
+        ...baseApi,
+        server: { ...baseApi.server, refreshProviders },
+      },
+    });
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <RefreshHarness />
+      </QueryClientProvider>,
+    );
+
+    try {
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+      await new Promise((resolve) => window.setTimeout(resolve, 25));
+      expect(refreshProviders).not.toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      Object.defineProperty(window, "nativeApi", {
+        configurable: true,
+        value: previousNativeApi,
+      });
+    }
+  });
+
+  it("preserves managed-install capability after a scheduled refresh", async () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData(
       serverQueryKeys.config(),
@@ -72,12 +116,11 @@ describe("useProviderStatusRefresh", () => {
 
     const screen = await render(
       <QueryClientProvider client={queryClient}>
-        <RefreshHarness />
+        <ScheduledRefreshHarness />
       </QueryClientProvider>,
     );
 
     try {
-      window.dispatchEvent(new Event("focus"));
       await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledTimes(1));
       expect(
         queryClient.getQueryData<ServerConfig>(serverQueryKeys.config())?.providers[0]?.runtime

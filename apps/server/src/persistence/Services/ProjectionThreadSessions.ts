@@ -7,6 +7,7 @@
  * @module ProjectionThreadSessionRepository
  */
 import {
+  EventId,
   RuntimeMode,
   IsoDateTime,
   OrchestrationSessionStatus,
@@ -25,6 +26,8 @@ export const ProjectionThreadSession = Schema.Struct({
   runtimeMode: RuntimeMode,
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(Schema.String),
+  lastErrorEventId: Schema.NullOr(EventId),
+  lastErrorClass: Schema.NullOr(Schema.String),
   updatedAt: IsoDateTime,
 });
 export type ProjectionThreadSession = typeof ProjectionThreadSession.Type;

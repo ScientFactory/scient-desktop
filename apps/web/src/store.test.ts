@@ -517,12 +517,16 @@ describe("store pure functions", () => {
           runtimeMode: "full-access",
           activeTurnId: null,
           lastError: "provider crashed",
+          lastErrorEventId: EventId.makeUnsafe("runtime-error-event"),
+          lastErrorClass: "authentication_error",
           updatedAt: "2026-02-27T00:02:00.000Z",
         },
       }),
     ]);
 
     expect(next.threads[0]?.error).toBe("provider crashed");
+    expect(next.threads[0]?.session?.lastErrorEventId).toBe("runtime-error-event");
+    expect(next.threads[0]?.session?.lastErrorClass).toBe("authentication_error");
     expect(next.threads[0]?.latestTurn).toMatchObject({
       turnId: TurnId.makeUnsafe("turn-running"),
       state: "error",

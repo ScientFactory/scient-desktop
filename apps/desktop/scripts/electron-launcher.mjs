@@ -5,6 +5,7 @@ import {
   copyFileSync,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -145,4 +146,88 @@ export function resolveElectronPath() {
   }
 
   return buildMacLauncher(electronBinaryPath);
+}
+
+export function isLinuxSetuidSandboxConfigured(
+  electronBinaryPath,
+  { platform = process.platform, lstat = lstatSync } = {},
+) {
+  if (platform !== "linux") {
+    return true;
+  }
+
+  const sandboxPath = join(dirname(electronBinaryPath), "chrome-sandbox");
+  try {
+    const sandboxStat = lstat(sandboxPath);
+    return sandboxStat.isFile() && sandboxStat.uid === 0 && (sandboxStat.mode & 0o7777) === 0o4755;
+  } catch {
+    return false;
+  }
+}
+
+export function isLinuxUserNamespaceSandboxAvailable({
+  platform = process.platform,
+  runUnshare = spawnSync,
+} = {}) {
+  if (platform !== "linux") {
+    return true;
+  }
+
+  const result = runUnshare("unshare", ["-Ur", "true"], {
+    shell: false,
+    stdio: "ignore",
+    timeout: 5_000,
+    windowsHide: true,
+  });
+  return !result.error && result.status === 0;
+}
+
+export class LinuxSandboxConfigurationError extends Error {
+  constructor(sandboxPath) {
+    super(
+      `Electron needs either unprivileged user namespaces or a sandbox helper at ${sandboxPath} ` +
+        "that is a regular file owned by root with exact mode 4755. Enable one of those sandbox paths " +
+        "before launching Scient. For an isolated local development session only, " +
+        "set SCIENT_DEV_ALLOW_NO_SANDBOX=1 to accept the unsafe fallback explicitly.",
+    );
+    this.name = "LinuxSandboxConfigurationError";
+    this.sandboxPath = sandboxPath;
+  }
+}
+
+export function resolveLinuxSandboxArgs(
+  electronBinaryPath,
+  {
+    platform = process.platform,
+    lstat = lstatSync,
+    runUnshare = spawnSync,
+    development = isDevelopment,
+    env = process.env,
+    warn = console.warn,
+  } = {},
+) {
+  if (
+    isLinuxSetuidSandboxConfigured(electronBinaryPath, { platform, lstat }) ||
+    isLinuxUserNamespaceSandboxAvailable({ platform, runUnshare })
+  ) {
+    return [];
+  }
+
+  const sandboxPath = join(dirname(electronBinaryPath), "chrome-sandbox");
+  if (development && env.SCIENT_DEV_ALLOW_NO_SANDBOX === "1") {
+    warn(
+      "[desktop-launcher] Unsafe development override accepted: launching local Electron with --no-sandbox.",
+    );
+    return ["--no-sandbox"];
+  }
+
+  throw new LinuxSandboxConfigurationError(sandboxPath);
+}
+
+export function resolveElectronLaunchCommand(args = [], options = {}) {
+  const electronPath = resolveElectronPath();
+  return {
+    electronPath,
+    args: [...resolveLinuxSandboxArgs(electronPath, options), ...args],
+  };
 }

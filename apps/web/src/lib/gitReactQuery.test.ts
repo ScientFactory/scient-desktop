@@ -10,6 +10,7 @@ import {
   gitPreparePullRequestThreadMutationOptions,
   gitPullMutationOptions,
   gitRunStackedActionMutationOptions,
+  passiveGitStatusQueryOptions,
 } from "./gitReactQuery";
 
 describe("gitMutationKeys", () => {
@@ -119,5 +120,14 @@ describe("git working tree diff query options", () => {
 
     expect(GIT_WORKING_TREE_DIFF_LIVE_REFETCH_INTERVAL_MS).toBe(4_000);
     expect(options.refetchInterval).toBe(GIT_WORKING_TREE_DIFF_LIVE_REFETCH_INTERVAL_MS);
+  });
+});
+
+describe("passive git status query options", () => {
+  it("relies on domain invalidation instead of focus or timer polling", () => {
+    const options = passiveGitStatusQueryOptions("/repo/a");
+
+    expect(options.refetchOnWindowFocus).toBe(false);
+    expect(options.refetchInterval).toBe(false);
   });
 });

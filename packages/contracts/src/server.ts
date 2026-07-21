@@ -121,6 +121,7 @@ export const ServerProviderConnectionState = Schema.Struct({
   startedAt: IsoDateTime,
   finishedAt: Schema.NullOr(IsoDateTime),
   message: TrimmedNonEmptyString,
+  authorizationUrl: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
 });
 export type ServerProviderConnectionState = typeof ServerProviderConnectionState.Type;
 
@@ -129,6 +130,10 @@ export const ServerProviderStatus = Schema.Struct({
   status: ServerProviderStatusState,
   available: Schema.Boolean,
   authStatus: ServerProviderAuthStatus,
+  // `false` means this runtime owns authentication outside the provider's
+  // account flow (for example a custom Codex model provider). Older servers
+  // omit the field, so clients retain their provider-specific default.
+  requiresProviderAccount: Schema.optional(Schema.Boolean),
   authType: Schema.optional(TrimmedNonEmptyString),
   authLabel: Schema.optional(TrimmedNonEmptyString),
   voiceTranscriptionAvailable: Schema.optional(Schema.Boolean),
@@ -593,6 +598,7 @@ export type ServerProviderInstallationResult = typeof ServerProviderInstallation
 export const ServerProviderConnectionStartInput = Schema.Struct({
   provider: ProviderKind,
   method: ServerProviderConnectionMethod,
+  mode: Schema.optional(Schema.Literals(["connect", "reauthenticate"])),
 });
 export type ServerProviderConnectionStartInput = typeof ServerProviderConnectionStartInput.Type;
 
@@ -601,6 +607,22 @@ export const ServerProviderConnectionCancelInput = Schema.Struct({
   operationId: TrimmedNonEmptyString,
 });
 export type ServerProviderConnectionCancelInput = typeof ServerProviderConnectionCancelInput.Type;
+
+export const ServerProviderConnectionAuthorizationCode = Schema.redact(
+  TrimmedNonEmptyString.check(
+    Schema.isMinLength(8),
+    Schema.isMaxLength(2_048),
+    Schema.isPattern(/^[A-Za-z0-9._~+/=-]+$/),
+  ),
+);
+
+export const ServerProviderConnectionSubmitAuthorizationCodeInput = Schema.Struct({
+  provider: ProviderKind,
+  operationId: TrimmedNonEmptyString,
+  authorizationCode: ServerProviderConnectionAuthorizationCode,
+});
+export type ServerProviderConnectionSubmitAuthorizationCodeInput =
+  typeof ServerProviderConnectionSubmitAuthorizationCodeInput.Type;
 
 export class ServerProviderConnectionError extends Schema.TaggedErrorClass<ServerProviderConnectionError>()(
   "ServerProviderConnectionError",
@@ -612,6 +634,9 @@ export class ServerProviderConnectionError extends Schema.TaggedErrorClass<Serve
       "invalid_method",
       "already_running",
       "operation_not_found",
+      "authorization_code_not_supported",
+      "authorization_code_already_submitted",
+      "authorization_code_not_accepted",
       "provider_disabled",
     ]),
     message: TrimmedNonEmptyString,

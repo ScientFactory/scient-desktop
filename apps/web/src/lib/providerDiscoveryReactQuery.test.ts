@@ -9,7 +9,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   isInitialModelDiscoveryPending,
+  providerAgentsQueryOptions,
+  providerCommandsQueryOptions,
+  providerComposerCapabilitiesQueryOptions,
   providerModelsQueryOptions,
+  providerPluginsQueryOptions,
+  providerReadPluginQueryOptions,
+  providerSkillsQueryOptions,
+  skillsCatalogQueryOptions,
 } from "./providerDiscoveryReactQuery";
 import * as nativeApi from "../nativeApi";
 
@@ -63,7 +70,10 @@ describe("providerModelsQueryOptions", () => {
     const listModels = mockListModels(
       vi.fn().mockRejectedValue(new Error("Cursor CLI is not installed or not on PATH")),
     );
-    const options = providerModelsQueryOptions({ provider: "cursor", enabled: true });
+    const options = providerModelsQueryOptions({
+      provider: "cursor",
+      enabled: true,
+    });
     expect(options.retry).toBe(0);
 
     const queryClient = new QueryClient();
@@ -79,9 +89,34 @@ describe("providerModelsQueryOptions", () => {
     expect(providerModelsQueryOptions({ provider: "droid" }).retry).toBe(0);
   });
 
+  it("never re-runs provider discovery just because the window regained focus", () => {
+    const options = [
+      providerComposerCapabilitiesQueryOptions("codex"),
+      providerModelsQueryOptions({ provider: "codex" }),
+      providerAgentsQueryOptions({ provider: "codex" }),
+      providerCommandsQueryOptions({ provider: "codex", cwd: "/repo" }),
+      providerSkillsQueryOptions({ provider: "codex", cwd: "/repo" }),
+      providerPluginsQueryOptions({ provider: "codex", cwd: "/repo" }),
+      providerReadPluginQueryOptions({
+        provider: "codex",
+        marketplacePath: "/marketplace",
+        pluginName: "example",
+        cwd: "/repo",
+      }),
+      skillsCatalogQueryOptions({ cwd: "/repo" }),
+    ];
+
+    for (const option of options) {
+      expect(option.refetchOnWindowFocus).toBe(false);
+    }
+  });
+
   it("surfaces real errors instead of masking them as empty catalogs", async () => {
     mockListModels(vi.fn().mockRejectedValue(new Error("discovery exploded")));
-    const options = providerModelsQueryOptions({ provider: "cursor", enabled: true });
+    const options = providerModelsQueryOptions({
+      provider: "cursor",
+      enabled: true,
+    });
 
     const queryClient = new QueryClient();
     await expect(queryClient.fetchQuery(options)).rejects.toThrow("discovery exploded");
@@ -97,7 +132,10 @@ describe("providerModelsQueryOptions", () => {
     const listModels = mockListModels(
       vi.fn().mockResolvedValueOnce(catalog).mockRejectedValue(new Error("cursor went away")),
     );
-    const options = providerModelsQueryOptions({ provider: "cursor", enabled: true });
+    const options = providerModelsQueryOptions({
+      provider: "cursor",
+      enabled: true,
+    });
 
     const queryClient = new QueryClient();
     await expect(queryClient.fetchQuery(options)).resolves.toEqual(catalog);
@@ -114,7 +152,10 @@ describe("providerModelsQueryOptions", () => {
       cached: false,
     };
     mockListModels(vi.fn().mockResolvedValue(catalog));
-    const options = providerModelsQueryOptions({ provider: "codex", enabled: true });
+    const options = providerModelsQueryOptions({
+      provider: "codex",
+      enabled: true,
+    });
 
     const queryClient = new QueryClient();
     await expect(queryClient.fetchQuery(options)).resolves.toEqual(catalog);

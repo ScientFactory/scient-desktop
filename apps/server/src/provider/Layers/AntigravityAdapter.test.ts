@@ -95,6 +95,62 @@ GPT-OSS 120B (Medium)
     });
   });
 
+  it("parses Antigravity 1.1.5 machine model slugs and preserves them for selection", () => {
+    expect(
+      parseAntigravityModelLines(`
+gemini-3.5-flash-medium
+gemini-3.5-flash-high
+gemini-3.5-flash-low
+gemini-3.1-pro-low
+gemini-3.1-pro-high
+claude-sonnet-4-6
+claude-opus-4-6-thinking
+gpt-oss-120b-medium
+`),
+    ).toEqual([
+      {
+        slug: "gemini-3.5-flash",
+        name: "Gemini 3.5 Flash",
+        supportedReasoningEfforts: [
+          { value: "low", label: "Low" },
+          { value: "medium", label: "Medium" },
+          { value: "high", label: "High" },
+        ],
+        defaultReasoningEffort: "medium",
+      },
+      {
+        slug: "gemini-3.1-pro",
+        name: "Gemini 3.1 Pro",
+        supportedReasoningEfforts: [
+          { value: "low", label: "Low" },
+          { value: "high", label: "High" },
+        ],
+        defaultReasoningEffort: "low",
+      },
+      { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+      {
+        slug: "claude-opus-4-6",
+        name: "Claude Opus 4.6",
+        supportedReasoningEfforts: [{ value: "thinking", label: "Thinking" }],
+        defaultReasoningEffort: "thinking",
+      },
+      {
+        slug: "gpt-oss-120b",
+        name: "GPT OSS 120B",
+        supportedReasoningEfforts: [{ value: "medium", label: "Medium" }],
+        defaultReasoningEffort: "medium",
+      },
+    ]);
+
+    expect(resolveAntigravityCliModelLabel("gemini-3.5-flash", undefined, "medium")).toBe(
+      "gemini-3.5-flash-medium",
+    );
+    expect(resolveAntigravityCliModelLabel("gemini-3.5-flash", { reasoningEffort: "high" })).toBe(
+      "gemini-3.5-flash-high",
+    );
+    expect(resolveAntigravityCliModelLabel("claude-sonnet-4-6")).toBe("claude-sonnet-4-6");
+  });
+
   it("discovers future CLI models without requiring a static catalog update", () => {
     expect(
       parseAntigravityModelLines(`

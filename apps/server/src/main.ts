@@ -10,6 +10,8 @@ import OS from "node:os";
 import { Config, Data, Effect, FileSystem, Layer, Option, Path, Schema, ServiceMap } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import { NetService } from "@synara/shared/Net";
+import { ensurePrivateScientDirectoriesSync } from "@synara/shared/scientDataDirectories";
+import { waitForDesktopParentShutdown } from "./desktopParentShutdown";
 import {
   DEFAULT_PORT,
   deriveServerPaths,
@@ -175,6 +177,14 @@ const ServerConfigLive = (input: CliInput) =>
       const baseDir = yield* resolveBaseDir(configuredHome);
       const userHomeDir = OS.homedir();
       const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
+      yield* Effect.try({
+        try: () => ensurePrivateScientDirectoriesSync({ baseDir, ...derivedPaths }),
+        catch: (cause) =>
+          new StartupError({
+            message: `Failed to secure Scient application data at ${baseDir}`,
+            cause,
+          }),
+      });
       const noBrowser = resolveBooleanFlag(input.noBrowser, env.noBrowser ?? mode === "desktop");
       const authToken = Option.getOrUndefined(input.authToken) ?? env.authToken;
       const autoBootstrapProjectFromCwd = resolveBooleanFlag(
@@ -369,7 +379,9 @@ const makeServerProgram = (input: CliInput) =>
       );
     }
 
-    return yield* stopSignal;
+    return yield* config.mode === "desktop"
+      ? Effect.raceFirst(stopSignal, waitForDesktopParentShutdown())
+      : stopSignal;
   }).pipe(Effect.provide(LayerLive(input)));
 
 /**

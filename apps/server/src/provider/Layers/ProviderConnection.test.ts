@@ -4,13 +4,18 @@ import type {
   ServerProviderRuntimeSource,
   ServerProviderStatus,
 } from "@synara/contracts";
-import { Duration, Effect, Layer, Sink, Stream } from "effect";
+import { Duration, Effect, Fiber, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { describe, expect, it, vi } from "vitest";
 
 import { ServerConfig, type ServerConfigShape } from "../../config";
 import { ServerSettingsService } from "../../serverSettings";
-import { PtyAdapter, type PtyAdapterShape } from "../../terminal/Services/PTY";
+import {
+  PtyAdapter,
+  type PtyAdapterShape,
+  type PtyProcess,
+  type PtySpawnInput,
+} from "../../terminal/Services/PTY";
 import { probeDroidAcpAuthentication } from "../acp/DroidAcpSupport";
 import { ProviderConnection } from "../Services/ProviderConnection";
 import {
@@ -24,12 +29,25 @@ import {
 } from "../Services/ProviderRuntimeManager";
 
 import {
+  antigravityAuthenticationCommandArgs,
   expectedMethodForProvider,
   makeProviderConnectionLive,
+  parseAntigravityOAuthAuthorizationUrl,
+  parseGrokOAuthAuthorizationUrl,
   providerConnectionCommandArgs,
 } from "./ProviderConnection";
+import { resolveProviderProbeCwd } from "./ProviderHealth";
 
 const encoder = new TextEncoder();
+
+interface CapturedCommand {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly options: {
+    readonly cwd?: string;
+    readonly stdin?: unknown;
+  };
+}
 
 const TEST_CONFIG: ServerConfigShape = {
   mode: "web",
@@ -63,24 +81,37 @@ const TEST_CONFIG: ServerConfigShape = {
   anonymousIdPath: "/tmp/scient-test/anonymous-id",
   environmentIdPath: "/tmp/scient-test/environment-id",
 };
+const TEST_PROVIDER_PROBE_CWD = resolveProviderProbeCwd(TEST_CONFIG.stateDir);
 
 function makeHandle(input: {
   readonly code?: number;
+  readonly delayMs?: number;
   readonly hanging?: boolean;
   readonly stdout?: string;
   onKill?: () => void;
 }) {
+  const delay = input.delayMs
+    ? <A>(effect: Effect.Effect<A>) =>
+        Effect.sleep(Duration.millis(input.delayMs!)).pipe(Effect.andThen(effect))
+    : <A>(effect: Effect.Effect<A>) => effect;
+  const stdout = Stream.make(encoder.encode(input.stdout ?? "browser opened"));
   return ChildProcessSpawner.makeHandle({
     pid: ChildProcessSpawner.ProcessId(41),
     exitCode: input.hanging
       ? Effect.never
-      : Effect.succeed(ChildProcessSpawner.ExitCode(input.code ?? 0)),
+      : delay(Effect.succeed(ChildProcessSpawner.ExitCode(input.code ?? 0))),
     isRunning: Effect.succeed(Boolean(input.hanging)),
     kill: () => Effect.sync(() => input.onKill?.()),
     stdin: Sink.drain,
     stdout: input.hanging
-      ? Stream.never
-      : Stream.make(encoder.encode(input.stdout ?? "browser opened")),
+      ? input.stdout
+        ? Stream.concat(Stream.make(encoder.encode(input.stdout)), Stream.never)
+        : Stream.never
+      : input.delayMs
+        ? Stream.fromEffect(Effect.sleep(Duration.millis(input.delayMs))).pipe(
+            Stream.flatMap(() => stdout),
+          )
+        : stdout,
     stderr: input.hanging ? Stream.never : Stream.empty,
     all: Stream.empty,
     getInputFd: () => Sink.drain,
@@ -91,23 +122,47 @@ function makeHandle(input: {
 function makeConnectionTestLayer(input?: {
   readonly available?: boolean;
   readonly hanging?: boolean;
+  readonly processExitCode?: number;
   readonly processStdout?: string;
   readonly provider?: ProviderKind;
   readonly runtimeSource?: ServerProviderRuntimeSource;
   readonly timeout?: Duration.Duration;
-  readonly onSpawn?: (command: { command: string; args: ReadonlyArray<string> }) => void;
+  readonly antigravityCodeWindowTimeout?: Duration.Duration;
+  readonly antigravityCodeWindowCloseSignal?: Effect.Effect<void>;
+  readonly antigravityTimeout?: Duration.Duration;
+  readonly antigravityAuthenticationProbeInterval?: Duration.Duration;
+  readonly antigravityAuthenticationSettleTimeout?: Duration.Duration;
+  readonly beforeAntigravityOutputPublication?: Effect.Effect<void>;
+  readonly afterAntigravityCodeWindowInputClosed?: Effect.Effect<void>;
+  readonly onSpawn?: (command: CapturedCommand) => void;
+  readonly onStdinChunk?: (command: CapturedCommand, chunk: Uint8Array) => void;
+  readonly ptyOutputChunks?: ReadonlyArray<string>;
+  readonly ptyOutputDelayMs?: number;
+  readonly onPtyReady?: (emitData: (data: string) => void) => void;
+  readonly processForCommand?: (command: CapturedCommand) => {
+    readonly code?: number;
+    readonly delayMs?: number;
+    readonly exitOnWrite?: boolean;
+    readonly hanging?: boolean;
+    readonly stdout?: string;
+    readonly onKill?: () => void;
+  };
   readonly onKill?: () => void;
-  readonly onPtySpawn?: (input: unknown) => void;
-  readonly onPtyKill?: () => void;
   readonly droidAuthenticationProbe?: typeof probeDroidAcpAuthentication;
   readonly modelsAvailable?: boolean;
+  readonly listModelsHanging?: boolean;
   readonly initiallyAuthenticated?: boolean;
+  readonly requiresProviderAccount?: boolean | null;
   readonly onListModels?: (input: {
     readonly provider: ProviderKind;
     readonly binaryPath?: string;
+    readonly cwd?: string;
   }) => void;
 }) {
   let connectionState: ServerProviderConnectionState | undefined;
+  const connectionStateWaiters = new Set<
+    (state: ServerProviderConnectionState | undefined) => void
+  >();
   let authenticated = input?.initiallyAuthenticated ?? false;
   let refreshCalls = 0;
   const status = (): ServerProviderStatus => ({
@@ -115,6 +170,13 @@ function makeConnectionTestLayer(input?: {
     status: authenticated ? "ready" : "error",
     available: input?.available ?? true,
     authStatus: authenticated ? "authenticated" : "unauthenticated",
+    ...(input?.requiresProviderAccount === null
+      ? {}
+      : input?.requiresProviderAccount !== undefined
+        ? { requiresProviderAccount: input.requiresProviderAccount }
+        : input?.provider === "codex"
+          ? { requiresProviderAccount: true }
+          : {}),
     checkedAt: new Date().toISOString(),
     ...(connectionState ? { connectionState } : {}),
   });
@@ -131,6 +193,7 @@ function makeConnectionTestLayer(input?: {
     setConnectionState: (_provider, state) =>
       Effect.sync(() => {
         connectionState = state ?? undefined;
+        for (const waiter of [...connectionStateWaiters]) waiter(connectionState);
         return [status()];
       }),
     streamChanges: Stream.empty,
@@ -141,34 +204,124 @@ function makeConnectionTestLayer(input?: {
     listSkills: () => Effect.die("unused"),
     listPlugins: () => Effect.die("unused"),
     readPlugin: () => Effect.die("unused"),
-    listModels: ({ provider, binaryPath }) =>
-      Effect.sync(() => {
-        input?.onListModels?.({ provider, ...(binaryPath ? { binaryPath } : {}) });
-        return {
-          models:
-            input?.modelsAvailable === false
-              ? []
-              : [{ slug: `${provider}-test-model`, name: `${provider} test model` }],
-          source: "test",
-          cached: false,
-        };
-      }),
+    listModels: ({ provider, binaryPath, cwd }) =>
+      input?.listModelsHanging
+        ? Effect.never
+        : Effect.sync(() => {
+            input?.onListModels?.({
+              provider,
+              ...(binaryPath ? { binaryPath } : {}),
+              ...(cwd ? { cwd } : {}),
+            });
+            return {
+              models:
+                input?.modelsAvailable === false
+                  ? []
+                  : [{ slug: `${provider}-test-model`, name: `${provider} test model` }],
+              source: "test",
+              cached: false,
+            };
+          }),
     listAgents: () => Effect.die("unused"),
   } satisfies ProviderDiscoveryServiceShape);
   const spawnerLayer = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => {
-      const captured = command as unknown as { command: string; args: ReadonlyArray<string> };
+      const captured = command as unknown as CapturedCommand;
       input?.onSpawn?.(captured);
-      return Effect.succeed(
-        makeHandle({
-          ...(input?.hanging !== undefined ? { hanging: input.hanging } : {}),
-          ...(input?.onKill ? { onKill: input.onKill } : {}),
-          ...(input?.processStdout ? { stdout: input.processStdout } : {}),
-        }),
-      );
+      const process = input?.processForCommand?.(captured);
+      const handle = makeHandle({
+        ...(process?.delayMs !== undefined ? { delayMs: process.delayMs } : {}),
+        ...(process?.code !== undefined
+          ? { code: process.code }
+          : input?.processExitCode !== undefined
+            ? { code: input.processExitCode }
+            : {}),
+        ...(process?.hanging !== undefined
+          ? { hanging: process.hanging }
+          : input?.hanging !== undefined
+            ? { hanging: input.hanging }
+            : {}),
+        ...(process?.onKill
+          ? { onKill: process.onKill }
+          : input?.onKill
+            ? { onKill: input.onKill }
+            : {}),
+        ...(process?.stdout
+          ? { stdout: process.stdout }
+          : input?.processStdout
+            ? { stdout: input.processStdout }
+            : {}),
+      });
+      return Effect.succeed(handle);
     }),
   );
+  const ptyLayer = Layer.succeed(PtyAdapter, {
+    spawn: (ptyInput: PtySpawnInput) =>
+      Effect.sync(() => {
+        const captured: CapturedCommand = {
+          command: ptyInput.shell,
+          args: ptyInput.args ?? [],
+          options: { cwd: ptyInput.cwd },
+        };
+        input?.onSpawn?.(captured);
+        const configured = input?.processForCommand?.(captured);
+        const hanging = configured?.hanging ?? input?.hanging ?? false;
+        const stdout = configured?.stdout ?? input?.processStdout ?? "browser opened";
+        const outputChunks = input?.ptyOutputChunks ?? (stdout ? [stdout] : []);
+        const exitCode = configured?.code ?? input?.processExitCode ?? 0;
+        const onKill = configured?.onKill ?? input?.onKill;
+        let exited = false;
+        const dataListeners = new Set<(data: string) => void>();
+        const exitListeners = new Set<
+          (event: { exitCode: number; signal: number | null }) => void
+        >();
+        input?.onPtyReady?.((data) => {
+          for (const listener of dataListeners) listener(data);
+        });
+        const emitExit = () => {
+          if (exited) return;
+          exited = true;
+          for (const listener of exitListeners) listener({ exitCode, signal: null });
+        };
+        const process: PtyProcess = {
+          pid: 42,
+          write: (data) => {
+            input?.onStdinChunk?.(captured, encoder.encode(data));
+            if (configured?.exitOnWrite) emitExit();
+          },
+          resize: () => undefined,
+          kill: () => {
+            onKill?.();
+            emitExit();
+          },
+          pause: () => undefined,
+          resume: () => undefined,
+          onData: (listener) => {
+            dataListeners.add(listener);
+            if (outputChunks.length > 0) {
+              const emit = () => {
+                if (!dataListeners.has(listener)) return;
+                for (const chunk of outputChunks) listener(chunk);
+              };
+              if (input?.ptyOutputDelayMs) setTimeout(emit, input.ptyOutputDelayMs);
+              else queueMicrotask(emit);
+            }
+            return () => dataListeners.delete(listener);
+          },
+          onExit: (listener) => {
+            exitListeners.add(listener);
+            if (!hanging) {
+              const emit = () => exitListeners.has(listener) && emitExit();
+              if (configured?.delayMs) setTimeout(emit, configured.delayMs);
+              else queueMicrotask(emit);
+            }
+            return () => exitListeners.delete(listener);
+          },
+        };
+        return process;
+      }),
+  } satisfies PtyAdapterShape);
   const providerRuntimeLayer = Layer.succeed(ProviderRuntimeManager, {
     prepareInstall: () => Effect.die("unused"),
     install: () => Effect.die("unused"),
@@ -207,25 +360,31 @@ function makeConnectionTestLayer(input?: {
       }),
     streamChanges: Stream.empty,
   } satisfies ProviderRuntimeManagerShape);
-  const ptyLayer = Layer.succeed(PtyAdapter, {
-    spawn: (spawnInput) =>
-      Effect.sync(() => {
-        input?.onPtySpawn?.(spawnInput);
-        return {
-          pid: 42,
-          write: () => undefined,
-          resize: () => undefined,
-          kill: () => input?.onPtyKill?.(),
-          pause: () => undefined,
-          resume: () => undefined,
-          onData: () => () => undefined,
-          onExit: () => () => undefined,
-        };
-      }),
-  } satisfies PtyAdapterShape);
-
   const layer = makeProviderConnectionLive({
     ...(input?.timeout ? { timeout: input.timeout } : {}),
+    ...(input?.antigravityCodeWindowTimeout
+      ? { antigravityCodeWindowTimeout: input.antigravityCodeWindowTimeout }
+      : {}),
+    ...(input?.antigravityCodeWindowCloseSignal
+      ? { antigravityCodeWindowCloseSignal: input.antigravityCodeWindowCloseSignal }
+      : {}),
+    ...(input?.antigravityTimeout ? { antigravityTimeout: input.antigravityTimeout } : {}),
+    ...(input?.antigravityAuthenticationProbeInterval
+      ? {
+          antigravityAuthenticationProbeInterval: input.antigravityAuthenticationProbeInterval,
+        }
+      : {}),
+    ...(input?.antigravityAuthenticationSettleTimeout
+      ? {
+          antigravityAuthenticationSettleTimeout: input.antigravityAuthenticationSettleTimeout,
+        }
+      : {}),
+    ...(input?.beforeAntigravityOutputPublication
+      ? { beforeAntigravityOutputPublication: input.beforeAntigravityOutputPublication }
+      : {}),
+    ...(input?.afterAntigravityCodeWindowInputClosed
+      ? { afterAntigravityCodeWindowInputClosed: input.afterAntigravityCodeWindowInputClosed }
+      : {}),
     ...(input?.droidAuthenticationProbe
       ? { droidAuthenticationProbe: input.droidAuthenticationProbe }
       : {}),
@@ -238,7 +397,20 @@ function makeConnectionTestLayer(input?: {
     Layer.provideMerge(spawnerLayer),
     Layer.provideMerge(ptyLayer),
   );
-  return { layer, getConnectionState: () => connectionState };
+  const waitForConnectionState = (
+    predicate: (state: ServerProviderConnectionState | undefined) => boolean,
+  ) => {
+    if (predicate(connectionState)) return Promise.resolve(connectionState);
+    return new Promise<ServerProviderConnectionState | undefined>((resolve) => {
+      const waiter = (state: ServerProviderConnectionState | undefined) => {
+        if (!predicate(state)) return;
+        connectionStateWaiters.delete(waiter);
+        resolve(state);
+      };
+      connectionStateWaiters.add(waiter);
+    });
+  };
+  return { layer, getConnectionState: () => connectionState, waitForConnectionState };
 }
 
 describe("provider connection command allowlist", () => {
@@ -270,14 +442,14 @@ describe("provider connection command allowlist", () => {
     expect(providerConnectionCommandArgs("cursor", "cursor_browser")).toEqual(["login"]);
   });
 
-  it("launches Antigravity's provider-owned TTY login", () => {
+  it("selects Antigravity's provider-owned browser login strategy", () => {
     expect(expectedMethodForProvider("antigravity")).toBe("antigravity_browser");
     expect(providerConnectionCommandArgs("antigravity", "antigravity_browser")).toEqual([]);
   });
 
   it("uses Grok's provider-owned browser login", () => {
     expect(expectedMethodForProvider("grok")).toBe("grok_browser");
-    expect(providerConnectionCommandArgs("grok", "grok_browser")).toEqual(["login"]);
+    expect(providerConnectionCommandArgs("grok", "grok_browser")).toEqual(["login", "--oauth"]);
   });
 
   it("uses Droid's ACP device-pairing authentication", () => {
@@ -297,16 +469,97 @@ describe("provider connection command allowlist", () => {
   });
 });
 
+describe("Grok OAuth authorization URL parsing", () => {
+  const authorizationUrl =
+    "https://auth.x.ai/oauth2/authorize?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A50418%2Fcallback&state=test-state&code_challenge=test-challenge";
+
+  it("accepts the exact xAI authorization route with a loopback callback", () => {
+    expect(parseGrokOAuthAuthorizationUrl(`Open this URL:\n${authorizationUrl}\n`)).toBe(
+      authorizationUrl,
+    );
+  });
+
+  it("rejects lookalike hosts and callbacks that are not local", () => {
+    expect(
+      parseGrokOAuthAuthorizationUrl(
+        authorizationUrl.replace("auth.x.ai", "auth.x.ai.example.com"),
+      ),
+    ).toBeNull();
+    expect(
+      parseGrokOAuthAuthorizationUrl(
+        authorizationUrl.replace("127.0.0.1%3A50418", "example.com%3A50418"),
+      ),
+    ).toBeNull();
+    expect(parseGrokOAuthAuthorizationUrl(`${authorizationUrl}#unexpected-fragment`)).toBeNull();
+  });
+});
+
+describe("Antigravity OAuth authorization URL parsing", () => {
+  const authorizationUrl =
+    "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&client_id=test-client&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
+
+  it("accepts Google's authorization route only for Antigravity's callback", () => {
+    expect(parseAntigravityOAuthAuthorizationUrl(`Open this URL:\n${authorizationUrl}\n`)).toBe(
+      authorizationUrl,
+    );
+  });
+
+  it("rejects lookalike Google hosts, foreign callbacks, and incomplete PKCE", () => {
+    expect(
+      parseAntigravityOAuthAuthorizationUrl(
+        authorizationUrl.replace("accounts.google.com", "accounts.google.com.example.com"),
+      ),
+    ).toBeNull();
+    expect(
+      parseAntigravityOAuthAuthorizationUrl(
+        authorizationUrl.replace(
+          "antigravity.google%2Foauth-callback",
+          "example.com%2Foauth-callback",
+        ),
+      ),
+    ).toBeNull();
+    expect(
+      parseAntigravityOAuthAuthorizationUrl(
+        authorizationUrl.replace("code_challenge_method=S256", "code_challenge_method=plain"),
+      ),
+    ).toBeNull();
+  });
+
+  it("uses a sandboxed no-task print bootstrap with an impossible per-operation model", () => {
+    expect(antigravityAuthenticationCommandArgs("operation-1")).toEqual([
+      "--sandbox",
+      "--mode",
+      "plan",
+      "--model",
+      "__scient_auth_only_operation-1",
+      "--print-timeout",
+      "600s",
+      "--print",
+      "Authenticate this Antigravity CLI only. Do not inspect or modify files and do not perform a task.",
+    ]);
+  });
+});
+
 describe("ProviderConnectionLive", () => {
-  it("runs managed Antigravity login in a PTY and verifies models before connecting", async () => {
-    const onPtySpawn = vi.fn();
-    const onPtyKill = vi.fn();
+  it("runs managed Antigravity's browser-auth bootstrap and verifies models", async () => {
+    const onSpawn = vi.fn();
+    const onAuthenticationKill = vi.fn();
+    const onListModels = vi.fn();
+    let modelProbeCount = 0;
     const fixture = makeConnectionTestLayer({
       provider: "antigravity",
       runtimeSource: "managed",
-      processStdout: "Gemini 3.5 Flash (High)\n",
-      onPtySpawn,
-      onPtyKill,
+      onSpawn,
+      onListModels,
+      processForCommand: ({ args }) => {
+        if (args.includes("--print")) {
+          return { hanging: true, onKill: onAuthenticationKill };
+        }
+        modelProbeCount += 1;
+        return modelProbeCount === 1
+          ? { code: 1, stdout: "Error: Please sign in to view available models.\n" }
+          : { code: 0, stdout: "Gemini 3.5 Flash (High)\n" };
+      },
     });
 
     await Effect.runPromise(
@@ -316,19 +569,555 @@ describe("ProviderConnectionLive", () => {
           provider: "antigravity",
           method: "antigravity_browser",
         });
-        yield* Effect.sleep(Duration.millis(30));
+        yield* Effect.sleep(Duration.millis(650));
         expect(fixture.getConnectionState()?.status).toBe("connected");
       }).pipe(Effect.provide(fixture.layer)),
     );
 
-    expect(onPtySpawn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        shell: "agy",
-        args: [],
-        env: expect.objectContaining({ AGY_CLI_DISABLE_AUTO_UPDATE: "true" }),
-      }),
+    const authenticationSpawn = onSpawn.mock.calls.find(([spawn]) =>
+      (spawn as { args: ReadonlyArray<string> }).args.includes("--print"),
+    )?.[0] as CapturedCommand | undefined;
+    expect(authenticationSpawn).toMatchObject({
+      command: "agy",
+      options: { cwd: TEST_PROVIDER_PROBE_CWD },
+    });
+    expect(authenticationSpawn?.args).toEqual(
+      expect.arrayContaining(["--sandbox", "--mode", "plan", "--model", "--print"]),
     );
-    expect(onPtyKill).toHaveBeenCalledTimes(1);
+    expect(authenticationSpawn?.args[4]).toMatch(/^__scient_auth_only_[0-9a-f-]+$/u);
+    expect(
+      onSpawn.mock.calls
+        .map(([spawn]) => spawn as CapturedCommand)
+        .filter((spawn) => spawn.args.includes("models")),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          options: expect.objectContaining({ cwd: TEST_PROVIDER_PROBE_CWD }),
+        }),
+      ]),
+    );
+    expect(onAuthenticationKill).toHaveBeenCalledTimes(1);
+    expect(onListModels).toHaveBeenCalledWith({
+      provider: "antigravity",
+      binaryPath: "agy",
+      cwd: TEST_PROVIDER_PROBE_CWD,
+    });
+  });
+
+  it("publishes only a validated transient Google OAuth URL for Antigravity", async () => {
+    const authorizationUrl =
+      "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&client_id=test-client&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
+    const fixture = makeConnectionTestLayer({
+      provider: "antigravity",
+      hanging: true,
+      processStdout: `Authentication required:\n${authorizationUrl}\n`,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const authorizationUrlPublished = fixture.waitForConnectionState(
+          (state) => state?.authorizationUrl === authorizationUrl,
+        );
+        const started = yield* connection.start({
+          provider: "antigravity",
+          method: "antigravity_browser",
+        });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        yield* Effect.promise(() => authorizationUrlPublished);
+        expect(fixture.getConnectionState()?.authorizationUrl).toBe(authorizationUrl);
+        yield* connection.cancel({ provider: "antigravity", operationId: operationId! });
+        expect(fixture.getConnectionState()?.authorizationUrl).toBeUndefined();
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
+  it("coalesces flooded PTY output while preserving a fragmented OAuth URL", async () => {
+    const authorizationUrl =
+      "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&client_id=test-client&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
+    const splitAt = Math.floor(authorizationUrl.length / 2);
+    const fixture = makeConnectionTestLayer({
+      provider: "antigravity",
+      hanging: true,
+      ptyOutputChunks: [
+        ...Array.from({ length: 2_000 }, (_, index) => `noise-${index}\n`),
+        authorizationUrl.slice(0, splitAt),
+        authorizationUrl.slice(splitAt),
+      ],
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const authorizationUrlPublished = fixture.waitForConnectionState(
+          (state) => state?.authorizationUrl === authorizationUrl,
+        );
+        const started = yield* connection.start({
+          provider: "antigravity",
+          method: "antigravity_browser",
+        });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        yield* Effect.promise(() => authorizationUrlPublished);
+        expect(fixture.getConnectionState()?.authorizationUrl).toBe(authorizationUrl);
+        yield* connection.cancel({ provider: "antigravity", operationId: operationId! });
+        yield* Effect.sleep(Duration.millis(10));
+        expect(fixture.getConnectionState()?.status).toBe("cancelled");
+        expect(fixture.getConnectionState()?.authorizationUrl).toBeUndefined();
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
+  it("settles a claimed URL publication before the code deadline publishes verifying", async () => {
+    const authorizationUrl =
+      "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&client_id=test-client&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
+    let closeCodeWindow!: () => void;
+    let releasePublication!: () => void;
+    let markPublicationClaimed!: () => void;
+    let markInputClosed!: () => void;
+    const codeWindowCloseSignal = new Promise<void>((resolve) => {
+      closeCodeWindow = resolve;
+    });
+    const publicationRelease = new Promise<void>((resolve) => {
+      releasePublication = resolve;
+    });
+    const publicationClaimed = new Promise<void>((resolve) => {
+      markPublicationClaimed = resolve;
+    });
+    const inputClosed = new Promise<void>((resolve) => {
+      markInputClosed = resolve;
+    });
+    const fixture = makeConnectionTestLayer({
+      provider: "antigravity",
+      hanging: true,
+      processStdout: `Authentication required:\n${authorizationUrl}\n`,
+      antigravityCodeWindowCloseSignal: Effect.promise(() => codeWindowCloseSignal),
+      beforeAntigravityOutputPublication: Effect.sync(markPublicationClaimed).pipe(
+        Effect.andThen(Effect.promise(() => publicationRelease)),
+      ),
+      afterAntigravityCodeWindowInputClosed: Effect.sync(markInputClosed),
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const verifyingPublished = fixture.waitForConnectionState(
+          (state) => state?.status === "verifying",
+        );
+        const cancelledPublished = fixture.waitForConnectionState(
+          (state) => state?.status === "cancelled",
+        );
+        const started = yield* connection.start({
+          provider: "antigravity",
+          method: "antigravity_browser",
+        });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        yield* Effect.promise(() => publicationClaimed);
+        yield* Effect.sync(closeCodeWindow);
+        yield* Effect.promise(() => inputClosed);
+        const lateSubmission = yield* Effect.result(
+          connection.submitAuthorizationCode({
+            provider: "antigravity",
+            operationId: operationId!,
+            authorizationCode: "4/test-code-after-deadline",
+          }),
+        );
+        expect(lateSubmission._tag).toBe("Failure");
+        if (lateSubmission._tag === "Failure") {
+          expect(lateSubmission.failure.reason).toBe("authorization_code_not_accepted");
+        }
+        yield* Effect.sync(releasePublication);
+        yield* Effect.promise(() => verifyingPublished);
+        expect(fixture.getConnectionState()?.status).toBe("verifying");
+        expect(fixture.getConnectionState()?.authorizationUrl).toBeUndefined();
+        yield* connection.cancel({ provider: "antigravity", operationId: operationId! });
+        yield* Effect.promise(() => cancelledPublished);
+        expect(fixture.getConnectionState()?.status).toBe("cancelled");
+        expect(fixture.getConnectionState()?.authorizationUrl).toBeUndefined();
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
+  it("cancels an already-claimed URL publication without allowing stale state", async () => {
+    const authorizationUrl =
+      "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&client_id=test-client&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
+    let releasePublication!: () => void;
+    let markPublicationClaimed!: () => void;
+    let emitPtyData!: (data: string) => void;
+    const publicationRelease = new Promise<void>((resolve) => {
+      releasePublication = resolve;
+    });
+    const publicationClaimed = new Promise<void>((resolve) => {
+      markPublicationClaimed = resolve;
+    });
+    const fixture = makeConnectionTestLayer({
+      provider: "antigravity",
+      hanging: true,
+      processStdout: `Authentication required:\n${authorizationUrl}\n`,
+      beforeAntigravityOutputPublication: Effect.sync(markPublicationClaimed).pipe(
+        Effect.andThen(Effect.promise(() => publicationRelease)),
+      ),
+      onPtyReady: (emitData) => {
+        emitPtyData = emitData;
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const cancelledPublished = fixture.waitForConnectionState(
+          (state) => state?.status === "cancelled",
+        );
+        const started = yield* connection.start({
+          provider: "antigravity",
+          method: "antigravity_browser",
+        });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        yield* Effect.promise(() => publicationClaimed);
+        const cancellation = yield* connection
+          .cancel({ provider: "antigravity", operationId: operationId! })
+          .pipe(Effect.forkChild);
+        yield* Fiber.join(cancellation);
+        yield* Effect.promise(() => cancelledPublished);
+        expect(fixture.getConnectionState()?.status).toBe("cancelled");
+        expect(fixture.getConnectionState()?.authorizationUrl).toBeUndefined();
+
+        yield* Effect.sync(() => {
+          releasePublication();
+          emitPtyData(`late output:\n${authorizationUrl}\n`);
+        });
+        yield* Effect.promise(() => Promise.resolve());
+        expect(fixture.getConnectionState()?.status).toBe("cancelled");
+        expect(fixture.getConnectionState()?.authorizationUrl).toBeUndefined();
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
+  it("closes Antigravity code entry on schedule even when the PTY hangs", async () => {
+    const onKill = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "antigravity",
+      antigravityCodeWindowTimeout: Duration.millis(20),
+      antigravityTimeout: Duration.millis(50),
+      processForCommand: ({ args }) =>
+        args.includes("--print")
+          ? { hanging: true, onKill }
+          : {
+              code: 1,
+              hanging: false,
+              stdout: "Please sign in to view available models.\n",
+            },
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const verifyingPublished = fixture.waitForConnectionState(
+          (state) => state?.status === "verifying",
+        );
+        const failedPublished = fixture.waitForConnectionState(
+          (state) => state?.status === "failed",
+        );
+        const started = yield* connection.start({
+          provider: "antigravity",
+          method: "antigravity_browser",
+        });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        yield* Effect.promise(() => verifyingPublished);
+        expect(fixture.getConnectionState()?.status).toBe("verifying");
+        const lateSubmission = yield* Effect.result(
+          connection.submitAuthorizationCode({
+            provider: "antigravity",
+            operationId: operationId!,
+            authorizationCode: "4/test-code-after-deadline",
+          }),
+        );
+        expect(lateSubmission._tag).toBe("Failure");
+        if (lateSubmission._tag === "Failure") {
+          expect(lateSubmission.failure.reason).toBe("authorization_code_not_accepted");
+        }
+        yield* Effect.promise(() => failedPublished);
+        expect(fixture.getConnectionState()?.status).toBe("failed");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onKill).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a pre-deadline code through Antigravity's verification grace", async () => {
+    let authenticationVisible = false;
+    const submittedChunks: Uint8Array[] = [];
+    const fixture = makeConnectionTestLayer({
+      provider: "antigravity",
+      antigravityCodeWindowTimeout: Duration.millis(200),
+      antigravityTimeout: Duration.millis(300),
+      antigravityAuthenticationProbeInterval: Duration.millis(5),
+      processForCommand: ({ args }) =>
+        args.includes("--print")
+          ? { hanging: true }
+          : authenticationVisible
+            ? { code: 0, hanging: false, stdout: "Gemini 3.5 Flash (High)\n" }
+            : {
+                code: 1,
+                hanging: false,
+                stdout: "Please sign in to view available models.\n",
+              },
+      onStdinChunk: (command, chunk) => {
+        if (command.args.includes("--print")) submittedChunks.push(chunk);
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const verifyingPublished = fixture.waitForConnectionState(
+          (state) => state?.status === "verifying",
+        );
+        const connectedPublished = fixture.waitForConnectionState(
+          (state) => state?.status === "connected",
+        );
+        const started = yield* connection.start({
+          provider: "antigravity",
+          method: "antigravity_browser",
+        });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        const submissionFiber = yield* connection
+          .submitAuthorizationCode({
+            provider: "antigravity",
+            operationId: operationId!,
+            authorizationCode: "4/test-code-before-deadline",
+          })
+          .pipe(Effect.forkChild);
+        yield* Effect.promise(() => verifyingPublished);
+        expect(fixture.getConnectionState()?.status).toBe("verifying");
+        authenticationVisible = true;
+        yield* Fiber.join(submissionFiber);
+        yield* Effect.promise(() => connectedPublished);
+        expect(fixture.getConnectionState()?.status).toBe("connected");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(Buffer.concat(submittedChunks.map((chunk) => Buffer.from(chunk))).toString("utf8")).toBe(
+      "4/test-code-before-deadline\n",
+    );
+  });
+
+  it("accepts authentication that settles just after Antigravity's browser process exits", async () => {
+    const authorizationUrl =
+      "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&client_id=test-client&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
+    let authenticationVisible = false;
+    const fixture = makeConnectionTestLayer({
+      provider: "antigravity",
+      antigravityTimeout: Duration.millis(250),
+      antigravityAuthenticationProbeInterval: Duration.millis(5),
+      antigravityAuthenticationSettleTimeout: Duration.millis(150),
+      processForCommand: ({ args }) =>
+        args.includes("--print")
+          ? {
+              code: 1,
+              delayMs: 20,
+              stdout: `Authentication required:\n${authorizationUrl}\n`,
+            }
+          : authenticationVisible
+            ? { code: 0, stdout: "Gemini 3.5 Flash (High)\n" }
+            : {
+                code: 1,
+                stdout: "Please sign in to view available models.\n",
+              },
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const connectedPublished = fixture.waitForConnectionState(
+          (state) => state?.status === "connected",
+        );
+        yield* connection.start({
+          provider: "antigravity",
+          method: "antigravity_browser",
+        });
+        yield* Effect.sleep(Duration.millis(45));
+        authenticationVisible = true;
+        yield* Effect.promise(() => connectedPublished);
+        expect(fixture.getConnectionState()?.status).toBe("connected");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
+  it("delivers one transient authorization code only to the active Antigravity PTY", async () => {
+    const authorizationUrl =
+      "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&client_id=test-client&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
+    const submittedChunks: Uint8Array[] = [];
+    let codeSubmitted = false;
+    const fixture = makeConnectionTestLayer({
+      provider: "antigravity",
+      listModelsHanging: true,
+      processForCommand: ({ args }) =>
+        args.includes("--print")
+          ? {
+              hanging: true,
+              stdout: `Authentication required:\n${authorizationUrl}\n`,
+            }
+          : codeSubmitted
+            ? { code: 0, stdout: "Gemini 3.5 Flash (High)\n" }
+            : { code: 1, stdout: "Please sign in to view available models.\n" },
+      onStdinChunk: (command, chunk) => {
+        if (command.args.includes("--print")) {
+          submittedChunks.push(chunk);
+          codeSubmitted = true;
+        }
+      },
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const started = yield* connection.start({
+          provider: "antigravity",
+          method: "antigravity_browser",
+        });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        yield* Effect.sleep(Duration.millis(10));
+
+        const stale = yield* Effect.result(
+          connection.submitAuthorizationCode({
+            provider: "antigravity",
+            operationId: "stale-operation",
+            authorizationCode: "4/test-code-stale",
+          }),
+        );
+        expect(stale._tag).toBe("Failure");
+        if (stale._tag === "Failure") expect(stale.failure.reason).toBe("operation_not_found");
+
+        yield* connection.submitAuthorizationCode({
+          provider: "antigravity",
+          operationId: operationId!,
+          authorizationCode: "4/test-code-123",
+        });
+        const submitted = Buffer.concat(
+          submittedChunks.map((chunk) => Buffer.from(chunk)),
+        ).toString("utf8");
+        expect(submitted).toBe("4/test-code-123\n");
+
+        const duplicate = yield* Effect.result(
+          connection.submitAuthorizationCode({
+            provider: "antigravity",
+            operationId: operationId!,
+            authorizationCode: "4/test-code-456",
+          }),
+        );
+        expect(duplicate._tag).toBe("Failure");
+        if (duplicate._tag === "Failure") {
+          expect(duplicate.failure.reason).toBe("authorization_code_already_submitted");
+        }
+        expect(fixture.getConnectionState()).not.toHaveProperty("authorizationCode");
+        yield* connection.cancel({ provider: "antigravity", operationId: operationId! });
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
+  it("rejects a code when Antigravity exits before confirming authentication", async () => {
+    const authorizationUrl =
+      "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&client_id=test-client&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
+    const fixture = makeConnectionTestLayer({
+      provider: "antigravity",
+      processForCommand: ({ args }) =>
+        args.includes("--print")
+          ? {
+              hanging: true,
+              exitOnWrite: true,
+              stdout: `Authentication required:\n${authorizationUrl}\n`,
+            }
+          : { code: 1, stdout: "Please sign in to view available models.\n" },
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const started = yield* connection.start({
+          provider: "antigravity",
+          method: "antigravity_browser",
+        });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        yield* Effect.sleep(Duration.millis(10));
+        const submission = yield* Effect.result(
+          connection.submitAuthorizationCode({
+            provider: "antigravity",
+            operationId: operationId!,
+            authorizationCode: "4/test-code-123",
+          }),
+        );
+        expect(submission._tag).toBe("Failure");
+        if (submission._tag === "Failure") {
+          expect(submission.failure.reason).toBe("authorization_code_not_accepted");
+        }
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
+  it("ignores a delayed PTY flood after an Antigravity attempt is cancelled", async () => {
+    const authorizationUrl =
+      "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&client_id=test-client&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
+    const fixture = makeConnectionTestLayer({
+      provider: "antigravity",
+      hanging: true,
+      ptyOutputDelayMs: 30,
+      ptyOutputChunks: [
+        ...Array.from({ length: 20_000 }, (_, index) => `late-noise-${index}\n`),
+        `Authentication required:\n${authorizationUrl}\n`,
+      ],
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const started = yield* connection.start({
+          provider: "antigravity",
+          method: "antigravity_browser",
+        });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        yield* Effect.sleep(Duration.millis(10));
+        yield* connection.cancel({ provider: "antigravity", operationId: operationId! });
+        yield* Effect.sleep(Duration.millis(50));
+        expect(fixture.getConnectionState()?.status).toBe("cancelled");
+        expect(fixture.getConnectionState()?.authorizationUrl).toBeUndefined();
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
+  it("rejects a code after the Antigravity stdin has closed during verification", async () => {
+    const fixture = makeConnectionTestLayer({
+      provider: "antigravity",
+      listModelsHanging: true,
+      processForCommand: ({ args }) =>
+        args.includes("models")
+          ? { code: 0, stdout: "Gemini 3.5 Flash (High)\n" }
+          : { code: 0, stdout: "Authentication complete.\n" },
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const started = yield* connection.start({
+          provider: "antigravity",
+          method: "antigravity_browser",
+        });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("verifying");
+        const late = yield* Effect.result(
+          connection.submitAuthorizationCode({
+            provider: "antigravity",
+            operationId: operationId!,
+            authorizationCode: "4/test-code-late",
+          }),
+        );
+        expect(late._tag).toBe("Failure");
+        if (late._tag === "Failure") {
+          expect(late.failure.reason).toBe("authorization_code_not_accepted");
+        }
+        yield* connection.cancel({ provider: "antigravity", operationId: operationId! });
+      }).pipe(Effect.provide(fixture.layer)),
+    );
   });
 
   it("starts Grok's browser login with the resolved executable", async () => {
@@ -349,8 +1138,116 @@ describe("ProviderConnectionLive", () => {
     );
 
     expect(onSpawn).toHaveBeenCalledWith(
-      expect.objectContaining({ command: "grok", args: ["--no-auto-update", "login"] }),
+      expect.objectContaining({
+        command: "grok",
+        args: ["--no-auto-update", "login", "--oauth"],
+      }),
     );
+  });
+
+  it("uses direct OAuth with a system Grok runtime too", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({ provider: "grok", onSpawn });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({ provider: "grok", method: "grok_browser" });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("connected");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "grok", args: ["login", "--oauth"] }),
+    );
+  });
+
+  it("publishes only a validated transient Grok OAuth URL while sign-in is active", async () => {
+    const authorizationUrl =
+      "https://auth.x.ai/oauth2/authorize?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A50418%2Fcallback&state=test-state&code_challenge=test-challenge";
+    const fixture = makeConnectionTestLayer({
+      provider: "grok",
+      hanging: true,
+      processStdout: `Complete sign-in at:\n${authorizationUrl}\n`,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const started = yield* connection.start({ provider: "grok", method: "grok_browser" });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        yield* Effect.sleep(Duration.millis(10));
+        expect(fixture.getConnectionState()?.authorizationUrl).toBe(authorizationUrl);
+        yield* connection.cancel({ provider: "grok", operationId: operationId! });
+        expect(fixture.getConnectionState()?.authorizationUrl).toBeUndefined();
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
+  it("ends a rejected Grok OAuth flow with actionable retry guidance", async () => {
+    const fixture = makeConnectionTestLayer({
+      provider: "grok",
+      processExitCode: 1,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({ provider: "grok", method: "grok_browser" });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("failed");
+        expect(fixture.getConnectionState()?.message).toContain("fresh secure browser sign-in");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
+  it("cancels Grok OAuth and kills the waiting callback process", async () => {
+    const onKill = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "grok",
+      hanging: true,
+      onKill,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const started = yield* connection.start({
+          provider: "grok",
+          method: "grok_browser",
+        });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        expect(operationId).toBeTruthy();
+        yield* Effect.sleep(Duration.millis(5));
+        yield* connection.cancel({ provider: "grok", operationId: operationId! });
+        expect(fixture.getConnectionState()?.status).toBe("cancelled");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onKill).toHaveBeenCalledTimes(1);
+  });
+
+  it("times out Grok OAuth and kills the waiting callback process", async () => {
+    const onKill = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "grok",
+      hanging: true,
+      timeout: Duration.millis(5),
+      onKill,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({ provider: "grok", method: "grok_browser" });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("failed");
+        expect(fixture.getConnectionState()?.message).toContain("timed out");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onKill).toHaveBeenCalledTimes(1);
   });
 
   it("runs Droid's authentication-only ACP handshake before verification", async () => {
@@ -370,7 +1267,7 @@ describe("ProviderConnectionLive", () => {
     );
 
     expect(droidAuthenticationProbe).toHaveBeenCalledWith(
-      expect.objectContaining({ binaryPath: "droid", cwd: "/tmp" }),
+      expect.objectContaining({ binaryPath: "droid", cwd: TEST_PROVIDER_PROBE_CWD }),
     );
   });
 
@@ -400,6 +1297,7 @@ describe("ProviderConnectionLive", () => {
     expect(onListModels).toHaveBeenCalledWith({
       provider: "claudeAgent",
       binaryPath: "claude",
+      cwd: TEST_PROVIDER_PROBE_CWD,
     });
   });
 
@@ -499,6 +1397,110 @@ describe("ProviderConnectionLive", () => {
 
     expect(result.providers[0]?.authStatus).toBe("authenticated");
     expect(result.providers[0]?.connectionState).toBeUndefined();
+    expect(onSpawn).not.toHaveBeenCalled();
+  });
+
+  it("never applies the Codex-only reauthentication override to another provider", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({ initiallyAuthenticated: true, onSpawn });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* connection.start({
+          provider: "claudeAgent",
+          method: "claude_account",
+          mode: "reauthenticate",
+        });
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result.providers[0]?.authStatus).toBe("authenticated");
+    expect(result.providers[0]?.connectionState).toBeUndefined();
+    expect(onSpawn).not.toHaveBeenCalled();
+  });
+
+  it("starts a fresh Codex login when runtime recovery explicitly requests reauthentication", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      initiallyAuthenticated: true,
+      onSpawn,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({
+          provider: "codex",
+          method: "codex_browser",
+          mode: "reauthenticate",
+        });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("connected");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "codex", args: ["login"] }),
+    );
+  });
+
+  it("refuses official Codex reauthentication for a custom Codex provider", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      initiallyAuthenticated: true,
+      requiresProviderAccount: false,
+      onSpawn,
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* Effect.result(
+          connection.start({
+            provider: "codex",
+            method: "codex_browser",
+            mode: "reauthenticate",
+          }),
+        );
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure.reason).toBe("invalid_method");
+    }
+    expect(onSpawn).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when Codex account ownership is unknown", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      initiallyAuthenticated: true,
+      requiresProviderAccount: null,
+      onSpawn,
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* Effect.result(
+          connection.start({
+            provider: "codex",
+            method: "codex_browser",
+            mode: "reauthenticate",
+          }),
+        );
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure.reason).toBe("invalid_method");
+    }
     expect(onSpawn).not.toHaveBeenCalled();
   });
 

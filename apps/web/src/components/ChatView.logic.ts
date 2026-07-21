@@ -88,12 +88,25 @@ export function hasFileUndoSettled(input: {
 
 const ALWAYS_ALLOW_RUNTIME_MODE: RuntimeMode = "full-access";
 
+export function resolveComposerRuntimeMode(input: {
+  readonly pendingRuntimeMode?: RuntimeMode | null | undefined;
+  readonly serverRuntimeMode?: RuntimeMode | null | undefined;
+  readonly draftRuntimeMode?: RuntimeMode | null | undefined;
+  readonly defaultRuntimeMode: RuntimeMode;
+}): RuntimeMode {
+  return (
+    input.pendingRuntimeMode ??
+    input.serverRuntimeMode ??
+    input.draftRuntimeMode ??
+    input.defaultRuntimeMode
+  );
+}
+
 /**
  * "Always allow" (acceptForSession) only auto-approves the live provider turn.
- * Because the client is the source of truth for runtime mode (it sends it with
- * every turn), the choice must also flip the thread to full-access so it survives
- * idle-stop and runtime restarts instead of reverting to approval-required on the
- * next turn. Returns the runtime mode to persist, or null when nothing changes.
+ * The choice must also durably flip the server thread to full-access so it
+ * survives idle-stop and runtime restarts. Returns the runtime mode to persist,
+ * or null when nothing changes.
  */
 export function resolveRuntimeModeAfterApprovalDecision(
   currentRuntimeMode: RuntimeMode,

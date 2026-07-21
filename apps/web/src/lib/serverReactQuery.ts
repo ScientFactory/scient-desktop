@@ -124,12 +124,17 @@ export function serverLocalServersQueryOptions(
 export function sidebarLocalServersQueryOptions(input: {
   hasActiveProjectRun: boolean;
   hasProjects: boolean;
-}) {
+}): ReturnType<typeof serverLocalServersQueryOptions> {
   const enabled = input.hasProjects || input.hasActiveProjectRun;
-  return serverLocalServersQueryOptions({
-    enabled,
-    refetchInterval: input.hasActiveProjectRun ? LOCAL_SERVERS_VISIBLE_REFETCH_INTERVAL_MS : false,
-  });
+  return {
+    ...serverLocalServersQueryOptions({
+      enabled,
+      refetchInterval: input.hasActiveProjectRun
+        ? LOCAL_SERVERS_VISIBLE_REFETCH_INTERVAL_MS
+        : false,
+    }),
+    refetchOnWindowFocus: false as const,
+  };
 }
 
 const STUDIO_THREAD_OUTPUTS_STALE_TIME_MS = 10_000;
@@ -154,7 +159,9 @@ export function studioThreadOutputsQueryOptions(input: {
     },
     enabled: (input.enabled ?? true) && threadId !== null,
     staleTime: STUDIO_THREAD_OUTPUTS_STALE_TIME_MS,
-    refetchOnWindowFocus: true,
+    // File/checkpoint domain events already invalidate this query. Returning to
+    // Scient should not itself read the active project tree.
+    refetchOnWindowFocus: false,
     refetchOnReconnect: true,
   });
 }
