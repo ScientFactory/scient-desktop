@@ -19,6 +19,7 @@ import {
   MAC_APPSNAP_HELPER_STAGE_PATH,
   validateDesktopNativeBuildHost,
 } from "./lib/desktop-platform-build-config.ts";
+import { isolateDesktopSigningEnvironment } from "./lib/desktop-signing-environment.ts";
 import { SCIENT_PRODUCTION_BUNDLE_ID } from "@synara/shared/desktopIdentity";
 import { parseBooleanEnvValue } from "./lib/env-bool.ts";
 import { verifySingleMacDmgSignature } from "./lib/mac-artifact-signature.ts";
@@ -842,6 +843,19 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   const electronVersion = desktopPackageJson.dependencies.electron;
+  const platformBuildConfig = yield* createBuildConfig(
+    options.platform,
+    options.target,
+    desktopPackageJson.productName ?? "Scient",
+    options.signed,
+    options.mockUpdates,
+    options.mockUpdateServerPort,
+  );
+  const signingEnvironment = isolateDesktopSigningEnvironment(
+    process.env,
+    options.platform,
+    options.signed,
+  );
 
   const serverDependencies = serverPackageJson.dependencies;
   if (!serverDependencies || Object.keys(serverDependencies).length === 0) {
@@ -971,14 +985,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     description: "Scient desktop build",
     author: "Yaacov Corcos",
     main: "apps/desktop/dist-electron/main.js",
-    build: yield* createBuildConfig(
-      options.platform,
-      options.target,
-      desktopPackageJson.productName ?? "Scient",
-      options.signed,
-      options.mockUpdates,
-      options.mockUpdateServerPort,
-    ),
+    build: platformBuildConfig,
     dependencies: {
       ...resolvedServerDependencies,
       ...resolvedDesktopRuntimeDependencies,
@@ -1003,6 +1010,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   const buildEnv: NodeJS.ProcessEnv = {
     ...process.env,
+    ...signingEnvironment,
   };
   for (const [key, value] of Object.entries(buildEnv)) {
     if (value === "") {
@@ -1011,13 +1019,6 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
   if (!options.signed) {
     buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = "false";
-    delete buildEnv.CSC_LINK;
-    delete buildEnv.CSC_KEY_PASSWORD;
-    delete buildEnv.WIN_CSC_LINK;
-    delete buildEnv.WIN_CSC_KEY_PASSWORD;
-    delete buildEnv.APPLE_API_KEY;
-    delete buildEnv.APPLE_API_KEY_ID;
-    delete buildEnv.APPLE_API_ISSUER;
   }
 
   if (process.platform === "win32") {
