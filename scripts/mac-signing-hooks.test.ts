@@ -6,9 +6,10 @@ import { describe, expect, it, vi } from "vitest";
 import { assertSignedMacIdentityDetails } from "./lib/mac-artifact-signature.ts";
 
 const require = createRequire(import.meta.url);
-const { SCIENT_APPSNAP_HELPER_IDENTIFIER, SCIENT_MAC_BUNDLE_IDENTIFIER } =
+const { SCIENT_APPSNAP_HELPER_IDENTIFIER, SCIENT_ELECTRON_HELPERS, SCIENT_MAC_BUNDLE_IDENTIFIER } =
   require("./lib/mac-signing-policy.cjs") as {
     readonly SCIENT_APPSNAP_HELPER_IDENTIFIER: string;
+    readonly SCIENT_ELECTRON_HELPERS: ReadonlyArray<{ readonly identifier: string }>;
     readonly SCIENT_MAC_BUNDLE_IDENTIFIER: string;
   };
 const { createMacSignHook } = require("./sign-mac-app.cjs") as {
@@ -19,9 +20,9 @@ const { createMacSignHook } = require("./sign-mac-app.cjs") as {
     packager: { readonly projectDir: string },
   ) => Promise<void>;
 };
-const { createStapleMacAppHook } = require("./staple-mac-app.cjs") as {
-  readonly createStapleMacAppHook: (
-    run: ReturnType<typeof vi.fn>,
+const { createNotarizeMacAppHook } = require("./notarize-mac-app.cjs") as {
+  readonly createNotarizeMacAppHook: (
+    notarize: ReturnType<typeof vi.fn>,
   ) => (context: Record<string, unknown>) => Promise<void>;
 };
 
@@ -58,27 +59,32 @@ describe("macOS release signing hooks", () => {
     });
   });
 
-  it("staples and validates the notarized app before artifact packaging", async () => {
-    const run = vi.fn();
-    await createStapleMacAppHook(run)({
-      electronPlatformName: "darwin",
-      appOutDir: "/stage/dist/mac-arm64",
-      packager: { appInfo: { productFilename: "Scient" } },
-    });
+  it("delegates signed apps to the controlled notarization workflow", async () => {
+    const notarize = vi.fn();
+    vi.stubEnv("SCIENT_NOTARIZATION_ARCH", "arm64");
+    vi.stubEnv("SCIENT_NOTARIZATION_COMMIT", "abc123");
+    vi.stubEnv("SCIENT_NOTARIZATION_EVIDENCE_DIR", "/release");
+    vi.stubEnv("SCIENT_NOTARIZATION_VERSION", "0.5.9");
+    try {
+      await createNotarizeMacAppHook(notarize)({
+        electronPlatformName: "darwin",
+        appOutDir: "/stage/dist/mac-arm64",
+        outDir: "/stage/dist",
+        packager: { appInfo: { productFilename: "Scient" } },
+      });
 
-    const appPath = "/stage/dist/mac-arm64/Scient.app";
-    expect(run).toHaveBeenNthCalledWith(
-      1,
-      "/usr/bin/xcrun",
-      ["stapler", "staple", "--verbose", appPath],
-      { stdio: "inherit" },
-    );
-    expect(run).toHaveBeenNthCalledWith(
-      2,
-      "/usr/bin/xcrun",
-      ["stapler", "validate", "--verbose", appPath],
-      { stdio: "inherit" },
-    );
+      expect(notarize).toHaveBeenCalledWith({
+        appPath: "/stage/dist/mac-arm64/Scient.app",
+        arch: "arm64",
+        commit: "abc123",
+        environment: process.env,
+        evidenceDirectory: "/release",
+        productName: "Scient",
+        version: "0.5.9",
+      });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("rejects identity drift and inherited Electron entitlements", () => {
@@ -86,18 +92,34 @@ describe("macOS release signing hooks", () => {
       `Identifier=${SCIENT_MAC_BUNDLE_IDENTIFIER}`,
       "Authority=Developer ID Application: ScientFactory (TEAM123)",
       "TeamIdentifier=TEAM123",
+      "Timestamp=21 Jul 2026 at 17:30:00",
+      "flags=0x10000(runtime)",
     ].join("\n");
     const helperDetails = [
       `Identifier=${SCIENT_APPSNAP_HELPER_IDENTIFIER}`,
       "Authority=Developer ID Application: ScientFactory (TEAM123)",
       "TeamIdentifier=TEAM123",
+      "Timestamp=21 Jul 2026 at 17:30:00",
+      "flags=0x10000(runtime)",
     ].join("\n");
+    const electronHelpers = SCIENT_ELECTRON_HELPERS.map(({ identifier }) => ({
+      identifier,
+      details: [
+        `Identifier=${identifier}`,
+        "Authority=Developer ID Application: ScientFactory (TEAM123)",
+        "TeamIdentifier=TEAM123",
+        "Timestamp=21 Jul 2026 at 17:30:00",
+        "flags=0x10000(runtime)",
+      ].join("\n"),
+      entitlements: "<plist><dict/></plist>",
+    }));
 
     expect(() =>
       assertSignedMacIdentityDetails({
         appDetails,
         appSnapDetails: helperDetails,
         appSnapEntitlements: '<?xml version="1.0"?><plist><dict/></plist>',
+        electronHelpers,
       }),
     ).not.toThrow();
     expect(() =>
@@ -106,7 +128,26 @@ describe("macOS release signing hooks", () => {
         appSnapDetails: helperDetails,
         appSnapEntitlements:
           "<plist><dict><key>com.apple.security.cs.allow-jit</key><true/></dict></plist>",
+        electronHelpers,
       }),
     ).toThrow(/forbidden entitlement/);
+    const mismatchedElectronHelpers = electronHelpers.slice();
+    const firstElectronHelper = mismatchedElectronHelpers[0];
+    if (!firstElectronHelper) throw new Error("Expected at least one Electron helper policy.");
+    mismatchedElectronHelpers[0] = {
+      ...firstElectronHelper,
+      details: firstElectronHelper.details.replace(
+        "TeamIdentifier=TEAM123",
+        "TeamIdentifier=OTHERTEAM",
+      ),
+    };
+    expect(() =>
+      assertSignedMacIdentityDetails({
+        appDetails,
+        appSnapDetails: helperDetails,
+        appSnapEntitlements: "<plist><dict/></plist>",
+        electronHelpers: mismatchedElectronHelpers,
+      }),
+    ).toThrow(/Electron helper/);
   });
 });

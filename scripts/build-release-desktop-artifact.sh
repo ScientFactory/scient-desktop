@@ -2,6 +2,14 @@
 
 set -euo pipefail
 
+apple_key_path=""
+cleanup_sensitive_files() {
+  if [[ -n "$apple_key_path" ]]; then
+    rm -f -- "$apple_key_path"
+  fi
+}
+trap cleanup_sensitive_files EXIT
+
 platform="$1"
 target="$2"
 arch="$3"
@@ -42,9 +50,11 @@ if [[ "$platform" == "mac" ]]; then
     "${APPLE_API_ISSUER:-}"
   )
   if has_all "${apple_values[@]}"; then
-    key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
-    printf '%s' "$APPLE_API_KEY" > "$key_path"
-    export APPLE_API_KEY="$key_path"
+    umask 077
+    apple_key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+    printf '%s' "$APPLE_API_KEY" > "$apple_key_path"
+    chmod 600 "$apple_key_path"
+    export APPLE_API_KEY="$apple_key_path"
     echo "macOS signing enabled."
     args+=(--signed)
   elif has_any "${apple_values[@]}"; then
@@ -97,24 +107,7 @@ else
   echo "Signing disabled for $platform."
 fi
 
-if [[ "$platform" == "mac" && "$arch" == "x64" ]]; then
-  # electron-builder occasionally times out fetching x64 DMG helper bundles on GitHub-hosted macOS runners.
-  # Retry this narrow packaging path so transient upstream 504s do not block the whole release.
-  max_attempts=3
-  for attempt in $(seq 1 "$max_attempts"); do
-    if bun run dist:desktop:artifact -- "${args[@]}"; then
-      break
-    fi
-
-    if [[ "$attempt" -eq "$max_attempts" ]]; then
-      echo "macOS x64 desktop artifact build failed after $max_attempts attempts."
-      exit 1
-    fi
-
-    sleep_seconds=$((attempt * 15))
-    echo "macOS x64 desktop artifact build failed on attempt $attempt/$max_attempts. Retrying in ${sleep_seconds}s..."
-    sleep "$sleep_seconds"
-  done
-else
-  bun run dist:desktop:artifact -- "${args[@]}"
-fi
+# Do not retry the whole macOS build: once notarization starts, a broad retry can
+# create duplicate Apple submissions. Retry individual pre-notarization network
+# operations at their owning layer instead.
+bun run dist:desktop:artifact -- "${args[@]}"

@@ -8,6 +8,7 @@ import {
   MAC_ADHOC_SIGN_HOOK_PATH,
   MAC_ENTITLEMENTS_PATH,
   MAC_INHERITED_ENTITLEMENTS_PATH,
+  MAC_NOTARIZATION_HOOK_PATH,
   MAC_SIGNING_POLICY_PATH,
   MICROPHONE_USAGE_DESCRIPTION,
   NODE_PTY_ASAR_UNPACK_GLOBS,
@@ -67,14 +68,17 @@ describe("createDesktopPlatformBuildConfig", () => {
       platform: "mac",
       signed: true,
       target: "dmg",
+      macNotarizeHookPath: "/repo/scripts/notarize-mac-app.cjs",
       macSignHookPath: "/repo/scripts/sign-mac-app.cjs",
-      macStapleHookPath: "/repo/scripts/staple-mac-app.cjs",
     });
 
     assert.equal(unsigned.afterPack, MAC_ADHOC_SIGN_HOOK_PATH);
     assert.equal(signed.afterPack, undefined);
-    assert.equal(signed.afterSign, "/repo/scripts/staple-mac-app.cjs");
-    assert.equal((signed.mac as Record<string, unknown>).sign, "/repo/scripts/sign-mac-app.cjs");
+    assert.equal(MAC_NOTARIZATION_HOOK_PATH, "scripts/notarize-mac-app.cjs");
+    assert.equal(signed.afterSign, "/repo/scripts/notarize-mac-app.cjs");
+    const signedMac = signed.mac as Record<string, unknown>;
+    assert.equal(signedMac.notarize, false);
+    assert.equal(signedMac.sign, "/repo/scripts/sign-mac-app.cjs");
   });
 
   it("fails signed macOS configuration closed without both release hooks", () => {
@@ -85,7 +89,7 @@ describe("createDesktopPlatformBuildConfig", () => {
           signed: true,
           target: "dmg",
         }),
-      /require explicit signing and stapling hooks/,
+      /require explicit signing and notarization hooks/,
     );
   });
 

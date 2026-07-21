@@ -767,8 +767,8 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     target,
     ...(platform === "mac" && signed
       ? {
+          macNotarizeHookPath: path.join(repoRoot, "scripts/notarize-mac-app.cjs"),
           macSignHookPath: path.join(repoRoot, "scripts/sign-mac-app.cjs"),
-          macStapleHookPath: path.join(repoRoot, "scripts/staple-mac-app.cjs"),
         }
       : {}),
     ...(windowsAzureSignOptions ? { windowsAzureSignOptions } : {}),
@@ -1024,6 +1024,14 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const buildEnv: NodeJS.ProcessEnv = {
     ...process.env,
     ...signingEnvironment,
+    ...(options.platform === "mac" && options.signed
+      ? {
+          SCIENT_NOTARIZATION_ARCH: options.arch,
+          SCIENT_NOTARIZATION_COMMIT: commitHash,
+          SCIENT_NOTARIZATION_EVIDENCE_DIR: options.outputDir,
+          SCIENT_NOTARIZATION_VERSION: appVersion,
+        }
+      : {}),
   };
   for (const [key, value] of Object.entries(buildEnv)) {
     if (value === "") {

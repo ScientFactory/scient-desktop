@@ -59,11 +59,13 @@ This document covers build-only native validation, promotion through the protect
   - The workflow merges the per-arch macOS metadata, then keeps the merged manifest as `latest-mac.yml` and copies it to `scient-mac.yml` for stable releases.
   - Local unsigned validation builds receive a complete ad-hoc signature. Public
     builds use the stable Developer ID identity, a dedicated minimal AppSnap
-    signature, notarization, and stapling. The build then repacks the macOS
-    update `.zip` with `ditto`, verifies Electron framework symlinks and both
-    source/extracted app signatures, validates the app inside the final DMG,
-    patches the matching `latest-mac*.yml` hash/size, and removes the stale
-    `.zip.blockmap`.
+    signature, controlled notarization, and stapling. The notarization hook
+    captures Apple's submission ID immediately, polls for up to 90 minutes,
+    preserves Apple's completed log, and writes architecture-specific evidence
+    even when the build fails. The build then repacks the macOS update `.zip`
+    with `ditto`, verifies Electron framework symlinks and both source/extracted
+    app signatures, validates the app inside the final DMG, patches the matching
+    `latest-mac*.yml` hash/size, and removes the stale `.zip.blockmap`.
   - macOS updater downloads intentionally use the full zip payload so Squirrel.Mac installs the exact signed archive validated by release build.
 - Local smoke test:
   - Run `bun run release:smoke:mac-update -- --skip-build --build-version 0.1.5` on macOS after local desktop/server/web dist files exist.
@@ -176,11 +178,26 @@ Checklist:
 8. Re-run a tag release and confirm macOS artifacts are signed, notarized, and
    stapled. The macOS jobs allow up to 120 minutes for Apple service delays;
    Linux and Windows remain capped at 30 minutes.
+9. Download the `notarization-<arch>` workflow artifacts and confirm each
+   evidence file records an Apple submission ID, `Accepted` status, Developer ID
+   Team ID, successful stapling, Gatekeeper acceptance, and the corresponding
+   Apple notarization log.
+10. For publishing runs, confirm both `Verify published macOS` jobs downloaded
+    the public DMGs and updater ZIPs, matched them against `SHA256SUMS.txt`, and
+    re-ran Developer ID, nested-helper identity, stapling, and Gatekeeper checks
+    against the extracted delivered copies. Release finalization waits for these
+    checks.
 
 Notes:
 
 - `APPLE_API_KEY` is stored as raw key text in secrets.
-- The workflow writes it to a temporary `AuthKey_<id>.p8` file at runtime.
+- The workflow writes it with owner-only permissions to a temporary
+  `AuthKey_<id>.p8` file at runtime and removes the file when the build exits.
+- The custom notarization workflow deliberately disables electron-builder's
+  opaque automatic `submit --wait` integration. A submission timeout is
+  recovered from `notarytool history` when Apple accepted the uniquely named
+  archive but the runner lost the response; the entire app build is never
+  retried automatically after notarization starts.
 
 ## 3) Windows signing setup
 

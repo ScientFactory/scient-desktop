@@ -12,6 +12,7 @@ export const MAC_APPSNAP_HELPER_STAGE_PATH =
   "apps/desktop/native/appsnap/build/scient-appsnap-helper";
 export const MAC_ADHOC_SIGN_HOOK_PATH = "scripts/adhoc-sign-mac-app.cjs";
 export const MAC_SIGNING_POLICY_PATH = "scripts/lib/mac-signing-policy.cjs";
+export const MAC_NOTARIZATION_HOOK_PATH = "scripts/notarize-mac-app.cjs";
 export const MAC_APPSNAP_HELPER_ASAR_EXCLUSION = "!apps/desktop/native/appsnap/build/**";
 export const MAC_APPSNAP_HELPER_BUNDLE_PATH = "Contents/Helpers/scient-appsnap-helper";
 export const WINDOWS_INSTALLER_GUID = "368107a8-afe6-5db5-ab3b-d4f331684868";
@@ -31,8 +32,8 @@ export interface DesktopPlatformBuildConfig {
 }
 
 export interface CreateDesktopPlatformBuildConfigInput {
+  readonly macNotarizeHookPath?: string;
   readonly macSignHookPath?: string;
-  readonly macStapleHookPath?: string;
   readonly platform: "linux" | "mac" | "win";
   readonly signed?: boolean;
   readonly target: string;
@@ -73,8 +74,8 @@ export function createDesktopPlatformBuildConfig(
   const nativePackaging = { asarUnpack: [...NODE_PTY_ASAR_UNPACK_GLOBS] };
 
   if (input.platform === "mac") {
-    if (input.signed === true && (!input.macSignHookPath || !input.macStapleHookPath)) {
-      throw new Error("Signed macOS builds require explicit signing and stapling hooks.");
+    if (input.signed === true && (!input.macSignHookPath || !input.macNotarizeHookPath)) {
+      throw new Error("Signed macOS builds require explicit signing and notarization hooks.");
     }
     const mac = {
       target: input.target === "dmg" ? [input.target, "zip"] : [input.target],
@@ -84,7 +85,12 @@ export function createDesktopPlatformBuildConfig(
       entitlements: MAC_ENTITLEMENTS_PATH,
       entitlementsInherit: MAC_INHERITED_ENTITLEMENTS_PATH,
       binaries: [MAC_APPSNAP_HELPER_BUNDLE_PATH],
-      ...(input.signed === true ? { sign: input.macSignHookPath } : {}),
+      ...(input.signed === true
+        ? {
+            notarize: false,
+            sign: input.macSignHookPath,
+          }
+        : {}),
       // The universal build stages the same pre-lipo'd helper in both app trees.
       // @electron/universal needs this pattern to preserve that existing fat binary.
       x64ArchFiles: MAC_APPSNAP_HELPER_BUNDLE_PATH,
@@ -95,7 +101,7 @@ export function createDesktopPlatformBuildConfig(
 
     return {
       ...nativePackaging,
-      ...(input.signed === true ? { afterSign: input.macStapleHookPath } : {}),
+      ...(input.signed === true ? { afterSign: input.macNotarizeHookPath } : {}),
       ...(input.signed === true ? {} : { afterPack: MAC_ADHOC_SIGN_HOOK_PATH }),
       files: [
         "**/*",

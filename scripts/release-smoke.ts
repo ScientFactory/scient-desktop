@@ -179,6 +179,10 @@ function verifyReleaseWorkflowSafety(): void {
     resolve(repoRoot, "scripts/build-release-desktop-artifact.sh"),
     "utf8",
   ).replaceAll("\r\n", "\n");
+  const notarizationHelper = readFileSync(
+    resolve(repoRoot, "scripts/lib/mac-notarization.cjs"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
   const parsedWorkflow = parseYaml(workflow) as {
     jobs?: {
       build?: { steps?: Array<ReleaseWorkflowStep> };
@@ -318,6 +322,71 @@ function verifyReleaseWorkflowSafety(): void {
     workflow,
     "timeout_minutes: 120",
     "Expected macOS signing and notarization to tolerate bounded Apple service delays.",
+  );
+  assertContains(
+    workflow,
+    "name: Upload macOS notarization evidence",
+    "Expected macOS builders to preserve notarization evidence even when packaging fails.",
+  );
+  assertContains(
+    workflow,
+    "path: release/notarization-*.json",
+    "Expected macOS builders to upload Apple submission evidence and logs.",
+  );
+  assertContains(
+    workflow,
+    "verify_published_macos:",
+    "Expected public macOS DMGs to be independently downloaded and verified.",
+  );
+  assertContains(
+    workflow,
+    'gh release download "$RELEASE_TAG"',
+    "Expected post-publication checks to download the public release artifact.",
+  );
+  assertContains(
+    workflow,
+    "bun scripts/verify-mac-release-artifact.ts published-macos",
+    "Expected post-publication checks to validate the delivered macOS identity.",
+  );
+  assertContains(
+    notarizationHelper,
+    '"--no-wait"',
+    "Expected notarization to capture Apple's submission ID before polling.",
+  );
+  assertNotContains(
+    notarizationHelper,
+    '"--wait"',
+    "Controlled notarization must not return to Apple's opaque wait mode.",
+  );
+  assertContains(
+    notarizationHelper,
+    "processingMs: 90 * 60 * 1000",
+    "Expected Apple processing to have an inner deadline below the macOS job limit.",
+  );
+  assertContains(
+    notarizationHelper,
+    'args: ["notarytool", "info", submissionId',
+    "Expected notarization to poll Apple explicitly.",
+  );
+  assertContains(
+    notarizationHelper,
+    'args: ["notarytool", "log", submissionId',
+    "Expected notarization to preserve Apple's completed submission log.",
+  );
+  assertNotContains(
+    releaseBuildScript,
+    "max_attempts=3",
+    "macOS release builds must not retry the whole notarization workflow.",
+  );
+  assertContains(
+    releaseBuildScript,
+    'chmod 600 "$apple_key_path"',
+    "Expected the temporary Apple API key to have owner-only permissions.",
+  );
+  assertContains(
+    releaseBuildScript,
+    "trap cleanup_sensitive_files EXIT",
+    "Expected the temporary Apple API key to be removed when the build exits.",
   );
   assertContains(
     workflow,
