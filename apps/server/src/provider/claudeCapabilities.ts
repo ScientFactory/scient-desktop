@@ -8,6 +8,8 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
+import { resolveClaudeSdkExecutablePath } from "./claudeExecutable";
+
 export interface ClaudeAccountCapabilities {
   readonly email?: string;
   readonly organization?: string;
@@ -112,10 +114,14 @@ export async function probeClaudeAccountCapabilities(
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   try {
+    const executable = resolveClaudeSdkExecutablePath(input.executable, {
+      env: input.env,
+      ...(input.cwd ? { cwd: input.cwd } : {}),
+    });
     runtime = createQuery({
       prompt: neverSendingPrompt(abortController.signal),
       options: {
-        pathToClaudeCodeExecutable: input.executable,
+        pathToClaudeCodeExecutable: executable,
         env: input.env,
         persistSession: false,
         settingSources: ["user", "project", "local"],

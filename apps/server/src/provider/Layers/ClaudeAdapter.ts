@@ -90,6 +90,7 @@ import { ServerConfig } from "../../config.ts";
 import { buildFileAttachmentsPromptBlock } from "../attachmentProjection.ts";
 import { readProviderPromptImage } from "../promptAttachments.ts";
 import { buildClaudeProcessEnv } from "../claudeProcessEnv.ts";
+import { resolveClaudeSdkExecutablePath } from "../claudeExecutable.ts";
 import {
   applyClaudeTaskToolResult,
   claudeTrackedTasksPayload,
@@ -3683,11 +3684,15 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           ...(ultracode ? { ultracode: true } : {}),
         };
         const claudeSubagents = buildClaudeSdkSubagents();
-        const claudeExecutable = providerOptions?.binaryPath ?? "claude";
+        const configuredClaudeExecutable = providerOptions?.binaryPath ?? "claude";
         const claudeSdkEnv = claudeSdkEnvForExecutable(
           yield* resolveClaudeSdkEnv,
-          claudeExecutable,
+          configuredClaudeExecutable,
         );
+        const claudeExecutable = resolveClaudeSdkExecutablePath(configuredClaudeExecutable, {
+          env: claudeSdkEnv,
+          ...(input.cwd ? { cwd: input.cwd } : {}),
+        });
 
         const queryOptions: ClaudeQueryOptions = {
           ...(input.cwd ? { cwd: input.cwd } : {}),
@@ -4269,6 +4274,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       env: NodeJS.ProcessEnv,
       binaryPath: string,
     ): Promise<ProviderListCommandsResult> {
+      const executablePath = resolveClaudeSdkExecutablePath(binaryPath, { cwd, env });
       // Spawn a lightweight Claude Code process for native command discovery.
       // The SDK's supportedCommands() awaits an internal initialization promise
       // that only resolves when the async generator is iterated (driving the
@@ -4277,7 +4283,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         prompt: neverResolvingUserMessageStream(),
         options: {
           cwd,
-          pathToClaudeCodeExecutable: binaryPath,
+          pathToClaudeCodeExecutable: executablePath,
           settingSources: [...CLAUDE_SETTING_SOURCES],
           permissionMode: "plan" as PermissionMode,
           persistSession: false,
@@ -4307,11 +4313,12 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       env: NodeJS.ProcessEnv,
       binaryPath: string,
     ): Promise<ProviderListModelsResult> {
+      const executablePath = resolveClaudeSdkExecutablePath(binaryPath, { cwd, env });
       const tempQuery = createQuery({
         prompt: neverResolvingUserMessageStream(),
         options: {
           cwd,
-          pathToClaudeCodeExecutable: binaryPath,
+          pathToClaudeCodeExecutable: executablePath,
           settingSources: [...CLAUDE_SETTING_SOURCES],
           permissionMode: "plan" as PermissionMode,
           persistSession: false,

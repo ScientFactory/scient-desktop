@@ -42,7 +42,7 @@ import { NetService } from "@synara/shared/Net";
 import { prepareWindowsSafeProcess } from "@synara/shared/windowsProcess";
 import { isWindowsShellCommandMissingResult } from "../shell-command-detection.ts";
 
-const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 20_000;
+const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 30_000;
 const DEFAULT_HOSTNAME = "127.0.0.1";
 export const OPENCODE_LOCAL_SERVER_IDLE_TTL_MS = 5 * 60_000;
 const OPENCODE_STARTUP_OUTPUT_MAX_CHARS = 4_000;

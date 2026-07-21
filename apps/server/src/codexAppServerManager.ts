@@ -75,7 +75,10 @@ interface PendingApprovalRequest {
   requestKind: ProviderRequestKind;
   threadId: ThreadId;
   turnId?: TurnId;
+  parentTurnId?: TurnId;
   itemId?: ProviderItemId;
+  providerThreadId?: string;
+  providerParentThreadId?: string;
 }
 
 interface PendingUserInputRequest {
@@ -83,7 +86,17 @@ interface PendingUserInputRequest {
   jsonRpcId: string | number;
   threadId: ThreadId;
   turnId?: TurnId;
+  parentTurnId?: TurnId;
   itemId?: ProviderItemId;
+  providerThreadId?: string;
+  providerParentThreadId?: string;
+}
+
+interface ResolvedCollaborationRoute {
+  readonly parentTurnId?: TurnId;
+  readonly providerThreadId?: string;
+  readonly providerParentThreadId?: string;
+  readonly isChildConversation: boolean;
 }
 
 interface CodexUserInputAnswer {
@@ -1681,7 +1694,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       createdAt: new Date().toISOString(),
       method: "item/requestApproval/decision",
       turnId: pendingRequest.turnId,
+      parentTurnId: pendingRequest.parentTurnId,
       itemId: pendingRequest.itemId,
+      providerThreadId: pendingRequest.providerThreadId,
+      providerParentThreadId: pendingRequest.providerParentThreadId,
       requestId: pendingRequest.requestId,
       requestKind: pendingRequest.requestKind,
       payload: {
@@ -1749,7 +1765,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       createdAt: new Date().toISOString(),
       method: "item/tool/requestUserInput/answered",
       turnId: pendingRequest.turnId,
+      parentTurnId: pendingRequest.parentTurnId,
       itemId: pendingRequest.itemId,
+      providerThreadId: pendingRequest.providerThreadId,
+      providerParentThreadId: pendingRequest.providerParentThreadId,
       requestId: pendingRequest.requestId,
       payload: {
         requestId: pendingRequest.requestId,
@@ -2330,34 +2349,13 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   ): void {
     const rawRoute = this.readRouteFields(notification.params);
     this.rememberCollabReceiverTurns(context, notification.params, rawRoute.turnId);
-    const childParentTurnId = this.readChildParentTurnId(context, notification.params);
-    const providerThreadId = normalizeProviderThreadId(
-      this.readProviderConversationId(notification.params),
-    );
-    const providerParentThreadId = this.readChildParentProviderThreadId(
-      context,
-      notification.params,
-    );
-    const activeProviderThreadId = normalizeProviderThreadId(
-      readResumeThreadId({
-        threadId: context.session.threadId,
-        runtimeMode: context.session.runtimeMode,
-        resumeCursor: context.session.resumeCursor,
-      }),
-    );
-    // A child can emit turn/started before its collab tool-call payload has
-    // populated the receiver maps. While a parent turn is live, a notification
-    // from another provider thread must not replace the parent's active turn.
-    const isUnmappedChildConversation =
-      context.session.status === "running" &&
-      context.session.activeTurnId !== undefined &&
-      providerThreadId !== undefined &&
-      activeProviderThreadId !== undefined &&
-      providerThreadId !== activeProviderThreadId;
-    const isChildConversation =
-      childParentTurnId !== undefined ||
-      providerParentThreadId !== undefined ||
-      isUnmappedChildConversation;
+    const resolvedCollaborationRoute = this.resolveCollaborationRoute(context, notification.params);
+    const {
+      parentTurnId: childParentTurnId,
+      providerThreadId,
+      providerParentThreadId,
+      isChildConversation,
+    } = resolvedCollaborationRoute;
     if (
       isChildConversation &&
       this.shouldSuppressChildConversationNotification(notification.method)
@@ -2545,11 +2543,12 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
   private handleServerRequest(context: CodexSessionContext, request: JsonRpcRequest): void {
     const rawRoute = this.readRouteFields(request.params);
-    const childParentTurnId = this.readChildParentTurnId(context, request.params);
-    const providerThreadId = normalizeProviderThreadId(
-      this.readProviderConversationId(request.params),
-    );
-    const providerParentThreadId = this.readChildParentProviderThreadId(context, request.params);
+    const resolvedCollaborationRoute = this.resolveCollaborationRoute(context, request.params);
+    const {
+      parentTurnId: childParentTurnId,
+      providerThreadId,
+      providerParentThreadId,
+    } = resolvedCollaborationRoute;
     const requestKind = this.requestKindForMethod(request.method);
     let requestId: ApprovalRequestId | undefined;
     if (requestKind) {
@@ -2566,7 +2565,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         requestKind,
         threadId: context.session.threadId,
         ...(rawRoute.turnId ? { turnId: rawRoute.turnId } : {}),
+        ...(childParentTurnId ? { parentTurnId: childParentTurnId } : {}),
         ...(rawRoute.itemId ? { itemId: rawRoute.itemId } : {}),
+        ...(providerThreadId ? { providerThreadId } : {}),
+        ...(providerParentThreadId ? { providerParentThreadId } : {}),
       };
       if (context.sessionApprovalOverride) {
         this.resolveApprovalRequest(context, pendingRequest, "acceptForSession");
@@ -2582,7 +2584,10 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         jsonRpcId: request.id,
         threadId: context.session.threadId,
         ...(rawRoute.turnId ? { turnId: rawRoute.turnId } : {}),
+        ...(childParentTurnId ? { parentTurnId: childParentTurnId } : {}),
         ...(rawRoute.itemId ? { itemId: rawRoute.itemId } : {}),
+        ...(providerThreadId ? { providerThreadId } : {}),
+        ...(providerParentThreadId ? { providerParentThreadId } : {}),
       });
     }
 
@@ -2922,6 +2927,46 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       return undefined;
     }
     return context.collabReceiverParents.get(providerConversationId);
+  }
+
+  private resolveCollaborationRoute(
+    context: CodexSessionContext,
+    params: unknown,
+  ): ResolvedCollaborationRoute {
+    const parentTurnId = this.readChildParentTurnId(context, params);
+    const providerThreadId = normalizeProviderThreadId(this.readProviderConversationId(params));
+    const mappedProviderParentThreadId = this.readChildParentProviderThreadId(context, params);
+    const activeProviderThreadId = normalizeProviderThreadId(
+      readResumeThreadId({
+        threadId: context.session.threadId,
+        runtimeMode: context.session.runtimeMode,
+        resumeCursor: context.session.resumeCursor,
+      }),
+    );
+    // A child can emit events before its collaboration tool-call payload
+    // populates the receiver maps. During a live parent turn, another provider
+    // thread belongs to that active conversation. Preserve an explicit mapping
+    // when available; otherwise retain the active provider thread as its parent.
+    const isUnmappedChildConversation =
+      mappedProviderParentThreadId === undefined &&
+      context.session.status === "running" &&
+      context.session.activeTurnId !== undefined &&
+      providerThreadId !== undefined &&
+      activeProviderThreadId !== undefined &&
+      providerThreadId !== activeProviderThreadId;
+    const providerParentThreadId =
+      mappedProviderParentThreadId ??
+      (isUnmappedChildConversation ? activeProviderThreadId : undefined);
+
+    return {
+      ...(parentTurnId ? { parentTurnId } : {}),
+      ...(providerThreadId ? { providerThreadId } : {}),
+      ...(providerParentThreadId ? { providerParentThreadId } : {}),
+      isChildConversation:
+        parentTurnId !== undefined ||
+        providerParentThreadId !== undefined ||
+        isUnmappedChildConversation,
+    };
   }
 
   private rememberCollabReceiverTurns(

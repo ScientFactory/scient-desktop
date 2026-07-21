@@ -277,6 +277,12 @@ function createCollabNotificationHarness() {
     pending: new Map(),
     pendingApprovals: new Map(),
     pendingUserInputs: new Map(),
+    sessionApprovalOverride: undefined as
+      | undefined
+      | {
+          approvalPolicy: "never";
+          sandboxPolicy: { type: "dangerFullAccess" };
+        },
     collabReceiverTurns: new Map<string, string>(),
     collabReceiverParents: new Map<string, string>(),
     reviewTurnIds: new Set<string>(),
@@ -290,8 +296,41 @@ function createCollabNotificationHarness() {
   const updateSession = vi
     .spyOn(manager as unknown as { updateSession: (...args: unknown[]) => void }, "updateSession")
     .mockImplementation(() => {});
+  const requireSession = vi
+    .spyOn(
+      manager as unknown as { requireSession: (threadId: ThreadId) => unknown },
+      "requireSession",
+    )
+    .mockReturnValue(context);
+  const writeMessage = vi
+    .spyOn(manager as unknown as { writeMessage: (...args: unknown[]) => void }, "writeMessage")
+    .mockImplementation(() => {});
 
-  return { manager, context, emitEvent, updateSession };
+  return { manager, context, emitEvent, updateSession, requireSession, writeMessage };
+}
+
+function handleServerNotificationForTest(
+  manager: CodexAppServerManager,
+  context: unknown,
+  notification: Record<string, unknown>,
+): void {
+  (
+    manager as unknown as {
+      handleServerNotification: (context: unknown, notification: Record<string, unknown>) => void;
+    }
+  ).handleServerNotification(context, notification);
+}
+
+function handleServerRequestForTest(
+  manager: CodexAppServerManager,
+  context: unknown,
+  request: Record<string, unknown>,
+): void {
+  (
+    manager as unknown as {
+      handleServerRequest: (context: unknown, request: Record<string, unknown>) => void;
+    }
+  ).handleServerRequest(context, request);
 }
 
 function createProcessOutputHarness() {
@@ -2560,6 +2599,130 @@ describe("collab child conversation routing", () => {
         parentTurnId: "turn_parent",
         itemId: "msg_child_1",
         providerThreadId: "child_provider_1",
+        providerParentThreadId: "provider_parent",
+      }),
+    );
+  });
+
+  it("routes unmapped child events through the active provider thread", () => {
+    const { manager, context, emitEvent } = createCollabNotificationHarness();
+
+    handleServerNotificationForTest(manager, context, {
+      method: "item/agentMessage/delta",
+      params: {
+        threadId: "child_provider_unmapped",
+        turnId: "turn_child_unmapped",
+        itemId: "msg_child_unmapped",
+        delta: "working",
+      },
+    });
+
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: "item/agentMessage/delta",
+        turnId: "turn_child_unmapped",
+        itemId: "msg_child_unmapped",
+        providerThreadId: "child_provider_unmapped",
+        providerParentThreadId: "provider_parent",
+      }),
+    );
+  });
+
+  it("does not infer a provider parent for the active parent or an inactive session", () => {
+    const { manager, context, emitEvent } = createCollabNotificationHarness();
+
+    handleServerNotificationForTest(manager, context, {
+      method: "item/agentMessage/delta",
+      params: {
+        threadId: "provider_parent",
+        turnId: "turn_parent",
+        itemId: "msg_parent",
+        delta: "parent",
+      },
+    });
+    context.session.status = "ready";
+    handleServerNotificationForTest(manager, context, {
+      method: "item/agentMessage/delta",
+      params: {
+        threadId: "another_provider_thread",
+        turnId: "turn_other",
+        itemId: "msg_other",
+        delta: "other",
+      },
+    });
+
+    const activeParentEvent = emitEvent.mock.calls[0]?.[0] as Record<string, unknown>;
+    const inactiveSessionEvent = emitEvent.mock.calls[1]?.[0] as Record<string, unknown>;
+    expect(activeParentEvent.providerThreadId).toBe("provider_parent");
+    expect(activeParentEvent).not.toHaveProperty("providerParentThreadId");
+    expect(inactiveSessionEvent.providerThreadId).toBe("another_provider_thread");
+    expect(inactiveSessionEvent).not.toHaveProperty("providerParentThreadId");
+  });
+
+  it("preserves inferred child routing through approval decisions", async () => {
+    const { manager, context, emitEvent, writeMessage } = createCollabNotificationHarness();
+
+    handleServerRequestForTest(manager, context, {
+      id: 42,
+      method: "item/commandExecution/requestApproval",
+      params: {
+        threadId: "child_provider_unmapped",
+        turnId: "turn_child_unmapped",
+        itemId: "call_child_unmapped",
+        command: "bun install",
+      },
+    });
+
+    const pendingRequest = Array.from(context.pendingApprovals.values())[0];
+    expect(pendingRequest).toEqual(
+      expect.objectContaining({
+        providerThreadId: "child_provider_unmapped",
+        providerParentThreadId: "provider_parent",
+      }),
+    );
+    await manager.respondToRequest(asThreadId("thread_1"), pendingRequest.requestId, "accept");
+
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 42,
+      result: { decision: "accept" },
+    });
+    expect(emitEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        method: "item/requestApproval/decision",
+        turnId: "turn_child_unmapped",
+        providerThreadId: "child_provider_unmapped",
+        providerParentThreadId: "provider_parent",
+      }),
+    );
+  });
+
+  it("preserves inferred child routing through user-input answers", async () => {
+    const { manager, context, emitEvent, writeMessage } = createCollabNotificationHarness();
+
+    handleServerRequestForTest(manager, context, {
+      id: 43,
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "child_provider_unmapped",
+        turnId: "turn_child_unmapped",
+        itemId: "tool_child_unmapped",
+        questions: [],
+      },
+    });
+
+    const pendingRequest = Array.from(context.pendingUserInputs.values())[0];
+    await manager.respondToUserInput(asThreadId("thread_1"), pendingRequest.requestId, {
+      scope: "child",
+    });
+
+    expect(writeMessage).toHaveBeenCalledWith(context, {
+      id: 43,
+      result: { answers: { scope: { answers: ["child"] } } },
+    });
+    expect(emitEvent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        method: "item/tool/requestUserInput/answered",
+        providerThreadId: "child_provider_unmapped",
         providerParentThreadId: "provider_parent",
       }),
     );

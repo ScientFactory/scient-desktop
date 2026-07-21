@@ -18,7 +18,19 @@ import {
   TurnId,
   type UserInputQuestion,
 } from "@synara/contracts";
-import { Cause, Deferred, Effect, Exit, Layer, Queue, Ref, Scope, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Path,
+  Queue,
+  Ref,
+  Scope,
+  Stream,
+} from "effect";
 import type {
   Agent,
   AssistantMessage,
@@ -112,6 +124,62 @@ const KILO_ADAPTER_CONFIG: OpenCodeCompatibleAdapterConfig = {
 const OPENCODE_PROMPT_ACCEPTED_ACTIVITY_TIMEOUT_MS = 60_000;
 const OPENCODE_PROMPT_ACCEPTED_RECOVERY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000] as const;
 const OPENCODE_PROMPT_SUBMISSION_INLINE_WAIT_MS = 500;
+
+/** Only a confirmed missing-session response may discard a durable cursor. */
+export function isOpenCodeSessionNotFound(cause: unknown): boolean {
+  const seen = new Set<unknown>();
+  const queue: unknown[] = [cause];
+  for (let steps = 0; queue.length > 0 && steps < 32; steps += 1) {
+    const node = queue.shift();
+    if (node === null || typeof node !== "object" || seen.has(node)) {
+      continue;
+    }
+    seen.add(node);
+    const record = node as Record<string, unknown>;
+    const response =
+      record.response !== null && typeof record.response === "object"
+        ? (record.response as Record<string, unknown>)
+        : undefined;
+    const statuses = [record.status, record.statusCode, response?.status].filter(
+      (status): status is number => typeof status === "number",
+    );
+    if (statuses.includes(404)) {
+      return true;
+    }
+    if (statuses.length > 0) {
+      continue;
+    }
+    if (typeof record.name === "string" && record.name.toLowerCase() === "notfounderror") {
+      return true;
+    }
+    for (const key of ["cause", "body", "error", "data"] as const) {
+      if (record[key] !== undefined) {
+        queue.push(record[key]);
+      }
+    }
+  }
+  return false;
+}
+
+export function isSameOpenCodeDirectory(
+  fileSystem: FileSystem.FileSystem,
+  path: Path.Path,
+  left: string,
+  right: string,
+): Effect.Effect<boolean> {
+  const lexicalLeft = path.resolve(left);
+  const lexicalRight = path.resolve(right);
+  if (lexicalLeft === lexicalRight) {
+    return Effect.succeed(true);
+  }
+  const canonicalize = (value: string) =>
+    fileSystem.realPath(value).pipe(Effect.orElseSucceed(() => value));
+  return Effect.zipWith(
+    canonicalize(lexicalLeft),
+    canonicalize(lexicalRight),
+    (canonicalLeft, canonicalRight) => canonicalLeft === canonicalRight,
+  );
+}
 
 type OpenCodeSubscribedEvent =
   Awaited<ReturnType<OpencodeClient["event"]["subscribe"]>> extends {
@@ -1717,6 +1785,10 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig;
       const openCodeRuntime = yield* OpenCodeRuntime;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sameDirectory = (left: string, right: string) =>
+        isSameOpenCodeDirectory(fileSystem, path, left, right);
       const provider = adapterConfig.provider;
       const buildEventBase = (
         input: Omit<
@@ -3655,67 +3727,167 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
                   cliSpec: adapterConfig.cliSpec,
                   ...(server.external && serverPassword ? { serverPassword } : {}),
                 });
-                const createSessionId = resumedSessionId
-                  ? // Resumed sessions skip session.create, so re-apply the runtime-mode
-                    // permission ruleset explicitly. Non-fatal: older servers may reject the
-                    // field, and full-access asks are still auto-approved in the event pump.
-                    runOpenCodeSdk("session.update", () =>
-                      client.session.update({
-                        sessionID: resumedSessionId,
-                        permission: buildOpenCodePermissionRules(input.runtimeMode),
-                      }),
-                    ).pipe(
-                      Effect.catchCause((cause) =>
-                        Effect.logWarning(
-                          `${adapterConfig.displayName} failed to apply permission ruleset on resume`,
-                          Cause.squash(cause),
-                        ),
+                const reapplyPermissions = (sessionId: string) =>
+                  runOpenCodeSdk("session.update", () =>
+                    client.session.update({
+                      sessionID: sessionId,
+                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                    }),
+                  ).pipe(
+                    // Older compatible servers may not accept the permission field. Full-access
+                    // requests remain auto-approved by the event pump, so keep this non-fatal.
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning(
+                        `${adapterConfig.displayName} failed to apply permission ruleset on resume`,
+                        Cause.squash(cause),
                       ),
-                      Effect.as(resumedSessionId),
-                    )
-                  : runOpenCodeSdk("session.create", () => {
-                      const sessionCreateInput = {
-                        ...(initialParsedModel
-                          ? {
-                              model: {
-                                providerID: initialParsedModel.providerID,
-                                id: initialParsedModel.modelID,
-                                ...(initialVariant ? { variant: initialVariant } : {}),
-                              },
-                            }
-                          : {}),
-                        ...(initialAgent ? { agent: initialAgent } : {}),
-                        permission: buildOpenCodePermissionRules(input.runtimeMode),
-                        title: `Scient ${input.threadId}`,
-                      };
-                      return client.session.create(
-                        sessionCreateInput as unknown as Parameters<
-                          typeof client.session.create
-                        >[0],
-                      );
-                    }).pipe(
-                      Effect.flatMap((sessionResult) =>
-                        sessionResult.data?.id
-                          ? Effect.succeed(sessionResult.data.id)
-                          : Effect.fail(
-                              new OpenCodeRuntimeError({
-                                operation: "session.create",
-                                detail: `${adapterConfig.displayName} session.create returned no session payload.`,
-                              }),
-                            ),
-                      ),
+                    ),
+                    Effect.asVoid,
+                  );
+                const createSession = (
+                  resolution: "fresh" | "fresh-after-stale" | "fresh-after-cwd" = "fresh",
+                ) =>
+                  runOpenCodeSdk("session.create", () => {
+                    const sessionCreateInput = {
+                      ...(initialParsedModel
+                        ? {
+                            model: {
+                              providerID: initialParsedModel.providerID,
+                              id: initialParsedModel.modelID,
+                              ...(initialVariant ? { variant: initialVariant } : {}),
+                            },
+                          }
+                        : {}),
+                      ...(initialAgent ? { agent: initialAgent } : {}),
+                      permission: buildOpenCodePermissionRules(input.runtimeMode),
+                      title: `Scient ${input.threadId}`,
+                    };
+                    return client.session.create(
+                      sessionCreateInput as unknown as Parameters<typeof client.session.create>[0],
                     );
+                  }).pipe(
+                    Effect.flatMap((sessionResult) =>
+                      sessionResult.data?.id
+                        ? Effect.succeed({
+                            openCodeSessionId: sessionResult.data.id,
+                            created: true as const,
+                            resolution,
+                          })
+                        : Effect.fail(
+                            new OpenCodeRuntimeError({
+                              operation: "session.create",
+                              detail: `${adapterConfig.displayName} session.create returned no session payload.`,
+                            }),
+                          ),
+                    ),
+                  );
+                const resolveSession = Effect.gen(function* () {
+                  if (!resumedSessionId) {
+                    return yield* createSession();
+                  }
+
+                  // A durable cursor is authoritative unless the provider confirms a 404.
+                  // Transport/auth/server failures must propagate instead of silently replacing
+                  // a live conversation with an empty session. The separate changed-cwd path
+                  // below may fall back only after the provider proves it cannot move a fork.
+                  const adopted = yield* runOpenCodeSdk("session.get", () =>
+                    client.session.get({ sessionID: resumedSessionId }),
+                  ).pipe(
+                    Effect.map((response) => response.data),
+                    Effect.catchIf(
+                      (cause) => isOpenCodeSessionNotFound(cause),
+                      () => Effect.succeed(undefined),
+                    ),
+                  );
+                  if (!adopted) {
+                    yield* Effect.logWarning(
+                      `${adapterConfig.displayName} session '${resumedSessionId}' no longer exists; starting a fresh session.`,
+                    );
+                    return yield* createSession("fresh-after-stale");
+                  }
+
+                  const adoptedSessionId = adopted.id || resumedSessionId;
+                  const adoptedDirectory = adopted.directory?.trim();
+                  const canReuse =
+                    !adoptedDirectory || (yield* sameDirectory(adoptedDirectory, directory));
+                  if (canReuse) {
+                    yield* reapplyPermissions(adoptedSessionId);
+                    return {
+                      openCodeSessionId: adoptedSessionId,
+                      created: false as const,
+                      resolution: "resumed" as const,
+                    };
+                  }
+
+                  // A changed worktree/cwd needs a provider fork so the new session retains
+                  // history without mutating the original session's directory.
+                  const forkedSession = yield* runOpenCodeSdk("session.fork", () =>
+                    client.session.fork({ sessionID: adoptedSessionId, directory }),
+                  );
+                  const forkedSessionId = forkedSession.data?.id;
+                  if (!forkedSessionId) {
+                    return yield* Effect.fail(
+                      new OpenCodeRuntimeError({
+                        operation: "session.fork",
+                        detail: `${adapterConfig.displayName} session.fork returned no session payload.`,
+                      }),
+                    );
+                  }
+                  const forkedDirectory = forkedSession.data?.directory?.trim();
+                  const forkCreatedDistinctSession = forkedSessionId !== adoptedSessionId;
+                  const forkUsesRequestedDirectory = forkedDirectory
+                    ? yield* sameDirectory(forkedDirectory, directory)
+                    : false;
+                  if (!forkCreatedDistinctSession || !forkUsesRequestedDirectory) {
+                    // OpenCode 1.18.4 accepts the directory argument but can still bind the
+                    // fork to the source session's cwd. Never persist a cursor that claims a
+                    // different worktree than the provider will actually use. Retire the
+                    // unusable fork and preserve the requested cwd with a fresh session.
+                    yield* Effect.logWarning(
+                      `${adapterConfig.displayName} session fork remained bound to '${forkedDirectory ?? "an unknown directory"}'; starting a fresh session in '${directory}' instead.`,
+                    );
+                    if (forkCreatedDistinctSession) {
+                      yield* runOpenCodeSdk("session.delete", () =>
+                        client.session.delete({
+                          sessionID: forkedSessionId,
+                          ...(forkedDirectory ? { directory: forkedDirectory } : {}),
+                        }),
+                      ).pipe(
+                        Effect.catchCause((cause) =>
+                          Effect.logWarning(
+                            `${adapterConfig.displayName} failed to delete a fork created in the wrong directory`,
+                            Cause.squash(cause),
+                          ),
+                        ),
+                        Effect.asVoid,
+                      );
+                    }
+                    return yield* createSession("fresh-after-cwd");
+                  }
+                  yield* reapplyPermissions(forkedSessionId);
+                  return {
+                    openCodeSessionId: forkedSessionId,
+                    created: true as const,
+                    resolution: "forked" as const,
+                  };
+                });
                 const loadModelContextLimits = openCodeRuntime.loadOpenCodeInventory(client).pipe(
                   Effect.map(buildOpenCodeModelContextLimitMap),
                   Effect.catchCause(() => Effect.succeed(new Map<string, number>())),
                 );
                 // Session creation and metadata discovery are independent once the server is up.
-                const [openCodeSessionId, modelContextLimitBySlug] = yield* Effect.all(
-                  [createSessionId, loadModelContextLimits],
+                const [resolvedSession, modelContextLimitBySlug] = yield* Effect.all(
+                  [resolveSession, loadModelContextLimits],
                   { concurrency: "unbounded" },
                 );
 
-                return { sessionScope, server, client, openCodeSessionId, modelContextLimitBySlug };
+                return {
+                  sessionScope,
+                  server,
+                  client,
+                  ...resolvedSession,
+                  modelContextLimitBySlug,
+                };
               }).pipe(Effect.provideService(Scope.Scope, sessionScope)),
             );
             if (Exit.isFailure(startedExit)) {
@@ -3727,11 +3899,14 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
 
           const raceWinner = sessions.get(input.threadId);
           if (raceWinner) {
-            yield* runOpenCodeSdk("session.abort", () =>
-              started.client.session.abort({
-                sessionID: started.openCodeSessionId,
-              }),
-            ).pipe(Effect.ignore);
+            // Never abort provider state merely adopted from a durable cursor.
+            if (started.created) {
+              yield* runOpenCodeSdk("session.abort", () =>
+                started.client.session.abort({
+                  sessionID: started.openCodeSessionId,
+                }),
+              ).pipe(Effect.ignore);
+            }
             yield* Scope.close(started.sessionScope, Exit.void).pipe(Effect.ignore);
             return raceWinner.session;
           }
@@ -3787,13 +3962,22 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           sessions.set(input.threadId, context);
           yield* startEventPump(context);
 
+          const sessionStartedMessage =
+            started.resolution === "resumed"
+              ? `${adapterConfig.displayName} session resumed`
+              : started.resolution === "forked"
+                ? `${adapterConfig.displayName} session resumed in the requested directory`
+                : started.resolution === "fresh-after-stale"
+                  ? `${adapterConfig.displayName} previous session unavailable; new session started`
+                  : started.resolution === "fresh-after-cwd"
+                    ? `${adapterConfig.displayName} could not move the previous session to the requested directory; new session started`
+                    : `${adapterConfig.displayName} session started`;
+
           yield* emit({
             ...buildEventBase({ threadId: input.threadId }),
             type: "session.started",
             payload: {
-              message: resumedSessionId
-                ? `${adapterConfig.displayName} session resumed`
-                : `${adapterConfig.displayName} session started`,
+              message: sessionStartedMessage,
               resume: { openCodeSessionId: started.openCodeSessionId },
             },
           });

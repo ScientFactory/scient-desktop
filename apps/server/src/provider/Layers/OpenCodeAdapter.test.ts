@@ -16,6 +16,7 @@ import {
   flattenOpenCodeCliModels,
   flattenOpenCodeModels,
   makeOpenCodeAdapterLive,
+  isOpenCodeSessionNotFound,
   normalizeOpenCodeTokenUsage,
   resolvePreferredOpenCodeModelProviders,
 } from "./OpenCodeAdapter.ts";
@@ -120,13 +121,17 @@ function createMockOpenCodeRuntime(options?: {
     data: Array<{ info: Record<string, unknown>; parts: Part[] }>;
   }>;
   readonly session?: Record<string, unknown>;
+  readonly forkedSession?: Record<string, unknown>;
+  readonly sessionGetError?: unknown;
 }) {
   const abortCalls: Array<{ sessionID: string }> = [];
   const cliModelCalls: Array<Parameters<OpenCodeRuntimeShape["listOpenCodeCliModels"]>[0]> = [];
   const connectCalls: Array<Parameters<OpenCodeRuntimeShape["connectToOpenCodeServer"]>[0]> = [];
   const createCalls: Array<Record<string, unknown>> = [];
+  const deleteCalls: Array<{ sessionID: string; directory?: string }> = [];
+  const getCalls: Array<{ sessionID: string }> = [];
   const updateCalls: Array<Record<string, unknown>> = [];
-  const forkCalls: Array<{ sessionID: string }> = [];
+  const forkCalls: Array<{ sessionID: string; directory?: string }> = [];
   const permissionReplyCalls: Array<Record<string, unknown>> = [];
   const promptCalls: Array<Record<string, unknown>> = [];
   const emptySubscription = {
@@ -142,6 +147,10 @@ function createMockOpenCodeRuntime(options?: {
       create: async (input: Record<string, unknown>) => {
         createCalls.push(input);
         return { data: { id: "opencode-session-1" } };
+      },
+      delete: async (input: { sessionID: string; directory?: string }) => {
+        deleteCalls.push(input);
+        return { data: true };
       },
       update: async (input: Record<string, unknown>) => {
         updateCalls.push(input);
@@ -166,12 +175,24 @@ function createMockOpenCodeRuntime(options?: {
         return { data: null };
       },
       messages: options?.messages ?? (async () => ({ data: [] })),
-      get: async () => ({ data: { directory: process.cwd(), ...(options?.session ?? {}) } }),
+      get: async (input: { sessionID: string }) => {
+        getCalls.push(input);
+        if (options?.sessionGetError !== undefined) {
+          throw options.sessionGetError;
+        }
+        return { data: { id: input.sessionID, ...options?.session } };
+      },
       revert: async () => ({ data: null }),
       summarize: async () => ({ data: null }),
-      fork: async (input: { sessionID: string }) => {
+      fork: async (input: { sessionID: string; directory?: string }) => {
         forkCalls.push(input);
-        return { data: { id: "forked-session-1" } };
+        return {
+          data: {
+            id: "forked-session-1",
+            ...(input.directory ? { directory: input.directory } : {}),
+            ...options?.forkedSession,
+          },
+        };
       },
     },
     permission: {
@@ -253,6 +274,8 @@ function createMockOpenCodeRuntime(options?: {
     cliModelCalls,
     connectCalls,
     createCalls,
+    deleteCalls,
+    getCalls,
     updateCalls,
     forkCalls,
     permissionReplyCalls,
@@ -1045,6 +1068,30 @@ describe("flattenOpenCodeModels", () => {
   });
 });
 
+describe("isOpenCodeSessionNotFound", () => {
+  it("recognizes structured 404 errors through bounded wrappers", () => {
+    expect(
+      isOpenCodeSessionNotFound(
+        new OpenCodeRuntimeError({
+          operation: "session.get",
+          detail: "missing",
+          cause: new Error("missing", { cause: { status: 404 } }),
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not classify transport or non-404 server failures as missing", () => {
+    expect(isOpenCodeSessionNotFound(new Error("network unavailable"))).toBe(false);
+    expect(
+      isOpenCodeSessionNotFound({
+        status: 500,
+        cause: { name: "NotFoundError" },
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("OpenCodeAdapter runtime lifecycle", () => {
   it("lists OpenCode models from the CLI before falling back to server inventory", async () => {
     const runtime = createMockOpenCodeRuntime({
@@ -1337,6 +1384,7 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
     );
 
     expect(runtime.createCalls).toEqual([]);
+    expect(runtime.getCalls).toEqual([{ sessionID: "existing-session-1" }]);
     expect(runtime.connectCalls).toHaveLength(1);
     expect(runtime.connectCalls[0]).toMatchObject({ cwd: "/repo/resume" });
     expect(result.cwd).toBe("/repo/resume");
@@ -1371,12 +1419,216 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
     );
 
     expect(runtime.createCalls).toEqual([]);
+    expect(runtime.getCalls).toEqual([{ sessionID: "existing-session-1" }]);
     expect(runtime.updateCalls).toEqual([
       {
         sessionID: "existing-session-1",
         permission: [{ permission: "*", pattern: "*", action: "allow" }],
       },
     ]);
+  });
+
+  it("starts fresh only when the provider confirms a stale resume session", async () => {
+    const runtime = createMockOpenCodeRuntime({
+      sessionGetError: new Error("session missing", { cause: { status: 404 } }),
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+          Effect.forkChild,
+        );
+        const session = yield* adapter.startSession({
+          provider: "opencode",
+          threadId: asThreadId("thread-stale-resume"),
+          runtimeMode: "full-access",
+          resumeCursor: { openCodeSessionId: "stale-session", cwd: "/repo/resume" },
+        });
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+        return { events, session };
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(runtime.getCalls).toEqual([{ sessionID: "stale-session" }]);
+    expect(runtime.createCalls).toHaveLength(1);
+    expect(result.session.resumeCursor).toMatchObject({
+      openCodeSessionId: "opencode-session-1",
+    });
+    expect(result.events[0]).toMatchObject({
+      type: "session.started",
+      payload: {
+        message: "OpenCode previous session unavailable; new session started",
+      },
+    });
+  });
+
+  it("does not erase resume context on a transient session probe failure", async () => {
+    const runtime = createMockOpenCodeRuntime({
+      sessionGetError: new Error("provider unavailable", { cause: { status: 503 } }),
+    });
+
+    await expect(
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const adapter = yield* OpenCodeAdapter;
+          return yield* adapter.startSession({
+            provider: "opencode",
+            threadId: asThreadId("thread-transient-resume"),
+            runtimeMode: "full-access",
+            resumeCursor: { openCodeSessionId: "live-session", cwd: "/repo/resume" },
+          });
+        }).pipe(
+          Effect.provide(
+            makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+        ),
+      ),
+    ).rejects.toThrow();
+
+    expect(runtime.getCalls).toEqual([{ sessionID: "live-session" }]);
+    expect(runtime.createCalls).toEqual([]);
+  });
+
+  it("forks a resumed session when its provider directory changed", async () => {
+    const runtime = createMockOpenCodeRuntime({ session: { directory: "/repo/old" } });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        return yield* adapter.startSession({
+          provider: "opencode",
+          threadId: asThreadId("thread-resume-new-worktree"),
+          runtimeMode: "full-access",
+          cwd: "/repo/new",
+          resumeCursor: { openCodeSessionId: "existing-session-1", cwd: "/repo/old" },
+        });
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(runtime.createCalls).toEqual([]);
+    expect(runtime.forkCalls).toEqual([
+      { sessionID: "existing-session-1", directory: "/repo/new" },
+    ]);
+    expect(result.resumeCursor).toMatchObject({
+      openCodeSessionId: "forked-session-1",
+      cwd: "/repo/new",
+    });
+  });
+
+  it("starts fresh when OpenCode ignores the requested fork directory", async () => {
+    const runtime = createMockOpenCodeRuntime({
+      session: { directory: "/repo/old" },
+      forkedSession: { directory: "/repo/old" },
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+          Effect.forkChild,
+        );
+        const session = yield* adapter.startSession({
+          provider: "opencode",
+          threadId: asThreadId("thread-resume-unsupported-worktree-fork"),
+          runtimeMode: "full-access",
+          cwd: "/repo/new",
+          resumeCursor: { openCodeSessionId: "existing-session-1", cwd: "/repo/old" },
+        });
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+        return { events, session };
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(runtime.forkCalls).toEqual([
+      { sessionID: "existing-session-1", directory: "/repo/new" },
+    ]);
+    expect(runtime.deleteCalls).toEqual([
+      { sessionID: "forked-session-1", directory: "/repo/old" },
+    ]);
+    expect(runtime.createCalls).toHaveLength(1);
+    expect(result.session.resumeCursor).toMatchObject({
+      openCodeSessionId: "opencode-session-1",
+      cwd: "/repo/new",
+    });
+    expect(result.events[0]).toMatchObject({
+      type: "session.started",
+      payload: {
+        message:
+          "OpenCode could not move the previous session to the requested directory; new session started",
+      },
+    });
+  });
+
+  it("never deletes the durable source session when a failed fork returns the same id", async () => {
+    const runtime = createMockOpenCodeRuntime({
+      session: { directory: "/repo/old" },
+      forkedSession: { id: "existing-session-1", directory: "/repo/old" },
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        return yield* adapter.startSession({
+          provider: "opencode",
+          threadId: asThreadId("thread-resume-same-id-fork"),
+          runtimeMode: "full-access",
+          cwd: "/repo/new",
+          resumeCursor: { openCodeSessionId: "existing-session-1", cwd: "/repo/old" },
+        });
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(runtime.forkCalls).toEqual([
+      { sessionID: "existing-session-1", directory: "/repo/new" },
+    ]);
+    expect(runtime.deleteCalls).toEqual([]);
+    expect(runtime.createCalls).toHaveLength(1);
+    expect(result.resumeCursor).toMatchObject({
+      openCodeSessionId: "opencode-session-1",
+      cwd: "/repo/new",
+    });
   });
 
   it("declines inactive OpenCode native fork when source and target cwd differ", async () => {

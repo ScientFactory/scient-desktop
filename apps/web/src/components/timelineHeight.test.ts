@@ -230,6 +230,28 @@ describe("estimateTimelineMessageHeight", () => {
       ),
     );
   });
+
+  it("adds heading typography and margin height without treating fenced markers as headings", () => {
+    const heading = estimateTimelineMessageHeight(
+      { role: "assistant", text: "# Result\nDetails" },
+      { timelineWidthPx: 768 },
+    );
+    const plain = estimateTimelineMessageHeight(
+      { role: "assistant", text: "Result\nDetails" },
+      { timelineWidthPx: 768 },
+    );
+    const fenced = estimateTimelineMessageHeight(
+      { role: "assistant", text: "```md\n# Result\n```" },
+      { timelineWidthPx: 768 },
+    );
+    const fencedWithoutMarker = estimateTimelineMessageHeight(
+      { role: "assistant", text: "```md\nResult\n```" },
+      { timelineWidthPx: 768 },
+    );
+
+    expect(heading - plain).toBeGreaterThan(35);
+    expect(fenced).toBe(fencedWithoutMarker);
+  });
 });
 
 describe("estimateChangedFilesSummaryHeight", () => {

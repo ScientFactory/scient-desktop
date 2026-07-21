@@ -49,3 +49,33 @@ export function shouldHandleTerminalSelectionMouseUp(
 ): boolean {
   return selectionGestureActive && button === 0;
 }
+
+export async function executeTerminalSelectionAction<T>(input: {
+  action: "add-to-chat" | "copy";
+  clipboardText: string;
+  selection: T;
+  copyText: (text: string) => Promise<void>;
+  addToChat: (selection: T) => void;
+  clearSelection: () => void;
+  focusTerminal: () => void;
+  reportCopyError: (error: unknown) => void;
+  isCurrent: () => boolean;
+}): Promise<void> {
+  if (!input.isCurrent()) return;
+  if (input.action === "add-to-chat") {
+    input.addToChat(input.selection);
+    input.clearSelection();
+    input.focusTerminal();
+    return;
+  }
+
+  try {
+    await input.copyText(input.clipboardText);
+  } catch (error) {
+    if (!input.isCurrent()) return;
+    input.reportCopyError(error);
+  }
+  if (input.isCurrent()) {
+    input.focusTerminal();
+  }
+}
