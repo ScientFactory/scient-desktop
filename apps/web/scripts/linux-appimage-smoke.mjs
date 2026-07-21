@@ -221,7 +221,7 @@ async function addProjectByTypedPath(page, workspacePath) {
     .getByText(basename(workspacePath), { exact: true })
     .first()
     .waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
-  const addButton = folderDialog.getByRole("button", { name: "Add", exact: true });
+  const addButton = folderDialog.getByRole("button", { name: /^Add\b/u });
   await addButton.waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
   if (
     await folderDialog
@@ -286,6 +286,9 @@ async function stopPackagedApp(child, backendProcessGroupId) {
       timeoutMs,
     ).catch(() => false);
 
+  if (processGroupIsAlive(child.pid)) {
+    signalProcessGroup(child.pid, "SIGTERM");
+  }
   if (await waitForAllGroupsToExit(GRACEFUL_APP_SHUTDOWN_TIMEOUT_MS)) return;
 
   const gracefulSurvivors = livingProcessGroups();
