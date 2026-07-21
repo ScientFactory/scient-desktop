@@ -1,6 +1,7 @@
 // Purpose: Conservatively identify Codex account-authentication failures.
-// Structured app-server error data is authoritative. Text matching only
-// supports older Codex builds that did not expose `codexErrorInfo`.
+// Structured app-server error data is authoritative. Generic provider text is
+// never sufficient because custom OpenAI-compatible endpoints can also return
+// an `Unauthorized` response without invalidating the user's Codex account.
 
 function asObject(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -15,23 +16,13 @@ function structuredCodexErrorInfo(detail: unknown): unknown {
   return error?.codexErrorInfo ?? root?.codexErrorInfo;
 }
 
-const LEGACY_AUTHENTICATION_FAILURE_PATTERNS: ReadonlyArray<RegExp> = [
-  /\bauthentication required\b/iu,
-  /\b(?:not|no longer) (?:signed|logged) in\b/iu,
-  /\bplease (?:sign|log) in(?: again)?\b/iu,
-  /\brun [`'"]?codex login\b/iu,
-  /\binvalid_grant\b/iu,
-  /\brefresh token\b.{0,80}\b(?:expired|invalid|revoked|failed|rejected)\b/iu,
-  /^unauthorized(?:[.:]\s*.*)?$/iu,
-];
-
 export function isCodexAuthenticationError(input: {
   readonly message: string;
   readonly detail?: unknown;
+  readonly requiresProviderAccount?: boolean;
 }): boolean {
-  if (structuredCodexErrorInfo(input.detail) === "unauthorized") {
-    return true;
-  }
-
-  return LEGACY_AUTHENTICATION_FAILURE_PATTERNS.some((pattern) => pattern.test(input.message));
+  return (
+    input.requiresProviderAccount !== false &&
+    structuredCodexErrorInfo(input.detail) === "unauthorized"
+  );
 }

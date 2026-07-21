@@ -19,17 +19,22 @@ describe("isCodexAuthenticationError", () => {
     "invalid_grant",
     "Refresh token was rejected because it is revoked",
     "Unauthorized",
-  ])("supports a conservative legacy auth message: %s", (message) => {
-    expect(isCodexAuthenticationError({ message })).toBe(true);
-  });
-
-  it.each([
     "Usage limit exceeded",
     "Request failed with status 401 while contacting a custom proxy",
     "Permission denied while reading a file",
     "Response stream disconnected",
-  ])("does not reinterpret unrelated failures: %s", (message) => {
+  ])("does not infer account state from provider text: %s", (message) => {
     expect(isCodexAuthenticationError({ message })).toBe(false);
+  });
+
+  it("does not reinterpret structured upstream authorization failures for custom providers", () => {
+    expect(
+      isCodexAuthenticationError({
+        message: "Request failed",
+        detail: { error: { codexErrorInfo: "unauthorized" } },
+        requiresProviderAccount: false,
+      }),
+    ).toBe(false);
   });
 
   it("does not treat a non-auth structured Codex error as authentication loss", () => {
