@@ -2100,6 +2100,35 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       ),
     );
 
+    it.effect("returns ready for Antigravity 1.1.5 machine model output", () =>
+      Effect.gen(function* () {
+        const status = yield* checkAntigravityProviderStatus();
+        assert.strictEqual(status.provider, "antigravity");
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.available, true);
+        assert.strictEqual(status.authStatus, "authenticated");
+        assert.strictEqual(status.version, "1.1.5");
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args, command) => {
+            assert.strictEqual(command, "agy");
+            const joined = args.join(" ");
+            if (joined === "--version") {
+              return { stdout: "1.1.5\n", stderr: "", code: 0 };
+            }
+            if (joined === "models") {
+              return {
+                stdout: "gemini-3.5-flash-medium\ngemini-3.5-flash-high\nclaude-sonnet-4-6\n",
+                stderr: "",
+                code: 0,
+              };
+            }
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect("maps Antigravity's clean-profile response to unauthenticated", () =>
       Effect.gen(function* () {
         const status = yield* checkAntigravityProviderStatus();
