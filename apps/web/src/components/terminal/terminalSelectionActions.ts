@@ -4,6 +4,13 @@
 
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
 
+// Xterm selections can include visual cell padding at the end of each line.
+// Keep meaningful leading/internal whitespace and the original line endings,
+// while matching the terminal runtime's established keyboard-copy behavior.
+export function normalizeTerminalClipboardText(selection: string): string {
+  return selection.replace(/[^\S\r\n]+(?=\r?$)/gm, "");
+}
+
 export function resolveTerminalSelectionActionPosition(options: {
   bounds: { left: number; top: number; width: number; height: number };
   selectionRect: { right: number; bottom: number } | null;
@@ -70,7 +77,7 @@ export async function executeTerminalSelectionAction<T>(input: {
   }
 
   try {
-    await input.copyText(input.clipboardText);
+    await input.copyText(normalizeTerminalClipboardText(input.clipboardText));
   } catch (error) {
     if (!input.isCurrent()) return;
     input.reportCopyError(error);

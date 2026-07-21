@@ -38,11 +38,6 @@ const MIN_ASSISTANT_CHARS_PER_LINE = 20;
 const ASSISTANT_INLINE_CODE_WIDTH_MULTIPLIER = 1.2;
 const ASSISTANT_INLINE_CODE_WRAP_OVERHEAD_CHARS = 2;
 const INLINE_CODE_SPAN_REGEX = /`([^`\n]+)`/g;
-const ASSISTANT_MARKDOWN_HEADING_FONT_SCALE = [0, 1.75, 1.55, 1.35, 1.2, 1.1, 1] as const;
-const ASSISTANT_MARKDOWN_HEADING_LINE_HEIGHT = 1.25;
-const ASSISTANT_MARKDOWN_HEADING_MARGIN_EM = 1.45;
-const MARKDOWN_ATX_HEADING_REGEX = /^ {0,3}(#{1,6})(?:[\t ]+|$)/;
-const MARKDOWN_FENCE_REGEX = /^ {0,3}(`{3,}|~{3,})/;
 const TURN_DIFF_SUMMARY_CHROME_HEIGHT_PX = 76;
 const TURN_DIFF_FILE_ROW_HEIGHT_PX = 36;
 const TURN_DIFF_FILE_LIST_TOGGLE_HEIGHT_PX = 34;
@@ -245,44 +240,6 @@ function expandAssistantInlineCodeForEstimate(text: string): string {
   );
 }
 
-function estimateAssistantMarkdownHeadingExtraHeight(
-  text: string,
-  chatFontSizePx: number,
-  bodyLineHeightPx: number,
-): number {
-  let extraHeightPx = 0;
-  let activeFenceMarker: "`" | "~" | null = null;
-  let activeFenceLength = 0;
-
-  for (const line of text.split("\n")) {
-    const fenceMatch = MARKDOWN_FENCE_REGEX.exec(line);
-    if (fenceMatch) {
-      const fence = fenceMatch[1]!;
-      const marker = fence[0] as "`" | "~";
-      if (activeFenceMarker === null) {
-        activeFenceMarker = marker;
-        activeFenceLength = fence.length;
-      } else if (marker === activeFenceMarker && fence.length >= activeFenceLength) {
-        activeFenceMarker = null;
-        activeFenceLength = 0;
-      }
-      continue;
-    }
-    if (activeFenceMarker !== null) continue;
-
-    const headingMatch = MARKDOWN_ATX_HEADING_REGEX.exec(line);
-    if (!headingMatch) continue;
-    const level = headingMatch[1]!.length;
-    const headingFontSizePx = chatFontSizePx * ASSISTANT_MARKDOWN_HEADING_FONT_SCALE[level]!;
-    const headingLineHeightPx = headingFontSizePx * ASSISTANT_MARKDOWN_HEADING_LINE_HEIGHT;
-    extraHeightPx +=
-      Math.max(headingLineHeightPx - bodyLineHeightPx, 0) +
-      headingFontSizePx * ASSISTANT_MARKDOWN_HEADING_MARGIN_EM;
-  }
-
-  return extraHeightPx;
-}
-
 export function estimateTimelineMessageHeight(
   message: TimelineMessageHeightInput,
   layout: TimelineHeightEstimateLayout = { timelineWidthPx: null },
@@ -298,11 +255,6 @@ export function estimateTimelineMessageHeight(
       expandAssistantInlineCodeForEstimate(message.text),
       charsPerLine,
     );
-    const headingExtraHeight = estimateAssistantMarkdownHeadingExtraHeight(
-      message.text,
-      chatFontSizePx,
-      lineHeightPx,
-    );
     const changedFilesHeight = estimateChangedFilesSummaryHeight(
       message.diffSummaryFiles ?? [],
       message.diffSummaryFileListExpanded ?? false,
@@ -317,7 +269,6 @@ export function estimateTimelineMessageHeight(
     return (
       ASSISTANT_BASE_HEIGHT_PX +
       estimatedLines * lineHeightPx +
-      headingExtraHeight +
       changedFilesHeight +
       inlineToolPreviewHeight
     );

@@ -11,10 +11,12 @@ import {
   type OpenCodeInventory,
   type OpenCodeRuntimeShape,
 } from "../opencodeRuntime.ts";
+import { KiloAdapter } from "../Services/KiloAdapter.ts";
 import { OpenCodeAdapter } from "../Services/OpenCodeAdapter.ts";
 import {
   flattenOpenCodeCliModels,
   flattenOpenCodeModels,
+  makeKiloAdapterLive,
   makeOpenCodeAdapterLive,
   isOpenCodeSessionNotFound,
   normalizeOpenCodeTokenUsage,
@@ -122,7 +124,11 @@ function createMockOpenCodeRuntime(options?: {
   }>;
   readonly session?: Record<string, unknown>;
   readonly forkedSession?: Record<string, unknown>;
+  readonly sessionGet?: (input: {
+    readonly sessionID: string;
+  }) => Promise<{ readonly data?: Record<string, unknown> }>;
   readonly sessionGetError?: unknown;
+  readonly createdSessionId?: string;
 }) {
   const abortCalls: Array<{ sessionID: string }> = [];
   const cliModelCalls: Array<Parameters<OpenCodeRuntimeShape["listOpenCodeCliModels"]>[0]> = [];
@@ -146,7 +152,7 @@ function createMockOpenCodeRuntime(options?: {
     session: {
       create: async (input: Record<string, unknown>) => {
         createCalls.push(input);
-        return { data: { id: "opencode-session-1" } };
+        return { data: { id: options?.createdSessionId ?? "opencode-session-1" } };
       },
       delete: async (input: { sessionID: string; directory?: string }) => {
         deleteCalls.push(input);
@@ -177,6 +183,9 @@ function createMockOpenCodeRuntime(options?: {
       messages: options?.messages ?? (async () => ({ data: [] })),
       get: async (input: { sessionID: string }) => {
         getCalls.push(input);
+        if (options?.sessionGet) {
+          return options.sessionGet(input);
+        }
         if (options?.sessionGetError !== undefined) {
           throw options.sessionGetError;
         }
@@ -1092,6 +1101,193 @@ describe("isOpenCodeSessionNotFound", () => {
   });
 });
 
+describe("KiloAdapter runtime lifecycle", () => {
+  it("validates and resumes an existing Kilo session without creating a replacement", async () => {
+    const runtime = createMockOpenCodeRuntime({
+      session: { directory: "/repo/kilo-resume" },
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* KiloAdapter;
+        const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+          Effect.forkChild,
+        );
+        const session = yield* adapter.startSession({
+          provider: "kilo",
+          threadId: asThreadId("thread-kilo-resume"),
+          runtimeMode: "full-access",
+          resumeCursor: {
+            openCodeSessionId: "ses_kilo_existing",
+            cwd: "/repo/kilo-resume",
+          },
+        });
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+        return { events, session };
+      }).pipe(
+        Effect.provide(
+          makeKiloAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "kilo-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(runtime.getCalls).toEqual([{ sessionID: "ses_kilo_existing" }]);
+    expect(runtime.createCalls).toEqual([]);
+    expect(runtime.updateCalls).toEqual([
+      {
+        sessionID: "ses_kilo_existing",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      },
+    ]);
+    expect(runtime.connectCalls).toHaveLength(1);
+    expect(runtime.connectCalls[0]).toMatchObject({
+      binaryPath: "kilo",
+      cwd: "/repo/kilo-resume",
+      cliSpec: {
+        defaultBinaryPath: "kilo",
+        displayName: "Kilo",
+        serverReadyPrefix: "kilo server listening",
+        configContentEnvVar: "KILO_CONFIG_CONTENT",
+        dataDirectoryName: "kilo",
+        serverAuthUsername: "kilo",
+      },
+    });
+    expect(result.session).toMatchObject({
+      provider: "kilo",
+      cwd: "/repo/kilo-resume",
+      resumeCursor: {
+        openCodeSessionId: "ses_kilo_existing",
+        cwd: "/repo/kilo-resume",
+      },
+    });
+    expect(result.events[0]).toMatchObject({
+      provider: "kilo",
+      type: "session.started",
+      payload: { message: "Kilo session resumed" },
+    });
+  });
+
+  it("forks an explicit cwd move when a legacy Kilo cursor has no source directory", async () => {
+    const runtime = createMockOpenCodeRuntime();
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* KiloAdapter;
+        return yield* adapter.startSession({
+          provider: "kilo",
+          threadId: asThreadId("thread-kilo-legacy-cursor-move"),
+          runtimeMode: "full-access",
+          cwd: "/repo/kilo-target",
+          resumeCursor: "ses_kilo_legacy",
+        });
+      }).pipe(
+        Effect.provide(
+          makeKiloAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "kilo-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(runtime.getCalls).toEqual([{ sessionID: "ses_kilo_legacy" }]);
+    expect(runtime.createCalls).toEqual([]);
+    expect(runtime.forkCalls).toEqual([
+      { sessionID: "ses_kilo_legacy", directory: "/repo/kilo-target" },
+    ]);
+    expect(runtime.updateCalls).toEqual([
+      {
+        sessionID: "forked-session-1",
+        permission: [{ permission: "*", pattern: "*", action: "allow" }],
+      },
+    ]);
+    expect(result.resumeCursor).toMatchObject({
+      openCodeSessionId: "forked-session-1",
+      cwd: "/repo/kilo-target",
+    });
+  });
+
+  it("starts a fresh Kilo session only after a structured missing-session response", async () => {
+    const runtime = createMockOpenCodeRuntime({
+      createdSessionId: "ses_kilo_fresh",
+      sessionGetError: new OpenCodeRuntimeError({
+        operation: "session.get",
+        detail: "Kilo session was not found.",
+        cause: { response: { status: 404 }, name: "NotFoundError" },
+      }),
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* KiloAdapter;
+        const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+          Effect.forkChild,
+        );
+        const session = yield* adapter.startSession({
+          provider: "kilo",
+          threadId: asThreadId("thread-kilo-stale-resume"),
+          runtimeMode: "approval-required",
+          resumeCursor: {
+            openCodeSessionId: "ses_kilo_missing",
+            cwd: "/repo/kilo-stale-resume",
+          },
+        });
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+        return { events, session };
+      }).pipe(
+        Effect.provide(
+          makeKiloAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "kilo-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(runtime.getCalls).toEqual([{ sessionID: "ses_kilo_missing" }]);
+    expect(runtime.createCalls).toHaveLength(1);
+    expect(runtime.createCalls[0]?.permission).toEqual(
+      expect.arrayContaining([
+        { permission: "*", pattern: "*", action: "ask" },
+        { permission: "external_directory", pattern: "*", action: "ask" },
+      ]),
+    );
+    expect(runtime.connectCalls).toHaveLength(1);
+    expect(runtime.connectCalls[0]).toMatchObject({
+      binaryPath: "kilo",
+      cwd: "/repo/kilo-stale-resume",
+      cliSpec: {
+        defaultBinaryPath: "kilo",
+        displayName: "Kilo",
+        configContentEnvVar: "KILO_CONFIG_CONTENT",
+      },
+    });
+    expect(result.session).toMatchObject({
+      provider: "kilo",
+      resumeCursor: {
+        openCodeSessionId: "ses_kilo_fresh",
+        cwd: "/repo/kilo-stale-resume",
+      },
+    });
+    expect(result.events[0]).toMatchObject({
+      provider: "kilo",
+      type: "session.started",
+      payload: {
+        message: "Kilo previous session unavailable; new session started",
+      },
+    });
+  });
+});
+
 describe("OpenCodeAdapter runtime lifecycle", () => {
   it("lists OpenCode models from the CLI before falling back to server inventory", async () => {
     const runtime = createMockOpenCodeRuntime({
@@ -1426,6 +1622,98 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
         permission: [{ permission: "*", pattern: "*", action: "allow" }],
       },
     ]);
+  });
+
+  it("does not abort a durable resume cursor when concurrent starts race for one thread", async () => {
+    let enteredValidationCount = 0;
+    let signalBothValidationsEntered!: () => void;
+    let releaseValidations!: () => void;
+    const bothValidationsEntered = new Promise<void>((resolve) => {
+      signalBothValidationsEntered = resolve;
+    });
+    const validationGate = new Promise<void>((resolve) => {
+      releaseValidations = resolve;
+    });
+    const runtime = createMockOpenCodeRuntime({
+      sessionGet: async (input) => {
+        enteredValidationCount += 1;
+        if (enteredValidationCount === 2) {
+          signalBothValidationsEntered();
+        }
+        await validationGate;
+        return {
+          data: {
+            id: input.sessionID,
+            directory: "/repo/concurrent-resume",
+          },
+        };
+      },
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const input = {
+          provider: "opencode" as const,
+          threadId: asThreadId("thread-concurrent-durable-resume"),
+          runtimeMode: "full-access" as const,
+          resumeCursor: {
+            openCodeSessionId: "ses_concurrent_durable",
+            cwd: "/repo/concurrent-resume",
+          },
+        };
+        const firstStart = yield* adapter.startSession(input).pipe(Effect.forkChild);
+        const secondStart = yield* adapter.startSession(input).pipe(Effect.forkChild);
+
+        yield* Effect.promise(() => bothValidationsEntered);
+        yield* Effect.sync(releaseValidations);
+
+        const [first, second] = yield* Effect.all(
+          [Fiber.join(firstStart), Fiber.join(secondStart)],
+          { concurrency: "unbounded" },
+        );
+        const sessions = yield* adapter.listSessions();
+        return {
+          first,
+          second,
+          sessions,
+          abortCallsBeforeLayerClose: [...runtime.abortCalls],
+        };
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(runtime.getCalls).toEqual([
+      { sessionID: "ses_concurrent_durable" },
+      { sessionID: "ses_concurrent_durable" },
+    ]);
+    expect(runtime.createCalls).toEqual([]);
+    expect(result.abortCallsBeforeLayerClose).toEqual([]);
+    // Closing the test layer retires the single winning live session. A second
+    // abort here would show that the resumed race loser was aborted too.
+    expect(runtime.abortCalls).toEqual([{ sessionID: "ses_concurrent_durable" }]);
+    expect(runtime.updateCalls).toHaveLength(2);
+    expect(runtime.updateCalls.every((call) => call.sessionID === "ses_concurrent_durable")).toBe(
+      true,
+    );
+    expect(result.first.resumeCursor).toMatchObject({
+      openCodeSessionId: "ses_concurrent_durable",
+    });
+    expect(result.second.resumeCursor).toMatchObject({
+      openCodeSessionId: "ses_concurrent_durable",
+    });
+    expect(result.sessions).toHaveLength(1);
+    expect(result.sessions[0]?.resumeCursor).toMatchObject({
+      openCodeSessionId: "ses_concurrent_durable",
+    });
   });
 
   it("starts fresh only when the provider confirms a stale resume session", async () => {

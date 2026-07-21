@@ -336,7 +336,7 @@ function itemDetail(
   const actionQueries = Array.isArray(action?.queries) ? action.queries : [];
   const candidates = [
     ...(itemType === "web_search"
-      ? [item.query, action?.query, ...actionQueries, action?.pattern, action?.url]
+      ? [item.query, action?.query, ...actionQueries, action?.pattern, action?.url].map(asString)
       : []),
     asString(item.command),
     asString(item.title),

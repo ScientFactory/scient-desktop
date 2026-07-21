@@ -3807,9 +3807,14 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
                   }
 
                   const adoptedSessionId = adopted.id || resumedSessionId;
-                  const adoptedDirectory = adopted.directory?.trim();
-                  const canReuse =
-                    !adoptedDirectory || (yield* sameDirectory(adoptedDirectory, directory));
+                  const sourceDirectory = adopted.directory?.trim() || resumeDirectory;
+                  // Older provider responses and legacy string cursors can both omit the
+                  // source cwd. Reuse is safe when the caller did not request a move; an
+                  // explicit cwd with an unknown source must take the guarded fork path so
+                  // Scient never persists a cursor that only claims to have changed cwd.
+                  const canReuse = sourceDirectory
+                    ? yield* sameDirectory(sourceDirectory, directory)
+                    : input.cwd === undefined;
                   if (canReuse) {
                     yield* reapplyPermissions(adoptedSessionId);
                     return {
