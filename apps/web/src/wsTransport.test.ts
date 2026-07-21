@@ -483,10 +483,13 @@ describe("WsTransport RPC recovery integration", () => {
     harness.transport.dispose();
   });
 
-  it("never replays a mutation after a transport failure", async () => {
+  it("recovers the failed generation without replaying a mutation", async () => {
     const failure = socketClosedFailure();
     const harness = makeRpcRecoveryHarness({
-      execute: () => Effect.fail(failure),
+      execute: ({ generation, method }) =>
+        generation === 1 && method === WS_METHODS.projectsWriteFile
+          ? Effect.fail(failure)
+          : Effect.succeed("next call recovered"),
       probe: async () => Promise.reject(failure),
     });
 
@@ -494,9 +497,15 @@ describe("WsTransport RPC recovery integration", () => {
       harness.transport.request(WS_METHODS.projectsWriteFile, {}, { timeoutMs: null }),
     ).rejects.toBe(failure);
 
-    expect(harness.connectGenerations).toEqual([1]);
-    expect(harness.attempts.map(({ generation }) => generation)).toEqual([1]);
-    expect(harness.probe).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(harness.connectGenerations).toEqual([1, 2]));
+    await expect(
+      harness.transport.request(WS_METHODS.serverGetConfig, {}, { timeoutMs: null }),
+    ).resolves.toBe("next call recovered");
+    expect(
+      harness.attempts.filter(({ method }) => method === WS_METHODS.projectsWriteFile),
+    ).toEqual([{ generation: 1, input: {}, method: WS_METHODS.projectsWriteFile }]);
+    expect(harness.attempts.map(({ generation }) => generation)).toEqual([1, 2]);
+    expect(harness.probe).toHaveBeenCalledOnce();
     harness.transport.dispose();
   });
 

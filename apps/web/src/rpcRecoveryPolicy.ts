@@ -81,8 +81,8 @@ export function isRpcTransportFailure(error: unknown): boolean {
 }
 
 /**
- * Runs one RPC attempt and, for reviewed reads only, permits exactly one replay
- * when recovery produces a different connection generation.
+ * Runs one RPC attempt. A structured transport failure always starts connection
+ * recovery, but only reviewed reads may replay on the replacement generation.
  */
 export async function runRpcWithRecovery<TSession extends RpcRecoverySession, TResult>(input: {
   readonly method: string;
@@ -94,7 +94,12 @@ export async function runRpcWithRecovery<TSession extends RpcRecoverySession, TR
   try {
     return await input.run(input.session);
   } catch (error) {
-    if (rpcRecoveryPolicyFor(input.method) === "never-replay" || !input.shouldRecover(error)) {
+    if (!input.shouldRecover(error)) throw error;
+    if (rpcRecoveryPolicyFor(input.method) === "never-replay") {
+      // The write outcome is uncertain, so preserve the original error and do
+      // not wait for or execute on a replacement. Recovery still begins now so
+      // later user actions do not remain pinned to the failed generation.
+      void input.recover(input.session, error).catch(() => undefined);
       throw error;
     }
     const replacement = await input.recover(input.session, error);
