@@ -29,6 +29,7 @@ const DIAGNOSTIC_DIR = resolve(
 const STARTUP_TIMEOUT_MS = 45_000;
 const ACTION_TIMEOUT_MS = 20_000;
 const RECOVERY_TIMEOUT_MS = 30_000;
+const GRACEFUL_APP_SHUTDOWN_TIMEOUT_MS = 12_000;
 const PRIVATE_DIRECTORY_MODE = 0o700;
 
 function delay(milliseconds) {
@@ -273,21 +274,37 @@ function signalProcessGroup(processGroupId, signal) {
   }
 }
 
-async function stopPackagedApp(child) {
-  if (!child.pid || !processGroupIsAlive(child.pid)) return;
-  const waitForGroupExit = (timeoutMs) =>
+async function stopPackagedApp(child, backendProcessGroupId) {
+  if (!child.pid) return;
+  const processGroupIds = [...new Set([child.pid, backendProcessGroupId].filter(Boolean))];
+  const livingProcessGroups = () =>
+    processGroupIds.filter((processGroupId) => processGroupIsAlive(processGroupId));
+  const waitForAllGroupsToExit = (timeoutMs) =>
     waitFor(
-      "packaged Electron process group exit",
-      () => !processGroupIsAlive(child.pid),
+      "packaged Electron and backend process groups to exit",
+      () => livingProcessGroups().length === 0,
       timeoutMs,
     ).catch(() => false);
 
-  signalProcessGroup(child.pid, "SIGTERM");
-  if (await waitForGroupExit(5_000)) return;
-  signalProcessGroup(child.pid, "SIGKILL");
-  if (!(await waitForGroupExit(5_000))) {
-    throw new Error(`Packaged Electron process group ${child.pid} survived SIGKILL.`);
+  if (await waitForAllGroupsToExit(GRACEFUL_APP_SHUTDOWN_TIMEOUT_MS)) return;
+
+  const gracefulSurvivors = livingProcessGroups();
+  for (const processGroupId of gracefulSurvivors) {
+    signalProcessGroup(processGroupId, "SIGTERM");
   }
+  if (!(await waitForAllGroupsToExit(5_000))) {
+    for (const processGroupId of livingProcessGroups()) {
+      signalProcessGroup(processGroupId, "SIGKILL");
+    }
+    if (!(await waitForAllGroupsToExit(5_000))) {
+      throw new Error(
+        `Packaged process groups ${livingProcessGroups().join(", ")} survived SIGKILL.`,
+      );
+    }
+  }
+  throw new Error(
+    `Packaged application required forced cleanup after its ${GRACEFUL_APP_SHUTDOWN_TIMEOUT_MS}ms graceful shutdown window; surviving process groups: ${gracefulSurvivors.join(", ")}.`,
+  );
 }
 
 async function preserveFailureDiagnostics({
@@ -332,6 +349,7 @@ async function runScenario(appImagePath, scenario) {
   let browser;
   let child;
   let page;
+  let backendProcessGroupId;
   let output = "";
   let scenarioError;
   const cleanupErrors = [];
@@ -402,6 +420,7 @@ async function runScenario(appImagePath, scenario) {
       recordOutput(`\n[renderer:pageerror] ${error.stack || error.message}`);
     });
     const initialRuntime = await waitForRuntimeState(runtimeStatePath);
+    backendProcessGroupId = initialRuntime.pid;
     await waitForBackendReady(
       initialRuntime,
       "first packaged backend generation readiness",
@@ -420,6 +439,7 @@ async function runScenario(appImagePath, scenario) {
         runtimeStatePath,
         (state) => state.pid !== initialRuntime.pid,
       );
+      backendProcessGroupId = recoveredRuntime.pid;
       await waitForBackendReady(
         recoveredRuntime,
         "second packaged backend generation readiness",
@@ -458,9 +478,21 @@ async function runScenario(appImagePath, scenario) {
       { cause: error },
     );
   } finally {
-    await browser?.close().catch(() => undefined);
+    await browser?.close().catch((error) => cleanupErrors.push(error));
     if (child) {
-      await stopPackagedApp(child).catch((error) => cleanupErrors.push(error));
+      await stopPackagedApp(child, backendProcessGroupId).catch((error) =>
+        cleanupErrors.push(error),
+      );
+    }
+    if (cleanupErrors.length > 0) {
+      await preserveFailureDiagnostics({
+        scenarioName: scenario.name,
+        page,
+        output,
+        desktopLogPath,
+        serverLogPath,
+        runtimeStatePath,
+      }).catch(() => undefined);
     }
     await rm(scenarioRoot, { recursive: true, force: true }).catch((error) =>
       cleanupErrors.push(error),
