@@ -43,6 +43,7 @@ import type {
 import { autoUpdater, BaseUpdater, CancellationToken } from "electron-updater";
 
 import type { ContextMenuItem } from "@synara/contracts";
+import { makeScientBackendShutdownMessage } from "@synara/shared/backendControl";
 import { getMacTrafficLightPosition } from "@synara/shared/desktopChrome";
 import {
   SCIENT_APP_NAME,
@@ -57,6 +58,15 @@ import { RotatingFileSink } from "@synara/shared/logging";
 import { ensureStaticSnapshot, findAsarArchivePath } from "@synara/shared/staticSnapshot";
 import { isBackendReadinessAborted, waitForHttpReady } from "./backendReadiness";
 import { resolveBackendNodeArgs } from "./backendNodeOptions";
+import {
+  backendProcessContainmentOptions,
+  forceTerminateBackendProcessTree,
+} from "./backendProcessTree";
+import {
+  DesktopBackendSupervisor,
+  type DesktopBackendExit,
+  type DesktopBackendGeneration,
+} from "./desktopBackendSupervisor";
 import {
   bundleSignatureFromStats,
   isBundleStable,
@@ -280,7 +290,7 @@ const browserPerfLoggingEnabled = process.env.SYNARA_BROWSER_PERF === "1";
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 
 let mainWindow: BrowserWindow | null = null;
-let backendProcess: ChildProcess.ChildProcess | null = null;
+let backendSupervisor: DesktopBackendSupervisor | null = null;
 let backendPort = 0;
 let backendAuthToken = "";
 let backendHttpUrl = "";
@@ -288,8 +298,6 @@ let backendWsUrl = "";
 let backendReadinessAbortController: AbortController | null = null;
 let backendInitialWindowOpenInFlight: Promise<void> | null = null;
 let backendListeningDetector: ServerListeningDetector | null = null;
-let restartAttempt = 0;
-let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
 let isUpdaterInstallPreparing = false;
 let isUpdaterQuitAndInstallInFlight = false;
@@ -529,7 +537,8 @@ async function reserveBackendEndpoint(reason: string): Promise<void> {
 }
 
 async function waitForBackendWindowReady(baseUrl: string): Promise<"listening" | "http"> {
-  return await waitForBackendStartupReady({
+  const generation = backendSupervisor?.currentGeneration?.number ?? null;
+  const source = await waitForBackendStartupReady({
     listeningPromise: backendListeningDetector?.promise ?? null,
     waitForHttpReady: () =>
       waitForBackendHttpReady(baseUrl, {
@@ -549,8 +558,19 @@ async function waitForBackendWindowReady(baseUrl: string): Promise<"listening" |
           }
         },
       }),
-    cancelHttpWait: cancelBackendReadinessWait,
+    onHttpReady: () => {
+      if (generation !== null) backendSupervisor?.markReady(generation);
+    },
+    onHttpFailure: (error) => {
+      if (generation === null) return;
+      const message = formatErrorMessage(error);
+      writeDesktopLogHeader(
+        `backend generation=${generation} semantic readiness failed message=${message}`,
+      );
+      void backendSupervisor?.restartGeneration(generation, `readiness failed: ${message}`);
+    },
   });
+  return source;
 }
 
 function ensureInitialBackendWindowOpen(baseUrl: string): void {
@@ -1142,7 +1162,7 @@ function handleFatalStartupError(stage: string, error: unknown): void {
       `Stage: ${stage}\n${message}${detail}`,
     );
   }
-  stopBackend();
+  stopBackend(`fatal startup: ${stage}`);
   restoreStdIoCapture?.();
   app.quit();
 }
@@ -2500,7 +2520,7 @@ async function installDownloadedUpdate(): Promise<{
     isQuitting = true;
     isUpdaterInstallPreparing = true;
     clearUpdatePollTimer();
-    await stopBackendAndWaitForExit();
+    await stopBackendAndWaitForExit("updater install handoff");
     await logMacUpdateDiagnostics("before install handoff");
     isUpdaterQuitAndInstallInFlight = true;
     autoUpdater.quitAndInstall();
@@ -2739,45 +2759,24 @@ function backendEnv(): NodeJS.ProcessEnv {
   };
 }
 
-function scheduleBackendRestart(reason: string): void {
-  if (isQuitting || restartTimer) return;
-
-  const delayMs = Math.min(500 * 2 ** restartAttempt, 10_000);
-  restartAttempt += 1;
-  safeConsoleError(`[desktop] backend exited unexpectedly (${reason}); restarting in ${delayMs}ms`);
-
-  restartTimer = setTimeout(() => {
-    restartTimer = null;
-    void restartBackendAfterCrash(reason);
-  }, delayMs);
+interface BackendGenerationRuntime {
+  readonly listeningDetector: ServerListeningDetector;
+  readonly closeSession: (details: string) => void;
 }
 
-async function restartBackendAfterCrash(reason: string): Promise<void> {
-  if (isQuitting || backendProcess) {
-    return;
+class MissingBackendEntryError extends Error {
+  constructor(readonly entryPath: string) {
+    super(`Missing packaged server entry at ${entryPath}`);
+    this.name = "MissingBackendEntryError";
   }
-
-  cancelBackendReadinessWait();
-  try {
-    await reserveBackendEndpoint("backend restart");
-  } catch (error) {
-    scheduleBackendRestart(
-      `failed to reserve restart port after ${reason}: ${formatErrorMessage(error)}`,
-    );
-    return;
-  }
-
-  startBackend();
-  ensureInitialBackendWindowOpen(backendHttpUrl);
 }
 
-function startBackend(): void {
-  if (isQuitting || backendProcess) return;
+const backendGenerationRuntimes = new Map<number, BackendGenerationRuntime>();
 
+function spawnBackendGeneration(generation: number): ChildProcess.ChildProcess {
   const backendEntry = resolveBackendEntry();
   if (!FS.existsSync(backendEntry)) {
-    scheduleBackendRestart(`missing server entry at ${backendEntry}`);
-    return;
+    throw new MissingBackendEntryError(backendEntry);
   }
 
   const captureBackendLogs = app.isPackaged && backendLogSink !== null;
@@ -2789,11 +2788,12 @@ function startBackend(): void {
       ...backendEnv(),
       ELECTRON_RUN_AS_NODE: "1",
     },
-    stdio: captureBackendLogs ? ["ignore", "pipe", "pipe"] : "inherit",
+    // POSIX force termination targets this dedicated process group. Windows
+    // uses taskkill /T after the same graceful IPC deadline.
+    ...backendProcessContainmentOptions(captureBackendLogs),
   });
   const listeningDetector = new ServerListeningDetector();
   backendListeningDetector = listeningDetector;
-  backendProcess = child;
   let backendSessionClosed = false;
   const closeBackendSession = (details: string) => {
     if (backendSessionClosed) return;
@@ -2805,118 +2805,140 @@ function startBackend(): void {
     `pid=${child.pid ?? "unknown"} port=${backendPort} cwd=${resolveBackendCwd()}`,
   );
   captureBackendOutput(child);
-
-  child.once("spawn", () => {
-    restartAttempt = 0;
+  backendGenerationRuntimes.set(generation, {
+    listeningDetector,
+    closeSession: closeBackendSession,
   });
+  return child;
+}
 
-  child.on("error", (error) => {
-    if (backendListeningDetector === listeningDetector) {
-      listeningDetector.fail(error);
-      backendListeningDetector = null;
-    }
-    if (backendProcess === child) {
-      backendProcess = null;
-    }
-    closeBackendSession(`pid=${child.pid ?? "unknown"} error=${error.message}`);
-    scheduleBackendRestart(error.message);
-  });
+function handleBackendGenerationStarted(generation: DesktopBackendGeneration): void {
+  if (isDevelopment) {
+    void waitForBackendWindowReady(backendHttpUrl)
+      .then((source) => {
+        writeDesktopLogHeader(`backend generation=${generation.number} ready source=${source}`);
+        if (!mainWindow) {
+          mainWindow = createWindow();
+          writeDesktopLogHeader("bootstrap main window created");
+        }
+      })
+      .catch((error) => {
+        if (isBackendReadinessAborted(error)) return;
+        writeDesktopLogHeader(
+          `backend generation=${generation.number} readiness warning message=${formatErrorMessage(error)}`,
+        );
+        console.warn("[desktop] backend readiness check timed out", error);
+        if (!mainWindow) {
+          mainWindow = createWindow();
+          writeDesktopLogHeader("bootstrap main window created after readiness warning");
+        }
+      });
+    return;
+  }
 
-  child.on("exit", (code, signal) => {
-    if (backendListeningDetector === listeningDetector) {
-      listeningDetector.fail(
-        new Error(
-          `backend exited before logging readiness (code=${code ?? "null"} signal=${signal ?? "null"})`,
-        ),
+  const hadWindow = (mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null) !== null;
+  ensureInitialBackendWindowOpen(backendHttpUrl);
+  if (hadWindow && backendInitialWindowOpenInFlight === null) {
+    void waitForBackendWindowReady(backendHttpUrl)
+      .then((source) => {
+        writeDesktopLogHeader(`backend generation=${generation.number} ready source=${source}`);
+      })
+      .catch((error) => {
+        if (isBackendReadinessAborted(error)) return;
+        console.warn("[desktop] restarted backend readiness check timed out", error);
+      });
+  }
+}
+
+function handleBackendGenerationExited(exit: DesktopBackendExit): void {
+  cancelBackendReadinessWait();
+  const runtime = backendGenerationRuntimes.get(exit.generation);
+  backendGenerationRuntimes.delete(exit.generation);
+  if (runtime) {
+    if (backendListeningDetector === runtime.listeningDetector) {
+      runtime.listeningDetector.fail(
+        new Error(`backend generation ${exit.generation} closed (${exit.reason})`),
       );
       backendListeningDetector = null;
     }
-    if (backendProcess === child) {
-      backendProcess = null;
-    }
-    closeBackendSession(
-      `pid=${child.pid ?? "unknown"} code=${code ?? "null"} signal=${signal ?? "null"}`,
+    runtime.closeSession(
+      `pid=${exit.pid ?? "unknown"} generation=${exit.generation} ${exit.reason}`,
     );
-    if (isQuitting) return;
-    const reason = `code=${code ?? "null"} signal=${signal ?? "null"}`;
-    scheduleBackendRestart(reason);
-  });
-}
-
-function stopBackend(): void {
-  cancelBackendReadinessWait();
-  backendListeningDetector = null;
-  if (restartTimer) {
-    clearTimeout(restartTimer);
-    restartTimer = null;
-  }
-
-  const child = backendProcess;
-  backendProcess = null;
-  if (!child) return;
-
-  if (child.exitCode === null && child.signalCode === null) {
-    child.kill("SIGTERM");
-    setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill("SIGKILL");
-      }
-    }, BACKEND_FORCE_KILL_DELAY_MS).unref();
   }
 }
 
-async function stopBackendAndWaitForExit(timeoutMs = BACKEND_SHUTDOWN_TIMEOUT_MS): Promise<void> {
-  cancelBackendReadinessWait();
-  backendListeningDetector = null;
-  if (restartTimer) {
-    clearTimeout(restartTimer);
-    restartTimer = null;
-  }
-
-  const child = backendProcess;
-  backendProcess = null;
-  if (!child) return;
-  const backendChild = child;
-  if (backendChild.exitCode !== null || backendChild.signalCode !== null) return;
-
-  await new Promise<void>((resolve) => {
-    let settled = false;
-    let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
-    let exitTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
-
-    function settle(): void {
-      if (settled) return;
-      settled = true;
-      backendChild.off("exit", onExit);
-      if (forceKillTimer) {
-        clearTimeout(forceKillTimer);
-      }
-      if (exitTimeoutTimer) {
-        clearTimeout(exitTimeoutTimer);
-      }
-      resolve();
-    }
-
-    function onExit(): void {
-      settle();
-    }
-
-    backendChild.once("exit", onExit);
-    backendChild.kill("SIGTERM");
-
-    const forceKillDelayMs = Math.min(BACKEND_FORCE_KILL_DELAY_MS, Math.max(1, timeoutMs - 500));
-    forceKillTimer = setTimeout(() => {
-      if (backendChild.exitCode === null && backendChild.signalCode === null) {
-        backendChild.kill("SIGKILL");
-      }
-    }, forceKillDelayMs);
-    forceKillTimer.unref();
-
-    exitTimeoutTimer = setTimeout(() => {
-      settle();
-    }, timeoutMs);
-    exitTimeoutTimer.unref();
+function getBackendSupervisor(): DesktopBackendSupervisor {
+  if (backendSupervisor) return backendSupervisor;
+  backendSupervisor = new DesktopBackendSupervisor({
+    prepareStart: async (generation) => {
+      cancelBackendReadinessWait();
+      await reserveBackendEndpoint(
+        generation === 1 ? "bootstrap" : `backend generation ${generation}`,
+      );
+    },
+    spawn: spawnBackendGeneration,
+    requestGracefulShutdown: async (child, reason) => {
+      if (!child.send || child.connected === false) return false;
+      return await new Promise<boolean>((resolve) => {
+        try {
+          child.send!(makeScientBackendShutdownMessage(reason), (error) => resolve(error === null));
+        } catch {
+          resolve(false);
+        }
+      });
+    },
+    forceTerminateTree: (child) => forceTerminateBackendProcessTree(child),
+    onGenerationStarted: handleBackendGenerationStarted,
+    onGenerationExited: handleBackendGenerationExited,
+    onRestartScheduled: ({ delayMs, reason }) => {
+      safeConsoleError(
+        `[desktop] backend exited unexpectedly (${reason}); restarting in ${delayMs}ms`,
+      );
+    },
+    onError: (error, context) => {
+      safeConsoleError(`[desktop] ${context}: ${formatErrorMessage(error)}`);
+    },
+    classifyStartFailure: (error) =>
+      error instanceof MissingBackendEntryError ? "fatal" : "retry",
+    onFatalStartFailure: (error) => handleFatalStartupError("backend", error),
+    onUnrecoverableGeneration: ({ error, generation, reason }) => {
+      const message = formatErrorMessage(error);
+      writeDesktopLogHeader(
+        `backend generation=${generation.number} unrecoverable reason=${reason} message=${message}`,
+      );
+      console.error(`[desktop] backend generation ${generation.number} could not recover`, error);
+      dialog.showErrorBox(
+        `${SCIENT_APP_NAME} backend needs attention`,
+        `Scient kept the desktop open because backend generation ${generation.number} could not be stopped safely.\n\n${message}`,
+      );
+    },
+    gracefulShutdownTimeoutMs: BACKEND_FORCE_KILL_DELAY_MS,
+    forcedExitTimeoutMs: BACKEND_SHUTDOWN_TIMEOUT_MS - BACKEND_FORCE_KILL_DELAY_MS,
   });
+  return backendSupervisor;
+}
+
+function startBackend(): void {
+  if (isQuitting) return;
+  void getBackendSupervisor()
+    .start()
+    .catch((error: unknown) => {
+      safeConsoleError(`[desktop] backend start failed: ${formatErrorMessage(error)}`);
+    });
+}
+
+function stopBackend(reason = "desktop stop"): void {
+  cancelBackendReadinessWait();
+  if (!backendSupervisor) return;
+  void backendSupervisor.stop(reason).catch((error: unknown) => {
+    safeConsoleError(`[desktop] backend stop failed: ${formatErrorMessage(error)}`);
+  });
+}
+
+async function stopBackendAndWaitForExit(reason = "desktop shutdown"): Promise<void> {
+  cancelBackendReadinessWait();
+  if (!backendSupervisor) return;
+  await backendSupervisor.stop(reason);
 }
 
 async function disposeBrowserUsePipeServerForShutdown(reason: string): Promise<void> {
@@ -2940,26 +2962,30 @@ async function shutdownDesktopRuntime(reason: string): Promise<void> {
   }
 
   isQuitting = true;
-  desktopShutdownPromise = (async () => {
+  const shutdown = (async () => {
     writeDesktopLogHeader(`${reason} shutdown start`);
-    try {
-      clearUpdateBackgroundBlurTimer();
-      clearUpdateCheckTimeoutTimer();
-      clearUpdatePollTimer();
-      cancelBackendReadinessWait();
-      appSnapManager?.dispose();
-      appSnapManager = null;
-      await disposeBrowserUsePipeServerForShutdown(reason);
-      await stopBackendAndWaitForExit();
-      browserManager.dispose();
-      restoreStdIoCapture?.();
-      writeDesktopLogHeader(`${reason} shutdown complete`);
-    } finally {
-      desktopShutdownComplete = true;
-    }
+    clearUpdateBackgroundBlurTimer();
+    clearUpdateCheckTimeoutTimer();
+    clearUpdatePollTimer();
+    cancelBackendReadinessWait();
+    appSnapManager?.dispose();
+    appSnapManager = null;
+    await disposeBrowserUsePipeServerForShutdown(reason);
+    await stopBackendAndWaitForExit(reason);
+    browserManager.dispose();
+    restoreStdIoCapture?.();
+    writeDesktopLogHeader(`${reason} shutdown complete`);
+    desktopShutdownComplete = true;
   })();
+  desktopShutdownPromise = shutdown;
 
-  return desktopShutdownPromise;
+  try {
+    await shutdown;
+  } catch (error) {
+    desktopShutdownPromise = null;
+    isQuitting = false;
+    throw error;
+  }
 }
 
 function requestGracefulAppQuit(reason: string): void {
@@ -2969,13 +2995,17 @@ function requestGracefulAppQuit(reason: string): void {
   }
 
   void shutdownDesktopRuntime(reason)
+    .then(() => {
+      app.quit();
+    })
     .catch((error: unknown) => {
       const message = formatErrorMessage(error);
       writeDesktopLogHeader(`${reason} shutdown failed message=${message}`);
       console.warn(`[desktop] Shutdown failed during ${reason}: ${message}`);
-    })
-    .finally(() => {
-      app.quit();
+      dialog.showErrorBox(
+        `${SCIENT_APP_NAME} could not close safely`,
+        `Scient stayed open because its backend did not stop. Retry after checking running tasks.\n\n${message}`,
+      );
     });
 }
 
@@ -3453,6 +3483,19 @@ function createWindow(): BrowserWindow {
   window.on("unmaximize", () => emitDesktopWindowState(window));
   window.on("enter-full-screen", () => emitDesktopWindowState(window));
   window.on("leave-full-screen", () => emitDesktopWindowState(window));
+  if (process.platform === "win32") {
+    window.on("query-session-end", (event) => {
+      if (desktopShutdownComplete) return;
+      event.preventDefault();
+      writeDesktopLogHeader("Windows query-session-end received");
+      requestGracefulAppQuit("Windows session end");
+    });
+    window.on("session-end", () => {
+      if (desktopShutdownPromise) return;
+      writeDesktopLogHeader("Windows session-end received");
+      void shutdownDesktopRuntime("Windows session end");
+    });
+  }
   window.on("close", () => {
     try {
       writeDesktopWindowState(DESKTOP_WINDOW_STATE_PATH, {
@@ -3544,39 +3587,11 @@ if (!hasSingleInstanceLock) {
 async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap start");
   backendAuthToken = Crypto.randomBytes(24).toString("hex");
-  await reserveBackendEndpoint("bootstrap");
 
   registerIpcHandlers();
   writeDesktopLogHeader("bootstrap ipc handlers registered");
-  startBackend();
+  await getBackendSupervisor().start();
   writeDesktopLogHeader("bootstrap backend start requested");
-
-  if (isDevelopment) {
-    void waitForBackendWindowReady(backendHttpUrl)
-      .then((source) => {
-        writeDesktopLogHeader(`bootstrap backend ready source=${source}`);
-        if (!mainWindow) {
-          mainWindow = createWindow();
-          writeDesktopLogHeader("bootstrap main window created");
-        }
-      })
-      .catch((error) => {
-        if (isBackendReadinessAborted(error)) {
-          return;
-        }
-        writeDesktopLogHeader(
-          `bootstrap backend readiness warning message=${formatErrorMessage(error)}`,
-        );
-        console.warn("[desktop] backend readiness check timed out during dev bootstrap", error);
-        if (!mainWindow) {
-          mainWindow = createWindow();
-          writeDesktopLogHeader("bootstrap main window created after readiness warning");
-        }
-      });
-    return;
-  }
-
-  ensureInitialBackendWindowOpen(backendHttpUrl);
 }
 
 app.on("before-quit", (event) => {
