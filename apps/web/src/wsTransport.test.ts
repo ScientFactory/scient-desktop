@@ -4,9 +4,12 @@
 // Depends on: the global WebSocket constructor shim and desktop bridge URL contract.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { WS_CHANNELS } from "@synara/contracts";
-import { Exit, Stream } from "effect";
+import { WS_CHANNELS, WS_METHODS } from "@synara/contracts";
+import { Effect, Exit, Stream } from "effect";
+import { RpcClientError } from "effect/unstable/rpc/RpcClientError";
+import { SocketCloseError } from "effect/unstable/socket/Socket";
 
+import { ConnectionSupervisor } from "./connectionSupervisor";
 import {
   EFFECT_RPC_RETRY_CONFIG,
   isConnectionProtocolFailure,
@@ -64,6 +67,94 @@ class MockWebSocket {
 }
 
 const originalWebSocket = globalThis.WebSocket;
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
+function socketClosedFailure() {
+  return new RpcClientError({ reason: new SocketCloseError({ code: 1006 }) });
+}
+
+type RpcHarnessFailure = ReturnType<typeof socketClosedFailure>;
+
+interface RpcHarnessInput {
+  readonly generation: number;
+  readonly input: unknown;
+  readonly method: string;
+}
+
+function makeRpcRecoveryHarness(options: {
+  readonly execute: (input: RpcHarnessInput) => Effect.Effect<unknown, RpcHarnessFailure, never>;
+  readonly probe: (generation: number) => Promise<void>;
+  readonly beforeConnect?: (generation: number, signal: AbortSignal) => Promise<void>;
+}) {
+  const attempts: RpcHarnessInput[] = [];
+  const connectGenerations: number[] = [];
+  const close = vi.fn();
+  const probe = vi.fn((session: { readonly generation: number }) =>
+    options.probe(session.generation),
+  );
+
+  const supervisor = new ConnectionSupervisor({
+    connect: async (generation, signal) => {
+      connectGenerations.push(generation);
+      await options.beforeConnect?.(generation, signal);
+      const client = new Proxy<
+        Record<string, (input: unknown) => Effect.Effect<unknown, RpcHarnessFailure, never>>
+      >(
+        {},
+        {
+          get: (_target, method) => (input: unknown) => {
+            const attempt = { generation, input, method: String(method) };
+            attempts.push(attempt);
+            return options.execute(attempt);
+          },
+        },
+      );
+      return {
+        client,
+        clientScope: {},
+        runtime: {
+          runPromise: (effect: Effect.Effect<unknown, RpcHarnessFailure, never>) =>
+            Effect.runPromise(effect),
+        },
+      };
+    },
+    close,
+    probe,
+    retryBaseDelayMs: 0,
+    retryMaxDelayMs: 0,
+    retryJitterRatio: 0,
+  });
+
+  const transport = Object.assign(Object.create(WsTransport.prototype) as object, {
+    disposed: false,
+    explicitUrl: null,
+    latestPushByChannel: new Map(),
+    listeners: new Map(),
+    sequence: 0,
+    shellSubscribed: false,
+    state: "connecting",
+    stateListeners: new Set(),
+    streamCleanups: new Map(),
+    streamRestartTimers: new Map(),
+    streamStartTokens: new Map(),
+    streamTransitions: new Map(),
+    supervisor,
+    threadSubscriptions: new Map(),
+    wakeCleanups: [],
+  }) as unknown as WsTransport;
+
+  supervisor.start();
+  return { attempts, close, connectGenerations, probe, supervisor, transport };
+}
 
 function makeStreamHarness() {
   const transport = new WsTransport("ws://localhost:3020");
@@ -375,5 +466,141 @@ describe("WsTransport", () => {
     transport.dispose();
 
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe("WsTransport RPC recovery integration", () => {
+  it("replays a reviewed read once on one replacement generation", async () => {
+    const failure = socketClosedFailure();
+    const harness = makeRpcRecoveryHarness({
+      execute: ({ generation }) =>
+        generation === 1 ? Effect.fail(failure) : Effect.succeed("recovered"),
+      probe: async () => Promise.reject(failure),
+    });
+
+    await expect(
+      harness.transport.request(WS_METHODS.filesystemBrowse, {}, { timeoutMs: null }),
+    ).resolves.toBe("recovered");
+
+    expect(harness.connectGenerations).toEqual([1, 2]);
+    expect(harness.attempts.map(({ generation }) => generation)).toEqual([1, 2]);
+    expect(harness.probe).toHaveBeenCalledOnce();
+    harness.transport.dispose();
+  });
+
+  it("recovers the failed generation without replaying a mutation", async () => {
+    const failure = socketClosedFailure();
+    const harness = makeRpcRecoveryHarness({
+      execute: ({ generation, method }) =>
+        generation === 1 && method === WS_METHODS.projectsWriteFile
+          ? Effect.fail(failure)
+          : Effect.succeed("next call recovered"),
+      probe: async () => Promise.reject(failure),
+    });
+
+    await expect(
+      harness.transport.request(WS_METHODS.projectsWriteFile, {}, { timeoutMs: null }),
+    ).rejects.toBe(failure);
+
+    await vi.waitFor(() => expect(harness.connectGenerations).toEqual([1, 2]));
+    await expect(
+      harness.transport.request(WS_METHODS.serverGetConfig, {}, { timeoutMs: null }),
+    ).resolves.toBe("next call recovered");
+    expect(
+      harness.attempts.filter(({ method }) => method === WS_METHODS.projectsWriteFile),
+    ).toEqual([{ generation: 1, input: {}, method: WS_METHODS.projectsWriteFile }]);
+    expect(harness.attempts.map(({ generation }) => generation)).toEqual([1, 2]);
+    expect(harness.probe).toHaveBeenCalledOnce();
+    harness.transport.dispose();
+  });
+
+  it("shares one probe and one replacement generation across concurrent failed reads", async () => {
+    const failure = socketClosedFailure();
+    const probeGate = deferred<void>();
+    const harness = makeRpcRecoveryHarness({
+      execute: ({ generation, input }) =>
+        generation === 1
+          ? Effect.fail(failure)
+          : Effect.succeed((input as { readonly requestId: string }).requestId),
+      probe: () => probeGate.promise,
+    });
+
+    const left = harness.transport.request(
+      WS_METHODS.filesystemBrowse,
+      { requestId: "left" },
+      { timeoutMs: null },
+    );
+    const right = harness.transport.request(
+      WS_METHODS.filesystemBrowse,
+      { requestId: "right" },
+      { timeoutMs: null },
+    );
+    await vi.waitFor(() => {
+      expect(harness.attempts).toHaveLength(2);
+      expect(harness.probe).toHaveBeenCalledOnce();
+    });
+
+    probeGate.reject(failure);
+
+    await expect(Promise.all([left, right])).resolves.toEqual(["left", "right"]);
+    expect(harness.connectGenerations).toEqual([1, 2]);
+    expect(harness.attempts.map(({ generation }) => generation)).toEqual([1, 1, 2, 2]);
+    expect(harness.probe).toHaveBeenCalledOnce();
+    harness.transport.dispose();
+  });
+
+  it("does not replay when the same generation passes its recovery probe", async () => {
+    const failure = socketClosedFailure();
+    const harness = makeRpcRecoveryHarness({
+      execute: () => Effect.fail(failure),
+      probe: async () => undefined,
+    });
+
+    await expect(
+      harness.transport.request(WS_METHODS.gitStatus, {}, { timeoutMs: null }),
+    ).rejects.toBe(failure);
+
+    expect(harness.connectGenerations).toEqual([1]);
+    expect(harness.attempts.map(({ generation }) => generation)).toEqual([1]);
+    expect(harness.probe).toHaveBeenCalledOnce();
+    harness.transport.dispose();
+  });
+
+  it("settles a recovering request when transport disposal cancels replacement creation", async () => {
+    const failure = socketClosedFailure();
+    const replacementGate = deferred<void>();
+    const harness = makeRpcRecoveryHarness({
+      beforeConnect: (generation) =>
+        generation === 2 ? replacementGate.promise : Promise.resolve(),
+      execute: () => Effect.fail(failure),
+      probe: async () => Promise.reject(failure),
+    });
+    const request = harness.transport.request(WS_METHODS.serverGetConfig, {}, { timeoutMs: null });
+    await vi.waitFor(() => expect(harness.connectGenerations).toEqual([1, 2]));
+
+    harness.transport.dispose();
+
+    await expect(request).rejects.toThrow("disposed");
+    expect(harness.attempts.map(({ generation }) => generation)).toEqual([1]);
+    replacementGate.resolve();
+    await vi.waitFor(() => expect(harness.close).toHaveBeenCalledTimes(2));
+  });
+
+  it("recovers the failed replay generation without executing a third time", async () => {
+    const firstFailure = socketClosedFailure();
+    const replayFailure = socketClosedFailure();
+    const harness = makeRpcRecoveryHarness({
+      execute: ({ generation }) => Effect.fail(generation === 1 ? firstFailure : replayFailure),
+      probe: async () => Promise.reject(firstFailure),
+    });
+
+    await expect(
+      harness.transport.request(WS_METHODS.serverGetConfig, {}, { timeoutMs: null }),
+    ).rejects.toBe(replayFailure);
+
+    await vi.waitFor(() => expect(harness.connectGenerations).toEqual([1, 2, 3]));
+    expect(harness.attempts.map(({ generation }) => generation)).toEqual([1, 2]);
+    expect(harness.probe).toHaveBeenCalledTimes(2);
+    harness.transport.dispose();
   });
 });

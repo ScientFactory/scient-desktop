@@ -42,6 +42,7 @@ import { RpcClient, RpcClientError, RpcSerialization } from "effect/unstable/rpc
 import * as Socket from "effect/unstable/socket/Socket";
 
 import { ConnectionSupervisor, type ConnectionSupervisorSession } from "./connectionSupervisor";
+import { isRpcTransportFailure, runRpcWithRecovery } from "./rpcRecoveryPolicy";
 import type { WsTransportState } from "./wsTransportEvents";
 
 type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void;
@@ -336,26 +337,14 @@ export class WsTransport {
         ? (params as { command: unknown }).command
         : (params ?? {});
     const normalizedRpcInput = omitNullUserInputAnswers(rpcInput);
-    const call = (
-      session.value.client as unknown as Record<
-        string,
-        (input: unknown) => Effect.Effect<unknown, WsTransportRpcError, never>
-      >
-    )[method];
-    if (!call) throw new WsTransportRpcError({ message: `Unknown RPC method: ${method}` });
-    const rpcEffect =
-      timeoutMs === null
-        ? call(normalizedRpcInput)
-        : Effect.timeoutOrElse(call(normalizedRpcInput), {
-            duration: timeoutMs,
-            onTimeout: () =>
-              Effect.fail(
-                new WsTransportRpcError({
-                  message: `RPC request timed out after ${timeoutMs}ms: ${method}`,
-                }),
-              ),
-          });
-    return (await session.value.runtime.runPromise(rpcEffect)) as T;
+    return runRpcWithRecovery({
+      method,
+      session,
+      run: (attemptSession) =>
+        this.runRpcCall<T>(attemptSession, method, normalizedRpcInput, timeoutMs),
+      shouldRecover: isRpcTransportFailure,
+      recover: (failedSession) => this.recoverReadSession(failedSession, method),
+    });
   }
 
   subscribe<C extends WsPushChannel>(
@@ -492,6 +481,50 @@ export class WsTransport {
   private getSession(timeoutMs: number): Promise<ActiveSession> {
     if (this.disposed) return Promise.reject(new Error("Transport disposed"));
     return this.supervisor.waitForSession({ timeoutMs });
+  }
+
+  private runRpcCall<T>(
+    session: ActiveSession,
+    method: string,
+    input: unknown,
+    timeoutMs: number | null,
+  ): Promise<T> {
+    const call = (
+      session.value.client as unknown as Record<
+        string,
+        (input: unknown) => Effect.Effect<unknown, WsTransportRpcError, never>
+      >
+    )[method];
+    if (!call) {
+      return Promise.reject(new WsTransportRpcError({ message: `Unknown RPC method: ${method}` }));
+    }
+    const rpcEffect =
+      timeoutMs === null
+        ? call(input)
+        : Effect.timeoutOrElse(call(input), {
+            duration: timeoutMs,
+            onTimeout: () =>
+              Effect.fail(
+                new WsTransportRpcError({
+                  message: `RPC request timed out after ${timeoutMs}ms: ${method}`,
+                }),
+              ),
+          });
+    return session.value.runtime.runPromise(rpcEffect) as Promise<T>;
+  }
+
+  private async recoverReadSession(
+    failedSession: ActiveSession,
+    method: string,
+  ): Promise<ActiveSession | null> {
+    if (this.disposed) return null;
+    if (this.supervisor.currentSession?.generation === failedSession.generation) {
+      await this.supervisor.probe(`RPC ${method} failed`);
+    }
+    if (this.disposed || this.supervisor.currentSession?.generation === failedSession.generation) {
+      return null;
+    }
+    return this.getSession(REQUEST_TIMEOUT_MS);
   }
 
   private setState(state: WsTransportState): void {
