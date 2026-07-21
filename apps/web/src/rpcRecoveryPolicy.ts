@@ -104,6 +104,15 @@ export async function runRpcWithRecovery<TSession extends RpcRecoverySession, TR
     }
     const replacement = await input.recover(input.session, error);
     if (!replacement || replacement.generation === input.session.generation) throw error;
-    return input.run(replacement);
+    try {
+      return await input.run(replacement);
+    } catch (replayError) {
+      if (input.shouldRecover(replayError)) {
+        // The one reviewed replay is the execution limit, but its failed
+        // generation must still be invalidated so later calls do not inherit it.
+        void input.recover(replacement, replayError).catch(() => undefined);
+      }
+      throw replayError;
+    }
   }
 }

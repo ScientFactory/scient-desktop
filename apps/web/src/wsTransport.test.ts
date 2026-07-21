@@ -586,7 +586,7 @@ describe("WsTransport RPC recovery integration", () => {
     await vi.waitFor(() => expect(harness.close).toHaveBeenCalledTimes(2));
   });
 
-  it("does not execute a third time when the one allowed replay also fails", async () => {
+  it("recovers the failed replay generation without executing a third time", async () => {
     const firstFailure = socketClosedFailure();
     const replayFailure = socketClosedFailure();
     const harness = makeRpcRecoveryHarness({
@@ -598,9 +598,9 @@ describe("WsTransport RPC recovery integration", () => {
       harness.transport.request(WS_METHODS.serverGetConfig, {}, { timeoutMs: null }),
     ).rejects.toBe(replayFailure);
 
-    expect(harness.connectGenerations).toEqual([1, 2]);
+    await vi.waitFor(() => expect(harness.connectGenerations).toEqual([1, 2, 3]));
     expect(harness.attempts.map(({ generation }) => generation)).toEqual([1, 2]);
-    expect(harness.probe).toHaveBeenCalledOnce();
+    expect(harness.probe).toHaveBeenCalledTimes(2);
     harness.transport.dispose();
   });
 });
