@@ -82,6 +82,8 @@ function socketClosedFailure() {
   return new RpcClientError({ reason: new SocketCloseError({ code: 1006 }) });
 }
 
+type RpcHarnessFailure = ReturnType<typeof socketClosedFailure>;
+
 interface RpcHarnessInput {
   readonly generation: number;
   readonly input: unknown;
@@ -89,7 +91,7 @@ interface RpcHarnessInput {
 }
 
 function makeRpcRecoveryHarness(options: {
-  readonly execute: (input: RpcHarnessInput) => Effect.Effect<unknown, unknown, never>;
+  readonly execute: (input: RpcHarnessInput) => Effect.Effect<unknown, RpcHarnessFailure, never>;
   readonly probe: (generation: number) => Promise<void>;
   readonly beforeConnect?: (generation: number, signal: AbortSignal) => Promise<void>;
 }) {
@@ -104,7 +106,9 @@ function makeRpcRecoveryHarness(options: {
     connect: async (generation, signal) => {
       connectGenerations.push(generation);
       await options.beforeConnect?.(generation, signal);
-      const client = new Proxy<Record<string, (input: unknown) => unknown>>(
+      const client = new Proxy<
+        Record<string, (input: unknown) => Effect.Effect<unknown, RpcHarnessFailure, never>>
+      >(
         {},
         {
           get: (_target, method) => (input: unknown) => {
@@ -118,7 +122,8 @@ function makeRpcRecoveryHarness(options: {
         client,
         clientScope: {},
         runtime: {
-          runPromise: (effect: Effect.Effect<unknown, unknown, never>) => Effect.runPromise(effect),
+          runPromise: (effect: Effect.Effect<unknown, RpcHarnessFailure, never>) =>
+            Effect.runPromise(effect),
         },
       };
     },
@@ -145,7 +150,7 @@ function makeRpcRecoveryHarness(options: {
     supervisor,
     threadSubscriptions: new Map(),
     wakeCleanups: [],
-  }) as WsTransport;
+  }) as unknown as WsTransport;
 
   supervisor.start();
   return { attempts, close, connectGenerations, probe, supervisor, transport };
