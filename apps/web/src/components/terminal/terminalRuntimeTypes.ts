@@ -54,7 +54,26 @@ export type TerminalOutputEvent = Extract<TerminalEvent, { type: "output" }>;
 export interface TerminalSnapshotCaptureState {
   snapshotReconcileActive: boolean;
   snapshotBufferedOutputEvents: TerminalOutputEvent[];
+  snapshotReconcileQueued: boolean;
   snapshotReconcileRequestId: number;
+}
+
+/** Coalesces an open-state reconcile signal instead of dropping it behind an active capture. */
+export function requestTerminalSnapshotReconcile(state: TerminalSnapshotCaptureState): boolean {
+  if (!state.snapshotReconcileActive) {
+    state.snapshotReconcileQueued = false;
+    return true;
+  }
+  state.snapshotReconcileQueued = true;
+  return false;
+}
+
+/** Finishes one capture and reports whether a coalesced replacement must now run. */
+export function finishTerminalSnapshotReconcile(state: TerminalSnapshotCaptureState): boolean {
+  state.snapshotReconcileActive = false;
+  const shouldRetry = state.snapshotReconcileQueued;
+  state.snapshotReconcileQueued = false;
+  return shouldRetry;
 }
 
 /**
@@ -64,10 +83,19 @@ export interface TerminalSnapshotCaptureState {
  */
 export function supersedeTerminalSnapshotCapture(state: TerminalSnapshotCaptureState): boolean {
   if (!state.snapshotReconcileActive) return false;
-  state.snapshotReconcileActive = false;
-  state.snapshotBufferedOutputEvents.length = 0;
-  state.snapshotReconcileRequestId += 1;
+  supersedeTerminalSnapshotCaptureAndTakeBuffered(state);
   return true;
+}
+
+/** Invalidates one capture and returns its buffered output for ordered flush or explicit ACK. */
+export function supersedeTerminalSnapshotCaptureAndTakeBuffered(
+  state: TerminalSnapshotCaptureState,
+): TerminalOutputEvent[] {
+  if (!state.snapshotReconcileActive) return [];
+  state.snapshotReconcileActive = false;
+  state.snapshotReconcileQueued = false;
+  state.snapshotReconcileRequestId += 1;
+  return state.snapshotBufferedOutputEvents.splice(0);
 }
 
 export type TerminalRuntimeStatus = "connecting" | "replaying" | "ready" | "error";
@@ -144,6 +172,7 @@ export interface TerminalRuntimeEntry {
   lastOutputSequence: number;
   snapshotReconcileActive: boolean;
   snapshotBufferedOutputEvents: TerminalOutputEvent[];
+  snapshotReconcileQueued: boolean;
   snapshotReconcileRequestId: number;
   snapshotReconcileTimer: number | null;
   webglLoadFrame: number | null;

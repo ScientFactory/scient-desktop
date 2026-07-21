@@ -8,7 +8,10 @@ import {
   acceptTerminalOutputSequence,
   acceptTerminalSnapshotBarrier,
   buildTerminalRuntimeKey,
+  finishTerminalSnapshotReconcile,
+  requestTerminalSnapshotReconcile,
   supersedeTerminalSnapshotCapture,
+  supersedeTerminalSnapshotCaptureAndTakeBuffered,
 } from "./terminalRuntimeTypes";
 
 describe("buildTerminalRuntimeKey", () => {
@@ -34,16 +37,62 @@ describe("terminal snapshot capture", () => {
             outputSequence: 1,
           },
         ],
+        snapshotReconcileQueued: true,
         snapshotReconcileRequestId: 7,
       };
 
       expect(supersedeTerminalSnapshotCapture(capture)).toBe(true);
       expect(capture.snapshotReconcileActive).toBe(false);
       expect(capture.snapshotBufferedOutputEvents).toEqual([]);
+      expect(capture.snapshotReconcileQueued).toBe(false);
       expect(capture.snapshotReconcileRequestId).toBe(8);
       expect(supersedeTerminalSnapshotCapture(capture)).toBe(false);
     },
   );
+
+  it("queues one replacement when a reconnect signal arrives behind a wedged capture", () => {
+    const capture = {
+      snapshotReconcileActive: true,
+      snapshotBufferedOutputEvents: [],
+      snapshotReconcileQueued: false,
+      snapshotReconcileRequestId: 1,
+    };
+
+    expect(requestTerminalSnapshotReconcile(capture)).toBe(false);
+    expect(requestTerminalSnapshotReconcile(capture)).toBe(false);
+    expect(capture.snapshotReconcileQueued).toBe(true);
+    expect(finishTerminalSnapshotReconcile(capture)).toBe(true);
+    expect(capture.snapshotReconcileActive).toBe(false);
+    expect(capture.snapshotReconcileQueued).toBe(false);
+    expect(requestTerminalSnapshotReconcile(capture)).toBe(true);
+  });
+
+  it("returns buffered output when an exit supersedes a capture so callers can flush it first", () => {
+    const older = {
+      type: "output" as const,
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      createdAt: new Date().toISOString(),
+      data: "before exit",
+      byteLength: 11,
+      outputEpoch: "epoch-1",
+      outputSequence: 2,
+    };
+    const capture = {
+      snapshotReconcileActive: true,
+      snapshotBufferedOutputEvents: [older],
+      snapshotReconcileQueued: true,
+      snapshotReconcileRequestId: 4,
+    };
+
+    expect(supersedeTerminalSnapshotCaptureAndTakeBuffered(capture)).toEqual([older]);
+    expect(capture).toMatchObject({
+      snapshotReconcileActive: false,
+      snapshotBufferedOutputEvents: [],
+      snapshotReconcileQueued: false,
+      snapshotReconcileRequestId: 5,
+    });
+  });
 });
 
 describe("terminal output barriers", () => {
