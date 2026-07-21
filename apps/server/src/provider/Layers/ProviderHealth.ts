@@ -1622,11 +1622,12 @@ export const checkAntigravityProviderStatus = (
     if (Option.isNone(versionProbe.success)) {
       return {
         provider: ANTIGRAVITY_PROVIDER,
-        status: "warning",
-        available: true,
+        status: "error",
+        available: false,
         authStatus: "unknown",
         checkedAt,
-        message: "Antigravity CLI version check timed out.",
+        message:
+          "Scient could not verify Antigravity CLI 1.1.4 or newer because the version check timed out.",
       } satisfies ServerProviderStatus;
     }
     const version = versionProbe.success.value;
@@ -1641,10 +1642,18 @@ export const checkAntigravityProviderStatus = (
       } satisfies ServerProviderStatus;
     }
     const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
-    if (
-      parsedVersion !== null &&
-      compareSemverVersions(parsedVersion, MINIMUM_ANTIGRAVITY_CLI_VERSION) < 0
-    ) {
+    if (parsedVersion === null) {
+      return {
+        provider: ANTIGRAVITY_PROVIDER,
+        status: "error",
+        available: false,
+        authStatus: "unknown",
+        checkedAt,
+        message:
+          "Scient could not verify Antigravity CLI 1.1.4 or newer from the version command output.",
+      } satisfies ServerProviderStatus;
+    }
+    if (compareSemverVersions(parsedVersion, MINIMUM_ANTIGRAVITY_CLI_VERSION) < 0) {
       return {
         provider: ANTIGRAVITY_PROVIDER,
         status: "error",

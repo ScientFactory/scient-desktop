@@ -4,7 +4,7 @@
 
 import type { ServerProviderConnectionMethod, ServerProviderInstallPlan } from "@synara/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   CLAUDE_CONNECTION_METHOD_OPTIONS,
@@ -55,6 +55,10 @@ export function ProviderConnectionDialog() {
   const [authorizationCode, setAuthorizationCode] = useState("");
   const [submittedAuthorizationCodeOperationId, setSubmittedAuthorizationCodeOperationId] =
     useState<string | null>(null);
+  const activeAuthorizationCodeSubmissionRef = useRef<{
+    readonly operationId: string;
+  } | null>(null);
+  const activeConnectionOperationIdRef = useRef<string | null>(null);
   const status = provider
     ? configQuery.data?.providers.find((entry) => entry.provider === provider)
     : undefined;
@@ -76,6 +80,7 @@ export function ProviderConnectionDialog() {
     ["starting", "waiting_for_browser", "verifying"].includes(status.connectionState.status)
       ? status.connectionState
       : null;
+  activeConnectionOperationIdRef.current = activeConnection?.operationId ?? null;
 
   useEffect(() => {
     setRuntimeReconnectBaselineOperationId(undefined);
@@ -119,10 +124,15 @@ export function ProviderConnectionDialog() {
   useEffect(() => {
     setAuthorizationCode("");
     const operationId = activeConnection?.operationId;
+    if (activeAuthorizationCodeSubmissionRef.current?.operationId !== operationId) {
+      activeAuthorizationCodeSubmissionRef.current = null;
+    }
     if (operationId) {
       setSubmittedAuthorizationCodeOperationId((submitted) =>
         submitted === operationId ? submitted : null,
       );
+    } else {
+      setSubmittedAuthorizationCodeOperationId(null);
     }
   }, [activeConnection?.operationId]);
 
@@ -179,9 +189,20 @@ export function ProviderConnectionDialog() {
   const startSignIn = (method?: ServerProviderConnectionMethod) =>
     runAction(() => performStartSignIn(method));
 
+  const invalidateAuthorizationCodeSubmission = (operationId: string) => {
+    if (activeAuthorizationCodeSubmissionRef.current?.operationId === operationId) {
+      activeAuthorizationCodeSubmissionRef.current = null;
+    }
+    setAuthorizationCode("");
+    setSubmittedAuthorizationCodeOperationId((submitted) =>
+      submitted === operationId ? null : submitted,
+    );
+  };
+
   const cancelSignIn = () => {
     const operationId = status?.connectionState?.operationId;
     if (!operationId) return Promise.resolve();
+    invalidateAuthorizationCodeSubmission(operationId);
     return runAction(async () => {
       const result = await ensureNativeApi().server.cancelProviderConnection({
         provider,
@@ -194,6 +215,7 @@ export function ProviderConnectionDialog() {
   const restartSignIn = () => {
     const operation = status?.connectionState;
     if (!operation) return Promise.resolve();
+    invalidateAuthorizationCodeSubmission(operation.operationId);
     return runAction(async () => {
       const cancelled = await ensureNativeApi().server.cancelProviderConnection({
         provider,
@@ -215,16 +237,47 @@ export function ProviderConnectionDialog() {
     const code = authorizationCode.trim();
     if (!code) return Promise.resolve();
     const operationId = activeConnection.operationId;
-    return runAction(async () => {
-      const result = await ensureNativeApi().server.submitProviderConnectionAuthorizationCode({
+    if (activeAuthorizationCodeSubmissionRef.current?.operationId === operationId) {
+      return Promise.resolve();
+    }
+    const submission = { operationId };
+    activeAuthorizationCodeSubmissionRef.current = submission;
+    setAuthorizationCode("");
+    setSubmittedAuthorizationCodeOperationId(operationId);
+    setActionError(null);
+    void ensureNativeApi()
+      .server.submitProviderConnectionAuthorizationCode({
         provider,
         operationId,
         authorizationCode: code,
+      })
+      .then((result) => {
+        if (
+          activeAuthorizationCodeSubmissionRef.current !== submission ||
+          activeConnectionOperationIdRef.current !== operationId
+        ) {
+          return;
+        }
+        activeAuthorizationCodeSubmissionRef.current = null;
+        applyProviderStatusesToCache(queryClient, result.providers);
+        setSubmittedAuthorizationCodeOperationId((submitted) =>
+          submitted === operationId ? null : submitted,
+        );
+      })
+      .catch((error) => {
+        if (
+          activeAuthorizationCodeSubmissionRef.current !== submission ||
+          activeConnectionOperationIdRef.current !== operationId
+        ) {
+          return;
+        }
+        activeAuthorizationCodeSubmissionRef.current = null;
+        setSubmittedAuthorizationCodeOperationId((submitted) =>
+          submitted === operationId ? null : submitted,
+        );
+        setActionError(error instanceof Error ? error.message : "The code could not be submitted.");
       });
-      applyProviderStatusesToCache(queryClient, result.providers);
-      setAuthorizationCode("");
-      setSubmittedAuthorizationCodeOperationId(operationId);
-    });
+    return Promise.resolve();
   };
 
   const install = () =>

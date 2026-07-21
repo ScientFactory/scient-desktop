@@ -837,62 +837,107 @@ describe("ProviderConnectionDialog", () => {
     }
   });
 
-  it("submits Google's one-time code even before a reopen URL is available", async () => {
-    const active = {
-      provider: "antigravity",
-      status: "error",
-      available: true,
-      authStatus: "unauthenticated",
-      checkedAt,
-      runtime: systemRuntime,
-      connectionState: {
-        operationId: "connect-antigravity-code",
-        method: "antigravity_browser",
-        status: "waiting_for_browser",
-        startedAt: new Date().toISOString(),
-        finishedAt: null,
-        message: "Finish signing in to Google, then paste the code here.",
-      },
-    } satisfies ServerProviderStatus;
-    const submitProviderConnectionAuthorizationCode = vi
-      .fn()
-      .mockResolvedValue({ providers: [active] });
-    const restoreNativeApi = installNativeApi({ submitProviderConnectionAuthorizationCode });
-    const queryClient = createQueryClient(active);
-    useProviderConnectionDialogStore.getState().openDialog("antigravity", "provider_picker");
-
-    const screen = await render(
-      <QueryClientProvider client={queryClient}>
-        <ProviderConnectionDialog />
-      </QueryClientProvider>,
-    );
-
-    try {
-      const submitButton = page.getByRole("button", { name: "Submit code" });
-      await expect.element(submitButton).toBeDisabled();
-      await page.getByPlaceholder("Paste authorization code").fill("4/test-code-123");
-      await submitButton.click();
-      await vi.waitFor(() =>
-        expect(submitProviderConnectionAuthorizationCode).toHaveBeenCalledWith({
-          provider: "antigravity",
+  it.each(["resolve", "reject"] as const)(
+    "clears Google's one-time code immediately and ignores a late %s after cancellation",
+    async (lateSettlement) => {
+      const active = {
+        provider: "antigravity",
+        status: "error",
+        available: true,
+        authStatus: "unauthenticated",
+        checkedAt,
+        runtime: systemRuntime,
+        connectionState: {
           operationId: "connect-antigravity-code",
-          authorizationCode: "4/test-code-123",
-        }),
+          method: "antigravity_browser",
+          status: "waiting_for_browser",
+          startedAt: new Date().toISOString(),
+          finishedAt: null,
+          message: "Finish signing in to Google, then paste the code here.",
+        },
+      } satisfies ServerProviderStatus;
+      const cancelled = {
+        ...active,
+        connectionState: {
+          ...active.connectionState,
+          status: "cancelled",
+          finishedAt: new Date().toISOString(),
+          message: "Sign in was cancelled.",
+        },
+      } satisfies ServerProviderStatus;
+      let resolveSubmission!: (result: { providers: ServerProviderStatus[] }) => void;
+      let rejectSubmission!: (error: Error) => void;
+      const pendingSubmission = new Promise<{ providers: ServerProviderStatus[] }>(
+        (resolve, reject) => {
+          resolveSubmission = resolve;
+          rejectSubmission = reject;
+        },
       );
-      await expect.element(page.getByText("Code submitted. Finishing sign in.")).toBeVisible();
-      await expect
-        .element(page.getByPlaceholder("Paste authorization code"))
-        .not.toBeInTheDocument();
-      useProviderConnectionDialogStore.getState().setOpen(false);
+      const submitProviderConnectionAuthorizationCode = vi.fn().mockReturnValue(pendingSubmission);
+      const cancelProviderConnection = vi.fn().mockResolvedValue({ providers: [cancelled] });
+      const restoreNativeApi = installNativeApi({
+        submitProviderConnectionAuthorizationCode,
+        cancelProviderConnection,
+      });
+      const queryClient = createQueryClient(active);
       useProviderConnectionDialogStore.getState().openDialog("antigravity", "provider_picker");
-      await expect.element(page.getByText("Code submitted. Finishing sign in.")).toBeVisible();
-      expect(submitProviderConnectionAuthorizationCode).toHaveBeenCalledTimes(1);
-    } finally {
-      await screen.unmount();
-      queryClient.clear();
-      restoreNativeApi();
-    }
-  });
+
+      const screen = await render(
+        <QueryClientProvider client={queryClient}>
+          <ProviderConnectionDialog />
+        </QueryClientProvider>,
+      );
+
+      try {
+        const submitButton = page.getByRole("button", { name: "Submit code" });
+        await expect.element(submitButton).toBeDisabled();
+        await page.getByPlaceholder("Paste authorization code").fill("4/test-code-123");
+        await submitButton.click();
+        await vi.waitFor(() =>
+          expect(submitProviderConnectionAuthorizationCode).toHaveBeenCalledWith({
+            provider: "antigravity",
+            operationId: "connect-antigravity-code",
+            authorizationCode: "4/test-code-123",
+          }),
+        );
+        await expect.element(page.getByText("Code submitted. Finishing sign in.")).toBeVisible();
+        await expect
+          .element(page.getByPlaceholder("Paste authorization code"))
+          .not.toBeInTheDocument();
+        const cancelButton = page.getByRole("button", { name: "Cancel sign in" });
+        const restartButton = page.getByRole("button", { name: "Restart sign in" });
+        await expect.element(cancelButton).not.toBeDisabled();
+        await expect.element(restartButton).not.toBeDisabled();
+        expect(submitProviderConnectionAuthorizationCode).toHaveBeenCalledTimes(1);
+        await cancelButton.click();
+        await vi.waitFor(() =>
+          expect(cancelProviderConnection).toHaveBeenCalledWith({
+            provider: "antigravity",
+            operationId: "connect-antigravity-code",
+          }),
+        );
+        await expect.element(page.getByText("Sign in was cancelled.")).toBeVisible();
+
+        if (lateSettlement === "resolve") resolveSubmission({ providers: [active] });
+        else rejectSubmission(new Error("Stale authorization-code failure."));
+        await Promise.resolve();
+        await Promise.resolve();
+
+        await expect.element(page.getByText("Sign in was cancelled.")).toBeVisible();
+        await expect
+          .element(page.getByText("Stale authorization-code failure."))
+          .not.toBeInTheDocument();
+        expect(
+          queryClient.getQueryData<ServerConfig>(serverQueryKeys.config())?.providers[0]
+            ?.connectionState?.status,
+        ).toBe("cancelled");
+      } finally {
+        await screen.unmount();
+        queryClient.clear();
+        restoreNativeApi();
+      }
+    },
+  );
 
   it("retries the same Claude sign-in method after a failed attempt", async () => {
     const failed = {

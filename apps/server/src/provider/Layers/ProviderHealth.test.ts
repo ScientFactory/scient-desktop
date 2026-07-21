@@ -2,7 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ServerProviderStatus } from "@synara/contracts";
 import { DEFAULT_SERVER_SETTINGS, ServerProviderUpdateError } from "@synara/contracts";
 import { describe, it, assert } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, Sink, Stream } from "effect";
+import { Duration, Effect, Fiber, FileSystem, Layer, Path, Sink, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -2002,6 +2002,52 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
   });
 
   describe("checkAntigravityProviderStatus", () => {
+    it.effect("rejects an unparseable Antigravity version", () =>
+      Effect.gen(function* () {
+        const status = yield* checkAntigravityProviderStatus();
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.available, false);
+        assert.strictEqual(status.authStatus, "unknown");
+        assert.strictEqual(status.version, undefined);
+        assert.strictEqual(
+          status.message,
+          "Scient could not verify Antigravity CLI 1.1.4 or newer from the version command output.",
+        );
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) => {
+            assert.strictEqual(args.join(" "), "--version");
+            return { stdout: "Antigravity development build\n", stderr: "", code: 0 };
+          }),
+        ),
+      ),
+    );
+
+    it.effect("rejects an Antigravity version probe timeout", () => {
+      return Effect.gen(function* () {
+        const statusFiber = yield* checkAntigravityProviderStatus().pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(Duration.millis(4_001));
+        yield* Effect.yieldNow;
+        const status = yield* Fiber.join(statusFiber);
+
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.available, false);
+        assert.strictEqual(status.authStatus, "unknown");
+        assert.strictEqual(
+          status.message,
+          "Scient could not verify Antigravity CLI 1.1.4 or newer because the version check timed out.",
+        );
+      }).pipe(
+        Effect.provide(
+          hangingSpawnerLayer({
+            onKill: () => undefined,
+            shouldHang: (args, command) => command === "agy" && args.join(" ") === "--version",
+          }),
+        ),
+      );
+    });
+
     it.effect("rejects versions that predate Scient's browser-auth flow", () =>
       Effect.gen(function* () {
         const status = yield* checkAntigravityProviderStatus();
