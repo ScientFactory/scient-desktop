@@ -172,6 +172,10 @@
       "types": "./src/providerUsage.ts",
       "import": "./src/providerUsage.ts"
     },
+    "./providerVersions": {
+      "types": "./src/providerVersions.ts",
+      "import": "./src/providerVersions.ts"
+    },
     "./formatBytes": {
       "types": "./src/formatBytes.ts",
       "import": "./src/formatBytes.ts"
