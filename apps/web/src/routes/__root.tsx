@@ -46,6 +46,7 @@ import {
   serverQueryKeys,
   serverSettingsQueryOptions,
 } from "../lib/serverReactQuery";
+import { applyProviderStatusesToCache } from "../lib/providerStatusCache";
 import { ensureNativeApi, readNativeApi } from "../nativeApi";
 import {
   finalizePromotedDraftThreads,
@@ -1457,10 +1458,7 @@ function EventRouter() {
         void queryClient.fetchQuery(serverConfigQueryOptions()).catch(() => undefined);
         return;
       }
-      queryClient.setQueryData(serverQueryKeys.config(), {
-        ...currentConfig,
-        providers: payload.providers,
-      });
+      applyProviderStatusesToCache(queryClient, payload.providers);
       if (shouldInvalidateProviderDiscovery) {
         // Model and agent discovery can depend on auth, availability, and installed versions,
         // but not on every provider-status timestamp replay.
