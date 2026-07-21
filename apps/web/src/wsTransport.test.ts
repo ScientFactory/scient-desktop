@@ -204,6 +204,26 @@ describe("WsTransport", () => {
     harness.transport.dispose();
   });
 
+  it("invalidates instead of starting a same-generation replacement when cancellation never settles", async () => {
+    vi.useFakeTimers();
+    const harness = makeStreamHarness();
+    harness.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    harness.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(harness.cancels[0]).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(harness.supervisor.invalidate).toHaveBeenCalledWith(
+      1,
+      "stream test.stream did not settle after cancellation",
+    );
+    expect(harness.runtime.runCallback).toHaveBeenCalledTimes(1);
+    harness.transport.dispose();
+  });
+
   it("restarts a domain-failed stream without replacing its healthy session", async () => {
     vi.useFakeTimers();
     vi.spyOn(Math, "random").mockReturnValue(0.5);

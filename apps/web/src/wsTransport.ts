@@ -767,7 +767,17 @@ export class WsTransport {
       this.streamCleanups.delete(key);
       clearTimeout(existing.healthyTimer);
       existing.cancel();
-      await this.waitForStreamSettlement(existing.settled);
+      const settled = await this.waitForStreamSettlement(existing.settled);
+      if (!settled) {
+        if (this.streamStartTokens.get(key)?.identity === identity) {
+          this.streamStartTokens.delete(key);
+        }
+        this.supervisor.invalidate(
+          existing.generation,
+          `stream ${key} did not settle after cancellation`,
+        );
+        return;
+      }
     }
     if (
       this.disposed ||
@@ -945,7 +955,13 @@ export class WsTransport {
         this.streamCleanups.delete(key);
         clearTimeout(cleanup.healthyTimer);
         cleanup.cancel();
-        await this.waitForStreamSettlement(cleanup.settled);
+        const settled = await this.waitForStreamSettlement(cleanup.settled);
+        if (!settled) {
+          this.supervisor.invalidate(
+            cleanup.generation,
+            `stream ${key} did not settle after cancellation`,
+          );
+        }
       })
       .finally(() => {
         if (this.streamTransitions.get(key) === transition) {
@@ -955,13 +971,13 @@ export class WsTransport {
     this.streamTransitions.set(key, transition);
   }
 
-  private async waitForStreamSettlement(settled: Promise<void>): Promise<void> {
+  private async waitForStreamSettlement(settled: Promise<void>): Promise<boolean> {
     let timeout: ReturnType<typeof setTimeout> | null = null;
     try {
-      await Promise.race([
-        settled,
-        new Promise<void>((resolve) => {
-          timeout = setTimeout(resolve, STREAM_SETTLEMENT_TIMEOUT_MS);
+      return await Promise.race([
+        settled.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timeout = setTimeout(() => resolve(false), STREAM_SETTLEMENT_TIMEOUT_MS);
         }),
       ]);
     } finally {
