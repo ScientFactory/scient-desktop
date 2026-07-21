@@ -44,6 +44,7 @@ import { useSplitViewStore } from "../splitViewStore";
 import { useStore } from "../store";
 import {
   createShellSnapshotFromReadModel,
+  createTestEnvironmentDescriptor,
   flattenEffectRpcRequestPayload,
   readEffectRpcClientMessage,
   sendEffectRpcChunk,
@@ -1021,6 +1022,9 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   if (tag === WS_METHODS.serverGetConfig) {
     return fixture.serverConfig;
   }
+  if (tag === WS_METHODS.serverGetEnvironment) {
+    return createTestEnvironmentDescriptor();
+  }
   if (tag === WS_METHODS.gitListBranches) {
     const cwd = typeof body.cwd === "string" ? body.cwd : null;
     const branchName = cwd ? (fixture.gitBranchByCwd[cwd] ?? "main") : "main";
@@ -1082,6 +1086,8 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
       status: "running",
       pid: 123,
       history: "",
+      outputEpoch: "epoch-1",
+      outputSequence: 0,
       exitCode: null,
       exitSignal: null,
       updatedAt: NOW_ISO,
@@ -1250,8 +1256,13 @@ const worker = setupWorker(
         method === WS_METHODS.subscribeServerProviderStatuses ||
         method === WS_METHODS.subscribeServerSettings ||
         method === WS_METHODS.subscribeTerminalEvents ||
-        method === WS_METHODS.subscribeOrchestrationDomainEvents
+        method === WS_METHODS.subscribeOrchestrationDomainEvents ||
+        method === WS_METHODS.subscribeProjectDevServerEvents ||
+        method === WS_METHODS.subscribeAutomationEvents
       ) {
+        // Keep unasserted streaming subscriptions open. Completing them with a
+        // unary `{}` response is a protocol error and correctly triggers the
+        // connection supervisor's recovery path.
         return;
       }
       sendEffectRpcExit(client, parsed.request.id, resolveWsRpc(requestBody));

@@ -2,6 +2,7 @@
 // Purpose: Implements server-side terminal sessions, cleanup orchestration, history persistence, and PTY output flow control.
 // Layer: Terminal infrastructure
 // Depends on: PTY adapters, process-tree cleanup helpers, shared terminal contracts, and server config.
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
@@ -1001,6 +1002,7 @@ interface KillEscalationHandle {
 }
 
 export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> {
+  private readonly outputEpoch = randomUUID();
   private readonly sessions = new Map<string, TerminalSessionState>();
   private readonly logsDir: string;
   private managedWrapperBinDir: string | null;
@@ -1124,6 +1126,8 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
           modeReplayTracker: null,
           pendingOutputChunks: [],
           pendingOutputLength: 0,
+          outputSequence: 0,
+          outputEpoch: this.outputEpoch,
           outputFlushTimer: null,
           streamOutput: input.streamOutput ?? true,
           outputPaused: false,
@@ -1333,6 +1337,8 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
           modeReplayTracker: null,
           pendingOutputChunks: [],
           pendingOutputLength: 0,
+          outputSequence: 0,
+          outputEpoch: this.outputEpoch,
           outputFlushTimer: null,
           // Restart has no headless mode of its own; fresh sessions stream normally
           // and existing sessions (below) keep whatever mode they were opened with.
@@ -1685,6 +1691,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     // history above, but skip the live broadcast so unviewed background output
     // never reaches the WebSocket fanout.
     if (session.streamOutput) {
+      session.outputSequence += 1;
       this.emitEvent({
         type: "output",
         threadId: session.threadId,
@@ -1692,6 +1699,8 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
         createdAt: new Date().toISOString(),
         data,
         byteLength,
+        outputEpoch: session.outputEpoch,
+        outputSequence: session.outputSequence,
       });
     }
     if (session.outputAckObserved) {
@@ -2476,6 +2485,8 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       status: session.status,
       pid: session.pid,
       history: session.history.toString(),
+      outputEpoch: session.outputEpoch,
+      outputSequence: session.outputSequence,
       ...(replayPreamble.length > 0 ? { replayPreamble } : {}),
       exitCode: session.exitCode,
       exitSignal: session.exitSignal,

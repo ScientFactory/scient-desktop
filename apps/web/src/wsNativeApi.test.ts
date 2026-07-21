@@ -26,6 +26,7 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestMock = vi.fn<(...args: Array<unknown>) => Promise<unknown>>();
+const onStateChangeMock = vi.fn(() => () => undefined);
 const showContextMenuFallbackMock =
   vi.fn<
     <T extends string>(
@@ -62,9 +63,7 @@ vi.mock("./wsTransport", () => {
     WsTransport: class MockWsTransport {
       request = requestMock;
       subscribe = subscribeMock;
-      onStateChange() {
-        return () => undefined;
-      }
+      onStateChange = onStateChangeMock;
       getLatestPush(channel: string) {
         return latestPushByChannel.get(channel) ?? null;
       }
@@ -116,6 +115,7 @@ const defaultProviders: ReadonlyArray<ServerProviderStatus> = [
 beforeEach(() => {
   vi.resetModules();
   requestMock.mockReset();
+  onStateChangeMock.mockClear();
   showContextMenuFallbackMock.mockReset();
   subscribeMock.mockClear();
   channelListeners.clear();
@@ -130,6 +130,16 @@ afterEach(() => {
 });
 
 describe("wsNativeApi", () => {
+  it("seeds renderer transport state from the new transport immediately", async () => {
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    createWsNativeApi();
+
+    expect(onStateChangeMock).toHaveBeenCalledWith(expect.any(Function), {
+      replayCurrent: true,
+    });
+  });
+
   it("delivers and caches valid server.welcome payloads", async () => {
     const { createWsNativeApi, onServerWelcome } = await import("./wsNativeApi");
 
@@ -348,6 +358,8 @@ describe("wsNativeApi", () => {
       createdAt: "2026-02-24T00:00:00.000Z",
       type: "output",
       data: "hello",
+      outputEpoch: "epoch-1",
+      outputSequence: 1,
     } as const;
     emitPush(WS_CHANNELS.terminalEvent, terminalEvent);
 

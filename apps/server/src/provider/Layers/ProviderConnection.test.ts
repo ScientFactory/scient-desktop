@@ -26,6 +26,7 @@ import {
 import {
   expectedMethodForProvider,
   makeProviderConnectionLive,
+  parseGrokOAuthAuthorizationUrl,
   providerConnectionCommandArgs,
 } from "./ProviderConnection";
 
@@ -79,7 +80,9 @@ function makeHandle(input: {
     kill: () => Effect.sync(() => input.onKill?.()),
     stdin: Sink.drain,
     stdout: input.hanging
-      ? Stream.never
+      ? input.stdout
+        ? Stream.concat(Stream.make(encoder.encode(input.stdout)), Stream.never)
+        : Stream.never
       : Stream.make(encoder.encode(input.stdout ?? "browser opened")),
     stderr: input.hanging ? Stream.never : Stream.empty,
     all: Stream.empty,
@@ -91,6 +94,7 @@ function makeHandle(input: {
 function makeConnectionTestLayer(input?: {
   readonly available?: boolean;
   readonly hanging?: boolean;
+  readonly processExitCode?: number;
   readonly processStdout?: string;
   readonly provider?: ProviderKind;
   readonly runtimeSource?: ServerProviderRuntimeSource;
@@ -170,6 +174,7 @@ function makeConnectionTestLayer(input?: {
       input?.onSpawn?.(captured);
       return Effect.succeed(
         makeHandle({
+          ...(input?.processExitCode !== undefined ? { code: input.processExitCode } : {}),
           ...(input?.hanging !== undefined ? { hanging: input.hanging } : {}),
           ...(input?.onKill ? { onKill: input.onKill } : {}),
           ...(input?.processStdout ? { stdout: input.processStdout } : {}),
@@ -285,7 +290,7 @@ describe("provider connection command allowlist", () => {
 
   it("uses Grok's provider-owned browser login", () => {
     expect(expectedMethodForProvider("grok")).toBe("grok_browser");
-    expect(providerConnectionCommandArgs("grok", "grok_browser")).toEqual(["login"]);
+    expect(providerConnectionCommandArgs("grok", "grok_browser")).toEqual(["login", "--oauth"]);
   });
 
   it("uses Droid's ACP device-pairing authentication", () => {
@@ -302,6 +307,31 @@ describe("provider connection command allowlist", () => {
     expect(providerConnectionCommandArgs("claudeAgent", "claude_subscription")).toBeNull();
     expect(providerConnectionCommandArgs("cursor", "codex_browser")).toBeNull();
     expect(expectedMethodForProvider("opencode")).toBeNull();
+  });
+});
+
+describe("Grok OAuth authorization URL parsing", () => {
+  const authorizationUrl =
+    "https://auth.x.ai/oauth2/authorize?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A50418%2Fcallback&state=test-state&code_challenge=test-challenge";
+
+  it("accepts the exact xAI authorization route with a loopback callback", () => {
+    expect(parseGrokOAuthAuthorizationUrl(`Open this URL:\n${authorizationUrl}\n`)).toBe(
+      authorizationUrl,
+    );
+  });
+
+  it("rejects lookalike hosts and callbacks that are not local", () => {
+    expect(
+      parseGrokOAuthAuthorizationUrl(
+        authorizationUrl.replace("auth.x.ai", "auth.x.ai.example.com"),
+      ),
+    ).toBeNull();
+    expect(
+      parseGrokOAuthAuthorizationUrl(
+        authorizationUrl.replace("127.0.0.1%3A50418", "example.com%3A50418"),
+      ),
+    ).toBeNull();
+    expect(parseGrokOAuthAuthorizationUrl(`${authorizationUrl}#unexpected-fragment`)).toBeNull();
   });
 });
 
@@ -357,8 +387,116 @@ describe("ProviderConnectionLive", () => {
     );
 
     expect(onSpawn).toHaveBeenCalledWith(
-      expect.objectContaining({ command: "grok", args: ["--no-auto-update", "login"] }),
+      expect.objectContaining({
+        command: "grok",
+        args: ["--no-auto-update", "login", "--oauth"],
+      }),
     );
+  });
+
+  it("uses direct OAuth with a system Grok runtime too", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({ provider: "grok", onSpawn });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({ provider: "grok", method: "grok_browser" });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("connected");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "grok", args: ["login", "--oauth"] }),
+    );
+  });
+
+  it("publishes only a validated transient Grok OAuth URL while sign-in is active", async () => {
+    const authorizationUrl =
+      "https://auth.x.ai/oauth2/authorize?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A50418%2Fcallback&state=test-state&code_challenge=test-challenge";
+    const fixture = makeConnectionTestLayer({
+      provider: "grok",
+      hanging: true,
+      processStdout: `Complete sign-in at:\n${authorizationUrl}\n`,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const started = yield* connection.start({ provider: "grok", method: "grok_browser" });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        yield* Effect.sleep(Duration.millis(10));
+        expect(fixture.getConnectionState()?.authorizationUrl).toBe(authorizationUrl);
+        yield* connection.cancel({ provider: "grok", operationId: operationId! });
+        expect(fixture.getConnectionState()?.authorizationUrl).toBeUndefined();
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
+  it("ends a rejected Grok OAuth flow with actionable retry guidance", async () => {
+    const fixture = makeConnectionTestLayer({
+      provider: "grok",
+      processExitCode: 1,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({ provider: "grok", method: "grok_browser" });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("failed");
+        expect(fixture.getConnectionState()?.message).toContain("fresh secure browser sign-in");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
+  it("cancels Grok OAuth and kills the waiting callback process", async () => {
+    const onKill = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "grok",
+      hanging: true,
+      onKill,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const started = yield* connection.start({
+          provider: "grok",
+          method: "grok_browser",
+        });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        expect(operationId).toBeTruthy();
+        yield* Effect.sleep(Duration.millis(5));
+        yield* connection.cancel({ provider: "grok", operationId: operationId! });
+        expect(fixture.getConnectionState()?.status).toBe("cancelled");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onKill).toHaveBeenCalledTimes(1);
+  });
+
+  it("times out Grok OAuth and kills the waiting callback process", async () => {
+    const onKill = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "grok",
+      hanging: true,
+      timeout: Duration.millis(5),
+      onKill,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({ provider: "grok", method: "grok_browser" });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("failed");
+        expect(fixture.getConnectionState()?.message).toContain("timed out");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onKill).toHaveBeenCalledTimes(1);
   });
 
   it("runs Droid's authentication-only ACP handshake before verification", async () => {

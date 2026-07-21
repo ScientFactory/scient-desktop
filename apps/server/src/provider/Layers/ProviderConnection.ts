@@ -16,7 +16,19 @@ import type {
 } from "@synara/contracts";
 import { ServerProviderConnectionError } from "@synara/contracts";
 import { prepareWindowsSafeProcess } from "@synara/shared/windowsProcess";
-import { Duration, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Result, Scope } from "effect";
+import {
+  Duration,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Ref,
+  Result,
+  Scope,
+  Stream,
+} from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ServerConfig } from "../../config";
@@ -48,6 +60,56 @@ interface ConnectionCommand {
   readonly env: NodeJS.ProcessEnv;
   readonly waitingMessage: string;
   readonly strategy?: "antigravity-pty";
+}
+
+interface ConnectionOutputObserver {
+  readonly onOutputChunk?: (chunk: Uint8Array) => Effect.Effect<void>;
+}
+
+const GROK_OAUTH_AUTHORIZATION_ORIGIN = "https://auth.x.ai";
+const GROK_OAUTH_AUTHORIZATION_PATH = "/oauth2/authorize";
+const GROK_OAUTH_OUTPUT_BUFFER_MAX_CHARS = 16 * 1024;
+
+export function parseGrokOAuthAuthorizationUrl(output: string): string | null {
+  const candidates =
+    output.match(/https:\/\/auth\.x\.ai\/oauth2\/authorize\?[^\s\u0000-\u001f\u007f<>"']+/gu) ?? [];
+  for (const candidate of candidates) {
+    if (candidate.length > 8_192) continue;
+    try {
+      const url = new URL(candidate);
+      if (
+        url.origin !== GROK_OAUTH_AUTHORIZATION_ORIGIN ||
+        url.pathname !== GROK_OAUTH_AUTHORIZATION_PATH ||
+        url.hash ||
+        url.username ||
+        url.password ||
+        url.searchParams.get("response_type") !== "code" ||
+        !url.searchParams.get("state") ||
+        !url.searchParams.get("code_challenge")
+      ) {
+        continue;
+      }
+      const redirectValue = url.searchParams.get("redirect_uri");
+      if (!redirectValue) continue;
+      const redirectUrl = new URL(redirectValue);
+      if (
+        redirectUrl.protocol !== "http:" ||
+        redirectUrl.hostname !== "127.0.0.1" ||
+        !redirectUrl.port ||
+        redirectUrl.pathname !== "/callback" ||
+        redirectUrl.search ||
+        redirectUrl.hash ||
+        redirectUrl.username ||
+        redirectUrl.password
+      ) {
+        continue;
+      }
+      return url.toString();
+    } catch {
+      // Ignore malformed or incomplete output while the CLI is still streaming.
+    }
+  }
+  return null;
 }
 
 export function expectedMethodForProvider(
@@ -87,7 +149,7 @@ export function providerConnectionCommandArgs(
   }
   if (provider === "cursor" && method === "cursor_browser") return ["login"];
   if (provider === "antigravity" && method === "antigravity_browser") return [];
-  if (provider === "grok" && method === "grok_browser") return ["login"];
+  if (provider === "grok" && method === "grok_browser") return ["login", "--oauth"];
   if (provider === "droid" && method === "droid_device_pairing") {
     return ["exec", "--output-format", "acp"];
   }
@@ -287,7 +349,8 @@ export function makeProviderConnectionLive(options?: {
             executable: runtime.executable ?? "grok",
             args: runtime.source === "managed" ? ["--no-auto-update", ...args] : args,
             env: process.env,
-            waitingMessage: "Finish signing in to xAI in the browser window.",
+            waitingMessage:
+              "Finish authorizing Grok in the xAI browser window. No terminal code is required.",
           } satisfies ConnectionCommand;
         }
 
@@ -339,6 +402,7 @@ export function makeProviderConnectionLive(options?: {
 
       const runCommandResult = Effect.fn("ProviderConnection.runCommandResult")(function* (
         command: ConnectionCommand,
+        observer?: ConnectionOutputObserver,
       ) {
         const prepared = prepareWindowsSafeProcess(command.executable, command.args, {
           env: command.env,
@@ -352,14 +416,16 @@ export function makeProviderConnectionLive(options?: {
           }),
         );
         yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
+        const observe = (stream: Stream.Stream<Uint8Array, unknown>) =>
+          observer?.onOutputChunk ? stream.pipe(Stream.tap(observer.onOutputChunk)) : stream;
         const [stdout, stderr, exitCode] = yield* Effect.all(
           [
             collectUint8StreamText({
-              stream: child.stdout,
+              stream: observe(child.stdout),
               maxBytes: CONNECTION_OUTPUT_MAX_BYTES,
             }),
             collectUint8StreamText({
-              stream: child.stderr,
+              stream: observe(child.stderr),
               maxBytes: CONNECTION_OUTPUT_MAX_BYTES,
             }),
             child.exitCode.pipe(Effect.map(Number)),
@@ -369,8 +435,8 @@ export function makeProviderConnectionLive(options?: {
         return { stdout: stdout.text, stderr: stderr.text, code: exitCode };
       });
 
-      const runCommand = (command: ConnectionCommand) =>
-        runCommandResult(command).pipe(Effect.map((result) => result.code));
+      const runCommand = (command: ConnectionCommand, observer?: ConnectionOutputObserver) =>
+        runCommandResult(command, observer).pipe(Effect.map((result) => result.code));
 
       const runAntigravityConnection = (command: ConnectionCommand) =>
         Effect.gen(function* () {
@@ -460,6 +526,7 @@ export function makeProviderConnectionLive(options?: {
             readonly status: ServerProviderConnectionState["status"];
             readonly message: string;
             readonly finished?: boolean;
+            readonly authorizationUrl?: string;
           }): ServerProviderConnectionState => ({
             operationId,
             method,
@@ -467,6 +534,7 @@ export function makeProviderConnectionLive(options?: {
             startedAt,
             finishedAt: input.finished ? new Date().toISOString() : null,
             message: input.message,
+            ...(input.authorizationUrl ? { authorizationUrl: input.authorizationUrl } : {}),
           });
 
           yield* publishState(
@@ -479,6 +547,32 @@ export function makeProviderConnectionLive(options?: {
               provider,
               state({ status: "waiting_for_browser", message: command.waitingMessage }),
             );
+            let grokOutputBuffer = "";
+            let publishedGrokAuthorizationUrl: string | null = null;
+            const grokOutputObserver: ConnectionOutputObserver | undefined =
+              provider === "grok"
+                ? {
+                    onOutputChunk: (chunk) =>
+                      Effect.gen(function* () {
+                        grokOutputBuffer =
+                          `${grokOutputBuffer}${Buffer.from(chunk).toString("utf8")}`.slice(
+                            -GROK_OAUTH_OUTPUT_BUFFER_MAX_CHARS,
+                          );
+                        const authorizationUrl = parseGrokOAuthAuthorizationUrl(grokOutputBuffer);
+                        if (!authorizationUrl || authorizationUrl === publishedGrokAuthorizationUrl)
+                          return;
+                        publishedGrokAuthorizationUrl = authorizationUrl;
+                        yield* publishState(
+                          provider,
+                          state({
+                            status: "waiting_for_browser",
+                            message: command.waitingMessage,
+                            authorizationUrl,
+                          }),
+                        );
+                      }),
+                  }
+                : undefined;
             const connectionProcess: Effect.Effect<number, unknown> =
               provider === "droid"
                 ? (options?.droidAuthenticationProbe ?? probeDroidAcpAuthentication)({
@@ -488,7 +582,7 @@ export function makeProviderConnectionLive(options?: {
                   }).pipe(Effect.as(0))
                 : command.strategy === "antigravity-pty"
                   ? runAntigravityConnection(command)
-                  : runCommand(command).pipe(Effect.scoped);
+                  : runCommand(command, grokOutputObserver).pipe(Effect.scoped);
             const exitCodeResult = yield* connectionProcess.pipe(
               Effect.timeoutOption(timeout),
               Effect.result,
@@ -521,7 +615,10 @@ export function makeProviderConnectionLive(options?: {
                 provider,
                 state({
                   status: "failed",
-                  message: "Sign in was not completed. No credentials were saved by Scient.",
+                  message:
+                    provider === "grok"
+                      ? "Grok authorization was not completed. Close any old xAI page, update Grok if an update is available, then try again to start a fresh secure browser sign-in."
+                      : "Sign in was not completed. No credentials were saved by Scient.",
                   finished: true,
                 }),
               );

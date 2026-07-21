@@ -103,6 +103,14 @@ describe("ProviderConnectionDialog", () => {
   });
 
   it("starts official browser sign-in and shows background progress", async () => {
+    const initialProvider = {
+      provider: "codex",
+      status: "warning",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+      runtime: systemRuntime,
+    } satisfies ServerProviderStatus;
     const waitingProvider = {
       provider: "codex",
       status: "warning",
@@ -120,15 +128,12 @@ describe("ProviderConnectionDialog", () => {
       },
     } satisfies ServerProviderStatus;
     const startProviderConnection = vi.fn().mockResolvedValue({ providers: [waitingProvider] });
-    const restoreNativeApi = installNativeApi({ startProviderConnection });
-    const queryClient = createQueryClient({
-      provider: "codex",
-      status: "warning",
-      available: true,
-      authStatus: "unauthenticated",
-      checkedAt,
-      runtime: systemRuntime,
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [initialProvider] });
+    const restoreNativeApi = installNativeApi({
+      refreshProviders,
+      startProviderConnection,
     });
+    const queryClient = createQueryClient(initialProvider);
     useProviderConnectionDialogStore.getState().openDialog("codex", "settings");
 
     const screen = await render(
@@ -444,6 +449,14 @@ describe("ProviderConnectionDialog", () => {
   }>)(
     "starts the guided $provider connection flow",
     async ({ provider, method, title, primaryLabel }) => {
+      const initialProvider = {
+        provider,
+        status: "warning",
+        available: true,
+        authStatus: "unauthenticated",
+        checkedAt,
+        runtime: systemRuntime,
+      } satisfies ServerProviderStatus;
       const waitingProvider = {
         provider,
         status: "warning",
@@ -461,15 +474,12 @@ describe("ProviderConnectionDialog", () => {
         },
       } satisfies ServerProviderStatus;
       const startProviderConnection = vi.fn().mockResolvedValue({ providers: [waitingProvider] });
-      const restoreNativeApi = installNativeApi({ startProviderConnection });
-      const queryClient = createQueryClient({
-        provider,
-        status: "warning",
-        available: true,
-        authStatus: "unauthenticated",
-        checkedAt,
-        runtime: systemRuntime,
+      const refreshProviders = vi.fn().mockResolvedValue({ providers: [initialProvider] });
+      const restoreNativeApi = installNativeApi({
+        refreshProviders,
+        startProviderConnection,
       });
+      const queryClient = createQueryClient(initialProvider);
       useProviderConnectionDialogStore.getState().openDialog(provider, "settings");
 
       const screen = await render(
@@ -697,6 +707,47 @@ describe("ProviderConnectionDialog", () => {
     }
   });
 
+  it("reopens the validated xAI authorization page without terminal use", async () => {
+    const authorizationUrl =
+      "https://auth.x.ai/oauth2/authorize?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A50418%2Fcallback&state=test-state&code_challenge=test-challenge";
+    const active = {
+      provider: "grok",
+      status: "error",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+      runtime: systemRuntime,
+      connectionState: {
+        operationId: "connect-grok-active",
+        method: "grok_browser",
+        status: "waiting_for_browser",
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        message: "Finish signing in to Grok.",
+        authorizationUrl,
+      },
+    } satisfies ServerProviderStatus;
+    const openExternal = vi.fn().mockResolvedValue(undefined);
+    const restoreNativeApi = installNativeApi({ openExternal });
+    const queryClient = createQueryClient(active);
+    useProviderConnectionDialogStore.getState().openDialog("grok", "provider_picker");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await page.getByRole("button", { name: "Open xAI sign-in again" }).click();
+      await vi.waitFor(() => expect(openExternal).toHaveBeenCalledWith(authorizationUrl));
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
   it("retries the same Claude sign-in method after a failed attempt", async () => {
     const failed = {
       provider: "claudeAgent",
@@ -751,6 +802,22 @@ describe("ProviderConnectionDialog", () => {
   });
 
   it("requires reviewed consent before starting a managed installation", async () => {
+    const initialProvider = {
+      provider: "antigravity",
+      status: "error",
+      available: false,
+      authStatus: "unknown",
+      checkedAt,
+      runtime: {
+        source: "missing",
+        managedVersion: null,
+        canInstall: true,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: "No usable provider runtime was found.",
+      },
+    } satisfies ServerProviderStatus;
     const installingProvider = {
       provider: "antigravity",
       status: "error",
@@ -788,23 +855,13 @@ describe("ProviderConnectionDialog", () => {
       expiresAt: "2026-07-19T12:10:00.000Z",
     });
     const installProvider = vi.fn().mockResolvedValue({ providers: [installingProvider] });
-    const restoreNativeApi = installNativeApi({ prepareProviderInstall, installProvider });
-    const queryClient = createQueryClient({
-      provider: "antigravity",
-      status: "error",
-      available: false,
-      authStatus: "unknown",
-      checkedAt,
-      runtime: {
-        source: "missing",
-        managedVersion: null,
-        canInstall: true,
-        canRepair: false,
-        canRollback: false,
-        canRemove: false,
-        message: "No usable provider runtime was found.",
-      },
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [initialProvider] });
+    const restoreNativeApi = installNativeApi({
+      refreshProviders,
+      prepareProviderInstall,
+      installProvider,
     });
+    const queryClient = createQueryClient(initialProvider);
     useProviderConnectionDialogStore.getState().openDialog("antigravity", "settings");
 
     const screen = await render(

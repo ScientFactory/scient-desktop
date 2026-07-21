@@ -121,6 +121,7 @@ export const ServerProviderConnectionState = Schema.Struct({
   startedAt: IsoDateTime,
   finishedAt: Schema.NullOr(IsoDateTime),
   message: TrimmedNonEmptyString,
+  authorizationUrl: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
 });
 export type ServerProviderConnectionState = typeof ServerProviderConnectionState.Type;
 

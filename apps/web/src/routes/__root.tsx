@@ -26,6 +26,7 @@ import { AppSnapCoordinator } from "../components/AppSnapCoordinator";
 import { AppSnapWelcomeDialog } from "../components/AppSnapWelcomeDialog";
 import { FeedbackDialog } from "../components/FeedbackDialog";
 import { ProviderConnectionDialog } from "../components/ProviderConnectionDialog";
+import { ConnectionRecoveryNotifications } from "../components/ConnectionRecoveryNotifications";
 import { SETTINGS_TARGETS } from "../settingsNavigation";
 import ShortcutsDialog from "../components/ShortcutsDialog";
 import WhatsNewDialog from "../components/WhatsNewDialog";
@@ -203,6 +204,7 @@ function RootRouteView() {
           <GlobalShortcutsDialog />
           <GlobalFeedbackDialog />
           <ProviderConnectionDialog />
+          <ConnectionRecoveryNotifications />
           <GlobalWhatsNewSurface />
           <TaskCompletionNotifications />
           <AppSnapWelcomeDialog />
@@ -1245,6 +1247,9 @@ function EventRouter() {
 
     const unsubShellEvent = api.orchestration.onShellEvent((item) => {
       if (item.kind === "snapshot") {
+        if (item.snapshot.snapshotSequence < shellSnapshotSequence) {
+          return;
+        }
         shellSnapshotSequence = item.snapshot.snapshotSequence;
         syncServerShellSnapshot(item.snapshot);
         reconcilePromotedDraftsFromShellThreads(item.snapshot.threads);

@@ -10,6 +10,10 @@ import { Effect, FileSystem, Layer, Path, ServiceMap } from "effect";
 import OS from "node:os";
 import pathPosix from "node:path/posix";
 import pathWin32 from "node:path/win32";
+import {
+  ensurePrivateScientDirectoriesSync,
+  ensurePrivateScientStateDirectoriesSync,
+} from "@synara/shared/scientDataDirectories";
 
 import { realpathNearestExisting } from "./realpathNearestExisting";
 
@@ -160,9 +164,15 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
             : yield* fs.makeTempDirectoryScoped({ prefix: baseDirOrPrefix.prefix });
         const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
 
-        yield* fs.makeDirectory(derivedPaths.stateDir, { recursive: true });
-        yield* fs.makeDirectory(derivedPaths.logsDir, { recursive: true });
-        yield* fs.makeDirectory(derivedPaths.attachmentsDir, { recursive: true });
+        yield* Effect.sync(() => {
+          if (typeof baseDirOrPrefix === "string") {
+            // Explicit test fixtures commonly use shared roots such as /tmp.
+            // Secure Scient's children without changing or rejecting that root.
+            ensurePrivateScientStateDirectoriesSync(derivedPaths);
+          } else {
+            ensurePrivateScientDirectoriesSync({ baseDir, ...derivedPaths });
+          }
+        });
 
         const { homeDir, chatWorkspaceRoot, studioWorkspaceRoot } =
           yield* resolveCanonicalWorkspaceRoots({ homeDir: OS.homedir() });

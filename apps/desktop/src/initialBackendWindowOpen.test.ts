@@ -91,4 +91,21 @@ describe("openInitialBackendWindow", () => {
     expect(options.createWindow).not.toHaveBeenCalled();
     expect(options.waitForBackendWindowReady).not.toHaveBeenCalled();
   });
+
+  it("reports a non-abort readiness failure to the lifecycle owner", async () => {
+    const error = new Error("backend stayed unready");
+    const onReadinessFailure = vi.fn();
+    const options = createOptions({
+      waitForBackendWindowReady: vi.fn(async () => {
+        throw error;
+      }),
+      onReadinessFailure,
+    });
+
+    openInitialBackendWindow(options);
+    const watchedPromise = vi.mocked(options.setReadinessInFlight).mock.calls[0]?.[0];
+    await expect(watchedPromise).resolves.toBeUndefined();
+
+    expect(onReadinessFailure).toHaveBeenCalledWith(error);
+  });
 });

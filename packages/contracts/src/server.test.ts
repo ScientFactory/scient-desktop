@@ -80,15 +80,18 @@ describe("provider connection contracts", () => {
       checkedAt: "2026-07-19T10:00:00.000Z",
       connectionState: {
         operationId: "operation-1",
-        method: "codex_browser",
+        method: "grok_browser",
         status: "waiting_for_browser",
         startedAt: "2026-07-19T10:00:00.000Z",
         finishedAt: null,
         message: "Finish signing in in the browser.",
+        authorizationUrl:
+          "https://auth.x.ai/oauth2/authorize?response_type=code&state=transient-test-state",
       },
     });
 
     expect(decoded.connectionState?.status).toBe("waiting_for_browser");
+    expect(decoded.connectionState?.authorizationUrl).toContain("https://auth.x.ai/");
     expect(Object.keys(decoded.connectionState ?? {})).not.toContain("token");
     expect(Object.keys(decoded.connectionState ?? {})).not.toContain("output");
   });

@@ -17,6 +17,7 @@ export interface InitialBackendWindowOpenOptions {
   readonly isReadinessAborted: (error: unknown) => boolean;
   readonly formatErrorMessage: (error: unknown) => string;
   readonly warn: (message: string, error: unknown) => void;
+  readonly onReadinessFailure?: (error: unknown) => void;
 }
 
 export function openInitialBackendWindow(options: InitialBackendWindowOpenOptions): void {
@@ -46,6 +47,7 @@ export function openInitialBackendWindow(options: InitialBackendWindowOpenOption
         `bootstrap backend readiness warning message=${options.formatErrorMessage(error)}`,
       );
       options.warn("[desktop] backend readiness check timed out during packaged bootstrap", error);
+      options.onReadinessFailure?.(error);
     })
     .finally(() => {
       if (options.getReadinessInFlight() === nextOpen) {

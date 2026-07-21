@@ -720,7 +720,7 @@ export const makeWsRpcLayer = () =>
         [WS_METHODS.projectsListDevServers]: () =>
           rpcEffect(devServerManager.list, "Failed to list dev servers"),
         [WS_METHODS.subscribeProjectDevServerEvents]: () =>
-          Stream.concat(
+          bufferLiveWhileInitialStreamLoads(
             Stream.fromEffect(
               devServerManager.list.pipe(
                 Effect.map(
@@ -1224,7 +1224,7 @@ export const makeWsRpcLayer = () =>
             "Failed to update keybinding",
           ),
         [WS_METHODS.subscribeServerLifecycle]: () =>
-          Stream.concat(
+          bufferLiveWhileInitialStreamLoads(
             Stream.fromEffect(
               lifecycleEvents.snapshot.pipe(
                 Effect.map((snapshot) =>
@@ -1249,7 +1249,7 @@ export const makeWsRpcLayer = () =>
             ),
           ),
         [WS_METHODS.subscribeServerConfig]: () =>
-          Stream.concat(
+          bufferLiveWhileInitialStreamLoads(
             Stream.fromEffect(
               loadServerConfig.pipe(
                 Effect.map(
@@ -1290,7 +1290,7 @@ export const makeWsRpcLayer = () =>
             ),
           ).pipe(Stream.mapError((cause) => toWsRpcError(cause, "Server config stream failed"))),
         [WS_METHODS.subscribeServerProviderStatuses]: () =>
-          Stream.concat(
+          bufferLiveWhileInitialStreamLoads(
             Stream.fromEffect(
               providerClientStatusProjection.getStatuses.pipe(
                 Effect.map((providers) => ({ providers })),
@@ -1302,7 +1302,7 @@ export const makeWsRpcLayer = () =>
             }).pipe(Stream.map((providers) => ({ providers }))),
           ),
         [WS_METHODS.subscribeServerSettings]: () =>
-          Stream.concat(
+          bufferLiveWhileInitialStreamLoads(
             Stream.fromEffect(
               serverSettings.getSettings.pipe(Effect.map((settings) => ({ settings }))),
             ),
@@ -1370,7 +1370,7 @@ export const makeWsRpcLayer = () =>
         [WS_METHODS.automationArchiveRun]: (input) =>
           rpcEffect(automationService.archiveRun(input), "Failed to update automation run"),
         [WS_METHODS.subscribeAutomationEvents]: () =>
-          Stream.merge(
+          bufferLiveWhileInitialStreamLoads(
             Stream.fromEffect(
               automationService.list({}).pipe(
                 Effect.map(({ definitions, runs }) => ({
