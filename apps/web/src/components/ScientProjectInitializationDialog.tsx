@@ -97,8 +97,8 @@ function ReadyProjectChoice(props: {
               <div>
                 <div className="text-sm font-medium text-foreground">Built-in skills</div>
                 <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                  Select the procedures this project should activate. Activation does not execute
-                  them.
+                  Select the built-ins to record for this project. Selection does not execute a
+                  skill; items marked Needs foundations remain unavailable.
                 </p>
               </div>
               <div className="divide-y divide-[color:var(--color-border)] overflow-hidden rounded-xl border border-[color:var(--color-border)] bg-[var(--color-background-elevated-primary-opaque)]">
@@ -338,7 +338,7 @@ export function ScientProjectInitializationDialog(props: {
         if (!open) props.onDecision("cancel");
       }}
     >
-      <DialogPopup surface="solid" className="max-w-2xl sm:translate-y-[10vh]" showCloseButton>
+      <DialogPopup surface="solid" className="max-w-2xl" showCloseButton>
         {preview ? (
           ready ? (
             <ReadyProjectChoice
