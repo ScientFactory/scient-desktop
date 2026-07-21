@@ -127,9 +127,7 @@ export interface PackagedDesktopLaunchCommand {
   readonly cwd: string;
 }
 
-export function assertPackagedLaunchCommandSafety(
-  launch: PackagedDesktopLaunchCommand,
-): void {
+export function assertPackagedLaunchCommandSafety(launch: PackagedDesktopLaunchCommand): void {
   const forbiddenArgument = launch.args.find(
     (argument) => argument === "--no-sandbox" || argument.startsWith("--no-sandbox="),
   );

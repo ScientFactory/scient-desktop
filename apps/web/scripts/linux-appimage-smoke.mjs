@@ -571,24 +571,20 @@ async function runScenario(appImagePath, scenario) {
     assertSandboxedPackagedArguments(packagedArguments);
     const previousUmask = process.umask(scenario.umask);
     try {
-      child = spawn(
-        "xvfb-run",
-        ["-a", appImagePath, ...packagedArguments],
-        {
-          detached: true,
-          env: {
-            ...process.env,
-            HOME: homeDir,
-            SCIENT_HOME: scientHome,
-            SYNARA_DISABLE_AUTO_UPDATE: "1",
-            XDG_CACHE_HOME: cacheHome,
-            XDG_CONFIG_HOME: configHome,
-            XDG_DATA_HOME: dataHome,
-            XDG_RUNTIME_DIR: runtimeDir,
-          },
-          stdio: ["ignore", "pipe", "pipe"],
+      child = spawn("xvfb-run", ["-a", appImagePath, ...packagedArguments], {
+        detached: true,
+        env: {
+          ...process.env,
+          HOME: homeDir,
+          SCIENT_HOME: scientHome,
+          SYNARA_DISABLE_AUTO_UPDATE: "1",
+          XDG_CACHE_HOME: cacheHome,
+          XDG_CONFIG_HOME: configHome,
+          XDG_DATA_HOME: dataHome,
+          XDG_RUNTIME_DIR: runtimeDir,
         },
-      );
+        stdio: ["ignore", "pipe", "pipe"],
+      });
     } finally {
       process.umask(previousUmask);
     }

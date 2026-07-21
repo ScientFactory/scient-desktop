@@ -313,7 +313,7 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     packagedStartupVerifier,
-    'delete env.SYNARA_AUTH_TOKEN;\n  delete env.ELECTRON_RUN_AS_NODE;',
+    "delete env.SYNARA_AUTH_TOKEN;\n  delete env.ELECTRON_RUN_AS_NODE;",
     "Expected packaged startup verification to remove inherited backend authority and Electron Node mode.",
   );
   assertContains(

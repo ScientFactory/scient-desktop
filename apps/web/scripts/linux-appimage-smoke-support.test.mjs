@@ -10,9 +10,9 @@ import {
 
 describe("linux AppImage smoke polling", () => {
   it("fails closed if a packaged command disables Electron's sandbox", () => {
-    expect(() =>
-      assertSandboxedPackagedArguments(["--disable-gpu", "--no-sandbox"]),
-    ).toThrow("must not disable Electron's sandbox");
+    expect(() => assertSandboxedPackagedArguments(["--disable-gpu", "--no-sandbox"])).toThrow(
+      "must not disable Electron's sandbox",
+    );
     expect(() => assertSandboxedPackagedArguments(["--disable-gpu"])).not.toThrow();
   });
 
