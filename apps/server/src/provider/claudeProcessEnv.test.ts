@@ -7,7 +7,7 @@ import { describe, it, assert } from "@effect/vitest";
 import { buildClaudeProcessEnv } from "./claudeProcessEnv.ts";
 
 describe("claudeProcessEnv", () => {
-  it("preserves Anthropic Console credentials and excludes subscription OAuth", () => {
+  it("preserves every Claude-supported credential source", () => {
     const env = {
       PATH: "/bin",
       HOME: "/home/tester",
@@ -22,7 +22,7 @@ describe("claudeProcessEnv", () => {
     assert.equal(result.HOME, "/home/tester");
     assert.equal(result.ANTHROPIC_API_KEY, "console-api-key");
     assert.equal(result.ANTHROPIC_AUTH_TOKEN, "console-auth-token");
-    assert.equal(result.CLAUDE_CODE_OAUTH_TOKEN, undefined);
+    assert.equal(result.CLAUDE_CODE_OAUTH_TOKEN, "subscription-token");
     assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, "subscription-token");
   });
 
