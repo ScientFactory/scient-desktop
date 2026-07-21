@@ -10,7 +10,9 @@ if (process.platform === "darwin") {
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
 
-const electronCommand = resolveElectronLaunchCommand(["dist-electron/main.js"]);
+const electronCommand = resolveElectronLaunchCommand(["dist-electron/main.js"], {
+  development: true,
+});
 const child = spawn(electronCommand.electronPath, electronCommand.args, {
   stdio: "inherit",
   cwd: desktopDir,

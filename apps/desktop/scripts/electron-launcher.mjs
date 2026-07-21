@@ -5,6 +5,7 @@ import {
   copyFileSync,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -149,7 +150,7 @@ export function resolveElectronPath() {
 
 export function isLinuxSetuidSandboxConfigured(
   electronBinaryPath,
-  { platform = process.platform, stat = statSync } = {},
+  { platform = process.platform, lstat = lstatSync } = {},
 ) {
   if (platform !== "linux") {
     return true;
@@ -157,31 +158,58 @@ export function isLinuxSetuidSandboxConfigured(
 
   const sandboxPath = join(dirname(electronBinaryPath), "chrome-sandbox");
   try {
-    const sandboxStat = stat(sandboxPath);
-    return sandboxStat.uid === 0 && (sandboxStat.mode & 0o4777) === 0o4755;
+    const sandboxStat = lstat(sandboxPath);
+    return (
+      sandboxStat.isFile() &&
+      sandboxStat.uid === 0 &&
+      (sandboxStat.mode & 0o7777) === 0o4755
+    );
   } catch {
     return false;
   }
 }
 
+export class LinuxSandboxConfigurationError extends Error {
+  constructor(sandboxPath) {
+    super(
+      `Electron sandbox helper ${sandboxPath} must be a regular file owned by root with exact mode 4755. ` +
+        "Repair the helper before launching Scient. For an isolated local development session only, " +
+        "set SCIENT_DEV_ALLOW_NO_SANDBOX=1 to accept the unsafe fallback explicitly.",
+    );
+    this.name = "LinuxSandboxConfigurationError";
+    this.sandboxPath = sandboxPath;
+  }
+}
+
 export function resolveLinuxSandboxArgs(
   electronBinaryPath,
-  { platform = process.platform, stat = statSync, warn = console.warn } = {},
+  {
+    platform = process.platform,
+    lstat = lstatSync,
+    development = isDevelopment,
+    env = process.env,
+    warn = console.warn,
+  } = {},
 ) {
-  if (isLinuxSetuidSandboxConfigured(electronBinaryPath, { platform, stat })) {
+  if (isLinuxSetuidSandboxConfigured(electronBinaryPath, { platform, lstat })) {
     return [];
   }
 
-  warn(
-    "[desktop-launcher] Electron chrome-sandbox is not root-owned with mode 4755; launching local Electron with --no-sandbox.",
-  );
-  return ["--no-sandbox"];
+  const sandboxPath = join(dirname(electronBinaryPath), "chrome-sandbox");
+  if (development && env.SCIENT_DEV_ALLOW_NO_SANDBOX === "1") {
+    warn(
+      "[desktop-launcher] Unsafe development override accepted: launching local Electron with --no-sandbox.",
+    );
+    return ["--no-sandbox"];
+  }
+
+  throw new LinuxSandboxConfigurationError(sandboxPath);
 }
 
-export function resolveElectronLaunchCommand(args = []) {
+export function resolveElectronLaunchCommand(args = [], options = {}) {
   const electronPath = resolveElectronPath();
   return {
     electronPath,
-    args: [...resolveLinuxSandboxArgs(electronPath), ...args],
+    args: [...resolveLinuxSandboxArgs(electronPath, options), ...args],
   };
 }
