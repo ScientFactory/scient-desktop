@@ -48,6 +48,8 @@ import { ProviderRuntimeManager } from "../Services/ProviderRuntimeManager";
 import { parseAntigravityModelsAuthStatus } from "./ProviderHealth";
 
 const CONNECTION_TIMEOUT = Duration.minutes(10);
+const ANTIGRAVITY_CODE_WINDOW_TIMEOUT = Duration.seconds(60);
+const ANTIGRAVITY_AUTHENTICATION_PROBE_INTERVAL = Duration.millis(500);
 // Antigravity keeps the provider-owned code window at 60 seconds. The local
 // supervisor gets a small hidden grace period so a CLI exit at that boundary
 // can still complete one bounded authentication probe.
@@ -59,7 +61,8 @@ interface ActiveConnection {
   readonly fiber: Fiber.Fiber<void, never>;
   readonly authorizationCodeInput: Deferred.Deferred<string>;
   readonly authorizationCodeAccepted: Deferred.Deferred<void>;
-  readonly authorizationCodeClosed: Deferred.Deferred<void>;
+  readonly authorizationCodeSubmissionState: Ref.Ref<"open" | "submitted" | "closed">;
+  readonly authorizationCodeLifecycleClosed: Deferred.Deferred<void>;
 }
 
 interface ConnectionCommand {
@@ -250,11 +253,20 @@ function makeConnectionError(input: {
 
 export function makeProviderConnectionLive(options?: {
   readonly timeout?: Duration.Duration;
+  readonly antigravityCodeWindowTimeout?: Duration.Duration;
+  readonly antigravityCodeWindowCloseSignal?: Effect.Effect<void>;
   readonly antigravityTimeout?: Duration.Duration;
+  readonly antigravityAuthenticationProbeInterval?: Duration.Duration;
+  readonly beforeAntigravityOutputPublication?: Effect.Effect<void>;
+  readonly afterAntigravityCodeWindowInputClosed?: Effect.Effect<void>;
   readonly droidAuthenticationProbe?: typeof probeDroidAcpAuthentication;
 }) {
   const timeout = options?.timeout ?? CONNECTION_TIMEOUT;
+  const antigravityCodeWindowTimeout =
+    options?.antigravityCodeWindowTimeout ?? ANTIGRAVITY_CODE_WINDOW_TIMEOUT;
   const antigravityTimeout = options?.antigravityTimeout ?? ANTIGRAVITY_CONNECTION_TIMEOUT;
+  const antigravityAuthenticationProbeInterval =
+    options?.antigravityAuthenticationProbeInterval ?? ANTIGRAVITY_AUTHENTICATION_PROBE_INTERVAL;
 
   return Layer.effect(
     ProviderConnection,
@@ -534,7 +546,8 @@ export function makeProviderConnectionLive(options?: {
         operationId: string,
         authorizationCodeInput: Deferred.Deferred<string>,
         authorizationCodeAccepted: Deferred.Deferred<void>,
-        authorizationCodeClosed: Deferred.Deferred<void>,
+        authorizationCodeSubmissionState: Ref.Ref<"open" | "submitted" | "closed">,
+        authorizationCodeLifecycleClosed: Deferred.Deferred<void>,
         onCodeWindowClosed: Effect.Effect<void>,
         observer?: ConnectionOutputObserver,
       ) =>
@@ -555,7 +568,7 @@ export function makeProviderConnectionLive(options?: {
                 yield* Deferred.succeed(authorizationCodeAccepted, undefined);
                 return 0;
               }
-              yield* Effect.sleep(Duration.millis(500));
+              yield* Effect.sleep(antigravityAuthenticationProbeInterval);
             }
           });
           const prepared = prepareWindowsSafeProcess(
@@ -575,6 +588,9 @@ export function makeProviderConnectionLive(options?: {
             env: command.env,
           });
           const processExit = yield* Deferred.make<number>();
+          const outputPublicationSettled = yield* Deferred.make<void>();
+          let outputOpen = true;
+          let outputPublicationClaimed = false;
           // The PTY callback performs only bounded synchronous parsing. It
           // enqueues at most one validated publication effect, never raw CLI
           // output, so noisy output cannot accumulate buffers or waiting fibers.
@@ -587,9 +603,19 @@ export function makeProviderConnectionLive(options?: {
             );
           }
           const removeDataListener = process.onData((data) => {
+            if (!outputOpen) return;
             const publication = observer?.onOutputChunk?.(authorizationCodeEncoder.encode(data));
             if (publication) {
-              Effect.runSync(Queue.offer(outputEffectQueue, publication));
+              outputPublicationClaimed = true;
+              const orderedPublication = (
+                options?.beforeAntigravityOutputPublication ?? Effect.void
+              ).pipe(
+                Effect.andThen(publication),
+                Effect.ensuring(
+                  Deferred.succeed(outputPublicationSettled, undefined).pipe(Effect.asVoid),
+                ),
+              );
+              Effect.runSync(Queue.offer(outputEffectQueue, orderedPublication));
             }
           });
           const removeExitListener = process.onExit((event) => {
@@ -597,11 +623,34 @@ export function makeProviderConnectionLive(options?: {
           });
           yield* Effect.addFinalizer(() =>
             Effect.sync(() => {
+              outputOpen = false;
               removeDataListener();
               removeExitListener();
               process.kill();
             }).pipe(Effect.ignore),
           );
+          const codeWindowClosed = yield* Deferred.make<void>();
+          const closeCodeWindow = Deferred.succeed(codeWindowClosed, undefined).pipe(
+            Effect.flatMap((closedNow) =>
+              closedNow
+                ? Effect.gen(function* () {
+                    const publicationClaimed = yield* Effect.sync(() => {
+                      outputOpen = false;
+                      return outputPublicationClaimed;
+                    });
+                    yield* Ref.update(authorizationCodeSubmissionState, (submissionState) =>
+                      submissionState === "open" ? "closed" : submissionState,
+                    );
+                    yield* options?.afterAntigravityCodeWindowInputClosed ?? Effect.void;
+                    if (publicationClaimed) yield* Deferred.await(outputPublicationSettled);
+                    yield* onCodeWindowClosed;
+                  })
+                : Effect.void,
+            ),
+          );
+          yield* (
+            options?.antigravityCodeWindowCloseSignal ?? Effect.sleep(antigravityCodeWindowTimeout)
+          ).pipe(Effect.andThen(closeCodeWindow), Effect.forkScoped);
           const deliverAuthorizationCode = Deferred.await(authorizationCodeInput).pipe(
             Effect.flatMap((code) =>
               Effect.try({
@@ -617,7 +666,7 @@ export function makeProviderConnectionLive(options?: {
           ).pipe(
             Effect.flatMap((code) =>
               Effect.gen(function* () {
-                yield* onCodeWindowClosed;
+                yield* closeCodeWindow;
                 if (yield* authenticationProbe) {
                   yield* Deferred.succeed(authorizationCodeAccepted, undefined);
                   return 0;
@@ -629,7 +678,14 @@ export function makeProviderConnectionLive(options?: {
           return yield* Effect.raceFirst(waitForAuthentication, processCompletion);
         }).pipe(
           Effect.scoped,
-          Effect.ensuring(Deferred.succeed(authorizationCodeClosed, undefined).pipe(Effect.asVoid)),
+          Effect.ensuring(
+            Ref.update(authorizationCodeSubmissionState, (submissionState) =>
+              submissionState === "open" ? "closed" : submissionState,
+            ).pipe(
+              Effect.andThen(Deferred.succeed(authorizationCodeLifecycleClosed, undefined)),
+              Effect.asVoid,
+            ),
+          ),
         );
 
       const start: ProviderConnectionShape["start"] = Effect.fn("ProviderConnection.start")(
@@ -674,7 +730,10 @@ export function makeProviderConnectionLive(options?: {
           const operationId = randomUUID();
           const authorizationCodeInput = yield* Deferred.make<string>();
           const authorizationCodeAccepted = yield* Deferred.make<void>();
-          const authorizationCodeClosed = yield* Deferred.make<void>();
+          const authorizationCodeSubmissionState = yield* Ref.make<"open" | "submitted" | "closed">(
+            "open",
+          );
+          const authorizationCodeLifecycleClosed = yield* Deferred.make<void>();
           const startedAt = new Date().toISOString();
           const state = (input: {
             readonly status: ServerProviderConnectionState["status"];
@@ -742,7 +801,8 @@ export function makeProviderConnectionLive(options?: {
                       operationId,
                       authorizationCodeInput,
                       authorizationCodeAccepted,
-                      authorizationCodeClosed,
+                      authorizationCodeSubmissionState,
+                      authorizationCodeLifecycleClosed,
                       publishState(
                         provider,
                         state({
@@ -892,7 +952,8 @@ export function makeProviderConnectionLive(options?: {
               fiber,
               authorizationCodeInput,
               authorizationCodeAccepted,
-              authorizationCodeClosed,
+              authorizationCodeSubmissionState,
+              authorizationCodeLifecycleClosed,
             });
             return next;
           });
@@ -940,18 +1001,25 @@ export function makeProviderConnectionLive(options?: {
             message: "This connection attempt is no longer running.",
           });
         }
-        if (yield* Deferred.isDone(active.authorizationCodeInput)) {
-          return yield* makeConnectionError({
-            provider: input.provider,
-            reason: "authorization_code_already_submitted",
-            message: "A code was already submitted for this connection attempt.",
-          });
-        }
-        if (yield* Deferred.isDone(active.authorizationCodeClosed)) {
+        const submissionClaim = yield* Ref.modify(
+          active.authorizationCodeSubmissionState,
+          (submissionState) => {
+            if (submissionState === "open") return ["accepted" as const, "submitted" as const];
+            return [submissionState, submissionState] as const;
+          },
+        );
+        if (submissionClaim === "closed") {
           return yield* makeConnectionError({
             provider: input.provider,
             reason: "authorization_code_not_accepted",
             message: "This connection attempt is no longer waiting for a code.",
+          });
+        }
+        if (submissionClaim === "submitted") {
+          return yield* makeConnectionError({
+            provider: input.provider,
+            reason: "authorization_code_already_submitted",
+            message: "A code was already submitted for this connection attempt.",
           });
         }
         const accepted = yield* Deferred.succeed(
@@ -965,10 +1033,12 @@ export function makeProviderConnectionLive(options?: {
             message: "A code was already submitted for this connection attempt.",
           });
         }
-        const acceptedByProvider = yield* Effect.raceFirst(
-          Deferred.await(active.authorizationCodeAccepted).pipe(Effect.as(true)),
-          Deferred.await(active.authorizationCodeClosed).pipe(Effect.as(false)),
-        );
+        const acceptedByProvider = (yield* Deferred.isDone(active.authorizationCodeAccepted))
+          ? true
+          : yield* Effect.raceFirst(
+              Deferred.await(active.authorizationCodeAccepted).pipe(Effect.as(true)),
+              Deferred.await(active.authorizationCodeLifecycleClosed).pipe(Effect.as(false)),
+            );
         if (!acceptedByProvider) {
           return yield* makeConnectionError({
             provider: input.provider,
