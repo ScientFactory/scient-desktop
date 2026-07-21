@@ -3663,7 +3663,10 @@ if (hasSingleInstanceLock) {
         handleDesktopAppForegrounded();
         if (BrowserWindow.getAllWindows().length === 0) {
           if (!isDevelopment) {
-            ensureInitialBackendWindowOpen(backendHttpUrl);
+            ensureInitialBackendWindowOpen(
+              backendHttpUrl,
+              backendSupervisor?.currentGeneration?.number,
+            );
             return;
           }
           void waitForBackendWindowReady(backendHttpUrl)
