@@ -175,6 +175,30 @@ describe("DesktopBackendSupervisor", () => {
     ]);
   });
 
+  it("fails closed when descendants of an exited generation cannot be cleaned up", async () => {
+    const cleanupError = new Error("descendant cleanup could not be proven");
+    const onUnrecoverableGeneration = vi.fn();
+    const harness = makeHarness({
+      forceTerminateTree: vi.fn(async () => {
+        throw cleanupError;
+      }),
+      onUnrecoverableGeneration,
+    });
+    await harness.supervisor.start();
+
+    harness.children[0]!.exit(1);
+    await settleLifecycle();
+
+    expect(harness.supervisor.desiredRunning).toBe(false);
+    expect(harness.supervisor.currentGeneration).toBeNull();
+    expect(harness.restarts).toHaveLength(0);
+    expect(onUnrecoverableGeneration).toHaveBeenCalledWith({
+      error: cleanupError,
+      generation: expect.objectContaining({ number: 1 }),
+      reason: "code=1 signal=null",
+    });
+  });
+
   it("ignores late events from a closed generation", async () => {
     const harness = makeHarness();
     await harness.supervisor.start();

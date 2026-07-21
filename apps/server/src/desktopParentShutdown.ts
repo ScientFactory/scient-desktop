@@ -3,6 +3,7 @@ import { Effect } from "effect";
 import { isScientBackendShutdownMessage } from "@synara/shared/backendControl";
 
 export interface DesktopParentMessageSource {
+  readonly connected?: boolean;
   on(event: "message", listener: (message: unknown) => void): unknown;
   on(event: "disconnect", listener: () => void): unknown;
   off(event: "message", listener: (message: unknown) => void): unknown;
@@ -32,6 +33,10 @@ export function waitForDesktopParentShutdown(
     const onDisconnect = () => complete();
     source.on("message", onMessage);
     source.on("disconnect", onDisconnect);
+    // `disconnect` is edge-triggered. Register first, then inspect the current
+    // channel state so a parent that disappeared during server startup cannot
+    // leave an orphaned backend behind.
+    if (source.connected === false) complete();
     return Effect.sync(cleanup);
   });
 }

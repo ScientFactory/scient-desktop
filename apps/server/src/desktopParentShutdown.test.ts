@@ -33,6 +33,15 @@ describe("waitForDesktopParentShutdown", () => {
     expect(source.listenerCount("disconnect")).toBe(0);
   });
 
+  it("completes when the parent disconnected before listeners were registered", async () => {
+    const source = Object.assign(new EventEmitter(), { connected: false });
+
+    await Effect.runPromise(waitForDesktopParentShutdown(source));
+
+    expect(source.listenerCount("message")).toBe(0);
+    expect(source.listenerCount("disconnect")).toBe(0);
+  });
+
   it("settles only once when message and disconnect arrive together", async () => {
     const source = new EventEmitter();
     const fiber = Effect.runFork(waitForDesktopParentShutdown(source));
