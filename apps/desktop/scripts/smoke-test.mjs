@@ -10,7 +10,7 @@ const mainJs = resolve(desktopDir, "dist-electron/main.js");
 
 console.log("\nLaunching Electron smoke test...");
 
-const electronCommand = resolveElectronLaunchCommand([mainJs]);
+const electronCommand = resolveElectronLaunchCommand([mainJs], { development: false });
 const child = spawn(electronCommand.electronPath, electronCommand.args, {
   stdio: ["pipe", "pipe", "pipe"],
   detached: process.platform !== "win32",
