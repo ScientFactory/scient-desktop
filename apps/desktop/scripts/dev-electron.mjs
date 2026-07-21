@@ -4,7 +4,7 @@ import { join } from "node:path";
 import waitOn from "wait-on";
 
 import { buildAppSnapHelper } from "./build-appsnap-helper.mjs";
-import { desktopDir, resolveElectronPath } from "./electron-launcher.mjs";
+import { desktopDir, resolveElectronLaunchCommand } from "./electron-launcher.mjs";
 
 const port = Number(process.env.ELECTRON_RENDERER_PORT ?? 5733);
 const devServerUrl = `http://localhost:${port}`;
@@ -140,18 +140,18 @@ function startApp() {
     return;
   }
 
-  const app = spawn(
-    resolveElectronPath(),
+  const electronCommand = resolveElectronLaunchCommand(
     [`--synara-dev-root=${desktopDir}`, "dist-electron/main.js"],
-    {
-      cwd: desktopDir,
-      env: {
-        ...childEnv,
-        VITE_DEV_SERVER_URL: devServerUrl,
-      },
-      stdio: "inherit",
-    },
+    { development: true },
   );
+  const app = spawn(electronCommand.electronPath, electronCommand.args, {
+    cwd: desktopDir,
+    env: {
+      ...childEnv,
+      VITE_DEV_SERVER_URL: devServerUrl,
+    },
+    stdio: "inherit",
+  });
 
   currentApp = app;
 
