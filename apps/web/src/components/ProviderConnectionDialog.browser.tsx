@@ -105,6 +105,7 @@ function installNativeApi(overrides: {
 describe("ProviderConnectionDialog", () => {
   afterEach(() => {
     useProviderConnectionDialogStore.getState().setOpen(false);
+    document.documentElement.style.removeProperty("--app-font-size-ui");
     document.body.innerHTML = "";
     vi.restoreAllMocks();
   });
@@ -162,8 +163,60 @@ describe("ProviderConnectionDialog", () => {
       await expect
         .element(page.getByText("Finish signing in in the browser window."))
         .toBeVisible();
-      await expect.element(page.getByRole("button", { name: "Cancel sign in" })).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "Cancel sign-in" })).toBeVisible();
       await expect.element(page.getByText(/sign in continues in the background/u)).toBeVisible();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("keeps every active sign-in action inside the dialog at the largest UI text size", async () => {
+    document.documentElement.style.setProperty("--app-font-size-ui", "18px");
+    const activeProvider = {
+      provider: "codex",
+      status: "warning",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+      runtime: systemRuntime,
+      connectionState: {
+        operationId: "connect-codex-large-text",
+        method: "codex_browser",
+        status: "waiting_for_browser",
+        startedAt: checkedAt,
+        finishedAt: null,
+        message: "Finish signing in in the browser window.",
+      },
+    } satisfies ServerProviderStatus;
+    const restoreNativeApi = installNativeApi({});
+    const queryClient = createQueryClient(activeProvider);
+    useProviderConnectionDialogStore.getState().openDialog("codex", "settings");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await vi.waitFor(() => {
+        const popup = document.querySelector<HTMLElement>('[data-slot="dialog-popup"]');
+        const buttons = Array.from(
+          popup?.querySelectorAll<HTMLButtonElement>('[data-slot="button"]') ?? [],
+        ).filter((button) => button.getAttribute("aria-label") !== "Close");
+
+        expect(popup, "Expected the provider dialog popup.").toBeTruthy();
+        expect(buttons).toHaveLength(3);
+
+        const popupRect = popup!.getBoundingClientRect();
+        for (const button of buttons) {
+          const buttonRect = button.getBoundingClientRect();
+          expect(buttonRect.left).toBeGreaterThanOrEqual(popupRect.left);
+          expect(buttonRect.right).toBeLessThanOrEqual(popupRect.right);
+        }
+      });
     } finally {
       await screen.unmount();
       queryClient.clear();
@@ -690,7 +743,7 @@ describe("ProviderConnectionDialog", () => {
     );
 
     try {
-      await expect.element(page.getByRole("button", { name: "Cancel sign in" })).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "Cancel sign-in" })).toBeVisible();
       await expect.element(page.getByRole("button", { name: "Restart sign in" })).toBeVisible();
       await expect.element(page.getByText(/Automatic timeout in/u)).toBeVisible();
       await page.getByRole("button", { name: "Restart sign in" }).click();
@@ -733,9 +786,27 @@ describe("ProviderConnectionDialog", () => {
         message: "Finish signing in to Grok.",
         authorizationUrl,
       },
+      installationState: {
+        operationId: "install-grok-finished",
+        operation: "install",
+        status: "installed",
+        startedAt: checkedAt,
+        finishedAt: checkedAt,
+        message: "Grok is installed and verified.",
+      },
     } satisfies ServerProviderStatus;
     const openExternal = vi.fn().mockResolvedValue(undefined);
-    const restoreNativeApi = installNativeApi({ openExternal });
+    const cancelled = {
+      ...active,
+      connectionState: {
+        ...active.connectionState,
+        status: "cancelled",
+        finishedAt: checkedAt,
+        message: "Sign in was cancelled.",
+      },
+    } satisfies ServerProviderStatus;
+    const cancelProviderConnection = vi.fn().mockResolvedValue({ providers: [cancelled] });
+    const restoreNativeApi = installNativeApi({ openExternal, cancelProviderConnection });
     const queryClient = createQueryClient(active);
     useProviderConnectionDialogStore.getState().openDialog("grok", "provider_picker");
 
@@ -746,11 +817,22 @@ describe("ProviderConnectionDialog", () => {
     );
 
     try {
-      await page.getByRole("button", { name: "Open xAI sign-in again" }).click();
+      const progressActions = page.getByRole("group", { name: "Sign-in progress actions" });
+      await progressActions.getByRole("button", { name: "Open browser again" }).click();
       await vi.waitFor(() => expect(openExternal).toHaveBeenCalledWith(authorizationUrl));
       await expect
         .element(page.getByPlaceholder("Paste authorization code"))
         .not.toBeInTheDocument();
+      await expect
+        .element(page.getByRole("button", { name: "Cancel installation" }))
+        .not.toBeInTheDocument();
+      await page.getByRole("button", { name: "Cancel sign-in" }).click();
+      await vi.waitFor(() =>
+        expect(cancelProviderConnection).toHaveBeenCalledWith({
+          provider: "grok",
+          operationId: "connect-grok-active",
+        }),
+      );
     } finally {
       await screen.unmount();
       queryClient.clear();
@@ -790,9 +872,9 @@ describe("ProviderConnectionDialog", () => {
     );
 
     try {
-      await page.getByRole("button", { name: "Open Google sign-in again" }).click();
+      await page.getByRole("button", { name: "Open browser again" }).click();
       await vi.waitFor(() => expect(openExternal).toHaveBeenCalledWith(authorizationUrl));
-      await expect.element(page.getByText(/Automatic timeout in (?:1:00|0:5\d)/u)).toBeVisible();
+      await expect.element(page.getByText(/Automatic timeout in (?:10:00|9:5\d)/u)).toBeVisible();
     } finally {
       await screen.unmount();
       queryClient.clear();
@@ -904,7 +986,7 @@ describe("ProviderConnectionDialog", () => {
         await expect
           .element(page.getByPlaceholder("Paste authorization code"))
           .not.toBeInTheDocument();
-        const cancelButton = page.getByRole("button", { name: "Cancel sign in" });
+        const cancelButton = page.getByRole("button", { name: "Cancel sign-in" });
         const restartButton = page.getByRole("button", { name: "Restart sign in" });
         await expect.element(cancelButton).not.toBeDisabled();
         await expect.element(restartButton).not.toBeDisabled();

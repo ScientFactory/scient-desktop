@@ -16,6 +16,7 @@ import {
 } from "~/lib/providerConnectionPresentation";
 import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
 import { applyProviderStatusesToCache } from "~/lib/providerStatusCache";
+import { cn } from "~/lib/utils";
 import { ensureNativeApi } from "~/nativeApi";
 import { useProviderConnectionDialogStore } from "~/providerConnectionDialogStore";
 import { PROVIDER_ICON_COMPONENT_BY_PROVIDER } from "./ProviderIcon";
@@ -33,7 +34,7 @@ import { Input } from "./ui/input";
 import { Spinner } from "./ui/spinner";
 
 const CONNECTION_TIMEOUT_MS = 10 * 60 * 1_000;
-const ANTIGRAVITY_CONNECTION_TIMEOUT_MS = 60 * 1_000;
+const ANTIGRAVITY_CONNECTION_TIMEOUT_MS = 10 * 60 * 1_000;
 
 function formatRemainingTime(startedAt: string, nowMs: number, timeoutMs: number): string {
   const elapsedMs = Math.max(0, nowMs - Date.parse(startedAt));
@@ -360,7 +361,7 @@ export function ProviderConnectionDialog() {
           </div>
         </DialogHeader>
 
-        <DialogPanel className="space-y-4 px-5 pb-2">
+        <DialogPanel className={cn("space-y-4 px-5", activeConnection ? "pb-0" : "pb-2")}>
           <p className="text-sm leading-relaxed text-foreground" aria-live="polite">
             {presentation.description}
           </p>
@@ -387,20 +388,36 @@ export function ProviderConnectionDialog() {
                   )}
                 </p>
               ) : null}
+              {presentation.busy && activeConnection ? (
+                <div
+                  className="flex flex-wrap items-center gap-2 pt-2 pl-6"
+                  role="group"
+                  aria-label="Sign-in progress actions"
+                >
+                  {(provider === "grok" || provider === "antigravity") &&
+                  activeConnection.authorizationUrl ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={actionPending}
+                      onClick={reopenAuthorization}
+                    >
+                      Open browser again
+                    </Button>
+                  ) : null}
+                  {presentation.canRestart ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      disabled={actionPending}
+                      onClick={restartSignIn}
+                    >
+                      Restart sign in
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
-          ) : null}
-
-          {(provider === "grok" || provider === "antigravity") &&
-          activeConnection?.authorizationUrl ? (
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full"
-              disabled={actionPending}
-              onClick={reopenAuthorization}
-            >
-              {provider === "grok" ? "Open xAI sign-in again" : "Open Google sign-in again"}
-            </Button>
           ) : null}
 
           {provider === "antigravity" && activeConnection?.status === "waiting_for_browser" ? (
@@ -509,29 +526,26 @@ export function ProviderConnectionDialog() {
           </p>
         </DialogPanel>
 
-        <DialogFooter className="px-5 pb-5">
-          {presentation.canRestart ? (
-            <Button
-              type="button"
-              variant="outline"
-              disabled={actionPending}
-              onClick={restartSignIn}
-            >
-              Restart sign in
-            </Button>
-          ) : null}
+        <DialogFooter
+          className={cn("px-5 pb-5 sm:flex-wrap", activeConnection && "pt-2 sm:justify-start")}
+        >
           {presentation.canCancel ? (
             <Button
               type="button"
-              variant="outline"
+              variant={activeConnection ? "ghost" : "outline"}
               disabled={actionPending}
-              onClick={status?.installationState ? cancelInstall : cancelSignIn}
+              onClick={activeConnection ? cancelSignIn : cancelInstall}
             >
-              {status?.installationState ? "Cancel installation" : "Cancel sign in"}
+              {activeConnection ? "Cancel sign-in" : "Cancel installation"}
             </Button>
           ) : null}
           {presentation.primaryAction !== "none" ? (
-            <Button type="button" disabled={actionPending} onClick={handlePrimary}>
+            <Button
+              type="button"
+              className="sm:ml-auto"
+              disabled={actionPending}
+              onClick={handlePrimary}
+            >
               {actionPending ? <Spinner /> : null}
               {installPlan && managedUpdateFlow
                 ? "Download and update"
