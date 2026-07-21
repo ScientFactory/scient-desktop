@@ -140,10 +140,10 @@ function startApp() {
     return;
   }
 
-  const electronCommand = resolveElectronLaunchCommand([
-    `--synara-dev-root=${desktopDir}`,
-    "dist-electron/main.js",
-  ], { development: true });
+  const electronCommand = resolveElectronLaunchCommand(
+    [`--synara-dev-root=${desktopDir}`, "dist-electron/main.js"],
+    { development: true },
+  );
   const app = spawn(electronCommand.electronPath, electronCommand.args, {
     cwd: desktopDir,
     env: {

@@ -159,11 +159,7 @@ export function isLinuxSetuidSandboxConfigured(
   const sandboxPath = join(dirname(electronBinaryPath), "chrome-sandbox");
   try {
     const sandboxStat = lstat(sandboxPath);
-    return (
-      sandboxStat.isFile() &&
-      sandboxStat.uid === 0 &&
-      (sandboxStat.mode & 0o7777) === 0o4755
-    );
+    return sandboxStat.isFile() && sandboxStat.uid === 0 && (sandboxStat.mode & 0o7777) === 0o4755;
   } catch {
     return false;
   }
