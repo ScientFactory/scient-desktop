@@ -68,11 +68,7 @@ describe("isInitialModelDiscoveryPending", () => {
 describe("providerModelsQueryOptions", () => {
   it("fails fast for Cursor so a missing CLI settles instead of spinning (#103)", async () => {
     const listModels = mockListModels(
-      vi
-        .fn()
-        .mockRejectedValue(
-          new Error("Cursor CLI is not installed or not on PATH"),
-        ),
+      vi.fn().mockRejectedValue(new Error("Cursor CLI is not installed or not on PATH")),
     );
     const options = providerModelsQueryOptions({
       provider: "cursor",
@@ -123,9 +119,7 @@ describe("providerModelsQueryOptions", () => {
     });
 
     const queryClient = new QueryClient();
-    await expect(queryClient.fetchQuery(options)).rejects.toThrow(
-      "discovery exploded",
-    );
+    await expect(queryClient.fetchQuery(options)).rejects.toThrow("discovery exploded");
     expect(queryClient.getQueryData(options.queryKey)).toBeUndefined();
   });
 
@@ -136,10 +130,7 @@ describe("providerModelsQueryOptions", () => {
       cached: false,
     };
     const listModels = mockListModels(
-      vi
-        .fn()
-        .mockResolvedValueOnce(catalog)
-        .mockRejectedValue(new Error("cursor went away")),
+      vi.fn().mockResolvedValueOnce(catalog).mockRejectedValue(new Error("cursor went away")),
     );
     const options = providerModelsQueryOptions({
       provider: "cursor",
