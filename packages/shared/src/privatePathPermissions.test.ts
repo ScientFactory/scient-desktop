@@ -1,10 +1,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ensurePrivateFileSync, PrivatePathPermissionError } from "./privatePathPermissions";
+import {
+  ensurePrivateFileSync,
+  PrivatePathPermissionError,
+  repairPrivateFileSync,
+} from "./privatePathPermissions";
 
 const temporaryRoots: string[] = [];
 
@@ -57,5 +62,17 @@ describe("ensurePrivateFileSync", () => {
     expect(() => ensurePrivateFileSync(linkedPath)).toThrow(PrivatePathPermissionError);
     expect(fs.readFileSync(targetPath, "utf8")).toBe("outside");
     expect(fs.statSync(targetPath).mode & 0o777).toBe(0o664);
+  });
+
+  it("rejects FIFOs instead of blocking while opening them", () => {
+    if (process.platform === "win32") return;
+    const root = makeTemporaryRoot();
+    const ensurePath = path.join(root, "ensure.fifo");
+    const repairPath = path.join(root, "repair.fifo");
+    execFileSync("mkfifo", [ensurePath]);
+    execFileSync("mkfifo", [repairPath]);
+
+    expect(() => ensurePrivateFileSync(ensurePath)).toThrow(PrivatePathPermissionError);
+    expect(() => repairPrivateFileSync(repairPath)).toThrow(PrivatePathPermissionError);
   });
 });

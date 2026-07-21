@@ -29,6 +29,19 @@ const makeRuntimeSqliteLayer = (
     return clientModule.layer(config);
   }).pipe(Layer.unwrap);
 
+const repairExistingSidecars = (filename: string): void => {
+  for (const suffix of ["-wal", "-shm"]) {
+    const sidecarPath = `${filename}${suffix}`;
+    try {
+      fs.lstatSync(sidecarPath);
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw cause;
+    }
+    repairPrivateFileSync(sidecarPath);
+  }
+};
+
 const makeSetup = (filename: string) =>
   Layer.effectDiscard(
     Effect.gen(function* () {
@@ -49,10 +62,7 @@ const makeSetup = (filename: string) =>
       if (filename !== ":memory:") {
         yield* Effect.sync(() => {
           ensurePrivateFileSync(filename);
-          for (const suffix of ["-wal", "-shm"]) {
-            const sidecarPath = `${filename}${suffix}`;
-            if (fs.existsSync(sidecarPath)) repairPrivateFileSync(sidecarPath);
-          }
+          repairExistingSidecars(filename);
         });
       }
     }),
@@ -63,7 +73,10 @@ export const makeSqlitePersistenceLive = (dbPath: string) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     yield* fs.makeDirectory(path.dirname(dbPath), { recursive: true });
-    yield* Effect.sync(() => ensurePrivateFileSync(dbPath));
+    yield* Effect.sync(() => {
+      ensurePrivateFileSync(dbPath);
+      repairExistingSidecars(dbPath);
+    });
 
     return Layer.provideMerge(makeSetup(dbPath), makeRuntimeSqliteLayer({ filename: dbPath }));
   }).pipe(Layer.unwrap);

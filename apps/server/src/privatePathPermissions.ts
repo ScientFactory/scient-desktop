@@ -59,7 +59,10 @@ export async function repairPrivateFile(
   const targetMode = options.executable ? PRIVATE_EXECUTABLE_FILE_MODE : PRIVATE_FILE_MODE;
   let handle: fs.promises.FileHandle;
   try {
-    handle = await fs.promises.open(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    handle = await fs.promises.open(
+      filePath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+    );
   } catch (cause) {
     throw new PrivatePathPermissionError("open without following symlinks", filePath, cause);
   }

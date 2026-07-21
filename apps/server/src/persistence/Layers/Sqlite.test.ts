@@ -34,3 +34,29 @@ it.effect("enables WAL for a file-backed database", () =>
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect("rejects an existing symlinked sidecar before opening SQLite", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      if (process.platform === "win32") return;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "scient-sqlite-sidecar-",
+      });
+      const dbPath = path.join(directory, "state.sqlite");
+      const outsidePath = path.join(directory, "outside");
+      fs.writeFileSync(outsidePath, "outside", { mode: 0o664 });
+      fs.chmodSync(outsidePath, 0o664);
+      fs.symlinkSync(outsidePath, `${dbPath}-wal`, "file");
+
+      const exit = yield* Effect.gen(function* () {
+        yield* SqlClient.SqlClient;
+      }).pipe(Effect.provide(makeSqlitePersistenceLive(dbPath)), Effect.exit);
+
+      assert.strictEqual(exit._tag, "Failure");
+      assert.strictEqual(fs.readFileSync(outsidePath, "utf8"), "outside");
+      assert.strictEqual(fs.statSync(outsidePath).mode & 0o777, 0o664);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
