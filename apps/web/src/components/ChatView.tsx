@@ -527,6 +527,7 @@ import {
   PullRequestDialogState,
   type QueuedSteerGate,
   resolveQueuedSteerGateTransition,
+  resolveComposerRuntimeMode,
   shouldRenderProviderHealthBanner,
   resolveRuntimeModeAfterApprovalDecision,
   revokeBlobPreviewUrl,
@@ -1687,8 +1688,30 @@ export default function ChatView({
       setIsRevertingCheckpoint(false);
     }
   }, [activeThread, pendingFileUndo]);
-  const runtimeMode =
-    composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+  const [pendingServerRuntimeMode, setPendingServerRuntimeMode] = useState<{
+    readonly threadId: ThreadId;
+    readonly mode: RuntimeMode;
+  } | null>(null);
+  const runtimeMode = resolveComposerRuntimeMode({
+    pendingRuntimeMode:
+      pendingServerRuntimeMode?.threadId === threadId ? pendingServerRuntimeMode.mode : null,
+    serverRuntimeMode: serverThread?.runtimeMode,
+    draftRuntimeMode: composerDraft.runtimeMode,
+    defaultRuntimeMode: DEFAULT_RUNTIME_MODE,
+  });
+  useEffect(() => {
+    if (serverThread && composerDraft.runtimeMode !== null) {
+      setComposerDraftRuntimeMode(threadId, null);
+    }
+  }, [composerDraft.runtimeMode, serverThread, setComposerDraftRuntimeMode, threadId]);
+  useEffect(() => {
+    if (
+      pendingServerRuntimeMode?.threadId === threadId &&
+      serverThread?.runtimeMode === pendingServerRuntimeMode.mode
+    ) {
+      setPendingServerRuntimeMode(null);
+    }
+  }, [pendingServerRuntimeMode, serverThread?.runtimeMode, threadId]);
   const interactionMode =
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isServerThread = serverThread !== undefined;
@@ -4748,13 +4771,14 @@ export default function ChatView({
   const handleRuntimeModeChange = useCallback(
     (mode: RuntimeMode) => {
       if (mode === runtimeMode) return;
-      setComposerDraftRuntimeMode(threadId, mode);
       if (isLocalDraftThread) {
+        setComposerDraftRuntimeMode(threadId, mode);
         setDraftThreadContext(threadId, { runtimeMode: mode });
       }
       if (serverThread) {
         const api = readNativeApi();
         if (api) {
+          setPendingServerRuntimeMode({ threadId, mode });
           void api.orchestration
             .dispatchCommand({
               type: "thread.runtime-mode.set",
@@ -4764,6 +4788,9 @@ export default function ChatView({
               createdAt: new Date().toISOString(),
             })
             .catch((error) => {
+              setPendingServerRuntimeMode((pending) =>
+                pending?.threadId === threadId && pending.mode === mode ? null : pending,
+              );
               toastManager.add({
                 type: "error",
                 title: "Could not update access mode",
@@ -8024,31 +8051,58 @@ export default function ChatView({
       setRespondingRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
-      // Durably persist "always allow" client-side so the next turn (after an
-      // idle-stop or runtime restart) keeps full-access instead of asking again.
-      // The server's session override only covers the current live turn.
+      // The provider's session override only covers the current live turn.
+      // Persist "always allow" on the server thread as well so a restart does
+      // not silently return to approval-required.
       const durableRuntimeMode = resolveRuntimeModeAfterApprovalDecision(runtimeMode, decision);
-      if (durableRuntimeMode) {
-        setComposerDraftRuntimeMode(activeThreadId, durableRuntimeMode);
-      }
-      await api.orchestration
-        .dispatchCommand({
-          type: "thread.approval.respond",
-          commandId: newCommandId(),
-          threadId: activeThreadId,
-          requestId,
-          decision,
-          createdAt: new Date().toISOString(),
-        })
-        .catch((err: unknown) => {
+      try {
+        try {
+          await api.orchestration.dispatchCommand({
+            type: "thread.approval.respond",
+            commandId: newCommandId(),
+            threadId: activeThreadId,
+            requestId,
+            decision,
+            createdAt: new Date().toISOString(),
+          });
+        } catch (err: unknown) {
           setStoreThreadError(
             activeThreadId,
             err instanceof Error ? err.message : "Failed to submit approval decision.",
           );
-        });
-      setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
+          return;
+        }
+        if (durableRuntimeMode) {
+          setPendingServerRuntimeMode({ threadId: activeThreadId, mode: durableRuntimeMode });
+          try {
+            await api.orchestration.dispatchCommand({
+              type: "thread.runtime-mode.set",
+              commandId: newCommandId(),
+              threadId: activeThreadId,
+              runtimeMode: durableRuntimeMode,
+              createdAt: new Date().toISOString(),
+            });
+          } catch (err: unknown) {
+            setPendingServerRuntimeMode((pending) =>
+              pending?.threadId === activeThreadId && pending.mode === durableRuntimeMode
+                ? null
+                : pending,
+            );
+            toastManager.add({
+              type: "warning",
+              title: "Approval sent, but agent access was not saved",
+              description:
+                err instanceof Error
+                  ? err.message
+                  : "Choose Unrestricted again to keep it for future turns.",
+            });
+          }
+        }
+      } finally {
+        setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
+      }
     },
-    [activeThreadId, runtimeMode, setComposerDraftRuntimeMode, setStoreThreadError],
+    [activeThreadId, runtimeMode, setStoreThreadError],
   );
 
   const onRespondToUserInput = useCallback(

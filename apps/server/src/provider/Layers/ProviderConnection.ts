@@ -35,6 +35,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { ServerConfig } from "../../config";
 import { buildCodexProcessEnv } from "../../codexProcessEnv";
 import { resolveBaseCodexHomePath } from "../../codexHomePaths";
+import { ensurePrivateDirectorySync } from "../../privatePathPermissions";
 import { ServerSettingsService } from "../../serverSettings";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText";
 import { PtyAdapter } from "../../terminal/Services/PTY";
@@ -45,7 +46,7 @@ import { ProviderConnection, type ProviderConnectionShape } from "../Services/Pr
 import { ProviderDiscoveryService } from "../Services/ProviderDiscoveryService";
 import { ProviderHealth } from "../Services/ProviderHealth";
 import { ProviderRuntimeManager } from "../Services/ProviderRuntimeManager";
-import { parseAntigravityModelsAuthStatus } from "./ProviderHealth";
+import { parseAntigravityModelsAuthStatus, resolveProviderProbeCwd } from "./ProviderHealth";
 
 const CONNECTION_TIMEOUT = Duration.minutes(10);
 const ANTIGRAVITY_CODE_WINDOW_TIMEOUT = Duration.seconds(60);
@@ -273,6 +274,8 @@ export function makeProviderConnectionLive(options?: {
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const serverConfig = yield* ServerConfig;
+      const providerConnectionCwd = resolveProviderProbeCwd(serverConfig.stateDir);
+      yield* Effect.sync(() => ensurePrivateDirectorySync(providerConnectionCwd));
       const serverSettings = yield* ServerSettingsService;
       const providerHealth = yield* ProviderHealth;
       const providerDiscovery = yield* ProviderDiscoveryService;
@@ -704,7 +707,10 @@ export function makeProviderConnectionLive(options?: {
             yield* releaseProvider(provider, "");
             return yield* commandResult.failure;
           }
-          const command = commandResult.success;
+          // Provider-owned sign-in and verification never need a project cwd.
+          // Keep them in Scient's private probe directory so authentication
+          // cannot trigger macOS access to whichever project launched the app.
+          const command = { ...commandResult.success, cwd: providerConnectionCwd };
           const refreshedBeforeStart = yield* providerHealth.refresh;
           const currentStatus = refreshedBeforeStart.find((status) => status.provider === provider);
           const requestsCodexReauthentication =
@@ -793,7 +799,7 @@ export function makeProviderConnectionLive(options?: {
                 ? (options?.droidAuthenticationProbe ?? probeDroidAcpAuthentication)({
                     binaryPath: command.executable,
                     childProcessSpawner: spawner,
-                    cwd: serverConfig.cwd,
+                    cwd: providerConnectionCwd,
                   }).pipe(Effect.as(0))
                 : command.strategy === "antigravity-browser"
                   ? runAntigravityConnection(
@@ -885,7 +891,7 @@ export function makeProviderConnectionLive(options?: {
               .listModels({
                 provider,
                 binaryPath: command.executable,
-                cwd: command.cwd ?? serverConfig.cwd,
+                cwd: providerConnectionCwd,
               })
               .pipe(Effect.timeoutOption(Duration.seconds(30)), Effect.result);
             if (

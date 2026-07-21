@@ -157,8 +157,8 @@ export function RuntimeUsageControls({
                 )}
                 title={
                   runtimeMode === "full-access"
-                    ? "Full access — click to change permissions"
-                    : "Default permissions — click to change permissions"
+                    ? "Unrestricted agent — the AI provider can act without asking inside the selected workspace. This does not grant macOS Full Disk Access."
+                    : "Ask before changes — the AI provider requests approval for sensitive actions. This does not control macOS folder access."
                 }
               />
             }
@@ -170,7 +170,7 @@ export function RuntimeUsageControls({
                 <HiOutlineHandRaised className="size-3.5 shrink-0" />
               )}
               <span className={cn("truncate", hideLabel ? "sr-only" : "@max-[480px]:sr-only")}>
-                {runtimeMode === "full-access" ? "Full access" : "Default permissions"}
+                {runtimeMode === "full-access" ? "Unrestricted" : "Ask first"}
               </span>
               <ChevronDownIcon
                 className={cn(
@@ -180,7 +180,7 @@ export function RuntimeUsageControls({
               />
             </span>
           </MenuTrigger>
-          <ComposerPickerMenuPopup align="start" side="top" className="min-w-44">
+          <ComposerPickerMenuPopup align="start" side="top" className="min-w-64">
             <MenuRadioGroup
               value={runtimeMode}
               onValueChange={(value) => {
@@ -200,13 +200,13 @@ export function RuntimeUsageControls({
               >
                 <span className="inline-flex items-center gap-2">
                   <CentralIcon name="shield-access" className="size-4 shrink-0" />
-                  Full access
+                  Unrestricted agent
                 </span>
               </MenuRadioItem>
               <MenuRadioItem value="approval-required">
                 <span className="inline-flex items-center gap-2">
                   <HiOutlineHandRaised className="size-4 shrink-0" />
-                  Default permissions
+                  Ask before changes
                 </span>
               </MenuRadioItem>
             </MenuRadioGroup>

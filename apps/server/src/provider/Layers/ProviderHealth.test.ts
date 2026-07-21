@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodePath from "node:path";
 import type { ServerProviderStatus } from "@synara/contracts";
 import { DEFAULT_SERVER_SETTINGS, ServerProviderUpdateError } from "@synara/contracts";
 import { describe, it, assert } from "@effect/vitest";
@@ -42,6 +43,7 @@ import {
   ProviderHealthLive,
   projectProviderStatusesForSettings,
   readCodexConfigModelProvider,
+  resolveProviderProbeCwd,
   stabilizeProviderStatusesAgainstTransientTimeouts,
 } from "./ProviderHealth";
 import { resolvePackageManagedProviderMaintenance } from "../providerMaintenance";
@@ -49,6 +51,16 @@ import { resolvePackageManagedProviderMaintenance } from "../providerMaintenance
 // ── Test helpers ────────────────────────────────────────────────────
 
 const encoder = new TextEncoder();
+
+describe("provider health probe cwd", () => {
+  it("isolates background provider runtimes under Scient private state", () => {
+    const stateDir = NodePath.join("root", "scient-state");
+    assert.strictEqual(
+      resolveProviderProbeCwd(stateDir),
+      NodePath.join(stateDir, "provider-health-probe"),
+    );
+  });
+});
 
 function mockHandle(result: { stdout: string; stderr: string; code: number }) {
   return ChildProcessSpawner.makeHandle({

@@ -32,6 +32,7 @@ import {
   resolveEnvironmentPanelVisible,
   resolveProjectScriptTerminalTarget,
   resolveQueuedSteerGateTransition,
+  resolveComposerRuntimeMode,
   resolveRuntimeModeAfterApprovalDecision,
   QUEUED_STEER_GATE_TIMEOUT_MS,
   sanitizeVoiceErrorMessage,
@@ -1792,6 +1793,38 @@ describe("resolveRuntimeModeAfterApprovalDecision", () => {
   it("leaves runtime mode untouched for one-off accept and decline decisions", () => {
     expect(resolveRuntimeModeAfterApprovalDecision("approval-required", "accept")).toBeNull();
     expect(resolveRuntimeModeAfterApprovalDecision("approval-required", "decline")).toBeNull();
+  });
+});
+
+describe("resolveComposerRuntimeMode", () => {
+  it("shows an in-flight server change without letting persisted draft state own it", () => {
+    expect(
+      resolveComposerRuntimeMode({
+        pendingRuntimeMode: "full-access",
+        serverRuntimeMode: "approval-required",
+        draftRuntimeMode: "approval-required",
+        defaultRuntimeMode: "approval-required",
+      }),
+    ).toBe("full-access");
+  });
+
+  it("treats the durable server thread as authoritative over a stale local draft", () => {
+    expect(
+      resolveComposerRuntimeMode({
+        serverRuntimeMode: "approval-required",
+        draftRuntimeMode: "full-access",
+        defaultRuntimeMode: "full-access",
+      }),
+    ).toBe("approval-required");
+  });
+
+  it("uses the draft only before the server thread exists", () => {
+    expect(
+      resolveComposerRuntimeMode({
+        draftRuntimeMode: "approval-required",
+        defaultRuntimeMode: "full-access",
+      }),
+    ).toBe("approval-required");
   });
 });
 

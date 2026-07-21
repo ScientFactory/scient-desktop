@@ -9,6 +9,7 @@
  * @module ProviderHealthLive
  */
 import * as OS from "node:os";
+import * as NodePath from "node:path";
 import type {
   ProviderKind,
   ServerSettings,
@@ -102,12 +103,17 @@ import {
   type PackageManagedProviderMaintenanceDefinition,
 } from "../providerMaintenance";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText";
+import { ensurePrivateDirectorySync } from "../../privatePathPermissions";
 import { buildCodexProcessEnv } from "../../codexProcessEnv.ts";
 import { parseAntigravityModelLines } from "./AntigravityAdapter";
 import { parseGrokCliModelList } from "./GrokAdapter";
 
 export { parseClaudeAuthStatusFromOutput } from "../claudeAuthStatus";
 export type { CommandResult } from "../providerCliOutput";
+
+export function resolveProviderProbeCwd(stateDir: string): string {
+  return NodePath.join(stateDir, "provider-health-probe");
+}
 
 const DEFAULT_TIMEOUT_MS = 4_000;
 const CLAUDE_HEALTH_TIMEOUT_MS = 20_000;
@@ -1314,7 +1320,7 @@ const runDroidCommand = (args: ReadonlyArray<string>, executable = "droid") =>
 
 export const makeCheckDroidProviderStatus = (
   binaryPath?: string,
-  homeDir: string = OS.homedir(),
+  probeCwd: string = OS.homedir(),
   authenticationProbe: typeof verifyDroidAcpAuthentication = verifyDroidAcpAuthentication,
   modelProbe: (input: {
     readonly binaryPath: string;
@@ -1388,7 +1394,7 @@ export const makeCheckDroidProviderStatus = (
     const authentication = yield* authenticationProbe({
       binaryPath: executable,
       childProcessSpawner,
-      cwd: homeDir,
+      cwd: probeCwd,
     }).pipe(Effect.timeoutOption(CLAUDE_HEALTH_TIMEOUT_MS));
     const authStatus = Option.getOrElse(authentication, () => "unknown" as const);
     const modelReadiness =
@@ -1396,7 +1402,7 @@ export const makeCheckDroidProviderStatus = (
         ? yield* modelProbe({
             binaryPath: executable,
             childProcessSpawner,
-            cwd: homeDir,
+            cwd: probeCwd,
           }).pipe(Effect.timeoutOption(CLAUDE_HEALTH_TIMEOUT_MS))
         : Option.none<boolean>();
     const verified =
@@ -2109,6 +2115,8 @@ export function makeProviderHealthLive(options?: {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
+      const providerHealthProbeCwd = resolveProviderProbeCwd(serverConfig.stateDir);
+      yield* Effect.sync(() => ensurePrivateDirectorySync(providerHealthProbeCwd));
       const changesPubSub = yield* Effect.acquireRelease(
         PubSub.unbounded<ReadonlyArray<ServerProviderStatus>>(),
         PubSub.shutdown,
@@ -2400,7 +2408,7 @@ export function makeProviderHealthLive(options?: {
                           probeClaudeAccountCapabilities({
                             executable,
                             env,
-                            cwd: serverConfig.cwd,
+                            cwd: providerHealthProbeCwd,
                           }),
                         ),
                         executable,
@@ -2441,7 +2449,7 @@ export function makeProviderHealthLive(options?: {
                     settings.providers.droid.binaryPath,
                   ).pipe(
                     Effect.flatMap((binaryPath) =>
-                      makeCheckDroidProviderStatus(binaryPath, serverConfig.homeDir),
+                      makeCheckDroidProviderStatus(binaryPath, providerHealthProbeCwd),
                     ),
                   ),
                 ),
