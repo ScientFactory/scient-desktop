@@ -7,6 +7,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  readlink,
   readdir,
   rm,
   stat,
@@ -266,6 +267,14 @@ function processGroupIsAlive(processGroupId) {
   }
 }
 
+function signalProcess(processId, signal) {
+  try {
+    process.kill(processId, signal);
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+  }
+}
+
 function signalProcessGroup(processGroupId, signal) {
   try {
     process.kill(-processGroupId, signal);
@@ -274,9 +283,108 @@ function signalProcessGroup(processGroupId, signal) {
   }
 }
 
-async function stopPackagedApp(child, backendProcessGroupId) {
+async function readLinuxProcessInfo(processId) {
+  const [statContents, commandLineContents, executablePath] = await Promise.all([
+    readFile(`/proc/${processId}/stat`, "utf8"),
+    readFile(`/proc/${processId}/cmdline`),
+    readlink(`/proc/${processId}/exe`),
+  ]);
+  const commandEnd = statContents.lastIndexOf(")");
+  if (commandEnd < 0) throw new Error(`Invalid /proc stat data for PID ${processId}.`);
+  const statFields = statContents
+    .slice(commandEnd + 2)
+    .trim()
+    .split(/\s+/u);
+  const parentProcessId = Number(statFields[1]);
+  const processGroupId = Number(statFields[2]);
+  const startTimeTicks = statFields[19];
+  if (!Number.isInteger(parentProcessId) || !Number.isInteger(processGroupId) || !startTimeTicks) {
+    throw new Error(`Incomplete /proc stat identity for PID ${processId}.`);
+  }
+  return {
+    processId,
+    parentProcessId,
+    processGroupId,
+    startTimeTicks,
+    executablePath,
+    commandLine: commandLineContents.toString("utf8").split("\0").filter(Boolean),
+  };
+}
+
+async function processIdentityMatches(expectedProcess) {
+  try {
+    const currentProcess = await readLinuxProcessInfo(expectedProcess.processId);
+    return (
+      currentProcess.startTimeTicks === expectedProcess.startTimeTicks &&
+      currentProcess.executablePath === expectedProcess.executablePath
+    );
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+async function findPackagedElectronProcess(launcherProcessId, debuggingPort) {
+  return waitFor("packaged Electron main process", async () => {
+    const processEntries = (await readdir("/proc", { withFileTypes: true })).filter(
+      (entry) => entry.isDirectory() && /^\d+$/u.test(entry.name),
+    );
+    const processes = new Map();
+    await Promise.all(
+      processEntries.map(async (entry) => {
+        const processId = Number(entry.name);
+        try {
+          processes.set(processId, await readLinuxProcessInfo(processId));
+        } catch {
+          // Processes can exit while /proc is being inspected.
+        }
+      }),
+    );
+
+    const isDescendantOf = (processId, ancestorProcessId) => {
+      const visited = new Set();
+      let currentProcessId = processId;
+      while (currentProcessId > 1 && !visited.has(currentProcessId)) {
+        visited.add(currentProcessId);
+        const parentProcessId = processes.get(currentProcessId)?.parentProcessId;
+        if (parentProcessId === ancestorProcessId) return true;
+        if (!parentProcessId) return false;
+        currentProcessId = parentProcessId;
+      }
+      return false;
+    };
+
+    const debuggingArgument = `--remote-debugging-port=${debuggingPort}`;
+    const candidates = [...processes.entries()].filter(
+      ([processId, processInfo]) =>
+        isDescendantOf(processId, launcherProcessId) &&
+        basename(processInfo.executablePath) === "scient" &&
+        processInfo.commandLine.includes(debuggingArgument) &&
+        !processInfo.commandLine.some((argument) => argument.startsWith("--type=")),
+    );
+    const deepestCandidates = candidates.filter(([candidateProcessId]) =>
+      candidates.every(
+        ([otherProcessId]) =>
+          otherProcessId === candidateProcessId ||
+          !isDescendantOf(otherProcessId, candidateProcessId),
+      ),
+    );
+    if (deepestCandidates.length > 1) {
+      throw new Error(
+        `Found multiple packaged Electron main-process candidates: ${candidates
+          .map(([processId]) => processId)
+          .join(", ")}.`,
+      );
+    }
+    return deepestCandidates[0]?.[1] ?? null;
+  });
+}
+
+async function stopPackagedApp(child, electronProcess, backendProcessGroupId) {
   if (!child.pid) return;
-  const processGroupIds = [...new Set([child.pid, backendProcessGroupId].filter(Boolean))];
+  const processGroupIds = [
+    ...new Set([child.pid, electronProcess?.processGroupId, backendProcessGroupId].filter(Boolean)),
+  ];
   const livingProcessGroups = () =>
     processGroupIds.filter((processGroupId) => processGroupIsAlive(processGroupId));
   const waitForAllGroupsToExit = (timeoutMs) =>
@@ -286,8 +394,8 @@ async function stopPackagedApp(child, backendProcessGroupId) {
       timeoutMs,
     ).catch(() => false);
 
-  if (processGroupIsAlive(child.pid)) {
-    signalProcessGroup(child.pid, "SIGTERM");
+  if (electronProcess && (await processIdentityMatches(electronProcess))) {
+    signalProcess(electronProcess.processId, "SIGTERM");
   }
   if (await waitForAllGroupsToExit(GRACEFUL_APP_SHUTDOWN_TIMEOUT_MS)) return;
 
@@ -352,6 +460,7 @@ async function runScenario(appImagePath, scenario) {
   let browser;
   let child;
   let page;
+  let electronProcess;
   let backendProcessGroupId;
   let output = "";
   let scenarioError;
@@ -416,6 +525,7 @@ async function runScenario(appImagePath, scenario) {
     const renderer = await connectToPackagedRenderer(debuggingPort, () => output);
     browser = renderer.browser;
     page = renderer.page;
+    electronProcess = await findPackagedElectronProcess(child.pid, debuggingPort);
     page.on("console", (message) => {
       recordOutput(`\n[renderer:${message.type()}] ${message.text()}`);
     });
@@ -483,7 +593,7 @@ async function runScenario(appImagePath, scenario) {
   } finally {
     await browser?.close().catch((error) => cleanupErrors.push(error));
     if (child) {
-      await stopPackagedApp(child, backendProcessGroupId).catch((error) =>
+      await stopPackagedApp(child, electronProcess, backendProcessGroupId).catch((error) =>
         cleanupErrors.push(error),
       );
     }
