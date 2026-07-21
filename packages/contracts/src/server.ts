@@ -608,6 +608,22 @@ export const ServerProviderConnectionCancelInput = Schema.Struct({
 });
 export type ServerProviderConnectionCancelInput = typeof ServerProviderConnectionCancelInput.Type;
 
+export const ServerProviderConnectionAuthorizationCode = Schema.redact(
+  TrimmedNonEmptyString.check(
+    Schema.isMinLength(8),
+    Schema.isMaxLength(2_048),
+    Schema.isPattern(/^[A-Za-z0-9._~+/=-]+$/),
+  ),
+);
+
+export const ServerProviderConnectionSubmitAuthorizationCodeInput = Schema.Struct({
+  provider: ProviderKind,
+  operationId: TrimmedNonEmptyString,
+  authorizationCode: ServerProviderConnectionAuthorizationCode,
+});
+export type ServerProviderConnectionSubmitAuthorizationCodeInput =
+  typeof ServerProviderConnectionSubmitAuthorizationCodeInput.Type;
+
 export class ServerProviderConnectionError extends Schema.TaggedErrorClass<ServerProviderConnectionError>()(
   "ServerProviderConnectionError",
   {
@@ -618,6 +634,9 @@ export class ServerProviderConnectionError extends Schema.TaggedErrorClass<Serve
       "invalid_method",
       "already_running",
       "operation_not_found",
+      "authorization_code_not_supported",
+      "authorization_code_already_submitted",
+      "authorization_code_not_accepted",
       "provider_disabled",
     ]),
     message: TrimmedNonEmptyString,

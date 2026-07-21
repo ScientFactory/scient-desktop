@@ -2,7 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ServerProviderStatus } from "@synara/contracts";
 import { DEFAULT_SERVER_SETTINGS, ServerProviderUpdateError } from "@synara/contracts";
 import { describe, it, assert } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, Sink, Stream } from "effect";
+import { Duration, Effect, Fiber, FileSystem, Layer, Path, Sink, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -73,6 +73,7 @@ function mockSpawnerLayer(
     options:
       | {
           readonly env?: NodeJS.ProcessEnv;
+          readonly cwd?: string;
           readonly windowsVerbatimArguments?: boolean;
         }
       | undefined,
@@ -90,6 +91,7 @@ function mockSpawnerLayer(
         args: ReadonlyArray<string>;
         options?: {
           env?: NodeJS.ProcessEnv;
+          cwd?: string;
           windowsVerbatimArguments?: boolean;
         };
       };
@@ -2000,22 +2002,68 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
   });
 
   describe("checkAntigravityProviderStatus", () => {
-    it.effect("rejects versions that predate --new-project support", () =>
+    it.effect("rejects an unparseable Antigravity version", () =>
       Effect.gen(function* () {
         const status = yield* checkAntigravityProviderStatus();
         assert.strictEqual(status.status, "error");
         assert.strictEqual(status.available, false);
-        assert.strictEqual(status.version, "1.0.11");
+        assert.strictEqual(status.authStatus, "unknown");
+        assert.strictEqual(status.version, undefined);
         assert.strictEqual(
           status.message,
-          "Antigravity CLI 1.0.11 is too old for Scient. Upgrade to 1.0.12 or newer.",
+          "Scient could not verify Antigravity CLI 1.1.4 or newer from the version command output.",
+        );
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) => {
+            assert.strictEqual(args.join(" "), "--version");
+            return { stdout: "Antigravity development build\n", stderr: "", code: 0 };
+          }),
+        ),
+      ),
+    );
+
+    it.effect("rejects an Antigravity version probe timeout", () => {
+      return Effect.gen(function* () {
+        const statusFiber = yield* checkAntigravityProviderStatus().pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(Duration.millis(4_001));
+        yield* Effect.yieldNow;
+        const status = yield* Fiber.join(statusFiber);
+
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.available, false);
+        assert.strictEqual(status.authStatus, "unknown");
+        assert.strictEqual(
+          status.message,
+          "Scient could not verify Antigravity CLI 1.1.4 or newer because the version check timed out.",
+        );
+      }).pipe(
+        Effect.provide(
+          hangingSpawnerLayer({
+            onKill: () => undefined,
+            shouldHang: (args, command) => command === "agy" && args.join(" ") === "--version",
+          }),
+        ),
+      );
+    });
+
+    it.effect("rejects versions that predate Scient's browser-auth flow", () =>
+      Effect.gen(function* () {
+        const status = yield* checkAntigravityProviderStatus();
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.available, false);
+        assert.strictEqual(status.version, "1.1.3");
+        assert.strictEqual(
+          status.message,
+          "Antigravity CLI 1.1.3 is too old for Scient. Upgrade to 1.1.4 or newer.",
         );
       }).pipe(
         Effect.provide(
           mockSpawnerLayer((args) => {
             const joined = args.join(" ");
             if (joined === "--version") {
-              return { stdout: "Antigravity CLI 1.0.11\n", stderr: "", code: 0 };
+              return { stdout: "Antigravity CLI 1.1.3\n", stderr: "", code: 0 };
             }
             throw new Error(`Unexpected args: ${joined}`);
           }),
@@ -2030,14 +2078,14 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.available, true);
         assert.strictEqual(status.authStatus, "authenticated");
-        assert.strictEqual(status.version, "1.1.2");
+        assert.strictEqual(status.version, "1.1.4");
       }).pipe(
         Effect.provide(
           mockSpawnerLayer((args, command) => {
             assert.strictEqual(command, "agy");
             const joined = args.join(" ");
             if (joined === "--version") {
-              return { stdout: "Antigravity CLI 1.1.2\n", stderr: "", code: 0 };
+              return { stdout: "Antigravity CLI 1.1.4\n", stderr: "", code: 0 };
             }
             if (joined === "models") {
               return {
@@ -2112,14 +2160,18 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
 
     it.effect("uses the configured Antigravity binary", () =>
       Effect.gen(function* () {
-        const status = yield* checkAntigravityProviderStatus("/custom/bin/agy");
+        const status = yield* checkAntigravityProviderStatus(
+          "/custom/bin/agy",
+          "/tmp/scient-state",
+        );
         assert.strictEqual(status.status, "ready");
       }).pipe(
         Effect.provide(
-          mockSpawnerLayer((args, command) => {
+          mockSpawnerLayer((args, command, _env, options) => {
             assert.strictEqual(command, "/custom/bin/agy");
+            assert.strictEqual(options?.cwd, "/tmp/scient-state");
             return args.join(" ") === "--version"
-              ? { stdout: "1.1.2\n", stderr: "", code: 0 }
+              ? { stdout: "1.1.4\n", stderr: "", code: 0 }
               : { stdout: "GPT-OSS 120B (Medium)\n", stderr: "", code: 0 };
           }),
         ),

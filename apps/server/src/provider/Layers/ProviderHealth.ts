@@ -123,7 +123,7 @@ const OPENCODE_PROVIDER = "opencode" as const;
 const PI_PROVIDER = "pi" as const;
 type ProviderStatuses = ReadonlyArray<ServerProviderStatus>;
 const DISABLED_PROVIDER_STATUS_MESSAGE = "Provider is disabled in Scient settings.";
-const MINIMUM_ANTIGRAVITY_CLI_VERSION = "1.0.12";
+const MINIMUM_ANTIGRAVITY_CLI_VERSION = "1.1.4";
 
 const PROVIDERS = [
   CODEX_PROVIDER,
@@ -586,14 +586,19 @@ const runProviderCommand = (
   executable: string,
   args: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv = process.env,
+  cwd?: string,
 ) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const prepared = prepareWindowsSafeProcess(executable, args, { env });
+    const prepared = prepareWindowsSafeProcess(executable, args, {
+      env,
+      ...(cwd ? { cwd } : {}),
+    });
     const command = ChildProcess.make(prepared.command, prepared.args, {
       shell: prepared.shell,
       ...(prepared.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
       env,
+      ...(cwd ? { cwd } : {}),
       // Health probes are non-interactive. Leaving stdin as a pipe can keep CLIs
       // such as Antigravity waiting even after a read-only subcommand has finished.
       stdin: "ignore",
@@ -752,11 +757,16 @@ function cursorModelsOutputHasNoModels(output: string): boolean {
   return output.toLowerCase().includes("no models available");
 }
 
-const runAntigravityCommand = (args: ReadonlyArray<string>, executable = "agy") =>
-  runProviderCommand(executable, args, {
-    ...process.env,
-    AGY_CLI_DISABLE_AUTO_UPDATE: "true",
-  }).pipe(
+const runAntigravityCommand = (args: ReadonlyArray<string>, executable = "agy", cwd?: string) =>
+  runProviderCommand(
+    executable,
+    args,
+    {
+      ...process.env,
+      AGY_CLI_DISABLE_AUTO_UPDATE: "true",
+    },
+    cwd,
+  ).pipe(
     Effect.flatMap((result) =>
       isWindowsShellCommandMissingResult({ code: result.code, stderr: result.stderr })
         ? Effect.fail(new Error(`spawn ${executable} ENOENT`))
@@ -1588,11 +1598,12 @@ export function parseAntigravityModelsAuthStatus(result: CommandResult): ServerP
 
 export const checkAntigravityProviderStatus = (
   binaryPath?: string,
+  cwd?: string,
 ): Effect.Effect<ServerProviderStatus, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.gen(function* () {
     const checkedAt = new Date().toISOString();
     const executable = nonEmptyTrimmed(binaryPath) ?? "agy";
-    const versionProbe = yield* runAntigravityCommand(["--version"], executable).pipe(
+    const versionProbe = yield* runAntigravityCommand(["--version"], executable, cwd).pipe(
       Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
       Effect.result,
     );
@@ -1611,11 +1622,12 @@ export const checkAntigravityProviderStatus = (
     if (Option.isNone(versionProbe.success)) {
       return {
         provider: ANTIGRAVITY_PROVIDER,
-        status: "warning",
-        available: true,
+        status: "error",
+        available: false,
         authStatus: "unknown",
         checkedAt,
-        message: "Antigravity CLI version check timed out.",
+        message:
+          "Scient could not verify Antigravity CLI 1.1.4 or newer because the version check timed out.",
       } satisfies ServerProviderStatus;
     }
     const version = versionProbe.success.value;
@@ -1630,10 +1642,18 @@ export const checkAntigravityProviderStatus = (
       } satisfies ServerProviderStatus;
     }
     const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
-    if (
-      parsedVersion !== null &&
-      compareSemverVersions(parsedVersion, MINIMUM_ANTIGRAVITY_CLI_VERSION) < 0
-    ) {
+    if (parsedVersion === null) {
+      return {
+        provider: ANTIGRAVITY_PROVIDER,
+        status: "error",
+        available: false,
+        authStatus: "unknown",
+        checkedAt,
+        message:
+          "Scient could not verify Antigravity CLI 1.1.4 or newer from the version command output.",
+      } satisfies ServerProviderStatus;
+    }
+    if (compareSemverVersions(parsedVersion, MINIMUM_ANTIGRAVITY_CLI_VERSION) < 0) {
       return {
         provider: ANTIGRAVITY_PROVIDER,
         status: "error",
@@ -1644,7 +1664,7 @@ export const checkAntigravityProviderStatus = (
         message: `Antigravity CLI ${parsedVersion} is too old for Scient. Upgrade to ${MINIMUM_ANTIGRAVITY_CLI_VERSION} or newer.`,
       } satisfies ServerProviderStatus;
     }
-    const models = yield* runAntigravityCommand(["models"], executable).pipe(
+    const models = yield* runAntigravityCommand(["models"], executable, cwd).pipe(
       Effect.timeoutOption(CLAUDE_HEALTH_TIMEOUT_MS),
       Effect.result,
     );
@@ -2400,7 +2420,11 @@ export function makeProviderHealthLive(options?: {
                   resolveProviderBinaryPath(
                     ANTIGRAVITY_PROVIDER,
                     settings.providers.antigravity.binaryPath,
-                  ).pipe(Effect.flatMap(checkAntigravityProviderStatus)),
+                  ).pipe(
+                    Effect.flatMap((binaryPath) =>
+                      checkAntigravityProviderStatus(binaryPath, serverConfig.stateDir),
+                    ),
+                  ),
                 ),
                 checkProviderWhenEnabled(
                   settings,

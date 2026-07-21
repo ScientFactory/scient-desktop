@@ -4,6 +4,7 @@ import { Schema } from "effect";
 import {
   ServerProviderConnectionCancelInput,
   ServerProviderConnectionStartInput,
+  ServerProviderConnectionSubmitAuthorizationCodeInput,
   ServerProviderStatus,
 } from "./server";
 
@@ -57,6 +58,35 @@ describe("provider connection contracts", () => {
         operationId: "   ",
       }),
     ).toThrow();
+  });
+
+  it("accepts a bounded one-time authorization code and rejects control characters", () => {
+    const decode = Schema.decodeUnknownSync(ServerProviderConnectionSubmitAuthorizationCodeInput);
+    expect(
+      decode({
+        provider: "antigravity",
+        operationId: "operation-1",
+        authorizationCode: "  4/test_code-123  ",
+      }),
+    ).toEqual({
+      provider: "antigravity",
+      operationId: "operation-1",
+      authorizationCode: "4/test_code-123",
+    });
+    const rejectedCode = "4/test-code\nsecond-line";
+    let diagnostic = "";
+    try {
+      decode({
+        provider: "antigravity",
+        operationId: "operation-1",
+        authorizationCode: rejectedCode,
+      });
+    } catch (error) {
+      diagnostic = String(error);
+    }
+    expect(diagnostic).not.toBe("");
+    expect(diagnostic).not.toContain(rejectedCode);
+    expect(diagnostic).not.toContain("test-code");
   });
 
   it("keeps connection progress optional for old provider snapshots", () => {

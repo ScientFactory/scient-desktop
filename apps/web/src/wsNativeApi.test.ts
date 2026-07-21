@@ -610,7 +610,7 @@ describe("wsNativeApi", () => {
     expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverGetEnvironment);
   });
 
-  it("forwards provider connection start and cancel requests", async () => {
+  it("forwards provider connection start, code submission, and cancel requests", async () => {
     requestMock.mockResolvedValue({ providers: defaultProviders });
     const { createWsNativeApi } = await import("./wsNativeApi");
     const api = createWsNativeApi();
@@ -623,6 +623,11 @@ describe("wsNativeApi", () => {
       provider: "codex",
       operationId: "operation-1",
     });
+    await api.server.submitProviderConnectionAuthorizationCode({
+      provider: "antigravity",
+      operationId: "operation-2",
+      authorizationCode: "4/test-code-123",
+    });
 
     expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverStartProviderConnection, {
       provider: "codex",
@@ -632,6 +637,14 @@ describe("wsNativeApi", () => {
       provider: "codex",
       operationId: "operation-1",
     });
+    expect(requestMock).toHaveBeenCalledWith(
+      WS_METHODS.serverSubmitProviderConnectionAuthorizationCode,
+      {
+        provider: "antigravity",
+        operationId: "operation-2",
+        authorizationCode: "4/test-code-123",
+      },
+    );
   });
 
   it("fetches auth session state over HTTP", async () => {

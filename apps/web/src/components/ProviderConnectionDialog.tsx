@@ -4,7 +4,7 @@
 
 import type { ServerProviderConnectionMethod, ServerProviderInstallPlan } from "@synara/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   CLAUDE_CONNECTION_METHOD_OPTIONS,
@@ -27,13 +27,15 @@ import {
   DialogPopup,
   DialogTitle,
 } from "./ui/dialog";
+import { Input } from "./ui/input";
 import { Spinner } from "./ui/spinner";
 
 const CONNECTION_TIMEOUT_MS = 10 * 60 * 1_000;
+const ANTIGRAVITY_CONNECTION_TIMEOUT_MS = 60 * 1_000;
 
-function formatRemainingTime(startedAt: string, nowMs: number): string {
+function formatRemainingTime(startedAt: string, nowMs: number, timeoutMs: number): string {
   const elapsedMs = Math.max(0, nowMs - Date.parse(startedAt));
-  const remainingSeconds = Math.max(0, Math.ceil((CONNECTION_TIMEOUT_MS - elapsedMs) / 1_000));
+  const remainingSeconds = Math.max(0, Math.ceil((timeoutMs - elapsedMs) / 1_000));
   const minutes = Math.floor(remainingSeconds / 60);
   const seconds = remainingSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
@@ -50,6 +52,13 @@ export function ProviderConnectionDialog() {
   const [runtimeReconnectBaselineOperationId, setRuntimeReconnectBaselineOperationId] = useState<
     string | null | undefined
   >(undefined);
+  const [authorizationCode, setAuthorizationCode] = useState("");
+  const [submittedAuthorizationCodeOperationId, setSubmittedAuthorizationCodeOperationId] =
+    useState<string | null>(null);
+  const activeAuthorizationCodeSubmissionRef = useRef<{
+    readonly operationId: string;
+  } | null>(null);
+  const activeConnectionOperationIdRef = useRef<string | null>(null);
   const status = provider
     ? configQuery.data?.providers.find((entry) => entry.provider === provider)
     : undefined;
@@ -71,6 +80,7 @@ export function ProviderConnectionDialog() {
     ["starting", "waiting_for_browser", "verifying"].includes(status.connectionState.status)
       ? status.connectionState
       : null;
+  activeConnectionOperationIdRef.current = activeConnection?.operationId ?? null;
 
   useEffect(() => {
     setRuntimeReconnectBaselineOperationId(undefined);
@@ -110,6 +120,25 @@ export function ProviderConnectionDialog() {
     const intervalId = window.setInterval(() => setClockMs(Date.now()), 1_000);
     return () => window.clearInterval(intervalId);
   }, [isOpen, activeConnection]);
+
+  useEffect(() => {
+    setAuthorizationCode("");
+    const operationId = activeConnection?.operationId;
+    if (activeAuthorizationCodeSubmissionRef.current?.operationId !== operationId) {
+      activeAuthorizationCodeSubmissionRef.current = null;
+    }
+    if (operationId) {
+      setSubmittedAuthorizationCodeOperationId((submitted) =>
+        submitted === operationId ? submitted : null,
+      );
+    } else {
+      setSubmittedAuthorizationCodeOperationId(null);
+    }
+  }, [activeConnection?.operationId]);
+
+  useEffect(() => {
+    if (!isOpen) setAuthorizationCode("");
+  }, [isOpen]);
 
   if (!provider || !presentation || !Icon) return null;
   const startsProviderSignIn =
@@ -160,9 +189,20 @@ export function ProviderConnectionDialog() {
   const startSignIn = (method?: ServerProviderConnectionMethod) =>
     runAction(() => performStartSignIn(method));
 
+  const invalidateAuthorizationCodeSubmission = (operationId: string) => {
+    if (activeAuthorizationCodeSubmissionRef.current?.operationId === operationId) {
+      activeAuthorizationCodeSubmissionRef.current = null;
+    }
+    setAuthorizationCode("");
+    setSubmittedAuthorizationCodeOperationId((submitted) =>
+      submitted === operationId ? null : submitted,
+    );
+  };
+
   const cancelSignIn = () => {
     const operationId = status?.connectionState?.operationId;
     if (!operationId) return Promise.resolve();
+    invalidateAuthorizationCodeSubmission(operationId);
     return runAction(async () => {
       const result = await ensureNativeApi().server.cancelProviderConnection({
         provider,
@@ -175,6 +215,7 @@ export function ProviderConnectionDialog() {
   const restartSignIn = () => {
     const operation = status?.connectionState;
     if (!operation) return Promise.resolve();
+    invalidateAuthorizationCodeSubmission(operation.operationId);
     return runAction(async () => {
       const cancelled = await ensureNativeApi().server.cancelProviderConnection({
         provider,
@@ -189,6 +230,54 @@ export function ProviderConnectionDialog() {
     const authorizationUrl = activeConnection?.authorizationUrl;
     if (!authorizationUrl) return Promise.resolve();
     return runAction(() => ensureNativeApi().shell.openExternal(authorizationUrl));
+  };
+
+  const submitAuthorizationCode = () => {
+    if (provider !== "antigravity" || !activeConnection) return Promise.resolve();
+    const code = authorizationCode.trim();
+    if (!code) return Promise.resolve();
+    const operationId = activeConnection.operationId;
+    if (activeAuthorizationCodeSubmissionRef.current?.operationId === operationId) {
+      return Promise.resolve();
+    }
+    const submission = { operationId };
+    activeAuthorizationCodeSubmissionRef.current = submission;
+    setAuthorizationCode("");
+    setSubmittedAuthorizationCodeOperationId(operationId);
+    setActionError(null);
+    void ensureNativeApi()
+      .server.submitProviderConnectionAuthorizationCode({
+        provider,
+        operationId,
+        authorizationCode: code,
+      })
+      .then((result) => {
+        if (
+          activeAuthorizationCodeSubmissionRef.current !== submission ||
+          activeConnectionOperationIdRef.current !== operationId
+        ) {
+          return;
+        }
+        activeAuthorizationCodeSubmissionRef.current = null;
+        applyProviderStatusesToCache(queryClient, result.providers);
+        setSubmittedAuthorizationCodeOperationId((submitted) =>
+          submitted === operationId ? null : submitted,
+        );
+      })
+      .catch((error) => {
+        if (
+          activeAuthorizationCodeSubmissionRef.current !== submission ||
+          activeConnectionOperationIdRef.current !== operationId
+        ) {
+          return;
+        }
+        activeAuthorizationCodeSubmissionRef.current = null;
+        setSubmittedAuthorizationCodeOperationId((submitted) =>
+          submitted === operationId ? null : submitted,
+        );
+        setActionError(error instanceof Error ? error.message : "The code could not be submitted.");
+      });
+    return Promise.resolve();
   };
 
   const install = () =>
@@ -270,15 +359,23 @@ export function ProviderConnectionDialog() {
                     : "Checking the current provider state."}
                 </span>
               </div>
-              {activeConnection ? (
+              {activeConnection && activeConnection.status !== "verifying" ? (
                 <p className="pl-6 text-xs">
-                  Automatic timeout in {formatRemainingTime(activeConnection.startedAt, clockMs)}
+                  Automatic timeout in{" "}
+                  {formatRemainingTime(
+                    activeConnection.startedAt,
+                    clockMs,
+                    provider === "antigravity"
+                      ? ANTIGRAVITY_CONNECTION_TIMEOUT_MS
+                      : CONNECTION_TIMEOUT_MS,
+                  )}
                 </p>
               ) : null}
             </div>
           ) : null}
 
-          {provider === "grok" && activeConnection?.authorizationUrl ? (
+          {(provider === "grok" || provider === "antigravity") &&
+          activeConnection?.authorizationUrl ? (
             <Button
               type="button"
               variant="outline"
@@ -286,8 +383,53 @@ export function ProviderConnectionDialog() {
               disabled={actionPending}
               onClick={reopenAuthorization}
             >
-              Open xAI sign-in again
+              {provider === "grok" ? "Open xAI sign-in again" : "Open Google sign-in again"}
             </Button>
+          ) : null}
+
+          {provider === "antigravity" && activeConnection?.status === "waiting_for_browser" ? (
+            <form
+              className="space-y-2 rounded-xl border border-[color:var(--color-border)] bg-[var(--color-background-elevated-secondary)] px-3 py-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submitAuthorizationCode();
+              }}
+            >
+              {submittedAuthorizationCodeOperationId === activeConnection.operationId ? (
+                <p className="text-sm" aria-live="polite">
+                  Code submitted. Finishing sign in.
+                </p>
+              ) : (
+                <>
+                  <label
+                    className="block text-xs font-medium text-muted-foreground"
+                    htmlFor="antigravity-authorization-code"
+                  >
+                    After Google finishes, paste the code it shows you here
+                  </label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="antigravity-authorization-code"
+                      type="password"
+                      autoComplete="one-time-code"
+                      autoCapitalize="none"
+                      spellCheck={false}
+                      placeholder="Paste authorization code"
+                      value={authorizationCode}
+                      disabled={actionPending}
+                      onChange={(event) => setAuthorizationCode(event.target.value)}
+                    />
+                    <Button
+                      type="submit"
+                      disabled={actionPending || authorizationCode.trim().length === 0}
+                    >
+                      {actionPending ? <Spinner /> : null}
+                      Submit code
+                    </Button>
+                  </div>
+                </>
+              )}
+            </form>
           ) : null}
 
           {provider === "claudeAgent" && presentation.primaryAction === "sign_in" ? (
@@ -335,9 +477,11 @@ export function ProviderConnectionDialog() {
           ) : null}
 
           <p className="text-xs leading-relaxed text-muted-foreground">
-            {startsProviderSignIn
-              ? "Scient starts the provider's official sign-in. Passwords and account tokens stay with the provider and are never stored in Scient."
-              : "Installation and sign-in happen directly with the provider. Passwords and account tokens are never entered into or stored in Scient."}
+            {provider === "antigravity" && startsProviderSignIn
+              ? "Passwords and account tokens stay with Google. Scient sends this one-time code only to the local Antigravity process and never stores it."
+              : startsProviderSignIn
+                ? "Scient starts the provider's official sign-in. Passwords and account tokens stay with the provider and are never stored in Scient."
+                : "Installation and sign-in happen directly with the provider. Passwords and account tokens are never entered into or stored in Scient."}
           </p>
         </DialogPanel>
 

@@ -1049,6 +1049,11 @@ export const makeWsRpcLayer = () =>
             Effect.andThen(providerClientStatusProjection.getStatuses),
             Effect.map((providers) => ({ providers })),
           ),
+        [WS_METHODS.serverSubmitProviderConnectionAuthorizationCode]: (input) =>
+          providerConnection.submitAuthorizationCode(input).pipe(
+            Effect.andThen(providerClientStatusProjection.getStatuses),
+            Effect.map((providers) => ({ providers })),
+          ),
         [WS_METHODS.serverPrepareProviderInstall]: (input) =>
           providerRuntimeManager.prepareInstall(input.provider),
         [WS_METHODS.serverInstallProvider]: (input) =>

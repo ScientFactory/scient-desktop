@@ -12,17 +12,17 @@ The runtime-installation half of this design is now implemented for every provid
 
 ## Current implementation matrix
 
-| Provider    | Automatic runtime on current macOS arm64 target  | In-app connection                                                          | Remaining release gate                                                                                      |
-| ----------- | ------------------------------------------------ | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Codex       | Yes, pinned official standalone release          | Official browser login and status verification                             | Clean-machine proof on every claimed OS/architecture                                                        |
-| Claude      | Yes, pinned native release and manifest checksum | Authorized Claude Console browser login and status verification            | Fresh Console account and billing-onboarding proof; subscription login stays disabled without authorization |
-| Antigravity | Yes, pinned manifest release                     | Bare `agy` in a private PTY opens Google sign-in; `agy models` verifies it | Clean-account authentication proof; other targets need packaged proof                                       |
-| Cursor      | Yes, pinned macOS arm64 archive                  | Official browser login and health verification                             | Managed installation is intentionally gated off on other targets until reviewed                             |
-| Grok        | Yes, pinned macOS arm64 binary                   | Official xAI browser login plus explicit model/auth verification           | Fresh-account packaged proof; review other targets                                                          |
-| Droid       | Yes, pinned native binary and vendor SHA-256     | Authentication-only ACP device pairing plus non-inference verification     | Fresh-account packaged proof on macOS, Windows, and Linux                                                   |
-| OpenCode    | Yes, pinned official GitHub release              | Provider guidance                                                          | Design a provider-and-method chooser; clean-machine proof on claimed targets                                |
-| Kilo        | Yes, pinned official GitHub release              | Provider guidance                                                          | Design Gateway/provider chooser; clean-machine proof on claimed targets                                     |
-| Pi          | Bundled; no external CLI is required             | Existing embedded provider configuration                                   | Design the model-provider/OAuth chooser and verified credential presentation                                |
+| Provider    | Automatic runtime on current macOS arm64 target  | In-app connection                                                                                                                        | Remaining release gate                                                                                      |
+| ----------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Codex       | Yes, pinned official standalone release          | Official browser login and status verification                                                                                           | Clean-machine proof on every claimed OS/architecture                                                        |
+| Claude      | Yes, pinned native release and manifest checksum | Authorized Claude Console browser login and status verification                                                                          | Fresh Console account and billing-onboarding proof; subscription login stays disabled without authorization |
+| Antigravity | Yes, pinned manifest release                     | Sandboxed `agy --print` runs in a private PTY from neutral state, accepts the transient Google code in-app, and `agy models` verifies it | Clean-account authentication proof; other targets need packaged proof                                       |
+| Cursor      | Yes, pinned macOS arm64 archive                  | Official browser login and health verification                                                                                           | Managed installation is intentionally gated off on other targets until reviewed                             |
+| Grok        | Yes, pinned macOS arm64 binary                   | Official xAI browser login plus explicit model/auth verification                                                                         | Fresh-account packaged proof; review other targets                                                          |
+| Droid       | Yes, pinned native binary and vendor SHA-256     | Authentication-only ACP device pairing plus non-inference verification                                                                   | Fresh-account packaged proof on macOS, Windows, and Linux                                                   |
+| OpenCode    | Yes, pinned official GitHub release              | Provider guidance                                                                                                                        | Design a provider-and-method chooser; clean-machine proof on claimed targets                                |
+| Kilo        | Yes, pinned official GitHub release              | Provider guidance                                                                                                                        | Design Gateway/provider chooser; clean-machine proof on claimed targets                                     |
+| Pi          | Bundled; no external CLI is required             | Existing embedded provider configuration                                                                                                 | Design the model-provider/OAuth chooser and verified credential presentation                                |
 
 ## Product requirements
 
@@ -134,7 +134,7 @@ The installation service must:
 - Source: official platform manifest and native artifact.
 - Verification now: pinned manifest version and manifest SHA-512.
 - Smoke test: `agy --version`.
-- Authentication now: bare `agy` runs in a private PTY and opens provider-owned Google sign-in. Scient discards raw PTY output and polls the separate model verifier.
+- Authentication now: Antigravity 1.1.4 or newer runs sandboxed `agy --print` in a private PTY from Scient's neutral state directory and opens provider-owned Google sign-in. Scient validates the Google URL, forwards one redacted one-time code to that process, discards raw output, polls the separate model verifier, keeps Antigravity's 60-second OAuth window, and allows only a hidden five-second grace for the final local verification probe.
 - Auth verification: `agy models` returns models.
 - Managed invocations disable AGY's native self-updater so updates stay inside Scient's reviewed runtime lifecycle.
 
