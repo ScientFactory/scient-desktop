@@ -16,7 +16,19 @@ import type {
 } from "@synara/contracts";
 import { ServerProviderConnectionError } from "@synara/contracts";
 import { prepareWindowsSafeProcess } from "@synara/shared/windowsProcess";
-import { Duration, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Result, Scope } from "effect";
+import {
+  Duration,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  Ref,
+  Result,
+  Scope,
+  Stream,
+} from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ServerConfig } from "../../config";
@@ -24,7 +36,6 @@ import { buildCodexProcessEnv } from "../../codexProcessEnv";
 import { resolveBaseCodexHomePath } from "../../codexHomePaths";
 import { ServerSettingsService } from "../../serverSettings";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText";
-import { acquireClaudeAuthStatusLock } from "../claudeAuthStatusLock";
 import { buildClaudeProcessEnv } from "../claudeProcessEnv";
 import { buildCursorAgentCommand } from "../acp/CursorAcpCommand";
 import { probeDroidAcpAuthentication } from "../acp/DroidAcpSupport";
@@ -48,8 +59,57 @@ interface ConnectionCommand {
   readonly args: ReadonlyArray<string>;
   readonly env: NodeJS.ProcessEnv;
   readonly waitingMessage: string;
-  readonly lock?: "claude-auth";
   readonly strategy?: "antigravity-pty";
+}
+
+interface ConnectionOutputObserver {
+  readonly onOutputChunk?: (chunk: Uint8Array) => Effect.Effect<void>;
+}
+
+const GROK_OAUTH_AUTHORIZATION_ORIGIN = "https://auth.x.ai";
+const GROK_OAUTH_AUTHORIZATION_PATH = "/oauth2/authorize";
+const GROK_OAUTH_OUTPUT_BUFFER_MAX_CHARS = 16 * 1024;
+
+export function parseGrokOAuthAuthorizationUrl(output: string): string | null {
+  const candidates =
+    output.match(/https:\/\/auth\.x\.ai\/oauth2\/authorize\?[^\s\u0000-\u001f\u007f<>"']+/gu) ?? [];
+  for (const candidate of candidates) {
+    if (candidate.length > 8_192) continue;
+    try {
+      const url = new URL(candidate);
+      if (
+        url.origin !== GROK_OAUTH_AUTHORIZATION_ORIGIN ||
+        url.pathname !== GROK_OAUTH_AUTHORIZATION_PATH ||
+        url.hash ||
+        url.username ||
+        url.password ||
+        url.searchParams.get("response_type") !== "code" ||
+        !url.searchParams.get("state") ||
+        !url.searchParams.get("code_challenge")
+      ) {
+        continue;
+      }
+      const redirectValue = url.searchParams.get("redirect_uri");
+      if (!redirectValue) continue;
+      const redirectUrl = new URL(redirectValue);
+      if (
+        redirectUrl.protocol !== "http:" ||
+        redirectUrl.hostname !== "127.0.0.1" ||
+        !redirectUrl.port ||
+        redirectUrl.pathname !== "/callback" ||
+        redirectUrl.search ||
+        redirectUrl.hash ||
+        redirectUrl.username ||
+        redirectUrl.password
+      ) {
+        continue;
+      }
+      return url.toString();
+    } catch {
+      // Ignore malformed or incomplete output while the CLI is still streaming.
+    }
+  }
+  return null;
 }
 
 export function expectedMethodForProvider(
@@ -59,7 +119,7 @@ export function expectedMethodForProvider(
     case "codex":
       return "codex_browser";
     case "claudeAgent":
-      return "claude_console";
+      return "claude_account";
     case "cursor":
       return "cursor_browser";
     case "antigravity":
@@ -78,12 +138,18 @@ export function providerConnectionCommandArgs(
   method: ServerProviderConnectionMethod,
 ): ReadonlyArray<string> | null {
   if (provider === "codex" && method === "codex_browser") return ["login"];
+  if (provider === "claudeAgent" && method === "claude_account") {
+    return ["auth", "login"];
+  }
+  if (provider === "claudeAgent" && method === "claude_sso") {
+    return ["auth", "login", "--sso"];
+  }
   if (provider === "claudeAgent" && method === "claude_console") {
     return ["auth", "login", "--console"];
   }
   if (provider === "cursor" && method === "cursor_browser") return ["login"];
   if (provider === "antigravity" && method === "antigravity_browser") return [];
-  if (provider === "grok" && method === "grok_browser") return ["login"];
+  if (provider === "grok" && method === "grok_browser") return ["login", "--oauth"];
   if (provider === "droid" && method === "droid_device_pairing") {
     return ["exec", "--output-format", "acp"];
   }
@@ -169,13 +235,6 @@ export function makeProviderConnectionLive(options?: {
             provider,
             reason: "unsupported_provider",
             message: "This provider does not yet support in-app sign in.",
-          });
-        }
-        if (method !== expectedMethod) {
-          return yield* makeConnectionError({
-            provider,
-            reason: "invalid_method",
-            message: "The selected sign-in method is not valid for this provider.",
           });
         }
         const args = providerConnectionCommandArgs(provider, method);
@@ -290,7 +349,8 @@ export function makeProviderConnectionLive(options?: {
             executable: runtime.executable ?? "grok",
             args: runtime.source === "managed" ? ["--no-auto-update", ...args] : args,
             env: process.env,
-            waitingMessage: "Finish signing in to xAI in the browser window.",
+            waitingMessage:
+              "Finish authorizing Grok in the xAI browser window. No terminal code is required.",
           } satisfies ConnectionCommand;
         }
 
@@ -331,13 +391,18 @@ export function makeProviderConnectionLive(options?: {
             ...buildClaudeProcessEnv({ homeDir: serverConfig.homeDir }),
             ...(runtime.source === "managed" ? { DISABLE_AUTOUPDATER: "1" } : {}),
           },
-          waitingMessage: "Finish signing in to Claude in the browser window.",
-          lock: "claude-auth",
+          waitingMessage:
+            method === "claude_sso"
+              ? "Finish signing in with your Claude organization in the browser window."
+              : method === "claude_console"
+                ? "Finish signing in to Anthropic Console in the browser window."
+                : "Finish signing in to your Claude account in the browser window.",
         } satisfies ConnectionCommand;
       });
 
       const runCommandResult = Effect.fn("ProviderConnection.runCommandResult")(function* (
         command: ConnectionCommand,
+        observer?: ConnectionOutputObserver,
       ) {
         const prepared = prepareWindowsSafeProcess(command.executable, command.args, {
           env: command.env,
@@ -351,14 +416,16 @@ export function makeProviderConnectionLive(options?: {
           }),
         );
         yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
+        const observe = (stream: Stream.Stream<Uint8Array, unknown>) =>
+          observer?.onOutputChunk ? stream.pipe(Stream.tap(observer.onOutputChunk)) : stream;
         const [stdout, stderr, exitCode] = yield* Effect.all(
           [
             collectUint8StreamText({
-              stream: child.stdout,
+              stream: observe(child.stdout),
               maxBytes: CONNECTION_OUTPUT_MAX_BYTES,
             }),
             collectUint8StreamText({
-              stream: child.stderr,
+              stream: observe(child.stderr),
               maxBytes: CONNECTION_OUTPUT_MAX_BYTES,
             }),
             child.exitCode.pipe(Effect.map(Number)),
@@ -368,8 +435,8 @@ export function makeProviderConnectionLive(options?: {
         return { stdout: stdout.text, stderr: stderr.text, code: exitCode };
       });
 
-      const runCommand = (command: ConnectionCommand) =>
-        runCommandResult(command).pipe(Effect.map((result) => result.code));
+      const runCommand = (command: ConnectionCommand, observer?: ConnectionOutputObserver) =>
+        runCommandResult(command, observer).pipe(Effect.map((result) => result.code));
 
       const runAntigravityConnection = (command: ConnectionCommand) =>
         Effect.gen(function* () {
@@ -414,28 +481,15 @@ export function makeProviderConnectionLive(options?: {
           }
         }).pipe(Effect.scoped);
 
-      const runWithOptionalLock = (
-        command: ConnectionCommand,
-        run: Effect.Effect<number, unknown>,
-      ) => {
-        if (command.lock !== "claude-auth") return run;
-        return Effect.acquireUseRelease(
-          Effect.promise(() => acquireClaudeAuthStatusLock()),
-          () => run,
-          (release) => Effect.sync(release),
-        );
-      };
-
       const start: ProviderConnectionShape["start"] = Effect.fn("ProviderConnection.start")(
         function* (input) {
           const { provider, method } = input;
           const reserved = yield* reserveProvider(provider);
           if (!reserved) {
-            return yield* makeConnectionError({
-              provider,
-              reason: "already_running",
-              message: "A connection attempt is already running for this provider.",
-            });
+            // Starting the same provider is idempotent. Returning the current
+            // operation lets a reopened dialog resume or cancel it without
+            // spawning a competing credential process.
+            return { providers: yield* providerHealth.getStatuses };
           }
 
           const commandResult = yield* Effect.result(resolveCommand(provider, method));
@@ -444,12 +498,19 @@ export function makeProviderConnectionLive(options?: {
             return yield* commandResult.failure;
           }
           const command = commandResult.success;
+          const refreshedBeforeStart = yield* providerHealth.refresh;
+          const currentStatus = refreshedBeforeStart.find((status) => status.provider === provider);
+          if (currentStatus?.available && currentStatus.authStatus === "authenticated") {
+            yield* releaseProvider(provider, "");
+            return { providers: refreshedBeforeStart };
+          }
           const operationId = randomUUID();
           const startedAt = new Date().toISOString();
           const state = (input: {
             readonly status: ServerProviderConnectionState["status"];
             readonly message: string;
             readonly finished?: boolean;
+            readonly authorizationUrl?: string;
           }): ServerProviderConnectionState => ({
             operationId,
             method,
@@ -457,6 +518,7 @@ export function makeProviderConnectionLive(options?: {
             startedAt,
             finishedAt: input.finished ? new Date().toISOString() : null,
             message: input.message,
+            ...(input.authorizationUrl ? { authorizationUrl: input.authorizationUrl } : {}),
           });
 
           yield* publishState(
@@ -469,7 +531,33 @@ export function makeProviderConnectionLive(options?: {
               provider,
               state({ status: "waiting_for_browser", message: command.waitingMessage }),
             );
-            const connectionProcess =
+            let grokOutputBuffer = "";
+            let publishedGrokAuthorizationUrl: string | null = null;
+            const grokOutputObserver: ConnectionOutputObserver | undefined =
+              provider === "grok"
+                ? {
+                    onOutputChunk: (chunk) =>
+                      Effect.gen(function* () {
+                        grokOutputBuffer =
+                          `${grokOutputBuffer}${Buffer.from(chunk).toString("utf8")}`.slice(
+                            -GROK_OAUTH_OUTPUT_BUFFER_MAX_CHARS,
+                          );
+                        const authorizationUrl = parseGrokOAuthAuthorizationUrl(grokOutputBuffer);
+                        if (!authorizationUrl || authorizationUrl === publishedGrokAuthorizationUrl)
+                          return;
+                        publishedGrokAuthorizationUrl = authorizationUrl;
+                        yield* publishState(
+                          provider,
+                          state({
+                            status: "waiting_for_browser",
+                            message: command.waitingMessage,
+                            authorizationUrl,
+                          }),
+                        );
+                      }),
+                  }
+                : undefined;
+            const connectionProcess: Effect.Effect<number, unknown> =
               provider === "droid"
                 ? (options?.droidAuthenticationProbe ?? probeDroidAcpAuthentication)({
                     binaryPath: command.executable,
@@ -478,7 +566,7 @@ export function makeProviderConnectionLive(options?: {
                   }).pipe(Effect.as(0))
                 : command.strategy === "antigravity-pty"
                   ? runAntigravityConnection(command)
-                  : runWithOptionalLock(command, runCommand(command).pipe(Effect.scoped));
+                  : runCommand(command, grokOutputObserver).pipe(Effect.scoped);
             const exitCodeResult = yield* connectionProcess.pipe(
               Effect.timeoutOption(timeout),
               Effect.result,
@@ -511,7 +599,10 @@ export function makeProviderConnectionLive(options?: {
                 provider,
                 state({
                   status: "failed",
-                  message: "Sign in was not completed. No credentials were saved by Scient.",
+                  message:
+                    provider === "grok"
+                      ? "Grok authorization was not completed. Close any old xAI page, update Grok if an update is available, then try again to start a fresh secure browser sign-in."
+                      : "Sign in was not completed. No credentials were saved by Scient.",
                   finished: true,
                 }),
               );
@@ -592,7 +683,6 @@ export function makeProviderConnectionLive(options?: {
                 }),
               ).pipe(Effect.asVoid),
             ),
-            Effect.ensuring(releaseProvider(provider, operationId)),
           );
 
           // The gate prevents a very fast CLI exit from completing and releasing
@@ -600,6 +690,9 @@ export function makeProviderConnectionLive(options?: {
           const startGate = yield* Deferred.make<void>();
           const fiber = yield* Deferred.await(startGate).pipe(
             Effect.andThen(operation),
+            // Own the reservation at the outermost fiber boundary. A caller can
+            // cancel immediately after start returns, before `operation` begins.
+            Effect.ensuring(releaseProvider(provider, operationId)),
             Effect.forkIn(operationScope),
           );
           yield* Ref.update(activeConnectionsRef, (active) => {
@@ -624,6 +717,10 @@ export function makeProviderConnectionLive(options?: {
             });
           }
           yield* Fiber.interrupt(active.fiber);
+          // Restart callers must not race the interrupted operation's process
+          // cleanup or reservation finalizer. Do not return until both finish.
+          yield* Fiber.await(active.fiber);
+          yield* releaseProvider(input.provider, input.operationId);
           const providers = yield* providerHealth.getStatuses;
           return { providers };
         },
