@@ -284,7 +284,9 @@ export class ConnectionSupervisor<T> {
     })().then((value) => {
       if (!acceptResult || controller.signal.aborted) {
         this.#close({ generation, value }, `late abandoned generation ${generation}`);
-        throw controller.signal.reason ?? new Error(`Connection generation ${generation} abandoned`);
+        throw (
+          controller.signal.reason ?? new Error(`Connection generation ${generation} abandoned`)
+        );
       }
       return value;
     });
@@ -317,10 +319,7 @@ export class ConnectionSupervisor<T> {
   #armRetryReset(session: ConnectionSupervisorSession<T>): void {
     this.#clearRetryResetTimer();
     if (this.#retryAttempt === 0) return;
-    const delayMs = Math.max(
-      0,
-      this.#options.retryResetAfterMs ?? DEFAULT_RETRY_RESET_AFTER_MS,
-    );
+    const delayMs = Math.max(0, this.#options.retryResetAfterMs ?? DEFAULT_RETRY_RESET_AFTER_MS);
     this.#retryResetTimer = this.#setTimer(() => {
       this.#retryResetTimer = null;
       if (this.#disposed || this.#active?.generation !== session.generation) return;

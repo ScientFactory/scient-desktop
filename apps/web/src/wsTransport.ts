@@ -134,9 +134,7 @@ function makeProtocolLayer(url: string) {
       retryPolicy: Schedule.recurs(EFFECT_RPC_RETRY_CONFIG.retryCount),
     }),
   );
-  return protocolLayer.pipe(
-    Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson)),
-  );
+  return protocolLayer.pipe(Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson)));
 }
 
 function causeToError(cause: Cause.Cause<unknown>): Error {
@@ -393,7 +391,9 @@ export class WsTransport {
     const runtime = ManagedRuntime.make(makeProtocolLayer(makeSocketUrl(this.explicitUrl)));
     const clientScope = runtime.runSync(Scope.make());
     try {
-      const client = await runtime.runPromise(Scope.provide(clientScope)(makeRpcClient), { signal });
+      const client = await runtime.runPromise(Scope.provide(clientScope)(makeRpcClient), {
+        signal,
+      });
       const session = { client, clientScope, runtime } satisfies SessionHandle;
       await this.validateSession(
         session,
@@ -704,9 +704,7 @@ export class WsTransport {
     const previous = this.streamTransitions.get(key) ?? Promise.resolve();
     const transition = previous
       .catch(() => undefined)
-      .then(() =>
-        this.replaceStream(session, key, identity, streamFactory, listener, options),
-      )
+      .then(() => this.replaceStream(session, key, identity, streamFactory, listener, options))
       .finally(() => {
         if (this.streamTransitions.get(key) === transition) {
           this.streamTransitions.delete(key);
@@ -768,15 +766,7 @@ export class WsTransport {
           onExit: (exit) => {
             resolveSettled();
             queueMicrotask(() => {
-              this.handleStreamExit(
-                session,
-                key,
-                cleanup,
-                exit,
-                streamFactory,
-                listener,
-                options,
-              );
+              this.handleStreamExit(session, key, cleanup, exit, streamFactory, listener, options);
             });
           },
         },
@@ -791,14 +781,7 @@ export class WsTransport {
       if (this.streamStartTokens.get(key)?.identity === identity) {
         this.streamStartTokens.delete(key);
       }
-      this.handleStreamFailure(
-        session,
-        key,
-        error,
-        streamFactory,
-        listener,
-        options,
-      );
+      this.handleStreamFailure(session, key, error, streamFactory, listener, options);
     }
   }
 
