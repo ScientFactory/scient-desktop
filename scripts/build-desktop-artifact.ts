@@ -17,6 +17,7 @@ import {
   createDesktopPlatformBuildConfig,
   MAC_ADHOC_SIGN_HOOK_PATH,
   MAC_APPSNAP_HELPER_STAGE_PATH,
+  MAC_SIGNING_POLICY_PATH,
   validateDesktopNativeBuildHost,
 } from "./lib/desktop-platform-build-config.ts";
 import { isolateDesktopSigningEnvironment } from "./lib/desktop-signing-environment.ts";
@@ -715,6 +716,8 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   mockUpdates: boolean,
   mockUpdateServerPort: string | undefined,
 ) {
+  const repoRoot = yield* RepoRoot;
+  const path = yield* Path.Path;
   const buildConfig: Record<string, unknown> = {
     appId: SCIENT_PRODUCTION_BUNDLE_ID,
     productName,
@@ -762,6 +765,12 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     platform,
     signed,
     target,
+    ...(platform === "mac" && signed
+      ? {
+          macSignHookPath: path.join(repoRoot, "scripts/sign-mac-app.cjs"),
+          macStapleHookPath: path.join(repoRoot, "scripts/staple-mac-app.cjs"),
+        }
+      : {}),
     ...(windowsAzureSignOptions ? { windowsAzureSignOptions } : {}),
   } as const;
 
@@ -967,8 +976,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     if (!options.signed) {
       const hookSourcePath = path.join(repoRoot, MAC_ADHOC_SIGN_HOOK_PATH);
       const hookStagePath = path.join(stageAppDir, MAC_ADHOC_SIGN_HOOK_PATH);
+      const policySourcePath = path.join(repoRoot, MAC_SIGNING_POLICY_PATH);
+      const policyStagePath = path.join(stageAppDir, MAC_SIGNING_POLICY_PATH);
       yield* fs.makeDirectory(path.dirname(hookStagePath), { recursive: true });
+      yield* fs.makeDirectory(path.dirname(policyStagePath), { recursive: true });
       yield* fs.copyFile(hookSourcePath, hookStagePath);
+      yield* fs.copyFile(policySourcePath, policyStagePath);
     }
   }
 

@@ -300,6 +300,25 @@ function verifyReleaseWorkflowSafety(): void {
     "Public macOS releases require all Apple signing and notarization secrets.",
     "Expected public macOS releases to fail closed without signing and notarization.",
   );
+  const macReleasePolicy = releaseBuildScript.slice(
+    releaseBuildScript.indexOf('if [[ "$platform" == "mac" ]]'),
+    releaseBuildScript.indexOf('elif [[ "$platform" == "win" ]]'),
+  );
+  assertNotContains(
+    macReleasePolicy,
+    "ALLOW_UNSIGNED_RELEASE",
+    "Public macOS releases must not expose an unsigned publication bypass.",
+  );
+  assertContains(
+    workflow,
+    "timeout-minutes: ${{ matrix.timeout_minutes }}",
+    "Expected platform-specific release timeouts.",
+  );
+  assertContains(
+    workflow,
+    "timeout_minutes: 120",
+    "Expected macOS signing and notarization to tolerate bounded Apple service delays.",
+  );
   assertContains(
     workflow,
     "WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}",

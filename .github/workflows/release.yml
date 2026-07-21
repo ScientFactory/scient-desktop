@@ -16,7 +16,7 @@ on:
         default: false
         type: boolean
       allow_unsigned_release:
-        description: "Explicitly allow unsigned desktop artifacts for this manual early-access release"
+        description: "Allow an unsigned Windows installer for this manual early-access release (macOS always requires signing)"
         required: true
         default: false
         type: boolean
@@ -201,7 +201,7 @@ jobs:
     name: Build ${{ matrix.label }}
     needs: preflight
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
       matrix:
@@ -211,21 +211,25 @@ jobs:
             platform: mac
             target: dmg
             arch: arm64
+            timeout_minutes: 120
           - label: macOS x64
             runner: macos-15-intel
             platform: mac
             target: dmg
             arch: x64
+            timeout_minutes: 120
           - label: Linux x64
             runner: ubuntu-24.04
             platform: linux
             target: AppImage
             arch: x64
+            timeout_minutes: 30
           - label: Windows x64
             runner: windows-2022
             platform: win
             target: nsis
             arch: x64
+            timeout_minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -558,7 +562,7 @@ jobs:
           if [[ "$UNSIGNED_RELEASE" == "true" ]]; then
             printf '%s\n' \
               '> [!WARNING]' \
-              '> This early-access release is unsigned. Windows may show an Unknown Publisher warning. On macOS, Scient downloads updates in-app and opens them in Finder for manual replacement.' \
+              '> This early-access release includes an unsigned Windows installer, which may show an Unknown Publisher warning. macOS artifacts remain Developer ID signed, notarized, and stapled.' \
               > release-notice.md
           else
             : > release-notice.md
