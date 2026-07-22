@@ -1463,6 +1463,7 @@ it.layer(
       const { attachmentsDir } = yield* ServerConfig;
       const now = new Date().toISOString();
       const threadId = ThreadId.makeUnsafe("Thread Revert.Files");
+      const forkThreadId = ThreadId.makeUnsafe("Thread Revert.Files Fork");
       const keepAttachmentId = "thread-revert-files-00000000-0000-4000-8000-000000000001";
       const removeAttachmentId = "thread-revert-files-00000000-0000-4000-8000-000000000002";
       const removeFileAttachmentId = "thread-revert-files-00000000-0000-4000-8000-000000000004";
@@ -1577,6 +1578,64 @@ it.layer(
       });
 
       yield* appendAndProject({
+        type: "thread.created",
+        eventId: EventId.makeUnsafe("evt-revert-files-fork-1"),
+        aggregateKind: "thread",
+        aggregateId: forkThreadId,
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-revert-files-fork-1"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("cmd-revert-files-fork-1"),
+        metadata: {},
+        payload: {
+          threadId: forkThreadId,
+          projectId: ProjectId.makeUnsafe("project-revert-files"),
+          title: "Thread Revert Files Fork",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          forkSourceThreadId: threadId,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* appendAndProject({
+        type: "thread.message-sent",
+        eventId: EventId.makeUnsafe("evt-revert-files-fork-2"),
+        aggregateKind: "thread",
+        aggregateId: forkThreadId,
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-revert-files-fork-2"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("cmd-revert-files-fork-2"),
+        metadata: {},
+        payload: {
+          threadId: forkThreadId,
+          messageId: MessageId.makeUnsafe("message-remove-fork-copy"),
+          role: "assistant",
+          text: "Fork keeps shared image",
+          attachments: [
+            {
+              type: "image",
+              id: removeAttachmentId,
+              name: "remove.png",
+              mimeType: "image/png",
+              sizeBytes: 5,
+            },
+          ],
+          turnId: null,
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      yield* appendAndProject({
         type: "thread.turn-diff-completed",
         eventId: EventId.makeUnsafe("evt-revert-files-5"),
         aggregateKind: "thread",
@@ -1669,9 +1728,23 @@ it.layer(
       });
 
       assert.isTrue(yield* exists(keepPath));
-      assert.isFalse(yield* exists(removePath));
+      assert.isTrue(yield* exists(removePath));
       assert.isFalse(yield* exists(removeFilePath));
       assert.isTrue(yield* exists(otherThreadPath));
+
+      yield* appendAndProject({
+        type: "thread.deleted",
+        eventId: EventId.makeUnsafe("evt-revert-files-fork-3"),
+        aggregateKind: "thread",
+        aggregateId: forkThreadId,
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-revert-files-fork-3"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("cmd-revert-files-fork-3"),
+        metadata: {},
+        payload: { threadId: forkThreadId, deletedAt: now },
+      });
+      assert.isFalse(yield* exists(removePath));
     }),
   );
 });
@@ -1801,6 +1874,127 @@ it.layer(
 
       assert.isFalse(yield* exists(threadAttachmentPath));
       assert.isTrue(yield* exists(otherThreadAttachmentPath));
+    }),
+  );
+
+  it.effect("keeps a shared fork attachment until its final active reference is deleted", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const { attachmentsDir } = yield* ServerConfig;
+      const now = new Date().toISOString();
+      const projectId = ProjectId.makeUnsafe("project-shared-fork-attachment");
+      const sourceThreadId = ThreadId.makeUnsafe("thread-shared-attachment-source");
+      const forkThreadId = ThreadId.makeUnsafe("thread-shared-attachment-fork");
+      const attachmentId = "thread-shared-attachment-source-00000000-0000-4000-8000-000000000001";
+      const attachment = {
+        type: "image" as const,
+        id: attachmentId,
+        name: "shared.png",
+        mimeType: "image/png",
+        sizeBytes: 6,
+      };
+
+      const appendAndProject = (event: Parameters<typeof eventStore.append>[0]) =>
+        eventStore
+          .append(event)
+          .pipe(Effect.flatMap((savedEvent) => projectionPipeline.projectEvent(savedEvent)));
+
+      yield* appendAndProject({
+        type: "project.created",
+        eventId: EventId.makeUnsafe("evt-shared-fork-attachment-project"),
+        aggregateKind: "project",
+        aggregateId: projectId,
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-shared-fork-attachment-project"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("cmd-shared-fork-attachment-project"),
+        metadata: {},
+        payload: {
+          projectId,
+          title: "Shared fork attachment",
+          workspaceRoot: "/tmp/project-shared-fork-attachment",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      for (const [threadId, suffix] of [
+        [sourceThreadId, "source"],
+        [forkThreadId, "fork"],
+      ] as const) {
+        yield* appendAndProject({
+          type: "thread.created",
+          eventId: EventId.makeUnsafe(`evt-shared-fork-attachment-${suffix}`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.makeUnsafe(`cmd-shared-fork-attachment-${suffix}`),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe(`cmd-shared-fork-attachment-${suffix}`),
+          metadata: {},
+          payload: {
+            threadId,
+            projectId,
+            title: suffix,
+            modelSelection: { provider: "codex", model: "gpt-5-codex" },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+        yield* appendAndProject({
+          type: "thread.message-sent",
+          eventId: EventId.makeUnsafe(`evt-shared-fork-message-${suffix}`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.makeUnsafe(`cmd-shared-fork-message-${suffix}`),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe(`cmd-shared-fork-message-${suffix}`),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: MessageId.makeUnsafe(`message-shared-fork-${suffix}`),
+            role: "user",
+            text: "Shared attachment",
+            attachments: [attachment],
+            turnId: null,
+            streaming: false,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+      }
+
+      const attachmentPath = path.join(attachmentsDir, `${attachmentId}.png`);
+      yield* fileSystem.makeDirectory(attachmentsDir, { recursive: true });
+      yield* fileSystem.writeFileString(attachmentPath, "shared");
+
+      for (const [threadId, suffix, shouldRemain] of [
+        [sourceThreadId, "source", true],
+        [forkThreadId, "fork", false],
+      ] as const) {
+        yield* appendAndProject({
+          type: "thread.deleted",
+          eventId: EventId.makeUnsafe(`evt-shared-fork-delete-${suffix}`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: now,
+          commandId: CommandId.makeUnsafe(`cmd-shared-fork-delete-${suffix}`),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe(`cmd-shared-fork-delete-${suffix}`),
+          metadata: {},
+          payload: { threadId, deletedAt: now },
+        });
+        assert.equal(yield* exists(attachmentPath), shouldRemain);
+      }
     }),
   );
 });

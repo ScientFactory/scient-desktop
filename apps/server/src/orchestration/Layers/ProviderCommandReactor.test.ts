@@ -33,7 +33,10 @@ import { TextGenerationError } from "../../git/Errors.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import {
+  makeSqlitePersistenceLive,
+  SqlitePersistenceMemory,
+} from "../../persistence/Layers/Sqlite.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
@@ -131,11 +134,13 @@ describe("ProviderCommandReactor", () => {
     readonly studioOutputReactor?: Partial<StudioOutputReactorShape>;
     readonly forkThreadResult?: ProviderForkThreadResult | null;
     readonly skillAuthoringEnabled?: boolean;
+    readonly filePersistence?: boolean;
+    readonly seedInitialState?: boolean;
   }) {
     const now = new Date().toISOString();
     const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "synara-reactor-"));
     createdBaseDirs.add(baseDir);
-    const { stateDir } = deriveServerPathsSync(baseDir, undefined);
+    const { dbPath, stateDir } = deriveServerPathsSync(baseDir, undefined);
     createdStateDirs.add(stateDir);
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     let nextSessionIndex = 1;
@@ -397,6 +402,9 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(OrchestrationEventStoreLive),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     );
+    const persistenceLayer = input?.filePersistence
+      ? makeSqlitePersistenceLive(dbPath).pipe(Layer.provide(NodeServices.layer))
+      : SqlitePersistenceMemory;
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
@@ -430,44 +438,59 @@ describe("ProviderCommandReactor", () => {
       ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
-      Layer.provideMerge(SqlitePersistenceMemory),
+      Layer.provideMerge(persistenceLayer),
     );
-    const runtime = ManagedRuntime.make(layer);
+    const harnessRuntime = ManagedRuntime.make(layer);
+    runtime = harnessRuntime;
     const emitRuntimeEvent = (event: ProviderRuntimeEvent) =>
       Effect.runPromise(PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid));
 
-    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
-    const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
-    scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+    const engine = await harnessRuntime.runPromise(Effect.service(OrchestrationEngineService));
+    const reactor = await harnessRuntime.runPromise(Effect.service(ProviderCommandReactor));
+    const harnessScope = await Effect.runPromise(Scope.make("sequential"));
+    scope = harnessScope;
+    await Effect.runPromise(reactor.start.pipe(Scope.provide(harnessScope)));
     const drain = () => Effect.runPromise(reactor.drain);
 
-    await Effect.runPromise(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.makeUnsafe("cmd-project-create"),
-        projectId: asProjectId("project-1"),
-        title: "Provider Project",
-        workspaceRoot: "/tmp/provider-project",
-        defaultModelSelection: modelSelection,
-        createdAt: now,
-      }),
-    );
-    await Effect.runPromise(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.makeUnsafe("cmd-thread-create"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        projectId: asProjectId("project-1"),
-        title: "Thread",
-        modelSelection: modelSelection,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt: now,
-      }),
-    );
+    if (input?.seedInitialState !== false) {
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe("cmd-project-create"),
+          projectId: asProjectId("project-1"),
+          title: "Provider Project",
+          workspaceRoot: "/tmp/provider-project",
+          defaultModelSelection: modelSelection,
+          createdAt: now,
+        }),
+      );
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("cmd-thread-create"),
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          projectId: asProjectId("project-1"),
+          title: "Thread",
+          modelSelection: modelSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        }),
+      );
+    }
+
+    const dispose = async () => {
+      await Effect.runPromise(Scope.close(harnessScope, Exit.void));
+      if (scope === harnessScope) {
+        scope = null;
+      }
+      await harnessRuntime.dispose();
+      if (runtime === harnessRuntime) {
+        runtime = null;
+      }
+    };
 
     return {
       engine,
@@ -496,6 +519,7 @@ describe("ProviderCommandReactor", () => {
       drain,
       emitRuntimeEvent,
       setRuntimeSessionTurnState,
+      dispose,
     };
   }
 
@@ -687,6 +711,225 @@ describe("ProviderCommandReactor", () => {
     expect(secondInput?.input).not.toContain("Earlier question");
     expect(secondInput?.input).not.toContain("Earlier answer");
     expect(secondInput?.input).toContain("Second side question");
+  });
+
+  it("starts fresh and bootstraps only the selected prefix for a message-level fork", async () => {
+    const forkThreadId = ThreadId.makeUnsafe("thread-message-boundary-fork");
+    const sourceBoundaryId = asMessageId("source-boundary-assistant");
+    const harness = await createHarness({
+      forkThreadResult: {
+        threadId: forkThreadId,
+        resumeCursor: { sessionId: "native-tip-that-must-not-be-used" },
+      },
+    });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.messages.import",
+        commandId: CommandId.makeUnsafe("cmd-message-boundary-source-import"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messages: [
+          {
+            messageId: asMessageId("source-prefix-user"),
+            role: "user",
+            text: "Question before the branch",
+            createdAt: now,
+            updatedAt: now,
+          },
+          {
+            messageId: sourceBoundaryId,
+            role: "assistant",
+            text: "Answer at the branch boundary",
+            createdAt: now,
+            updatedAt: now,
+          },
+          {
+            messageId: asMessageId("source-after-boundary-user"),
+            role: "user",
+            text: "This later source message must not be inherited",
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork.create",
+        commandId: CommandId.makeUnsafe("cmd-message-boundary-fork-create"),
+        threadId: forkThreadId,
+        sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+        sourceMessageId: sourceBoundaryId,
+        projectId: asProjectId("project-1"),
+        title: "Message boundary fork",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        importedMessages: [
+          {
+            messageId: asMessageId("fork-prefix-user"),
+            role: "user",
+            text: "Question before the branch",
+            createdAt: now,
+            updatedAt: now,
+          },
+          {
+            messageId: asMessageId("fork-boundary-assistant"),
+            role: "assistant",
+            text: "Answer at the branch boundary",
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-message-boundary-fork-turn"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-boundary-fork-new-user"),
+          role: "user",
+          text: "Take this in a different direction",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.forkThread).not.toHaveBeenCalled();
+    expect(harness.startSession).toHaveBeenCalled();
+    const input = harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined;
+    expect(input?.input).toContain("<thread_context>");
+    expect(input?.input).toContain("Question before the branch");
+    expect(input?.input).toContain("Answer at the branch boundary");
+    expect(input?.input).not.toContain("This later source message must not be inherited");
+    expect(input?.input).toContain("Take this in a different direction");
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const forkedThread = readModel.threads.find((thread) => thread.id === forkThreadId);
+    expect(forkedThread?.title).toBe("Thread (2)");
+    expect(forkedThread?.forkSourceThreadId).toBe("thread-1");
+    expect(forkedThread?.forkSourceMessageId).toBe(sourceBoundaryId);
+    expect(forkedThread?.forkTitleBase).toBe("Thread");
+    expect(forkedThread?.forkTitleOrdinal).toBe(2);
+  });
+
+  it("reconstructs message-fork bootstrap context after a reactor restart", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "synara-reactor-fork-restart-"));
+    const forkThreadId = ThreadId.makeUnsafe("thread-message-fork-restart");
+    const sourceBoundaryId = asMessageId("source-message-fork-restart-boundary");
+    const createdAt = new Date().toISOString();
+    const firstHarness = await createHarness({ baseDir, filePersistence: true });
+
+    await Effect.runPromise(
+      firstHarness.engine.dispatch({
+        type: "thread.messages.import",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-restart-source-import"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messages: [
+          {
+            messageId: asMessageId("source-message-fork-restart-user"),
+            role: "user",
+            text: "Persisted question before restart",
+            createdAt,
+            updatedAt: createdAt,
+          },
+          {
+            messageId: sourceBoundaryId,
+            role: "assistant",
+            text: "Persisted answer before restart",
+            createdAt,
+            updatedAt: createdAt,
+          },
+        ],
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      firstHarness.engine.dispatch({
+        type: "thread.fork.create",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-restart-create"),
+        threadId: forkThreadId,
+        sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+        sourceMessageId: sourceBoundaryId,
+        projectId: asProjectId("project-1"),
+        title: "Message fork restart",
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        importedMessages: [
+          {
+            messageId: asMessageId("fork-message-restart-user"),
+            role: "user",
+            text: "Persisted question before restart",
+            createdAt,
+            updatedAt: createdAt,
+          },
+          {
+            messageId: asMessageId("fork-message-restart-assistant"),
+            role: "assistant",
+            text: "Persisted answer before restart",
+            createdAt,
+            updatedAt: createdAt,
+          },
+        ],
+        createdAt,
+      }),
+    );
+    await firstHarness.dispose();
+
+    const restartedHarness = await createHarness({
+      baseDir,
+      filePersistence: true,
+      seedInitialState: false,
+    });
+    // The reactor streams are scoped fibers; let their subscriptions attach before publishing the
+    // post-restart turn so this test measures reconstruction rather than subscription scheduling.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await Effect.runPromise(
+      restartedHarness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-restart-turn"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-fork-restart-new-user"),
+          role: "user",
+          text: "Continue after restart",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt,
+      }),
+    );
+
+    await waitFor(() => restartedHarness.sendTurn.mock.calls.length === 1);
+    const providerInput = restartedHarness.sendTurn.mock.calls[0]?.[0] as
+      | { input?: string }
+      | undefined;
+    expect(providerInput?.input).toContain("<thread_context>");
+    expect(providerInput?.input).toContain("Persisted question before restart");
+    expect(providerInput?.input).toContain("Persisted answer before restart");
+    expect(providerInput?.input).toContain("Continue after restart");
   });
 
   it("bootstraps Droid sidechat context after a native provider fork", async () => {

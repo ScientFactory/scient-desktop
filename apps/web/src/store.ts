@@ -387,6 +387,9 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     (left.subagentNickname ?? null) === (right.subagentNickname ?? null) &&
     (left.subagentRole ?? null) === (right.subagentRole ?? null) &&
     (left.forkSourceThreadId ?? null) === (right.forkSourceThreadId ?? null) &&
+    (left.forkSourceMessageId ?? null) === (right.forkSourceMessageId ?? null) &&
+    (left.forkTitleBase ?? null) === (right.forkTitleBase ?? null) &&
+    (left.forkTitleOrdinal ?? null) === (right.forkTitleOrdinal ?? null) &&
     (left.sidechatSourceThreadId ?? null) === (right.sidechatSourceThreadId ?? null) &&
     deepEqualJson(left.lastKnownPr ?? null, right.lastKnownPr ?? null) &&
     (left.handoff ?? null) === (right.handoff ?? null) &&
@@ -435,6 +438,9 @@ function toThreadShell(thread: Thread): ThreadShell {
     subagentNickname: thread.subagentNickname ?? null,
     subagentRole: thread.subagentRole ?? null,
     forkSourceThreadId: thread.forkSourceThreadId ?? null,
+    forkSourceMessageId: thread.forkSourceMessageId ?? null,
+    forkTitleBase: thread.forkTitleBase ?? null,
+    forkTitleOrdinal: thread.forkTitleOrdinal ?? null,
     sidechatSourceThreadId: thread.sidechatSourceThreadId ?? null,
     lastKnownPr: thread.lastKnownPr ?? null,
     handoff: thread.handoff ?? null,
@@ -1748,6 +1754,9 @@ function normalizeThreadFromReadModel(
     previous.hasPendingUserInput === resolvedHasPendingUserInput &&
     previous.hasActionableProposedPlan === resolvedHasActionableProposedPlan &&
     (previous.forkSourceThreadId ?? null) === (incoming.forkSourceThreadId ?? null) &&
+    (previous.forkSourceMessageId ?? null) === (incoming.forkSourceMessageId ?? null) &&
+    (previous.forkTitleBase ?? null) === (incoming.forkTitleBase ?? null) &&
+    (previous.forkTitleOrdinal ?? null) === (incoming.forkTitleOrdinal ?? null) &&
     (previous.sidechatSourceThreadId ?? null) === (incoming.sidechatSourceThreadId ?? null) &&
     deepEqualJson(previous.lastKnownPr ?? null, lastKnownPr) &&
     (previous.handoff ?? null) === handoff &&
@@ -1791,6 +1800,9 @@ function normalizeThreadFromReadModel(
     associatedWorktreeRef: nextAssociatedWorktreeRef,
     createBranchFlowCompleted: resolvedCreateBranchFlowCompleted,
     forkSourceThreadId: incoming.forkSourceThreadId ?? null,
+    forkSourceMessageId: incoming.forkSourceMessageId ?? null,
+    forkTitleBase: incoming.forkTitleBase ?? null,
+    forkTitleOrdinal: incoming.forkTitleOrdinal ?? null,
     sidechatSourceThreadId: incoming.sidechatSourceThreadId ?? null,
     lastKnownPr,
     handoff,
@@ -1884,6 +1896,9 @@ function normalizeThreadShellSnapshot(
     subagentNickname: incoming.subagentNickname ?? null,
     subagentRole: incoming.subagentRole ?? null,
     forkSourceThreadId: incoming.forkSourceThreadId ?? null,
+    forkSourceMessageId: incoming.forkSourceMessageId ?? null,
+    forkTitleBase: incoming.forkTitleBase ?? null,
+    forkTitleOrdinal: incoming.forkTitleOrdinal ?? null,
     sidechatSourceThreadId: incoming.sidechatSourceThreadId ?? null,
     lastKnownPr,
     handoff,
@@ -2188,6 +2203,7 @@ function sidebarThreadSummariesEqual(
     left.hasActionableProposedPlan === right.hasActionableProposedPlan &&
     left.hasLiveTailWork === right.hasLiveTailWork &&
     (left.forkSourceThreadId ?? null) === (right.forkSourceThreadId ?? null) &&
+    (left.forkSourceMessageId ?? null) === (right.forkSourceMessageId ?? null) &&
     (left.sidechatSourceThreadId ?? null) === (right.sidechatSourceThreadId ?? null) &&
     deepEqualJson(left.lastKnownPr ?? null, right.lastKnownPr ?? null) &&
     (left.handoff ?? null) === (right.handoff ?? null)
@@ -2230,6 +2246,7 @@ function buildSidebarThreadSummary(
     hasActionableProposedPlan: metadata.hasActionableProposedPlan,
     hasLiveTailWork: metadata.hasLiveTailWork,
     forkSourceThreadId: thread.forkSourceThreadId ?? null,
+    forkSourceMessageId: thread.forkSourceMessageId ?? null,
     sidechatSourceThreadId: thread.sidechatSourceThreadId ?? null,
     lastKnownPr: thread.lastKnownPr ?? null,
     handoff: thread.handoff ?? null,

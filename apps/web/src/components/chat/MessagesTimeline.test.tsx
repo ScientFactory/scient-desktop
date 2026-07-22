@@ -360,6 +360,66 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("size-[1.125em]");
   });
 
+  it("renders message fork actions immediately after copy for user and settled assistant messages", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        timelineEntries={[
+          {
+            id: "entry-fork-user",
+            kind: "message",
+            createdAt: "2026-07-22T08:00:00.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-fork-user"),
+              role: "user",
+              text: "Branch from my question",
+              createdAt: "2026-07-22T08:00:00.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "entry-fork-assistant",
+            kind: "message",
+            createdAt: "2026-07-22T08:00:01.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-fork-assistant"),
+              role: "assistant",
+              text: "Branch from my answer",
+              createdAt: "2026-07-22T08:00:01.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-07-22T08:00:02.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onForkFromMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    const copyLabels = [...markup.matchAll(/aria-label="Copy message"/g)];
+    const forkLabels = [...markup.matchAll(/aria-label="Fork conversation from this message"/g)];
+    expect(copyLabels).toHaveLength(2);
+    expect(forkLabels).toHaveLength(2);
+    expect(copyLabels[0]?.index).toBeLessThan(forkLabels[0]?.index ?? 0);
+    expect(copyLabels[1]?.index).toBeLessThan(forkLabels[1]?.index ?? 0);
+    expect(markup).toContain("/central-icons-reversed/fork-simple.svg");
+  });
+
   it("keeps edit available and hides undo before a revert checkpoint exists", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

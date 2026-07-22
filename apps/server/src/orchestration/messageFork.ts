@@ -1,0 +1,164 @@
+// FILE: messageFork.ts
+// Purpose: Validate server-authoritative message boundaries and imported fork prefixes.
+// Layer: Server orchestration domain logic
+
+import type {
+  ChatAttachment,
+  MessageId,
+  OrchestrationMessage,
+  OrchestrationThread,
+  ThreadHandoffImportedMessage,
+} from "@synara/contracts";
+import { stripEmbeddedAssistantSelections } from "@synara/shared/assistantSelections";
+
+import { isAssistantTurnTerminal } from "./assistantMessageLifecycle.ts";
+
+export type MessageForkValidation =
+  | { readonly ok: true }
+  | {
+      readonly ok: false;
+      readonly reason: "invalid-source" | "import-mismatch";
+      readonly expectedImportedMessageCount: number;
+    };
+
+export interface ImportedMessageIdValidation {
+  readonly ok: boolean;
+  readonly conflictingMessageId: MessageId | null;
+}
+
+type MessageForkSourceThread = Pick<OrchestrationThread, "messages" | "latestTurn">;
+
+function isCompletedConversationMessage(
+  thread: MessageForkSourceThread,
+  message: OrchestrationMessage,
+): message is OrchestrationMessage & { readonly role: "user" | "assistant" } {
+  if (message.role !== "user" && message.role !== "assistant") {
+    return false;
+  }
+  if (!message.streaming) {
+    return true;
+  }
+  return message.role === "assistant" && isAssistantTurnTerminal(thread, message.turnId);
+}
+
+function attachmentsEqual(
+  left: ReadonlyArray<ChatAttachment> | undefined,
+  right: ReadonlyArray<ChatAttachment> | undefined,
+): boolean {
+  const leftAttachments = left ?? [];
+  const rightAttachments = right ?? [];
+  if (leftAttachments.length !== rightAttachments.length) {
+    return false;
+  }
+
+  return leftAttachments.every((leftAttachment, index) => {
+    const rightAttachment = rightAttachments[index];
+    if (
+      !rightAttachment ||
+      leftAttachment.type !== rightAttachment.type ||
+      leftAttachment.id !== rightAttachment.id
+    ) {
+      return false;
+    }
+    if (
+      leftAttachment.type === "assistant-selection" &&
+      rightAttachment.type === "assistant-selection"
+    ) {
+      return (
+        leftAttachment.assistantMessageId === rightAttachment.assistantMessageId &&
+        leftAttachment.text === rightAttachment.text
+      );
+    }
+    if (
+      leftAttachment.type === "assistant-selection" ||
+      rightAttachment.type === "assistant-selection"
+    ) {
+      return false;
+    }
+    return (
+      leftAttachment.name === rightAttachment.name &&
+      leftAttachment.mimeType === rightAttachment.mimeType &&
+      leftAttachment.sizeBytes === rightAttachment.sizeBytes
+    );
+  });
+}
+
+function importedMessageMatchesSource(
+  importedMessage: ThreadHandoffImportedMessage,
+  sourceMessage: OrchestrationMessage & { readonly role: "user" | "assistant" },
+): boolean {
+  const expectedText =
+    sourceMessage.role === "user"
+      ? stripEmbeddedAssistantSelections(sourceMessage.text)
+      : sourceMessage.text;
+  return (
+    importedMessage.role === sourceMessage.role &&
+    importedMessage.text === expectedText &&
+    importedMessage.createdAt === sourceMessage.createdAt &&
+    attachmentsEqual(importedMessage.attachments, sourceMessage.attachments)
+  );
+}
+
+export function validateMessageForkImport(input: {
+  readonly sourceThread: MessageForkSourceThread;
+  readonly sourceMessageId: MessageId;
+  readonly importedMessages: ReadonlyArray<ThreadHandoffImportedMessage>;
+}): MessageForkValidation {
+  const sourceMessageIndex = input.sourceThread.messages.findIndex(
+    (message) => message.id === input.sourceMessageId,
+  );
+  const sourceMessage = input.sourceThread.messages[sourceMessageIndex];
+  if (
+    sourceMessageIndex < 0 ||
+    !sourceMessage ||
+    !isCompletedConversationMessage(input.sourceThread, sourceMessage)
+  ) {
+    return {
+      ok: false,
+      reason: "invalid-source",
+      expectedImportedMessageCount: 0,
+    };
+  }
+
+  const expectedMessages = input.sourceThread.messages
+    .slice(0, sourceMessageIndex + 1)
+    .filter((message) => isCompletedConversationMessage(input.sourceThread, message));
+  const importedMessagesMatch =
+    input.importedMessages.length === expectedMessages.length &&
+    input.importedMessages.every((message, index) => {
+      const expectedMessage = expectedMessages[index];
+      return expectedMessage ? importedMessageMatchesSource(message, expectedMessage) : false;
+    });
+  return importedMessagesMatch
+    ? { ok: true }
+    : {
+        ok: false,
+        reason: "import-mismatch",
+        expectedImportedMessageCount: expectedMessages.length,
+      };
+}
+
+/**
+ * Imported transcript rows must never reuse a projected message id. Projection message ids are
+ * globally keyed, so accepting a duplicate would either collapse the imported prefix or reassign
+ * an existing source row to the destination thread.
+ */
+export function validateImportedMessageIds(input: {
+  readonly importedMessages: ReadonlyArray<ThreadHandoffImportedMessage>;
+  readonly existingMessageIds: ReadonlySet<MessageId>;
+}): ImportedMessageIdValidation {
+  const importedMessageIds = new Set<MessageId>();
+  for (const message of input.importedMessages) {
+    if (
+      importedMessageIds.has(message.messageId) ||
+      input.existingMessageIds.has(message.messageId)
+    ) {
+      return {
+        ok: false,
+        conflictingMessageId: message.messageId,
+      };
+    }
+    importedMessageIds.add(message.messageId);
+  }
+  return { ok: true, conflictingMessageId: null };
+}

@@ -122,6 +122,175 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("serializes concurrent forks into distinct authoritative title ordinals", async () => {
+    const createdAt = now();
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const projectId = asProjectId("project-concurrent-forks");
+    const sourceThreadId = ThreadId.makeUnsafe("thread-concurrent-forks-source");
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-concurrent-forks-create"),
+        projectId,
+        title: "Concurrent Fork Project",
+        workspaceRoot: "/tmp/project-concurrent-forks",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-thread-concurrent-forks-source-create"),
+        threadId: sourceThreadId,
+        projectId,
+        title: "Greeting",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    const forkCommand = (suffix: string) => ({
+      type: "thread.fork.create" as const,
+      commandId: CommandId.makeUnsafe(`cmd-thread-concurrent-fork-${suffix}`),
+      threadId: ThreadId.makeUnsafe(`thread-concurrent-fork-${suffix}`),
+      sourceThreadId,
+      projectId,
+      title: "stale client title",
+      modelSelection: {
+        provider: "codex" as const,
+        model: "gpt-5-codex",
+      },
+      runtimeMode: "approval-required" as const,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      envMode: "local" as const,
+      branch: null,
+      worktreePath: null,
+      importedMessages: [],
+      createdAt,
+    });
+    await Promise.all([
+      system.run(engine.dispatch(forkCommand("a"))),
+      system.run(engine.dispatch(forkCommand("b"))),
+    ]);
+
+    const forkedThreads = (await system.run(engine.getReadModel())).threads
+      .filter((thread) => thread.forkSourceThreadId === sourceThreadId)
+      .toSorted((left, right) => (left.forkTitleOrdinal ?? 0) - (right.forkTitleOrdinal ?? 0));
+    expect(
+      forkedThreads.map((thread) => ({
+        title: thread.title,
+        base: thread.forkTitleBase,
+        ordinal: thread.forkTitleOrdinal,
+      })),
+    ).toEqual([
+      { title: "Greeting (2)", base: "Greeting", ordinal: 2 },
+      { title: "Greeting (3)", base: "Greeting", ordinal: 3 },
+    ]);
+    await system.dispose();
+  });
+
+  it("rejects a fork import that reuses a source message id without moving the source row", async () => {
+    const createdAt = now();
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const projectId = asProjectId("project-fork-message-id-collision");
+    const sourceThreadId = ThreadId.makeUnsafe("thread-fork-message-id-collision-source");
+    const sourceMessageId = asMessageId("message-fork-message-id-collision-source");
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-fork-message-id-collision"),
+        projectId,
+        title: "Fork collision project",
+        workspaceRoot: "/tmp/project-fork-message-id-collision",
+        defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-thread-fork-message-id-collision-source"),
+        threadId: sourceThreadId,
+        projectId,
+        title: "Source",
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-fork-message-id-collision-source"),
+        threadId: sourceThreadId,
+        message: {
+          messageId: sourceMessageId,
+          role: "user",
+          text: "Source message",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      }),
+    );
+
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "thread.fork.create",
+          commandId: CommandId.makeUnsafe("cmd-fork-message-id-collision"),
+          threadId: ThreadId.makeUnsafe("thread-fork-message-id-collision-destination"),
+          sourceThreadId,
+          sourceMessageId,
+          projectId,
+          title: "Source",
+          modelSelection: { provider: "codex", model: "gpt-5-codex" },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          envMode: "local",
+          branch: null,
+          worktreePath: null,
+          importedMessages: [
+            {
+              messageId: sourceMessageId,
+              role: "user",
+              text: "Source message",
+              attachments: [],
+              createdAt,
+              updatedAt: createdAt,
+            },
+          ],
+          createdAt,
+        }),
+      ),
+    ).rejects.toThrow("must be unique and must not already exist");
+
+    const sourceThread = (await system.run(engine.getReadModel())).threads.find(
+      (thread) => thread.id === sourceThreadId,
+    );
+    expect(sourceThread?.messages.map((message) => message.id)).toEqual([sourceMessageId]);
+    await system.dispose();
+  });
+
   it("replays append-only events from sequence", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;

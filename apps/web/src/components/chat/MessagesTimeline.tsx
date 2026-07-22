@@ -51,6 +51,7 @@ import {
   CircleCheckIcon,
   CircleQuestionIcon,
   ClockIcon,
+  ConversationForkIcon,
   EyeIcon,
   GitHubIcon,
   HammerIcon,
@@ -415,6 +416,8 @@ interface MessagesTimelineProps {
   onRevertUserMessage: (messageId: MessageId) => void;
   onUndoTurnFiles?: (turnCounts: readonly number[]) => void;
   onEditUserMessage?: (messageId: MessageId, text: string) => boolean | Promise<boolean>;
+  /** Create an independent conversation whose imported transcript ends at this message. */
+  onForkFromMessage?: (messageId: MessageId) => void;
   activeTurnId?: TurnId | null;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -472,6 +475,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onRevertUserMessage,
   onUndoTurnFiles,
   onEditUserMessage,
+  onForkFromMessage,
   activeTurnId,
   isRevertingCheckpoint,
   onImageExpand,
@@ -1194,6 +1198,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                           className={MESSAGE_HOVER_REVEAL_CLASS_NAME}
                         />
                       )}
+                      {onForkFromMessage ? (
+                        <MessageActionButton
+                          label="Fork conversation from this message"
+                          tooltip="Fork conversation from here"
+                          className={MESSAGE_HOVER_REVEAL_CLASS_NAME}
+                          onClick={() => onForkFromMessage(row.message.id)}
+                        >
+                          <ConversationForkIcon className={MESSAGE_ACTION_ICON_CLASS_NAME} />
+                        </MessageActionButton>
+                      ) : null}
                       {showEditUserMessage && (
                         <MessageActionButton
                           label="Edit message"
@@ -1563,6 +1577,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                         text={assistantCopyState.text ?? ""}
                         className={MESSAGE_HOVER_REVEAL_CLASS_NAME}
                       />
+                    ) : null}
+                    {assistantCopyState.visible && onForkFromMessage ? (
+                      <MessageActionButton
+                        label="Fork conversation from this message"
+                        tooltip="Fork conversation from here"
+                        className={MESSAGE_HOVER_REVEAL_CLASS_NAME}
+                        onClick={() => onForkFromMessage(row.message.id)}
+                      >
+                        <ConversationForkIcon className={MESSAGE_ACTION_ICON_CLASS_NAME} />
+                      </MessageActionButton>
                     ) : null}
                     {assistantMeta.length > 0 ? (
                       <p className={cn("tabular-nums", MESSAGE_HOVER_REVEAL_CLASS_NAME)}>

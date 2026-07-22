@@ -123,6 +123,40 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       detail,
     });
 
+  const validateImportedMessageIdsAgainstProjection = (command: OrchestrationCommand) => {
+    if (
+      (command.type !== "thread.handoff.create" && command.type !== "thread.fork.create") ||
+      command.importedMessages.length === 0
+    ) {
+      return Effect.void;
+    }
+
+    const importedMessageIds = command.importedMessages.map((message) => message.messageId);
+    return sql<{ readonly messageId: string }>`
+      SELECT message_id AS "messageId"
+      FROM projection_thread_messages
+      WHERE message_id IN ${sql.in(importedMessageIds)}
+      LIMIT 1
+    `.pipe(
+      Effect.mapError(
+        toPersistenceSqlError(
+          "OrchestrationEngine.validateImportedMessageIdsAgainstProjection:query",
+        ),
+      ),
+      Effect.flatMap((rows) => {
+        const conflictingMessageId = rows[0]?.messageId;
+        return conflictingMessageId === undefined
+          ? Effect.void
+          : Effect.fail(
+              new OrchestrationCommandInvariantError({
+                commandType: command.type,
+                detail: `Imported message id '${conflictingMessageId}' must be unique and must not already exist.`,
+              }),
+            );
+      }),
+    );
+  };
+
   const resolveStoredCommandOutcome = (
     command: OrchestrationCommand,
   ): Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never> =>
@@ -381,6 +415,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       }
 
       const deciderReadModel = yield* buildDeciderReadModel(envelope.command);
+      yield* validateImportedMessageIdsAgainstProjection(envelope.command);
       const eventBase = yield* decideOrchestrationCommand({
         command: envelope.command,
         readModel: deciderReadModel,

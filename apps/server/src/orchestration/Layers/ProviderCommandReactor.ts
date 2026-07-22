@@ -961,7 +961,10 @@ const make = Effect.gen(function* () {
       return restartedSession.threadId;
     }
 
-    if (providerService.forkThread && thread.forkSourceThreadId) {
+    const isMessageBoundaryFork =
+      thread.forkSourceMessageId !== null && thread.forkSourceMessageId !== undefined;
+
+    if (providerService.forkThread && thread.forkSourceThreadId && !isMessageBoundaryFork) {
       const forked = yield* providerService.forkThread({
         sourceThreadId: thread.forkSourceThreadId,
         threadId,
@@ -1003,6 +1006,13 @@ const make = Effect.gen(function* () {
       if (shouldRegisterContextBootstrap && !thread.sidechatSourceThreadId) {
         freshSessionContextBootstrapThreadIds.add(threadId);
       }
+    }
+
+    if (shouldRegisterContextBootstrap && isMessageBoundaryFork) {
+      // Provider-native forks branch from the source session's current tip. A message-level
+      // fork must instead start fresh and bootstrap only the persisted imported prefix, or
+      // messages after the selected boundary could silently leak into the new conversation.
+      freshSessionContextBootstrapThreadIds.add(threadId);
     }
 
     if (

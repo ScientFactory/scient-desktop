@@ -28,6 +28,8 @@ import {
   isAssistantTurnTerminal,
 } from "./assistantMessageLifecycle.ts";
 import { hasNativeHandoffMessages } from "./handoff.ts";
+import { resolveNextForkTitle } from "./forkTitle.ts";
+import { validateImportedMessageIds, validateMessageForkImport } from "./messageFork.ts";
 import { resolveStableMessageTurnId } from "./messageTurnId.ts";
 import {
   listActiveProjectsByWorkspaceRoot,
@@ -48,6 +50,12 @@ const STUDIO_PROJECT_KIND_SET = new Set<ProjectKind>(["studio"]);
 // Kinds that claim exclusive ownership of a workspace root. Chat containers are excluded: they
 // use placeholder roots (e.g. the home dir) that legitimately coexist with real projects.
 const WORKSPACE_OWNING_PROJECT_KIND_SET = new Set<ProjectKind>(["project", "studio"]);
+
+function collectExistingMessageIds(readModel: OrchestrationReadModel) {
+  return new Set(
+    readModel.threads.flatMap((thread) => thread.messages.map((message) => message.id)),
+  );
+}
 
 const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
   eventId: crypto.randomUUID() as OrchestrationEvent["eventId"],
@@ -467,6 +475,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           subagentNickname: command.subagentNickname,
           subagentRole: command.subagentRole,
           forkSourceThreadId: null,
+          forkSourceMessageId: null,
           lastKnownPr: command.lastKnownPr,
           handoff: null,
           createdAt: command.createdAt,
@@ -503,6 +512,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           detail: `Source thread '${command.sourceThreadId}' belongs to a different project.`,
         });
       }
+
+      const importedMessageIdValidation = validateImportedMessageIds({
+        importedMessages: command.importedMessages,
+        existingMessageIds: collectExistingMessageIds(readModel),
+      });
+      if (!importedMessageIdValidation.ok) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Imported message id '${importedMessageIdValidation.conflictingMessageId}' must be unique and must not already exist.`,
+        });
+      }
+
       if (sourceThread.handoff !== null && !hasNativeHandoffMessages(sourceThread)) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
@@ -548,6 +569,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           subagentNickname: null,
           subagentRole: null,
           forkSourceThreadId: null,
+          forkSourceMessageId: null,
           handoff: {
             sourceThreadId: command.sourceThreadId,
             sourceProvider: sourceThread.modelSelection.provider,
@@ -614,6 +636,48 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         });
       }
 
+      const importedMessageIdValidation = validateImportedMessageIds({
+        importedMessages: command.importedMessages,
+        existingMessageIds: collectExistingMessageIds(readModel),
+      });
+      if (!importedMessageIdValidation.ok) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Imported message id '${importedMessageIdValidation.conflictingMessageId}' must be unique and must not already exist.`,
+        });
+      }
+
+      if (command.sourceMessageId !== undefined) {
+        const validation = validateMessageForkImport({
+          sourceThread,
+          sourceMessageId: command.sourceMessageId,
+          importedMessages: command.importedMessages,
+        });
+        if (!validation.ok && validation.reason === "invalid-source") {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Fork source message '${command.sourceMessageId}' is not a completed conversation message in source thread '${command.sourceThreadId}'.`,
+          });
+        }
+        if (!validation.ok) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `Message-boundary fork through '${command.sourceMessageId}' must import the exact ${validation.expectedImportedMessageCount} completed conversation messages from the authoritative source prefix.`,
+          });
+        }
+      }
+
+      const resolvedForkTitle = command.sidechatSourceThreadId
+        ? {
+            title: command.title,
+            forkTitleBase: null,
+            forkTitleOrdinal: null,
+          }
+        : resolveNextForkTitle({
+            sourceThread,
+            threads: readModel.threads,
+          });
+
       const createdEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...withEventBase({
           aggregateKind: "thread",
@@ -625,7 +689,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           projectId: command.projectId,
-          title: command.title,
+          title: resolvedForkTitle.title,
           modelSelection: command.modelSelection,
           runtimeMode: command.runtimeMode,
           interactionMode: command.interactionMode,
@@ -652,6 +716,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           subagentNickname: null,
           subagentRole: null,
           forkSourceThreadId: command.sourceThreadId,
+          forkSourceMessageId: command.sourceMessageId ?? null,
+          forkTitleBase: resolvedForkTitle.forkTitleBase,
+          forkTitleOrdinal: resolvedForkTitle.forkTitleOrdinal,
           sidechatSourceThreadId: command.sidechatSourceThreadId,
           handoff: null,
           createdAt: command.createdAt,
