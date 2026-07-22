@@ -2,6 +2,7 @@ import { mkdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 
 import {
+  getBuiltInSkillReadiness,
   listUserActivatedBuiltInSkillReleases,
   listUserFacingBuiltInSkillReleases,
   type BuiltInSkillRelease,
@@ -61,7 +62,8 @@ export function listScientBuiltInSkillCatalogEntries(
     kind: release.kind,
     role: release.role,
     activationScope: release.activation.scope,
-    enabled: isScientBuiltInSkillEnabled(release, settings),
+    readiness: getBuiltInSkillReadiness(release),
+    enabled: release.activation.scope === "user" && isScientBuiltInSkillEnabled(release, settings),
     defaultEnabled: release.activation.defaultEnabled,
     capabilities: release.capabilities,
     limitations: release.limitations,

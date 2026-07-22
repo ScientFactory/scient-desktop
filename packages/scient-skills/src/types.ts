@@ -7,6 +7,7 @@ export type BuiltInSkillScope = "universal" | "domain";
 export type BuiltInSkillVisibility = "internal" | "user";
 export type BuiltInSkillActivationScope = "user" | "project";
 export type BuiltInSkillProjectWrites = "none" | "proposal-only";
+export type BuiltInSkillReadiness = "available" | "latent";
 
 export interface BuiltInSkillMetadata {
   readonly id: string;

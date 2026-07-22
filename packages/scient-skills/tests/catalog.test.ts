@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createBuiltInSkillsLock,
+  getBuiltInSkillReadiness,
   listBuiltInSkillReleases,
   listCurrentBuiltInSkillReleases,
   listProjectActivatableBuiltInSkillReleases,
@@ -14,10 +15,13 @@ import { selectCurrentBuiltInSkillReleases } from "../src/catalog.ts";
 import { assertBuiltInSkillMetadata } from "../src/validate.ts";
 
 describe("Scient built-in skills catalog", () => {
-  it("ships Skill Authoring v0.1 as a user-activated meta-capability", () => {
+  it("ships the user-scoped meta-skill and project-scoped scientific candidate", () => {
     const releases = listBuiltInSkillReleases();
-    expect(releases).toHaveLength(1);
-    expect(releases[0]).toMatchObject({
+    const skillAuthoring = releases.find((release) => release.id === "scient.skill-authoring");
+    const evidenceToNote = releases.find((release) => release.id === "scient.evidence-to-note");
+
+    expect(releases).toHaveLength(2);
+    expect(skillAuthoring).toMatchObject({
       id: "scient.skill-authoring",
       version: "0.1.0",
       name: "scient-skill-authoring",
@@ -32,12 +36,34 @@ describe("Scient built-in skills catalog", () => {
         projectWrites: "proposal-only",
       },
     });
-    expect(releases[0]?.body).toContain("# Scient Skill Authoring");
-    expect(releases[0]?.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(skillAuthoring?.body).toContain("# Scient Skill Authoring");
+    expect(skillAuthoring?.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+
+    expect(evidenceToNote).toMatchObject({
+      id: "scient.evidence-to-note",
+      version: "0.1.0",
+      name: "scient-evidence-to-note",
+      kind: "scientific",
+      role: "constructive",
+      visibility: "user",
+      activation: { scope: "project", defaultEnabled: false },
+      origin: SCIENT_BUILT_IN_ORIGIN,
+      capabilities: {
+        network: false,
+        codeExecution: false,
+        projectWrites: "proposal-only",
+      },
+    });
+    expect(evidenceToNote?.requirements.projectObjects).toContain("selected source evidence");
+    expect(evidenceToNote?.requirements.operations).toContain("propose evidence-linked note");
+    expect(evidenceToNote?.body).toContain("# Evidence to Note");
+    expect(evidenceToNote?.digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(evidenceToNote && getBuiltInSkillReadiness(evidenceToNote)).toBe("latent");
+
     expect(listUserFacingBuiltInSkillReleases()).toEqual(releases);
     expect(listCurrentBuiltInSkillReleases()).toEqual(releases);
-    expect(listUserActivatedBuiltInSkillReleases()).toEqual(releases);
-    expect(listProjectActivatableBuiltInSkillReleases()).toEqual([]);
+    expect(listUserActivatedBuiltInSkillReleases()).toEqual([skillAuthoring]);
+    expect(listProjectActivatableBuiltInSkillReleases()).toEqual([evidenceToNote]);
   });
 
   it("keeps old immutable releases resolvable while exposing only the newest release", () => {

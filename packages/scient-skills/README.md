@@ -11,8 +11,10 @@ documentation repository. Projects preserve selected release identities in
 `.scient/skills.lock.json`; provider and agent adapters only deliver releases
 that the Scient app resolves.
 
-The initial portfolio contains Skill Authoring v0.1 as a user-visible,
-user-activated meta-capability. It is enabled by default, can be disabled
-globally, and is delivered to agents for automatic semantic triggering while
-enabled. It remains intentionally separate from ordinary scientific project
-initialization.
+The portfolio contains Skill Authoring v0.1 as a user-visible, user-activated
+meta-capability and Evidence to Note v0.1 as a user-visible, project-scoped
+scientific skill with unmet foundations. Skill Authoring is enabled by default,
+can be disabled globally, and is delivered to agents for automatic semantic
+triggering while enabled. Evidence to Note is default-off, appears as latent in
+project setup, and is not delivered to agents until project-scoped invocation
+and its declared scientific foundations exist.
