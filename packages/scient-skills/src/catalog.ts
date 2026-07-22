@@ -1,5 +1,5 @@
 import { GENERATED_BUILT_IN_SKILL_RELEASES } from "./generated.ts";
-import type { BuiltInSkillRelease } from "./types.ts";
+import type { BuiltInSkillReadiness, BuiltInSkillRelease } from "./types.ts";
 import { compareBuiltInSkillVersions } from "./validate.ts";
 
 const releases: readonly BuiltInSkillRelease[] = GENERATED_BUILT_IN_SKILL_RELEASES;
@@ -23,6 +23,15 @@ export function selectCurrentBuiltInSkillReleases(
 
 export function listCurrentBuiltInSkillReleases(): readonly BuiltInSkillRelease[] {
   return selectCurrentBuiltInSkillReleases(releases);
+}
+
+export function getBuiltInSkillReadiness(
+  release: Pick<BuiltInSkillRelease, "requirements">,
+): BuiltInSkillReadiness {
+  return release.requirements.projectObjects.length > 0 ||
+    release.requirements.operations.length > 0
+    ? "latent"
+    : "available";
 }
 
 export function listUserFacingBuiltInSkillReleases(): readonly BuiltInSkillRelease[] {

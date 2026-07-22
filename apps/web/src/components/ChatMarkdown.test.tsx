@@ -21,11 +21,23 @@ async function renderMarkdown(
   text: string,
   cwd = "C:\\Users\\LENOVO\\synara",
   markers?: readonly ThreadMarker[],
+  options: {
+    readonly isStreaming?: boolean;
+    readonly directionHint?: "ltr" | "rtl";
+    readonly recognizeFrontmatter?: boolean;
+  } = {},
 ) {
   const { default: ChatMarkdown } = await import("./ChatMarkdown");
 
   return renderToStaticMarkup(
-    <ChatMarkdown text={text} cwd={cwd} isStreaming={false} markers={markers} />,
+    <ChatMarkdown
+      text={text}
+      cwd={cwd}
+      isStreaming={options.isStreaming ?? false}
+      markers={markers}
+      {...(options.directionHint ? { directionHint: options.directionHint } : {})}
+      {...(options.recognizeFrontmatter ? { recognizeFrontmatter: true } : {})}
+    />,
   );
 }
 
@@ -43,6 +55,121 @@ describe("ChatMarkdown", () => {
 
     expect(markup).toContain("text-foreground");
     expect(markup).not.toContain("text-neutral-900");
+  });
+
+  it("resolves every natural-language markdown block independently", async () => {
+    const markup = await renderMarkdown(
+      [
+        "Scient הוא כלי למחקר מדעי.",
+        "",
+        "This paragraph is intentionally written in English with עברית once.",
+        "",
+        "- פריט בעברית",
+        "- English item",
+        "",
+        "> ציטוט בעברית",
+      ].join("\n"),
+    );
+
+    expect(markup).toContain('<p dir="rtl">Scient הוא כלי למחקר מדעי.</p>');
+    expect(markup).toContain(
+      '<p dir="ltr">This paragraph is intentionally written in English with עברית once.</p>',
+    );
+    expect(markup).toContain('<li dir="rtl">פריט בעברית</li>');
+    expect(markup).toContain('<li dir="ltr">English item</li>');
+    expect(markup).toContain('<blockquote dir="rtl">');
+  });
+
+  it("does not let nested list items change their parent item's direction", async () => {
+    const markup = await renderMarkdown(
+      ["- English parent", "  - פריט עברי ראשון", "  - פריט עברי שני"].join("\n"),
+    );
+
+    expect(markup).toContain('<li dir="ltr">English parent');
+    expect(markup.match(/<li dir="rtl">פריט עברי/g) ?? []).toHaveLength(2);
+  });
+
+  it("excludes machine fragments from prose direction and isolates them as LTR", async () => {
+    const markup = await renderMarkdown(
+      [
+        "`evidence-to-note` הופך ראיה להערה שימושית.",
+        "",
+        "https://example.com הוא הקישור למקור.",
+        "",
+        "[המקור החשוב](https://example.com/research) מסביר את התוצאה.",
+      ].join("\n"),
+    );
+
+    expect(markup).toContain('<p dir="rtl"><code dir="ltr">evidence-to-note</code>');
+    expect(markup).toContain('<a dir="ltr" href="https://example.com"');
+    expect(markup).toContain('<p dir="rtl"><a href="https://example.com/research"');
+  });
+
+  it("excludes bare paths, filenames, and email addresses from prose direction", async () => {
+    const markup = await renderMarkdown(
+      [
+        "/Users/yaacov/project/src/App.tsx שלום, בדוק את הקובץ.",
+        "",
+        "src/App.tsx, שלום.",
+        "",
+        "App.tsx, שלום.",
+        "",
+        "dev@example.com היא כתובת התמיכה.",
+      ].join("\n"),
+    );
+
+    expect(markup.match(/<p dir="rtl">/g) ?? []).toHaveLength(4);
+    expect(markup).toContain('<a dir="ltr" href="mailto:dev@example.com"');
+  });
+
+  it("keeps authored local-file labels natural language", async () => {
+    const markup = await renderMarkdown("[קובץ ההגדרות](./config.ts) מכיל את ההגדרה החשובה.");
+
+    expect(markup).toContain('<p dir="rtl">');
+    expect(markup).toContain('dir="rtl" href="./config.ts"');
+    expect(markup).toContain("קובץ ההגדרות");
+  });
+
+  it("keeps nested quotation direction independent from its parent", async () => {
+    const markup = await renderMarkdown(
+      ["> English outer quote", ">", "> > ציטוט עברי פנימי ארוך וברור מאוד"].join("\n"),
+    );
+
+    expect(markup).toContain('<blockquote dir="ltr">');
+    expect(markup).toContain('<blockquote dir="rtl">');
+  });
+
+  it("does not flip the same block when streaming finishes", async () => {
+    const text = "one two three four אחד שני שלושה";
+    const streaming = await renderMarkdown(text, undefined, undefined, {
+      isStreaming: true,
+      directionHint: "rtl",
+    });
+    const complete = await renderMarkdown(text, undefined, undefined, { directionHint: "rtl" });
+
+    expect(streaming).toContain('<p dir="rtl">');
+    expect(complete).toContain('<p dir="rtl">');
+
+    const shortStreaming = await renderMarkdown("Done", undefined, undefined, {
+      isStreaming: true,
+      directionHint: "rtl",
+    });
+    const shortComplete = await renderMarkdown("Done", undefined, undefined, {
+      directionHint: "rtl",
+    });
+    expect(shortStreaming).toContain('<p dir="rtl">Done</p>');
+    expect(shortComplete).toContain('<p dir="rtl">Done</p>');
+  });
+
+  it("keeps table structure LTR while resolving cell content independently", async () => {
+    const markup = await renderMarkdown(
+      ["| Name | Value |", "| --- | --- |", "| שם | ערך רפואי |"].join("\n"),
+    );
+
+    expect(markup).toContain('<table dir="ltr">');
+    expect(markup).toContain('<th dir="ltr">Name</th>');
+    expect(markup).toContain('<td dir="rtl">שם</td>');
+    expect(markup).toContain('<td dir="rtl">ערך רפואי</td>');
   });
 
   it("renders inline math with KaTeX", async () => {
@@ -80,7 +207,7 @@ describe("ChatMarkdown", () => {
     expect(markup).toContain(
       'href="https://example.com" target="_blank" rel="noopener noreferrer"',
     );
-    expect(markup).toContain("<code>$z$</code>");
+    expect(markup).toContain('<code dir="ltr">$z$</code>');
     expect(markup).toContain("const price = &quot;$5&quot;;");
     expect(markup.match(/class="katex"/g) ?? []).toHaveLength(1);
   });
@@ -128,6 +255,95 @@ describe("ChatMarkdown", () => {
     expect(markup).toContain("$5. Formula");
     expect(markup).toContain('class="katex"');
     expect(markup).not.toContain("$x$");
+  });
+
+  it("hides YAML frontmatter when document recognition is enabled", async () => {
+    const source = [
+      "---",
+      "name: scient-evidence-to-note",
+      "description: Turn evidence into a note.",
+      "---",
+      "",
+      "# Evidence to Note",
+      "",
+      "Body text.",
+    ].join("\n");
+    const markup = await renderMarkdown(source, undefined, undefined, {
+      recognizeFrontmatter: true,
+    });
+
+    expect(markup).not.toContain("scient-evidence-to-note");
+    expect(markup).not.toContain("Turn evidence into a note.");
+    expect(markup).not.toContain("<hr");
+    expect(markup).toContain('<h1 dir="ltr">Evidence to Note</h1>');
+    expect(markup.match(/<h[1-6](?:\s|>)/g) ?? []).toEqual(["<h1 "]);
+  });
+
+  it("recognizes quoted and multiline YAML frontmatter with CRLF line endings", async () => {
+    const source = [
+      "---",
+      'name: "scient-evidence-to-note"',
+      "description: |",
+      "  First line.",
+      "  Second line with --- inside it.",
+      "---",
+      "",
+      "# Evidence to Note",
+    ].join("\r\n");
+    const markup = await renderMarkdown(source, undefined, undefined, {
+      recognizeFrontmatter: true,
+    });
+
+    expect(markup).not.toContain("scient-evidence-to-note");
+    expect(markup).not.toContain("First line.");
+    expect(markup).not.toContain("Second line");
+    expect(markup).toContain('<h1 dir="ltr">Evidence to Note</h1>');
+  });
+
+  it("keeps Hebrew document direction after hiding YAML frontmatter", async () => {
+    const source = [
+      "---",
+      "name: scient-medical-exam-study",
+      "description: Guide medical exam study.",
+      "---",
+      "",
+      "# הכנה למבחן",
+      "",
+      "סיכום רפואי בעברית.",
+    ].join("\n");
+    const markup = await renderMarkdown(source, undefined, undefined, {
+      recognizeFrontmatter: true,
+    });
+
+    expect(markup).not.toContain("scient-medical-exam-study");
+    expect(markup).not.toContain("Guide medical exam study.");
+    expect(markup).toContain('<h1 dir="rtl">הכנה למבחן</h1>');
+    expect(markup).toContain('<p dir="rtl">סיכום רפואי בעברית.</p>');
+  });
+
+  it("keeps an unclosed opening delimiter as a normal Markdown horizontal rule", async () => {
+    const markup = await renderMarkdown("---\n\nParagraph after the rule.", undefined, undefined, {
+      recognizeFrontmatter: true,
+    });
+
+    expect(markup).toContain("<hr/>");
+    expect(markup).toContain('<p dir="ltr">Paragraph after the rule.</p>');
+  });
+
+  it("keeps default Markdown rendering unchanged when frontmatter recognition is disabled", async () => {
+    const source = [
+      "---",
+      "name: scient-evidence-to-note",
+      "description: Turn evidence into a note.",
+      "---",
+      "",
+      "# Evidence to Note",
+    ].join("\n");
+    const markup = await renderMarkdown(source);
+
+    expect(markup).toContain("<hr/>");
+    expect(markup).toContain('<h2 dir="ltr">name: scient-evidence-to-note');
+    expect(markup).toContain('<h1 dir="ltr">Evidence to Note</h1>');
   });
 
   it("keeps all-caps dollar identifiers literal", async () => {
@@ -261,7 +477,7 @@ describe("ChatMarkdown user variant", () => {
     const markup = await renderUserMarkdown("use `bun run test` and **bold** text");
 
     expect(markup).toContain("chat-markdown--user");
-    expect(markup).toContain("<code>bun run test</code>");
+    expect(markup).toContain('<code dir="ltr">bun run test</code>');
     expect(markup).toContain("<strong>bold</strong>");
   });
 
@@ -289,7 +505,7 @@ describe("ChatMarkdown user variant", () => {
   it("keeps composer tokens literal inside inline code", async () => {
     const markup = await renderUserMarkdown("literal `$deep-research` here");
 
-    expect(markup).toContain("<code>$deep-research</code>");
+    expect(markup).toContain('<code dir="ltr">$deep-research</code>');
     expect(markup).not.toContain("Deep Research");
   });
 
@@ -299,7 +515,7 @@ describe("ChatMarkdown user variant", () => {
     for (const token of ["constructor", "__proto__", '"constructor"', '"__proto__"']) {
       const markup = await renderUserMarkdown(`what if a key is \`${token}\``);
 
-      expect(markup).toContain("<code>");
+      expect(markup).toContain('<code dir="ltr">');
       expect(markup).not.toContain('data-slot="central-icon"');
     }
   });

@@ -17,7 +17,7 @@ import { InlineChipContent } from "../InlineChip";
 
 export const InlineSkillChip = memo(function InlineSkillChip(props: { skillName: string }) {
   return (
-    <span className={COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME}>
+    <span className={COMPOSER_INLINE_SKILL_CHIP_CLASS_NAME} dir="ltr">
       <InlineChipContent
         icon={
           <CentralIcon

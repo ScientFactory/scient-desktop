@@ -1,0 +1,28 @@
+{
+  "id": "scient.medical-exam-study",
+  "version": "0.1.0",
+  "displayName": "Medical Exam Study",
+  "kind": "scientific",
+  "role": "constructive",
+  "scope": "domain",
+  "visibility": "user",
+  "activation": {
+    "scope": "user",
+    "defaultEnabled": false
+  },
+  "maintainer": "ScientFactory",
+  "capabilities": {
+    "network": true,
+    "codeExecution": false,
+    "projectWrites": "proposal-only"
+  },
+  "requirements": {
+    "projectObjects": [],
+    "operations": []
+  },
+  "limitations": [
+    "Educational exam preparation only; not for diagnosis or treatment of real patients.",
+    "Medical claims outside supplied study sources require authoritative external verification and citation.",
+    "User-activated v0.1; durable study files are proposed on first use rather than created by activation."
+  ]
+}

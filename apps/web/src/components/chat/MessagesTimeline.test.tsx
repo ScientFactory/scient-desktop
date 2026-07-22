@@ -650,9 +650,70 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("chat-markdown--user");
+    expect(markup).toContain('dir="auto"');
     // remark-breaks keeps the user's single newline as a hard break.
     expect(markup).toContain("tl<br/>\ndr");
     expect(markup).not.toContain("<pre");
+  });
+
+  it("uses the latest user direction as a weak hint for a streaming assistant block", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt="2026-03-17T19:12:29.000Z"
+        timelineEntries={[
+          {
+            id: "entry-user-hebrew-direction",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-user-hebrew-direction"),
+              role: "user",
+              text: "תענה לי בעברית בבקשה",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "entry-assistant-hebrew-direction",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-assistant-hebrew-direction"),
+              role: "assistant",
+              text: "Scient הוא",
+              turnId: TurnId.makeUnsafe("turn-hebrew-direction"),
+              createdAt: "2026-03-17T19:12:29.000Z",
+              streaming: true,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-03-17T19:12:30.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    const assistantStart = markup.indexOf(
+      'data-assistant-message-id="message-assistant-hebrew-direction"',
+    );
+    expect(assistantStart).toBeGreaterThanOrEqual(0);
+    expect(markup.slice(assistantStart, assistantStart + 500)).toContain(
+      '<p dir="rtl">Scient הוא</p>',
+    );
   });
 
   it("clamps long user messages visually and renders a separate Show more button", async () => {
@@ -1313,7 +1374,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("<h2>Complete File-Icon Rendering Map</h2>");
+    expect(markup).toContain('<h2 dir="ltr">Complete File-Icon Rendering Map</h2>');
     expect(markup).toContain("chat-markdown-codeblock");
     expect(markup).not.toContain("```tsx");
   });

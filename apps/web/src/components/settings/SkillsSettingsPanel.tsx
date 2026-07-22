@@ -190,6 +190,8 @@ export function SkillsSettingsPanel() {
                 <span className="flex flex-wrap gap-x-2 gap-y-1">
                   <span>Scient · v{skill.version}</span>
                   <span>{skill.kind === "meta" ? "Meta-skill" : "Scientific skill"}</span>
+                  <span>{skill.activationScope === "user" ? "User scope" : "Project scope"}</span>
+                  {skill.readiness === "latent" ? <span>Needs foundations</span> : null}
                   <span>
                     {skill.capabilities.network ? "Network" : "No network"} ·{" "}
                     {skill.capabilities.codeExecution ? "Code execution" : "No code execution"} ·{" "}
@@ -200,13 +202,19 @@ export function SkillsSettingsPanel() {
                 </span>
               }
               control={
-                <Switch
-                  checked={skill.enabled}
-                  onCheckedChange={(checked) =>
-                    setScientBuiltInSkillEnabled(skill.id, skill.defaultEnabled, Boolean(checked))
-                  }
-                  aria-label={`${skill.enabled ? "Deactivate" : "Activate"} the ${skill.displayName} skill`}
-                />
+                skill.activationScope === "user" ? (
+                  <Switch
+                    checked={skill.enabled}
+                    onCheckedChange={(checked) =>
+                      setScientBuiltInSkillEnabled(skill.id, skill.defaultEnabled, Boolean(checked))
+                    }
+                    aria-label={`${skill.enabled ? "Deactivate" : "Activate"} the ${skill.displayName} skill`}
+                  />
+                ) : (
+                  <span className="text-xs font-medium text-muted-foreground">
+                    Manage in project setup
+                  </span>
+                )
               }
             />
           ))}
