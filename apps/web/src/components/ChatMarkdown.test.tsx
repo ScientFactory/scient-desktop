@@ -21,7 +21,11 @@ async function renderMarkdown(
   text: string,
   cwd = "C:\\Users\\LENOVO\\synara",
   markers?: readonly ThreadMarker[],
-  options: { readonly isStreaming?: boolean; readonly directionHint?: "ltr" | "rtl" } = {},
+  options: {
+    readonly isStreaming?: boolean;
+    readonly directionHint?: "ltr" | "rtl";
+    readonly recognizeFrontmatter?: boolean;
+  } = {},
 ) {
   const { default: ChatMarkdown } = await import("./ChatMarkdown");
 
@@ -32,6 +36,7 @@ async function renderMarkdown(
       isStreaming={options.isStreaming ?? false}
       markers={markers}
       {...(options.directionHint ? { directionHint: options.directionHint } : {})}
+      {...(options.recognizeFrontmatter ? { recognizeFrontmatter: true } : {})}
     />,
   );
 }
@@ -250,6 +255,95 @@ describe("ChatMarkdown", () => {
     expect(markup).toContain("$5. Formula");
     expect(markup).toContain('class="katex"');
     expect(markup).not.toContain("$x$");
+  });
+
+  it("hides YAML frontmatter when document recognition is enabled", async () => {
+    const source = [
+      "---",
+      "name: scient-evidence-to-note",
+      "description: Turn evidence into a note.",
+      "---",
+      "",
+      "# Evidence to Note",
+      "",
+      "Body text.",
+    ].join("\n");
+    const markup = await renderMarkdown(source, undefined, undefined, {
+      recognizeFrontmatter: true,
+    });
+
+    expect(markup).not.toContain("scient-evidence-to-note");
+    expect(markup).not.toContain("Turn evidence into a note.");
+    expect(markup).not.toContain("<hr");
+    expect(markup).toContain('<h1 dir="ltr">Evidence to Note</h1>');
+    expect(markup.match(/<h[1-6](?:\s|>)/g) ?? []).toEqual(["<h1 "]);
+  });
+
+  it("recognizes quoted and multiline YAML frontmatter with CRLF line endings", async () => {
+    const source = [
+      "---",
+      'name: "scient-evidence-to-note"',
+      "description: |",
+      "  First line.",
+      "  Second line with --- inside it.",
+      "---",
+      "",
+      "# Evidence to Note",
+    ].join("\r\n");
+    const markup = await renderMarkdown(source, undefined, undefined, {
+      recognizeFrontmatter: true,
+    });
+
+    expect(markup).not.toContain("scient-evidence-to-note");
+    expect(markup).not.toContain("First line.");
+    expect(markup).not.toContain("Second line");
+    expect(markup).toContain('<h1 dir="ltr">Evidence to Note</h1>');
+  });
+
+  it("keeps Hebrew document direction after hiding YAML frontmatter", async () => {
+    const source = [
+      "---",
+      "name: scient-medical-exam-study",
+      "description: Guide medical exam study.",
+      "---",
+      "",
+      "# הכנה למבחן",
+      "",
+      "סיכום רפואי בעברית.",
+    ].join("\n");
+    const markup = await renderMarkdown(source, undefined, undefined, {
+      recognizeFrontmatter: true,
+    });
+
+    expect(markup).not.toContain("scient-medical-exam-study");
+    expect(markup).not.toContain("Guide medical exam study.");
+    expect(markup).toContain('<h1 dir="rtl">הכנה למבחן</h1>');
+    expect(markup).toContain('<p dir="rtl">סיכום רפואי בעברית.</p>');
+  });
+
+  it("keeps an unclosed opening delimiter as a normal Markdown horizontal rule", async () => {
+    const markup = await renderMarkdown("---\n\nParagraph after the rule.", undefined, undefined, {
+      recognizeFrontmatter: true,
+    });
+
+    expect(markup).toContain("<hr/>");
+    expect(markup).toContain('<p dir="ltr">Paragraph after the rule.</p>');
+  });
+
+  it("keeps default Markdown rendering unchanged when frontmatter recognition is disabled", async () => {
+    const source = [
+      "---",
+      "name: scient-evidence-to-note",
+      "description: Turn evidence into a note.",
+      "---",
+      "",
+      "# Evidence to Note",
+    ].join("\n");
+    const markup = await renderMarkdown(source);
+
+    expect(markup).toContain("<hr/>");
+    expect(markup).toContain('<h2 dir="ltr">name: scient-evidence-to-note');
+    expect(markup).toContain('<h1 dir="ltr">Evidence to Note</h1>');
   });
 
   it("keeps all-caps dollar identifiers literal", async () => {

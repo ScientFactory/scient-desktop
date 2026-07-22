@@ -26,6 +26,7 @@ import ReactMarkdown from "react-markdown";
 import { defaultUrlTransform } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkBreaks from "remark-breaks";
+import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { copyTextToClipboard } from "../hooks/useCopyToClipboard";
@@ -122,6 +123,12 @@ interface ChatMarkdownProps {
   mentionReferences?: ReadonlyArray<ProviderMentionReference> | undefined;
   /** Terminal selections rendered as inline chips inside user-message markdown. */
   terminalContexts?: ReadonlyArray<ParsedTerminalContextEntry> | undefined;
+  /**
+   * Recognizes leading YAML frontmatter as document metadata instead of
+   * rendering its delimiters as Markdown. Intended for workspace documents;
+   * chat and other shared-renderer consumers keep CommonMark behavior by default.
+   */
+  recognizeFrontmatter?: boolean;
   /**
    * Makes GFM task-list checkboxes interactive. Receives the 1-based line of
    * the task item in `text` so the caller can flip that `[ ]` marker at the
@@ -1174,6 +1181,7 @@ function ChatMarkdown({
   variant = "assistant",
   mentionReferences,
   terminalContexts,
+  recognizeFrontmatter = false,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
@@ -1214,13 +1222,19 @@ function ChatMarkdown({
     [isUserVariant, mentionReferences, terminalContexts],
   );
   const remarkPlugins = useMemo<MarkdownRemarkPlugins>(() => {
-    if (composerChipsRemarkPlugin) {
-      return [...USER_MARKDOWN_REMARK_PLUGINS, composerChipsRemarkPlugin];
+    const plugins: MarkdownRemarkPlugins = [
+      ...(isUserVariant ? USER_MARKDOWN_REMARK_PLUGINS : MARKDOWN_REMARK_PLUGINS),
+    ];
+    if (recognizeFrontmatter) {
+      plugins.push(remarkFrontmatter);
     }
-    return threadMarkerRemarkPlugin
-      ? [...MARKDOWN_REMARK_PLUGINS, threadMarkerRemarkPlugin]
-      : MARKDOWN_REMARK_PLUGINS;
-  }, [composerChipsRemarkPlugin, threadMarkerRemarkPlugin]);
+    if (composerChipsRemarkPlugin) {
+      plugins.push(composerChipsRemarkPlugin);
+    } else if (threadMarkerRemarkPlugin) {
+      plugins.push(threadMarkerRemarkPlugin);
+    }
+    return plugins;
+  }, [composerChipsRemarkPlugin, isUserVariant, recognizeFrontmatter, threadMarkerRemarkPlugin]);
   const markdownTextDirectionsPlugin = useMemo(
     () =>
       createRehypeMarkdownTextDirections({
