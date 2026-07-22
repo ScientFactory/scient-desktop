@@ -60,6 +60,7 @@ import {
 import { parseBareComposerLink } from "~/lib/linkChips";
 import { type TerminalContextDraft } from "~/lib/terminalContext";
 import { shouldCollapsePastedText } from "~/lib/composerPastedText";
+import { resolveRawTextDirectionHint } from "~/lib/textDirection";
 import type { ProviderMentionReference } from "@synara/contracts";
 import { cn } from "~/lib/utils";
 import {
@@ -597,6 +598,38 @@ function ComposerCommandKeyPlugin(props: {
       unregisterSlash();
     };
   }, [editor, props]);
+
+  return null;
+}
+
+function ComposerTextDirectionPlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useLayoutEffect(() => {
+    const applyDirection = () => {
+      let direction: "ltr" | "rtl" | "auto" = "auto";
+      editor.getEditorState().read(() => {
+        direction = resolveRawTextDirectionHint($getRoot().getTextContent()) ?? "auto";
+      });
+
+      const rootElement = editor.getRootElement();
+      if (!rootElement) {
+        return;
+      }
+      rootElement.dir = direction;
+      for (const paragraph of rootElement.querySelectorAll<HTMLElement>(":scope > p")) {
+        paragraph.dir = direction;
+      }
+    };
+
+    applyDirection();
+    const unregisterUpdate = editor.registerUpdateListener(applyDirection);
+    const unregisterRoot = editor.registerRootListener(() => applyDirection());
+    return () => {
+      unregisterUpdate();
+      unregisterRoot();
+    };
+  }, [editor]);
 
   return null;
 }
@@ -1188,6 +1221,7 @@ function ComposerPromptEditorInner({
           }
           ErrorBoundary={LexicalErrorBoundary}
         />
+        <ComposerTextDirectionPlugin />
         <OnChangePlugin onChange={handleEditorChange} />
         <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
         <ComposerInlineTokenArrowPlugin />

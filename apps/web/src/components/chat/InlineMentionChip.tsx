@@ -19,6 +19,7 @@ import {
 } from "../composerInlineChip";
 import { InlineChipContent } from "../InlineChip";
 import { MentionChipIcon, type MentionChipKind } from "./MentionChipIcon";
+import type { TextDirectionAttribute } from "~/lib/textDirection";
 
 interface InlineMentionChipProps {
   path: string;
@@ -32,6 +33,8 @@ interface InlineMentionChipProps {
   onActivate?: (event: MouseEvent<HTMLAnchorElement>) => void;
   /** Warm-up hook fired on hover/focus so activating the chip feels instant. */
   onHoverPrefetch?: (() => void) | undefined;
+  /** Machine labels default LTR; authored natural-language labels may override it. */
+  direction?: TextDirectionAttribute;
 }
 
 export const InlineMentionChip = memo(function InlineMentionChip(props: InlineMentionChipProps) {
@@ -81,7 +84,7 @@ export const InlineMentionChip = memo(function InlineMentionChip(props: InlineMe
       <a
         className={COMPOSER_INLINE_MENTION_CHIP_INTERACTIVE_CLASS_NAME}
         title={props.path}
-        dir="ltr"
+        dir={props.direction ?? "ltr"}
         {...(href !== undefined ? { href } : {})}
         {...(handleActivate ? { onClick: handleActivate } : {})}
         {...(handleHoverPrefetch
@@ -94,7 +97,11 @@ export const InlineMentionChip = memo(function InlineMentionChip(props: InlineMe
   }
 
   return (
-    <span className={COMPOSER_INLINE_MENTION_CHIP_CLASS_NAME} title={props.path} dir="ltr">
+    <span
+      className={COMPOSER_INLINE_MENTION_CHIP_CLASS_NAME}
+      title={props.path}
+      dir={props.direction ?? "ltr"}
+    >
       {inner}
     </span>
   );

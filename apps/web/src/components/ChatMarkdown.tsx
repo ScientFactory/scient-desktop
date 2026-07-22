@@ -38,7 +38,12 @@ import { useTheme } from "../hooks/useTheme";
 import { useSmoothStreamedText } from "../hooks/useSmoothStreamedText";
 import { openWorkspaceFileReference, useWorkspaceFileOpener } from "../lib/workspaceFileOpener";
 import { resolveMarkdownFileLinkTarget, rewriteMarkdownFileUriHref } from "../markdown-links";
-import { resolveTextDirection, type ResolvedTextDirection } from "../lib/textDirection";
+import {
+  resolveTextDirection,
+  stripTechnicalTextFragments,
+  type ResolvedTextDirection,
+  type TextDirectionAttribute,
+} from "../lib/textDirection";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { GeneratedMarkdownImage } from "./chat/GeneratedMarkdownImage";
 import { TerminalContextInlineChip } from "./chat/TerminalContextInlineChip";
@@ -254,6 +259,18 @@ function markdownNodeText(node: MarkdownHastNode): string {
   return (node.children ?? []).map(markdownNodeText).join(" ");
 }
 
+function isMachineLikeMarkdownLinkLabel(label: string, href: string): boolean {
+  const normalizedLabel = label.trim();
+  const normalizedHref = href.trim();
+  return (
+    normalizedLabel === normalizedHref ||
+    normalizedHref === `http://${normalizedLabel}` ||
+    normalizedHref === `https://${normalizedLabel}` ||
+    normalizedHref.toLowerCase() === `mailto:${normalizedLabel.toLowerCase()}` ||
+    pathLooksLikeKnownFile(normalizedLabel.replace(MARKDOWN_LINK_POSITION_SUFFIX_PATTERN, ""))
+  );
+}
+
 function isTechnicalMarkdownLink(node: MarkdownHastNode): boolean {
   if (node.tagName !== "a") {
     return false;
@@ -263,12 +280,7 @@ function isTechnicalMarkdownLink(node: MarkdownHastNode): boolean {
     return false;
   }
   const label = markdownNodeText(node).trim();
-  return (
-    label === href ||
-    href === `http://${label}` ||
-    href === `https://${label}` ||
-    pathLooksLikeKnownFile(href.replace(MARKDOWN_LINK_POSITION_SUFFIX_PATTERN, ""))
-  );
+  return isMachineLikeMarkdownLinkLabel(label, href);
 }
 
 function isTechnicalMarkdownNode(node: MarkdownHastNode): boolean {
@@ -283,28 +295,25 @@ function isTechnicalMarkdownNode(node: MarkdownHastNode): boolean {
 
 function collectNaturalLanguageMarkdownText(
   node: MarkdownHastNode,
-  options: { readonly excludeNestedLists?: boolean; readonly isRoot?: boolean } = {},
+  options: { readonly isRoot?: boolean } = {},
 ): string {
   if (isTechnicalMarkdownNode(node)) {
     return "";
   }
   if (
-    options.excludeNestedLists &&
     !options.isRoot &&
-    (node.tagName === "ol" || node.tagName === "ul")
+    (node.tagName === "blockquote" ||
+      node.tagName === "ol" ||
+      node.tagName === "ul" ||
+      node.tagName === "table")
   ) {
     return "";
   }
   if (node.type === "text") {
-    return node.value ?? "";
+    return stripTechnicalTextFragments(node.value ?? "");
   }
   return (node.children ?? [])
-    .map((child) =>
-      collectNaturalLanguageMarkdownText(child, {
-        ...(options.excludeNestedLists ? { excludeNestedLists: true } : {}),
-        isRoot: false,
-      }),
-    )
+    .map((child) => collectNaturalLanguageMarkdownText(child, { isRoot: false }))
     .join(" ");
 }
 
@@ -320,10 +329,7 @@ function applyMarkdownTextDirections(
     } else if (DIRECTIONAL_MARKDOWN_BLOCK_TAGS.has(node.tagName)) {
       node.properties ??= {};
       node.properties.dir ??= resolveTextDirection(
-        collectNaturalLanguageMarkdownText(node, {
-          excludeNestedLists: node.tagName === "li",
-          isRoot: true,
-        }),
+        collectNaturalLanguageMarkdownText(node, { isRoot: true }),
         {
           ...(options.hint ? { hint: options.hint } : {}),
           provisional: options.provisional,
@@ -907,6 +913,7 @@ function OpenableFileChip(props: {
   theme: "light" | "dark";
   label?: ReactNode;
   href?: string;
+  direction?: TextDirectionAttribute;
 }) {
   const opener = useWorkspaceFileOpener();
   const chipPath = props.targetPath.replace(MARKDOWN_LINK_POSITION_SUFFIX_PATTERN, "");
@@ -915,6 +922,7 @@ function OpenableFileChip(props: {
       path={chipPath}
       theme={props.theme}
       href={props.href ?? props.targetPath}
+      {...(props.direction ? { direction: props.direction } : {})}
       onActivate={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -1275,11 +1283,16 @@ function ChatMarkdown({
         // Local file links keep their openable behavior but adopt the shared
         // mention-chip UI (file icon + medium label). The link text is preserved
         // as the label.
+        const label = nodeToPlainText(children);
+        const direction = isMachineLikeMarkdownLinkLabel(label, restoredHref ?? "")
+          ? "ltr"
+          : resolveTextDirection(label);
         return (
           <OpenableFileChip
             targetPath={targetPath}
             theme={resolvedTheme}
-            label={nodeToPlainText(children)}
+            label={label}
+            direction={direction}
             {...(restoredHref ? { href: restoredHref } : {})}
           />
         );

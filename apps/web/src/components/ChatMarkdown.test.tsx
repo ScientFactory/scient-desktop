@@ -21,11 +21,18 @@ async function renderMarkdown(
   text: string,
   cwd = "C:\\Users\\LENOVO\\synara",
   markers?: readonly ThreadMarker[],
+  options: { readonly isStreaming?: boolean; readonly directionHint?: "ltr" | "rtl" } = {},
 ) {
   const { default: ChatMarkdown } = await import("./ChatMarkdown");
 
   return renderToStaticMarkup(
-    <ChatMarkdown text={text} cwd={cwd} isStreaming={false} markers={markers} />,
+    <ChatMarkdown
+      text={text}
+      cwd={cwd}
+      isStreaming={options.isStreaming ?? false}
+      markers={markers}
+      {...(options.directionHint ? { directionHint: options.directionHint } : {})}
+    />,
   );
 }
 
@@ -91,6 +98,62 @@ describe("ChatMarkdown", () => {
     expect(markup).toContain('<p dir="rtl"><code dir="ltr">evidence-to-note</code>');
     expect(markup).toContain('<a dir="ltr" href="https://example.com"');
     expect(markup).toContain('<p dir="rtl"><a href="https://example.com/research"');
+  });
+
+  it("excludes bare paths, filenames, and email addresses from prose direction", async () => {
+    const markup = await renderMarkdown(
+      [
+        "/Users/yaacov/project/src/App.tsx שלום, בדוק את הקובץ.",
+        "",
+        "src/App.tsx, שלום.",
+        "",
+        "App.tsx, שלום.",
+        "",
+        "dev@example.com היא כתובת התמיכה.",
+      ].join("\n"),
+    );
+
+    expect(markup.match(/<p dir="rtl">/g) ?? []).toHaveLength(4);
+    expect(markup).toContain('<a dir="ltr" href="mailto:dev@example.com"');
+  });
+
+  it("keeps authored local-file labels natural language", async () => {
+    const markup = await renderMarkdown("[קובץ ההגדרות](./config.ts) מכיל את ההגדרה החשובה.");
+
+    expect(markup).toContain('<p dir="rtl">');
+    expect(markup).toContain('dir="rtl" href="./config.ts"');
+    expect(markup).toContain("קובץ ההגדרות");
+  });
+
+  it("keeps nested quotation direction independent from its parent", async () => {
+    const markup = await renderMarkdown(
+      ["> English outer quote", ">", "> > ציטוט עברי פנימי ארוך וברור מאוד"].join("\n"),
+    );
+
+    expect(markup).toContain('<blockquote dir="ltr">');
+    expect(markup).toContain('<blockquote dir="rtl">');
+  });
+
+  it("does not flip the same block when streaming finishes", async () => {
+    const text = "one two three four אחד שני שלושה";
+    const streaming = await renderMarkdown(text, undefined, undefined, {
+      isStreaming: true,
+      directionHint: "rtl",
+    });
+    const complete = await renderMarkdown(text, undefined, undefined, { directionHint: "rtl" });
+
+    expect(streaming).toContain('<p dir="rtl">');
+    expect(complete).toContain('<p dir="rtl">');
+
+    const shortStreaming = await renderMarkdown("Done", undefined, undefined, {
+      isStreaming: true,
+      directionHint: "rtl",
+    });
+    const shortComplete = await renderMarkdown("Done", undefined, undefined, {
+      directionHint: "rtl",
+    });
+    expect(shortStreaming).toContain('<p dir="rtl">Done</p>');
+    expect(shortComplete).toContain('<p dir="rtl">Done</p>');
   });
 
   it("keeps table structure LTR while resolving cell content independently", async () => {

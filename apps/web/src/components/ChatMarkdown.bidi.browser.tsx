@@ -108,6 +108,42 @@ describe("ChatMarkdown bidirectional rendering", () => {
     }
   });
 
+  it("keeps outer and nested quotations independently directed", async () => {
+    const screen = await render(
+      <ChatMarkdown
+        text={["> English outer quote", ">", "> > ציטוט עברי פנימי ארוך וברור מאוד"].join("\n")}
+        cwd={undefined}
+      />,
+    );
+
+    try {
+      const quotes = Array.from(
+        document.querySelectorAll<HTMLElement>(".chat-markdown blockquote"),
+      );
+      expect(quotes).toHaveLength(2);
+      expect(getComputedStyle(quotes[0]!).direction).toBe("ltr");
+      expect(getComputedStyle(quotes[1]!).direction).toBe("rtl");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("keeps a natural-language file label in its paragraph direction", async () => {
+    const screen = await render(
+      <ChatMarkdown text="[קובץ ההגדרות](./config.ts) מכיל את ההגדרה החשובה." cwd="/tmp/project" />,
+    );
+
+    try {
+      const paragraph = document.querySelector<HTMLElement>(".chat-markdown p");
+      const link = paragraph?.querySelector<HTMLAnchorElement>('a[href="./config.ts"]');
+      expect(getComputedStyle(paragraph!).direction).toBe("rtl");
+      expect(link?.dir).toBe("rtl");
+      expect(getComputedStyle(link!).direction).toBe("rtl");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it("lets Hebrew user prose control a paragraph after a leading LTR file chip", async () => {
     const screen = await render(
       <ChatMarkdown text="@src/App.tsx שלום, בדוק את הקובץ" cwd="/tmp/project" variant="user" />,

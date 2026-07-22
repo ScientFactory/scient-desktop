@@ -29,7 +29,7 @@ function ComposerDirectionFixture(props: { initialValue: string }) {
 }
 
 describe("ComposerPromptEditor bidirectional rendering", () => {
-  it("follows each paragraph's natural direction without mirroring the app", async () => {
+  it("follows the draft's dominant natural direction without mirroring the app", async () => {
     const screen = await render(<ComposerDirectionFixture initialValue="שלום, בדוק את השינוי" />);
 
     try {
@@ -38,7 +38,7 @@ describe("ComposerPromptEditor bidirectional rendering", () => {
 
       await vi.waitFor(() => {
         const paragraph = editor?.querySelector<HTMLParagraphElement>("p");
-        expect(paragraph?.dir).toBe("auto");
+        expect(paragraph?.dir).toBe("rtl");
         expect(getComputedStyle(paragraph!).direction).toBe("rtl");
       });
 
@@ -50,6 +50,23 @@ describe("ComposerPromptEditor bidirectional rendering", () => {
       });
 
       expect(document.documentElement.dir).not.toBe("rtl");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("does not let a leading English product name control a Hebrew draft", async () => {
+    const screen = await render(
+      <ComposerDirectionFixture initialValue="Scient הוא כלי למחקר מדעי" />,
+    );
+
+    try {
+      const editor = document.querySelector<HTMLElement>('[data-testid="composer-editor"]');
+      await vi.waitFor(() => {
+        const paragraph = editor?.querySelector<HTMLParagraphElement>("p");
+        expect(paragraph?.dir).toBe("rtl");
+        expect(getComputedStyle(paragraph!).direction).toBe("rtl");
+      });
     } finally {
       await screen.unmount();
     }

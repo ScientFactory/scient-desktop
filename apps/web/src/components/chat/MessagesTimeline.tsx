@@ -1959,9 +1959,16 @@ function useStableAssistantDirectionHints(
   rows: readonly MessagesTimelineRow[],
 ): ReadonlyMap<MessageId, ResolvedTextDirection> {
   const previousHintsRef = useRef<ReadonlyMap<MessageId, ResolvedTextDirection>>(new Map());
+  const userDirectionCacheRef = useRef<
+    ReadonlyMap<MessageId, { readonly text: string; readonly direction?: ResolvedTextDirection }>
+  >(new Map());
 
   return useMemo(() => {
     const nextHints = new Map<MessageId, ResolvedTextDirection>();
+    const nextUserDirectionCache = new Map<
+      MessageId,
+      { readonly text: string; readonly direction?: ResolvedTextDirection }
+    >();
     let latestUserDirection: ResolvedTextDirection | undefined;
 
     for (const row of rows) {
@@ -1969,11 +1976,22 @@ function useStableAssistantDirectionHints(
         continue;
       }
       if (row.message.role === "user") {
-        latestUserDirection = resolveRawTextDirectionHint(row.message.text) ?? latestUserDirection;
+        const cached = userDirectionCacheRef.current.get(row.message.id);
+        const direction =
+          cached?.text === row.message.text
+            ? cached.direction
+            : resolveRawTextDirectionHint(row.message.text);
+        nextUserDirectionCache.set(row.message.id, {
+          text: row.message.text,
+          ...(direction ? { direction } : {}),
+        });
+        latestUserDirection = direction ?? latestUserDirection;
       } else if (latestUserDirection) {
         nextHints.set(row.message.id, latestUserDirection);
       }
     }
+
+    userDirectionCacheRef.current = nextUserDirectionCache;
 
     if (directionHintMapsEqual(previousHintsRef.current, nextHints)) {
       return previousHintsRef.current;
