@@ -63,6 +63,7 @@ type ComposerModelEffortPickerProps = {
   hideStatusLabel?: boolean;
   disabled?: boolean;
   onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
+  onProviderConnectionRequested?: (provider: ProviderKind) => void;
   onSelectionCommitted?: () => void;
 
   // Traits/effort/speed data.
@@ -315,6 +316,9 @@ export const ComposerModelEffortPicker = memo(function ComposerModelEffortPicker
               {...(props.providerOrder ? { providerOrder: props.providerOrder } : {})}
               {...(props.disabled !== undefined ? { disabled: props.disabled } : {})}
               onProviderModelChange={props.onProviderModelChange}
+              {...(props.onProviderConnectionRequested
+                ? { onProviderConnectionRequested: props.onProviderConnectionRequested }
+                : {})}
               onAfterSelection={handleAfterModelSelection}
             />
           </ComposerPickerMenuSubPopup>

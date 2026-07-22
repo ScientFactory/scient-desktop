@@ -56,6 +56,10 @@ import { Switch } from "~/components/ui/switch";
 import { useProviderModelCatalog } from "~/hooks/useProviderModelCatalog";
 import { useRefreshProviderStatusesNow } from "~/hooks/useProviderStatusRefresh";
 import { useProviderStatusesForLocalConfig } from "~/hooks/useProviderStatusesForLocalConfig";
+import {
+  useApplyProviderSelectionAfterConnection,
+  useProviderConnectionSelectionIntent,
+} from "~/hooks/useProviderSelectionAfterConnection";
 import { useComposerDropzone } from "~/hooks/useComposerDropzone";
 import { toastManager } from "~/components/ui/toast";
 import { useTheme } from "~/hooks/useTheme";
@@ -147,6 +151,7 @@ export function KanbanNewTaskDialog({
     clearComposerFileComments,
     removeComposerTerminalContext,
   } = useKanbanTaskScratchDraft({ defaultProvider: settings.defaultProvider });
+  const providerSelectionIntent = useProviderConnectionSelectionIntent(scratchThreadId);
   const promptRef = useRef(prompt);
 
   const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>(DEFAULT_RUNTIME_MODE);
@@ -193,9 +198,26 @@ export function KanbanNewTaskDialog({
     selectedProvider,
     // Keep discovery warm whenever either picker can open so cursor/codex effort
     // and fast-mode controls are populated, not just the model list.
-    discoveryEnabled: isModelPickerOpen || isTraitsPickerOpen,
+    discoveryEnabled:
+      isModelPickerOpen || isTraitsPickerOpen || providerSelectionIntent.pendingProvider !== null,
     cwd: providerModelDiscoveryCwd,
     modelHintByProvider,
+  });
+  const handleProviderConnectionRequested = useCallback(
+    (provider: ProviderKind) => {
+      providerSelectionIntent.request(provider, findProviderStatus(providerStatuses, provider));
+    },
+    [providerSelectionIntent, providerStatuses],
+  );
+  useApplyProviderSelectionAfterConnection({
+    controller: providerSelectionIntent,
+    scopeKey: scratchThreadId,
+    lockedProvider: null,
+    statuses: providerStatuses,
+    modelOptionsByProvider,
+    loadingModelProviders,
+    preferredModelByProvider: modelHintByProvider,
+    onProviderModelChange: handleProviderModelChange,
   });
   const trimmedPrompt = prompt.trim();
   const hasSendableContent =
@@ -527,6 +549,7 @@ export function KanbanNewTaskDialog({
                     hiddenProviders={settings.hiddenProviders}
                     providerOrder={settings.providerOrder}
                     onProviderModelChange={handleProviderModelChange}
+                    onProviderConnectionRequested={handleProviderConnectionRequested}
                     open={isModelPickerOpen}
                     onOpenChange={setIsModelPickerOpen}
                   />
