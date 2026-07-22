@@ -174,6 +174,10 @@ describe("orchestration projector", () => {
         subagentNickname: null,
         subagentRole: null,
         forkSourceThreadId: null,
+        forkSourceMessageId: null,
+        forkTitleFamilyRootId: null,
+        forkTitleBase: null,
+        forkTitleOrdinal: null,
         sidechatSourceThreadId: null,
         lastKnownPr: null,
         latestTurn: null,
@@ -188,6 +192,113 @@ describe("orchestration projector", () => {
         checkpoints: [],
         session: null,
       },
+    ]);
+  });
+
+  it("replays immutable descendant fork families across ancestor rename and rename-back", async () => {
+    const createdAt = "2026-07-22T10:00:00.000Z";
+    const createdEvent = (input: {
+      readonly sequence: number;
+      readonly threadId: string;
+      readonly title: string;
+      readonly sourceThreadId: string | null;
+      readonly familyRootId: string | null;
+      readonly ordinal: number | null;
+    }) =>
+      makeEvent({
+        sequence: input.sequence,
+        type: "thread.created",
+        aggregateKind: "thread",
+        aggregateId: input.threadId,
+        occurredAt: createdAt,
+        commandId: `command-create-${input.threadId}`,
+        payload: {
+          threadId: input.threadId,
+          projectId: "project-1",
+          title: input.title,
+          modelSelection: { provider: "codex", model: "gpt-5-codex" },
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          forkSourceThreadId: input.sourceThreadId,
+          forkTitleFamilyRootId: input.familyRootId,
+          forkTitleBase: input.ordinal === null ? null : "Greeting",
+          forkTitleOrdinal: input.ordinal,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+
+    const events = [
+      createdEvent({
+        sequence: 1,
+        threadId: "root",
+        title: "Greeting",
+        sourceThreadId: null,
+        familyRootId: null,
+        ordinal: null,
+      }),
+      createdEvent({
+        sequence: 2,
+        threadId: "fork-2",
+        title: "Greeting (2)",
+        sourceThreadId: "root",
+        familyRootId: "root",
+        ordinal: 2,
+      }),
+      createdEvent({
+        sequence: 3,
+        threadId: "fork-3",
+        title: "Greeting (3)",
+        sourceThreadId: "fork-2",
+        familyRootId: "root",
+        ordinal: 3,
+      }),
+      makeEvent({
+        sequence: 4,
+        type: "thread.meta-updated",
+        aggregateKind: "thread",
+        aggregateId: "fork-2",
+        occurredAt: createdAt,
+        commandId: "command-rename-fork-2-away",
+        payload: { threadId: "fork-2", title: "Experiment", updatedAt: createdAt },
+      }),
+      makeEvent({
+        sequence: 5,
+        type: "thread.meta-updated",
+        aggregateKind: "thread",
+        aggregateId: "fork-2",
+        occurredAt: createdAt,
+        commandId: "command-rename-fork-2-back",
+        payload: { threadId: "fork-2", title: "Greeting", updatedAt: createdAt },
+      }),
+      createdEvent({
+        sequence: 6,
+        threadId: "renamed-child-2",
+        title: "Greeting (2)",
+        sourceThreadId: "fork-2",
+        familyRootId: "fork-2",
+        ordinal: 2,
+      }),
+    ];
+
+    let model = createEmptyReadModel(createdAt);
+    for (const event of events) {
+      model = await Effect.runPromise(projectEvent(model, event));
+    }
+
+    expect(
+      model.threads.map((thread) => ({
+        id: thread.id,
+        familyRootId: thread.forkTitleFamilyRootId,
+        base: thread.forkTitleBase,
+        ordinal: thread.forkTitleOrdinal,
+      })),
+    ).toEqual([
+      { id: "root", familyRootId: null, base: null, ordinal: null },
+      { id: "fork-2", familyRootId: null, base: null, ordinal: null },
+      { id: "fork-3", familyRootId: "root", base: "Greeting", ordinal: 3 },
+      { id: "renamed-child-2", familyRootId: "fork-2", base: "Greeting", ordinal: 2 },
     ]);
   });
 

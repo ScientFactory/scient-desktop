@@ -6,6 +6,7 @@
 import {
   EventId,
   MessageId,
+  ThreadId,
   type OrchestrationThreadActivity,
   PROVIDER_DISPLAY_NAMES,
   type ModelSelection,
@@ -13,6 +14,7 @@ import {
   type ThreadHandoffImportedMessage,
 } from "@synara/contracts";
 import { getDefaultModel } from "@synara/shared/model";
+import { isLatestTurnSettled } from "../session-logic";
 import { type Thread } from "../types";
 import { stripEmbeddedAssistantSelections } from "./assistantSelections";
 import { randomUUID } from "./utils";
@@ -43,6 +45,64 @@ function isImportableThreadMessage(
   return (message.role === "user" || message.role === "assistant") && message.streaming === false;
 }
 
+type ForkSourceThread = Pick<Thread, "messages"> & Partial<Pick<Thread, "latestTurn" | "session">>;
+
+function resolveRunningTurnBoundaryIndex(thread: ForkSourceThread): number | null {
+  if (!thread.latestTurn || isLatestTurnSettled(thread.latestTurn, thread.session ?? null)) {
+    return null;
+  }
+
+  const activeAssistantIndex = thread.messages.findIndex(
+    (message) => message.role === "assistant" && message.turnId === thread.latestTurn?.turnId,
+  );
+  const requestedUserIndex = thread.messages.findIndex(
+    (message) => message.role === "user" && message.createdAt === thread.latestTurn?.requestedAt,
+  );
+
+  const knownUnsafeIndexes = [
+    ...(activeAssistantIndex >= 0 ? [activeAssistantIndex] : []),
+    ...(requestedUserIndex >= 0 ? [requestedUserIndex + 1] : []),
+  ];
+  if (knownUnsafeIndexes.length > 0) {
+    return Math.min(...knownUnsafeIndexes);
+  }
+
+  return 0;
+}
+
+function isSettledTerminalTurnAssistantMessage(
+  thread: ForkSourceThread,
+  message: Thread["messages"][number],
+): message is Thread["messages"][number] & { role: "assistant" } {
+  return (
+    message.role === "assistant" &&
+    message.streaming === true &&
+    message.turnId != null &&
+    thread.latestTurn?.turnId === message.turnId &&
+    isLatestTurnSettled(thread.latestTurn, thread.session ?? null)
+  );
+}
+
+function isForkImportableThreadMessage(
+  thread: ForkSourceThread,
+  message: Thread["messages"][number],
+): message is Thread["messages"][number] & { role: "user" | "assistant" } {
+  if (message.role !== "user" && message.role !== "assistant") {
+    return false;
+  }
+  if (
+    message.role === "assistant" &&
+    message.turnId != null &&
+    thread.latestTurn?.turnId === message.turnId &&
+    !isLatestTurnSettled(thread.latestTurn, thread.session ?? null)
+  ) {
+    return false;
+  }
+  return (
+    isImportableThreadMessage(message) || isSettledTerminalTurnAssistantMessage(thread, message)
+  );
+}
+
 function isImportableThreadActivity(
   activity: Thread["activities"][number],
 ): activity is OrchestrationThreadActivity {
@@ -71,37 +131,116 @@ export function resolveThreadHandoffTitle(thread: Pick<Thread, "title">): string
 export function buildThreadHandoffImportedMessages(
   thread: Pick<Thread, "messages">,
 ): ReadonlyArray<ThreadHandoffImportedMessage> {
-  return thread.messages.filter(isImportableThreadMessage).map((message) => {
-    const importedText =
-      message.role === "user" ? stripEmbeddedAssistantSelections(message.text) : message.text;
-    const importedMessage: ThreadHandoffImportedMessage = {
-      messageId: MessageId.makeUnsafe(randomUUID()),
-      role: message.role,
-      text: importedText,
-      createdAt: message.createdAt,
-      updatedAt: message.completedAt ?? message.createdAt,
-    };
-    const attachments =
-      message.attachments && message.attachments.length > 0
-        ? message.attachments.map((attachment) =>
-            attachment.type === "assistant-selection"
-              ? {
-                  type: attachment.type,
-                  id: attachment.id,
-                  assistantMessageId: attachment.assistantMessageId,
-                  text: attachment.text,
-                }
-              : {
-                  type: attachment.type,
-                  id: attachment.id,
-                  name: attachment.name,
-                  mimeType: attachment.mimeType,
-                  sizeBytes: attachment.sizeBytes,
-                },
-          )
-        : null;
-    return attachments ? Object.assign(importedMessage, { attachments }) : importedMessage;
-  });
+  return buildImportedMessages(thread.messages);
+}
+
+function buildImportedMessages(
+  messages: ReadonlyArray<Thread["messages"][number]>,
+  isImportable: (message: Thread["messages"][number]) => boolean = isImportableThreadMessage,
+  makeMessageId: (index: number) => MessageId = () => MessageId.makeUnsafe(randomUUID()),
+): ReadonlyArray<ThreadHandoffImportedMessage> {
+  return messages
+    .filter(
+      (message): message is Thread["messages"][number] & { role: "user" | "assistant" } =>
+        isImportable(message) && (message.role === "user" || message.role === "assistant"),
+    )
+    .map((message, index) => {
+      const importedText =
+        message.role === "user" ? stripEmbeddedAssistantSelections(message.text) : message.text;
+      const importedMessage: ThreadHandoffImportedMessage = {
+        messageId: makeMessageId(index),
+        role: message.role,
+        text: importedText,
+        createdAt: message.createdAt,
+        updatedAt: message.completedAt ?? message.createdAt,
+      };
+      const attachments =
+        message.attachments && message.attachments.length > 0
+          ? message.attachments.map((attachment) =>
+              attachment.type === "assistant-selection"
+                ? {
+                    type: attachment.type,
+                    id: attachment.id,
+                    assistantMessageId: attachment.assistantMessageId,
+                    text: attachment.text,
+                  }
+                : {
+                    type: attachment.type,
+                    id: attachment.id,
+                    name: attachment.name,
+                    mimeType: attachment.mimeType,
+                    sizeBytes: attachment.sizeBytes,
+                  },
+            )
+          : null;
+      return attachments ? Object.assign(importedMessage, { attachments }) : importedMessage;
+    });
+}
+
+export function buildThreadForkImportedMessagesThrough(
+  thread: ForkSourceThread,
+  sourceMessageId: MessageId,
+  destinationThreadId: ThreadId,
+): ReadonlyArray<ThreadHandoffImportedMessage> {
+  const sourceMessageIndex = thread.messages.findIndex((message) => message.id === sourceMessageId);
+  const sourceMessage = thread.messages[sourceMessageIndex];
+  const runningTurnBoundaryIndex = resolveRunningTurnBoundaryIndex(thread);
+  if (
+    sourceMessageIndex < 0 ||
+    !sourceMessage ||
+    (runningTurnBoundaryIndex !== null && sourceMessageIndex >= runningTurnBoundaryIndex)
+  ) {
+    return [];
+  }
+
+  const conversationPrefix = thread.messages
+    .slice(0, sourceMessageIndex + 1)
+    .filter((message) => message.role === "user" || message.role === "assistant");
+  if (
+    conversationPrefix.length === 0 ||
+    conversationPrefix.some((message) => !isForkImportableThreadMessage(thread, message)) ||
+    conversationPrefix.some((message, index, messages) => {
+      const previous = messages[index - 1];
+      return previous !== undefined && previous.createdAt > message.createdAt;
+    })
+  ) {
+    return [];
+  }
+
+  return buildImportedMessages(
+    conversationPrefix,
+    (message) => isForkImportableThreadMessage(thread, message),
+    (index) =>
+      MessageId.makeUnsafe(
+        `fork:${destinationThreadId}:${String(index).padStart(8, "0")}:${randomUUID()}`,
+      ),
+  );
+}
+
+/**
+ * Message actions are offered only while the entire conversation prefix is safe
+ * to import. Once a live assistant row appears, that row and every later user
+ * or assistant boundary stay hidden until the lifecycle settles.
+ */
+export function resolveThreadForkableMessageIds(thread: ForkSourceThread): ReadonlySet<MessageId> {
+  const forkableMessageIds = new Set<MessageId>();
+  let prefixIsImportable = true;
+  const runningTurnBoundaryIndex = resolveRunningTurnBoundaryIndex(thread);
+
+  for (const [messageIndex, message] of thread.messages.entries()) {
+    if (message.role !== "user" && message.role !== "assistant") {
+      continue;
+    }
+    prefixIsImportable =
+      prefixIsImportable &&
+      (runningTurnBoundaryIndex === null || messageIndex < runningTurnBoundaryIndex) &&
+      isForkImportableThreadMessage(thread, message);
+    if (prefixIsImportable) {
+      forkableMessageIds.add(message.id);
+    }
+  }
+
+  return forkableMessageIds;
 }
 
 export function buildThreadHandoffImportedActivities(
