@@ -394,6 +394,7 @@ export function WorkspaceFilesSidebar(props: {
   const handleListKeyDown = useExplorerListNavigation();
   return (
     <aside
+      aria-label="Workspace files"
       className={props.containerClassName ?? EXPLORER_SIDEBAR_CONTAINER_CLASS}
       onKeyDown={handleListKeyDown}
     >
@@ -678,6 +679,7 @@ export function WorkspaceExplorerSidebar(props: {
 
   return (
     <aside
+      aria-label="Workspace files"
       className={props.containerClassName ?? EXPLORER_SIDEBAR_CONTAINER_CLASS}
       onKeyDown={handleListKeyDown}
     >

@@ -77,13 +77,16 @@ import {
 } from "../splitViewStore";
 import { selectRightDockState, useRightDockStore } from "../rightDockStore";
 import {
-  DEFAULT_RIGHT_DOCK_PANE_KIND,
   type RightDockPane,
   type RightDockPaneKind,
   resolveActivePane,
 } from "../rightDockStore.logic";
 import { RightDock } from "../components/chat/RightDock";
-import { CHAT_SURFACE_HEADER_ROW_CLASS_NAME } from "../components/chat/chatHeaderControls";
+import { RightDockEmptyState } from "../components/chat/RightDockEmptyState";
+import {
+  CHAT_SURFACE_HEADER_ROW_CLASS_NAME,
+  DOCK_HEADER_ICON_BUTTON_CLASS,
+} from "../components/chat/chatHeaderControls";
 import { PanelStateMessage } from "../components/chat/PanelStateMessage";
 import {
   RIGHT_DOCK_ADD_MENU_KINDS,
@@ -100,6 +103,11 @@ import {
 } from "../lib/chatReferences";
 import type { FileCommentSelection } from "../lib/fileComments";
 import { type DockPaneRuntimeMode } from "../lib/dockPaneActivation";
+import {
+  readDockFileExplorerOpen,
+  storeDockFileExplorerOpen,
+} from "../lib/dockFileExplorerPreference";
+import { FoldersIcon } from "../lib/icons";
 import { projectListDirectoriesQueryOptions } from "../lib/projectReactQuery";
 import { clearNewThreadLanding, isNewThreadLandingPending } from "../lib/newThreadLanding";
 import {
@@ -135,6 +143,7 @@ import {
 } from "../storeSelectors";
 import { sortThreadsForSidebar } from "../components/Sidebar.logic";
 import { Button } from "../components/ui/button";
+import { IconButton } from "../components/ui/icon-button";
 import {
   Dialog,
   DialogDescription,
@@ -1470,6 +1479,9 @@ function SingleChatSurface(props: {
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[props.threadId] ?? null,
   );
+  const diffAvailable = useStore(
+    (store) => (store.turnDiffIdsByThreadId?.[props.threadId]?.length ?? 0) > 0,
+  );
   const newThreadLandingRef = useRef<{ threadId: ThreadIdType; deferMount: boolean } | null>(null);
   if (newThreadLandingRef.current?.threadId !== props.threadId) {
     newThreadLandingRef.current = {
@@ -1535,6 +1547,7 @@ function SingleChatSurface(props: {
   const [editorDiffFiles, setEditorDiffFiles] = useState<ReadonlyArray<FileDiffMetadata>>([]);
   const [editorDiffFilesLoading, setEditorDiffFilesLoading] = useState(false);
   const [editorDiffOptionsControl, setEditorDiffOptionsControl] = useState<ReactNode | null>(null);
+  const [dockFileExplorerOpen, setDockFileExplorerOpen] = useState(readDockFileExplorerOpen);
 
   const activePane = resolveActivePane(dockState);
   const retainedActivePane =
@@ -1577,15 +1590,15 @@ function SingleChatSurface(props: {
     toggleSingletonPane(props.threadId, { kind: "browser" });
   }, [props.threadId, requestImmediateDockHydration, toggleSingletonPane]);
   const handleToggleRightDock = useCallback(() => {
-    if (!dockState.open) {
-      requestImmediateDockHydration(retainedActivePane?.kind ?? DEFAULT_RIGHT_DOCK_PANE_KIND);
+    if (!dockState.open && retainedActivePane) {
+      requestImmediateDockHydration(retainedActivePane.kind);
     }
     toggleDock(props.threadId);
   }, [
     dockState.open,
     props.threadId,
     requestImmediateDockHydration,
-    retainedActivePane?.kind,
+    retainedActivePane,
     toggleDock,
   ]);
   const handleOpenBrowserUrl = useCallback(() => {
@@ -2046,6 +2059,22 @@ function SingleChatSurface(props: {
     [openPane, props.threadId, requestImmediateDockHydration],
   );
 
+  const handleOpenDockFile = useCallback(
+    (path: string) => {
+      requestImmediateDockHydration("file");
+      openPane(props.threadId, { kind: "file", filePath: path });
+    },
+    [openPane, props.threadId, requestImmediateDockHydration],
+  );
+
+  const handleToggleDockFileExplorer = useCallback(() => {
+    setDockFileExplorerOpen((current) => {
+      const next = !current;
+      storeDockFileExplorerOpen(next);
+      return next;
+    });
+  }, []);
+
   const renderDockPane = useCallback(
     (
       pane: RightDockPane,
@@ -2128,9 +2157,8 @@ function SingleChatSurface(props: {
             <Suspense fallback={<PanelStateMessage>Loading explorer...</PanelStateMessage>}>
               <DockExplorerPane
                 workspaceRoot={workspaceRoot}
+                onOpenFile={handleOpenDockFile}
                 onReferenceInChat={handleReferenceInChat}
-                onAskWhyInChat={handleAskWhyInChat}
-                onCommentInChat={handleCommentInChat}
               />
             </Suspense>
           );
@@ -2140,6 +2168,8 @@ function SingleChatSurface(props: {
               <DockFilePane
                 workspaceRoot={workspaceRoot}
                 filePath={pane.filePath}
+                explorerOpen={dockFileExplorerOpen}
+                onOpenFile={handleOpenDockFile}
                 onReferenceInChat={handleReferenceInChat}
                 onAskWhyInChat={handleAskWhyInChat}
                 onCommentInChat={handleCommentInChat}
@@ -2177,7 +2207,9 @@ function SingleChatSurface(props: {
       dockState.open,
       handleAskWhyInChat,
       handleCommentInChat,
+      handleOpenDockFile,
       handleReferenceInChat,
+      dockFileExplorerOpen,
       props.projectId,
       props.threadId,
       requestActiveDockPaneLive,
@@ -2361,6 +2393,29 @@ function SingleChatSurface(props: {
           defaultWidth={DIFF_INLINE_DEFAULT_WIDTH}
           shouldAcceptWidth={shouldAcceptDockWidth}
           addMenuKinds={RIGHT_DOCK_ADD_MENU_KINDS}
+          activePaneAction={
+            activePane?.kind === "file" && activePane.filePath !== null ? (
+              <IconButton
+                variant="chrome"
+                size="icon-xs"
+                label={dockFileExplorerOpen ? "Hide file explorer" : "Show file explorer"}
+                tooltip={dockFileExplorerOpen ? "Hide file explorer" : "Show file explorer"}
+                tooltipSide="bottom"
+                aria-pressed={dockFileExplorerOpen}
+                className={DOCK_HEADER_ICON_BUTTON_CLASS}
+                onClick={handleToggleDockFileExplorer}
+              >
+                <FoldersIcon />
+              </IconButton>
+            ) : null
+          }
+          emptyState={
+            <RightDockEmptyState
+              workspaceAvailable={workspaceRoot !== null}
+              diffAvailable={diffAvailable}
+              onOpenPane={handleAddDockPane}
+            />
+          }
           motionKey={props.threadId}
           activePaneRuntimeMode={activePaneRuntimeMode}
           {...(paneLabelOverrides ? { paneLabelOverrides } : {})}

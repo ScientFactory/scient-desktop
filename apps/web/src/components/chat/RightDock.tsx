@@ -65,6 +65,9 @@ interface RightDockProps {
   onCollapse: () => void;
   onOpenChange: (open: boolean) => void;
   onAddPane: (kind: RightDockPaneKind) => void;
+  /** Active-pane action rendered between Add panel and Collapse panel. */
+  activePaneAction?: ReactNode;
+  emptyState?: ReactNode;
   motionKey?: string;
   activePaneRuntimeMode?: DockPaneRuntimeMode;
   renderPane: (
@@ -255,6 +258,7 @@ export function RightDock(props: RightDockProps) {
                 </ComposerPickerMenuPopup>
               </Menu>
             ) : null}
+            {props.activePaneAction}
             <IconButton
               variant="chrome"
               size="icon-xs"
@@ -268,6 +272,7 @@ export function RightDock(props: RightDockProps) {
             </IconButton>
           </div>
           <div className="relative min-h-0 flex-1">
+            {activePane === null && props.state.open ? props.emptyState : null}
             {renderedPanes.map((pane) => {
               const isActive = pane.id === activePane?.id;
               const isVisible = isActive && props.state.open;
