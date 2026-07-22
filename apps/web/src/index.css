@@ -768,6 +768,7 @@ label:has(> select#reasoning-effort) select {
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
+  text-align: start;
 }
 
 .chat-markdown strong,
@@ -794,13 +795,19 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown ul {
-  padding-left: 1.25rem;
+  padding-inline-start: 0;
   list-style-type: disc;
 }
 
 .chat-markdown ol {
-  padding-left: 1.25rem;
+  padding-inline-start: 0;
   list-style-type: decimal;
+}
+
+/* Every item resolves its own direction, so its marker gutter belongs to the
+   item instead of to an LTR-only list container. */
+.chat-markdown li {
+  margin-inline-start: 1.25rem;
 }
 
 .chat-markdown ul ul {
@@ -832,7 +839,8 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown .chat-markdown-task-checkbox {
   width: 0.95em;
   height: 0.95em;
-  margin: 0 0.4em 0.1em -1.4em;
+  margin-block: 0 0.1em;
+  margin-inline: -1.4em 0.4em;
   vertical-align: middle;
   accent-color: var(--primary);
 }
@@ -876,15 +884,15 @@ label:has(> select#reasoning-effort) select {
 
 /* Markdown can split one marker across inline nodes; only outer edges keep padding/radius. */
 .chat-markdown .thread-marker-highlight.thread-marker-continues-before {
-  padding-left: 0;
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
+  padding-inline-start: 0;
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
 }
 
 .chat-markdown .thread-marker-highlight.thread-marker-continues-after {
-  padding-right: 0;
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
+  padding-inline-end: 0;
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
 }
 
 .chat-markdown .thread-marker-underline {
@@ -929,12 +937,14 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown blockquote {
-  border-left: 2px solid var(--border);
-  padding-left: 0.8rem;
+  border-inline-start: 2px solid var(--border);
+  padding-inline-start: 0.8rem;
   color: var(--muted-foreground);
 }
 
 .chat-markdown :not(pre) > code {
+  direction: ltr;
+  unicode-bidi: isolate;
   border-radius: 0.4rem;
   background: var(--app-user-message-background);
   padding: 0.1rem 0.35rem;
@@ -976,6 +986,8 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown .katex {
+  direction: ltr;
+  unicode-bidi: isolate;
   max-width: 100%;
   font-size: 1em;
   text-indent: 0;
@@ -998,6 +1010,9 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown pre {
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: left;
   max-width: 100%;
   overflow-x: auto;
   border-radius: 1rem;
@@ -1016,6 +1031,9 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown .chat-markdown-codeblock {
+  direction: ltr;
+  unicode-bidi: isolate;
+  text-align: left;
   margin: 0.65rem 0;
   overflow: hidden;
   border-radius: 0.65rem;
@@ -1383,7 +1401,11 @@ label:has(> select#reasoning-effort) select {
 
 .editor-markdown-preview .chat-markdown ul,
 .editor-markdown-preview .chat-markdown ol {
-  padding-left: 1.5rem;
+  padding-inline-start: 0;
+}
+
+.editor-markdown-preview .chat-markdown li {
+  margin-inline-start: 1.5rem;
 }
 
 .editor-markdown-preview .chat-markdown li + li {
@@ -2385,13 +2407,15 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown table {
   width: 100%;
   border-collapse: collapse;
+  direction: ltr;
+  unicode-bidi: isolate;
 }
 
 .chat-markdown th,
 .chat-markdown td {
   border: 1px solid var(--border);
   padding: 0.35rem 0.45rem;
-  text-align: left;
+  text-align: start;
 }
 
 /* Keep diff chrome aligned with the user-configured code font, not the base mono fallback. */

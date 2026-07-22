@@ -38,6 +38,12 @@ import { useTheme } from "../hooks/useTheme";
 import { useSmoothStreamedText } from "../hooks/useSmoothStreamedText";
 import { openWorkspaceFileReference, useWorkspaceFileOpener } from "../lib/workspaceFileOpener";
 import { resolveMarkdownFileLinkTarget, rewriteMarkdownFileUriHref } from "../markdown-links";
+import {
+  resolveTextDirection,
+  stripTechnicalTextFragments,
+  type ResolvedTextDirection,
+  type TextDirectionAttribute,
+} from "../lib/textDirection";
 import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { GeneratedMarkdownImage } from "./chat/GeneratedMarkdownImage";
 import { TerminalContextInlineChip } from "./chat/TerminalContextInlineChip";
@@ -101,6 +107,8 @@ interface ChatMarkdownProps {
   isStreaming?: boolean;
   className?: string | undefined;
   style?: CSSProperties | undefined;
+  /** Weak conversational direction used while a streamed block is still ambiguous. */
+  directionHint?: ResolvedTextDirection | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   markers?: readonly ThreadMarker[] | undefined;
   /**
@@ -198,6 +206,149 @@ function restoreLiteralDollarsInNode(node: unknown): void {
 function rehypeRestoreLiteralDollars() {
   return (tree: unknown) => {
     restoreLiteralDollarsInNode(tree);
+  };
+}
+
+type MarkdownHastNode = {
+  type?: string;
+  value?: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: MarkdownHastNode[];
+};
+
+const DIRECTIONAL_MARKDOWN_BLOCK_TAGS = new Set([
+  "blockquote",
+  "dd",
+  "dt",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "li",
+  "p",
+  "td",
+  "th",
+]);
+const LTR_MARKDOWN_TAGS = new Set(["code", "pre", "table"]);
+const TECHNICAL_MARKDOWN_TAGS = new Set([
+  "code",
+  "img",
+  "input",
+  "pre",
+  "svg",
+  COMPOSER_CHIP_TAG_NAME,
+  TERMINAL_CONTEXT_CHIP_TAG_NAME,
+]);
+const TECHNICAL_MARKDOWN_CLASSES = new Set(["katex", "math-display", "math-inline"]);
+
+function markdownNodeClassNames(node: MarkdownHastNode): string[] {
+  const className = node.properties?.className;
+  if (Array.isArray(className)) {
+    return className.filter((value): value is string => typeof value === "string");
+  }
+  return typeof className === "string" ? className.split(/\s+/) : [];
+}
+
+function markdownNodeText(node: MarkdownHastNode): string {
+  if (node.type === "text") {
+    return node.value ?? "";
+  }
+  return (node.children ?? []).map(markdownNodeText).join(" ");
+}
+
+function isMachineLikeMarkdownLinkLabel(label: string, href: string): boolean {
+  const normalizedLabel = label.trim();
+  const normalizedHref = href.trim();
+  return (
+    normalizedLabel === normalizedHref ||
+    normalizedHref === `http://${normalizedLabel}` ||
+    normalizedHref === `https://${normalizedLabel}` ||
+    normalizedHref.toLowerCase() === `mailto:${normalizedLabel.toLowerCase()}` ||
+    pathLooksLikeKnownFile(normalizedLabel.replace(MARKDOWN_LINK_POSITION_SUFFIX_PATTERN, ""))
+  );
+}
+
+function isTechnicalMarkdownLink(node: MarkdownHastNode): boolean {
+  if (node.tagName !== "a") {
+    return false;
+  }
+  const href = node.properties?.href;
+  if (typeof href !== "string") {
+    return false;
+  }
+  const label = markdownNodeText(node).trim();
+  return isMachineLikeMarkdownLinkLabel(label, href);
+}
+
+function isTechnicalMarkdownNode(node: MarkdownHastNode): boolean {
+  if (node.tagName && TECHNICAL_MARKDOWN_TAGS.has(node.tagName)) {
+    return true;
+  }
+  if (markdownNodeClassNames(node).some((className) => TECHNICAL_MARKDOWN_CLASSES.has(className))) {
+    return true;
+  }
+  return isTechnicalMarkdownLink(node);
+}
+
+function collectNaturalLanguageMarkdownText(
+  node: MarkdownHastNode,
+  options: { readonly isRoot?: boolean } = {},
+): string {
+  if (isTechnicalMarkdownNode(node)) {
+    return "";
+  }
+  if (
+    !options.isRoot &&
+    (node.tagName === "blockquote" ||
+      node.tagName === "ol" ||
+      node.tagName === "ul" ||
+      node.tagName === "table")
+  ) {
+    return "";
+  }
+  if (node.type === "text") {
+    return stripTechnicalTextFragments(node.value ?? "");
+  }
+  return (node.children ?? [])
+    .map((child) => collectNaturalLanguageMarkdownText(child, { isRoot: false }))
+    .join(" ");
+}
+
+function applyMarkdownTextDirections(
+  node: MarkdownHastNode,
+  options: { readonly hint?: ResolvedTextDirection; readonly provisional: boolean },
+): void {
+  if (node.type === "element" && node.tagName) {
+    const isTechnical = isTechnicalMarkdownNode(node);
+    if (LTR_MARKDOWN_TAGS.has(node.tagName) || isTechnical) {
+      node.properties ??= {};
+      node.properties.dir ??= "ltr";
+    } else if (DIRECTIONAL_MARKDOWN_BLOCK_TAGS.has(node.tagName)) {
+      node.properties ??= {};
+      node.properties.dir ??= resolveTextDirection(
+        collectNaturalLanguageMarkdownText(node, { isRoot: true }),
+        {
+          ...(options.hint ? { hint: options.hint } : {}),
+          provisional: options.provisional,
+        },
+      );
+    }
+  }
+
+  for (const child of node.children ?? []) {
+    applyMarkdownTextDirections(child, options);
+  }
+}
+
+function createRehypeMarkdownTextDirections(options: {
+  readonly hint?: ResolvedTextDirection;
+  readonly provisional: boolean;
+}) {
+  return () => (tree: MarkdownHastNode) => {
+    applyMarkdownTextDirections(tree, options);
   };
 }
 
@@ -762,6 +913,7 @@ function OpenableFileChip(props: {
   theme: "light" | "dark";
   label?: ReactNode;
   href?: string;
+  direction?: TextDirectionAttribute;
 }) {
   const opener = useWorkspaceFileOpener();
   const chipPath = props.targetPath.replace(MARKDOWN_LINK_POSITION_SUFFIX_PATTERN, "");
@@ -770,6 +922,7 @@ function OpenableFileChip(props: {
       path={chipPath}
       theme={props.theme}
       href={props.href ?? props.targetPath}
+      {...(props.direction ? { direction: props.direction } : {})}
       onActivate={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -875,7 +1028,7 @@ function MarkdownCodeBlock({
   );
 
   return (
-    <div className="chat-markdown-codeblock" data-wrap={wrap ? "true" : "false"}>
+    <div className="chat-markdown-codeblock" data-wrap={wrap ? "true" : "false"} dir="ltr">
       <div className="chat-markdown-codeblock__header">
         <CodeBlockHeaderTitle fence={fence} />
         <div className="chat-markdown-codeblock__actions">
@@ -1014,6 +1167,7 @@ function ChatMarkdown({
   isStreaming = false,
   className = "text-sm leading-relaxed",
   style,
+  directionHint,
   onImageExpand,
   markers,
   onTaskToggle,
@@ -1067,7 +1221,21 @@ function ChatMarkdown({
       ? [...MARKDOWN_REMARK_PLUGINS, threadMarkerRemarkPlugin]
       : MARKDOWN_REMARK_PLUGINS;
   }, [composerChipsRemarkPlugin, threadMarkerRemarkPlugin]);
-  const rehypePlugins = isUserVariant ? USER_MARKDOWN_REHYPE_PLUGINS : MARKDOWN_REHYPE_PLUGINS;
+  const markdownTextDirectionsPlugin = useMemo(
+    () =>
+      createRehypeMarkdownTextDirections({
+        ...(directionHint ? { hint: directionHint } : {}),
+        provisional: isStreaming,
+      }),
+    [directionHint, isStreaming],
+  );
+  const rehypePlugins = useMemo<MarkdownRehypePlugins>(
+    () =>
+      isUserVariant
+        ? [...USER_MARKDOWN_REHYPE_PLUGINS, markdownTextDirectionsPlugin]
+        : [...MARKDOWN_REHYPE_PLUGINS, markdownTextDirectionsPlugin],
+    [isUserVariant, markdownTextDirectionsPlugin],
+  );
   const markdownUrlTransform = useCallback((href: string) => {
     const restoredHref = restoreLiteralDollarPlaceholders(href);
     return rewriteMarkdownFileUriHref(restoredHref) ?? defaultUrlTransform(restoredHref);
@@ -1115,11 +1283,16 @@ function ChatMarkdown({
         // Local file links keep their openable behavior but adopt the shared
         // mention-chip UI (file icon + medium label). The link text is preserved
         // as the label.
+        const label = nodeToPlainText(children);
+        const direction = isMachineLikeMarkdownLinkLabel(label, restoredHref ?? "")
+          ? "ltr"
+          : resolveTextDirection(label);
         return (
           <OpenableFileChip
             targetPath={targetPath}
             theme={resolvedTheme}
-            label={nodeToPlainText(children)}
+            label={label}
+            direction={direction}
             {...(restoredHref ? { href: restoredHref } : {})}
           />
         );
@@ -1127,7 +1300,11 @@ function ChatMarkdown({
       pre({ node: _node, children, ...props }) {
         const codeBlock = extractCodeBlock(children);
         if (!codeBlock) {
-          return <pre {...props}>{children}</pre>;
+          return (
+            <pre dir="ltr" {...props}>
+              {children}
+            </pre>
+          );
         }
 
         const fence = parseCodeFenceInfo(extractRawFenceInfo(codeBlock.className));
@@ -1135,8 +1312,20 @@ function ChatMarkdown({
 
         return (
           <MarkdownCodeBlock code={code} fence={fence}>
-            <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
-              <Suspense fallback={<pre {...props}>{children}</pre>}>
+            <CodeHighlightErrorBoundary
+              fallback={
+                <pre dir="ltr" {...props}>
+                  {children}
+                </pre>
+              }
+            >
+              <Suspense
+                fallback={
+                  <pre dir="ltr" {...props}>
+                    {children}
+                  </pre>
+                }
+              >
                 <SuspenseShikiCodeBlock
                   language={fence.language}
                   code={code}
@@ -1161,7 +1350,7 @@ function ChatMarkdown({
           }
         }
         return (
-          <code className={className} {...props}>
+          <code className={className} dir="ltr" {...props}>
             {children}
           </code>
         );
@@ -1249,7 +1438,8 @@ function ChatMarkdown({
 
   return (
     <div
-      className={`chat-markdown ${isUserVariant ? "chat-markdown--user " : ""}w-full min-w-0 ${className} text-foreground`}
+      className={`chat-markdown ${isUserVariant ? "chat-markdown--user " : ""}w-full min-w-0 text-start ${className} text-foreground`}
+      dir="auto"
       style={style}
     >
       <ReactMarkdown

@@ -22,6 +22,7 @@ export const InlineAgentChip = memo(function InlineAgentChip(props: {
   return (
     <span
       className={COMPOSER_INLINE_AGENT_CHIP_CLASS_NAME}
+      dir="ltr"
       style={{ backgroundColor: colors.bg, color: colors.text }}
     >
       <InlineChipContent
