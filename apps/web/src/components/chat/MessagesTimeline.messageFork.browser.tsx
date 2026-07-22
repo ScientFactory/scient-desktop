@@ -67,6 +67,73 @@ function MessageForkTimeline() {
   );
 }
 
+function LiveBoundaryMessageForkTimeline() {
+  const safeUserId = MessageId.makeUnsafe("message-fork-browser-safe-user");
+  return (
+    <div style={{ height: 480 }}>
+      <MessagesTimeline
+        hasMessages
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt="2026-07-22T08:00:01.000Z"
+        timelineEntries={[
+          {
+            id: "entry-fork-browser-safe-user",
+            kind: "message",
+            createdAt: "2026-07-22T08:00:00.000Z",
+            message: {
+              id: safeUserId,
+              role: "user",
+              text: "Completed question",
+              createdAt: "2026-07-22T08:00:00.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "entry-fork-browser-live-assistant",
+            kind: "message",
+            createdAt: "2026-07-22T08:00:01.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-fork-browser-live-assistant"),
+              role: "assistant",
+              text: "Still answering",
+              createdAt: "2026-07-22T08:00:01.000Z",
+              streaming: true,
+            },
+          },
+          {
+            id: "entry-fork-browser-queued-user",
+            kind: "message",
+            createdAt: "2026-07-22T08:00:02.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-fork-browser-queued-user"),
+              role: "user",
+              text: "Queued follow-up",
+              createdAt: "2026-07-22T08:00:02.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-07-22T08:00:03.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onForkFromMessage={() => {}}
+        forkableMessageIds={new Set([safeUserId])}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="dark"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />
+    </div>
+  );
+}
+
 describe("MessagesTimeline message fork action", () => {
   afterEach(() => {
     document.body.innerHTML = "";
@@ -99,6 +166,24 @@ describe("MessagesTimeline message fork action", () => {
       await expect
         .poll(() => document.querySelector("output")?.getAttribute("data-selected-message-id"))
         .toBe("message-fork-browser-assistant");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("hides fork actions at and after a live assistant boundary", async () => {
+    const screen = await render(<LiveBoundaryMessageForkTimeline />);
+
+    try {
+      const forkButtons = Array.from(
+        document.querySelectorAll<HTMLButtonElement>(
+          'button[aria-label="Fork conversation from this message"]',
+        ),
+      );
+      expect(forkButtons).toHaveLength(1);
+      expect(
+        forkButtons[0]?.closest<HTMLElement>("[data-message-id]")?.getAttribute("data-message-id"),
+      ).toBe("message-fork-browser-safe-user");
     } finally {
       await screen.unmount();
     }

@@ -540,6 +540,7 @@ import { collapseCursorModelVariants } from "../cursorModelVariants";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import {
   canCreateThreadHandoff,
+  resolveThreadForkableMessageIds,
   resolveAvailableHandoffTargetProviders,
   resolveThreadHandoffBadgeLabel,
 } from "../lib/threadHandoff";
@@ -3059,6 +3060,10 @@ export default function ChatView({
   const enteringUserMessageIds = useMemo<ReadonlySet<MessageId>>(
     () => new Set(optimisticUserMessages.map((message) => message.id)),
     [optimisticUserMessages],
+  );
+  const forkableMessageIds = useMemo(
+    () => (activeThread ? resolveThreadForkableMessageIds(activeThread) : new Set<MessageId>()),
+    [activeThread],
   );
   // --- Pinned messages & notes (per-thread, server-synced through sidepanel commands) ---
   const pinnedMessages = activeThread?.pinnedMessages ?? EMPTY_PINNED_MESSAGES;
@@ -11163,6 +11168,7 @@ export default function ChatView({
                     onUndoTurnFiles={onUndoTurnFiles}
                     onEditUserMessage={onEditUserMessage}
                     {...(isServerThread ? { onForkFromMessage: handleForkFromMessage } : {})}
+                    {...(isServerThread ? { forkableMessageIds } : {})}
                     isRevertingCheckpoint={isRevertingCheckpoint}
                     onExpandTimelineImage={onExpandTimelineImage}
                     followLiveOutput={hasStreamingAssistantText}

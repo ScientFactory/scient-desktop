@@ -418,6 +418,8 @@ interface MessagesTimelineProps {
   onEditUserMessage?: (messageId: MessageId, text: string) => boolean | Promise<boolean>;
   /** Create an independent conversation whose imported transcript ends at this message. */
   onForkFromMessage?: (messageId: MessageId) => void;
+  /** Server-backed boundaries whose complete prefix is safe to import. */
+  forkableMessageIds?: ReadonlySet<MessageId>;
   activeTurnId?: TurnId | null;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -476,6 +478,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onUndoTurnFiles,
   onEditUserMessage,
   onForkFromMessage,
+  forkableMessageIds,
   activeTurnId,
   isRevertingCheckpoint,
   onImageExpand,
@@ -1198,7 +1201,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                           className={MESSAGE_HOVER_REVEAL_CLASS_NAME}
                         />
                       )}
-                      {onForkFromMessage ? (
+                      {onForkFromMessage &&
+                      (forkableMessageIds === undefined ||
+                        forkableMessageIds.has(row.message.id)) ? (
                         <MessageActionButton
                           label="Fork conversation from this message"
                           tooltip="Fork conversation from here"
@@ -1578,7 +1583,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                         className={MESSAGE_HOVER_REVEAL_CLASS_NAME}
                       />
                     ) : null}
-                    {assistantCopyState.visible && onForkFromMessage ? (
+                    {assistantCopyState.visible &&
+                    onForkFromMessage &&
+                    (forkableMessageIds === undefined || forkableMessageIds.has(row.message.id)) ? (
                       <MessageActionButton
                         label="Fork conversation from this message"
                         tooltip="Fork conversation from here"

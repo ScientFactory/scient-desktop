@@ -35,6 +35,14 @@ function isCompletedConversationMessage(
   if (message.role !== "user" && message.role !== "assistant") {
     return false;
   }
+  if (
+    message.role === "assistant" &&
+    message.turnId != null &&
+    thread.latestTurn?.turnId === message.turnId &&
+    thread.latestTurn.state === "running"
+  ) {
+    return false;
+  }
   if (!message.streaming) {
     return true;
   }
@@ -120,9 +128,25 @@ export function validateMessageForkImport(input: {
     };
   }
 
-  const expectedMessages = input.sourceThread.messages
+  const conversationPrefix = input.sourceThread.messages
     .slice(0, sourceMessageIndex + 1)
-    .filter((message) => isCompletedConversationMessage(input.sourceThread, message));
+    .filter(
+      (message): message is OrchestrationMessage & { readonly role: "user" | "assistant" } =>
+        message.role === "user" || message.role === "assistant",
+    );
+  if (
+    conversationPrefix.some(
+      (message) => !isCompletedConversationMessage(input.sourceThread, message),
+    )
+  ) {
+    return {
+      ok: false,
+      reason: "invalid-source",
+      expectedImportedMessageCount: 0,
+    };
+  }
+
+  const expectedMessages = conversationPrefix;
   const importedMessagesMatch =
     input.importedMessages.length === expectedMessages.length &&
     input.importedMessages.every((message, index) => {

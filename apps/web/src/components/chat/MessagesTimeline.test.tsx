@@ -420,6 +420,75 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("/central-icons-reversed/fork-simple.svg");
   });
 
+  it("hides message fork actions after an unsafe live boundary", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const priorUserId = MessageId.makeUnsafe("message-fork-safe-user");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt="2026-07-22T08:00:01.000Z"
+        timelineEntries={[
+          {
+            id: "entry-fork-safe-user",
+            kind: "message",
+            createdAt: "2026-07-22T08:00:00.000Z",
+            message: {
+              id: priorUserId,
+              role: "user",
+              text: "Completed question",
+              createdAt: "2026-07-22T08:00:00.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "entry-fork-live-assistant",
+            kind: "message",
+            createdAt: "2026-07-22T08:00:01.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-fork-live-assistant"),
+              role: "assistant",
+              text: "Still answering",
+              createdAt: "2026-07-22T08:00:01.000Z",
+              streaming: true,
+            },
+          },
+          {
+            id: "entry-fork-queued-user",
+            kind: "message",
+            createdAt: "2026-07-22T08:00:02.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-fork-queued-user"),
+              role: "user",
+              text: "Queued follow-up",
+              createdAt: "2026-07-22T08:00:02.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-07-22T08:00:03.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onForkFromMessage={() => {}}
+        forkableMessageIds={new Set([priorUserId])}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup.match(/aria-label="Fork conversation from this message"/g)).toHaveLength(1);
+    expect(markup).toContain('data-message-id="message-fork-queued-user"');
+  });
+
   it("keeps edit available and hides undo before a revert checkpoint exists", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

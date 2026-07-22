@@ -28,6 +28,18 @@ function isStoredForkOrdinal(value: number | null | undefined): value is number 
   return Number.isSafeInteger(value) && (value ?? 0) >= 2;
 }
 
+function usesAutomaticForkTitle(thread: ForkTitleThread): thread is ForkTitleThread & {
+  readonly forkTitleBase: string;
+  readonly forkTitleOrdinal: number;
+} {
+  return (
+    thread.forkTitleBase !== null &&
+    thread.forkTitleBase !== undefined &&
+    isStoredForkOrdinal(thread.forkTitleOrdinal) &&
+    thread.title === formatForkTitle(thread.forkTitleBase, thread.forkTitleOrdinal)
+  );
+}
+
 function resolveForkFamilyRootId(
   thread: ForkTitleThread,
   threadsById: ReadonlyMap<string, ForkTitleThread>,
@@ -35,7 +47,10 @@ function resolveForkFamilyRootId(
   let current = thread;
   const visited = new Set<string>();
 
-  while (current.forkSourceThreadId) {
+  // An automatically named fork inherits its source's family. A manual rename
+  // intentionally breaks that chain, making the renamed thread the root of a
+  // new family even when its visible title matches an older family.
+  while (current.forkSourceThreadId && usesAutomaticForkTitle(current)) {
     if (visited.has(current.id)) {
       return [...visited, current.id].toSorted()[0] ?? current.id;
     }
@@ -62,21 +77,18 @@ export function resolveNextForkTitle(input: {
     threadsById.set(source.id, source);
   }
 
-  const sourceUsesAutomaticTitle =
-    source.forkTitleBase !== null &&
-    source.forkTitleBase !== undefined &&
-    isStoredForkOrdinal(source.forkTitleOrdinal) &&
-    source.title === formatForkTitle(source.forkTitleBase, source.forkTitleOrdinal);
-  const forkTitleBase = sourceUsesAutomaticTitle ? source.forkTitleBase : source.title;
+  const forkTitleBase = usesAutomaticForkTitle(source) ? source.forkTitleBase : source.title;
   const familyRootId = resolveForkFamilyRootId(source, threadsById);
 
   let highestOrdinal = 1;
   for (const thread of input.threads) {
+    if (!usesAutomaticForkTitle(thread)) {
+      continue;
+    }
     if (
       thread.projectId !== source.projectId ||
       thread.sidechatSourceThreadId ||
       thread.forkTitleBase !== forkTitleBase ||
-      !isStoredForkOrdinal(thread.forkTitleOrdinal) ||
       resolveForkFamilyRootId(thread, threadsById) !== familyRootId
     ) {
       continue;

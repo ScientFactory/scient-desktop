@@ -117,6 +117,71 @@ describe("validateMessageForkImport", () => {
     });
   });
 
+  it("rejects a queued user boundary after a live assistant instead of omitting the live row", () => {
+    const queuedUserId = MessageId.makeUnsafe("message-queued-user");
+    expect(
+      validateMessageForkImport({
+        sourceThread: {
+          messages: [
+            sourceMessages[0]!,
+            sourceMessages[1]!,
+            {
+              id: queuedUserId,
+              role: "user",
+              text: "Queued follow-up",
+              turnId: TurnId.makeUnsafe("turn-queued"),
+              streaming: false,
+              source: "native",
+              createdAt: "2026-07-22T10:00:03.000Z",
+              updatedAt: "2026-07-22T10:00:03.000Z",
+            },
+          ],
+          latestTurn: {
+            ...sourceThread.latestTurn!,
+            state: "running",
+            completedAt: null,
+          },
+        },
+        sourceMessageId: queuedUserId,
+        importedMessages: [
+          importedMessages[0]!,
+          {
+            messageId: MessageId.makeUnsafe("import-queued-user"),
+            role: "user",
+            text: "Queued follow-up",
+            createdAt: "2026-07-22T10:00:03.000Z",
+            updatedAt: "2026-07-22T10:00:03.000Z",
+          },
+        ],
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "invalid-source",
+      expectedImportedMessageCount: 0,
+    });
+  });
+
+  it("rejects a non-streaming assistant while its authoritative turn is running", () => {
+    expect(
+      validateMessageForkImport({
+        sourceThread: {
+          messages: [{ ...sourceMessages[1]!, streaming: false }],
+          latestTurn: {
+            ...sourceThread.latestTurn!,
+            state: "running",
+            completedAt: null,
+          },
+        },
+        sourceMessageId: assistantMessageId,
+        importedMessages: [importedMessages[1]!],
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "invalid-source",
+      expectedImportedMessageCount: 0,
+    });
+  });
+
   it("rejects same-length imports whose text or attachments do not match the source prefix", () => {
     expect(
       validateMessageForkImport({

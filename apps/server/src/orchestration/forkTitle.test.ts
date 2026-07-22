@@ -94,6 +94,53 @@ describe("resolveNextForkTitle", () => {
     });
   });
 
+  it("keeps independently renamed siblings in separate families", () => {
+    const root = thread("root", "Greeting");
+    const renamedA = thread("fork-a", "Experiment", {
+      forkSourceThreadId: root.id,
+      forkTitleBase: "Greeting",
+      forkTitleOrdinal: 2,
+    });
+    const renamedB = thread("fork-b", "Experiment", {
+      forkSourceThreadId: root.id,
+      forkTitleBase: "Greeting",
+      forkTitleOrdinal: 3,
+    });
+    const experimentA2 = thread("experiment-a-2", "Experiment (2)", {
+      forkSourceThreadId: renamedA.id,
+      forkTitleBase: "Experiment",
+      forkTitleOrdinal: 2,
+    });
+
+    expect(
+      resolveNextForkTitle({
+        sourceThread: renamedB,
+        threads: [root, renamedA, renamedB, experimentA2],
+      }).title,
+    ).toBe("Experiment (2)");
+  });
+
+  it("starts a new family when a child is manually renamed to its original base", () => {
+    const root = thread("root", "Greeting");
+    const renamedChild = thread("fork-2", "Greeting", {
+      forkSourceThreadId: root.id,
+      forkTitleBase: "Greeting",
+      forkTitleOrdinal: 2,
+    });
+    const originalFork3 = thread("fork-3", "Greeting (3)", {
+      forkSourceThreadId: root.id,
+      forkTitleBase: "Greeting",
+      forkTitleOrdinal: 3,
+    });
+
+    expect(
+      resolveNextForkTitle({
+        sourceThread: renamedChild,
+        threads: [root, renamedChild, originalFork3],
+      }).title,
+    ).toBe("Greeting (2)");
+  });
+
   it("preserves natural numeric parentheses as part of the base title", () => {
     const root = thread("root", "Plan (2026)");
     const renamedFork = thread("fork-2", "Experiment (2026)", {

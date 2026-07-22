@@ -59,6 +59,26 @@ function isSettledTerminalTurnAssistantMessage(
   );
 }
 
+function isForkImportableThreadMessage(
+  thread: ForkSourceThread,
+  message: Thread["messages"][number],
+): message is Thread["messages"][number] & { role: "user" | "assistant" } {
+  if (message.role !== "user" && message.role !== "assistant") {
+    return false;
+  }
+  if (
+    message.role === "assistant" &&
+    message.turnId != null &&
+    thread.latestTurn?.turnId === message.turnId &&
+    !isLatestTurnSettled(thread.latestTurn, thread.session ?? null)
+  ) {
+    return false;
+  }
+  return (
+    isImportableThreadMessage(message) || isSettledTerminalTurnAssistantMessage(thread, message)
+  );
+}
+
 function isImportableThreadActivity(
   activity: Thread["activities"][number],
 ): activity is OrchestrationThreadActivity {
@@ -138,13 +158,45 @@ export function buildThreadForkImportedMessagesThrough(
 ): ReadonlyArray<ThreadHandoffImportedMessage> {
   const sourceMessageIndex = thread.messages.findIndex((message) => message.id === sourceMessageId);
   const sourceMessage = thread.messages[sourceMessageIndex];
-  const isForkImportable = (message: Thread["messages"][number]) =>
-    isImportableThreadMessage(message) || isSettledTerminalTurnAssistantMessage(thread, message);
-  if (sourceMessageIndex < 0 || !sourceMessage || !isForkImportable(sourceMessage)) {
+  if (sourceMessageIndex < 0 || !sourceMessage) {
     return [];
   }
 
-  return buildImportedMessages(thread.messages.slice(0, sourceMessageIndex + 1), isForkImportable);
+  const conversationPrefix = thread.messages
+    .slice(0, sourceMessageIndex + 1)
+    .filter((message) => message.role === "user" || message.role === "assistant");
+  if (
+    conversationPrefix.length === 0 ||
+    conversationPrefix.some((message) => !isForkImportableThreadMessage(thread, message))
+  ) {
+    return [];
+  }
+
+  return buildImportedMessages(conversationPrefix, (message) =>
+    isForkImportableThreadMessage(thread, message),
+  );
+}
+
+/**
+ * Message actions are offered only while the entire conversation prefix is safe
+ * to import. Once a live assistant row appears, that row and every later user
+ * or assistant boundary stay hidden until the lifecycle settles.
+ */
+export function resolveThreadForkableMessageIds(thread: ForkSourceThread): ReadonlySet<MessageId> {
+  const forkableMessageIds = new Set<MessageId>();
+  let prefixIsImportable = true;
+
+  for (const message of thread.messages) {
+    if (message.role !== "user" && message.role !== "assistant") {
+      continue;
+    }
+    prefixIsImportable = prefixIsImportable && isForkImportableThreadMessage(thread, message);
+    if (prefixIsImportable) {
+      forkableMessageIds.add(message.id);
+    }
+  }
+
+  return forkableMessageIds;
 }
 
 export function buildThreadHandoffImportedActivities(
