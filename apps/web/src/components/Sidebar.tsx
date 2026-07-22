@@ -10,7 +10,6 @@ import {
   ClockIcon,
   CopyIcon,
   ExternalLinkIcon,
-  FolderIcon,
   FolderOpenIcon,
   KanbanIcon,
   type LucideIcon,
@@ -36,11 +35,12 @@ import {
 import { PinStatusIcon, pinActionLabel } from "~/lib/pin";
 import { ensureNativeApi } from "~/nativeApi";
 import { autoAnimate } from "@formkit/auto-animate";
-import { FiGitBranch, FiPlus } from "react-icons/fi";
+import { FiGitBranch } from "react-icons/fi";
 import { IoIosGitCompare } from "react-icons/io";
 import { GoRepoForked } from "react-icons/go";
 import { HiOutlineArchiveBox } from "react-icons/hi2";
-import { TbArrowsDiagonal, TbArrowsDiagonalMinimize2, TbCursorText } from "react-icons/tb";
+import { TbArrowsDiagonal, TbArrowsDiagonalMinimize2 } from "react-icons/tb";
+import { LuFolderPlus } from "react-icons/lu";
 import { IoFilter } from "react-icons/io5";
 import {
   useCallback,
@@ -207,6 +207,7 @@ import { ThreadRunningSpinner } from "./ThreadRunningSpinner";
 import { RenameDialog } from "./RenameDialog";
 import { RenameThreadDialog } from "./RenameThreadDialog";
 import { ScientProjectInitializationDialog } from "./ScientProjectInitializationDialog";
+import { AddProjectDialog } from "./AddProjectDialog";
 import { terminalRuntimeRegistry } from "./terminal/terminalRuntimeRegistry";
 import {
   SidebarSearchPalette,
@@ -286,7 +287,6 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import {
-  describeAddProjectError,
   buildProjectThreadTree,
   derivePinnedProjectIdsForSidebar,
   deriveSidebarProjectData,
@@ -340,7 +340,6 @@ import {
   disclosureShellClassName,
   DISCLOSURE_INNER_CLASS,
 } from "~/lib/disclosureMotion";
-import { getInitialBrowseQuery } from "~/lib/projectPaths";
 import {
   canCreateThreadHandoff,
   resolveAvailableHandoffTargetProviders,
@@ -1589,32 +1588,21 @@ export default function Sidebar() {
   });
   const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
   const { activeProjectId: focusedProjectId } = useFocusedChatContext();
-  const [addingProject, setAddingProject] = useState(false);
-  const [newCwd, setNewCwd] = useState("");
+  const [addProjectDialogOpen, setAddProjectDialogOpen] = useState(false);
   const [searchPaletteOpen, setSearchPaletteOpen] = useState(false);
   const openFeedbackDialog = useFeedbackDialogStore((state) => state.openDialog);
   const [searchPaletteMode, setSearchPaletteMode] = useState<SidebarSearchPaletteMode>("search");
-  const [searchPaletteInitialQuery, setSearchPaletteInitialQuery] = useState<string | null>(null);
   const [projectRunDialogProjectId, setProjectRunDialogProjectId] = useState<ProjectId | null>(
     null,
   );
   const [projectRunDialogCommandDraft, setProjectRunDialogCommandDraft] = useState("");
-  const [isPickingFolder, setIsPickingFolder] = useState(false);
-  const [showManualPathInput, setShowManualPathInput] = useState(false);
-  const [isAddingProject, setIsAddingProject] = useState(false);
   const isAddingProjectRef = useRef(false);
-  const [addProjectError, setAddProjectError] = useState<string | null>(null);
   const [projectInitializationPreview, setProjectInitializationPreview] =
     useState<ScientProjectInitializationPreviewResult | null>(null);
   const [projectInitializationError, setProjectInitializationError] = useState<string | null>(null);
   const projectInitializationDecisionRef = useRef<
     ((decision: ScientProjectInitializationDecision) => void) | null
   >(null);
-  const addProjectErrorMeaning = useMemo(
-    () => (addProjectError ? describeAddProjectError(addProjectError) : null),
-    [addProjectError],
-  );
-  const addProjectInputRef = useRef<HTMLInputElement | null>(null);
   const archivePendingThreadIdsRef = useRef<Set<ThreadId>>(new Set());
   const archiveUndoPendingThreadIdsRef = useRef<Set<ThreadId>>(new Set());
   const [renameDialogThreadId, setRenameDialogThreadId] = useState<ThreadId | null>(null);
@@ -1673,9 +1661,6 @@ export default function Sidebar() {
   const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
 
-  // Keep every platform on the same explicit submit path so desktop picker
-  // results do not depend on a separate immediate-add branch.
-  const shouldShowProjectPathEntry = addingProject;
   const routeActiveSidebarThreadId = routeThreadId;
   const activeSidebarThreadId = optimisticActiveThreadId ?? routeActiveSidebarThreadId;
   const visualActiveSidebarThreadId = optimisticActiveThreadId ?? routeThreadId;
@@ -2715,17 +2700,20 @@ export default function Sidebar() {
   const addProjectFromPath = useCallback(
     async (rawCwd: string, options: { createIfMissing?: boolean } = {}) => {
       const cwd = rawCwd.trim();
-      if (!cwd || isAddingProjectRef.current) return;
+      if (!cwd) {
+        throw new Error("Enter a project folder path.");
+      }
+      if (isAddingProjectRef.current) {
+        throw new Error("Another project is already being added.");
+      }
       const api = readNativeApi();
-      if (!api) return;
+      if (!api) {
+        throw new Error("The app server is unavailable.");
+      }
 
       isAddingProjectRef.current = true;
-      setIsAddingProject(true);
       const finishAddingProject = () => {
-        setIsAddingProject(false);
-        setNewCwd("");
-        setAddProjectError(null);
-        setAddingProject(false);
+        setAddProjectDialogOpen(false);
       };
 
       try {
@@ -2806,11 +2794,9 @@ export default function Sidebar() {
       } catch (error) {
         const description =
           error instanceof Error ? error.message : "An error occurred while adding the project.";
-        setIsAddingProject(false);
         throw error instanceof Error ? error : new Error(description);
       } finally {
         isAddingProjectRef.current = false;
-        setIsAddingProject(false);
       }
     },
     [
@@ -2828,55 +2814,8 @@ export default function Sidebar() {
     ],
   );
 
-  const handleAddProject = () => {
-    void addProjectFromPath(newCwd, { createIfMissing: true }).catch((error: unknown) => {
-      const description =
-        error instanceof Error ? error.message : "An error occurred while adding the project.";
-      setAddProjectError(description);
-    });
-  };
-
-  const canAddProject = newCwd.trim().length > 0 && !isAddingProject;
-
-  // Keep the native folder picker and project creation in one awaited flow so
-  // the UI can show whether we're still opening the dialog or creating the project.
-  const handlePickFolder = useCallback(async () => {
-    const api = readNativeApi();
-    if (!api || isPickingFolder) return;
-    setIsPickingFolder(true);
-    try {
-      const pickedPath = await api.dialogs.pickFolder();
-      setIsPickingFolder(false);
-      if (pickedPath) {
-        setAddProjectError(null);
-        await addProjectFromPath(pickedPath).catch((error: unknown) => {
-          const description =
-            error instanceof Error ? error.message : "An error occurred while adding the project.";
-          setAddProjectError(description);
-          toastManager.add({
-            type: "error",
-            title: "Unable to add project",
-            description,
-          });
-        });
-      }
-    } catch (error) {
-      const description =
-        error instanceof Error ? error.message : "Unable to open the folder picker.";
-      setAddProjectError(description);
-      toastManager.add({
-        type: "error",
-        title: "Unable to open folder picker",
-        description,
-      });
-      setIsPickingFolder(false);
-    }
-  }, [isPickingFolder, addProjectFromPath]);
-
   const handleStartAddProject = useCallback(() => {
-    setAddProjectError(null);
-    setShowManualPathInput(false);
-    setAddingProject((prev) => !prev);
+    setAddProjectDialogOpen(true);
   }, []);
 
   const currentProjectShortcutTargetId = useMemo(
@@ -4762,7 +4701,7 @@ export default function Sidebar() {
   ]);
   const projectEmptyState = resolveProjectEmptyState({
     projectCount: standardProjects.length,
-    shouldShowProjectPathEntry,
+    shouldShowProjectPathEntry: addProjectDialogOpen,
     threadsHydrated,
   });
   const standardProjectSidebarDataById = useMemo<ReadonlyMap<ProjectId, SidebarDerivedProjectData>>(
@@ -5341,9 +5280,13 @@ export default function Sidebar() {
     );
   }
 
-  // Section header (label + hover-revealed toolbar) shared by the Threads and Studio surfaces,
-  // so spacing/typography stay in lockstep; only the label and toolbar contents vary.
-  function renderListSectionHeader(label: string, toolbar: ReactNode) {
+  // Section header shared by sidebar list surfaces. Projects may reserve one persistent action;
+  // secondary controls keep the established hover-reveal behavior.
+  function renderListSectionHeader(
+    label: string,
+    toolbar: ReactNode,
+    persistentToolbar?: ReactNode,
+  ) {
     return (
       <div className="group/project-header relative my-1">
         <div
@@ -5354,9 +5297,16 @@ export default function Sidebar() {
         >
           <span className="truncate">{label}</span>
         </div>
-        <SidebarSectionToolbar placement="overlay" revealOnHover>
+        <SidebarSectionToolbar
+          placement="overlay"
+          revealOnHover
+          {...(persistentToolbar ? { className: "right-8" } : {})}
+        >
           {toolbar}
         </SidebarSectionToolbar>
+        {persistentToolbar ? (
+          <div className="absolute top-1 right-1.5 flex items-center">{persistentToolbar}</div>
+        ) : null}
       </div>
     );
   }
@@ -6289,7 +6239,6 @@ export default function Sidebar() {
         event.preventDefault();
         event.stopPropagation();
         setSearchPaletteMode("search");
-        setSearchPaletteInitialQuery(null);
         setSearchPaletteOpen((prev) => !prev || searchPaletteMode !== "search");
         return;
       }
@@ -6328,23 +6277,19 @@ export default function Sidebar() {
         event.preventDefault();
         event.stopPropagation();
         setSearchPaletteMode("search");
-        setSearchPaletteInitialQuery(null);
         setSearchPaletteOpen((prev) => !prev || searchPaletteMode !== "search");
         return;
       }
       if (command === "sidebar.addProject") {
         event.preventDefault();
         event.stopPropagation();
-        setSearchPaletteMode("search");
-        setSearchPaletteInitialQuery(getInitialBrowseQuery(homeDir));
-        setSearchPaletteOpen(true);
+        setAddProjectDialogOpen(true);
         return;
       }
       if (command === "sidebar.importThread") {
         event.preventDefault();
         event.stopPropagation();
         setSearchPaletteMode("import");
-        setSearchPaletteInitialQuery(null);
         setSearchPaletteOpen((prev) => !prev || searchPaletteMode !== "import");
         return;
       }
@@ -6423,7 +6368,6 @@ export default function Sidebar() {
     activeSidebarThreadId,
     keybindings,
     getCurrentSidebarShortcutContext,
-    homeDir,
     navigate,
     searchPaletteMode,
     threadJumpCommandByThreadId,
@@ -7260,93 +7204,15 @@ export default function Sidebar() {
                           updateSettings({ sidebarThreadSortOrder: sortOrder });
                         }}
                       />
-                      <SidebarIconButton
-                        icon={FiPlus}
-                        label={shouldShowProjectPathEntry ? "Cancel add project" : "Add project"}
-                        aria-pressed={shouldShowProjectPathEntry}
-                        onClick={handleStartAddProject}
-                        tooltip={shouldShowProjectPathEntry ? "Cancel add project" : "Add project"}
-                        tooltipSide="right"
-                      />
                     </>,
-                  )}
-
-                  {shouldShowProjectPathEntry && (
-                    <div className="mb-2.5 px-1">
-                      {!showManualPathInput ? (
-                        <div className="flex gap-1.5">
-                          {isElectron && (
-                            <button
-                              type="button"
-                              className="flex h-8 flex-1 items-center justify-center gap-2 rounded-lg bg-[var(--color-background-elevated-secondary)] px-2 text-[length:var(--app-font-size-ui,12px)] font-normal text-[var(--color-text-foreground-secondary)] transition-colors hover:bg-[var(--color-background-button-secondary-hover)] hover:text-[var(--color-text-foreground)] disabled:opacity-50"
-                              onClick={() => void handlePickFolder()}
-                              disabled={isPickingFolder || isAddingProject}
-                            >
-                              <SidebarGlyph icon={FolderIcon} variant="chrome" />
-                              {isPickingFolder
-                                ? "Opening..."
-                                : isAddingProject
-                                  ? "Adding..."
-                                  : "Browse"}
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            className="flex h-8 flex-1 items-center justify-center gap-2 rounded-lg bg-[var(--color-background-elevated-secondary)] px-2 text-[length:var(--app-font-size-ui,12px)] font-normal text-[var(--color-text-foreground-secondary)] transition-colors hover:bg-[var(--color-background-button-secondary-hover)] hover:text-[var(--color-text-foreground)]"
-                            onClick={() => setShowManualPathInput(true)}
-                          >
-                            <SidebarGlyph icon={TbCursorText} variant="chrome" />
-                            Type path
-                          </button>
-                        </div>
-                      ) : (
-                        <div
-                          className={`flex items-center rounded-lg border bg-[var(--color-background-control-opaque)] transition-colors ${
-                            addProjectError
-                              ? "border-red-500/70 focus-within:border-red-500"
-                              : "border-[color:var(--color-border)] focus-within:border-[color:var(--color-border-focus)]"
-                          }`}
-                        >
-                          <input
-                            ref={addProjectInputRef}
-                            className="min-w-0 flex-1 bg-transparent pl-2.5 py-1.5 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none"
-                            placeholder="/path/to/project"
-                            value={newCwd}
-                            onChange={(event) => {
-                              setNewCwd(event.target.value);
-                              setAddProjectError(null);
-                            }}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") handleAddProject();
-                              if (event.key === "Escape") {
-                                setShowManualPathInput(false);
-                                setAddProjectError(null);
-                              }
-                            }}
-                            autoFocus
-                          />
-                          <button
-                            type="button"
-                            className="shrink-0 px-2.5 py-1.5 text-xs font-medium text-muted-foreground/50 transition-colors hover:text-foreground disabled:opacity-40"
-                            onClick={handleAddProject}
-                            disabled={!canAddProject}
-                            aria-label="Add project"
-                          >
-                            {isAddingProject ? "..." : "↵"}
-                          </button>
-                        </div>
-                      )}
-                      {addProjectError && (
-                        <div className="mt-1 space-y-1 px-0.5">
-                          <p className="text-xs leading-tight text-red-400">{addProjectError}</p>
-                          {addProjectErrorMeaning && (
-                            <p className="text-xs leading-tight text-muted-foreground/70">
-                              {addProjectErrorMeaning}
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                    <SidebarIconButton
+                      icon={LuFolderPlus}
+                      label="Add project"
+                      aria-pressed={addProjectDialogOpen}
+                      onClick={handleStartAddProject}
+                      tooltip="Add project"
+                      tooltipSide="right"
+                    />,
                   )}
 
                   {isManualProjectSorting ? (
@@ -7869,17 +7735,23 @@ export default function Sidebar() {
         }}
       />
 
+      <AddProjectDialog
+        open={addProjectDialogOpen}
+        onOpenChange={setAddProjectDialogOpen}
+        onAddProjectPath={addProjectFromPath}
+        homeDir={homeDir}
+        defaultCloneDirectory={appSettings.addProjectBaseDirectory || homeDir}
+      />
+
       {searchPaletteOpen ? (
         <SidebarSearchPaletteController
           open={searchPaletteOpen}
           mode={searchPaletteMode}
-          initialBrowseQuery={searchPaletteInitialQuery}
           onModeChange={setSearchPaletteMode}
           onOpenChange={(open) => {
             setSearchPaletteOpen(open);
             if (!open) {
               setSearchPaletteMode("search");
-              setSearchPaletteInitialQuery(null);
             }
           }}
           actions={searchPaletteActions}
@@ -7891,8 +7763,10 @@ export default function Sidebar() {
             void (isOnStudio ? handleCreateStudioChat() : handleCreateHomeChat())
           }
           onCreateThread={handlePrimaryNewThread}
-          onAddProjectPath={addProjectFromPath}
-          homeDir={homeDir}
+          onOpenAddProject={() => {
+            setSearchPaletteOpen(false);
+            setAddProjectDialogOpen(true);
+          }}
           onOpenSettings={() => {
             void navigate({ to: "/settings" });
           }}
@@ -7924,9 +7798,7 @@ function SidebarSearchPaletteController(props: {
   projectById: ReadonlyMap<ProjectId, { name: string; remoteName: string }>;
   onCreateChat: () => void;
   onCreateThread: () => void;
-  onAddProjectPath: (path: string, options?: { createIfMissing?: boolean }) => Promise<void>;
-  homeDir: string | null;
-  initialBrowseQuery: string | null;
+  onOpenAddProject: () => void;
   onOpenSettings: () => void;
   onOpenFeedback: () => void;
   onOpenUsageSettings: () => void;
@@ -7984,9 +7856,7 @@ function SidebarSearchPaletteController(props: {
       threads={searchPaletteThreads}
       onCreateChat={props.onCreateChat}
       onCreateThread={props.onCreateThread}
-      onAddProjectPath={props.onAddProjectPath}
-      homeDir={props.homeDir}
-      initialBrowseQuery={props.initialBrowseQuery}
+      onOpenAddProject={props.onOpenAddProject}
       onOpenSettings={props.onOpenSettings}
       onOpenFeedback={props.onOpenFeedback}
       onOpenUsageSettings={props.onOpenUsageSettings}
