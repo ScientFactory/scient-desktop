@@ -30,6 +30,7 @@ export function SettingNumberInput({
   const [draft, setDraft] = useState(String(value));
   const draftRef = useRef(String(value));
   const focusedRef = useRef(false);
+  const dirtyRef = useRef(false);
   const valueRef = useRef(value);
   valueRef.current = value;
   const normalizeValueRef = useRef(normalizeValue);
@@ -45,11 +46,19 @@ export function SettingNumberInput({
   // Honor changes from elsewhere (including Restore defaults) without replacing text mid-edit.
   useEffect(() => {
     if (!focusedRef.current) {
+      dirtyRef.current = false;
       replaceDraft(String(value));
     }
   }, [replaceDraft, value]);
 
   const commit = useCallback(() => {
+    const wasDirty = dirtyRef.current;
+    dirtyRef.current = false;
+    if (!wasDirty) {
+      replaceDraft(String(valueRef.current));
+      return;
+    }
+
     const nextValue = Number(draftRef.current.trim());
     if (draftRef.current.trim() === "" || !Number.isFinite(nextValue)) {
       replaceDraft(String(valueRef.current));
@@ -67,9 +76,13 @@ export function SettingNumberInput({
     <Input
       {...inputProps}
       value={draft}
-      onChange={(event) => replaceDraft(event.target.value)}
+      onChange={(event) => {
+        dirtyRef.current = true;
+        replaceDraft(event.target.value);
+      }}
       onFocus={(event) => {
         focusedRef.current = true;
+        dirtyRef.current = false;
         onFocus?.(event);
       }}
       onBlur={(event) => {

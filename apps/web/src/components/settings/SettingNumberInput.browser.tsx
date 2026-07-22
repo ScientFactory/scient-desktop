@@ -76,4 +76,39 @@ describe("SettingNumberInput", () => {
     expect(onCommit).toHaveBeenCalledOnce();
     expect(onCommit).toHaveBeenCalledWith(22);
   });
+
+  it("does not overwrite an external update unless the focused draft was edited", async () => {
+    const onCommit = vi.fn();
+    const view = (value: number) => (
+      <SettingNumberInput
+        type="number"
+        value={value}
+        min={11}
+        max={18}
+        step={1}
+        normalizeValue={normalizeChatFontSizePx}
+        onCommit={onCommit}
+        aria-label="Base font size in pixels"
+      />
+    );
+    const screen = await render(view(15));
+    const input = page.getByRole("spinbutton", { name: "Base font size in pixels" });
+
+    await input.click();
+    await screen.rerender(view(16));
+    expect(document.querySelector<HTMLInputElement>("input")?.value).toBe("15");
+    document.querySelector<HTMLInputElement>("input")?.blur();
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLInputElement>("input")?.value).toBe("16");
+    });
+    expect(onCommit).not.toHaveBeenCalled();
+
+    await input.fill("14");
+    await screen.rerender(view(17));
+    expect(document.querySelector<HTMLInputElement>("input")?.value).toBe("14");
+    document.querySelector<HTMLInputElement>("input")?.blur();
+    await vi.waitFor(() => {
+      expect(onCommit).toHaveBeenCalledWith(14);
+    });
+  });
 });
