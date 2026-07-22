@@ -237,9 +237,12 @@ export default Effect.gen(function* () {
           sidechatSourceThreadId: row.sidechatSourceThreadId,
           statesByThreadId,
         });
-    const automatic = isAutomaticFork(row) || inferredSeries !== null || legacySeries !== null;
-    const automaticBase =
-      legacySeries?.base ?? inferredSeries?.base ?? (automatic ? row.forkTitleBase : null);
+    const automatic =
+      !hasUnrecordedProjectionRename &&
+      (isAutomaticFork(row) || inferredSeries !== null || legacySeries !== null);
+    const automaticBase = automatic
+      ? (legacySeries?.base ?? inferredSeries?.base ?? row.forkTitleBase)
+      : null;
     const familyRootId = automatic
       ? ((legacySeries === null ? row.forkTitleFamilyRootId : null) ??
         resolveEventFamilyRoot({
@@ -252,9 +255,11 @@ export default Effect.gen(function* () {
       ? JSON.stringify([row.projectId, familyRootId, automaticBase])
       : null;
     const highestOrdinal = seriesKey ? (highestOrdinalBySeries.get(seriesKey) ?? 1) : 1;
-    const automaticOrdinal = legacySeries
-      ? highestOrdinal + 1
-      : (inferredSeries?.ordinal ?? (automatic ? row.forkTitleOrdinal : null));
+    const automaticOrdinal = automatic
+      ? legacySeries
+        ? highestOrdinal + 1
+        : (inferredSeries?.ordinal ?? row.forkTitleOrdinal)
+      : null;
     if (seriesKey && automaticOrdinal !== null) {
       highestOrdinalBySeries.set(seriesKey, Math.max(highestOrdinal, automaticOrdinal));
     }
@@ -270,7 +275,21 @@ export default Effect.gen(function* () {
       familyRootId,
     });
 
-    if (familyRootId) {
+    if (hasUnrecordedProjectionRename) {
+      yield* sql`
+        UPDATE orchestration_events
+        SET payload_json = json_set(
+          payload_json,
+          '$.forkTitleFamilyRootId',
+          NULL,
+          '$.forkTitleBase',
+          NULL,
+          '$.forkTitleOrdinal',
+          NULL
+        )
+        WHERE sequence = ${row.sequence}
+      `;
+    } else if (familyRootId) {
       yield* sql`
         UPDATE orchestration_events
         SET payload_json = json_set(

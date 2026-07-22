@@ -254,6 +254,8 @@ describe("059_ProjectionThreadsForkTitleFamilyRoot", () => {
         readonly id: string;
         readonly title: string;
         readonly sourceId?: string;
+        readonly base?: string;
+        readonly ordinal?: number;
       }) =>
         Effect.gen(function* () {
           yield* sql`
@@ -268,6 +270,8 @@ describe("059_ProjectionThreadsForkTitleFamilyRoot", () => {
               create_branch_flow_completed,
               is_pinned,
               fork_source_thread_id,
+              fork_title_base,
+              fork_title_ordinal,
               pending_approval_count,
               pending_user_input_count,
               has_actionable_proposed_plan,
@@ -285,6 +289,8 @@ describe("059_ProjectionThreadsForkTitleFamilyRoot", () => {
               0,
               0,
               ${input.sourceId ?? null},
+              ${input.base ?? null},
+              ${input.ordinal ?? null},
               0,
               0,
               0,
@@ -323,6 +329,8 @@ describe("059_ProjectionThreadsForkTitleFamilyRoot", () => {
                 projectId: "project-legacy",
                 title: input.title,
                 forkSourceThreadId: input.sourceId ?? null,
+                forkTitleBase: input.base ?? null,
+                forkTitleOrdinal: input.ordinal ?? null,
                 createdAt,
                 updatedAt: createdAt,
               })},
@@ -436,6 +444,19 @@ describe("059_ProjectionThreadsForkTitleFamilyRoot", () => {
         SET title = 'Experiment'
         WHERE thread_id = 'noop-child'
       `;
+      yield* insertLegacyThread({ id: "numbered-root", title: "Greeting" });
+      yield* insertLegacyThread({
+        id: "numbered-child",
+        title: "Greeting (7)",
+        sourceId: "numbered-root",
+        base: "Greeting",
+        ordinal: 7,
+      });
+      yield* sql`
+        UPDATE projection_threads
+        SET title = 'Experiment'
+        WHERE thread_id = 'numbered-child'
+      `;
 
       yield* runMigrations();
       yield* runMigrations();
@@ -483,6 +504,8 @@ describe("059_ProjectionThreadsForkTitleFamilyRoot", () => {
         },
         { id: "noop-child", familyRootId: null, base: null, ordinal: null },
         { id: "noop-root", familyRootId: null, base: null, ordinal: null },
+        { id: "numbered-child", familyRootId: null, base: null, ordinal: null },
+        { id: "numbered-root", familyRootId: null, base: null, ordinal: null },
       ]);
 
       const projectedRoots = yield* sql<{
@@ -522,6 +545,8 @@ describe("059_ProjectionThreadsForkTitleFamilyRoot", () => {
         },
         { id: "noop-child", familyRootId: null, base: null, ordinal: null },
         { id: "noop-root", familyRootId: null, base: null, ordinal: null },
+        { id: "numbered-child", familyRootId: null, base: null, ordinal: null },
+        { id: "numbered-root", familyRootId: null, base: null, ordinal: null },
       ]);
 
       const allocatorRows = yield* sql<{
@@ -571,6 +596,19 @@ describe("059_ProjectionThreadsForkTitleFamilyRoot", () => {
       assert.strictEqual(
         resolveNextForkTitle({
           sourceThread: projectionRenamedSource,
+          threads: allocatorThreads,
+        }).title,
+        "Experiment (2)",
+      );
+      const projectionRenamedNumberedSource = allocatorThreads.find(
+        (thread) => thread.id === "numbered-child",
+      );
+      if (!projectionRenamedNumberedSource) {
+        throw new Error("Expected migrated pre-numbered projection-renamed source thread");
+      }
+      assert.strictEqual(
+        resolveNextForkTitle({
+          sourceThread: projectionRenamedNumberedSource,
           threads: allocatorThreads,
         }).title,
         "Experiment (2)",
