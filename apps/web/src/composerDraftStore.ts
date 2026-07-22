@@ -1583,6 +1583,49 @@ function normalizeProviderModelOptions(
   };
 }
 
+// Each provider branch pulls its own slice out of `modelOptions`, and the
+// claudeAgent branch additionally folds in an auto-compact window inferred
+// from a legacy "[1m]" model-slug suffix — the branches genuinely return
+// differently-typed options, so this can't be a plain lookup table without
+// weakening the per-provider option types. A switch keeps each branch's
+// return type exact, and the `satisfies never` default makes adding a new
+// ProviderKind without wiring it up here a compile error instead of a silent
+// `undefined` options fallthrough.
+function resolveModelOptionsForProvider(
+  provider: ProviderKind,
+  modelOptions: ProviderModelOptions | null | undefined,
+  inferredClaudeAutoCompactWindow: string | undefined,
+): ProviderModelOptions[ProviderKind] | undefined {
+  switch (provider) {
+    case "codex":
+      return modelOptions?.codex;
+    case "claudeAgent":
+      return inferredClaudeAutoCompactWindow !== undefined
+        ? {
+            ...modelOptions?.claudeAgent,
+            autoCompactWindow:
+              modelOptions?.claudeAgent?.autoCompactWindow ?? inferredClaudeAutoCompactWindow,
+          }
+        : modelOptions?.claudeAgent;
+    case "antigravity":
+      return modelOptions?.antigravity;
+    case "grok":
+      return modelOptions?.grok;
+    case "droid":
+      return modelOptions?.droid;
+    case "kilo":
+      return modelOptions?.kilo;
+    case "cursor":
+      return modelOptions?.cursor;
+    case "opencode":
+      return modelOptions?.opencode;
+    case "pi":
+      return modelOptions?.pi;
+    default:
+      return provider satisfies never;
+  }
+}
+
 function normalizeModelSelection(
   value: unknown,
   legacy?: {
@@ -1628,32 +1671,11 @@ function normalizeModelSelection(
         provider,
         provider === "codex" ? legacy?.legacyCodex : undefined,
       );
-  const options =
-    provider === "codex"
-      ? modelOptions?.codex
-      : provider === "claudeAgent"
-        ? inferredClaudeAutoCompactWindow !== undefined
-          ? {
-              ...modelOptions?.claudeAgent,
-              autoCompactWindow:
-                modelOptions?.claudeAgent?.autoCompactWindow ?? inferredClaudeAutoCompactWindow,
-            }
-          : modelOptions?.claudeAgent
-        : provider === "antigravity"
-          ? modelOptions?.antigravity
-          : provider === "grok"
-            ? modelOptions?.grok
-            : provider === "droid"
-              ? modelOptions?.droid
-              : provider === "kilo"
-                ? modelOptions?.kilo
-                : provider === "cursor"
-                  ? modelOptions?.cursor
-                  : provider === "opencode"
-                    ? modelOptions?.opencode
-                    : provider === "pi"
-                      ? modelOptions?.pi
-                      : undefined;
+  const options = resolveModelOptionsForProvider(
+    provider,
+    modelOptions,
+    inferredClaudeAutoCompactWindow,
+  );
   const normalizedOptions =
     provider === "antigravity" && hasLegacyAntigravityEffort
       ? {

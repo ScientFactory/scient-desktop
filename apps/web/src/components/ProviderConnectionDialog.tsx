@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   CLAUDE_CONNECTION_METHOD_OPTIONS,
+  decideConnectChainStep,
   describeProviderConnection,
   describeManagedProviderUpdate,
   providerConnectionMethod,
@@ -45,7 +46,8 @@ function formatRemainingTime(startedAt: string, nowMs: number, timeoutMs: number
 }
 
 export function ProviderConnectionDialog() {
-  const { isOpen, provider, source, setOpen } = useProviderConnectionDialogStore();
+  const { isOpen, provider, source, setOpen, connectChain, beginConnectChain, clearConnectChain } =
+    useProviderConnectionDialogStore();
   const configQuery = useQuery({ ...serverConfigQueryOptions(), enabled: isOpen });
   const queryClient = useQueryClient();
   const [actionPending, setActionPending] = useState(false);
@@ -76,6 +78,7 @@ export function ProviderConnectionDialog() {
   const connectionPresentation = provider
     ? describeProviderConnection(provider, status, {
         forceReconnect: runtimeReconnectRequired,
+        connectChainActive: connectChain?.provider === provider,
       })
     : null;
   const managedUpdateFlow =
@@ -155,6 +158,47 @@ export function ProviderConnectionDialog() {
   useEffect(() => {
     if (!isOpen) setAuthorizationCode("");
   }, [isOpen]);
+
+  // The native Codex OAuth flow has no CLI process to open the browser, so the
+  // client opens the published authorization URL exactly once per operation.
+  const autoOpenedAuthorizationOperationRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (provider !== "codex") return;
+    const authorizationUrl = activeConnection?.authorizationUrl;
+    const operationId = activeConnection?.operationId;
+    if (!authorizationUrl || !operationId) return;
+    if (autoOpenedAuthorizationOperationRef.current === operationId) return;
+    autoOpenedAuthorizationOperationRef.current = operationId;
+    void ensureNativeApi()
+      .shell.openExternal(authorizationUrl)
+      .catch(() => undefined);
+  }, [provider, activeConnection?.authorizationUrl, activeConnection?.operationId]);
+
+  // One-click connect: once the managed install completes, start the
+  // provider's browser sign-in automatically. Driven by streamed provider
+  // statuses, so it keeps working while this dialog is closed.
+  const chainStatus = connectChain
+    ? configQuery.data?.providers.find((entry) => entry.provider === connectChain.provider)
+    : undefined;
+  useEffect(() => {
+    if (!connectChain) return;
+    const decision = decideConnectChainStep(chainStatus);
+    if (decision === "wait") return;
+    clearConnectChain(connectChain.token);
+    if (decision !== "start_sign_in") return;
+    const method = providerConnectionMethod(connectChain.provider);
+    if (!method) return;
+    void ensureNativeApi()
+      .server.startProviderConnection({ provider: connectChain.provider, method })
+      .then((result) => {
+        applyProviderStatusesToCache(queryClient, result.providers);
+      })
+      .catch((error) => {
+        setActionError(
+          error instanceof Error ? error.message : "The provider sign-in could not be started.",
+        );
+      });
+  }, [connectChain, chainStatus, clearConnectChain, queryClient]);
 
   if (!provider || !presentation || !Icon) return null;
   const startsProviderSignIn =
@@ -312,8 +356,41 @@ export function ProviderConnectionDialog() {
       applyProviderStatusesToCache(queryClient, result.providers);
     });
 
+  // One-click connect: plan, download, and install in a single action, then
+  // let the chain watcher start the browser sign-in once the CLI is verified.
+  // Codex signs in natively without a runtime, so its browser opens
+  // immediately while the managed install runs in parallel.
+  const connect = () =>
+    runAction(async () => {
+      const api = ensureNativeApi();
+      if (provider === "codex") {
+        const started = await api.server.startProviderConnection({
+          provider,
+          method: "codex_browser",
+        });
+        applyProviderStatusesToCache(queryClient, started.providers);
+        const plan = await api.server.prepareProviderInstall({ provider });
+        const result = await api.server.installProvider({
+          provider,
+          planToken: plan.planToken,
+        });
+        applyProviderStatusesToCache(queryClient, result.providers);
+        return;
+      }
+      const plan = await api.server.prepareProviderInstall({ provider });
+      setInstallPlan(plan);
+      const result = await api.server.installProvider({
+        provider,
+        planToken: plan.planToken,
+      });
+      setInstallPlan(null);
+      applyProviderStatusesToCache(queryClient, result.providers);
+      beginConnectChain(provider);
+    });
+
   const cancelInstall = () => {
     const operationId = status?.installationState?.operationId;
+    if (connectChain?.provider === provider) clearConnectChain(connectChain.token);
     if (!operationId) return Promise.resolve();
     return runAction(async () => {
       const result = await ensureNativeApi().server.cancelProviderInstall({
@@ -328,6 +405,8 @@ export function ProviderConnectionDialog() {
     switch (presentation.primaryAction) {
       case "install":
         return install();
+      case "connect":
+        return connect();
       case "sign_in":
         return startSignIn();
       case "check_again":
@@ -394,7 +473,7 @@ export function ProviderConnectionDialog() {
                   role="group"
                   aria-label="Sign-in progress actions"
                 >
-                  {(provider === "grok" || provider === "antigravity") &&
+                  {(provider === "codex" || provider === "grok" || provider === "antigravity") &&
                   activeConnection.authorizationUrl ? (
                     <Button
                       type="button"

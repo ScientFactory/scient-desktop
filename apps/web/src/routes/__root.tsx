@@ -25,6 +25,7 @@ import { DesktopWindowControls } from "../components/DesktopWindowControls";
 import { AppSnapCoordinator } from "../components/AppSnapCoordinator";
 import { AppSnapWelcomeDialog } from "../components/AppSnapWelcomeDialog";
 import { FeedbackDialog } from "../components/FeedbackDialog";
+import { OnboardingConnectAccounts } from "../components/OnboardingConnectAccounts";
 import { ProviderConnectionDialog } from "../components/ProviderConnectionDialog";
 import { ConnectionRecoveryNotifications } from "../components/ConnectionRecoveryNotifications";
 import { SETTINGS_TARGETS } from "../settingsNavigation";
@@ -206,6 +207,7 @@ function RootRouteView() {
           <ConnectionRecoveryNotifications />
           <GlobalWhatsNewSurface />
           <TaskCompletionNotifications />
+          <OnboardingConnectAccounts />
           <AppSnapWelcomeDialog />
           <AppSnapCoordinator />
           <ProviderUpdateNotifications />

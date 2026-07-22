@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CLAUDE_CONNECTION_METHOD_OPTIONS,
+  decideConnectChainStep,
   describeProviderConnection,
   describeManagedProviderUpdate,
   providerConnectionMethod,
@@ -133,7 +134,7 @@ describe("provider connection presentation", () => {
     expect(providerInstallUrl("codex")).toMatch(/^https:\/\//u);
   });
 
-  it("offers dependency-free managed installation when a reviewed artifact exists", () => {
+  it("offers one-click connect when a managed artifact and browser sign-in both exist", () => {
     const presentation = describeProviderConnection("codex", {
       ...BASE_STATUS,
       available: false,
@@ -148,8 +149,80 @@ describe("provider connection presentation", () => {
         message: "No usable provider runtime was found.",
       },
     });
+    expect(presentation.primaryAction).toBe("connect");
+    expect(presentation.primaryLabel).toBe("Connect Codex");
+    expect(presentation.description).toContain("no Homebrew");
+    expect(presentation.description).toContain("browser sign-in");
+  });
+
+  it("keeps plain managed installation for providers without a browser sign-in", () => {
+    const presentation = describeProviderConnection("kilo", {
+      ...BASE_STATUS,
+      provider: "kilo",
+      available: false,
+      authStatus: "unknown",
+      runtime: {
+        source: "missing",
+        managedVersion: null,
+        canInstall: true,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: "No usable provider runtime was found.",
+      },
+    });
     expect(presentation.primaryAction).toBe("install");
     expect(presentation.description).toContain("no Homebrew");
+  });
+
+  it("surfaces a stopped managed install and offers a retry", () => {
+    const stopped = describeProviderConnection("claudeAgent", {
+      ...BASE_STATUS,
+      provider: "claudeAgent",
+      available: false,
+      authStatus: "unknown",
+      runtime: {
+        source: "missing",
+        managedVersion: null,
+        canInstall: true,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: "No usable provider runtime was found.",
+      },
+      installationState: {
+        operationId: "operation-1",
+        operation: "install",
+        status: "failed",
+        startedAt: "2026-07-21T11:00:00.000Z",
+        finishedAt: "2026-07-21T11:01:00.000Z",
+        message: "The download could not be completed.",
+      },
+    });
+    expect(stopped.primaryAction).toBe("connect");
+    expect(stopped.primaryLabel).toBe("Try again");
+    expect(stopped.description).toBe("The download could not be completed.");
+  });
+
+  it("labels an installing provider as connecting while a connect chain is active", () => {
+    const installingStatus = {
+      ...BASE_STATUS,
+      available: false,
+      authStatus: "unknown",
+      installationState: {
+        operationId: "operation-1",
+        operation: "install",
+        status: "downloading",
+        startedAt: "2026-07-21T11:00:00.000Z",
+        finishedAt: null,
+        message: "Downloading Codex.",
+      },
+    } as const satisfies ServerProviderStatus;
+    expect(
+      describeProviderConnection("codex", installingStatus, { connectChainActive: true })
+        .primaryLabel,
+    ).toBe("Connecting…");
+    expect(describeProviderConnection("codex", installingStatus).primaryLabel).toBe("Installing…");
   });
 
   it("offers browser login without asking for credentials", () => {
@@ -280,6 +353,54 @@ describe("provider connection presentation", () => {
     });
     expect(presentation.primaryAction).toBe("sign_in");
     expect(presentation.primaryLabel).toBe("Try again");
+  });
+
+  describe("decideConnectChainStep", () => {
+    const installation = (
+      status: "downloading" | "installed" | "succeeded" | "failed" | "cancelled",
+    ) =>
+      ({
+        ...BASE_STATUS,
+        available: false,
+        authStatus: "unknown",
+        installationState: {
+          operationId: "operation-1",
+          operation: "install",
+          status,
+          startedAt: "2026-07-21T11:00:00.000Z",
+          finishedAt: null,
+          message: "Working.",
+        },
+      }) as const satisfies ServerProviderStatus;
+
+    it("waits while the managed install is running or status is unknown", () => {
+      expect(decideConnectChainStep(undefined)).toBe("wait");
+      expect(decideConnectChainStep({ ...BASE_STATUS, available: false })).toBe("wait");
+      expect(decideConnectChainStep(installation("downloading"))).toBe("wait");
+    });
+
+    it("starts the sign-in exactly when the install lands", () => {
+      expect(decideConnectChainStep(installation("installed"))).toBe("start_sign_in");
+      expect(decideConnectChainStep(installation("succeeded"))).toBe("start_sign_in");
+    });
+
+    it("clears the chain when the install stops or a sign-in already runs", () => {
+      expect(decideConnectChainStep(installation("failed"))).toBe("clear");
+      expect(decideConnectChainStep(installation("cancelled"))).toBe("clear");
+      expect(
+        decideConnectChainStep({
+          ...installation("installed"),
+          connectionState: {
+            operationId: "operation-2",
+            method: "codex_browser",
+            status: "waiting_for_browser",
+            startedAt: "2026-07-21T11:00:00.000Z",
+            finishedAt: null,
+            message: "Waiting.",
+          },
+        }),
+      ).toBe("clear");
+    });
   });
 
   it("turns a rejected Grok OAuth operation into a fresh browser retry", () => {

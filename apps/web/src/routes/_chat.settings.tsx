@@ -328,6 +328,46 @@ type InstallProviderSettings = {
   agentDirDescription?: ReactNode;
 };
 
+// Maps each provider's binary-path settings key to the single-key patch it
+// produces on commit. An exhaustive Record (rather than a ternary chain)
+// means adding a new InstallBinarySettingsKey without wiring it up here is a
+// type error instead of a silent fallthrough to codexBinaryPath.
+const INSTALL_BINARY_PATH_PATCH_BUILDERS: Record<
+  InstallBinarySettingsKey,
+  (value: string) => Partial<AppSettings>
+> = {
+  claudeBinaryPath: (value) => ({ claudeBinaryPath: value }),
+  codexBinaryPath: (value) => ({ codexBinaryPath: value }),
+  cursorBinaryPath: (value) => ({ cursorBinaryPath: value }),
+  antigravityBinaryPath: (value) => ({ antigravityBinaryPath: value }),
+  grokBinaryPath: (value) => ({ grokBinaryPath: value }),
+  droidBinaryPath: (value) => ({ droidBinaryPath: value }),
+  kiloBinaryPath: (value) => ({ kiloBinaryPath: value }),
+  openCodeBinaryPath: (value) => ({ openCodeBinaryPath: value }),
+  piBinaryPath: (value) => ({ piBinaryPath: value }),
+};
+
+// Settings compared against defaults for each install row's dirty indicator.
+// Exhaustive over ProviderKind for the same reason as the patch builders
+// above: a provider missing here is a type error, not a silent fallthrough
+// to another provider's fields.
+const INSTALL_PROVIDER_DIRTY_SETTING_KEYS: Record<ProviderKind, readonly (keyof AppSettings)[]> = {
+  codex: ["codexBinaryPath", "codexHomePath"],
+  claudeAgent: ["claudeBinaryPath"],
+  cursor: ["cursorBinaryPath", "cursorApiEndpoint"],
+  antigravity: ["antigravityBinaryPath"],
+  grok: ["grokBinaryPath"],
+  droid: ["droidBinaryPath"],
+  kilo: ["kiloBinaryPath", "kiloServerUrl", "kiloServerPassword"],
+  opencode: [
+    "openCodeBinaryPath",
+    "openCodeExperimentalWebSockets",
+    "openCodeServerUrl",
+    "openCodeServerPassword",
+  ],
+  pi: ["piBinaryPath", "piAgentDir"],
+};
+
 const PROVIDER_VISIBILITY_OPTIONS: ReadonlyArray<{ provider: ProviderKind; title: string }> = [
   { provider: "codex", title: PROVIDER_DISPLAY_NAMES.codex },
   { provider: "claudeAgent", title: PROVIDER_DISPLAY_NAMES.claudeAgent },
@@ -841,22 +881,13 @@ function SettingsRouteView() {
     }),
   );
   const isProviderOrderDirty = !sameProviderOrder(settings.providerOrder, defaults.providerOrder);
-  const codexBinaryPath = settings.codexBinaryPath;
   const codexHomePath = settings.codexHomePath;
-  const claudeBinaryPath = settings.claudeBinaryPath;
-  const cursorBinaryPath = settings.cursorBinaryPath;
   const cursorApiEndpoint = settings.cursorApiEndpoint;
-  const antigravityBinaryPath = settings.antigravityBinaryPath;
-  const grokBinaryPath = settings.grokBinaryPath;
-  const droidBinaryPath = settings.droidBinaryPath;
-  const kiloBinaryPath = settings.kiloBinaryPath;
   const kiloServerUrl = settings.kiloServerUrl;
   const kiloServerPassword = settings.kiloServerPassword;
-  const openCodeBinaryPath = settings.openCodeBinaryPath;
   const openCodeExperimentalWebSockets = settings.openCodeExperimentalWebSockets;
   const openCodeServerUrl = settings.openCodeServerUrl;
   const openCodeServerPassword = settings.openCodeServerPassword;
-  const piBinaryPath = settings.piBinaryPath;
   const piAgentDir = settings.piAgentDir;
   const keybindingsConfigPath = serverConfigQuery.data?.keybindingsConfigPath ?? null;
   const availableEditors = serverConfigQuery.data?.availableEditors;
@@ -3187,52 +3218,13 @@ function SettingsRouteView() {
             <div className={SETTINGS_INSET_LIST_CLASS_NAME}>
               {INSTALL_PROVIDER_SETTINGS.map((providerSettings) => {
                 const isOpen = openInstallProviders[providerSettings.provider];
-                const isDirty =
-                  providerSettings.provider === "codex"
-                    ? settings.codexBinaryPath !== defaults.codexBinaryPath ||
-                      settings.codexHomePath !== defaults.codexHomePath
-                    : providerSettings.provider === "claudeAgent"
-                      ? settings.claudeBinaryPath !== defaults.claudeBinaryPath
-                      : providerSettings.provider === "cursor"
-                        ? settings.cursorBinaryPath !== defaults.cursorBinaryPath ||
-                          settings.cursorApiEndpoint !== defaults.cursorApiEndpoint
-                        : providerSettings.provider === "antigravity"
-                          ? settings.antigravityBinaryPath !== defaults.antigravityBinaryPath
-                          : providerSettings.provider === "grok"
-                            ? settings.grokBinaryPath !== defaults.grokBinaryPath
-                            : providerSettings.provider === "droid"
-                              ? settings.droidBinaryPath !== defaults.droidBinaryPath
-                              : providerSettings.provider === "kilo"
-                                ? settings.kiloBinaryPath !== defaults.kiloBinaryPath ||
-                                  settings.kiloServerUrl !== defaults.kiloServerUrl ||
-                                  settings.kiloServerPassword !== defaults.kiloServerPassword
-                                : providerSettings.provider === "pi"
-                                  ? settings.piBinaryPath !== defaults.piBinaryPath ||
-                                    settings.piAgentDir !== defaults.piAgentDir
-                                  : settings.openCodeBinaryPath !== defaults.openCodeBinaryPath ||
-                                    settings.openCodeExperimentalWebSockets !==
-                                      defaults.openCodeExperimentalWebSockets ||
-                                    settings.openCodeServerUrl !== defaults.openCodeServerUrl ||
-                                    settings.openCodeServerPassword !==
-                                      defaults.openCodeServerPassword;
-                const binaryPathValue =
-                  providerSettings.binaryPathKey === "claudeBinaryPath"
-                    ? claudeBinaryPath
-                    : providerSettings.binaryPathKey === "cursorBinaryPath"
-                      ? cursorBinaryPath
-                      : providerSettings.binaryPathKey === "antigravityBinaryPath"
-                        ? antigravityBinaryPath
-                        : providerSettings.binaryPathKey === "grokBinaryPath"
-                          ? grokBinaryPath
-                          : providerSettings.binaryPathKey === "droidBinaryPath"
-                            ? droidBinaryPath
-                            : providerSettings.binaryPathKey === "kiloBinaryPath"
-                              ? kiloBinaryPath
-                              : providerSettings.binaryPathKey === "openCodeBinaryPath"
-                                ? openCodeBinaryPath
-                                : providerSettings.binaryPathKey === "piBinaryPath"
-                                  ? piBinaryPath
-                                  : codexBinaryPath;
+                const isDirty = INSTALL_PROVIDER_DIRTY_SETTING_KEYS[providerSettings.provider].some(
+                  (key) => settings[key] !== defaults[key],
+                );
+                // Every InstallBinarySettingsKey is a string AppSettings field,
+                // so settings itself is the exhaustive lookup — no per-provider
+                // branching that could fall through to the wrong path.
+                const binaryPathValue = settings[providerSettings.binaryPathKey];
                 const providerStatus = providerStatusByProvider.get(providerSettings.provider);
                 const showProviderUpdateStatus = providerStatus
                   ? shouldShowProviderUpdateStatus({
@@ -3407,25 +3399,9 @@ function SettingsRouteView() {
                                 value={binaryPathValue}
                                 onCommit={(nextValue) =>
                                   updateSettings(
-                                    providerSettings.binaryPathKey === "claudeBinaryPath"
-                                      ? { claudeBinaryPath: nextValue }
-                                      : providerSettings.binaryPathKey === "cursorBinaryPath"
-                                        ? { cursorBinaryPath: nextValue }
-                                        : providerSettings.binaryPathKey === "antigravityBinaryPath"
-                                          ? { antigravityBinaryPath: nextValue }
-                                          : providerSettings.binaryPathKey === "grokBinaryPath"
-                                            ? { grokBinaryPath: nextValue }
-                                            : providerSettings.binaryPathKey === "droidBinaryPath"
-                                              ? { droidBinaryPath: nextValue }
-                                              : providerSettings.binaryPathKey === "kiloBinaryPath"
-                                                ? { kiloBinaryPath: nextValue }
-                                                : providerSettings.binaryPathKey ===
-                                                    "openCodeBinaryPath"
-                                                  ? { openCodeBinaryPath: nextValue }
-                                                  : providerSettings.binaryPathKey ===
-                                                      "piBinaryPath"
-                                                    ? { piBinaryPath: nextValue }
-                                                    : { codexBinaryPath: nextValue },
+                                    INSTALL_BINARY_PATH_PATCH_BUILDERS[
+                                      providerSettings.binaryPathKey
+                                    ](nextValue),
                                   )
                                 }
                                 placeholder={providerSettings.binaryPlaceholder}
