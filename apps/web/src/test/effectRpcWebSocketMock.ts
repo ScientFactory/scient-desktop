@@ -148,6 +148,7 @@ export function createShellSnapshotFromReadModel(
         subagentRole: thread.subagentRole ?? null,
         forkSourceThreadId: thread.forkSourceThreadId ?? null,
         forkSourceMessageId: thread.forkSourceMessageId ?? null,
+        forkTitleFamilyRootId: thread.forkTitleFamilyRootId ?? null,
         forkTitleBase: thread.forkTitleBase ?? null,
         forkTitleOrdinal: thread.forkTitleOrdinal ?? null,
         sidechatSourceThreadId: thread.sidechatSourceThreadId ?? null,

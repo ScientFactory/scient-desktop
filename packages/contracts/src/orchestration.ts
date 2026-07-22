@@ -673,6 +673,9 @@ export const OrchestrationThread = Schema.Struct({
   forkSourceMessageId: Schema.optional(Schema.NullOr(MessageId)).pipe(
     Schema.withDecodingDefault(() => null),
   ),
+  forkTitleFamilyRootId: Schema.optional(Schema.NullOr(ThreadId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   forkTitleBase: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)).pipe(
     Schema.withDecodingDefault(() => null),
   ),
@@ -747,6 +750,9 @@ export const OrchestrationThreadShell = Schema.Struct({
     Schema.withDecodingDefault(() => null),
   ),
   forkSourceMessageId: Schema.optional(Schema.NullOr(MessageId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  forkTitleFamilyRootId: Schema.optional(Schema.NullOr(ThreadId)).pipe(
     Schema.withDecodingDefault(() => null),
   ),
   forkTitleBase: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)).pipe(
@@ -1510,6 +1516,9 @@ export const ThreadCreatedPayload = Schema.Struct({
     Schema.withDecodingDefault(() => null),
   ),
   forkSourceMessageId: Schema.optional(Schema.NullOr(MessageId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  forkTitleFamilyRootId: Schema.optional(Schema.NullOr(ThreadId)).pipe(
     Schema.withDecodingDefault(() => null),
   ),
   forkTitleBase: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)).pipe(

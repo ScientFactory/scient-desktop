@@ -14,6 +14,7 @@ const thread = (
   title,
   forkSourceThreadId: null,
   sidechatSourceThreadId: null,
+  forkTitleFamilyRootId: null,
   forkTitleBase: null,
   forkTitleOrdinal: null,
   archivedAt: null,
@@ -26,17 +27,20 @@ describe("resolveNextForkTitle", () => {
     const root = thread("root", "Greeting");
     expect(resolveNextForkTitle({ sourceThread: root, threads: [root] })).toEqual({
       title: "Greeting (2)",
+      forkTitleFamilyRootId: "root",
       forkTitleBase: "Greeting",
       forkTitleOrdinal: 2,
     });
 
     const fork2 = thread("fork-2", "Greeting (2)", {
       forkSourceThreadId: root.id,
+      forkTitleFamilyRootId: root.id,
       forkTitleBase: "Greeting",
       forkTitleOrdinal: 2,
     });
     expect(resolveNextForkTitle({ sourceThread: root, threads: [root, fork2] })).toEqual({
       title: "Greeting (3)",
+      forkTitleFamilyRootId: "root",
       forkTitleBase: "Greeting",
       forkTitleOrdinal: 3,
     });
@@ -46,17 +50,20 @@ describe("resolveNextForkTitle", () => {
     const root = thread("root", "Greeting");
     const fork2 = thread("fork-2", "Greeting (2)", {
       forkSourceThreadId: root.id,
+      forkTitleFamilyRootId: root.id,
       forkTitleBase: "Greeting",
       forkTitleOrdinal: 2,
     });
     const fork3 = thread("fork-3", "Greeting (3)", {
       forkSourceThreadId: root.id,
+      forkTitleFamilyRootId: root.id,
       forkTitleBase: "Greeting",
       forkTitleOrdinal: 3,
     });
 
     expect(resolveNextForkTitle({ sourceThread: fork2, threads: [root, fork2, fork3] })).toEqual({
       title: "Greeting (4)",
+      forkTitleFamilyRootId: "root",
       forkTitleBase: "Greeting",
       forkTitleOrdinal: 4,
     });
@@ -79,6 +86,7 @@ describe("resolveNextForkTitle", () => {
       resolveNextForkTitle({ sourceThread: renamedFork, threads: [root, renamedFork] }),
     ).toEqual({
       title: "Experiment (2)",
+      forkTitleFamilyRootId: "fork-2",
       forkTitleBase: "Experiment",
       forkTitleOrdinal: 2,
     });
@@ -89,6 +97,7 @@ describe("resolveNextForkTitle", () => {
       }),
     ).toEqual({
       title: "Experiment (3)",
+      forkTitleFamilyRootId: "fork-2",
       forkTitleBase: "Experiment",
       forkTitleOrdinal: 3,
     });
@@ -139,6 +148,51 @@ describe("resolveNextForkTitle", () => {
         threads: [root, renamedChild, originalFork3],
       }).title,
     ).toBe("Greeting (2)");
+  });
+
+  it("keeps existing descendants in their immutable family after an ancestor rename", () => {
+    const root = thread("root", "Greeting");
+    const renamedFork2 = thread("fork-2", "Experiment", {
+      forkSourceThreadId: root.id,
+      forkTitleFamilyRootId: null,
+      forkTitleBase: null,
+      forkTitleOrdinal: null,
+    });
+    const fork3 = thread("fork-3", "Greeting (3)", {
+      forkSourceThreadId: renamedFork2.id,
+      forkTitleFamilyRootId: root.id,
+      forkTitleBase: "Greeting",
+      forkTitleOrdinal: 3,
+    });
+    const fork4 = thread("fork-4", "Greeting (4)", {
+      forkSourceThreadId: root.id,
+      forkTitleFamilyRootId: root.id,
+      forkTitleBase: "Greeting",
+      forkTitleOrdinal: 4,
+    });
+
+    expect(
+      resolveNextForkTitle({
+        sourceThread: fork3,
+        threads: [root, renamedFork2, fork3, fork4],
+      }),
+    ).toEqual({
+      title: "Greeting (5)",
+      forkTitleFamilyRootId: root.id,
+      forkTitleBase: "Greeting",
+      forkTitleOrdinal: 5,
+    });
+    expect(
+      resolveNextForkTitle({
+        sourceThread: renamedFork2,
+        threads: [root, renamedFork2, fork3, fork4],
+      }),
+    ).toEqual({
+      title: "Experiment (2)",
+      forkTitleFamilyRootId: renamedFork2.id,
+      forkTitleBase: "Experiment",
+      forkTitleOrdinal: 2,
+    });
   });
 
   it("does not rejoin the old family after renaming back to the generated title", () => {

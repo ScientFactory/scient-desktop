@@ -654,6 +654,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             subagentRole: event.payload.subagentRole ?? null,
             forkSourceThreadId: event.payload.forkSourceThreadId,
             forkSourceMessageId: event.payload.forkSourceMessageId,
+            forkTitleFamilyRootId: event.payload.forkTitleFamilyRootId,
             forkTitleBase: event.payload.forkTitleBase,
             forkTitleOrdinal: event.payload.forkTitleOrdinal,
             sidechatSourceThreadId: event.payload.sidechatSourceThreadId,
@@ -697,7 +698,11 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             ...existingRow.value,
             ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
             ...(titleBreaksAutomaticForkLineage
-              ? { forkTitleBase: null, forkTitleOrdinal: null }
+              ? {
+                  forkTitleFamilyRootId: null,
+                  forkTitleBase: null,
+                  forkTitleOrdinal: null,
+                }
               : {}),
             ...(event.payload.modelSelection !== undefined
               ? { modelSelection: event.payload.modelSelection }

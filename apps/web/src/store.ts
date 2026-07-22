@@ -388,6 +388,7 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     (left.subagentRole ?? null) === (right.subagentRole ?? null) &&
     (left.forkSourceThreadId ?? null) === (right.forkSourceThreadId ?? null) &&
     (left.forkSourceMessageId ?? null) === (right.forkSourceMessageId ?? null) &&
+    (left.forkTitleFamilyRootId ?? null) === (right.forkTitleFamilyRootId ?? null) &&
     (left.forkTitleBase ?? null) === (right.forkTitleBase ?? null) &&
     (left.forkTitleOrdinal ?? null) === (right.forkTitleOrdinal ?? null) &&
     (left.sidechatSourceThreadId ?? null) === (right.sidechatSourceThreadId ?? null) &&
@@ -439,6 +440,7 @@ function toThreadShell(thread: Thread): ThreadShell {
     subagentRole: thread.subagentRole ?? null,
     forkSourceThreadId: thread.forkSourceThreadId ?? null,
     forkSourceMessageId: thread.forkSourceMessageId ?? null,
+    forkTitleFamilyRootId: thread.forkTitleFamilyRootId ?? null,
     forkTitleBase: thread.forkTitleBase ?? null,
     forkTitleOrdinal: thread.forkTitleOrdinal ?? null,
     sidechatSourceThreadId: thread.sidechatSourceThreadId ?? null,
@@ -1755,6 +1757,7 @@ function normalizeThreadFromReadModel(
     previous.hasActionableProposedPlan === resolvedHasActionableProposedPlan &&
     (previous.forkSourceThreadId ?? null) === (incoming.forkSourceThreadId ?? null) &&
     (previous.forkSourceMessageId ?? null) === (incoming.forkSourceMessageId ?? null) &&
+    (previous.forkTitleFamilyRootId ?? null) === (incoming.forkTitleFamilyRootId ?? null) &&
     (previous.forkTitleBase ?? null) === (incoming.forkTitleBase ?? null) &&
     (previous.forkTitleOrdinal ?? null) === (incoming.forkTitleOrdinal ?? null) &&
     (previous.sidechatSourceThreadId ?? null) === (incoming.sidechatSourceThreadId ?? null) &&
@@ -1801,6 +1804,7 @@ function normalizeThreadFromReadModel(
     createBranchFlowCompleted: resolvedCreateBranchFlowCompleted,
     forkSourceThreadId: incoming.forkSourceThreadId ?? null,
     forkSourceMessageId: incoming.forkSourceMessageId ?? null,
+    forkTitleFamilyRootId: incoming.forkTitleFamilyRootId ?? null,
     forkTitleBase: incoming.forkTitleBase ?? null,
     forkTitleOrdinal: incoming.forkTitleOrdinal ?? null,
     sidechatSourceThreadId: incoming.sidechatSourceThreadId ?? null,
@@ -1897,6 +1901,7 @@ function normalizeThreadShellSnapshot(
     subagentRole: incoming.subagentRole ?? null,
     forkSourceThreadId: incoming.forkSourceThreadId ?? null,
     forkSourceMessageId: incoming.forkSourceMessageId ?? null,
+    forkTitleFamilyRootId: incoming.forkTitleFamilyRootId ?? null,
     forkTitleBase: incoming.forkTitleBase ?? null,
     forkTitleOrdinal: incoming.forkTitleOrdinal ?? null,
     sidechatSourceThreadId: incoming.sidechatSourceThreadId ?? null,

@@ -50,6 +50,7 @@ export const ProjectionThread = Schema.Struct({
   subagentRole: Schema.optional(Schema.NullOr(Schema.String)),
   forkSourceThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   forkSourceMessageId: Schema.optional(Schema.NullOr(MessageId)),
+  forkTitleFamilyRootId: Schema.optional(Schema.NullOr(ThreadId)),
   forkTitleBase: Schema.optional(Schema.NullOr(Schema.String)),
   forkTitleOrdinal: Schema.optional(Schema.NullOr(PositiveInt)),
   sidechatSourceThreadId: Schema.optional(Schema.NullOr(ThreadId)),

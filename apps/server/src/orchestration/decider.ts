@@ -9,6 +9,7 @@ import {
   MAX_PINNED_PROJECTS,
   PINNED_MESSAGES_MAX_COUNT,
   THREAD_MARKERS_MAX_COUNT,
+  ThreadId,
   TurnId,
 } from "@synara/contracts";
 import {
@@ -670,6 +671,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       const resolvedForkTitle = command.sidechatSourceThreadId
         ? {
             title: command.title,
+            forkTitleFamilyRootId: null,
             forkTitleBase: null,
             forkTitleOrdinal: null,
           }
@@ -717,6 +719,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           subagentRole: null,
           forkSourceThreadId: command.sourceThreadId,
           forkSourceMessageId: command.sourceMessageId ?? null,
+          forkTitleFamilyRootId:
+            resolvedForkTitle.forkTitleFamilyRootId === null
+              ? null
+              : ThreadId.makeUnsafe(resolvedForkTitle.forkTitleFamilyRootId),
           forkTitleBase: resolvedForkTitle.forkTitleBase,
           forkTitleOrdinal: resolvedForkTitle.forkTitleOrdinal,
           sidechatSourceThreadId: command.sidechatSourceThreadId,

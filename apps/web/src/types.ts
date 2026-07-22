@@ -227,6 +227,7 @@ export interface Thread extends ThreadWorkspaceState {
   subagentRole?: string | null;
   forkSourceThreadId?: ThreadId | null;
   forkSourceMessageId?: MessageId | null;
+  forkTitleFamilyRootId?: ThreadId | null;
   forkTitleBase?: string | null;
   forkTitleOrdinal?: number | null;
   sidechatSourceThreadId?: ThreadId | null;
@@ -266,6 +267,7 @@ export interface ThreadShell extends ThreadWorkspaceState {
   subagentRole?: string | null;
   forkSourceThreadId?: ThreadId | null;
   forkSourceMessageId?: MessageId | null;
+  forkTitleFamilyRootId?: ThreadId | null;
   forkTitleBase?: string | null;
   forkTitleOrdinal?: number | null;
   sidechatSourceThreadId?: ThreadId | null;

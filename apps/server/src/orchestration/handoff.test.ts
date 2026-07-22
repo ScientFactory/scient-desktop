@@ -128,4 +128,27 @@ describe("transcript bootstrap budgets", () => {
     expect(text).toContain("critical selected excerpt");
     expect(listImportedForkProviderAttachments(selectedThread)).toEqual([]);
   });
+
+  it("reserves a complete attachment manifest ahead of truncated imported message text", () => {
+    const attachments = Array.from({ length: 10 }, (_, index) => ({
+      type: "file" as const,
+      id: `long-message-attachment-${index}`,
+      name: `${String(index).padStart(2, "0")}-${"x".repeat(180)}.txt`,
+      mimeType: "text/plain",
+      sizeBytes: 1,
+    }));
+    const importedMessage: OrchestrationMessage = {
+      ...message(1, "user", "long text ".repeat(1_000), "native"),
+      source: "fork-import",
+      attachments,
+    };
+
+    const text = buildMessageForkBootstrapText(thread([importedMessage]), 8_000);
+
+    expect(text).not.toBeNull();
+    expect(text).toContain("Imported attachment manifest:");
+    for (const attachment of attachments) {
+      expect(text).toContain(attachment.name);
+    }
+  });
 });

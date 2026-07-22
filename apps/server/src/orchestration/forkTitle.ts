@@ -8,6 +8,7 @@ export interface ForkTitleThread {
   readonly title: string;
   readonly forkSourceThreadId?: string | null | undefined;
   readonly sidechatSourceThreadId?: string | null | undefined;
+  readonly forkTitleFamilyRootId?: string | null | undefined;
   readonly forkTitleBase?: string | null | undefined;
   readonly forkTitleOrdinal?: number | null | undefined;
   readonly archivedAt?: string | null | undefined;
@@ -16,6 +17,7 @@ export interface ForkTitleThread {
 
 export interface ResolvedForkTitle {
   readonly title: string;
+  readonly forkTitleFamilyRootId: string;
   readonly forkTitleBase: string;
   readonly forkTitleOrdinal: number;
 }
@@ -39,7 +41,7 @@ function usesAutomaticForkTitle(thread: ForkTitleThread): thread is ForkTitleThr
   );
 }
 
-function resolveForkFamilyRootId(
+function resolveLegacyForkFamilyRootId(
   thread: ForkTitleThread,
   threadsById: ReadonlyMap<string, ForkTitleThread>,
 ): string {
@@ -77,7 +79,9 @@ export function resolveNextForkTitle(input: {
   }
 
   const forkTitleBase = usesAutomaticForkTitle(source) ? source.forkTitleBase : source.title;
-  const familyRootId = resolveForkFamilyRootId(source, threadsById);
+  const forkTitleFamilyRootId = usesAutomaticForkTitle(source)
+    ? (source.forkTitleFamilyRootId ?? resolveLegacyForkFamilyRootId(source, threadsById))
+    : source.id;
 
   let highestOrdinal = 1;
   for (const thread of input.threads) {
@@ -88,7 +92,8 @@ export function resolveNextForkTitle(input: {
       thread.projectId !== source.projectId ||
       thread.sidechatSourceThreadId ||
       thread.forkTitleBase !== forkTitleBase ||
-      resolveForkFamilyRootId(thread, threadsById) !== familyRootId
+      (thread.forkTitleFamilyRootId ?? resolveLegacyForkFamilyRootId(thread, threadsById)) !==
+        forkTitleFamilyRootId
     ) {
       continue;
     }
@@ -101,6 +106,7 @@ export function resolveNextForkTitle(input: {
   const forkTitleOrdinal = highestOrdinal + 1;
   return {
     title: formatForkTitle(forkTitleBase, forkTitleOrdinal),
+    forkTitleFamilyRootId,
     forkTitleBase,
     forkTitleOrdinal,
   };

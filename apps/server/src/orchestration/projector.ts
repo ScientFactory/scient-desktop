@@ -404,6 +404,7 @@ export function projectEvent(
             subagentRole: payload.subagentRole,
             forkSourceThreadId: payload.forkSourceThreadId,
             forkSourceMessageId: payload.forkSourceMessageId,
+            forkTitleFamilyRootId: payload.forkTitleFamilyRootId,
             forkTitleBase: payload.forkTitleBase,
             forkTitleOrdinal: payload.forkTitleOrdinal,
             sidechatSourceThreadId: payload.sidechatSourceThreadId,
@@ -494,7 +495,11 @@ export function projectEvent(
             threads: updateThread(nextBase.threads, payload.threadId, {
               ...(payload.title !== undefined ? { title: payload.title } : {}),
               ...(titleBreaksAutomaticForkLineage
-                ? { forkTitleBase: null, forkTitleOrdinal: null }
+                ? {
+                    forkTitleFamilyRootId: null,
+                    forkTitleBase: null,
+                    forkTitleOrdinal: null,
+                  }
                 : {}),
               ...(payload.modelSelection !== undefined
                 ? { modelSelection: payload.modelSelection }

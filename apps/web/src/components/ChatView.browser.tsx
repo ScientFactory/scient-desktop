@@ -2030,6 +2030,45 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("intercepts Claude /fork in the app instead of sending it to the provider", async () => {
+    const sourceSnapshot = createSnapshotForTargetUser({
+      targetMessageId: MessageId.makeUnsafe("msg-user-claude-fork-slash-source"),
+      targetText: "Claude fork slash source",
+    });
+    const claudeSnapshot: OrchestrationReadModel = {
+      ...sourceSnapshot,
+      threads: sourceSnapshot.threads.map((thread) => ({
+        ...thread,
+        modelSelection: { provider: "claudeAgent", model: "claude-opus-4-8" },
+        session: thread.session
+          ? {
+              ...thread.session,
+              providerName: "claudeAgent",
+            }
+          : null,
+      })),
+    };
+
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/fork");
+    const forkMounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: claudeSnapshot,
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => expect(composerEditor.textContent ?? "").toContain("/fork"));
+      wsRequests.length = 0;
+      await userEvent.click(await waitForSendButton());
+
+      await expect.element(page.getByText("Fork Into New Worktree", { exact: true })).toBeVisible();
+      await expect.element(page.getByText("Fork Into Local", { exact: true })).toBeVisible();
+      expect(hasDispatchedCommandType("thread.turn.start")).toBe(false);
+    } finally {
+      await forkMounted.cleanup();
+    }
+  });
+
   it("forks from an assistant row that first rendered while streaming", async () => {
     const targetUserMessageId = MessageId.makeUnsafe("msg-user-message-fork-settling-source");
     const sourceSnapshot = createSnapshotForTargetUser({

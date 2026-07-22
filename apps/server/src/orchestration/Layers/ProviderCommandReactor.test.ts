@@ -2887,6 +2887,131 @@ describe("ProviderCommandReactor", () => {
     expect(retrySendInput.input).toContain("scient-skill-authoring/SKILL.md");
   });
 
+  it("preserves the complete message-fork attachment manifest on a stale Claude retry", async () => {
+    const harness = await createHarness({
+      threadModelSelection: { provider: "claudeAgent", model: "claude-opus-4-8" },
+    });
+    const importedAt = "2026-07-22T10:00:00.000Z";
+    const boundaryAt = "2026-07-22T10:00:01.000Z";
+    const forkThreadId = ThreadId.makeUnsafe("thread-claude-message-fork-stale-retry");
+    const sourceBoundaryId = asMessageId("claude-message-fork-source-boundary");
+    const importedAttachments = Array.from({ length: 10 }, (_, index) => ({
+      type: "file" as const,
+      id: `claude-message-fork-imported-${index}`,
+      name: `claude-imported-${index}.txt`,
+      mimeType: "text/plain",
+      sizeBytes: index + 1,
+    }));
+    const currentAttachment = {
+      type: "file" as const,
+      id: "claude-message-fork-current",
+      name: "current.txt",
+      mimeType: "text/plain",
+      sizeBytes: 1,
+    };
+    harness.sendTurn.mockImplementationOnce(() =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: "claudeAgent",
+          method: "session/prompt",
+          detail: "No conversation found with session ID: stale-message-fork-session",
+        }),
+      ),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.messages.import",
+        commandId: CommandId.makeUnsafe("cmd-claude-message-fork-source-import"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messages: [
+          {
+            messageId: asMessageId("claude-message-fork-source-user"),
+            role: "user",
+            text: "Source question with files",
+            attachments: importedAttachments,
+            createdAt: importedAt,
+            updatedAt: importedAt,
+          },
+          {
+            messageId: sourceBoundaryId,
+            role: "assistant",
+            text: "Source answer",
+            createdAt: boundaryAt,
+            updatedAt: boundaryAt,
+          },
+        ],
+        createdAt: importedAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork.create",
+        commandId: CommandId.makeUnsafe("cmd-claude-message-fork-create"),
+        threadId: forkThreadId,
+        sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+        sourceMessageId: sourceBoundaryId,
+        projectId: asProjectId("project-1"),
+        title: "Claude message fork",
+        modelSelection: { provider: "claudeAgent", model: "claude-opus-4-8" },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        importedMessages: [
+          {
+            messageId: asMessageId("claude-message-fork-imported-user"),
+            role: "user",
+            text: "Source question with files",
+            attachments: importedAttachments,
+            createdAt: importedAt,
+            updatedAt: importedAt,
+          },
+          {
+            messageId: asMessageId("claude-message-fork-imported-assistant"),
+            role: "assistant",
+            text: "Source answer",
+            createdAt: boundaryAt,
+            updatedAt: boundaryAt,
+          },
+        ],
+        createdAt: boundaryAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-claude-message-fork-stale-turn"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("claude-message-fork-new-user"),
+          role: "user",
+          text: "Continue from the exact boundary",
+          attachments: [currentAttachment],
+        },
+        modelSelection: { provider: "claudeAgent", model: "claude-opus-4-8" },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: "2026-07-22T10:01:00.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    for (const call of harness.sendTurn.mock.calls) {
+      const sendInput = call[0] as {
+        readonly input?: string;
+        readonly attachments?: ReadonlyArray<{ readonly id: string }>;
+      };
+      expect(sendInput.input).toContain("Imported attachment manifest:");
+      expect(sendInput.input).toContain("claude-imported-9.txt");
+      expect(sendInput.attachments?.map((attachment) => attachment.id)).toEqual([
+        currentAttachment.id,
+        ...importedAttachments.slice(0, 7).map((attachment) => attachment.id),
+      ]);
+    }
+  });
+
   it("marks the thread session errored when normal turn start fails", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();

@@ -257,13 +257,19 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     thread: OrchestrationReadModel["threads"][number],
   ): OrchestrationReadModel => {
     const existingThread = model.threads.find((entry) => entry.id === thread.id);
-    const mergedThread =
-      existingThread && existingThread.messages.length > 0
-        ? {
-            ...thread,
-            messages: existingThread.messages,
-          }
-        : thread;
+    const hotMessageIds = new Set((existingThread?.messages ?? []).map((message) => message.id));
+    // The command model starts with no message bodies after a restart, then
+    // accumulates new events in their authoritative order. Keep persisted-only
+    // history first and let the hot model replace matching rows. This also
+    // avoids reordering same-timestamp messages by the projection's id tie-break.
+    const mergedMessages = [
+      ...thread.messages.filter((message) => !hotMessageIds.has(message.id)),
+      ...(existingThread?.messages ?? []),
+    ];
+    const mergedThread = {
+      ...thread,
+      messages: mergedMessages,
+    };
     const hasThread = existingThread !== undefined;
     return {
       ...model,

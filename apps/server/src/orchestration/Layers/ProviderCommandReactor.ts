@@ -62,6 +62,7 @@ import { ServerConfig } from "../../config.ts";
 import { buildScientBuiltInSkillTriggerInstructions } from "../../scientBuiltInSkills.ts";
 import { clearWorkspaceIndexCache } from "../../workspaceEntries.ts";
 import {
+  buildImportedForkAttachmentManifest,
   buildMessageForkBootstrapText,
   buildPriorTranscriptBootstrapText,
   buildForkBootstrapText,
@@ -1220,6 +1221,20 @@ const make = Effect.gen(function* () {
               priorTranscriptBootstrapAvailableChars,
             )
         : null;
+    const requiredForkAttachmentManifest = isPendingMessageBoundaryForkBootstrap
+      ? buildImportedForkAttachmentManifest(thread)
+      : null;
+    if (
+      requiredForkAttachmentManifest &&
+      !priorTranscriptBootstrapText?.includes(requiredForkAttachmentManifest)
+    ) {
+      return yield* new ProviderAdapterRequestError({
+        provider: selectedProvider as ProviderKind,
+        method: "thread.turn.start",
+        detail:
+          "The imported attachment manifest is too long to preserve in the fork context. Remove attachments from the source boundary or shorten the latest message, then retry.",
+      });
+    }
     const providerInput = handoffBootstrapText
       ? wrapProviderContext({
           tag: "handoff_context",
@@ -1448,12 +1463,25 @@ const make = Effect.gen(function* () {
 
             const retryBootstrapText =
               priorTranscriptBootstrapAvailableChars > 0
-                ? buildPriorTranscriptBootstrapText(
-                    thread,
-                    input.messageId,
-                    priorTranscriptBootstrapAvailableChars,
-                  )
+                ? isPendingMessageBoundaryForkBootstrap
+                  ? buildMessageForkBootstrapText(thread, priorTranscriptBootstrapAvailableChars)
+                  : buildPriorTranscriptBootstrapText(
+                      thread,
+                      input.messageId,
+                      priorTranscriptBootstrapAvailableChars,
+                    )
                 : null;
+            if (
+              requiredForkAttachmentManifest &&
+              !retryBootstrapText?.includes(requiredForkAttachmentManifest)
+            ) {
+              return yield* new ProviderAdapterRequestError({
+                provider: selectedProvider as ProviderKind,
+                method: "thread.turn.start",
+                detail:
+                  "The imported attachment manifest is too long to preserve in the fork retry context. Remove attachments from the source boundary or shorten the latest message, then retry.",
+              });
+            }
             const retryProviderInput = retryBootstrapText
               ? wrapProviderContext({
                   tag: "thread_context",

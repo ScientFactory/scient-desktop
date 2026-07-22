@@ -74,8 +74,11 @@ export function listImportedForkMessages(
 
 export function listImportedForkProviderAttachments(
   thread: Pick<OrchestrationThread, "messages">,
-): ReadonlyArray<ChatAttachment> {
-  const attachmentsById = new Map<string, ChatAttachment>();
+): ReadonlyArray<Exclude<ChatAttachment, { readonly type: "assistant-selection" }>> {
+  const attachmentsById = new Map<
+    string,
+    Exclude<ChatAttachment, { readonly type: "assistant-selection" }>
+  >();
   for (const message of listImportedForkMessages(thread)) {
     for (const attachment of message.attachments ?? []) {
       if (attachment.type !== "assistant-selection") {
@@ -84,6 +87,19 @@ export function listImportedForkProviderAttachments(
     }
   }
   return [...attachmentsById.values()];
+}
+
+export function buildImportedForkAttachmentManifest(
+  thread: Pick<OrchestrationThread, "messages">,
+): string | null {
+  const attachments = listImportedForkProviderAttachments(thread);
+  if (attachments.length === 0) {
+    return null;
+  }
+  return [
+    "Imported attachment manifest:",
+    ...attachments.map((attachment) => `- ${attachment.name} (${attachment.mimeType})`),
+  ].join("\n");
 }
 
 export function hasNativeHandoffMessages(thread: Pick<OrchestrationThread, "messages">): boolean {
@@ -259,10 +275,14 @@ export function buildMessageForkBootstrapText(
     return null;
   }
 
+  const attachmentManifest = buildImportedForkAttachmentManifest(thread);
+
   return buildImportedMessagesBootstrapText({
     thread,
     importedMessages,
-    intro: "This task was forked from an exact earlier conversation boundary.",
+    intro: ["This task was forked from an exact earlier conversation boundary.", attachmentManifest]
+      .filter((section): section is string => section !== null)
+      .join("\n\n"),
     maxChars,
     ceilingChars: AUTOMATIC_BOOTSTRAP_TRANSCRIPT_CHAR_BUDGET,
   });

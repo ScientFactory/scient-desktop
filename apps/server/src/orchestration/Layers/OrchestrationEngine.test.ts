@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import {
   CheckpointRef,
   CommandId,
@@ -14,7 +18,10 @@ import { describe, expect, it } from "vitest";
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import {
+  makeSqlitePersistenceLive,
+  SqlitePersistenceMemory,
+} from "../../persistence/Layers/Sqlite.ts";
 import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
@@ -45,6 +52,31 @@ async function createOrchestrationSystem() {
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(SqlitePersistenceMemory),
+    Layer.provideMerge(ServerConfigLayer),
+    Layer.provideMerge(NodeServices.layer),
+  );
+  const runtime = ManagedRuntime.make(orchestrationLayer);
+  const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+  return {
+    engine,
+    run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
+    dispose: () => runtime.dispose(),
+  };
+}
+
+async function createFileBackedOrchestrationSystem(dbPath: string) {
+  const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
+    prefix: "synara-orchestration-engine-restart-test-",
+  });
+  const persistenceLayer = makeSqlitePersistenceLive(dbPath).pipe(
+    Layer.provide(NodeServices.layer),
+  );
+  const orchestrationLayer = OrchestrationEngineLive.pipe(
+    Layer.provide(OrchestrationProjectionPipelineLive),
+    Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+    Layer.provide(OrchestrationEventStoreLive),
+    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+    Layer.provide(persistenceLayer),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -200,6 +232,148 @@ describe("OrchestrationEngine", () => {
       { title: "Greeting (3)", base: "Greeting", ordinal: 3 },
     ]);
     await system.dispose();
+  });
+
+  it("validates a post-restart fork against the complete persisted transcript", async () => {
+    const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "scient-fork-restart-"));
+    const dbPath = path.join(tempDirectory, "orchestration.sqlite");
+    const projectId = asProjectId("project-restart-fork");
+    const sourceThreadId = ThreadId.makeUnsafe("thread-restart-fork-source");
+    const oldCreatedAt = "2026-07-22T10:00:00.000Z";
+    const newCreatedAt = "2026-07-22T10:01:00.000Z";
+    let firstSystem: Awaited<ReturnType<typeof createFileBackedOrchestrationSystem>> | null = null;
+    let restartedSystem: Awaited<ReturnType<typeof createFileBackedOrchestrationSystem>> | null =
+      null;
+    try {
+      firstSystem = await createFileBackedOrchestrationSystem(dbPath);
+      await firstSystem.run(
+        firstSystem.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe("cmd-project-restart-fork-create"),
+          projectId,
+          title: "Restart Fork Project",
+          workspaceRoot: "/tmp/project-restart-fork",
+          defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
+          createdAt: oldCreatedAt,
+        }),
+      );
+      await firstSystem.run(
+        firstSystem.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("cmd-thread-restart-fork-create"),
+          threadId: sourceThreadId,
+          projectId,
+          title: "Restart source",
+          modelSelection: { provider: "codex", model: "gpt-5-codex" },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: oldCreatedAt,
+        }),
+      );
+      await firstSystem.run(
+        firstSystem.engine.dispatch({
+          type: "thread.messages.import",
+          commandId: CommandId.makeUnsafe("cmd-restart-fork-old-messages"),
+          threadId: sourceThreadId,
+          messages: [
+            {
+              messageId: asMessageId("restart-old-user"),
+              role: "user",
+              text: "Old question",
+              createdAt: oldCreatedAt,
+              updatedAt: oldCreatedAt,
+            },
+            {
+              messageId: asMessageId("restart-old-assistant"),
+              role: "assistant",
+              text: "Old answer",
+              createdAt: "2026-07-22T10:00:01.000Z",
+              updatedAt: "2026-07-22T10:00:01.000Z",
+            },
+          ],
+          createdAt: oldCreatedAt,
+        }),
+      );
+      await firstSystem.dispose();
+      firstSystem = null;
+
+      restartedSystem = await createFileBackedOrchestrationSystem(dbPath);
+      await restartedSystem.run(
+        restartedSystem.engine.dispatch({
+          type: "thread.messages.import",
+          commandId: CommandId.makeUnsafe("cmd-restart-fork-new-messages"),
+          threadId: sourceThreadId,
+          messages: [
+            {
+              messageId: asMessageId("restart-new-user"),
+              role: "user",
+              text: "New question",
+              createdAt: newCreatedAt,
+              updatedAt: newCreatedAt,
+            },
+            {
+              messageId: asMessageId("restart-new-assistant"),
+              role: "assistant",
+              text: "New answer",
+              createdAt: "2026-07-22T10:01:01.000Z",
+              updatedAt: "2026-07-22T10:01:01.000Z",
+            },
+          ],
+          createdAt: newCreatedAt,
+        }),
+      );
+
+      await expect(
+        restartedSystem.run(
+          restartedSystem.engine.dispatch({
+            type: "thread.fork.create",
+            commandId: CommandId.makeUnsafe("cmd-restart-fork-create-destination"),
+            threadId: ThreadId.makeUnsafe("thread-restart-fork-destination"),
+            sourceThreadId,
+            sourceMessageId: asMessageId("restart-new-assistant"),
+            projectId,
+            title: "stale client title",
+            modelSelection: { provider: "codex", model: "gpt-5-codex" },
+            runtimeMode: "approval-required",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            envMode: "local",
+            branch: null,
+            worktreePath: null,
+            importedMessages: [
+              ["fork-old-user", "user", "Old question", oldCreatedAt],
+              ["fork-old-assistant", "assistant", "Old answer", "2026-07-22T10:00:01.000Z"],
+              ["fork-new-user", "user", "New question", newCreatedAt],
+              ["fork-new-assistant", "assistant", "New answer", "2026-07-22T10:01:01.000Z"],
+            ].map(([id, role, text, createdAt]) => ({
+              messageId: asMessageId(id!),
+              role: role as "user" | "assistant",
+              text: text!,
+              createdAt: createdAt!,
+              updatedAt: createdAt!,
+            })),
+            createdAt: "2026-07-22T10:02:00.000Z",
+          }),
+        ),
+      ).resolves.toEqual(expect.objectContaining({ sequence: expect.any(Number) }));
+
+      const destination = (
+        await restartedSystem.run(restartedSystem.engine.getReadModel())
+      ).threads.find(
+        (thread) => thread.id === ThreadId.makeUnsafe("thread-restart-fork-destination"),
+      );
+      expect(destination?.messages.map((message) => message.text)).toEqual([
+        "Old question",
+        "Old answer",
+        "New question",
+        "New answer",
+      ]);
+    } finally {
+      if (firstSystem) await firstSystem.dispose();
+      if (restartedSystem) await restartedSystem.dispose();
+      fs.rmSync(tempDirectory, { recursive: true, force: true });
+    }
   });
 
   it("rejects a fork import that reuses a source message id without moving the source row", async () => {
