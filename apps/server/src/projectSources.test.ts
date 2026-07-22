@@ -45,6 +45,7 @@ describe("project source validation", () => {
     expect(() => validateGitRemoteUrl("https://token@example.com/repo.git")).toThrow(
       "embedded credentials",
     );
+    expect(() => normalizeRepositoryReference("github", "owner/..")).toThrow("owner/name");
   });
 
   it("accepts common Git transports and rejects local or relative paths", () => {
@@ -97,7 +98,7 @@ describe("cloneProjectSource", () => {
     expect(runProcess).toHaveBeenCalledWith(
       "gh",
       ["repo", "clone", "ScientFactory/scient", "."],
-      expect.objectContaining({ cwd: destinationPath, timeoutMs: 600_000 }),
+      expect.objectContaining({ cwd: fs.realpathSync(destinationPath), timeoutMs: 600_000 }),
     );
   });
 
@@ -149,6 +150,21 @@ describe("cloneProjectSource", () => {
     expect(runProcess).not.toHaveBeenCalled();
   });
 
+  it("validates the source before reserving the destination", async () => {
+    const root = makeTempDir();
+    const destinationPath = path.join(root, "invalid-repository");
+    const runProcess = vi.spyOn(ProcessRunner, "runProcess");
+
+    await expect(
+      cloneProjectSource(
+        { source: "git-url", remoteUrl: "../local-repository", destinationPath },
+        root,
+      ),
+    ).rejects.toThrow("HTTPS, SSH, or Git");
+    expect(fs.existsSync(destinationPath)).toBe(false);
+    expect(runProcess).not.toHaveBeenCalled();
+  });
+
   it("uses GitLab CLI without interpolating repository input into a shell command", async () => {
     const root = makeTempDir();
     const destinationPath = path.join(root, "project");
@@ -172,7 +188,7 @@ describe("cloneProjectSource", () => {
     expect(runProcess).toHaveBeenCalledWith(
       "glab",
       ["repo", "clone", "research/nested/project", "."],
-      expect.objectContaining({ cwd: destinationPath, timeoutMs: 600_000 }),
+      expect.objectContaining({ cwd: fs.realpathSync(destinationPath), timeoutMs: 600_000 }),
     );
   });
 });

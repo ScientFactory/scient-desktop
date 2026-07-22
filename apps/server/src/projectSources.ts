@@ -99,7 +99,9 @@ export function normalizeRepositoryReference(
 
   const normalized = stripRepositorySuffix(reference).replace(/^\/+/, "");
   const segments = normalized.split("/").filter(Boolean);
-  const hasValidSegments = segments.every((segment) => /^[A-Za-z0-9_.-]+$/.test(segment));
+  const hasValidSegments = segments.every(
+    (segment) => segment !== "." && segment !== ".." && /^[A-Za-z0-9_.-]+$/.test(segment),
+  );
   const hasValidDepth = provider === "github" ? segments.length === 2 : segments.length >= 2;
   if (!hasValidSegments || !hasValidDepth) {
     throw new Error(
@@ -181,17 +183,24 @@ export async function cloneProjectSource(
   input: CloneProjectSourceInput,
   homeDir: string,
 ): Promise<CloneProjectSourceResult> {
-  const destinationPath = resolveCloneDestination(input.destinationPath, homeDir);
-  const parentPath = path.dirname(destinationPath);
-  const parent = await fs.stat(parentPath).catch((cause) => {
+  // Validate the source before touching the filesystem. Invalid input must not leave
+  // behind an empty destination that looks like a failed or partial clone.
+  const command = cloneCommand(input);
+  const requestedDestinationPath = resolveCloneDestination(input.destinationPath, homeDir);
+  const parentPath = path.dirname(requestedDestinationPath);
+  const canonicalParentPath = await fs.realpath(parentPath).catch((cause) => {
     if ((cause as NodeJS.ErrnoException).code === "ENOENT") {
       throw new Error("The clone destination parent folder does not exist.", { cause });
     }
     throw new Error("Unable to inspect the clone destination parent folder.", { cause });
   });
+  const parent = await fs.stat(canonicalParentPath).catch((cause) => {
+    throw new Error("Unable to inspect the clone destination parent folder.", { cause });
+  });
   if (!parent.isDirectory()) {
     throw new Error("The clone destination parent is not a folder.");
   }
+  const destinationPath = path.join(canonicalParentPath, path.basename(requestedDestinationPath));
   try {
     // Reserve the exact target atomically. Every clone runs inside this empty directory,
     // so failure cleanup can never delete a folder that existed before this request.
@@ -203,8 +212,6 @@ export async function cloneProjectSource(
     throw new Error("Unable to create the clone destination.", { cause });
   }
 
-  const normalizedInput = { ...input, destinationPath } as CloneProjectSourceInput;
-  const command = cloneCommand(normalizedInput);
   try {
     await runProcess(command.command, command.args, {
       cwd: destinationPath,

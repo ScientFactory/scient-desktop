@@ -2,7 +2,7 @@
 
 ## Scope
 
-T3-inspired project intake adapted to Scient's existing command-dialog primitives and project-initialization flow. The intentionally supported sources are Local folder, Git URL, GitHub repository, and GitLab repository.
+Project-source intake adapted to Scient's existing command-dialog primitives and project-initialization flow. The intentionally supported sources are Local folder, Git URL, GitHub repository, and GitLab repository.
 
 ## Visual evidence
 
