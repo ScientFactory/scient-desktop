@@ -1,14 +1,12 @@
 // FILE: localPreviewFiles.ts
-// Purpose: Single source of truth for the /api/local-image route shape consumed by
-//          both the server (HTTP route + filesystem allowlist) and the web client
-//          (URL builder + markdown image source detection). The route serves every
-//          allowlisted preview file: images (rendered via <img>) and PDFs (rendered
-//          by the browser's built-in viewer in an <iframe>).
+// Purpose: Single source of truth for local preview route shapes consumed by the
+//          server and web client, plus the file-extension allowlists that guard them.
 // Layer: Shared utility (no runtime dependencies)
 // Exports: route path, preview-file extension allowlists, and helper predicates
 //          derived from them.
 
 export const LOCAL_IMAGE_ROUTE_PATH = "/api/local-image" as const;
+export const LOCAL_HTML_PREVIEW_ROUTE_PATH = "/api/local-html-preview" as const;
 
 // Lower-case extensions (with leading dot) that the server is willing to serve and
 // the web client is willing to treat as local-image markdown sources. Keep these in
@@ -48,6 +46,13 @@ export const SUPPORTED_LOCAL_PDF_EXTENSION = ".pdf" as const;
 
 export function isSupportedLocalPdfPath(filePath: string): boolean {
   return lowerCaseExtensionOf(filePath) === SUPPORTED_LOCAL_PDF_EXTENSION;
+}
+
+const SUPPORTED_LOCAL_HTML_EXTENSIONS: ReadonlySet<string> = new Set([".htm", ".html"]);
+
+export function isSupportedLocalHtmlPath(filePath: string): boolean {
+  const extension = lowerCaseExtensionOf(filePath);
+  return extension !== null && SUPPORTED_LOCAL_HTML_EXTENSIONS.has(extension);
 }
 
 // Full allowlist for the /api/local-image serving route. Markdown image source

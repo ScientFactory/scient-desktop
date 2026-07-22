@@ -85,6 +85,7 @@ import { InlineAgentChip } from "./InlineAgentChip";
 import { MessageActionButton, MESSAGE_ACTION_ICON_CLASS_NAME } from "./MessageActionButton";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AssistantSelectionsSummaryChip } from "./AssistantSelectionsSummaryChip";
+import { AssistantArtifactShelf } from "./AssistantArtifactShelf";
 import { FileAttachmentChip } from "./FileAttachmentChip";
 import { FileCommentsSummaryChip } from "./FileCommentsSummaryChip";
 import { UserMessagePastedTextCard } from "./PastedTextChip";
@@ -1534,6 +1535,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     ))}
                   </div>
                 )}
+                {isTerminalAssistantMessage && messageText !== null && !row.message.streaming ? (
+                  <AssistantArtifactShelf
+                    markdown={messageText}
+                    markdownCwd={markdownCwd}
+                    workspaceRoot={workspaceRoot}
+                  />
+                ) : null}
                 {(showPinToggle || assistantCopyState.visible || assistantMeta.length > 0) && (
                   <div
                     className="mt-0.5 flex items-center gap-2 font-system-ui font-normal text-muted-foreground/45"

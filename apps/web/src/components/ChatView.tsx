@@ -92,6 +92,10 @@ import {
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 import { useRefreshProviderStatusesNow } from "~/hooks/useProviderStatusRefresh";
+import {
+  useApplyProviderSelectionAfterConnection,
+  useProviderConnectionSelectionIntent,
+} from "~/hooks/useProviderSelectionAfterConnection";
 import { SINGLE_CHAT_PANE_SCOPE_ID } from "~/lib/chatPaneScope";
 import {
   composerMentionPathNeedsQuoting,
@@ -2047,6 +2051,8 @@ export default function ChatView({
     : null;
   const selectedProvider: ProviderKind =
     lockedProvider ?? selectedProviderByThreadId ?? threadProvider ?? settings.defaultProvider;
+  const providerSelectionIntent = useProviderConnectionSelectionIntent(threadId);
+  const pendingProviderSelection = providerSelectionIntent.pendingProvider;
   const previousSelectedProviderRef = useRef<{
     threadId: ThreadId;
     provider: ProviderKind;
@@ -2097,17 +2103,30 @@ export default function ChatView({
   );
   const codexDynamicModelsQuery = useQuery(providerModelsQueryOptions({ provider: "codex" }));
   const openCodeModelDiscoveryEnabled =
-    selectedProvider === "opencode" || lockedProvider === "opencode" || isModelPickerOpen;
+    selectedProvider === "opencode" ||
+    lockedProvider === "opencode" ||
+    pendingProviderSelection === "opencode" ||
+    isModelPickerOpen;
   const kiloModelDiscoveryEnabled =
-    selectedProvider === "kilo" || lockedProvider === "kilo" || isModelPickerOpen;
+    selectedProvider === "kilo" ||
+    lockedProvider === "kilo" ||
+    pendingProviderSelection === "kilo" ||
+    isModelPickerOpen;
   const piModelDiscoveryEnabled =
-    selectedProvider === "pi" || lockedProvider === "pi" || isModelPickerOpen;
+    selectedProvider === "pi" ||
+    lockedProvider === "pi" ||
+    pendingProviderSelection === "pi" ||
+    isModelPickerOpen;
   const cursorDynamicModelsQuery = useQuery(
     providerModelsQueryOptions({
       provider: "cursor",
       binaryPath: settings.cursorBinaryPath || null,
       apiEndpoint: settings.cursorApiEndpoint || null,
-      enabled: selectedProvider === "cursor" || lockedProvider === "cursor" || isModelPickerOpen,
+      enabled:
+        selectedProvider === "cursor" ||
+        lockedProvider === "cursor" ||
+        pendingProviderSelection === "cursor" ||
+        isModelPickerOpen,
     }),
   );
   const antigravityModelsQuery = useQuery(
@@ -2116,17 +2135,27 @@ export default function ChatView({
       binaryPath: settings.antigravityBinaryPath || null,
       cwd: providerModelDiscoveryCwd,
       enabled:
-        selectedProvider === "antigravity" || lockedProvider === "antigravity" || isModelPickerOpen,
+        selectedProvider === "antigravity" ||
+        lockedProvider === "antigravity" ||
+        pendingProviderSelection === "antigravity" ||
+        isModelPickerOpen,
     }),
   );
   const grokDynamicModelsQuery = useQuery(
     providerModelsQueryOptions({
       provider: "grok",
       binaryPath: settings.grokBinaryPath || null,
-      enabled: selectedProvider === "grok" || lockedProvider === "grok" || isModelPickerOpen,
+      enabled:
+        selectedProvider === "grok" ||
+        lockedProvider === "grok" ||
+        pendingProviderSelection === "grok" ||
+        isModelPickerOpen,
     }),
   );
-  const droidModelDiscoveryEnabled = selectedProvider === "droid" || lockedProvider === "droid";
+  const droidModelDiscoveryEnabled =
+    selectedProvider === "droid" ||
+    lockedProvider === "droid" ||
+    pendingProviderSelection === "droid";
   const droidDynamicModelsQuery = useQuery(
     providerModelsQueryOptions({
       provider: "droid",
@@ -2185,7 +2214,10 @@ export default function ChatView({
     [cursorDynamicModelsQuery.data?.models],
   );
   const cursorModelDiscoveryEnabled =
-    selectedProvider === "cursor" || lockedProvider === "cursor" || isModelPickerOpen;
+    selectedProvider === "cursor" ||
+    lockedProvider === "cursor" ||
+    pendingProviderSelection === "cursor" ||
+    isModelPickerOpen;
   const hasResolvedCursorModelDiscovery =
     (cursorDynamicModelsQuery.data?.source === "cursor.cli" ||
       cursorDynamicModelsQuery.data?.source === "cursor.acp") &&
@@ -2229,6 +2261,24 @@ export default function ChatView({
       antigravityModelsQuery.data?.source === "antigravity.cli" &&
       (antigravityModelsQuery.data.models.length ?? 0) > 0
     ) && isInitialModelDiscoveryPending(antigravityModelsQuery);
+  const providerModelDiscoveryPendingByProvider = useMemo<Partial<Record<ProviderKind, boolean>>>(
+    () => ({
+      antigravity: antigravityModelDiscoveryPending,
+      cursor: cursorModelDiscoveryPending,
+      droid: droidModelDiscoveryPending,
+      kilo: kiloModelDiscoveryPending,
+      opencode: openCodeModelDiscoveryPending,
+      pi: piModelDiscoveryPending,
+    }),
+    [
+      antigravityModelDiscoveryPending,
+      cursorModelDiscoveryPending,
+      droidModelDiscoveryPending,
+      kiloModelDiscoveryPending,
+      openCodeModelDiscoveryPending,
+      piModelDiscoveryPending,
+    ],
+  );
   const modelOptionsByProvider = useMemo(() => {
     const staticOptions: Record<ProviderKind, ReturnType<typeof getAppModelOptions>> = {
       codex: getAppModelOptions(
@@ -5849,6 +5899,24 @@ export default function ChatView({
     ],
   );
 
+  const onProviderConnectionRequested = useCallback(
+    (provider: ProviderKind) => {
+      providerSelectionIntent.request(provider, findProviderStatus(providerStatuses, provider));
+    },
+    [providerSelectionIntent, providerStatuses],
+  );
+  useApplyProviderSelectionAfterConnection({
+    controller: providerSelectionIntent,
+    scopeKey: threadId,
+    lockedProvider,
+    statuses: providerStatuses,
+    modelOptionsByProvider,
+    loadingModelProviders: providerModelDiscoveryPendingByProvider,
+    preferredModelByProvider: composerModelHintByProvider,
+    canApply: activeThread !== undefined,
+    onProviderModelChange: onProviderModelSelect,
+  });
+
   useEffect(() => {
     if (surfaceMode === "split" && !isFocusedPane) {
       return;
@@ -8914,17 +8982,11 @@ export default function ChatView({
         lockedProvider={lockedProvider}
         providers={providerStatuses}
         modelOptionsByProvider={modelOptionsByProvider}
-        loadingModelProviders={{
-          antigravity: antigravityModelDiscoveryPending,
-          cursor: cursorModelDiscoveryPending,
-          droid: droidModelDiscoveryPending,
-          kilo: kiloModelDiscoveryPending,
-          opencode: openCodeModelDiscoveryPending,
-          pi: piModelDiscoveryPending,
-        }}
+        loadingModelProviders={providerModelDiscoveryPendingByProvider}
         hiddenProviders={settings.hiddenProviders}
         providerOrder={settings.providerOrder}
         onProviderModelChange={onProviderModelSelect}
+        onProviderConnectionRequested={onProviderConnectionRequested}
         onSelectionCommitted={scheduleComposerFocus}
         open={isModelPickerOpen}
         onOpenChange={handleModelPickerOpenChange}
@@ -8957,14 +9019,7 @@ export default function ChatView({
       lockedProvider={lockedProvider}
       providers={providerStatuses}
       modelOptionsByProvider={modelOptionsByProvider}
-      loadingModelProviders={{
-        antigravity: antigravityModelDiscoveryPending,
-        cursor: cursorModelDiscoveryPending,
-        droid: droidModelDiscoveryPending,
-        kilo: kiloModelDiscoveryPending,
-        opencode: openCodeModelDiscoveryPending,
-        pi: piModelDiscoveryPending,
-      }}
+      loadingModelProviders={providerModelDiscoveryPendingByProvider}
       hiddenProviders={settings.hiddenProviders}
       providerOrder={settings.providerOrder}
       threadId={threadId}
@@ -8975,6 +9030,7 @@ export default function ChatView({
       prompt={prompt}
       onPromptChange={setPromptFromTraits}
       onProviderModelChange={onProviderModelSelect}
+      onProviderConnectionRequested={onProviderConnectionRequested}
       onSelectionCommitted={scheduleComposerFocus}
       open={isComposerModelEffortPickerOpen}
       onOpenChange={handleComposerModelEffortPickerOpenChange}
