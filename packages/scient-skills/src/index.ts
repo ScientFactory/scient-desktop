@@ -18,6 +18,7 @@ export {
   type BuiltInSkillProjectWrites,
   type BuiltInSkillReadiness,
   type BuiltInSkillRelease,
+  type BuiltInSkillTextAsset,
   type BuiltInSkillRole,
   type BuiltInSkillScope,
   type BuiltInSkillVisibility,

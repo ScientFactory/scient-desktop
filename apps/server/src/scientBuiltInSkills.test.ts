@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -45,28 +45,51 @@ function withEvidenceToNoteEnabled(enabled: boolean) {
   };
 }
 
+function withMedicalStudyEnabled(enabled: boolean) {
+  return {
+    ...DEFAULT_SERVER_SETTINGS,
+    skills: {
+      ...DEFAULT_SERVER_SETTINGS.skills,
+      scientBuiltInActivationOverrides: [{ id: "scient.medical-exam-study", enabled }],
+    },
+  };
+}
+
 describe("Scient built-in skill delivery", () => {
   it("lists user- and project-scoped built-ins with honest readiness", () => {
-    expect(listScientBuiltInSkillCatalogEntries(DEFAULT_SERVER_SETTINGS)).toEqual([
-      expect.objectContaining({
-        id: "scient.evidence-to-note",
-        version: "0.1.0",
-        kind: "scientific",
-        activationScope: "project",
-        readiness: "latent",
-        enabled: false,
-        defaultEnabled: false,
-      }),
-      expect.objectContaining({
-        id: "scient.skill-authoring",
-        version: "0.1.0",
-        kind: "meta",
-        activationScope: "user",
-        readiness: "available",
-        enabled: true,
-        defaultEnabled: true,
-      }),
-    ]);
+    const entries = listScientBuiltInSkillCatalogEntries(DEFAULT_SERVER_SETTINGS);
+    expect(entries).toHaveLength(3);
+    expect(entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "scient.evidence-to-note",
+          version: "0.1.0",
+          kind: "scientific",
+          activationScope: "project",
+          readiness: "latent",
+          enabled: false,
+          defaultEnabled: false,
+        }),
+        expect.objectContaining({
+          id: "scient.medical-exam-study",
+          version: "0.1.0",
+          kind: "scientific",
+          activationScope: "user",
+          readiness: "available",
+          enabled: false,
+          defaultEnabled: false,
+        }),
+        expect.objectContaining({
+          id: "scient.skill-authoring",
+          version: "0.1.0",
+          kind: "meta",
+          activationScope: "user",
+          readiness: "available",
+          enabled: true,
+          defaultEnabled: true,
+        }),
+      ]),
+    );
 
     expect(listScientBuiltInSkillCatalogEntries(withEvidenceToNoteEnabled(true))[0]).toMatchObject({
       id: "scient.evidence-to-note",
@@ -118,6 +141,47 @@ describe("Scient built-in skill delivery", () => {
     expect(await readFile(skillPath, "utf8")).toContain("# Scient Skill Authoring");
   });
 
+  it("delivers bundled text assets only while their skill is enabled", async () => {
+    const baseDir = await makeBaseDir();
+    const skillRoot = path.join(
+      scientBuiltInSkillsActiveRoot(baseDir),
+      "scient-medical-exam-study",
+    );
+    const templatePath = path.join(skillRoot, "assets", "minimal-rtl-lesson.html");
+
+    await synchronizeScientBuiltInSkills({
+      baseDir,
+      settings: withMedicalStudyEnabled(true),
+    });
+    expect(await readFile(path.join(skillRoot, "SKILL.md"), "utf8")).toContain(
+      "# Medical Exam Study",
+    );
+    expect(await readFile(templatePath, "utf8")).toContain('lang="he" dir="rtl"');
+    expect(JSON.parse(await readFile(path.join(skillRoot, "scient.release.json"), "utf8"))).toEqual(
+      expect.objectContaining({
+        id: "scient.medical-exam-study",
+        assets: ["assets/minimal-rtl-lesson.html"],
+      }),
+    );
+
+    const staleAssetPath = path.join(skillRoot, "assets", "stale.txt");
+    await writeFile(staleAssetPath, "stale", "utf8");
+    await synchronizeScientBuiltInSkills({
+      baseDir,
+      settings: withMedicalStudyEnabled(true),
+    });
+    await expect(readFile(staleAssetPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(path.join(skillRoot, "SKILL.md"), "utf8")).toContain(
+      "# Medical Exam Study",
+    );
+
+    await synchronizeScientBuiltInSkills({
+      baseDir,
+      settings: withMedicalStudyEnabled(false),
+    });
+    await expect(readFile(templatePath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("compares effective activation rather than redundant override representation", () => {
     expect(
       haveSameScientBuiltInSkillActivation(
@@ -149,6 +213,7 @@ describe("Scient built-in skill delivery", () => {
     expect(enabled).toContain("Create, revise, adapt, and review reusable Scient skill candidates");
     expect(enabled).not.toContain("# Scient Skill Authoring");
     expect(enabled).not.toContain("scient.evidence-to-note");
+    expect(enabled).not.toContain("scient.medical-exam-study");
 
     const projectOverride = buildScientBuiltInSkillTriggerInstructions({
       baseDir: "/tmp/scient",
@@ -156,6 +221,16 @@ describe("Scient built-in skill delivery", () => {
     });
     expect(projectOverride).toContain('id="scient.skill-authoring"');
     expect(projectOverride).not.toContain("scient.evidence-to-note");
+    expect(projectOverride).not.toContain("scient.medical-exam-study");
+
+    const medicalStudyEnabled = buildScientBuiltInSkillTriggerInstructions({
+      baseDir: "/tmp/scient",
+      settings: withMedicalStudyEnabled(true),
+    });
+    expect(medicalStudyEnabled).toContain('id="scient.medical-exam-study"');
+    expect(medicalStudyEnabled).toContain("Guide medical students preparing for exams");
+    expect(medicalStudyEnabled).not.toContain("# Medical Exam Study");
+    expect(medicalStudyEnabled).not.toContain("scient.evidence-to-note");
 
     const disabled = buildScientBuiltInSkillTriggerInstructions({
       baseDir: "/tmp/scient",
