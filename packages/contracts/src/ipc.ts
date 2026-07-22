@@ -106,6 +106,11 @@ import type {
   ProjectWriteFileResult,
 } from "./project";
 import type {
+  CloneProjectSourceInput,
+  CloneProjectSourceResult,
+  RepositorySourceStatusesResult,
+} from "./projectSources";
+import type {
   ScientProjectInitializationActionInput,
   ScientProjectInitializationApplyResult,
   ScientProjectInitializationPreviewInput,
@@ -534,6 +539,8 @@ export interface NativeApi {
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;
   };
   projects: {
+    repositorySourceStatuses: () => Promise<RepositorySourceStatusesResult>;
+    cloneSource: (input: CloneProjectSourceInput) => Promise<CloneProjectSourceResult>;
     discoverScripts: (input: ProjectDiscoverScriptsInput) => Promise<ProjectDiscoverScriptsResult>;
     listDirectories: (input: ProjectListDirectoriesInput) => Promise<ProjectListDirectoriesResult>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;

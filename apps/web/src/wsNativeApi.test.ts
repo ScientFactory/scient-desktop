@@ -594,6 +594,31 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards project source status and clone requests", async () => {
+    requestMock.mockResolvedValueOnce({ sources: [] }).mockResolvedValueOnce({ path: "/tmp/repo" });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    await api.projects.repositorySourceStatuses();
+    await api.projects.cloneSource({
+      source: "github",
+      repository: "ScientFactory/scient",
+      destinationPath: "/tmp/repo",
+    });
+
+    expect(requestMock).toHaveBeenNthCalledWith(1, WS_METHODS.projectsRepositorySourceStatuses);
+    expect(requestMock).toHaveBeenNthCalledWith(
+      2,
+      WS_METHODS.projectsCloneSource,
+      {
+        source: "github",
+        repository: "ScientFactory/scient",
+        destinationPath: "/tmp/repo",
+      },
+      { timeoutMs: null },
+    );
+  });
+
   it("forwards server environment requests to the websocket server method", async () => {
     requestMock.mockResolvedValue({
       environmentId: "environment-1",
