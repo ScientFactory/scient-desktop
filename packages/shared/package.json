@@ -72,6 +72,10 @@
       "types": "./src/chatThreads.ts",
       "import": "./src/chatThreads.ts"
     },
+    "./assistantSelections": {
+      "types": "./src/assistantSelections.ts",
+      "import": "./src/assistantSelections.ts"
+    },
     "./localServers": {
       "types": "./src/localServers.ts",
       "import": "./src/localServers.ts"

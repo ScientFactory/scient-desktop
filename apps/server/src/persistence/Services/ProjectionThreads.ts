@@ -8,8 +8,10 @@
  */
 import {
   IsoDateTime,
+  MessageId,
   ModelSelection,
   NonNegativeInt,
+  PositiveInt,
   OrchestrationThreadPullRequest,
   ThreadNotes,
   ThreadPinnedMessages,
@@ -47,6 +49,10 @@ export const ProjectionThread = Schema.Struct({
   subagentNickname: Schema.optional(Schema.NullOr(Schema.String)),
   subagentRole: Schema.optional(Schema.NullOr(Schema.String)),
   forkSourceThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  forkSourceMessageId: Schema.optional(Schema.NullOr(MessageId)),
+  forkTitleFamilyRootId: Schema.optional(Schema.NullOr(ThreadId)),
+  forkTitleBase: Schema.optional(Schema.NullOr(Schema.String)),
+  forkTitleOrdinal: Schema.optional(Schema.NullOr(PositiveInt)),
   sidechatSourceThreadId: Schema.optional(Schema.NullOr(ThreadId)),
   lastKnownPr: Schema.NullOr(OrchestrationThreadPullRequest),
   latestTurnId: Schema.NullOr(TurnId),
