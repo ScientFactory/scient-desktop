@@ -45,6 +45,65 @@ describe("ChatMarkdown", () => {
     expect(markup).not.toContain("text-neutral-900");
   });
 
+  it("resolves every natural-language markdown block independently", async () => {
+    const markup = await renderMarkdown(
+      [
+        "Scient הוא כלי למחקר מדעי.",
+        "",
+        "This paragraph is intentionally written in English with עברית once.",
+        "",
+        "- פריט בעברית",
+        "- English item",
+        "",
+        "> ציטוט בעברית",
+      ].join("\n"),
+    );
+
+    expect(markup).toContain('<p dir="rtl">Scient הוא כלי למחקר מדעי.</p>');
+    expect(markup).toContain(
+      '<p dir="ltr">This paragraph is intentionally written in English with עברית once.</p>',
+    );
+    expect(markup).toContain('<li dir="rtl">פריט בעברית</li>');
+    expect(markup).toContain('<li dir="ltr">English item</li>');
+    expect(markup).toContain('<blockquote dir="rtl">');
+  });
+
+  it("does not let nested list items change their parent item's direction", async () => {
+    const markup = await renderMarkdown(
+      ["- English parent", "  - פריט עברי ראשון", "  - פריט עברי שני"].join("\n"),
+    );
+
+    expect(markup).toContain('<li dir="ltr">English parent');
+    expect(markup.match(/<li dir="rtl">פריט עברי/g) ?? []).toHaveLength(2);
+  });
+
+  it("excludes machine fragments from prose direction and isolates them as LTR", async () => {
+    const markup = await renderMarkdown(
+      [
+        "`evidence-to-note` הופך ראיה להערה שימושית.",
+        "",
+        "https://example.com הוא הקישור למקור.",
+        "",
+        "[המקור החשוב](https://example.com/research) מסביר את התוצאה.",
+      ].join("\n"),
+    );
+
+    expect(markup).toContain('<p dir="rtl"><code dir="ltr">evidence-to-note</code>');
+    expect(markup).toContain('<a dir="ltr" href="https://example.com"');
+    expect(markup).toContain('<p dir="rtl"><a href="https://example.com/research"');
+  });
+
+  it("keeps table structure LTR while resolving cell content independently", async () => {
+    const markup = await renderMarkdown(
+      ["| Name | Value |", "| --- | --- |", "| שם | ערך רפואי |"].join("\n"),
+    );
+
+    expect(markup).toContain('<table dir="ltr">');
+    expect(markup).toContain('<th dir="ltr">Name</th>');
+    expect(markup).toContain('<td dir="rtl">שם</td>');
+    expect(markup).toContain('<td dir="rtl">ערך רפואי</td>');
+  });
+
   it("renders inline math with KaTeX", async () => {
     const markup = await renderMarkdown("Euler wrote $e^{i\\\\pi} + 1 = 0$.");
 
@@ -80,7 +139,7 @@ describe("ChatMarkdown", () => {
     expect(markup).toContain(
       'href="https://example.com" target="_blank" rel="noopener noreferrer"',
     );
-    expect(markup).toContain("<code>$z$</code>");
+    expect(markup).toContain('<code dir="ltr">$z$</code>');
     expect(markup).toContain("const price = &quot;$5&quot;;");
     expect(markup.match(/class="katex"/g) ?? []).toHaveLength(1);
   });
@@ -261,7 +320,7 @@ describe("ChatMarkdown user variant", () => {
     const markup = await renderUserMarkdown("use `bun run test` and **bold** text");
 
     expect(markup).toContain("chat-markdown--user");
-    expect(markup).toContain("<code>bun run test</code>");
+    expect(markup).toContain('<code dir="ltr">bun run test</code>');
     expect(markup).toContain("<strong>bold</strong>");
   });
 
@@ -289,7 +348,7 @@ describe("ChatMarkdown user variant", () => {
   it("keeps composer tokens literal inside inline code", async () => {
     const markup = await renderUserMarkdown("literal `$deep-research` here");
 
-    expect(markup).toContain("<code>$deep-research</code>");
+    expect(markup).toContain('<code dir="ltr">$deep-research</code>');
     expect(markup).not.toContain("Deep Research");
   });
 
@@ -299,7 +358,7 @@ describe("ChatMarkdown user variant", () => {
     for (const token of ["constructor", "__proto__", '"constructor"', '"__proto__"']) {
       const markup = await renderUserMarkdown(`what if a key is \`${token}\``);
 
-      expect(markup).toContain("<code>");
+      expect(markup).toContain('<code dir="ltr">');
       expect(markup).not.toContain('data-slot="central-icon"');
     }
   });

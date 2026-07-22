@@ -165,6 +165,7 @@ import {
   userMessageLikelyOverflows,
 } from "./userMessageCollapse";
 import { observeUserMessageOverflow } from "./userMessageOverflowObserver";
+import { resolveRawTextDirectionHint, type ResolvedTextDirection } from "~/lib/textDirection";
 import {
   resolveActiveTrailSnapshot,
   type ActiveTrailSnapshot,
@@ -618,11 +619,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+  const assistantDirectionHintByMessageId = useStableAssistantDirectionHints(rows);
   const settledTurnCollapseTransitions = useSettledTurnCollapseTransitions(rows);
   const enteringMessageRowIds = useMessageSendEnterAnimations(rows, enteringUserMessageIds);
   const timelineExtraData = useMemo(
     () => ({
       editingUserMessageId,
+      assistantDirectionHintByMessageId,
       enteringMessageRowIds,
       expandedCollapsedWork,
       expandedFileChangesByTurnId,
@@ -637,6 +640,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }),
     [
       editingUserMessageId,
+      assistantDirectionHintByMessageId,
       enteringMessageRowIds,
       expandedCollapsedWork,
       expandedFileChangesByTurnId,
@@ -1422,6 +1426,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   text={item.message.text}
                   cwd={markdownCwd}
                   isStreaming={false}
+                  directionHint={assistantDirectionHintByMessageId.get(row.message.id)}
                   style={chatTypographyStyle}
                   onImageExpand={onImageExpand}
                 />
@@ -1500,6 +1505,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                       text={messageText}
                       cwd={markdownCwd}
                       isStreaming={Boolean(row.message.streaming)}
+                      directionHint={assistantDirectionHintByMessageId.get(row.message.id)}
                       style={chatTypographyStyle}
                       onImageExpand={onImageExpand}
                       markers={messageMarkers}
@@ -1928,6 +1934,52 @@ function useStableRows(rows: MessagesTimelineRow[]): MessagesTimelineRow[] {
     const nextState = computeStableMessagesTimelineRows(rows, previousStateRef.current);
     previousStateRef.current = nextState;
     return nextState.result;
+  }, [rows]);
+}
+
+function directionHintMapsEqual(
+  left: ReadonlyMap<MessageId, ResolvedTextDirection>,
+  right: ReadonlyMap<MessageId, ResolvedTextDirection>,
+): boolean {
+  if (left.size !== right.size) {
+    return false;
+  }
+  for (const [messageId, direction] of left) {
+    if (right.get(messageId) !== direction) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Assistant text changes on every streaming token, but its weak direction hint
+// changes only when the surrounding user-message sequence changes. Preserve the
+// map identity so LegendList does not invalidate all cached rows on every token.
+function useStableAssistantDirectionHints(
+  rows: readonly MessagesTimelineRow[],
+): ReadonlyMap<MessageId, ResolvedTextDirection> {
+  const previousHintsRef = useRef<ReadonlyMap<MessageId, ResolvedTextDirection>>(new Map());
+
+  return useMemo(() => {
+    const nextHints = new Map<MessageId, ResolvedTextDirection>();
+    let latestUserDirection: ResolvedTextDirection | undefined;
+
+    for (const row of rows) {
+      if (row.kind !== "message") {
+        continue;
+      }
+      if (row.message.role === "user") {
+        latestUserDirection = resolveRawTextDirectionHint(row.message.text) ?? latestUserDirection;
+      } else if (latestUserDirection) {
+        nextHints.set(row.message.id, latestUserDirection);
+      }
+    }
+
+    if (directionHintMapsEqual(previousHintsRef.current, nextHints)) {
+      return previousHintsRef.current;
+    }
+    previousHintsRef.current = nextHints;
+    return nextHints;
   }, [rows]);
 }
 
@@ -2394,7 +2446,8 @@ const UserMessageEditForm = memo(function UserMessageEditForm(props: {
         disabled={props.disabled}
         rows={1}
         aria-label="Edit message"
-        className="max-h-60 min-h-0 w-full resize-none overflow-y-auto border-0 bg-transparent p-0 font-system-ui text-foreground outline-none placeholder:text-muted-foreground/45 disabled:opacity-70"
+        className="max-h-60 min-h-0 w-full resize-none overflow-y-auto border-0 bg-transparent p-0 text-start font-system-ui text-foreground outline-none placeholder:text-muted-foreground/45 disabled:opacity-70"
+        dir="auto"
         style={props.chatTypographyStyle}
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={handleKeyDown}
@@ -2541,7 +2594,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   ) {
     return (
       <div
-        className="flex max-w-full min-w-0 items-center leading-none text-foreground [&>span]:translate-y-0"
+        className="flex max-w-full min-w-0 items-center text-start leading-none text-foreground [&>span]:translate-y-0"
+        dir="auto"
         style={props.chatTypographyStyle}
       >
         {renderUserMessageInlineText(
