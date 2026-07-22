@@ -66,8 +66,8 @@ describe("resolveNextForkTitle", () => {
     const root = thread("root", "Greeting");
     const renamedFork = thread("fork-2", "Experiment", {
       forkSourceThreadId: root.id,
-      forkTitleBase: "Greeting",
-      forkTitleOrdinal: 2,
+      forkTitleBase: null,
+      forkTitleOrdinal: null,
     });
     const experiment2 = thread("experiment-2", "Experiment (2)", {
       forkSourceThreadId: renamedFork.id,
@@ -98,13 +98,13 @@ describe("resolveNextForkTitle", () => {
     const root = thread("root", "Greeting");
     const renamedA = thread("fork-a", "Experiment", {
       forkSourceThreadId: root.id,
-      forkTitleBase: "Greeting",
-      forkTitleOrdinal: 2,
+      forkTitleBase: null,
+      forkTitleOrdinal: null,
     });
     const renamedB = thread("fork-b", "Experiment", {
       forkSourceThreadId: root.id,
-      forkTitleBase: "Greeting",
-      forkTitleOrdinal: 3,
+      forkTitleBase: null,
+      forkTitleOrdinal: null,
     });
     const experimentA2 = thread("experiment-a-2", "Experiment (2)", {
       forkSourceThreadId: renamedA.id,
@@ -124,8 +124,8 @@ describe("resolveNextForkTitle", () => {
     const root = thread("root", "Greeting");
     const renamedChild = thread("fork-2", "Greeting", {
       forkSourceThreadId: root.id,
-      forkTitleBase: "Greeting",
-      forkTitleOrdinal: 2,
+      forkTitleBase: null,
+      forkTitleOrdinal: null,
     });
     const originalFork3 = thread("fork-3", "Greeting (3)", {
       forkSourceThreadId: root.id,
@@ -141,12 +141,46 @@ describe("resolveNextForkTitle", () => {
     ).toBe("Greeting (2)");
   });
 
+  it("does not rejoin the old family after renaming back to the generated title", () => {
+    const root = thread("root", "Greeting");
+    const renamedBack = thread("fork-2", "Greeting (2)", {
+      forkSourceThreadId: root.id,
+      forkTitleBase: null,
+      forkTitleOrdinal: null,
+    });
+    const originalFork3 = thread("fork-3", "Greeting (3)", {
+      forkSourceThreadId: root.id,
+      forkTitleBase: "Greeting",
+      forkTitleOrdinal: 3,
+    });
+
+    expect(
+      resolveNextForkTitle({
+        sourceThread: renamedBack,
+        threads: [root, renamedBack, originalFork3],
+      }).title,
+    ).toBe("Greeting (2) (2)");
+  });
+
+  it("counts migrated legacy forks whose visible title was intentionally preserved", () => {
+    const root = thread("root", "Greeting");
+    const legacyFork = thread("legacy-fork", "Greeting", {
+      forkSourceThreadId: root.id,
+      forkTitleBase: "Greeting",
+      forkTitleOrdinal: 2,
+    });
+
+    expect(resolveNextForkTitle({ sourceThread: root, threads: [root, legacyFork] }).title).toBe(
+      "Greeting (3)",
+    );
+  });
+
   it("preserves natural numeric parentheses as part of the base title", () => {
     const root = thread("root", "Plan (2026)");
     const renamedFork = thread("fork-2", "Experiment (2026)", {
       forkSourceThreadId: root.id,
-      forkTitleBase: "Plan (2026)",
-      forkTitleOrdinal: 2,
+      forkTitleBase: null,
+      forkTitleOrdinal: null,
     });
 
     expect(resolveNextForkTitle({ sourceThread: root, threads: [root] }).title).toBe(

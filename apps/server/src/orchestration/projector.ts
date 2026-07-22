@@ -483,10 +483,19 @@ export function projectEvent(
                   payload.branch !== existingThread.branch
                 ? false
                 : undefined;
+          const titleBreaksAutomaticForkLineage =
+            payload.title !== undefined &&
+            existingThread !== null &&
+            payload.title !== existingThread.title &&
+            existingThread.forkTitleBase !== null &&
+            existingThread.forkTitleBase !== undefined;
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               ...(payload.title !== undefined ? { title: payload.title } : {}),
+              ...(titleBreaksAutomaticForkLineage
+                ? { forkTitleBase: null, forkTitleOrdinal: null }
+                : {}),
               ...(payload.modelSelection !== undefined
                 ? { modelSelection: payload.modelSelection }
                 : {}),

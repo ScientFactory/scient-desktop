@@ -35,8 +35,7 @@ function usesAutomaticForkTitle(thread: ForkTitleThread): thread is ForkTitleThr
   return (
     thread.forkTitleBase !== null &&
     thread.forkTitleBase !== undefined &&
-    isStoredForkOrdinal(thread.forkTitleOrdinal) &&
-    thread.title === formatForkTitle(thread.forkTitleBase, thread.forkTitleOrdinal)
+    isStoredForkOrdinal(thread.forkTitleOrdinal)
   );
 }
 
@@ -47,9 +46,9 @@ function resolveForkFamilyRootId(
   let current = thread;
   const visited = new Set<string>();
 
-  // An automatically named fork inherits its source's family. A manual rename
-  // intentionally breaks that chain, making the renamed thread the root of a
-  // new family even when its visible title matches an older family.
+  // Automatic lineage is persisted in the fork metadata. Title updates clear
+  // that metadata in both projectors, so a rename remains a permanent family
+  // boundary even when the user later restores the generated title verbatim.
   while (current.forkSourceThreadId && usesAutomaticForkTitle(current)) {
     if (visited.has(current.id)) {
       return [...visited, current.id].toSorted()[0] ?? current.id;

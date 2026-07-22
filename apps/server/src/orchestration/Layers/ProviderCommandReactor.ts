@@ -61,11 +61,13 @@ import { ServerConfig } from "../../config.ts";
 import { buildScientBuiltInSkillTriggerInstructions } from "../../scientBuiltInSkills.ts";
 import { clearWorkspaceIndexCache } from "../../workspaceEntries.ts";
 import {
+  buildMessageForkBootstrapText,
   buildPriorTranscriptBootstrapText,
   buildForkBootstrapText,
   buildHandoffBootstrapText,
   hasNativeAssistantMessagesBefore,
   listImportedForkMessages,
+  listImportedForkProviderAttachments,
   listPriorTranscriptMessages,
 } from "../handoff.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -1102,6 +1104,8 @@ const make = Effect.gen(function* () {
     const hasPendingPriorTranscriptBootstrap =
       freshSessionContextBootstrapThreadIds.has(input.threadId) ||
       rollbackContextBootstrapThreadIds.has(input.threadId);
+    const isPendingMessageBoundaryForkBootstrap =
+      hasPendingPriorTranscriptBootstrap && thread.forkSourceMessageId != null;
     const shouldBootstrapSidechatContext =
       thread.sidechatSourceThreadId !== null &&
       sidechatContextBootstrapThreadIds.has(input.threadId) &&
@@ -1140,7 +1144,9 @@ const make = Effect.gen(function* () {
       !shouldBootstrapSidechatContext;
     const hasPriorTranscriptBootstrapContent =
       shouldBootstrapPriorTranscriptContext &&
-      listPriorTranscriptMessages(thread, input.messageId).length > 0;
+      (isPendingMessageBoundaryForkBootstrap
+        ? listImportedForkMessages(thread).length > 0
+        : listPriorTranscriptMessages(thread, input.messageId).length > 0);
     const priorTranscriptBootstrapAvailableChars = availableProviderContextChars({
       tag: "thread_context",
       messageText: boundaryMessageText,
@@ -1163,11 +1169,13 @@ const make = Effect.gen(function* () {
     }
     const priorTranscriptBootstrapText =
       shouldBootstrapPriorTranscriptContext && priorTranscriptBootstrapAvailableChars > 0
-        ? buildPriorTranscriptBootstrapText(
-            thread,
-            input.messageId,
-            priorTranscriptBootstrapAvailableChars,
-          )
+        ? isPendingMessageBoundaryForkBootstrap
+          ? buildMessageForkBootstrapText(thread, priorTranscriptBootstrapAvailableChars)
+          : buildPriorTranscriptBootstrapText(
+              thread,
+              input.messageId,
+              priorTranscriptBootstrapAvailableChars,
+            )
         : null;
     const providerInput = handoffBootstrapText
       ? wrapProviderContext({
@@ -1238,7 +1246,13 @@ const make = Effect.gen(function* () {
         ...(input.skills !== undefined ? { skills: input.skills } : {}),
       }),
     );
-    const normalizedAttachments = input.attachments ?? [];
+    const normalizedAttachments = [
+      ...(isPendingMessageBoundaryForkBootstrap ? listImportedForkProviderAttachments(thread) : []),
+      ...(input.attachments ?? []),
+    ].filter(
+      (attachment, index, attachments) =>
+        attachments.findIndex((candidate) => candidate.id === attachment.id) === index,
+    );
     const activeSession = yield* providerService
       .listSessions()
       .pipe(

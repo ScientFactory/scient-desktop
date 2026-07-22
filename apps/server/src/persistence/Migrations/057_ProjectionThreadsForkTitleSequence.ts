@@ -16,6 +16,7 @@ interface ThreadCreatedRow {
   readonly sidechatSourceThreadId: string | null;
   readonly forkTitleBase: string | null;
   readonly forkTitleOrdinal: number | null;
+  readonly currentProjectionTitle?: string | null;
 }
 
 const familyRootId = (
@@ -65,7 +66,12 @@ export default Effect.gen(function* () {
       json_extract(payload_json, '$.forkSourceThreadId') AS "forkSourceThreadId",
       json_extract(payload_json, '$.sidechatSourceThreadId') AS "sidechatSourceThreadId",
       json_extract(payload_json, '$.forkTitleBase') AS "forkTitleBase",
-      json_extract(payload_json, '$.forkTitleOrdinal') AS "forkTitleOrdinal"
+      json_extract(payload_json, '$.forkTitleOrdinal') AS "forkTitleOrdinal",
+      (
+        SELECT projection_threads.title
+        FROM projection_threads
+        WHERE projection_threads.thread_id = orchestration_events.stream_id
+      ) AS "currentProjectionTitle"
     FROM orchestration_events
     WHERE event_type = 'thread.created'
       AND json_valid(payload_json)
@@ -75,7 +81,15 @@ export default Effect.gen(function* () {
   const highestOrdinalBySeries = new Map<string, number>();
 
   for (const row of createdRows) {
-    if (!row.projectId || !row.title || !row.forkSourceThreadId || row.sidechatSourceThreadId) {
+    if (
+      !row.projectId ||
+      !row.title ||
+      !row.forkSourceThreadId ||
+      row.sidechatSourceThreadId ||
+      (row.currentProjectionTitle !== null &&
+        row.currentProjectionTitle !== undefined &&
+        row.currentProjectionTitle !== row.title)
+    ) {
       continue;
     }
 
@@ -127,6 +141,7 @@ export default Effect.gen(function* () {
     ORDER BY created_at ASC, thread_id ASC
   `;
   const projectionRowsByThreadId = new Map(projectionRows.map((row) => [row.threadId, row]));
+  const eventBackedThreadIds = new Set(createdRows.map((row) => row.threadId));
   const projectionHighestOrdinalBySeries = new Map<string, number>();
 
   for (const row of projectionRows) {
@@ -157,6 +172,7 @@ export default Effect.gen(function* () {
       !row.title ||
       !row.forkSourceThreadId ||
       row.sidechatSourceThreadId ||
+      eventBackedThreadIds.has(row.threadId) ||
       (row.forkTitleBase !== null &&
         Number.isSafeInteger(row.forkTitleOrdinal) &&
         (row.forkTitleOrdinal ?? 0) >= 2)

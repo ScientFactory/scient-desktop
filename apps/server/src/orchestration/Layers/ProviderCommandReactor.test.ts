@@ -734,6 +734,15 @@ describe("ProviderCommandReactor", () => {
             messageId: asMessageId("source-prefix-user"),
             role: "user",
             text: "Question before the branch",
+            attachments: [
+              {
+                type: "file",
+                id: "attachment-before-boundary",
+                name: "before.txt",
+                mimeType: "text/plain",
+                sizeBytes: 12,
+              },
+            ],
             createdAt: now,
             updatedAt: now,
           },
@@ -748,6 +757,15 @@ describe("ProviderCommandReactor", () => {
             messageId: asMessageId("source-after-boundary-user"),
             role: "user",
             text: "This later source message must not be inherited",
+            attachments: [
+              {
+                type: "file",
+                id: "attachment-after-boundary",
+                name: "after.txt",
+                mimeType: "text/plain",
+                sizeBytes: 11,
+              },
+            ],
             createdAt: now,
             updatedAt: now,
           },
@@ -776,14 +794,23 @@ describe("ProviderCommandReactor", () => {
         worktreePath: null,
         importedMessages: [
           {
-            messageId: asMessageId("fork-prefix-user"),
+            messageId: asMessageId("fork-00000000-prefix-user"),
             role: "user",
             text: "Question before the branch",
+            attachments: [
+              {
+                type: "file",
+                id: "attachment-before-boundary",
+                name: "before.txt",
+                mimeType: "text/plain",
+                sizeBytes: 12,
+              },
+            ],
             createdAt: now,
             updatedAt: now,
           },
           {
-            messageId: asMessageId("fork-boundary-assistant"),
+            messageId: asMessageId("fork-00000001-boundary-assistant"),
             role: "assistant",
             text: "Answer at the branch boundary",
             createdAt: now,
@@ -814,12 +841,17 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.forkThread).not.toHaveBeenCalled();
     expect(harness.startSession).toHaveBeenCalled();
-    const input = harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined;
+    const input = harness.sendTurn.mock.calls[0]?.[0] as
+      | { input?: string; attachments?: ReadonlyArray<{ id: string }> }
+      | undefined;
     expect(input?.input).toContain("<thread_context>");
     expect(input?.input).toContain("Question before the branch");
     expect(input?.input).toContain("Answer at the branch boundary");
     expect(input?.input).not.toContain("This later source message must not be inherited");
     expect(input?.input).toContain("Take this in a different direction");
+    expect(input?.attachments?.map((attachment) => attachment.id)).toEqual([
+      "attachment-before-boundary",
+    ]);
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
     const forkedThread = readModel.threads.find((thread) => thread.id === forkThreadId);
@@ -847,6 +879,15 @@ describe("ProviderCommandReactor", () => {
             messageId: asMessageId("source-message-fork-restart-user"),
             role: "user",
             text: "Persisted question before restart",
+            attachments: [
+              {
+                type: "file",
+                id: "attachment-before-restart",
+                name: "restart.txt",
+                mimeType: "text/plain",
+                sizeBytes: 15,
+              },
+            ],
             createdAt,
             updatedAt: createdAt,
           },
@@ -878,14 +919,23 @@ describe("ProviderCommandReactor", () => {
         worktreePath: null,
         importedMessages: [
           {
-            messageId: asMessageId("fork-message-restart-user"),
+            messageId: asMessageId("fork-00000000-message-restart-user"),
             role: "user",
             text: "Persisted question before restart",
+            attachments: [
+              {
+                type: "file",
+                id: "attachment-before-restart",
+                name: "restart.txt",
+                mimeType: "text/plain",
+                sizeBytes: 15,
+              },
+            ],
             createdAt,
             updatedAt: createdAt,
           },
           {
-            messageId: asMessageId("fork-message-restart-assistant"),
+            messageId: asMessageId("fork-00000001-message-restart-assistant"),
             role: "assistant",
             text: "Persisted answer before restart",
             createdAt,
@@ -924,12 +974,18 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => restartedHarness.sendTurn.mock.calls.length === 1);
     const providerInput = restartedHarness.sendTurn.mock.calls[0]?.[0] as
-      | { input?: string }
+      | { input?: string; attachments?: ReadonlyArray<{ id: string }> }
       | undefined;
     expect(providerInput?.input).toContain("<thread_context>");
     expect(providerInput?.input).toContain("Persisted question before restart");
     expect(providerInput?.input).toContain("Persisted answer before restart");
+    expect(providerInput?.input?.indexOf("Persisted question before restart")).toBeLessThan(
+      providerInput?.input?.indexOf("Persisted answer before restart") ?? -1,
+    );
     expect(providerInput?.input).toContain("Continue after restart");
+    expect(providerInput?.attachments?.map((attachment) => attachment.id)).toEqual([
+      "attachment-before-restart",
+    ]);
   });
 
   it("bootstraps Droid sidechat context after a native provider fork", async () => {

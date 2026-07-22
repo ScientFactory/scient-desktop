@@ -688,9 +688,17 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
                   event.payload.branch !== existingRow.value.branch
                 ? false
                 : undefined;
+          const titleBreaksAutomaticForkLineage =
+            event.payload.title !== undefined &&
+            event.payload.title !== existingRow.value.title &&
+            existingRow.value.forkTitleBase !== null &&
+            existingRow.value.forkTitleBase !== undefined;
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
             ...(event.payload.title !== undefined ? { title: event.payload.title } : {}),
+            ...(titleBreaksAutomaticForkLineage
+              ? { forkTitleBase: null, forkTitleOrdinal: null }
+              : {}),
             ...(event.payload.modelSelection !== undefined
               ? { modelSelection: event.payload.modelSelection }
               : {}),

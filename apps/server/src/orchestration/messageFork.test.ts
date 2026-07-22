@@ -161,6 +161,93 @@ describe("validateMessageForkImport", () => {
     });
   });
 
+  it("rejects queued input before the running turn has projected an assistant", () => {
+    const activeCreatedAt = "2026-07-22T10:01:00.000Z";
+    const queuedUserId = MessageId.makeUnsafe("message-queued-before-assistant");
+    expect(
+      validateMessageForkImport({
+        sourceThread: {
+          messages: [
+            sourceMessages[0]!,
+            {
+              id: MessageId.makeUnsafe("message-active-before-assistant"),
+              role: "user",
+              text: "Prompt currently running",
+              turnId: null,
+              streaming: false,
+              source: "native",
+              createdAt: activeCreatedAt,
+              updatedAt: activeCreatedAt,
+            },
+            {
+              id: queuedUserId,
+              role: "user",
+              text: "Queued before an assistant row exists",
+              turnId: null,
+              streaming: false,
+              source: "native",
+              createdAt: "2026-07-22T10:01:01.000Z",
+              updatedAt: "2026-07-22T10:01:01.000Z",
+            },
+          ],
+          latestTurn: {
+            turnId: TurnId.makeUnsafe("turn-before-assistant"),
+            state: "running",
+            requestedAt: activeCreatedAt,
+            startedAt: activeCreatedAt,
+            completedAt: null,
+            assistantMessageId: null,
+          },
+        },
+        sourceMessageId: queuedUserId,
+        importedMessages: [],
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "invalid-source",
+      expectedImportedMessageCount: 0,
+    });
+  });
+
+  it("rejects equal-timestamp ids whose persisted order would differ from the prefix", () => {
+    const equalTimestampThread = {
+      messages: [
+        { ...sourceMessages[0]!, createdAt: now },
+        { ...sourceMessages[1]!, createdAt: now, streaming: false },
+      ],
+      latestTurn: {
+        ...sourceThread.latestTurn!,
+        completedAt: now,
+      },
+    };
+    const reversedIds = [
+      { ...importedMessages[0]!, messageId: MessageId.makeUnsafe("fork:00000001"), createdAt: now },
+      { ...importedMessages[1]!, messageId: MessageId.makeUnsafe("fork:00000000"), createdAt: now },
+    ];
+
+    expect(
+      validateMessageForkImport({
+        sourceThread: equalTimestampThread,
+        sourceMessageId: assistantMessageId,
+        importedMessages: reversedIds,
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "import-mismatch",
+      expectedImportedMessageCount: 2,
+    });
+    expect(
+      validateMessageForkImport({
+        sourceThread: equalTimestampThread,
+        sourceMessageId: assistantMessageId,
+        importedMessages: [
+          { ...reversedIds[0]!, messageId: MessageId.makeUnsafe("fork:00000000") },
+          { ...reversedIds[1]!, messageId: MessageId.makeUnsafe("fork:00000001") },
+        ],
+      }),
+    ).toEqual({ ok: true });
+  });
+
   it("rejects a non-streaming assistant while its authoritative turn is running", () => {
     expect(
       validateMessageForkImport({

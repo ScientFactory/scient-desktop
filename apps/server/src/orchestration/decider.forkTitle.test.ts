@@ -174,6 +174,9 @@ describe("thread.fork.create title allocation", () => {
       throw new Error("Expected thread.meta-updated event");
     }
     const renamedModel = await applyEvent(withFork2, renameEvent, 4);
+    const renamedThread = renamedModel.threads.find((thread) => thread.id === "fork-2");
+    expect(renamedThread?.forkTitleBase).toBeNull();
+    expect(renamedThread?.forkTitleOrdinal).toBeNull();
 
     const renamedForkEvent = await decideCreatedEvent(
       renamedModel,
@@ -182,6 +185,34 @@ describe("thread.fork.create title allocation", () => {
     expect(renamedForkEvent.payload).toMatchObject({
       title: "Experiment (2026) (2)",
       forkTitleBase: "Experiment (2026)",
+      forkTitleOrdinal: 2,
+    });
+
+    const renameBackResult = await Effect.runPromise(
+      decideOrchestrationCommand({
+        readModel: renamedModel,
+        command: {
+          type: "thread.meta.update",
+          commandId: commandId("command-rename-fork-2-back"),
+          threadId: ThreadId.makeUnsafe("fork-2"),
+          title: "Greeting (2)",
+        },
+      }),
+    );
+    const renameBackEvent = (
+      Array.isArray(renameBackResult) ? renameBackResult : [renameBackResult]
+    )[0];
+    if (!renameBackEvent || renameBackEvent.type !== "thread.meta-updated") {
+      throw new Error("Expected rename-back thread.meta-updated event");
+    }
+    const renamedBackModel = await applyEvent(renamedModel, renameBackEvent, 5);
+    const renamedBackForkEvent = await decideCreatedEvent(
+      renamedBackModel,
+      forkCommand({ threadId: "renamed-back-child", sourceThreadId: "fork-2" }),
+    );
+    expect(renamedBackForkEvent.payload).toMatchObject({
+      title: "Greeting (2) (2)",
+      forkTitleBase: "Greeting (2)",
       forkTitleOrdinal: 2,
     });
   });

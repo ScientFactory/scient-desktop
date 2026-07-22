@@ -5,6 +5,7 @@ import { describe } from "vitest";
 
 import { runMigrations } from "../Migrations.ts";
 import * as NodeSqliteClient from "../NodeSqliteClient.ts";
+import { resolveNextForkTitle, type ForkTitleThread } from "../../orchestration/forkTitle.ts";
 
 const projectionThreadColumnNames = (sql: SqlClient.SqlClient) =>
   sql<{ readonly name: string }>`
@@ -229,14 +230,14 @@ describe("057_ProjectionThreadsForkTitleSequence", () => {
         {
           id: "fork-2",
           title: "Renamed first fork",
-          forkTitleBase: "Greeting",
-          forkTitleOrdinal: 2,
+          forkTitleBase: null,
+          forkTitleOrdinal: null,
         },
         {
           id: "fork-3",
           title: "Greeting",
           forkTitleBase: "Greeting",
-          forkTitleOrdinal: 3,
+          forkTitleOrdinal: 2,
         },
         {
           id: "pre-numbered",
@@ -259,6 +260,37 @@ describe("057_ProjectionThreadsForkTitleSequence", () => {
         },
       ]);
 
+      const allocatorRows = yield* sql<{
+        readonly id: string;
+        readonly projectId: string;
+        readonly title: string;
+        readonly forkSourceThreadId: string | null;
+        readonly sidechatSourceThreadId: string | null;
+        readonly forkTitleBase: string | null;
+        readonly forkTitleOrdinal: number | null;
+      }>`
+        SELECT
+          thread_id AS id,
+          project_id AS "projectId",
+          title,
+          fork_source_thread_id AS "forkSourceThreadId",
+          sidechat_source_thread_id AS "sidechatSourceThreadId",
+          fork_title_base AS "forkTitleBase",
+          fork_title_ordinal AS "forkTitleOrdinal"
+        FROM projection_threads
+      `;
+      const allocatorRoot = allocatorRows.find((row) => row.id === "root");
+      if (!allocatorRoot) {
+        throw new Error("Expected migrated root thread");
+      }
+      assert.strictEqual(
+        resolveNextForkTitle({
+          sourceThread: allocatorRoot,
+          threads: allocatorRows satisfies ReadonlyArray<ForkTitleThread>,
+        }).title,
+        "Greeting (9)",
+      );
+
       const eventRows = yield* sql<{
         readonly id: string;
         readonly forkTitleBase: string | null;
@@ -274,8 +306,8 @@ describe("057_ProjectionThreadsForkTitleSequence", () => {
       `;
       assert.deepEqual(eventRows, [
         { id: "experiment-2", forkTitleBase: "Experiment", forkTitleOrdinal: 2 },
-        { id: "fork-2", forkTitleBase: "Greeting", forkTitleOrdinal: 2 },
-        { id: "fork-3", forkTitleBase: "Greeting", forkTitleOrdinal: 3 },
+        { id: "fork-2", forkTitleBase: null, forkTitleOrdinal: null },
+        { id: "fork-3", forkTitleBase: "Greeting", forkTitleOrdinal: 2 },
         { id: "pre-numbered", forkTitleBase: "Greeting", forkTitleOrdinal: 7 },
         { id: "root", forkTitleBase: null, forkTitleOrdinal: null },
         { id: "sidechat", forkTitleBase: null, forkTitleOrdinal: null },

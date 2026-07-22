@@ -259,8 +259,13 @@ export function useComposerSlashCommands(input: {
         return true;
       }
 
+      const nextThreadId = newThreadId();
       const importedMessages = inputOptions?.sourceMessageId
-        ? buildThreadForkImportedMessagesThrough(activeThread, inputOptions.sourceMessageId)
+        ? buildThreadForkImportedMessagesThrough(
+            activeThread,
+            inputOptions.sourceMessageId,
+            nextThreadId,
+          )
         : buildThreadHandoffImportedMessages(activeThread);
       if (inputOptions?.sourceMessageId && importedMessages.length === 0) {
         toastManager.add({
@@ -271,7 +276,6 @@ export function useComposerSlashCommands(input: {
         return true;
       }
 
-      const nextThreadId = newThreadId();
       const createdAt = new Date().toISOString();
       // Fork first, then let the normal first-send worktree bootstrap create the cwd if needed.
       const resolvedTarget = resolveForkThreadEnvironment({

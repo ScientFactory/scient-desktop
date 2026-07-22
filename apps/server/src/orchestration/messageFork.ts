@@ -28,11 +28,40 @@ export interface ImportedMessageIdValidation {
 
 type MessageForkSourceThread = Pick<OrchestrationThread, "messages" | "latestTurn">;
 
+function resolveRunningTurnBoundaryIndex(thread: MessageForkSourceThread): number | null {
+  if (thread.latestTurn?.state !== "running") {
+    return null;
+  }
+
+  const activeAssistantIndex = thread.messages.findIndex(
+    (message) => message.role === "assistant" && message.turnId === thread.latestTurn?.turnId,
+  );
+  if (activeAssistantIndex >= 0) {
+    return activeAssistantIndex;
+  }
+
+  const requestedUserIndex = thread.messages.findIndex(
+    (message) => message.role === "user" && message.createdAt === thread.latestTurn?.requestedAt,
+  );
+  if (requestedUserIndex >= 0) {
+    return requestedUserIndex + 1;
+  }
+
+  // A running turn without a projected prompt or assistant is an incomplete
+  // lifecycle snapshot. Fail closed until the authoritative boundary appears.
+  return 0;
+}
+
 function isCompletedConversationMessage(
   thread: MessageForkSourceThread,
   message: OrchestrationMessage,
+  messageIndex: number,
+  runningTurnBoundaryIndex: number | null,
 ): message is OrchestrationMessage & { readonly role: "user" | "assistant" } {
   if (message.role !== "user" && message.role !== "assistant") {
+    return false;
+  }
+  if (runningTurnBoundaryIndex !== null && messageIndex >= runningTurnBoundaryIndex) {
     return false;
   }
   if (
@@ -112,6 +141,7 @@ export function validateMessageForkImport(input: {
   readonly sourceMessageId: MessageId;
   readonly importedMessages: ReadonlyArray<ThreadHandoffImportedMessage>;
 }): MessageForkValidation {
+  const runningTurnBoundaryIndex = resolveRunningTurnBoundaryIndex(input.sourceThread);
   const sourceMessageIndex = input.sourceThread.messages.findIndex(
     (message) => message.id === input.sourceMessageId,
   );
@@ -119,7 +149,12 @@ export function validateMessageForkImport(input: {
   if (
     sourceMessageIndex < 0 ||
     !sourceMessage ||
-    !isCompletedConversationMessage(input.sourceThread, sourceMessage)
+    !isCompletedConversationMessage(
+      input.sourceThread,
+      sourceMessage,
+      sourceMessageIndex,
+      runningTurnBoundaryIndex,
+    )
   ) {
     return {
       ok: false,
@@ -135,14 +170,38 @@ export function validateMessageForkImport(input: {
         message.role === "user" || message.role === "assistant",
     );
   if (
-    conversationPrefix.some(
-      (message) => !isCompletedConversationMessage(input.sourceThread, message),
-    )
+    conversationPrefix.some((message) => {
+      const messageIndex = input.sourceThread.messages.indexOf(message);
+      return !isCompletedConversationMessage(
+        input.sourceThread,
+        message,
+        messageIndex,
+        runningTurnBoundaryIndex,
+      );
+    })
   ) {
     return {
       ok: false,
       reason: "invalid-source",
       expectedImportedMessageCount: 0,
+    };
+  }
+
+  const importOrderIsPersistent = input.importedMessages.every((message, index, messages) => {
+    const previous = messages[index - 1];
+    if (!previous) {
+      return true;
+    }
+    return (
+      previous.createdAt < message.createdAt ||
+      (previous.createdAt === message.createdAt && previous.messageId < message.messageId)
+    );
+  });
+  if (!importOrderIsPersistent) {
+    return {
+      ok: false,
+      reason: "import-mismatch",
+      expectedImportedMessageCount: conversationPrefix.length,
     };
   }
 

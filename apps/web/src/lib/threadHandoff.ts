@@ -6,6 +6,7 @@
 import {
   EventId,
   MessageId,
+  ThreadId,
   type OrchestrationThreadActivity,
   PROVIDER_DISPLAY_NAMES,
   type ModelSelection,
@@ -45,6 +46,28 @@ function isImportableThreadMessage(
 }
 
 type ForkSourceThread = Pick<Thread, "messages"> & Partial<Pick<Thread, "latestTurn" | "session">>;
+
+function resolveRunningTurnBoundaryIndex(thread: ForkSourceThread): number | null {
+  if (!thread.latestTurn || isLatestTurnSettled(thread.latestTurn, thread.session ?? null)) {
+    return null;
+  }
+
+  const activeAssistantIndex = thread.messages.findIndex(
+    (message) => message.role === "assistant" && message.turnId === thread.latestTurn?.turnId,
+  );
+  if (activeAssistantIndex >= 0) {
+    return activeAssistantIndex;
+  }
+
+  const requestedUserIndex = thread.messages.findIndex(
+    (message) => message.role === "user" && message.createdAt === thread.latestTurn?.requestedAt,
+  );
+  if (requestedUserIndex >= 0) {
+    return requestedUserIndex + 1;
+  }
+
+  return 0;
+}
 
 function isSettledTerminalTurnAssistantMessage(
   thread: ForkSourceThread,
@@ -113,17 +136,18 @@ export function buildThreadHandoffImportedMessages(
 function buildImportedMessages(
   messages: ReadonlyArray<Thread["messages"][number]>,
   isImportable: (message: Thread["messages"][number]) => boolean = isImportableThreadMessage,
+  makeMessageId: (index: number) => MessageId = () => MessageId.makeUnsafe(randomUUID()),
 ): ReadonlyArray<ThreadHandoffImportedMessage> {
   return messages
     .filter(
       (message): message is Thread["messages"][number] & { role: "user" | "assistant" } =>
         isImportable(message) && (message.role === "user" || message.role === "assistant"),
     )
-    .map((message) => {
+    .map((message, index) => {
       const importedText =
         message.role === "user" ? stripEmbeddedAssistantSelections(message.text) : message.text;
       const importedMessage: ThreadHandoffImportedMessage = {
-        messageId: MessageId.makeUnsafe(randomUUID()),
+        messageId: makeMessageId(index),
         role: message.role,
         text: importedText,
         createdAt: message.createdAt,
@@ -155,10 +179,16 @@ function buildImportedMessages(
 export function buildThreadForkImportedMessagesThrough(
   thread: ForkSourceThread,
   sourceMessageId: MessageId,
+  destinationThreadId: ThreadId,
 ): ReadonlyArray<ThreadHandoffImportedMessage> {
   const sourceMessageIndex = thread.messages.findIndex((message) => message.id === sourceMessageId);
   const sourceMessage = thread.messages[sourceMessageIndex];
-  if (sourceMessageIndex < 0 || !sourceMessage) {
+  const runningTurnBoundaryIndex = resolveRunningTurnBoundaryIndex(thread);
+  if (
+    sourceMessageIndex < 0 ||
+    !sourceMessage ||
+    (runningTurnBoundaryIndex !== null && sourceMessageIndex >= runningTurnBoundaryIndex)
+  ) {
     return [];
   }
 
@@ -167,13 +197,22 @@ export function buildThreadForkImportedMessagesThrough(
     .filter((message) => message.role === "user" || message.role === "assistant");
   if (
     conversationPrefix.length === 0 ||
-    conversationPrefix.some((message) => !isForkImportableThreadMessage(thread, message))
+    conversationPrefix.some((message) => !isForkImportableThreadMessage(thread, message)) ||
+    conversationPrefix.some((message, index, messages) => {
+      const previous = messages[index - 1];
+      return previous !== undefined && previous.createdAt > message.createdAt;
+    })
   ) {
     return [];
   }
 
-  return buildImportedMessages(conversationPrefix, (message) =>
-    isForkImportableThreadMessage(thread, message),
+  return buildImportedMessages(
+    conversationPrefix,
+    (message) => isForkImportableThreadMessage(thread, message),
+    (index) =>
+      MessageId.makeUnsafe(
+        `fork:${destinationThreadId}:${String(index).padStart(8, "0")}:${randomUUID()}`,
+      ),
   );
 }
 
@@ -185,12 +224,16 @@ export function buildThreadForkImportedMessagesThrough(
 export function resolveThreadForkableMessageIds(thread: ForkSourceThread): ReadonlySet<MessageId> {
   const forkableMessageIds = new Set<MessageId>();
   let prefixIsImportable = true;
+  const runningTurnBoundaryIndex = resolveRunningTurnBoundaryIndex(thread);
 
-  for (const message of thread.messages) {
+  for (const [messageIndex, message] of thread.messages.entries()) {
     if (message.role !== "user" && message.role !== "assistant") {
       continue;
     }
-    prefixIsImportable = prefixIsImportable && isForkImportableThreadMessage(thread, message);
+    prefixIsImportable =
+      prefixIsImportable &&
+      (runningTurnBoundaryIndex === null || messageIndex < runningTurnBoundaryIndex) &&
+      isForkImportableThreadMessage(thread, message);
     if (prefixIsImportable) {
       forkableMessageIds.add(message.id);
     }

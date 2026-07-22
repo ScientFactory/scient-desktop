@@ -1,4 +1,4 @@
-import { MessageId, type ModelSelection, TurnId } from "@synara/contracts";
+import { MessageId, type ModelSelection, ThreadId, TurnId } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 import {
   buildThreadForkImportedMessagesThrough,
@@ -49,6 +49,7 @@ describe("threadHandoff", () => {
         ],
       },
       firstAssistantId,
+      ThreadId.makeUnsafe("thread-fork-destination"),
     );
 
     expect(imported).toHaveLength(2);
@@ -74,9 +75,19 @@ describe("threadHandoff", () => {
       ],
     };
 
-    expect(buildThreadForkImportedMessagesThrough(thread, streamingId)).toEqual([]);
     expect(
-      buildThreadForkImportedMessagesThrough(thread, MessageId.makeUnsafe("message-missing")),
+      buildThreadForkImportedMessagesThrough(
+        thread,
+        streamingId,
+        ThreadId.makeUnsafe("thread-fork-streaming"),
+      ),
+    ).toEqual([]);
+    expect(
+      buildThreadForkImportedMessagesThrough(
+        thread,
+        MessageId.makeUnsafe("message-missing"),
+        ThreadId.makeUnsafe("thread-fork-missing"),
+      ),
     ).toEqual([]);
   });
 
@@ -121,8 +132,95 @@ describe("threadHandoff", () => {
       session: null,
     };
 
-    expect(buildThreadForkImportedMessagesThrough(thread, queuedUserId)).toEqual([]);
+    expect(
+      buildThreadForkImportedMessagesThrough(
+        thread,
+        queuedUserId,
+        ThreadId.makeUnsafe("thread-fork-queued"),
+      ),
+    ).toEqual([]);
     expect([...resolveThreadForkableMessageIds(thread)]).toEqual([priorUserId]);
+  });
+
+  it("fails closed for queued input before the running turn projects an assistant", () => {
+    const activeUserId = MessageId.makeUnsafe("message-active-user-before-assistant");
+    const queuedUserId = MessageId.makeUnsafe("message-queued-before-assistant");
+    const turnId = TurnId.makeUnsafe("turn-before-assistant");
+    const thread = {
+      messages: [
+        {
+          id: MessageId.makeUnsafe("message-prior-settled-user"),
+          role: "user" as const,
+          text: "Settled prompt",
+          createdAt: "2026-07-22T07:59:00.000Z",
+          streaming: false,
+        },
+        {
+          id: activeUserId,
+          role: "user" as const,
+          text: "Prompt currently running",
+          createdAt: "2026-07-22T08:00:00.000Z",
+          streaming: false,
+        },
+        {
+          id: queuedUserId,
+          role: "user" as const,
+          text: "Queued before an assistant row exists",
+          createdAt: "2026-07-22T08:00:01.000Z",
+          streaming: false,
+        },
+      ],
+      latestTurn: {
+        turnId,
+        state: "running" as const,
+        requestedAt: "2026-07-22T08:00:00.000Z",
+        startedAt: "2026-07-22T08:00:00.500Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+      session: null,
+    };
+
+    expect(
+      buildThreadForkImportedMessagesThrough(
+        thread,
+        queuedUserId,
+        ThreadId.makeUnsafe("thread-fork-before-assistant"),
+      ),
+    ).toEqual([]);
+    expect([...resolveThreadForkableMessageIds(thread)]).toEqual([
+      MessageId.makeUnsafe("message-prior-settled-user"),
+      activeUserId,
+    ]);
+  });
+
+  it("assigns equal-timestamp imports ids whose persisted sort preserves source order", () => {
+    const boundaryId = MessageId.makeUnsafe("message-equal-time-assistant");
+    const imported = buildThreadForkImportedMessagesThrough(
+      {
+        messages: [
+          {
+            id: MessageId.makeUnsafe("message-equal-time-user"),
+            role: "user",
+            text: "First",
+            createdAt: "2026-07-22T08:00:00.000Z",
+            streaming: false,
+          },
+          {
+            id: boundaryId,
+            role: "assistant",
+            text: "Second",
+            createdAt: "2026-07-22T08:00:00.000Z",
+            streaming: false,
+          },
+        ],
+      },
+      boundaryId,
+      ThreadId.makeUnsafe("thread-fork-equal-time"),
+    );
+
+    expect(imported.map((message) => message.text)).toEqual(["First", "Second"]);
+    expect(imported[0]!.messageId < imported[1]!.messageId).toBe(true);
   });
 
   it("treats an active-turn assistant as unsafe even before its streaming flag arrives", () => {
@@ -150,7 +248,13 @@ describe("threadHandoff", () => {
       session: null,
     };
 
-    expect(buildThreadForkImportedMessagesThrough(thread, assistantId)).toEqual([]);
+    expect(
+      buildThreadForkImportedMessagesThrough(
+        thread,
+        assistantId,
+        ThreadId.makeUnsafe("thread-fork-active"),
+      ),
+    ).toEqual([]);
     expect(resolveThreadForkableMessageIds(thread).size).toBe(0);
   });
 
@@ -189,6 +293,7 @@ describe("threadHandoff", () => {
         session: null,
       },
       assistantId,
+      ThreadId.makeUnsafe("thread-fork-settled"),
     );
 
     expect(imported.map(({ role, text }) => ({ role, text }))).toEqual([
@@ -233,6 +338,7 @@ describe("threadHandoff", () => {
         session: null,
       },
       latestAssistantId,
+      ThreadId.makeUnsafe("thread-fork-settled-multiple"),
     );
 
     expect(imported.map(({ text }) => text)).toEqual([
