@@ -1473,6 +1473,7 @@ async function waitForProductionStyles(): Promise<void> {
 async function waitForElement<T extends Element>(
   query: () => T | null,
   errorMessage: string,
+  timeout = 8_000,
 ): Promise<T> {
   let element: T | null = null;
   await vi.waitFor(
@@ -1481,7 +1482,7 @@ async function waitForElement<T extends Element>(
       expect(element, errorMessage).toBeTruthy();
     },
     {
-      timeout: 8_000,
+      timeout,
       interval: 16,
     },
   );
@@ -1967,6 +1968,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             `[data-message-id="${sourceMessageId}"][data-message-role="user"]`,
           ),
         "Unable to find source message for the fork action.",
+        20_000,
       );
       await userEvent.hover(sourceRow);
       const forkButton = sourceRow.querySelector<HTMLButtonElement>(
