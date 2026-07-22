@@ -23,8 +23,6 @@ export const RIGHT_DOCK_PANE_KINDS = [
 export type RightDockPaneKind = (typeof RIGHT_DOCK_PANE_KINDS)[number];
 export type PullRequestInitialTab = "summary" | "timeline" | "code";
 
-export const DEFAULT_RIGHT_DOCK_PANE_KIND: RightDockPaneKind = "explorer";
-
 const RIGHT_DOCK_PANE_KIND_SET: ReadonlySet<string> = new Set(RIGHT_DOCK_PANE_KINDS);
 
 export interface RightDockPane {
@@ -131,7 +129,10 @@ export function sanitizeRightDockThreadState(value: unknown): RightDockThreadSta
       ? candidate.activePaneId
       : (panes[0]?.id ?? null);
   return {
-    open: panes.length > 0 && candidate.open === true,
+    // An open dock with no panes is intentional: it renders the surface chooser.
+    // Older snapshots remain valid because their pane arrays and active ids are
+    // still sanitized through the same path.
+    open: candidate.open === true,
     panes,
     activePaneId,
   };
@@ -235,26 +236,41 @@ export function openPaneInState(
   state: RightDockThreadState,
   input: OpenPaneInput,
 ): RightDockThreadState {
+  // A file surface contains its own explorer. Retaining the standalone Explorer
+  // tab would duplicate the same workspace tree in two neighboring surfaces, so
+  // opening a file promotes Files into the richer file + explorer composition.
+  const baseState =
+    input.kind === "file" && state.panes.some((pane) => pane.kind === "explorer")
+      ? (() => {
+          const panes = state.panes.filter((pane) => pane.kind !== "explorer");
+          const activePaneId =
+            state.activePaneId && panes.some((pane) => pane.id === state.activePaneId)
+              ? state.activePaneId
+              : (panes[0]?.id ?? null);
+          return { ...state, panes, activePaneId };
+        })()
+      : state;
+
   if (isSingletonPaneKind(input.kind)) {
-    const existing = findSingletonPane(state, input.kind);
+    const existing = findSingletonPane(baseState, input.kind);
     if (existing) {
       const patch = singletonPaneReopenPatch(input);
       const nextPanes = patch
-        ? state.panes.map((pane) => (pane.id === existing.id ? { ...pane, ...patch } : pane))
-        : state.panes;
+        ? baseState.panes.map((pane) => (pane.id === existing.id ? { ...pane, ...patch } : pane))
+        : baseState.panes;
       return { open: true, panes: nextPanes, activePaneId: existing.id };
     }
   } else {
-    const existing = findMatchingMultiInstancePane(state, input);
+    const existing = findMatchingMultiInstancePane(baseState, input);
     if (existing) {
-      return { open: true, panes: state.panes, activePaneId: existing.id };
+      return { open: true, panes: baseState.panes, activePaneId: existing.id };
     }
   }
 
   const pane = createPane(input);
   return {
     open: true,
-    panes: [...state.panes, pane],
+    panes: [...baseState.panes, pane],
     activePaneId: pane.id,
   };
 }
@@ -291,7 +307,9 @@ export function closePaneInState(
     paneId,
   );
   return {
-    open: nextPanes.length > 0 ? state.open : false,
+    // Closing the final tab leaves the dock open on its surface chooser. The
+    // persistent dock control remains the one explicit way to collapse it.
+    open: state.open,
     panes: nextPanes,
     activePaneId: nextActiveId,
   };
@@ -311,9 +329,6 @@ export function setDockOpenInState(
   state: RightDockThreadState,
   open: boolean,
 ): RightDockThreadState {
-  if (open && state.panes.length === 0) {
-    return state;
-  }
   if (state.open === open) {
     return state;
   }
@@ -322,19 +337,11 @@ export function setDockOpenInState(
 
 // The persistent header control owns dock visibility, not any specific pane kind.
 // Closing preserves all tabs and their active selection. Reopening restores that
-// selection; the first-ever open creates Explorer so the panel is immediately useful.
-export function toggleRightDockInState(
-  state: RightDockThreadState,
-  defaultPaneId: string,
-): RightDockThreadState {
+// selection; a first-ever open intentionally has no active pane so the surface
+// chooser can explain every available destination.
+export function toggleRightDockInState(state: RightDockThreadState): RightDockThreadState {
   if (state.open) {
     return { ...state, open: false };
-  }
-  if (state.panes.length === 0) {
-    return openPaneInState(state, {
-      paneId: defaultPaneId,
-      kind: DEFAULT_RIGHT_DOCK_PANE_KIND,
-    });
   }
   const activePaneId =
     state.activePaneId && state.panes.some((pane) => pane.id === state.activePaneId)

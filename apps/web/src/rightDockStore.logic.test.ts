@@ -1,29 +1,26 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  DEFAULT_RIGHT_DOCK_PANE_KIND,
   RIGHT_DOCK_PANE_KINDS,
   SINGLETON_PANE_KINDS,
+  closePaneInState,
   createDefaultRightDockState,
   isRightDockPaneKind,
   openPaneInState,
   sanitizeRightDockStateByThreadId,
   sanitizeRightDockThreadState,
+  setDockOpenInState,
   toggleRightDockInState,
   updatePaneInState,
 } from "./rightDockStore.logic";
 
 describe("toggleRightDockInState", () => {
-  it("opens Explorer when the dock has never had a pane", () => {
-    const state = toggleRightDockInState(createDefaultRightDockState(), "explorer-1");
+  it("opens the empty surface chooser when the dock has never had a pane", () => {
+    const state = toggleRightDockInState(createDefaultRightDockState());
 
     expect(state.open).toBe(true);
-    expect(state.activePaneId).toBe("explorer-1");
-    expect(state.panes).toHaveLength(1);
-    expect(state.panes[0]).toMatchObject({
-      id: "explorer-1",
-      kind: DEFAULT_RIGHT_DOCK_PANE_KIND,
-    });
+    expect(state.activePaneId).toBeNull();
+    expect(state.panes).toEqual([]);
   });
 
   it("closes the dock without discarding its panes or active tab", () => {
@@ -35,7 +32,7 @@ describe("toggleRightDockInState", () => {
       { paneId: "file-1", kind: "file", filePath: "notes.md" },
     );
 
-    const state = toggleRightDockInState(openState, "unused");
+    const state = toggleRightDockInState(openState);
 
     expect(state.open).toBe(false);
     expect(state.activePaneId).toBe("file-1");
@@ -54,7 +51,7 @@ describe("toggleRightDockInState", () => {
       open: false,
     };
 
-    const state = toggleRightDockInState(closedState, "unused");
+    const state = toggleRightDockInState(closedState);
 
     expect(state.open).toBe(true);
     expect(state.activePaneId).toBe("file-1");
@@ -71,7 +68,7 @@ describe("toggleRightDockInState", () => {
       activePaneId: "missing",
     };
 
-    const state = toggleRightDockInState(closedState, "unused");
+    const state = toggleRightDockInState(closedState);
 
     expect(state.open).toBe(true);
     expect(state.activePaneId).toBe("browser-1");
@@ -196,7 +193,7 @@ describe("sanitizeRightDockThreadState", () => {
     expect(state.open).toBe(true);
   });
 
-  it("forces the dock closed when no valid panes survive", () => {
+  it("preserves an intentional open-empty dock when no valid panes survive", () => {
     const state = sanitizeRightDockThreadState({
       open: true,
       activePaneId: "legacy",
@@ -206,7 +203,7 @@ describe("sanitizeRightDockThreadState", () => {
     });
     expect(state.panes).toEqual([]);
     expect(state.activePaneId).toBeNull();
-    expect(state.open).toBe(false);
+    expect(state.open).toBe(true);
   });
 
   it("returns the default state for malformed input", () => {
@@ -221,9 +218,52 @@ describe("sanitizeRightDockThreadState", () => {
       activePaneId: null,
     });
   });
+
+  it("preserves a closed empty persisted dock", () => {
+    expect(
+      sanitizeRightDockThreadState({ open: false, activePaneId: null, panes: [] }),
+    ).toEqual({ open: false, panes: [], activePaneId: null });
+  });
+});
+
+describe("empty dock transitions", () => {
+  it("allows the dock to open without creating a pane", () => {
+    expect(setDockOpenInState(createDefaultRightDockState(), true)).toEqual({
+      open: true,
+      panes: [],
+      activePaneId: null,
+    });
+  });
+
+  it("keeps the dock open when its final pane closes", () => {
+    const openState = openPaneInState(createDefaultRightDockState(), {
+      paneId: "browser-1",
+      kind: "browser",
+    });
+    expect(closePaneInState(openState, "browser-1")).toEqual({
+      open: true,
+      panes: [],
+      activePaneId: null,
+    });
+  });
 });
 
 describe("file panes", () => {
+  it("replaces the standalone Explorer with the embedded file surface", () => {
+    const explorer = openPaneInState(createDefaultRightDockState(), {
+      paneId: "explorer-1",
+      kind: "explorer",
+    });
+    const file = openPaneInState(explorer, {
+      paneId: "file-1",
+      kind: "file",
+      filePath: "src/page.tsx",
+    });
+
+    expect(file.panes.map((pane) => pane.kind)).toEqual(["file"]);
+    expect(file.activePaneId).toBe("file-1");
+  });
+
   it("opens a file pane carrying the file path", () => {
     const state = openPaneInState(createDefaultRightDockState(), {
       paneId: "f1",
