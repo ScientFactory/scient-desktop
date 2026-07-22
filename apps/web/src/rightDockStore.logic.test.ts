@@ -220,9 +220,11 @@ describe("sanitizeRightDockThreadState", () => {
   });
 
   it("preserves a closed empty persisted dock", () => {
-    expect(
-      sanitizeRightDockThreadState({ open: false, activePaneId: null, panes: [] }),
-    ).toEqual({ open: false, panes: [], activePaneId: null });
+    expect(sanitizeRightDockThreadState({ open: false, activePaneId: null, panes: [] })).toEqual({
+      open: false,
+      panes: [],
+      activePaneId: null,
+    });
   });
 });
 

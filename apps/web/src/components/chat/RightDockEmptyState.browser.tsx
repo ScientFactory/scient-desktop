@@ -18,22 +18,17 @@ describe("RightDockEmptyState", () => {
     );
 
     try {
-      await expect
-        .element(page.getByRole("heading", { name: "Open a surface" }))
-        .toBeVisible();
+      await expect.element(page.getByRole("heading", { name: "Open a surface" })).toBeVisible();
       await expect.element(page.getByRole("button", { name: /^Browser/ })).toBeVisible();
-      await expect.element(page.getByRole("button", { name: /^Terminal/ })).toHaveAttribute(
-        "aria-disabled",
-        "true",
-      );
-      await expect.element(page.getByRole("button", { name: /^Files/ })).toHaveAttribute(
-        "aria-disabled",
-        "true",
-      );
-      await expect.element(page.getByRole("button", { name: /^Diff/ })).toHaveAttribute(
-        "aria-disabled",
-        "true",
-      );
+      await expect
+        .element(page.getByRole("button", { name: /^Terminal/ }))
+        .toHaveAttribute("aria-disabled", "true");
+      await expect
+        .element(page.getByRole("button", { name: /^Files/ }))
+        .toHaveAttribute("aria-disabled", "true");
+      await expect
+        .element(page.getByRole("button", { name: /^Diff/ }))
+        .toHaveAttribute("aria-disabled", "true");
 
       await page.getByRole("button", { name: /^Browser/ }).click();
       expect(onOpenPane).toHaveBeenCalledWith("browser");

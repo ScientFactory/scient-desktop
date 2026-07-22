@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  readDockFileExplorerOpen,
-  storeDockFileExplorerOpen,
-} from "./dockFileExplorerPreference";
+import { readDockFileExplorerOpen, storeDockFileExplorerOpen } from "./dockFileExplorerPreference";
 
 function createStorage(initial?: string) {
   let value = initial ?? null;
