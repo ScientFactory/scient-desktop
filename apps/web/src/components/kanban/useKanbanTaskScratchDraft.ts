@@ -4,7 +4,7 @@
 // Exports: useKanbanTaskScratchDraft
 
 import type { ModelSlug, ProviderKind } from "@synara/contracts";
-import { getDefaultModel } from "@synara/shared/model";
+import { getRecommendedDefaultModelSelection } from "@synara/shared/model";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -59,9 +59,11 @@ export function useKanbanTaskScratchDraft(input: { readonly defaultProvider: Pro
   const draftModelSelection =
     scratchDraft.modelSelectionByProvider[selectedProvider] ??
     stickyModelSelectionByProvider[selectedProvider];
+  const recommendedModelSelection = getRecommendedDefaultModelSelection(selectedProvider);
   const selectedModel: ModelSlug | null =
-    draftModelSelection?.model ?? getDefaultModel(selectedProvider);
-  const selectedProviderModelOptions = draftModelSelection?.options;
+    draftModelSelection?.model ?? recommendedModelSelection?.model ?? null;
+  const selectedProviderModelOptions =
+    draftModelSelection?.options ?? recommendedModelSelection?.options;
 
   const previousSelectedProviderRef = useRef<{
     threadId: string;

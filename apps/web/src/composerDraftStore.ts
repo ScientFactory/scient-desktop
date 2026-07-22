@@ -31,7 +31,10 @@ import * as Equal from "effect/Equal";
 import { DeepMutable } from "effect/Types";
 import {
   getDefaultModel,
+  getRecommendedDefaultModelSelection,
+  type RecommendedModelCandidate,
   normalizeModelSlug,
+  resolveRecommendedModelSelection,
   resolveSelectableModel,
   resolveModelSlugForProvider,
 } from "@synara/shared/model";
@@ -706,8 +709,10 @@ function deriveEffectiveComposerModelOptions(input: {
     | undefined;
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
+  policyModelSelection?: ModelSelection | null | undefined;
 }): ProviderModelOptions | null {
   const baseOptions = mergeProviderModelOptionsFromSelections(
+    input.policyModelSelection,
     input.projectModelSelection,
     input.threadModelSelection,
   );
@@ -1825,7 +1830,7 @@ export function deriveEffectiveComposerModelState(input: {
   projectModelSelection: ModelSelection | null | undefined;
   customModelsByProvider: Record<ProviderKind, readonly string[]>;
   availableModelOptionsByProvider?: Partial<
-    Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>
+    Record<ProviderKind, ReadonlyArray<RecommendedModelCandidate>>
   >;
 }): EffectiveComposerModelState {
   const resolveAvailableModel = (candidate: string | null | undefined): ModelSlug | null => {
@@ -1864,6 +1869,10 @@ export function deriveEffectiveComposerModelState(input: {
       )
     : null;
   const unlistedDraftModel = input.selectedProvider === "pi" ? selectedDraftModel : null;
+  const policyModelSelection = resolveRecommendedModelSelection(
+    input.selectedProvider,
+    input.availableModelOptionsByProvider?.[input.selectedProvider],
+  );
   const selectedModel =
     resolveAvailableModel(activeSelection?.model) ??
     resolveAvailableModel(
@@ -1880,11 +1889,15 @@ export function deriveEffectiveComposerModelState(input: {
     persistedThreadModel ??
     persistedProjectModel ??
     unlistedDraftModel ??
-    input.availableModelOptionsByProvider?.[input.selectedProvider]?.[0]?.slug ??
+    policyModelSelection?.model ??
     selectedDraftModel ??
     baseModel ??
     getDefaultModel("codex");
-  const modelOptions = deriveEffectiveComposerModelOptions(input);
+  const modelOptions = deriveEffectiveComposerModelOptions({
+    ...input,
+    policyModelSelection:
+      policyModelSelection?.model === selectedModel ? policyModelSelection : undefined,
+  });
 
   return {
     selectedModel,
@@ -1922,10 +1935,9 @@ export function resolvePreferredComposerModelSelection(input: {
       : null) ??
     (input.projectModelSelection?.provider === preferredProvider
       ? input.projectModelSelection
-      : null) ?? {
-      provider: preferredProvider === "pi" ? "codex" : preferredProvider,
-      model: getDefaultModel(preferredProvider === "pi" ? "codex" : preferredProvider),
-    }
+      : null) ??
+    getRecommendedDefaultModelSelection(preferredProvider) ??
+    getRecommendedDefaultModelSelection("codex")!
   );
 }
 

@@ -222,6 +222,18 @@ const CODEX_GPT_5_5_CAPABILITIES: ModelCapabilities = {
   ],
 };
 
+const CODEX_GPT_5_6_CAPABILITIES: ModelCapabilities = {
+  ...CODEX_GPT_5_CAPABILITIES,
+  reasoningEffortLevels: [
+    { value: "none", label: "None" },
+    { value: "low", label: "Low", isDefault: true },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "xhigh", label: "Extra High" },
+    { value: "max", label: "Max" },
+  ],
+};
+
 const GROK_BUILD_CAPABILITIES: ModelCapabilities = {
   reasoningEffortLevels: [
     { value: "none", label: "None" },
@@ -437,6 +449,21 @@ type ModelDefinition = {
 export const MODEL_OPTIONS_BY_PROVIDER = {
   codex: [
     {
+      slug: "gpt-5.6-sol",
+      name: "GPT-5.6 Sol",
+      capabilities: CODEX_GPT_5_6_CAPABILITIES,
+    },
+    {
+      slug: "gpt-5.6-terra",
+      name: "GPT-5.6 Terra",
+      capabilities: CODEX_GPT_5_6_CAPABILITIES,
+    },
+    {
+      slug: "gpt-5.6-luna",
+      name: "GPT-5.6 Luna",
+      capabilities: CODEX_GPT_5_6_CAPABILITIES,
+    },
+    {
       slug: "gpt-5.5",
       name: "GPT-5.5",
       capabilities: CODEX_GPT_5_5_CAPABILITIES,
@@ -536,6 +563,16 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
   // `agy models` so CLI updates appear without a Synara release.
   antigravity: [],
   grok: [
+    {
+      slug: "grok-build-latest",
+      name: "Grok Build Latest",
+      capabilities: GROK_BUILD_CAPABILITIES,
+    },
+    {
+      slug: "grok-4.5",
+      name: "Grok 4.5",
+      capabilities: GROK_BUILD_CAPABILITIES,
+    },
     {
       slug: "grok-build-0.1",
       name: "Grok Build 0.1",
@@ -733,6 +770,14 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
   ],
   opencode: [
     {
+      slug: "openai/gpt-5.6-sol",
+      name: "OpenAI GPT-5.6 Sol",
+      capabilities: {
+        ...CODEX_GPT_5_6_CAPABILITIES,
+        variantOptions: CODEX_GPT_5_6_CAPABILITIES.reasoningEffortLevels,
+      },
+    },
+    {
       slug: "openai/gpt-5",
       name: "OpenAI GPT-5",
       capabilities: {
@@ -745,6 +790,17 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
     },
   ],
   kilo: [
+    {
+      slug: "kilo/kilo-auto/frontier",
+      name: "Kilo Auto Frontier",
+      capabilities: {
+        reasoningEffortLevels: [],
+        supportsFastMode: false,
+        supportsThinkingToggle: false,
+        promptInjectedEffortLevels: [],
+        contextWindowOptions: [],
+      },
+    },
     {
       slug: "kilo/kilo-auto/free",
       name: "Kilo Auto Free",
@@ -759,6 +815,11 @@ export const MODEL_OPTIONS_BY_PROVIDER = {
   ],
   pi: [],
   cursor: [
+    {
+      slug: "gpt-5.6-sol",
+      name: "GPT-5.6 Sol",
+      capabilities: CODEX_GPT_5_6_CAPABILITIES,
+    },
     {
       slug: "auto",
       name: "Auto",
@@ -823,14 +884,14 @@ export type ModelSlug = BuiltInModelSlug | (string & {});
 export type ProviderWithDefaultModel = Exclude<ProviderKind, "pi">;
 
 export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderWithDefaultModel, ModelSlug> = {
-  codex: "gpt-5.5",
-  claudeAgent: "claude-sonnet-5",
-  cursor: "auto",
-  antigravity: "Gemini 3.5 Flash",
-  grok: "grok-build",
-  droid: "claude-opus-4-8",
-  kilo: "kilo/kilo-auto/free",
-  opencode: "openai/gpt-5",
+  codex: "gpt-5.6-sol",
+  claudeAgent: "claude-opus-4-8",
+  cursor: "gpt-5.6-sol",
+  antigravity: "gemini-3.6-flash",
+  grok: "grok-build-latest",
+  droid: "auto",
+  kilo: "kilo/kilo-auto/frontier",
+  opencode: "openai/gpt-5.6-sol",
 };
 
 // Backward compatibility for existing Codex-only call sites.
@@ -840,6 +901,11 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini" as const;
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, ModelSlug>> = {
   codex: {
+    "5.6": "gpt-5.6-sol",
+    "gpt-5.6": "gpt-5.6-sol",
+    "5.6-sol": "gpt-5.6-sol",
+    "5.6-terra": "gpt-5.6-terra",
+    "5.6-luna": "gpt-5.6-luna",
     "5.5": "gpt-5.5",
     "5.4": "gpt-5.4",
     "5.3": "gpt-5.3-codex",
@@ -883,13 +949,16 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     "opus-4.6": "claude-opus-4-6",
     "opus-4.6-thinking": "claude-opus-4-6",
     "gpt-5.3": "gpt-5.3-codex",
+    "gpt-5.6": "gpt-5.6-sol",
+    "5.6-sol": "gpt-5.6-sol",
     "codex-5.3": "gpt-5.3-codex",
     "gemini-3": "gemini-3-pro",
   },
   antigravity: {},
   droid: {
-    droid: "claude-opus-4-8",
-    factory: "claude-opus-4-8",
+    auto: "auto",
+    droid: "auto",
+    factory: "auto",
     opus: "claude-opus-4-8",
     "opus-4.8": "claude-opus-4-8",
     "opus-fast": "claude-opus-4-8-fast",
@@ -926,14 +995,17 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
     minimax: "minimax-m3",
   },
   grok: {
-    grok: "grok-build-0.1",
-    build: "grok-build-0.1",
+    grok: "grok-build-latest",
+    build: "grok-build-latest",
     "grok-build-0.1": "grok-build-0.1",
     "grok-build": "grok-build",
+    "grok-build-latest": "grok-build-latest",
+    "grok-4.5": "grok-4.5",
+    "grok-4.5-latest": "grok-build-latest",
     "4.3": "grok-build",
     "grok-4": "grok-build",
     "grok-4.3": "grok-build",
-    "grok-latest": "grok-build",
+    "grok-latest": "grok-build-latest",
     "grok-code-fast": "grok-build-0.1",
     "grok-code-fast-1": "grok-build-0.1",
     "grok-code-fast-1-0825": "grok-build-0.1",

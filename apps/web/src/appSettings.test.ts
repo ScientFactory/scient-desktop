@@ -65,6 +65,9 @@ describe("getAppModelOptions", () => {
     const options = getAppModelOptions("codex", ["custom/internal-model"]);
 
     expect(options.map((option) => option.slug)).toEqual([
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
       "gpt-5.5",
       "gpt-5.4",
       "gpt-5.4-mini",
@@ -223,7 +226,7 @@ describe("resolveAppModelSelection", () => {
         },
         "",
       ),
-    ).toBe("gpt-5.5");
+    ).toBe("gpt-5.6-sol");
   });
 
   it("resolves display names through the shared resolver", () => {

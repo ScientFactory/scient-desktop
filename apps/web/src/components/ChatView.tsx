@@ -38,7 +38,11 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
 } from "@synara/contracts";
-import { getModelCapabilities, normalizeModelSlug } from "@synara/shared/model";
+import {
+  getModelCapabilities,
+  getRecommendedDefaultModelSelection,
+  normalizeModelSlug,
+} from "@synara/shared/model";
 import { resolveTailUserMessageEditTarget } from "@synara/shared/conversationEdit";
 import { threadExportBlockedReason } from "@synara/shared/threadExport";
 import { buildTemporaryWorktreeBranchName } from "@synara/shared/git";
@@ -1674,10 +1678,8 @@ export default function ChatView({
         ? buildLocalDraftThread(
             threadId,
             draftThread,
-            fallbackDraftProject?.defaultModelSelection ?? {
-              provider: "codex",
-              model: DEFAULT_MODEL_BY_PROVIDER.codex,
-            },
+            fallbackDraftProject?.defaultModelSelection ??
+              getRecommendedDefaultModelSelection("codex")!,
             localDraftError,
           )
         : undefined,
