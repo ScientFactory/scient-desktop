@@ -46,16 +46,10 @@ export interface SelectableModelOption {
 
 export type RecommendedModelCandidate = SelectableModelOption &
   Partial<
-    Pick<
-      ProviderModelDescriptor,
-      "resolvedModel" | "isDefault" | "supportedReasoningEfforts"
-    >
+    Pick<ProviderModelDescriptor, "resolvedModel" | "isDefault" | "supportedReasoningEfforts">
   >;
 
-const RECOMMENDED_MODEL_IDENTIFIERS: Record<
-  ProviderKind,
-  ReadonlyArray<ReadonlyArray<string>>
-> = {
+const RECOMMENDED_MODEL_IDENTIFIERS: Record<ProviderKind, ReadonlyArray<ReadonlyArray<string>>> = {
   codex: [["gpt-5-6-sol"], ["gpt-5-6"], ["gpt-5-5"]],
   claudeAgent: [["claude-opus-4-8"], ["opus"]],
   cursor: [["gpt-5-6-sol"], ["auto"]],
@@ -63,18 +57,8 @@ const RECOMMENDED_MODEL_IDENTIFIERS: Record<
   grok: [["grok-build-latest"], ["grok-4-5-latest"], ["grok-4-5"], ["grok-build"]],
   droid: [["auto"]],
   kilo: [["kilo-auto/frontier"]],
-  opencode: [
-    ["gpt-5-6-sol"],
-    ["claude-opus-4-8"],
-    ["gemini-3-6-flash"],
-    ["grok-4-5"],
-  ],
-  pi: [
-    ["gpt-5-6-sol"],
-    ["claude-opus-4-8"],
-    ["gemini-3-6-flash"],
-    ["grok-4-5"],
-  ],
+  opencode: [["gpt-5-6-sol"], ["claude-opus-4-8"], ["gemini-3-6-flash"], ["grok-4-5"]],
+  pi: [["gpt-5-6-sol"], ["claude-opus-4-8"], ["gemini-3-6-flash"], ["grok-4-5"]],
 };
 
 function canonicalModelIdentity(value: string): string {
@@ -146,10 +130,7 @@ function candidateSupportsHighEffort(
 
   // Antigravity has no static catalog, but this product-recommended model supports
   // the high reasoning option. Live metadata remains authoritative when present.
-  if (
-    provider === "antigravity" &&
-    candidateMatchesIdentifier(candidate, "gemini-3-6-flash")
-  ) {
+  if (provider === "antigravity" && candidateMatchesIdentifier(candidate, "gemini-3-6-flash")) {
     return true;
   }
 
@@ -212,9 +193,7 @@ function recommendedModelSelection(
 }
 
 /** Product-level default used before a provider catalog is available. */
-export function getRecommendedDefaultModelSelection(
-  provider: ProviderKind,
-): ModelSelection | null {
+export function getRecommendedDefaultModelSelection(provider: ProviderKind): ModelSelection | null {
   const model = getDefaultModel(provider);
   return model ? recommendedModelSelection(provider, { slug: model, name: model }) : null;
 }

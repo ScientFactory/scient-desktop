@@ -88,10 +88,7 @@ import {
   type ServerLocalServerProcess,
 } from "@synara/contracts";
 import { isGenericChatThreadTitle } from "@synara/shared/chatThreads";
-import {
-  getDefaultModel,
-  getRecommendedDefaultModelSelection,
-} from "@synara/shared/model";
+import { getDefaultModel, getRecommendedDefaultModelSelection } from "@synara/shared/model";
 import { pluralize } from "@synara/shared/text";
 import { localServerAddressLabel, localServerMatchesRun } from "@synara/shared/localServers";
 import { resolveThreadWorkspaceCwd } from "@synara/shared/threadEnvironment";

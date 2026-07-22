@@ -340,19 +340,20 @@ describe("ClaudeAdapterLive", () => {
 
   it.effect("uses the configured Claude executable for pre-session model discovery", () => {
     const harness = makeHarness();
-    (harness.query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels = async () => [
-      {
-        value: "opus[1m]",
-        resolvedModel: "claude-opus-4-8[1m]",
-        displayName: "Claude Opus 4.8 (1M context)",
-        description: "Complex agentic coding",
-        supportsEffort: true,
-        supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
-        supportsAdaptiveThinking: true,
-        supportsFastMode: true,
-        supportsAutoMode: false,
-      },
-    ];
+    (harness.query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels =
+      async () => [
+        {
+          value: "opus[1m]",
+          resolvedModel: "claude-opus-4-8[1m]",
+          displayName: "Claude Opus 4.8 (1M context)",
+          description: "Complex agentic coding",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: true,
+          supportsAutoMode: false,
+        },
+      ];
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       if (!adapter.listModels) {

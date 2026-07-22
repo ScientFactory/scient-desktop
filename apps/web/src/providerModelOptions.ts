@@ -138,8 +138,7 @@ export function mergeDynamicModelOptions(input: {
     input.provider === "claudeAgent"
       ? input.dynamicModels
           .find(
-            (model) =>
-              model.isDefault === true || model.slug.trim().toLowerCase() === "default",
+            (model) => model.isDefault === true || model.slug.trim().toLowerCase() === "default",
           )
           ?.resolvedModel?.trim()
       : undefined;

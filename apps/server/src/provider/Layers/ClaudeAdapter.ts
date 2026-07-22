@@ -305,7 +305,8 @@ function mapClaudeModelInfo(model: ModelInfo): ProviderModelDescriptor {
   const description = model.description.trim();
   const supportedReasoningEfforts = model.supportedEffortLevels?.map((effort) => ({
     value: effort,
-    label: effort === "xhigh" ? "Extra High" : `${effort.charAt(0).toUpperCase()}${effort.slice(1)}`,
+    label:
+      effort === "xhigh" ? "Extra High" : `${effort.charAt(0).toUpperCase()}${effort.slice(1)}`,
   }));
   return {
     slug: model.value,
