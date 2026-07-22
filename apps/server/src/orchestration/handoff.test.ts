@@ -6,7 +6,12 @@
 import { MessageId, ThreadId, type OrchestrationMessage } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
-import { buildHandoffBootstrapText, buildPriorTranscriptBootstrapText } from "./handoff.ts";
+import {
+  buildHandoffBootstrapText,
+  buildMessageForkBootstrapText,
+  buildPriorTranscriptBootstrapText,
+  listImportedForkProviderAttachments,
+} from "./handoff.ts";
 
 const message = (
   index: number,
@@ -100,5 +105,50 @@ describe("transcript bootstrap budgets", () => {
     expect(text!.length).toBeGreaterThan(32_000);
     expect(text!.length).toBeLessThanOrEqual(90_000);
     expect(text).toContain("handoff-179");
+  });
+
+  it("serializes assistant selections as context without treating them as provider files", () => {
+    const selectedMessage: OrchestrationMessage = {
+      ...message(1, "user", "Rewrite this", "native"),
+      source: "fork-import",
+      attachments: [
+        {
+          type: "assistant-selection",
+          id: "selection-critical-excerpt",
+          assistantMessageId: MessageId.makeUnsafe("selected-assistant-message"),
+          text: "critical selected excerpt",
+        },
+      ],
+    };
+    const selectedThread = thread([selectedMessage]);
+
+    const text = buildMessageForkBootstrapText(selectedThread);
+
+    expect(text).toContain("Rewrite this");
+    expect(text).toContain("critical selected excerpt");
+    expect(listImportedForkProviderAttachments(selectedThread)).toEqual([]);
+  });
+
+  it("reserves a complete attachment manifest ahead of truncated imported message text", () => {
+    const attachments = Array.from({ length: 10 }, (_, index) => ({
+      type: "file" as const,
+      id: `long-message-attachment-${index}`,
+      name: `${String(index).padStart(2, "0")}-${"x".repeat(180)}.txt`,
+      mimeType: "text/plain",
+      sizeBytes: 1,
+    }));
+    const importedMessage: OrchestrationMessage = {
+      ...message(1, "user", "long text ".repeat(1_000), "native"),
+      source: "fork-import",
+      attachments,
+    };
+
+    const text = buildMessageForkBootstrapText(thread([importedMessage]), 8_000);
+
+    expect(text).not.toBeNull();
+    expect(text).toContain("Imported attachment manifest:");
+    for (const attachment of attachments) {
+      expect(text).toContain(attachment.name);
+    }
   });
 });

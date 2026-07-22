@@ -123,6 +123,40 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       detail,
     });
 
+  const validateImportedMessageIdsAgainstProjection = (command: OrchestrationCommand) => {
+    if (
+      (command.type !== "thread.handoff.create" && command.type !== "thread.fork.create") ||
+      command.importedMessages.length === 0
+    ) {
+      return Effect.void;
+    }
+
+    const importedMessageIds = command.importedMessages.map((message) => message.messageId);
+    return sql<{ readonly messageId: string }>`
+      SELECT message_id AS "messageId"
+      FROM projection_thread_messages
+      WHERE message_id IN ${sql.in(importedMessageIds)}
+      LIMIT 1
+    `.pipe(
+      Effect.mapError(
+        toPersistenceSqlError(
+          "OrchestrationEngine.validateImportedMessageIdsAgainstProjection:query",
+        ),
+      ),
+      Effect.flatMap((rows) => {
+        const conflictingMessageId = rows[0]?.messageId;
+        return conflictingMessageId === undefined
+          ? Effect.void
+          : Effect.fail(
+              new OrchestrationCommandInvariantError({
+                commandType: command.type,
+                detail: `Imported message id '${conflictingMessageId}' must be unique and must not already exist.`,
+              }),
+            );
+      }),
+    );
+  };
+
   const resolveStoredCommandOutcome = (
     command: OrchestrationCommand,
   ): Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never> =>
@@ -223,13 +257,19 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     thread: OrchestrationReadModel["threads"][number],
   ): OrchestrationReadModel => {
     const existingThread = model.threads.find((entry) => entry.id === thread.id);
-    const mergedThread =
-      existingThread && existingThread.messages.length > 0
-        ? {
-            ...thread,
-            messages: existingThread.messages,
-          }
-        : thread;
+    const hotMessageIds = new Set((existingThread?.messages ?? []).map((message) => message.id));
+    // The command model starts with no message bodies after a restart, then
+    // accumulates new events in their authoritative order. Keep persisted-only
+    // history first and let the hot model replace matching rows. This also
+    // avoids reordering same-timestamp messages by the projection's id tie-break.
+    const mergedMessages = [
+      ...thread.messages.filter((message) => !hotMessageIds.has(message.id)),
+      ...(existingThread?.messages ?? []),
+    ];
+    const mergedThread = {
+      ...thread,
+      messages: mergedMessages,
+    };
     const hasThread = existingThread !== undefined;
     return {
       ...model,
@@ -381,6 +421,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       }
 
       const deciderReadModel = yield* buildDeciderReadModel(envelope.command);
+      yield* validateImportedMessageIdsAgainstProjection(envelope.command);
       const eventBase = yield* decideOrchestrationCommand({
         command: envelope.command,
         readModel: deciderReadModel,
