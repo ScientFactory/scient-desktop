@@ -137,6 +137,7 @@ async function mountPicker(props: {
   providers?: ReadonlyArray<ServerProviderStatus>;
   loadingModelProviders?: Partial<Record<ProviderKind, boolean>>;
   onSelectionCommitted?: () => void;
+  onProviderConnectionRequested?: (provider: ProviderKind) => void;
   modelOptionsByProvider?: Record<
     ProviderKind,
     ReadonlyArray<ProviderModelOption & { slug: ModelSlug }>
@@ -156,6 +157,9 @@ async function mountPicker(props: {
         : {})}
       {...(props.providers ? { providers: props.providers } : {})}
       {...(props.onSelectionCommitted ? { onSelectionCommitted: props.onSelectionCommitted } : {})}
+      {...(props.onProviderConnectionRequested
+        ? { onProviderConnectionRequested: props.onProviderConnectionRequested }
+        : {})}
       onProviderModelChange={onProviderModelChange}
     />,
     { container: host },
@@ -532,6 +536,7 @@ describe("ProviderModelPicker", () => {
   });
 
   it("opens guided connection from an unavailable provider row", async () => {
+    const onProviderConnectionRequested = vi.fn();
     const mounted = await mountPicker({
       provider: "codex",
       model: "gpt-5-codex",
@@ -552,6 +557,7 @@ describe("ProviderModelPicker", () => {
           checkedAt: "2026-04-10T10:00:00.000Z",
         },
       ],
+      onProviderConnectionRequested,
     });
 
     try {
@@ -564,6 +570,9 @@ describe("ProviderModelPicker", () => {
         expect(text).toContain("Set up");
       });
       await page.getByRole("menuitem", { name: /Claude.*Set up/u }).click();
+
+      expect(onProviderConnectionRequested).toHaveBeenCalledOnce();
+      expect(onProviderConnectionRequested).toHaveBeenCalledWith("claudeAgent");
 
       await vi.waitFor(() => {
         expect(useProviderConnectionDialogStore.getState()).toMatchObject({

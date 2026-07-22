@@ -15,7 +15,7 @@ import {
   type ThreadId,
 } from "@synara/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
 import { useAppSettings } from "~/appSettings";
 import {
@@ -42,10 +42,15 @@ import {
 import { TimePicker } from "~/components/ui/time-picker";
 import { toastManager } from "~/components/ui/toast";
 import {
+  useApplyProviderSelectionAfterConnection,
+  useProviderConnectionSelectionIntent,
+} from "~/hooks/useProviderSelectionAfterConnection";
+import {
   hasBlockingAutomationDraftWarnings,
   type AutomationDraftWarning,
   type AutomationDraftWarningId,
 } from "~/lib/automationDraft";
+import { findProviderStatus } from "~/lib/providerAvailability";
 import {
   acknowledgedRiskIdsForFormWarnings,
   applyScheduleToForm,
@@ -703,6 +708,8 @@ export function AutomationModelPicker({
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const providerStatuses = useProviderStatusesForLocalConfig();
   const [open, setOpen] = useState(false);
+  const selectionScope = useId();
+  const providerSelectionIntent = useProviderConnectionSelectionIntent(selectionScope);
   const modelHintByProvider = useMemo<Partial<Record<ProviderKind, string | null>>>(
     () => ({ [value.provider]: value.model }),
     [value.model, value.provider],
@@ -714,9 +721,29 @@ export function AutomationModelPicker({
   });
   const { modelOptionsByProvider, loadingModelProviders } = useProviderModelCatalog({
     selectedProvider: value.provider,
-    discoveryEnabled: open,
+    discoveryEnabled: open || providerSelectionIntent.pendingProvider !== null,
     cwd: providerModelDiscoveryCwd,
     modelHintByProvider,
+  });
+  const handleProviderModelChange = useCallback(
+    (provider: ProviderKind, model: string) => onChange(buildModelSelection(provider, model)),
+    [onChange],
+  );
+  const handleProviderConnectionRequested = useCallback(
+    (provider: ProviderKind) => {
+      providerSelectionIntent.request(provider, findProviderStatus(providerStatuses, provider));
+    },
+    [providerSelectionIntent, providerStatuses],
+  );
+  useApplyProviderSelectionAfterConnection({
+    controller: providerSelectionIntent,
+    scopeKey: selectionScope,
+    lockedProvider: null,
+    statuses: providerStatuses,
+    modelOptionsByProvider,
+    loadingModelProviders,
+    preferredModelByProvider: modelHintByProvider,
+    onProviderModelChange: handleProviderModelChange,
   });
 
   return (
@@ -732,7 +759,8 @@ export function AutomationModelPicker({
       providerOrder={settings.providerOrder}
       open={open}
       onOpenChange={setOpen}
-      onProviderModelChange={(provider, model) => onChange(buildModelSelection(provider, model))}
+      onProviderModelChange={handleProviderModelChange}
+      onProviderConnectionRequested={handleProviderConnectionRequested}
     />
   );
 }
