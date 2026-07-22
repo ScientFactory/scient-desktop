@@ -82,6 +82,7 @@ import { shouldRejectUntrustedRequestOrigin } from "./trustedOrigins";
 import { bufferLiveUiStream, type LiveUiStreamDropReport } from "./wsStreamBackpressure";
 import { PullRequestService } from "./pullRequests/Services/PullRequestService";
 import { resolveGitHubRepository } from "./pullRequests/repositoryResolution";
+import { cloneProjectSource, getRepositorySourceStatuses } from "./projectSources";
 
 const MAX_DIAGNOSTIC_CHILD_PROCESSES = 80;
 const MAX_DIAGNOSTIC_ARGS_CHARS = 500;
@@ -720,6 +721,16 @@ export const makeWsRpcLayer = () =>
           rpcEffect(devServerManager.stop(input), "Failed to stop dev server"),
         [WS_METHODS.projectsListDevServers]: () =>
           rpcEffect(devServerManager.list, "Failed to list dev servers"),
+        [WS_METHODS.projectsRepositorySourceStatuses]: () =>
+          rpcEffect(
+            Effect.tryPromise(() => getRepositorySourceStatuses()),
+            "Failed to inspect repository sources",
+          ),
+        [WS_METHODS.projectsCloneSource]: (input) =>
+          rpcEffect(
+            Effect.tryPromise(() => cloneProjectSource(input, config.homeDir)),
+            "Failed to clone repository",
+          ),
         [WS_METHODS.subscribeProjectDevServerEvents]: () =>
           bufferLiveWhileInitialStreamLoads(
             Stream.fromEffect(
