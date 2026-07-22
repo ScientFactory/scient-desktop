@@ -196,11 +196,12 @@ export default Effect.gen(function* () {
   const statesByThreadId = new Map<string, EventThreadState>();
   const eventBackedThreadIds = new Set<string>();
   const highestOrdinalBySeries = new Map<string, number>();
-  const threadIdsWithTitleEvents = new Set(
-    eventRows
-      .filter((row) => row.eventType === "thread.meta-updated" && row.title !== null)
-      .map((row) => row.threadId),
-  );
+  const finalEventTitleByThreadId = new Map<string, string>();
+  for (const row of eventRows) {
+    if (row.title !== null) {
+      finalEventTitleByThreadId.set(row.threadId, row.title);
+    }
+  }
 
   for (const row of eventRows) {
     if (row.eventType === "thread.meta-updated") {
@@ -227,8 +228,7 @@ export default Effect.gen(function* () {
     });
     const hasUnrecordedProjectionRename =
       row.currentProjectionTitle !== null &&
-      row.currentProjectionTitle !== row.title &&
-      !threadIdsWithTitleEvents.has(row.threadId);
+      row.currentProjectionTitle !== finalEventTitleByThreadId.get(row.threadId);
     const legacySeries = hasUnrecordedProjectionRename
       ? null
       : inferLegacyForkSeries({

@@ -391,6 +391,51 @@ describe("059_ProjectionThreadsForkTitleFamilyRoot", () => {
         title: "Experiment",
         sourceId: "legacy-child",
       });
+      yield* insertLegacyThread({ id: "noop-root", title: "Greeting" });
+      yield* insertLegacyThread({
+        id: "noop-child",
+        title: "Greeting",
+        sourceId: "noop-root",
+      });
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id,
+          aggregate_kind,
+          stream_id,
+          stream_version,
+          event_type,
+          occurred_at,
+          command_id,
+          causation_event_id,
+          correlation_id,
+          actor_kind,
+          payload_json,
+          metadata_json
+        )
+        VALUES (
+          'event-title-noop-child-2',
+          'thread',
+          'noop-child',
+          2,
+          'thread.meta-updated',
+          ${createdAt},
+          'command-title-noop-child-2',
+          NULL,
+          'command-title-noop-child-2',
+          'client',
+          ${JSON.stringify({
+            threadId: "noop-child",
+            title: "Greeting",
+            updatedAt: createdAt,
+          })},
+          '{}'
+        )
+      `;
+      yield* sql`
+        UPDATE projection_threads
+        SET title = 'Experiment'
+        WHERE thread_id = 'noop-child'
+      `;
 
       yield* runMigrations();
       yield* runMigrations();
@@ -436,6 +481,8 @@ describe("059_ProjectionThreadsForkTitleFamilyRoot", () => {
           base: "Greeting",
           ordinal: 4,
         },
+        { id: "noop-child", familyRootId: null, base: null, ordinal: null },
+        { id: "noop-root", familyRootId: null, base: null, ordinal: null },
       ]);
 
       const projectedRoots = yield* sql<{
@@ -473,6 +520,8 @@ describe("059_ProjectionThreadsForkTitleFamilyRoot", () => {
           base: "Greeting",
           ordinal: 4,
         },
+        { id: "noop-child", familyRootId: null, base: null, ordinal: null },
+        { id: "noop-root", familyRootId: null, base: null, ordinal: null },
       ]);
 
       const allocatorRows = yield* sql<{
@@ -514,6 +563,17 @@ describe("059_ProjectionThreadsForkTitleFamilyRoot", () => {
       assert.strictEqual(
         resolveNextForkTitle({ sourceThread: renamedSource, threads: allocatorThreads }).title,
         "Experiment (3)",
+      );
+      const projectionRenamedSource = allocatorThreads.find((thread) => thread.id === "noop-child");
+      if (!projectionRenamedSource) {
+        throw new Error("Expected migrated projection-renamed source thread");
+      }
+      assert.strictEqual(
+        resolveNextForkTitle({
+          sourceThread: projectionRenamedSource,
+          threads: allocatorThreads,
+        }).title,
+        "Experiment (2)",
       );
     }).pipe(Effect.provide(NodeSqliteClient.layerMemory())),
   );
