@@ -3265,7 +3265,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         expect(
           useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.modelSelectionByProvider
             .codex,
-        ).toMatchObject({ provider: "codex", model: "gpt-5.5" });
+        ).toMatchObject({ provider: "codex", model: "gpt-5.6-sol" });
       });
       expect(document.querySelector('[data-slot="menu-popup"]')).toBeNull();
 
