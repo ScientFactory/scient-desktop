@@ -954,7 +954,6 @@ const make = Effect.gen(function* () {
         !shouldRestartForModelChange &&
         !shouldRestartForModelSelectionChange
       ) {
-        registerInitialMessageForkContextBootstrap();
         return existingSessionThreadId;
       }
 
