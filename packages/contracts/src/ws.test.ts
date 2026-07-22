@@ -94,6 +94,27 @@ it.effect("accepts project script discovery requests", () =>
   }),
 );
 
+it.effect("accepts project source status and clone requests", () =>
+  Effect.gen(function* () {
+    const statuses = yield* decode(WebSocketRequest, {
+      id: "req-project-source-statuses",
+      body: { _tag: WS_METHODS.projectsRepositorySourceStatuses },
+    });
+    assert.strictEqual(statuses.body._tag, WS_METHODS.projectsRepositorySourceStatuses);
+
+    const clone = yield* decode(WebSocketRequest, {
+      id: "req-project-source-clone",
+      body: {
+        _tag: WS_METHODS.projectsCloneSource,
+        source: "gitlab",
+        repository: "group/project",
+        destinationPath: "/tmp/project",
+      },
+    });
+    assert.strictEqual(clone.body._tag, WS_METHODS.projectsCloneSource);
+  }),
+);
+
 it.effect("accepts provider connection start, code submission, and cancel requests", () =>
   Effect.gen(function* () {
     const start = yield* decode(WebSocketRequest, {

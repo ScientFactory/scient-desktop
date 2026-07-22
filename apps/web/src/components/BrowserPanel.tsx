@@ -413,7 +413,7 @@ function BrowserLocalServerThumbnail({ server }: { server: ServerLocalServerProc
   );
 }
 
-// Replaces about:blank with a local-server launcher so the browser never opens to white.
+// Replaces about:blank with a useful, theme-aware local-server launcher.
 function BrowserLocalServersHome({
   activeTabId,
   loading,
@@ -430,15 +430,15 @@ function BrowserLocalServersHome({
   const hasServers = servers.length > 0;
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col overflow-hidden bg-[#0d0d0d] text-white">
+    <div className="absolute inset-0 z-20 flex flex-col overflow-hidden bg-background text-foreground">
       <div className="mx-auto flex h-full w-full max-w-[52rem] flex-col px-8 py-9">
         <div className="flex shrink-0 items-center justify-between">
-          <p className="text-[15px] font-medium text-white/35">Local</p>
+          <p className="text-[15px] font-medium text-muted-foreground/65">Local</p>
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="size-8 text-white/35 hover:bg-white/[0.06] hover:text-white/70"
+            className="size-8 text-muted-foreground/65 hover:bg-[var(--color-background-elevated-secondary)] hover:text-foreground"
             disabled={loading}
             onClick={onRefresh}
             aria-label="Refresh local servers"
@@ -452,15 +452,15 @@ function BrowserLocalServersHome({
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center text-center">
             {loading ? (
               <>
-                <RefreshCwIcon className="mb-4 size-12 animate-spin text-white/20" />
-                <p className="text-base font-semibold text-white">Scanning local servers</p>
-                <p className="mt-2 text-sm text-white/35">Checking localhost ports</p>
+                <RefreshCwIcon className="mb-4 size-12 animate-spin text-muted-foreground/35" />
+                <p className="text-base font-semibold text-foreground">Scanning local servers</p>
+                <p className="mt-2 text-sm text-muted-foreground/65">Checking localhost ports</p>
               </>
             ) : (
               <>
-                <GlobeIcon className="mb-4 size-16 stroke-[1.5] text-white/30" />
-                <p className="text-base font-semibold text-white">No local servers</p>
-                <p className="mt-2 text-sm text-white/35">Try another browser URL</p>
+                <GlobeIcon className="mb-4 size-16 stroke-[1.5] text-muted-foreground/45" />
+                <p className="text-base font-semibold text-foreground">No local servers</p>
+                <p className="mt-2 text-sm text-muted-foreground/65">Try another browser URL</p>
               </>
             )}
           </div>
@@ -479,7 +479,7 @@ function BrowserLocalServersHome({
                       onNavigate(url, activeTabId);
                     }
                   }}
-                  className="group grid w-full shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3.5 rounded-xl border border-white/[0.07] px-3 py-2.5 text-left transition-colors hover:border-white/[0.14] hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-45"
+                  className="group grid w-full shrink-0 cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3.5 rounded-xl border border-border/70 px-3 py-2.5 text-left transition-colors hover:border-border hover:bg-[var(--color-background-elevated-secondary)] disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <BrowserLocalServerThumbnail server={server} />
                   <LocalServerIdentity server={server} tone="browser" />

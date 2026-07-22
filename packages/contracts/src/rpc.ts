@@ -130,6 +130,11 @@ import {
   ProjectWriteFileResult,
 } from "./project";
 import {
+  CloneProjectSourceInput,
+  CloneProjectSourceResult,
+  RepositorySourceStatusesResult,
+} from "./projectSources";
+import {
   ScientProjectInitializationActionInput,
   ScientProjectInitializationApplyResult,
   ScientProjectInitializationPreviewInput,
@@ -421,6 +426,21 @@ export const WsStudioListThreadOutputsRpc = Rpc.make(WS_METHODS.studioListThread
 export const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   payload: FilesystemBrowseInput,
   success: FilesystemBrowseResult,
+  error: WsRpcError,
+});
+
+export const WsProjectsRepositorySourceStatusesRpc = Rpc.make(
+  WS_METHODS.projectsRepositorySourceStatuses,
+  {
+    payload: Schema.Struct({}),
+    success: RepositorySourceStatusesResult,
+    error: WsRpcError,
+  },
+);
+
+export const WsProjectsCloneSourceRpc = Rpc.make(WS_METHODS.projectsCloneSource, {
+  payload: CloneProjectSourceInput,
+  success: CloneProjectSourceResult,
   error: WsRpcError,
 });
 
@@ -1011,6 +1031,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsRunDevServerRpc,
   WsProjectsStopDevServerRpc,
   WsProjectsListDevServersRpc,
+  WsProjectsRepositorySourceStatusesRpc,
+  WsProjectsCloneSourceRpc,
   WsSubscribeProjectDevServerEventsRpc,
   WsScientProjectInitializationPreviewRpc,
   WsScientProjectInitializationApplyRpc,

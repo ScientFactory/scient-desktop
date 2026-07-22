@@ -11,7 +11,15 @@ import {
   type TurnId,
 } from "@synara/contracts";
 import type { FileDiffMetadata } from "@pierre/diffs/react";
-import { isWorkspaceRelativePathSafe } from "@synara/shared/path";
+import {
+  isLocalAbsolutePath,
+  isWorkspaceRelativePathSafe,
+  joinWorkspaceRelativePath,
+} from "@synara/shared/path";
+import {
+  LOCAL_HTML_PREVIEW_ROUTE_PATH,
+  isSupportedLocalHtmlPath,
+} from "@synara/shared/localPreviewFiles";
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
@@ -77,13 +85,16 @@ import {
 } from "../splitViewStore";
 import { selectRightDockState, useRightDockStore } from "../rightDockStore";
 import {
-  DEFAULT_RIGHT_DOCK_PANE_KIND,
   type RightDockPane,
   type RightDockPaneKind,
   resolveActivePane,
 } from "../rightDockStore.logic";
 import { RightDock } from "../components/chat/RightDock";
-import { CHAT_SURFACE_HEADER_ROW_CLASS_NAME } from "../components/chat/chatHeaderControls";
+import { RightDockEmptyState } from "../components/chat/RightDockEmptyState";
+import {
+  CHAT_SURFACE_HEADER_ROW_CLASS_NAME,
+  DOCK_HEADER_ICON_BUTTON_CLASS,
+} from "../components/chat/chatHeaderControls";
 import { PanelStateMessage } from "../components/chat/PanelStateMessage";
 import {
   RIGHT_DOCK_ADD_MENU_KINDS,
@@ -100,7 +111,16 @@ import {
 } from "../lib/chatReferences";
 import type { FileCommentSelection } from "../lib/fileComments";
 import { type DockPaneRuntimeMode } from "../lib/dockPaneActivation";
-import { projectListDirectoriesQueryOptions } from "../lib/projectReactQuery";
+import {
+  readDockFileExplorerOpen,
+  storeDockFileExplorerOpen,
+} from "../lib/dockFileExplorerPreference";
+import { FoldersIcon } from "../lib/icons";
+import {
+  projectListDirectoriesQueryOptions,
+  projectLocalPreviewGrantQueryOptions,
+} from "../lib/projectReactQuery";
+import { resolveWsHttpUrl } from "../lib/wsHttpUrl";
 import { clearNewThreadLanding, isNewThreadLandingPending } from "../lib/newThreadLanding";
 import {
   WorkspaceFileOpenerContext,
@@ -135,6 +155,7 @@ import {
 } from "../storeSelectors";
 import { sortThreadsForSidebar } from "../components/Sidebar.logic";
 import { Button } from "../components/ui/button";
+import { IconButton } from "../components/ui/icon-button";
 import {
   Dialog,
   DialogDescription,
@@ -1470,6 +1491,9 @@ function SingleChatSurface(props: {
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[props.threadId] ?? null,
   );
+  const diffAvailable = useStore(
+    (store) => (store.turnDiffIdsByThreadId?.[props.threadId]?.length ?? 0) > 0,
+  );
   const newThreadLandingRef = useRef<{ threadId: ThreadIdType; deferMount: boolean } | null>(null);
   if (newThreadLandingRef.current?.threadId !== props.threadId) {
     newThreadLandingRef.current = {
@@ -1535,6 +1559,7 @@ function SingleChatSurface(props: {
   const [editorDiffFiles, setEditorDiffFiles] = useState<ReadonlyArray<FileDiffMetadata>>([]);
   const [editorDiffFilesLoading, setEditorDiffFilesLoading] = useState(false);
   const [editorDiffOptionsControl, setEditorDiffOptionsControl] = useState<ReactNode | null>(null);
+  const [dockFileExplorerOpen, setDockFileExplorerOpen] = useState(readDockFileExplorerOpen);
 
   const activePane = resolveActivePane(dockState);
   const retainedActivePane =
@@ -1577,15 +1602,15 @@ function SingleChatSurface(props: {
     toggleSingletonPane(props.threadId, { kind: "browser" });
   }, [props.threadId, requestImmediateDockHydration, toggleSingletonPane]);
   const handleToggleRightDock = useCallback(() => {
-    if (!dockState.open) {
-      requestImmediateDockHydration(retainedActivePane?.kind ?? DEFAULT_RIGHT_DOCK_PANE_KIND);
+    if (!dockState.open && retainedActivePane) {
+      requestImmediateDockHydration(retainedActivePane.kind);
     }
     toggleDock(props.threadId);
   }, [
     dockState.open,
     props.threadId,
     requestImmediateDockHydration,
-    retainedActivePane?.kind,
+    retainedActivePane,
     toggleDock,
   ]);
   const handleOpenBrowserUrl = useCallback(() => {
@@ -1731,6 +1756,67 @@ function SingleChatSurface(props: {
     },
     [queryClient, workspaceRoot],
   );
+  const getHtmlPreviewUrl = useCallback(
+    async (path: string): Promise<string | null> => {
+      const targetPath = resolveDockFileOpenTarget(path, workspaceRoot);
+      if (!targetPath || !isSupportedLocalHtmlPath(targetPath)) {
+        return null;
+      }
+      const absolutePath = isLocalAbsolutePath(targetPath)
+        ? targetPath
+        : workspaceRoot
+          ? joinWorkspaceRelativePath(workspaceRoot, targetPath)
+          : null;
+      if (!absolutePath) {
+        return null;
+      }
+      const grant = await queryClient.fetchQuery(
+        projectLocalPreviewGrantQueryOptions({ path: absolutePath, staleTime: 15_000 }),
+      );
+      const params = new URLSearchParams({ grant: grant.grant });
+      return resolveWsHttpUrl(`${LOCAL_HTML_PREVIEW_ROUTE_PATH}?${params.toString()}`, {
+        includeLegacyToken: false,
+      });
+    },
+    [queryClient, workspaceRoot],
+  );
+  const openHtmlPreview = useCallback(
+    (path: string, destination: "internal" | "external"): boolean => {
+      const targetPath = resolveDockFileOpenTarget(path, workspaceRoot);
+      if (!targetPath || !isSupportedLocalHtmlPath(targetPath)) {
+        return false;
+      }
+      if (destination === "internal") {
+        requestImmediateDockHydration("browser");
+        openPane(props.threadId, { kind: "browser" });
+      }
+      void getHtmlPreviewUrl(path)
+        .then(async (url) => {
+          if (!url) {
+            throw new Error("This HTML file is not available for preview.");
+          }
+          const api = readNativeApi();
+          if (!api) {
+            throw new Error("The file opener is not available.");
+          }
+          if (destination === "external") {
+            await api.shell.openExternal(url);
+          } else {
+            await api.browser.open({ threadId: props.threadId, initialUrl: url });
+          }
+        })
+        .catch((error: unknown) => {
+          toastManager.add({
+            type: "error",
+            title: "Could not preview HTML",
+            description:
+              error instanceof Error ? error.message : "The rendered preview could not be opened.",
+          });
+        });
+      return true;
+    },
+    [getHtmlPreviewUrl, openPane, props.threadId, requestImmediateDockHydration, workspaceRoot],
+  );
   // Chat surface: file references open in the right-dock file pane. References
   // outside the workspace report unhandled so chips fall back to the external
   // editor.
@@ -1744,13 +1830,26 @@ function SingleChatSurface(props: {
         if (!targetPath) {
           return false;
         }
+        if (isSupportedLocalHtmlPath(targetPath)) {
+          return openHtmlPreview(path, "internal");
+        }
         requestImmediateDockHydration("file");
         openPane(props.threadId, { kind: "file", filePath: targetPath });
         return true;
       },
+      openHtmlInExternalBrowser: (path) => openHtmlPreview(path, "external"),
+      getHtmlPreviewUrl,
       prefetchFile: prefetchOpenerFile,
     }),
-    [openPane, prefetchOpenerFile, props.threadId, requestImmediateDockHydration, workspaceRoot],
+    [
+      getHtmlPreviewUrl,
+      openHtmlPreview,
+      openPane,
+      prefetchOpenerFile,
+      props.threadId,
+      requestImmediateDockHydration,
+      workspaceRoot,
+    ],
   );
   // Editor surface: the center file pane is already the file viewer, so file
   // references select into it instead of opening a dock pane.
@@ -2046,6 +2145,22 @@ function SingleChatSurface(props: {
     [openPane, props.threadId, requestImmediateDockHydration],
   );
 
+  const handleOpenDockFile = useCallback(
+    (path: string) => {
+      requestImmediateDockHydration("file");
+      openPane(props.threadId, { kind: "file", filePath: path });
+    },
+    [openPane, props.threadId, requestImmediateDockHydration],
+  );
+
+  const handleToggleDockFileExplorer = useCallback(() => {
+    setDockFileExplorerOpen((current) => {
+      const next = !current;
+      storeDockFileExplorerOpen(next);
+      return next;
+    });
+  }, []);
+
   const renderDockPane = useCallback(
     (
       pane: RightDockPane,
@@ -2128,9 +2243,8 @@ function SingleChatSurface(props: {
             <Suspense fallback={<PanelStateMessage>Loading explorer...</PanelStateMessage>}>
               <DockExplorerPane
                 workspaceRoot={workspaceRoot}
+                onOpenFile={handleOpenDockFile}
                 onReferenceInChat={handleReferenceInChat}
-                onAskWhyInChat={handleAskWhyInChat}
-                onCommentInChat={handleCommentInChat}
               />
             </Suspense>
           );
@@ -2140,6 +2254,8 @@ function SingleChatSurface(props: {
               <DockFilePane
                 workspaceRoot={workspaceRoot}
                 filePath={pane.filePath}
+                explorerOpen={dockFileExplorerOpen}
+                onOpenFile={handleOpenDockFile}
                 onReferenceInChat={handleReferenceInChat}
                 onAskWhyInChat={handleAskWhyInChat}
                 onCommentInChat={handleCommentInChat}
@@ -2177,7 +2293,9 @@ function SingleChatSurface(props: {
       dockState.open,
       handleAskWhyInChat,
       handleCommentInChat,
+      handleOpenDockFile,
       handleReferenceInChat,
+      dockFileExplorerOpen,
       props.projectId,
       props.threadId,
       requestActiveDockPaneLive,
@@ -2361,6 +2479,29 @@ function SingleChatSurface(props: {
           defaultWidth={DIFF_INLINE_DEFAULT_WIDTH}
           shouldAcceptWidth={shouldAcceptDockWidth}
           addMenuKinds={RIGHT_DOCK_ADD_MENU_KINDS}
+          activePaneAction={
+            activePane?.kind === "file" && activePane.filePath !== null ? (
+              <IconButton
+                variant="chrome"
+                size="icon-xs"
+                label={dockFileExplorerOpen ? "Hide file explorer" : "Show file explorer"}
+                tooltip={dockFileExplorerOpen ? "Hide file explorer" : "Show file explorer"}
+                tooltipSide="bottom"
+                aria-pressed={dockFileExplorerOpen}
+                className={DOCK_HEADER_ICON_BUTTON_CLASS}
+                onClick={handleToggleDockFileExplorer}
+              >
+                <FoldersIcon />
+              </IconButton>
+            ) : null
+          }
+          emptyState={
+            <RightDockEmptyState
+              workspaceAvailable={workspaceRoot !== null}
+              diffAvailable={diffAvailable}
+              onOpenPane={handleAddDockPane}
+            />
+          }
           motionKey={props.threadId}
           activePaneRuntimeMode={activePaneRuntimeMode}
           {...(paneLabelOverrides ? { paneLabelOverrides } : {})}

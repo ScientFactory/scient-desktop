@@ -10,6 +10,10 @@ import {
   ThreadId,
 } from "@synara/contracts";
 import { EDITOR_ICON_ROUTE_PATH } from "@synara/shared/editorIcons";
+import {
+  LOCAL_HTML_PREVIEW_ROUTE_PATH,
+  isSupportedLocalHtmlPath,
+} from "@synara/shared/localPreviewFiles";
 import { threadExportBlockedReason } from "@synara/shared/threadExport";
 import { DateTime, Effect, Exit, FileSystem, Layer, Option, Path, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -28,7 +32,11 @@ import { SessionCredentialService } from "./auth/Services/SessionCredentialServi
 import { deriveAuthClientMetadata } from "./auth/utils";
 import { ServerConfig, type ServerConfigShape } from "./config";
 import { resolveCachedEditorIcon } from "./editorAppIcons";
-import { LOCAL_IMAGE_ROUTE_PATH, resolveAllowedLocalPreviewFile } from "./localImageFiles.ts";
+import {
+  LOCAL_IMAGE_ROUTE_PATH,
+  resolveAllowedLocalPreviewFile,
+  resolveLocalPreviewGrantRealPath,
+} from "./localImageFiles.ts";
 import type { ProjectFaviconResolverShape } from "./project/Services/ProjectFaviconResolver";
 import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolver";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
@@ -174,6 +182,7 @@ export function makeEffectHttpRouteLayer(readiness: ServerReadiness) {
     siteFaviconEffectRouteLayer,
     editorIconEffectRouteLayer,
     localImageEffectRouteLayer,
+    localHtmlPreviewEffectRouteLayer,
     attachmentsEffectRouteLayer,
     staticAndDevEffectRouteLayer,
   );
@@ -602,6 +611,66 @@ export const localImageEffectRouteLayer = HttpRouter.add(
       },
     });
   }).pipe(Effect.catchTag("AuthError", (error) => Effect.succeed(authErrorResponse(error)))),
+);
+
+const HTML_PREVIEW_CONTENT_SECURITY_POLICY = [
+  "default-src 'none'",
+  "script-src 'none'",
+  "style-src 'unsafe-inline'",
+  "img-src data: blob:",
+  "font-src data:",
+  "media-src data: blob:",
+  "connect-src 'none'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "child-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'self' http://localhost:* http://127.0.0.1:* scient:",
+  "sandbox allow-top-navigation-by-user-activation",
+].join("; ");
+
+/**
+ * Serves exactly one short-lived, granted HTML file as inert rendered content.
+ * The grant is the authority: unlike /api/local-image, no caller-provided path
+ * or cwd participates in resolution, and active/networked document features are
+ * disabled by response policy.
+ */
+export const localHtmlPreviewEffectRouteLayer = HttpRouter.add(
+  "GET",
+  LOCAL_HTML_PREVIEW_ROUTE_PATH,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (!url) return HttpServerResponse.text("Bad Request", { status: 400 });
+
+    const filePath = resolveLocalPreviewGrantRealPath({
+      token: url.searchParams.get("grant"),
+    });
+    if (!filePath || !isSupportedLocalHtmlPath(filePath)) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+
+    const fileSystem = yield* FileSystem.FileSystem;
+    const fileInfo = yield* fileSystem
+      .stat(filePath)
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (!fileInfo || fileInfo.type !== "File") {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+
+    return streamedFileResponse({
+      fileSystem,
+      path: filePath,
+      sizeBytes: Number(fileInfo.size),
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Security-Policy": HTML_PREVIEW_CONTENT_SECURITY_POLICY,
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  }),
 );
 
 export const attachmentsEffectRouteLayer = HttpRouter.add(

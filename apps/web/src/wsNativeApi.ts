@@ -486,6 +486,10 @@ export function createWsNativeApi(): NativeApi {
       },
     },
     projects: {
+      repositorySourceStatuses: () =>
+        transport.request(WS_METHODS.projectsRepositorySourceStatuses),
+      cloneSource: (input) =>
+        transport.request(WS_METHODS.projectsCloneSource, input, { timeoutMs: null }),
       discoverScripts: (input) => transport.request(WS_METHODS.projectsDiscoverScripts, input),
       listDirectories: (input) => transport.request(WS_METHODS.projectsListDirectories, input),
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
