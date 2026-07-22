@@ -42,6 +42,11 @@ import { PtyAdapter } from "../../terminal/Services/PTY";
 import { buildClaudeProcessEnv } from "../claudeProcessEnv";
 import { buildCursorAgentCommand } from "../acp/CursorAcpCommand";
 import { probeDroidAcpAuthentication } from "../acp/DroidAcpSupport";
+import {
+  OpenAiNativeOAuthError,
+  runOpenAiNativeOAuthFlow,
+  type RunOpenAiNativeOAuthFlowOptions,
+} from "../oauth/openaiNativeOAuth";
 import { ProviderConnection, type ProviderConnectionShape } from "../Services/ProviderConnection";
 import { ProviderDiscoveryService } from "../Services/ProviderDiscoveryService";
 import { ProviderHealth } from "../Services/ProviderHealth";
@@ -71,12 +76,17 @@ interface ActiveConnection {
 }
 
 interface ConnectionCommand {
+  /** Empty only for the codex-native-oauth strategy when no runtime is installed yet. */
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
   readonly env: NodeJS.ProcessEnv;
   readonly cwd?: string;
   readonly waitingMessage: string;
-  readonly strategy?: "antigravity-browser";
+  readonly strategy?: "antigravity-browser" | "codex-native-oauth";
+  /** codex-native-oauth: destination CODEX_HOME for auth.json. */
+  readonly codexHome?: string;
+  /** codex-native-oauth: configured binary override for post-flow verification. */
+  readonly configuredBinaryPath?: string;
 }
 
 interface ConnectionOutputObserver {
@@ -266,6 +276,10 @@ export function makeProviderConnectionLive(options?: {
   readonly beforeAntigravityOutputPublication?: Effect.Effect<void>;
   readonly afterAntigravityCodeWindowInputClosed?: Effect.Effect<void>;
   readonly droidAuthenticationProbe?: typeof probeDroidAcpAuthentication;
+  /** Test seam: overrides issuer/client/ports/fetch for the native OpenAI flow. */
+  readonly openAiNativeOAuthFlowOverrides?: Partial<
+    Omit<RunOpenAiNativeOAuthFlowOptions, "codexHome" | "onAuthorizationUrl">
+  >;
 }) {
   const timeout = options?.timeout ?? CONNECTION_TIMEOUT;
   const antigravityCodeWindowTimeout =
@@ -380,12 +394,15 @@ export function makeProviderConnectionLive(options?: {
             });
           }
           const homePath = settings.providers.codex.homePath.trim() || undefined;
+          const configuredBinaryPath = settings.providers.codex.binaryPath.trim() || undefined;
           const runtimeEnv = yield* Effect.promise(() =>
             buildCodexProcessEnv(homePath ? { homePath } : {}),
           );
-          const executable = yield* resolveExecutable(
-            settings.providers.codex.binaryPath.trim() || undefined,
-            "codex",
+          // The native OAuth strategy signs in without a local runtime, so a
+          // missing binary must not block it; the empty executable is only a
+          // CLI-fallback marker and is never spawned while empty.
+          const executable = yield* resolveExecutable(configuredBinaryPath, "codex").pipe(
+            Effect.catch(() => Effect.succeed("")),
           );
           return {
             executable,
@@ -395,6 +412,9 @@ export function makeProviderConnectionLive(options?: {
               CODEX_HOME: resolveBaseCodexHomePath(process.env, homePath),
             },
             waitingMessage: "Finish signing in to ChatGPT in the browser window.",
+            strategy: "codex-native-oauth",
+            codexHome: resolveBaseCodexHomePath(process.env, homePath),
+            ...(configuredBinaryPath ? { configuredBinaryPath } : {}),
           } satisfies ConnectionCommand;
         }
 
@@ -730,7 +750,10 @@ export function makeProviderConnectionLive(options?: {
           // Provider-owned sign-in and verification never need a project cwd.
           // Keep them in Scient's private probe directory so authentication
           // cannot trigger macOS access to whichever project launched the app.
-          const command = { ...commandResult.success, cwd: providerConnectionCwd };
+          const command: ConnectionCommand = {
+            ...commandResult.success,
+            cwd: providerConnectionCwd,
+          };
           const refreshedBeforeStart = yield* providerHealth.refresh;
           const currentStatus = refreshedBeforeStart.find((status) => status.provider === provider);
           const requestsCodexReauthentication =
@@ -814,6 +837,35 @@ export function makeProviderConnectionLive(options?: {
                     },
                   }
                 : undefined;
+            let strategyFailureMessage: string | null = null;
+            const runCodexNativeOAuth: Effect.Effect<number, unknown> = runOpenAiNativeOAuthFlow({
+              codexHome: command.codexHome ?? resolveBaseCodexHomePath(process.env),
+              onAuthorizationUrl: (url) =>
+                publishState(
+                  provider,
+                  state({
+                    status: "waiting_for_browser",
+                    message: command.waitingMessage,
+                    authorizationUrl: url,
+                  }),
+                ).pipe(Effect.asVoid),
+              ...(options?.openAiNativeOAuthFlowOverrides ?? {}),
+            } satisfies RunOpenAiNativeOAuthFlowOptions).pipe(
+              Effect.scoped,
+              Effect.as(0),
+              Effect.catch((error) => {
+                if (error instanceof OpenAiNativeOAuthError) {
+                  if (error.reason === "port_in_use" && command.executable) {
+                    // The CLI owns the same credential file; its own login flow
+                    // is a safe fallback when the loopback port is occupied.
+                    return runCommand(command).pipe(Effect.scoped);
+                  }
+                  strategyFailureMessage = error.message;
+                  return Effect.succeed(1);
+                }
+                return Effect.fail(error);
+              }),
+            );
             const connectionProcess: Effect.Effect<number, unknown> =
               provider === "droid"
                 ? (options?.droidAuthenticationProbe ?? probeDroidAcpAuthentication)({
@@ -821,24 +873,26 @@ export function makeProviderConnectionLive(options?: {
                     childProcessSpawner: spawner,
                     cwd: providerConnectionCwd,
                   }).pipe(Effect.as(0))
-                : command.strategy === "antigravity-browser"
-                  ? runAntigravityConnection(
-                      command,
-                      operationId,
-                      authorizationCodeInput,
-                      authorizationCodeAccepted,
-                      authorizationCodeSubmissionState,
-                      authorizationCodeLifecycleClosed,
-                      publishState(
-                        provider,
-                        state({
-                          status: "verifying",
-                          message: "Verifying the connection.",
-                        }),
-                      ).pipe(Effect.asVoid),
-                      oauthOutputObserver,
-                    )
-                  : runCommand(command, oauthOutputObserver).pipe(Effect.scoped);
+                : command.strategy === "codex-native-oauth"
+                  ? runCodexNativeOAuth
+                  : command.strategy === "antigravity-browser"
+                    ? runAntigravityConnection(
+                        command,
+                        operationId,
+                        authorizationCodeInput,
+                        authorizationCodeAccepted,
+                        authorizationCodeSubmissionState,
+                        authorizationCodeLifecycleClosed,
+                        publishState(
+                          provider,
+                          state({
+                            status: "verifying",
+                            message: "Verifying the connection.",
+                          }),
+                        ).pipe(Effect.asVoid),
+                        oauthOutputObserver,
+                      )
+                    : runCommand(command, oauthOutputObserver).pipe(Effect.scoped);
             const operationTimeout =
               provider === "antigravity" && options?.timeout === undefined
                 ? antigravityTimeout
@@ -876,9 +930,10 @@ export function makeProviderConnectionLive(options?: {
                 state({
                   status: "failed",
                   message:
-                    provider === "grok"
+                    strategyFailureMessage ??
+                    (provider === "grok"
                       ? "Grok authorization was not completed. Close any old xAI page, update Grok if an update is available, then try again to start a fresh secure browser sign-in."
-                      : "Sign in was not completed. No credentials were saved by Scient.",
+                      : "Sign in was not completed. No credentials were saved by Scient."),
                   finished: true,
                 }),
               );
@@ -889,6 +944,21 @@ export function makeProviderConnectionLive(options?: {
               provider,
               state({ status: "verifying", message: "Verifying the connection." }),
             );
+            if (command.strategy === "codex-native-oauth") {
+              // The native flow can finish before a concurrently started managed
+              // install does. Credentials are already on disk, so wait for the
+              // runtime instead of failing verification against a missing binary.
+              for (let waitAttempt = 0; waitAttempt < 150; waitAttempt += 1) {
+                const refreshed = yield* providerHealth.refresh;
+                const current = refreshed.find((status) => status.provider === provider);
+                const installation = current?.installationState;
+                const installRunning =
+                  installation !== undefined &&
+                  !["installed", "succeeded", "failed", "cancelled"].includes(installation.status);
+                if (current?.available || !installRunning) break;
+                yield* Effect.sleep(Duration.seconds(2));
+              }
+            }
             let verified: ServerProviderStatus | undefined;
             for (let attempt = 0; attempt < 10; attempt += 1) {
               const refreshed = yield* providerHealth.refresh;
@@ -907,10 +977,19 @@ export function makeProviderConnectionLive(options?: {
               );
               return;
             }
+            const catalogBinaryPath =
+              command.strategy === "codex-native-oauth" && !command.executable
+                ? yield* providerRuntimeManager
+                    .resolve(provider, command.configuredBinaryPath)
+                    .pipe(
+                      Effect.map((runtime) => runtime.executable ?? "codex"),
+                      Effect.catch(() => Effect.succeed("codex")),
+                    )
+                : command.executable;
             const modelReadiness = yield* providerDiscovery
               .listModels({
                 provider,
-                binaryPath: command.executable,
+                binaryPath: catalogBinaryPath,
                 cwd: providerConnectionCwd,
               })
               .pipe(Effect.timeoutOption(Duration.seconds(30)), Effect.result);

@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import type {
   ProviderKind,
   ServerProviderConnectionState,
@@ -158,6 +162,18 @@ function makeConnectionTestLayer(input?: {
     readonly binaryPath?: string;
     readonly cwd?: string;
   }) => void;
+  readonly settingsOverrides?: Parameters<typeof ServerSettingsService.layerTest>[0];
+  readonly openAiNativeOAuthFlowOverrides?: NonNullable<
+    Parameters<typeof makeProviderConnectionLive>[0]
+  >["openAiNativeOAuthFlowOverrides"];
+  // Shapes availability/installation per refresh call so tests can model a
+  // managed install still running while another verification path polls.
+  readonly refreshStatusOverride?: (refreshCall: number) =>
+    | {
+        readonly available?: boolean;
+        readonly installationState?: ServerProviderStatus["installationState"];
+      }
+    | undefined;
 }) {
   let connectionState: ServerProviderConnectionState | undefined;
   const connectionStateWaiters = new Set<
@@ -165,21 +181,25 @@ function makeConnectionTestLayer(input?: {
   >();
   let authenticated = input?.initiallyAuthenticated ?? false;
   let refreshCalls = 0;
-  const status = (): ServerProviderStatus => ({
-    provider: input?.provider ?? "claudeAgent",
-    status: authenticated ? "ready" : "error",
-    available: input?.available ?? true,
-    authStatus: authenticated ? "authenticated" : "unauthenticated",
-    ...(input?.requiresProviderAccount === null
-      ? {}
-      : input?.requiresProviderAccount !== undefined
-        ? { requiresProviderAccount: input.requiresProviderAccount }
-        : input?.provider === "codex"
-          ? { requiresProviderAccount: true }
-          : {}),
-    checkedAt: new Date().toISOString(),
-    ...(connectionState ? { connectionState } : {}),
-  });
+  const status = (): ServerProviderStatus => {
+    const shaped = input?.refreshStatusOverride?.(refreshCalls);
+    return {
+      provider: input?.provider ?? "claudeAgent",
+      status: authenticated ? "ready" : "error",
+      available: shaped?.available ?? input?.available ?? true,
+      authStatus: authenticated ? "authenticated" : "unauthenticated",
+      ...(input?.requiresProviderAccount === null
+        ? {}
+        : input?.requiresProviderAccount !== undefined
+          ? { requiresProviderAccount: input.requiresProviderAccount }
+          : input?.provider === "codex"
+            ? { requiresProviderAccount: true }
+            : {}),
+      checkedAt: new Date().toISOString(),
+      ...(shaped?.installationState ? { installationState: shaped.installationState } : {}),
+      ...(connectionState ? { connectionState } : {}),
+    };
+  };
   const providerHealthLayer = Layer.succeed(ProviderHealth, {
     getStatuses: Effect.sync(() => [status()]),
     refresh: Effect.sync(() => {
@@ -388,8 +408,11 @@ function makeConnectionTestLayer(input?: {
     ...(input?.droidAuthenticationProbe
       ? { droidAuthenticationProbe: input.droidAuthenticationProbe }
       : {}),
+    ...(input?.openAiNativeOAuthFlowOverrides
+      ? { openAiNativeOAuthFlowOverrides: input.openAiNativeOAuthFlowOverrides }
+      : {}),
   }).pipe(
-    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(ServerSettingsService.layerTest(input?.settingsOverrides ?? {})),
     Layer.provideMerge(Layer.succeed(ServerConfig, TEST_CONFIG)),
     Layer.provideMerge(providerHealthLayer),
     Layer.provideMerge(providerDiscoveryLayer),
@@ -1420,30 +1443,196 @@ describe("ProviderConnectionLive", () => {
     expect(onSpawn).not.toHaveBeenCalled();
   });
 
-  it("starts a fresh Codex login when runtime recovery explicitly requests reauthentication", async () => {
+  it("runs the native Codex OAuth end to end and persists auth.json", async () => {
+    const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-native-"));
+    const onSpawn = vi.fn();
+    const idTokenSegment = Buffer.from(
+      JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "account-native" } }),
+    ).toString("base64url");
+    const idToken = `${Buffer.from("{}").toString("base64url")}.${idTokenSegment}.signature`;
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id_token: idToken,
+            access_token: "access-token-raw",
+            refresh_token: "refresh-token-raw",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    ) as unknown as typeof fetch;
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      initiallyAuthenticated: true,
+      onSpawn,
+      settingsOverrides: { providers: { codex: { homePath: codexHome } } },
+      openAiNativeOAuthFlowOverrides: { ports: [0], fetchImpl },
+    });
+
+    try {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const connection = yield* ProviderConnection;
+          yield* connection.start({
+            provider: "codex",
+            method: "codex_browser",
+            mode: "reauthenticate",
+          });
+          const waiting = yield* Effect.promise(() =>
+            fixture.waitForConnectionState(
+              (state) =>
+                state?.status === "waiting_for_browser" && state.authorizationUrl !== undefined,
+            ),
+          );
+          const authorizationUrl = new URL(waiting!.authorizationUrl!);
+          expect(authorizationUrl.origin).toBe("https://auth.openai.com");
+          expect(authorizationUrl.searchParams.get("code_challenge_method")).toBe("S256");
+          const redirectUri = authorizationUrl.searchParams.get("redirect_uri")!;
+          const state = authorizationUrl.searchParams.get("state")!;
+          yield* Effect.promise(() => fetch(`${redirectUri}?code=test-code&state=${state}`));
+          yield* Effect.promise(() =>
+            fixture.waitForConnectionState((current) => current?.status === "connected"),
+          );
+        }).pipe(Effect.provide(fixture.layer)),
+      );
+
+      // The native flow spawns no CLI process at all.
+      expect(onSpawn).not.toHaveBeenCalled();
+      const authJson = JSON.parse(
+        fs.readFileSync(path.join(codexHome, "auth.json"), "utf8"),
+      ) as Record<string, unknown>;
+      expect(authJson.tokens).toMatchObject({
+        id_token: idToken,
+        access_token: "access-token-raw",
+        refresh_token: "refresh-token-raw",
+        account_id: "account-native",
+      });
+    } finally {
+      fs.rmSync(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it("waits for a parallel managed install before verifying native Codex OAuth", async () => {
+    const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-native-"));
+    const onSpawn = vi.fn();
+    const idTokenSegment = Buffer.from(
+      JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "account-native" } }),
+    ).toString("base64url");
+    const idToken = `${Buffer.from("{}").toString("base64url")}.${idTokenSegment}.signature`;
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            id_token: idToken,
+            access_token: "access-token-raw",
+            refresh_token: "refresh-token-raw",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    ) as unknown as typeof fetch;
+    let installingRefreshes = 0;
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      initiallyAuthenticated: true,
+      onSpawn,
+      settingsOverrides: { providers: { codex: { homePath: codexHome } } },
+      openAiNativeOAuthFlowOverrides: { ports: [0], fetchImpl },
+      // Refresh #1 is the preflight; the codex-native pre-verification wait begins
+      // at refresh #2. Report an in-progress managed install (unavailable plus a
+      // non-terminal installationState) for that first wait refresh, then let the
+      // fixture's defaults flip it to available so the wait releases.
+      refreshStatusOverride: (refreshCall) => {
+        if (refreshCall !== 2) return undefined;
+        installingRefreshes += 1;
+        return {
+          available: false,
+          installationState: {
+            operationId: "codex-managed-install",
+            operation: "install",
+            status: "downloading",
+            startedAt: new Date().toISOString(),
+            finishedAt: null,
+            message: "Downloading the managed Codex runtime.",
+          },
+        };
+      },
+    });
+
+    try {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const connection = yield* ProviderConnection;
+          yield* connection.start({
+            provider: "codex",
+            method: "codex_browser",
+            mode: "reauthenticate",
+          });
+          const waiting = yield* Effect.promise(() =>
+            fixture.waitForConnectionState(
+              (state) =>
+                state?.status === "waiting_for_browser" && state.authorizationUrl !== undefined,
+            ),
+          );
+          const authorizationUrl = new URL(waiting!.authorizationUrl!);
+          const redirectUri = authorizationUrl.searchParams.get("redirect_uri")!;
+          const state = authorizationUrl.searchParams.get("state")!;
+          yield* Effect.promise(() => fetch(`${redirectUri}?code=test-code&state=${state}`));
+          yield* Effect.promise(() =>
+            fixture.waitForConnectionState((current) => current?.status === "connected"),
+          );
+        }).pipe(Effect.provide(fixture.layer)),
+      );
+
+      // The pre-verification wait must have consumed at least one in-progress
+      // install refresh before the account was verified as connected.
+      expect(installingRefreshes).toBeGreaterThanOrEqual(1);
+      expect(onSpawn).not.toHaveBeenCalled();
+      const authJson = JSON.parse(
+        fs.readFileSync(path.join(codexHome, "auth.json"), "utf8"),
+      ) as Record<string, unknown>;
+      expect(authJson.tokens).toMatchObject({ account_id: "account-native" });
+    } finally {
+      fs.rmSync(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to the CLI login when the OAuth callback port is unavailable", async () => {
+    const http = await import("node:http");
+    const blocker = http.createServer(() => undefined);
+    await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+    const blockedPort = (blocker.address() as { port: number }).port;
+    const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), "codex-native-"));
     const onSpawn = vi.fn();
     const fixture = makeConnectionTestLayer({
       provider: "codex",
       initiallyAuthenticated: true,
       onSpawn,
+      settingsOverrides: { providers: { codex: { homePath: codexHome } } },
+      openAiNativeOAuthFlowOverrides: { ports: [blockedPort] },
     });
 
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const connection = yield* ProviderConnection;
-        yield* connection.start({
-          provider: "codex",
-          method: "codex_browser",
-          mode: "reauthenticate",
-        });
-        yield* Effect.sleep(Duration.millis(20));
-        expect(fixture.getConnectionState()?.status).toBe("connected");
-      }).pipe(Effect.provide(fixture.layer)),
-    );
+    try {
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const connection = yield* ProviderConnection;
+          yield* connection.start({
+            provider: "codex",
+            method: "codex_browser",
+            mode: "reauthenticate",
+          });
+          yield* Effect.promise(() =>
+            fixture.waitForConnectionState((current) => current?.status === "connected"),
+          );
+        }).pipe(Effect.provide(fixture.layer)),
+      );
 
-    expect(onSpawn).toHaveBeenCalledWith(
-      expect.objectContaining({ command: "codex", args: ["login"] }),
-    );
+      expect(onSpawn).toHaveBeenCalledWith(expect.objectContaining({ args: ["login"] }));
+      const spawnedCommand = (onSpawn.mock.calls[0]?.[0] as CapturedCommand | undefined)?.command;
+      expect(path.basename(spawnedCommand ?? "").toLowerCase()).toMatch(/^codex(\.exe)?$/u);
+    } finally {
+      blocker.close();
+      fs.rmSync(codexHome, { recursive: true, force: true });
+    }
   });
 
   it("refuses official Codex reauthentication for a custom Codex provider", async () => {

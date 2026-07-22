@@ -5,6 +5,7 @@ import { useProviderConnectionDialogStore } from "./providerConnectionDialogStor
 describe("provider connection dialog store", () => {
   beforeEach(() => {
     useProviderConnectionDialogStore.getState().setOpen(false);
+    useProviderConnectionDialogStore.getState().clearConnectChain();
   });
 
   it("opens with provider and source context", () => {
@@ -34,5 +35,26 @@ describe("provider connection dialog store", () => {
       provider: null,
       source: null,
     });
+  });
+
+  it("keeps an active connect chain across dialog close", () => {
+    useProviderConnectionDialogStore.getState().openDialog("claudeAgent", "settings");
+    const chain = useProviderConnectionDialogStore.getState().beginConnectChain("claudeAgent");
+    useProviderConnectionDialogStore.getState().setOpen(false);
+    expect(useProviderConnectionDialogStore.getState().connectChain).toEqual(chain);
+  });
+
+  it("only clears the connect chain for a matching token", () => {
+    const chain = useProviderConnectionDialogStore.getState().beginConnectChain("antigravity");
+    useProviderConnectionDialogStore.getState().clearConnectChain("some-other-token");
+    expect(useProviderConnectionDialogStore.getState().connectChain).toEqual(chain);
+    useProviderConnectionDialogStore.getState().clearConnectChain(chain.token);
+    expect(useProviderConnectionDialogStore.getState().connectChain).toBeNull();
+  });
+
+  it("replaces a previous chain when a new one begins", () => {
+    useProviderConnectionDialogStore.getState().beginConnectChain("codex");
+    const next = useProviderConnectionDialogStore.getState().beginConnectChain("claudeAgent");
+    expect(useProviderConnectionDialogStore.getState().connectChain).toEqual(next);
   });
 });

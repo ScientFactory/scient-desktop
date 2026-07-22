@@ -70,6 +70,7 @@ export function providerConnectionTitle(provider: ProviderKind): string {
 
 export type ProviderConnectionPrimaryAction =
   | "install"
+  | "connect"
   | "sign_in"
   | "open_install_guide"
   | "check_again"
@@ -84,6 +85,34 @@ export interface ProviderConnectionPresentation {
   readonly busy: boolean;
   readonly canCancel: boolean;
   readonly canRestart?: boolean;
+}
+
+export type ConnectChainDecision = "start_sign_in" | "clear" | "wait";
+
+/**
+ * Decides the next automated step of a one-click connect chain (managed
+ * install followed by the provider's browser sign-in). The chain owner clears
+ * itself on "clear", starts the sign-in exactly once on "start_sign_in", and
+ * otherwise keeps waiting for streamed provider-status updates.
+ */
+export function decideConnectChainStep(
+  status: ServerProviderStatus | null | undefined,
+): ConnectChainDecision {
+  const operation = status?.connectionState;
+  if (
+    operation &&
+    ["starting", "waiting_for_browser", "verifying", "connected"].includes(operation.status)
+  ) {
+    // A sign-in is already running or finished; the chain has done its job.
+    return "clear";
+  }
+  const installation = status?.installationState;
+  if (!installation) return "wait";
+  if (installation.status === "installed" || installation.status === "succeeded") {
+    return "start_sign_in";
+  }
+  if (installation.status === "failed" || installation.status === "cancelled") return "clear";
+  return "wait";
 }
 
 export function describeManagedProviderUpdate(input: {
@@ -169,27 +198,15 @@ export function describeManagedProviderUpdate(input: {
 export function describeProviderConnection(
   provider: ProviderKind,
   status: ServerProviderStatus | null | undefined,
-  options?: { readonly forceReconnect?: boolean },
+  options?: { readonly forceReconnect?: boolean; readonly connectChainActive?: boolean },
 ): ProviderConnectionPresentation {
   const title = providerConnectionTitle(provider);
   const label = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
   const operation = status?.connectionState;
   const installation = status?.installationState;
 
-  if (
-    installation &&
-    !["installed", "succeeded", "failed", "cancelled"].includes(installation.status)
-  ) {
-    return {
-      title,
-      description: installation.message,
-      primaryAction: "none",
-      primaryLabel: "Installing…",
-      busy: true,
-      canCancel: true,
-    };
-  }
-
+  // An active sign-in outranks a concurrent managed install (the native Codex
+  // flow runs both at once); install-only progress renders below.
   if (
     operation &&
     (operation.status === "starting" ||
@@ -204,6 +221,20 @@ export function describeProviderConnection(
       busy: true,
       canCancel: true,
       canRestart: true,
+    };
+  }
+
+  if (
+    installation &&
+    !["installed", "succeeded", "failed", "cancelled"].includes(installation.status)
+  ) {
+    return {
+      title,
+      description: installation.message,
+      primaryAction: "none",
+      primaryLabel: options?.connectChainActive ? "Connecting…" : "Installing…",
+      busy: true,
+      canCancel: true,
     };
   }
 
@@ -323,11 +354,29 @@ export function describeProviderConnection(
       };
     }
     if (status.runtime?.canInstall) {
+      const stoppedInstallation =
+        installation?.status === "failed" || installation?.status === "cancelled"
+          ? installation
+          : null;
+      if (providerConnectionMethod(provider)) {
+        return {
+          title,
+          description: stoppedInstallation
+            ? stoppedInstallation.message
+            : `${label} isn't set up yet. Scient will download a verified, private copy for this app—no Homebrew, Node.js, npm, terminal, or administrator password required—and then open ${label}'s secure browser sign-in.`,
+          primaryAction: "connect",
+          primaryLabel: stoppedInstallation ? "Try again" : `Connect ${label}`,
+          busy: false,
+          canCancel: false,
+        };
+      }
       return {
         title,
-        description: `${label} is not installed. Scient can download a verified, private copy for this app—no Homebrew, Node.js, npm, terminal, or administrator password required.`,
+        description: stoppedInstallation
+          ? stoppedInstallation.message
+          : `${label} is not installed. Scient can download a verified, private copy for this app—no Homebrew, Node.js, npm, terminal, or administrator password required.`,
         primaryAction: "install",
-        primaryLabel: `Install ${label}`,
+        primaryLabel: stoppedInstallation ? "Try again" : `Install ${label}`,
         busy: false,
         canCancel: false,
       };
