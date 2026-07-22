@@ -47,6 +47,7 @@ export const ScientBuiltInSkillCatalogEntry = Schema.Struct({
   kind: Schema.Literals(["scientific", "meta"]),
   role: Schema.Literals(["constructive", "review", "orientation"]),
   activationScope: Schema.Literals(["user", "project"]),
+  readiness: Schema.Literals(["available", "latent"]),
   enabled: Schema.Boolean,
   defaultEnabled: Schema.Boolean,
   capabilities: Schema.Struct({
