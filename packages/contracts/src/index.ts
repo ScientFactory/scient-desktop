@@ -19,6 +19,7 @@ export * from "./orchestration";
 export * from "./editor";
 export * from "./environment";
 export * from "./project";
+export * from "./projectSources";
 export * from "./scientProjectInitialization";
 export * from "./studio";
 export * from "./filesystem";

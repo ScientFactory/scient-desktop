@@ -80,6 +80,7 @@ import {
   ProjectStopDevServerInput,
   ProjectWriteFileInput,
 } from "./project";
+import { CloneProjectSourceInput } from "./projectSources";
 import {
   ScientProjectInitializationActionInput,
   ScientProjectInitializationPreviewInput,
@@ -146,6 +147,8 @@ export const WS_METHODS = {
   projectsRunDevServer: "projects.runDevServer",
   projectsStopDevServer: "projects.stopDevServer",
   projectsListDevServers: "projects.listDevServers",
+  projectsRepositorySourceStatuses: "projects.repositorySourceStatuses",
+  projectsCloneSource: "projects.cloneSource",
   subscribeProjectDevServerEvents: "projects.subscribeDevServerEvents",
 
   // Scient-owned project initiation
@@ -326,6 +329,8 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.projectsRunDevServer, ProjectRunDevServerInput),
   tagRequestBody(WS_METHODS.projectsStopDevServer, ProjectStopDevServerInput),
   tagRequestBody(WS_METHODS.projectsListDevServers, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.projectsRepositorySourceStatuses, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.projectsCloneSource, CloneProjectSourceInput),
   tagRequestBody(WS_METHODS.subscribeProjectDevServerEvents, Schema.Struct({})),
   tagRequestBody(
     WS_METHODS.scientProjectInitializationPreview,
