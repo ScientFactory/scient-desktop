@@ -19,6 +19,7 @@ interface ForkTitleEventRow {
   readonly forkTitleFamilyRootId: string | null;
   readonly forkTitleBase: string | null;
   readonly forkTitleOrdinal: number | null;
+  readonly currentProjectionTitle: string | null;
 }
 
 interface EventThreadState {
@@ -90,6 +91,22 @@ function inferGeneratedForkSeries(input: {
   return Number.isSafeInteger(ordinal) && ordinal >= 2 && String(ordinal) === ordinalText
     ? { base, ordinal }
     : null;
+}
+
+function inferLegacyForkSeries(input: {
+  readonly title: string;
+  readonly forkSourceThreadId: string | null;
+  readonly sidechatSourceThreadId: string | null;
+  readonly statesByThreadId: ReadonlyMap<string, EventThreadState>;
+}): { readonly base: string } | null {
+  if (!input.forkSourceThreadId || input.sidechatSourceThreadId) {
+    return null;
+  }
+  const source = input.statesByThreadId.get(input.forkSourceThreadId);
+  if (!source || input.title !== source.currentTitle) {
+    return null;
+  }
+  return { base: source.automaticBase ?? source.currentTitle };
 }
 
 function resolveEventFamilyRoot(input: {
@@ -165,7 +182,12 @@ export default Effect.gen(function* () {
       json_extract(payload_json, '$.sidechatSourceThreadId') AS "sidechatSourceThreadId",
       json_extract(payload_json, '$.forkTitleFamilyRootId') AS "forkTitleFamilyRootId",
       json_extract(payload_json, '$.forkTitleBase') AS "forkTitleBase",
-      json_extract(payload_json, '$.forkTitleOrdinal') AS "forkTitleOrdinal"
+      json_extract(payload_json, '$.forkTitleOrdinal') AS "forkTitleOrdinal",
+      (
+        SELECT projection_threads.title
+        FROM projection_threads
+        WHERE projection_threads.thread_id = orchestration_events.stream_id
+      ) AS "currentProjectionTitle"
     FROM orchestration_events
     WHERE event_type IN ('thread.created', 'thread.meta-updated')
       AND json_valid(payload_json)
@@ -173,6 +195,12 @@ export default Effect.gen(function* () {
   `;
   const statesByThreadId = new Map<string, EventThreadState>();
   const eventBackedThreadIds = new Set<string>();
+  const highestOrdinalBySeries = new Map<string, number>();
+  const threadIdsWithTitleEvents = new Set(
+    eventRows
+      .filter((row) => row.eventType === "thread.meta-updated" && row.title !== null)
+      .map((row) => row.threadId),
+  );
 
   for (const row of eventRows) {
     if (row.eventType === "thread.meta-updated") {
@@ -197,17 +225,39 @@ export default Effect.gen(function* () {
       sidechatSourceThreadId: row.sidechatSourceThreadId,
       statesByThreadId,
     });
-    const automatic = isAutomaticFork(row) || inferredSeries !== null;
-    const automaticBase = inferredSeries?.base ?? (automatic ? row.forkTitleBase : null);
-    const automaticOrdinal = inferredSeries?.ordinal ?? (automatic ? row.forkTitleOrdinal : null);
+    const hasUnrecordedProjectionRename =
+      row.currentProjectionTitle !== null &&
+      row.currentProjectionTitle !== row.title &&
+      !threadIdsWithTitleEvents.has(row.threadId);
+    const legacySeries = hasUnrecordedProjectionRename
+      ? null
+      : inferLegacyForkSeries({
+          title: row.title,
+          forkSourceThreadId: row.forkSourceThreadId,
+          sidechatSourceThreadId: row.sidechatSourceThreadId,
+          statesByThreadId,
+        });
+    const automatic = isAutomaticFork(row) || inferredSeries !== null || legacySeries !== null;
+    const automaticBase =
+      legacySeries?.base ?? inferredSeries?.base ?? (automatic ? row.forkTitleBase : null);
     const familyRootId = automatic
-      ? (row.forkTitleFamilyRootId ??
+      ? ((legacySeries === null ? row.forkTitleFamilyRootId : null) ??
         resolveEventFamilyRoot({
           sourceThreadId: row.forkSourceThreadId!,
           forkTitleBase: automaticBase!,
           statesByThreadId,
         }))
       : null;
+    const seriesKey = automatic
+      ? JSON.stringify([row.projectId, familyRootId, automaticBase])
+      : null;
+    const highestOrdinal = seriesKey ? (highestOrdinalBySeries.get(seriesKey) ?? 1) : 1;
+    const automaticOrdinal = legacySeries
+      ? highestOrdinal + 1
+      : (inferredSeries?.ordinal ?? (automatic ? row.forkTitleOrdinal : null));
+    if (seriesKey && automaticOrdinal !== null) {
+      highestOrdinalBySeries.set(seriesKey, Math.max(highestOrdinal, automaticOrdinal));
+    }
     statesByThreadId.set(row.threadId, {
       threadId: row.threadId,
       projectId: row.projectId,
