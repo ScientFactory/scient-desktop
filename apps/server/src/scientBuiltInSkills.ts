@@ -110,6 +110,19 @@ async function writeFileIfChanged(target: string, contents: string): Promise<voi
   await Effect.runPromise(writeFileStringAtomically({ filePath: target, contents, mode: 0o600 }));
 }
 
+function releaseAssetPath(releaseDirectory: string, relativePath: string): string {
+  if (!relativePath.startsWith("assets/")) {
+    throw new Error(`Built-in skill asset must remain under assets/: ${relativePath}`);
+  }
+  const assetsDirectory = path.join(releaseDirectory, "assets");
+  const target = path.resolve(releaseDirectory, relativePath);
+  const relative = path.relative(assetsDirectory, target);
+  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`)) {
+    throw new Error(`Built-in skill asset escapes assets/: ${relativePath}`);
+  }
+  return target;
+}
+
 async function synchronizeScientBuiltInSkillsUnlocked(input: {
   readonly baseDir: string;
   readonly settings: ServerSettings;
@@ -134,6 +147,12 @@ async function synchronizeScientBuiltInSkillsUnlocked(input: {
     const releaseDirectory = path.join(root, release.name);
     await mkdir(releaseDirectory, { recursive: true, mode: 0o700 });
     await writeFileIfChanged(path.join(releaseDirectory, "SKILL.md"), release.body);
+    await rm(path.join(releaseDirectory, "assets"), { recursive: true, force: true });
+    for (const asset of release.assets) {
+      const target = releaseAssetPath(releaseDirectory, asset.path);
+      await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
+      await writeFileIfChanged(target, asset.contents);
+    }
     await writeFileIfChanged(
       path.join(releaseDirectory, "scient.release.json"),
       `${JSON.stringify(
@@ -142,6 +161,7 @@ async function synchronizeScientBuiltInSkillsUnlocked(input: {
           version: release.version,
           digest: release.digest,
           origin: release.origin,
+          assets: release.assets.map((asset) => asset.path),
         },
         null,
         2,

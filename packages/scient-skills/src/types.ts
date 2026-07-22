@@ -34,12 +34,18 @@ export interface BuiltInSkillMetadata {
   readonly limitations: readonly string[];
 }
 
+export interface BuiltInSkillTextAsset {
+  readonly path: `assets/${string}`;
+  readonly contents: string;
+}
+
 export interface BuiltInSkillRelease extends BuiltInSkillMetadata {
   readonly name: string;
   readonly description: string;
   readonly origin: typeof SCIENT_BUILT_IN_ORIGIN;
   readonly digest: `sha256:${string}`;
   readonly body: string;
+  readonly assets: readonly BuiltInSkillTextAsset[];
 }
 
 export interface BuiltInSkillActivation {
