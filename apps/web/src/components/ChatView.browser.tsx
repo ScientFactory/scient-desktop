@@ -1727,6 +1727,7 @@ async function measureUserRow(options: {
   const scrollContainer = await waitForElement(
     () => host.querySelector<HTMLElement>("[data-chat-scroll-container='true']"),
     "Unable to find ChatView message scroll container.",
+    20_000,
   );
 
   let row: HTMLElement | null = null;
