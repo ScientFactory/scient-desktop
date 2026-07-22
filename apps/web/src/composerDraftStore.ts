@@ -1832,6 +1832,9 @@ export function deriveEffectiveComposerModelState(input: {
   availableModelOptionsByProvider?: Partial<
     Record<ProviderKind, ReadonlyArray<RecommendedModelCandidate>>
   >;
+  runtimeModelOptionsByProvider?: Partial<
+    Record<ProviderKind, ReadonlyArray<RecommendedModelCandidate>>
+  >;
 }): EffectiveComposerModelState {
   const resolveAvailableModel = (candidate: string | null | undefined): ModelSlug | null => {
     const availableOptions = input.availableModelOptionsByProvider?.[input.selectedProvider];
@@ -1873,9 +1876,12 @@ export function deriveEffectiveComposerModelState(input: {
     (input.availableModelOptionsByProvider?.[input.selectedProvider]?.length ?? 0) === 0
       ? selectedDraftModel
       : null;
+  const runtimeModelOptions = input.runtimeModelOptionsByProvider?.[input.selectedProvider];
   const policyModelSelection = resolveRecommendedModelSelection(
     input.selectedProvider,
-    input.availableModelOptionsByProvider?.[input.selectedProvider],
+    runtimeModelOptions && runtimeModelOptions.length > 0
+      ? runtimeModelOptions
+      : input.availableModelOptionsByProvider?.[input.selectedProvider],
   );
   const selectedModel =
     resolveAvailableModel(activeSelection?.model) ??
@@ -5167,7 +5173,10 @@ export function useEffectiveComposerModelState(input: {
   projectModelSelection: ModelSelection | null | undefined;
   customModelsByProvider: Record<ProviderKind, readonly string[]>;
   availableModelOptionsByProvider?: Partial<
-    Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>>
+    Record<ProviderKind, ReadonlyArray<RecommendedModelCandidate>>
+  >;
+  runtimeModelOptionsByProvider?: Partial<
+    Record<ProviderKind, ReadonlyArray<RecommendedModelCandidate>>
   >;
 }): EffectiveComposerModelState {
   const draft = useComposerThreadDraft(input.threadId);
@@ -5183,9 +5192,13 @@ export function useEffectiveComposerModelState(input: {
         ...(input.availableModelOptionsByProvider !== undefined
           ? { availableModelOptionsByProvider: input.availableModelOptionsByProvider }
           : {}),
+        ...(input.runtimeModelOptionsByProvider !== undefined
+          ? { runtimeModelOptionsByProvider: input.runtimeModelOptionsByProvider }
+          : {}),
       }),
     [
       input.availableModelOptionsByProvider,
+      input.runtimeModelOptionsByProvider,
       draft,
       input.customModelsByProvider,
       input.projectModelSelection,

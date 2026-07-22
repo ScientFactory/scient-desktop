@@ -2520,6 +2520,47 @@ describe("composerDraftStore modelSelection", () => {
     });
   });
 
+  it("does not select an unavailable static recommendation over the live account catalog", () => {
+    const runtimeModels = [
+      {
+        slug: "gpt-5.6-terra",
+        name: "GPT-5.6 Terra",
+        isDefault: true as const,
+        supportedReasoningEfforts: [{ value: "low" }, { value: "high" }],
+      },
+    ];
+    const state = deriveEffectiveComposerModelState({
+      draft: { modelSelectionByProvider: {}, activeProvider: "codex" },
+      selectedProvider: "codex",
+      threadModelSelection: null,
+      projectModelSelection: null,
+      customModelsByProvider: {
+        codex: [],
+        claudeAgent: [],
+        cursor: [],
+        antigravity: [],
+        grok: [],
+        droid: [],
+        kilo: [],
+        opencode: [],
+        pi: [],
+      },
+      availableModelOptionsByProvider: {
+        codex: [
+          ...runtimeModels,
+          { slug: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+          { slug: "gpt-5.5", name: "GPT-5.5" },
+        ],
+      },
+      runtimeModelOptionsByProvider: { codex: runtimeModels },
+    });
+
+    expect(state).toEqual({
+      selectedModel: "gpt-5.6-terra",
+      modelOptions: { codex: { reasoningEffort: "high" } },
+    });
+  });
+
   it("preserves an explicit thread model instead of silently upgrading it", () => {
     const state = deriveEffectiveComposerModelState({
       draft: { modelSelectionByProvider: {}, activeProvider: "codex" },

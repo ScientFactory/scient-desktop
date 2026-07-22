@@ -2382,14 +2382,6 @@ export default function ChatView({
     openCodeDynamicModelsQuery.data,
     piDynamicModelsQuery.data,
   ]);
-  const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
-    threadId,
-    selectedProvider,
-    threadModelSelection: activeThread?.modelSelection,
-    projectModelSelection: activeProject?.defaultModelSelection,
-    customModelsByProvider,
-    availableModelOptionsByProvider: modelOptionsByProvider,
-  });
   const runtimeModelsByProvider = useMemo(
     () => ({
       claudeAgent: claudeDynamicModelsQuery.data?.models ?? [],
@@ -2414,6 +2406,15 @@ export default function ChatView({
       piDynamicModelsQuery.data?.models,
     ],
   );
+  const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
+    threadId,
+    selectedProvider,
+    threadModelSelection: activeThread?.modelSelection,
+    projectModelSelection: activeProject?.defaultModelSelection,
+    customModelsByProvider,
+    availableModelOptionsByProvider: modelOptionsByProvider,
+    runtimeModelOptionsByProvider: runtimeModelsByProvider,
+  });
   const providerModelsQueryByProvider = {
     claudeAgent: claudeDynamicModelsQuery,
     codex: codexDynamicModelsQuery,
