@@ -11,7 +11,10 @@ import {
   type InitializationRequest,
   type BuiltInSkillDescriptor,
 } from "@scientfactory/project-init";
-import { listProjectActivatableBuiltInSkillReleases } from "@scientfactory/scient-skills";
+import {
+  getBuiltInSkillReadiness,
+  listProjectActivatableBuiltInSkillReleases,
+} from "@scientfactory/scient-skills";
 import type {
   ScientProjectInitializationApplyResult,
   ScientProjectInitializationOperation,
@@ -51,11 +54,8 @@ function defaultBuiltInSkills(): readonly BuiltInSkillDescriptor[] {
     displayName: release.displayName,
     description: release.description,
     role: release.role,
-    defaultSelected: false,
-    readiness:
-      release.requirements.projectObjects.length > 0 || release.requirements.operations.length > 0
-        ? "latent"
-        : "available",
+    defaultSelected: release.activation.defaultEnabled,
+    readiness: getBuiltInSkillReadiness(release),
     prerequisites: [
       ...release.requirements.projectObjects.map((object) => `Project object: ${object}`),
       ...release.requirements.operations.map((operation) => `Operation: ${operation}`),

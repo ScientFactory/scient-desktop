@@ -1,0 +1,35 @@
+{
+  "id": "scient.evidence-to-note",
+  "version": "0.1.0",
+  "displayName": "Evidence to Note",
+  "kind": "scientific",
+  "role": "constructive",
+  "scope": "universal",
+  "visibility": "user",
+  "activation": {
+    "scope": "project",
+    "defaultEnabled": false
+  },
+  "maintainer": "ScientFactory",
+  "capabilities": {
+    "network": false,
+    "codeExecution": false,
+    "projectWrites": "proposal-only"
+  },
+  "requirements": {
+    "projectObjects": ["selected source evidence", "evidence-linked note proposal"],
+    "operations": [
+      "inspect selected evidence",
+      "propose evidence-linked note",
+      "review and decide proposal",
+      "preserve provenance and decision history",
+      "reopen and recover project state"
+    ]
+  },
+  "limitations": [
+    "Creates one note proposal from one exact source passage selected as evidence.",
+    "Does not capture evidence, summarize whole sources, combine evidence selections, or create project claims.",
+    "Does not add independent analysis or outside knowledge to the evidence-linked note.",
+    "Requires Scient's proposal, provenance, review, reopening, and recovery foundations."
+  ]
+}

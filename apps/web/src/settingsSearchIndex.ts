@@ -346,7 +346,8 @@ export const SETTINGS_SEARCH_ENTRIES: readonly SettingsSearchEntry[] = [
     id: "skills:skills",
     section: "skills",
     title: "Skills",
-    keywords: "Every skill found across providers, with toggles to control availability. agent",
+    keywords:
+      "Browse skills from Scient and connected providers, managed at the scope each skill supports. agent",
     target: null,
   },
 

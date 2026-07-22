@@ -45,7 +45,7 @@ export const InlineLinkChip = memo(function InlineLinkChip({
 
   if (interactive) {
     return (
-      <button type="button" className={chipClassName} title={url} onClick={onClick}>
+      <button type="button" className={chipClassName} title={url} dir="ltr" onClick={onClick}>
         {content}
       </button>
     );
@@ -55,6 +55,7 @@ export const InlineLinkChip = memo(function InlineLinkChip({
     <span
       className={chipClassName}
       title={url}
+      dir="ltr"
       contentEditable={false}
       suppressContentEditableWarning
       spellCheck={false}
