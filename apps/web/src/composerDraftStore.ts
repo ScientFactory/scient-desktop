@@ -1869,6 +1869,10 @@ export function deriveEffectiveComposerModelState(input: {
       )
     : null;
   const unlistedDraftModel = input.selectedProvider === "pi" ? selectedDraftModel : null;
+  const offlineDraftModel =
+    (input.availableModelOptionsByProvider?.[input.selectedProvider]?.length ?? 0) === 0
+      ? selectedDraftModel
+      : null;
   const policyModelSelection = resolveRecommendedModelSelection(
     input.selectedProvider,
     input.availableModelOptionsByProvider?.[input.selectedProvider],
@@ -1889,6 +1893,7 @@ export function deriveEffectiveComposerModelState(input: {
     persistedThreadModel ??
     persistedProjectModel ??
     unlistedDraftModel ??
+    offlineDraftModel ??
     policyModelSelection?.model ??
     selectedDraftModel ??
     baseModel ??

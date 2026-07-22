@@ -2548,6 +2548,38 @@ describe("composerDraftStore modelSelection", () => {
     expect(state).toEqual({ selectedModel: "gpt-5.5", modelOptions: null });
   });
 
+  it("preserves an explicit draft model before provider discovery is available", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: {
+        modelSelectionByProvider: {
+          claudeAgent: modelSelection("claudeAgent", "claude-haiku-4-5", {
+            thinking: true,
+          }),
+        },
+        activeProvider: "claudeAgent",
+      },
+      selectedProvider: "claudeAgent",
+      threadModelSelection: null,
+      projectModelSelection: null,
+      customModelsByProvider: {
+        codex: [],
+        claudeAgent: [],
+        cursor: [],
+        antigravity: [],
+        grok: [],
+        droid: [],
+        kilo: [],
+        opencode: [],
+        pi: [],
+      },
+    });
+
+    expect(state).toEqual({
+      selectedModel: "claude-haiku-4-5",
+      modelOptions: { claudeAgent: { thinking: true } },
+    });
+  });
+
   it("selects Claude Opus from resolved metadata instead of a stale first row", () => {
     const state = deriveEffectiveComposerModelState({
       draft: { modelSelectionByProvider: {}, activeProvider: "claudeAgent" },
