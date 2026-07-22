@@ -255,6 +255,109 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
     }),
   );
 
+  it.effect("keeps no-op fork titles but makes rename-away-and-back a replay-stable boundary", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const projectId = ProjectId.makeUnsafe("project-fork-title-replay");
+      const sameTitleThreadId = ThreadId.makeUnsafe("thread-fork-title-same");
+      const renamedThreadId = ThreadId.makeUnsafe("thread-fork-title-renamed");
+      const occurredAt = "2026-07-22T10:20:00.000Z";
+
+      for (const [threadId, suffix] of [
+        [sameTitleThreadId, "same"],
+        [renamedThreadId, "renamed"],
+      ] as const) {
+        yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.makeUnsafe(`event-fork-title-${suffix}-created`),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt,
+          commandId: CommandId.makeUnsafe(`command-fork-title-${suffix}-created`),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe(`command-fork-title-${suffix}-created`),
+          metadata: {},
+          payload: {
+            threadId,
+            projectId,
+            title: "Greeting (2)",
+            modelSelection: { provider: "codex", model: "gpt-5-codex" },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            forkSourceThreadId: ThreadId.makeUnsafe("thread-fork-title-root"),
+            forkTitleBase: "Greeting",
+            forkTitleOrdinal: 2,
+            createdAt: occurredAt,
+            updatedAt: occurredAt,
+          },
+        });
+      }
+
+      yield* eventStore.append({
+        type: "thread.meta-updated",
+        eventId: EventId.makeUnsafe("event-fork-title-same-noop"),
+        aggregateKind: "thread",
+        aggregateId: sameTitleThreadId,
+        occurredAt,
+        commandId: CommandId.makeUnsafe("command-fork-title-same-noop"),
+        causationEventId: null,
+        correlationId: CorrelationId.makeUnsafe("command-fork-title-same-noop"),
+        metadata: {},
+        payload: { threadId: sameTitleThreadId, title: "Greeting (2)", updatedAt: occurredAt },
+      });
+      for (const [title, suffix] of [
+        ["Experiment", "away"],
+        ["Greeting (2)", "back"],
+      ] as const) {
+        yield* eventStore.append({
+          type: "thread.meta-updated",
+          eventId: EventId.makeUnsafe(`event-fork-title-renamed-${suffix}`),
+          aggregateKind: "thread",
+          aggregateId: renamedThreadId,
+          occurredAt,
+          commandId: CommandId.makeUnsafe(`command-fork-title-renamed-${suffix}`),
+          causationEventId: null,
+          correlationId: CorrelationId.makeUnsafe(`command-fork-title-renamed-${suffix}`),
+          metadata: {},
+          payload: { threadId: renamedThreadId, title, updatedAt: occurredAt },
+        });
+      }
+
+      const readRows = () =>
+        sql<{
+          readonly id: string;
+          readonly forkTitleBase: string | null;
+          readonly forkTitleOrdinal: number | null;
+        }>`
+          SELECT
+            thread_id AS id,
+            fork_title_base AS "forkTitleBase",
+            fork_title_ordinal AS "forkTitleOrdinal"
+          FROM projection_threads
+          WHERE thread_id IN (${sameTitleThreadId}, ${renamedThreadId})
+          ORDER BY thread_id ASC
+        `;
+      const expectedRows = [
+        { id: renamedThreadId, forkTitleBase: null, forkTitleOrdinal: null },
+        { id: sameTitleThreadId, forkTitleBase: "Greeting", forkTitleOrdinal: 2 },
+      ];
+
+      yield* projectionPipeline.bootstrap;
+      assert.deepEqual(yield* readRows(), expectedRows);
+
+      yield* sql`DELETE FROM projection_threads WHERE thread_id IN (${sameTitleThreadId}, ${renamedThreadId})`;
+      yield* sql`
+        DELETE FROM projection_state
+        WHERE projector = ${ORCHESTRATION_PROJECTOR_NAMES.threads}
+      `;
+      yield* projectionPipeline.bootstrap;
+      assert.deepEqual(yield* readRows(), expectedRows);
+    }),
+  );
+
   it.effect("persists turn-start thread settings into projection rows", () =>
     Effect.gen(function* () {
       const projectionPipeline = yield* OrchestrationProjectionPipeline;

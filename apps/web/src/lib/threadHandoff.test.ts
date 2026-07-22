@@ -194,6 +194,66 @@ describe("threadHandoff", () => {
     ]);
   });
 
+  it("uses the earliest unsafe boundary when the active assistant projects after queued input", () => {
+    const priorUserId = MessageId.makeUnsafe("message-prior-before-interleaving");
+    const activeUserId = MessageId.makeUnsafe("message-active-before-interleaving");
+    const queuedUserId = MessageId.makeUnsafe("message-queued-before-active-assistant");
+    const activeAssistantId = MessageId.makeUnsafe("message-active-assistant-after-queued");
+    const activeTurnId = TurnId.makeUnsafe("turn-active-assistant-after-queued");
+    const requestedAt = "2026-07-22T08:02:00.000Z";
+    const thread = {
+      messages: [
+        {
+          id: priorUserId,
+          role: "user" as const,
+          text: "Settled prompt",
+          createdAt: "2026-07-22T08:01:00.000Z",
+          streaming: false,
+        },
+        {
+          id: activeUserId,
+          role: "user" as const,
+          text: "Active prompt",
+          createdAt: requestedAt,
+          streaming: false,
+        },
+        {
+          id: queuedUserId,
+          role: "user" as const,
+          text: "Queued prompt",
+          createdAt: "2026-07-22T08:02:01.000Z",
+          streaming: false,
+        },
+        {
+          id: activeAssistantId,
+          role: "assistant" as const,
+          text: "Delayed active response",
+          turnId: activeTurnId,
+          createdAt: "2026-07-22T08:02:02.000Z",
+          streaming: true,
+        },
+      ],
+      latestTurn: {
+        turnId: activeTurnId,
+        state: "running" as const,
+        requestedAt,
+        startedAt: requestedAt,
+        completedAt: null,
+        assistantMessageId: activeAssistantId,
+      },
+      session: null,
+    };
+
+    expect(
+      buildThreadForkImportedMessagesThrough(
+        thread,
+        queuedUserId,
+        ThreadId.makeUnsafe("thread-fork-interleaved-queue"),
+      ),
+    ).toEqual([]);
+    expect([...resolveThreadForkableMessageIds(thread)]).toEqual([priorUserId, activeUserId]);
+  });
+
   it("assigns equal-timestamp imports ids whose persisted sort preserves source order", () => {
     const boundaryId = MessageId.makeUnsafe("message-equal-time-assistant");
     const imported = buildThreadForkImportedMessagesThrough(

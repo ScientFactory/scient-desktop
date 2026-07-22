@@ -723,6 +723,20 @@ describe("ProviderCommandReactor", () => {
       },
     });
     const now = new Date().toISOString();
+    const importedAttachments = Array.from({ length: 9 }, (_, index) => ({
+      type: "file" as const,
+      id: `attachment-before-boundary-${index + 1}`,
+      name: `before-${index + 1}.txt`,
+      mimeType: "text/plain",
+      sizeBytes: index + 1,
+    }));
+    const currentAttachment = {
+      type: "file" as const,
+      id: "attachment-current-fork-turn",
+      name: "current.txt",
+      mimeType: "text/plain",
+      sizeBytes: 10,
+    };
 
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -734,15 +748,7 @@ describe("ProviderCommandReactor", () => {
             messageId: asMessageId("source-prefix-user"),
             role: "user",
             text: "Question before the branch",
-            attachments: [
-              {
-                type: "file",
-                id: "attachment-before-boundary",
-                name: "before.txt",
-                mimeType: "text/plain",
-                sizeBytes: 12,
-              },
-            ],
+            attachments: importedAttachments.slice(0, 8),
             createdAt: now,
             updatedAt: now,
           },
@@ -750,6 +756,7 @@ describe("ProviderCommandReactor", () => {
             messageId: sourceBoundaryId,
             role: "assistant",
             text: "Answer at the branch boundary",
+            attachments: importedAttachments.slice(8),
             createdAt: now,
             updatedAt: now,
           },
@@ -797,15 +804,7 @@ describe("ProviderCommandReactor", () => {
             messageId: asMessageId("fork-00000000-prefix-user"),
             role: "user",
             text: "Question before the branch",
-            attachments: [
-              {
-                type: "file",
-                id: "attachment-before-boundary",
-                name: "before.txt",
-                mimeType: "text/plain",
-                sizeBytes: 12,
-              },
-            ],
+            attachments: importedAttachments.slice(0, 8),
             createdAt: now,
             updatedAt: now,
           },
@@ -813,6 +812,7 @@ describe("ProviderCommandReactor", () => {
             messageId: asMessageId("fork-00000001-boundary-assistant"),
             role: "assistant",
             text: "Answer at the branch boundary",
+            attachments: importedAttachments.slice(8),
             createdAt: now,
             updatedAt: now,
           },
@@ -830,7 +830,7 @@ describe("ProviderCommandReactor", () => {
           messageId: asMessageId("message-boundary-fork-new-user"),
           role: "user",
           text: "Take this in a different direction",
-          attachments: [],
+          attachments: [currentAttachment],
         },
         runtimeMode: "approval-required",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -849,8 +849,43 @@ describe("ProviderCommandReactor", () => {
     expect(input?.input).toContain("Answer at the branch boundary");
     expect(input?.input).not.toContain("This later source message must not be inherited");
     expect(input?.input).toContain("Take this in a different direction");
+    expect(input?.input).toContain("before-9.txt");
     expect(input?.attachments?.map((attachment) => attachment.id)).toEqual([
-      "attachment-before-boundary",
+      currentAttachment.id,
+      ...importedAttachments.slice(0, 7).map((attachment) => attachment.id),
+    ]);
+    expect(input?.attachments).toHaveLength(8);
+
+    const followUpAttachment = {
+      type: "file" as const,
+      id: "attachment-after-bootstrap",
+      name: "follow-up.txt",
+      mimeType: "text/plain",
+      sizeBytes: 11,
+    };
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-message-boundary-fork-follow-up"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-boundary-fork-follow-up-user"),
+          role: "user",
+          text: "Continue the fork",
+          attachments: [followUpAttachment],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    const followUpInput = harness.sendTurn.mock.calls[1]?.[0] as
+      | { input?: string; attachments?: ReadonlyArray<{ id: string }> }
+      | undefined;
+    expect(followUpInput?.input).not.toContain("<thread_context>");
+    expect(followUpInput?.attachments?.map((attachment) => attachment.id)).toEqual([
+      followUpAttachment.id,
     ]);
 
     const readModel = await Effect.runPromise(harness.engine.getReadModel());
@@ -1571,6 +1606,15 @@ describe("ProviderCommandReactor", () => {
     });
     const now = new Date().toISOString();
     const importedAt = new Date(Date.parse(now) - 1_000).toISOString();
+    const importedAssistantAt = new Date(Date.parse(importedAt) + 1).toISOString();
+    const sourceBoundaryId = asMessageId("droid-async-bootstrap-source-boundary");
+    const importedAttachment = {
+      type: "file" as const,
+      id: "droid-async-bootstrap-imported-file",
+      name: "retained-context.txt",
+      mimeType: "text/plain",
+      sizeBytes: 21,
+    };
     harness.sendTurn
       .mockImplementationOnce(() => Effect.succeed({ threadId, turnId: firstTurnId }))
       .mockImplementationOnce(() => Effect.succeed({ threadId, turnId: retryTurnId }))
@@ -1578,10 +1622,37 @@ describe("ProviderCommandReactor", () => {
 
     await Effect.runPromise(
       harness.engine.dispatch({
+        type: "thread.messages.import",
+        commandId: CommandId.makeUnsafe("cmd-droid-async-bootstrap-source"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messages: [
+          {
+            messageId: asMessageId("droid-async-bootstrap-source-user"),
+            role: "user",
+            text: "Context retained across the failed prompt",
+            attachments: [importedAttachment],
+            createdAt: importedAt,
+            updatedAt: importedAt,
+          },
+          {
+            messageId: sourceBoundaryId,
+            role: "assistant",
+            text: "Source answer at the fork boundary",
+            createdAt: importedAssistantAt,
+            updatedAt: importedAssistantAt,
+          },
+        ],
+        createdAt: importedAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
         type: "thread.fork.create",
         commandId: CommandId.makeUnsafe("cmd-droid-async-bootstrap-fork"),
         threadId,
         sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+        sourceMessageId: sourceBoundaryId,
         projectId: asProjectId("project-1"),
         title: "Droid async bootstrap failure",
         modelSelection: {
@@ -1598,8 +1669,16 @@ describe("ProviderCommandReactor", () => {
             messageId: asMessageId("droid-async-bootstrap-imported-user"),
             role: "user",
             text: "Context retained across the failed prompt",
+            attachments: [importedAttachment],
             createdAt: importedAt,
             updatedAt: importedAt,
+          },
+          {
+            messageId: asMessageId("droid-async-bootstrap-imported-assistant"),
+            role: "assistant",
+            text: "Source answer at the fork boundary",
+            createdAt: importedAssistantAt,
+            updatedAt: importedAssistantAt,
           },
         ],
         createdAt: now,
@@ -1623,8 +1702,13 @@ describe("ProviderCommandReactor", () => {
       }),
     );
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    const firstInput = harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined;
+    const firstInput = harness.sendTurn.mock.calls[0]?.[0] as
+      | { input?: string; attachments?: ReadonlyArray<{ id: string }> }
+      | undefined;
     expect(firstInput?.input).toContain("<thread_context>");
+    expect(firstInput?.attachments?.map((attachment) => attachment.id)).toEqual([
+      importedAttachment.id,
+    ]);
 
     await harness.emitRuntimeEvent({
       type: "turn.completed",
@@ -1659,10 +1743,15 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.sendTurn.mock.calls.length === 2);
-    const retryInput = harness.sendTurn.mock.calls[1]?.[0] as { input?: string } | undefined;
+    const retryInput = harness.sendTurn.mock.calls[1]?.[0] as
+      | { input?: string; attachments?: ReadonlyArray<{ id: string }> }
+      | undefined;
     expect(retryInput?.input).toContain("<thread_context>");
     expect(retryInput?.input).toContain("Context retained across the failed prompt");
     expect(retryInput?.input).toContain("Retry after async failure");
+    expect(retryInput?.attachments?.map((attachment) => attachment.id)).toEqual([
+      importedAttachment.id,
+    ]);
 
     await harness.emitRuntimeEvent({
       type: "turn.completed",
@@ -1696,8 +1785,11 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.sendTurn.mock.calls.length === 3);
-    const followUpInput = harness.sendTurn.mock.calls[2]?.[0] as { input?: string } | undefined;
+    const followUpInput = harness.sendTurn.mock.calls[2]?.[0] as
+      | { input?: string; attachments?: ReadonlyArray<{ id: string }> }
+      | undefined;
     expect(followUpInput?.input).not.toContain("<thread_context>");
+    expect(followUpInput?.attachments).toBeUndefined();
     expectSkillAwareProviderInput(followUpInput?.input, "Continue after successful retry");
   });
 
@@ -1966,6 +2058,203 @@ describe("ProviderCommandReactor", () => {
     expect(resent?.input).toContain("Earlier answer");
     expect(resent?.input).toContain("edited prompt");
     expect(resent?.input).not.toContain("old prompt");
+  });
+
+  it("replays retained native context after rollback in a message fork without imported files", async () => {
+    const harness = await createHarness({
+      threadModelSelection: { provider: "droid", model: "claude-opus-4-8" },
+      conversationRollback: "restart-session",
+    });
+    const forkThreadId = ThreadId.makeUnsafe("thread-message-fork-later-rollback");
+    const sourceBoundaryId = asMessageId("message-fork-later-rollback-source-assistant");
+    const importedFile = {
+      type: "file" as const,
+      id: "message-fork-later-rollback-imported-file",
+      name: "source-only.txt",
+      mimeType: "text/plain",
+      sizeBytes: 17,
+    };
+    const sourceUserAt = "2026-07-22T10:10:00.000Z";
+    const sourceAssistantAt = "2026-07-22T10:10:01.000Z";
+    const nativeAt = "2026-07-22T10:11:00.000Z";
+    const targetAt = "2026-07-22T10:12:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.messages.import",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-later-rollback-source"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messages: [
+          {
+            messageId: asMessageId("message-fork-later-rollback-source-user"),
+            role: "user",
+            text: "Imported source question",
+            attachments: [importedFile],
+            createdAt: sourceUserAt,
+            updatedAt: sourceUserAt,
+          },
+          {
+            messageId: sourceBoundaryId,
+            role: "assistant",
+            text: "Imported source answer",
+            createdAt: sourceAssistantAt,
+            updatedAt: sourceAssistantAt,
+          },
+        ],
+        createdAt: sourceUserAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork.create",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-later-rollback-create"),
+        threadId: forkThreadId,
+        sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+        sourceMessageId: sourceBoundaryId,
+        projectId: asProjectId("project-1"),
+        title: "Message fork later rollback",
+        modelSelection: { provider: "droid", model: "claude-opus-4-8" },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        importedMessages: [
+          {
+            messageId: asMessageId("fork-00000000-later-rollback-user"),
+            role: "user",
+            text: "Imported source question",
+            attachments: [importedFile],
+            createdAt: sourceUserAt,
+            updatedAt: sourceUserAt,
+          },
+          {
+            messageId: asMessageId("fork-00000001-later-rollback-assistant"),
+            role: "assistant",
+            text: "Imported source answer",
+            createdAt: sourceAssistantAt,
+            updatedAt: sourceAssistantAt,
+          },
+        ],
+        createdAt: sourceAssistantAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-retained-native-turn"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-fork-retained-native-user"),
+          role: "user",
+          text: "Retained native question",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: nativeAt,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await harness.emitRuntimeEvent({
+      type: "turn.completed",
+      eventId: asEventId("evt-message-fork-initial-bootstrap-completed"),
+      provider: "droid",
+      threadId: forkThreadId,
+      createdAt: nativeAt,
+      turnId: asTurnId("turn-1"),
+      payload: { state: "completed" },
+      providerRefs: {},
+    } as ProviderRuntimeEvent);
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-retained-native-assistant-delta"),
+        threadId: forkThreadId,
+        messageId: asMessageId("message-fork-retained-native-assistant"),
+        delta: "Retained native answer",
+        turnId: asTurnId("turn-message-fork-retained-native"),
+        createdAt: nativeAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-retained-native-assistant-complete"),
+        threadId: forkThreadId,
+        messageId: asMessageId("message-fork-retained-native-assistant"),
+        turnId: asTurnId("turn-message-fork-retained-native"),
+        createdAt: nativeAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-later-edit-target"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-fork-later-edit-target"),
+          role: "user",
+          text: "old later prompt",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: targetAt,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    harness.sendTurn.mockClear();
+    harness.setRuntimeSessionTurnState({
+      threadId: forkThreadId,
+      status: "running",
+      activeTurnId: asTurnId("turn-message-fork-later-edit-active"),
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-later-edit-session"),
+        threadId: forkThreadId,
+        session: {
+          threadId: forkThreadId,
+          status: "running",
+          providerName: "droid",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-message-fork-later-edit-active"),
+          lastError: null,
+          updatedAt: targetAt,
+        },
+        createdAt: targetAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.edit-and-resend",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-later-edit-resend"),
+        threadId: forkThreadId,
+        messageId: asMessageId("message-fork-later-edit-target"),
+        text: "edited later prompt",
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: targetAt,
+      }),
+    );
+
+    await waitFor(() => harness.clearSessionResumeCursor.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const resent = harness.sendTurn.mock.calls[0]?.[0] as
+      | { input?: string; attachments?: ReadonlyArray<{ id: string }> }
+      | undefined;
+    expect(resent?.input).toContain("<thread_context>");
+    expect(resent?.input).toContain("Imported source question");
+    expect(resent?.input).toContain("Retained native question");
+    expect(resent?.input).toContain("Retained native answer");
+    expect(resent?.input).toContain("edited later prompt");
+    expect(resent?.input).not.toContain("old later prompt");
+    expect(resent?.attachments).toBeUndefined();
   });
 
   it("keeps queued-message edits queued while an active provider turn continues", async () => {

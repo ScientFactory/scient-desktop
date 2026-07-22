@@ -6,7 +6,12 @@
 import { MessageId, ThreadId, type OrchestrationMessage } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
-import { buildHandoffBootstrapText, buildPriorTranscriptBootstrapText } from "./handoff.ts";
+import {
+  buildHandoffBootstrapText,
+  buildMessageForkBootstrapText,
+  buildPriorTranscriptBootstrapText,
+  listImportedForkProviderAttachments,
+} from "./handoff.ts";
 
 const message = (
   index: number,
@@ -100,5 +105,27 @@ describe("transcript bootstrap budgets", () => {
     expect(text!.length).toBeGreaterThan(32_000);
     expect(text!.length).toBeLessThanOrEqual(90_000);
     expect(text).toContain("handoff-179");
+  });
+
+  it("serializes assistant selections as context without treating them as provider files", () => {
+    const selectedMessage: OrchestrationMessage = {
+      ...message(1, "user", "Rewrite this", "native"),
+      source: "fork-import",
+      attachments: [
+        {
+          type: "assistant-selection",
+          id: "selection-critical-excerpt",
+          assistantMessageId: MessageId.makeUnsafe("selected-assistant-message"),
+          text: "critical selected excerpt",
+        },
+      ],
+    };
+    const selectedThread = thread([selectedMessage]);
+
+    const text = buildMessageForkBootstrapText(selectedThread);
+
+    expect(text).toContain("Rewrite this");
+    expect(text).toContain("critical selected excerpt");
+    expect(listImportedForkProviderAttachments(selectedThread)).toEqual([]);
   });
 });

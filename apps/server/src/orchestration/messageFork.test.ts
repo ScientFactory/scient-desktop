@@ -209,6 +209,68 @@ describe("validateMessageForkImport", () => {
     });
   });
 
+  it("rejects queued input projected before the active assistant row", () => {
+    const activeCreatedAt = "2026-07-22T10:02:00.000Z";
+    const activeTurnId = TurnId.makeUnsafe("turn-assistant-after-queue");
+    const queuedUserId = MessageId.makeUnsafe("message-queue-before-active-assistant");
+    const activeAssistantId = MessageId.makeUnsafe("message-active-assistant-after-queue");
+    const messages: OrchestrationMessage[] = [
+      sourceMessages[0]!,
+      {
+        id: MessageId.makeUnsafe("message-active-user-before-queue"),
+        role: "user",
+        text: "Prompt currently running",
+        turnId: null,
+        streaming: false,
+        source: "native",
+        createdAt: activeCreatedAt,
+        updatedAt: activeCreatedAt,
+      },
+      {
+        id: queuedUserId,
+        role: "user",
+        text: "Queued before the delayed assistant row",
+        turnId: null,
+        streaming: false,
+        source: "native",
+        createdAt: "2026-07-22T10:02:01.000Z",
+        updatedAt: "2026-07-22T10:02:01.000Z",
+      },
+      {
+        id: activeAssistantId,
+        role: "assistant",
+        text: "Delayed active assistant",
+        turnId: activeTurnId,
+        streaming: true,
+        source: "native",
+        createdAt: "2026-07-22T10:02:02.000Z",
+        updatedAt: "2026-07-22T10:02:02.000Z",
+      },
+    ];
+
+    expect(
+      validateMessageForkImport({
+        sourceThread: {
+          messages,
+          latestTurn: {
+            turnId: activeTurnId,
+            state: "running",
+            requestedAt: activeCreatedAt,
+            startedAt: activeCreatedAt,
+            completedAt: null,
+            assistantMessageId: activeAssistantId,
+          },
+        },
+        sourceMessageId: queuedUserId,
+        importedMessages: [],
+      }),
+    ).toEqual({
+      ok: false,
+      reason: "invalid-source",
+      expectedImportedMessageCount: 0,
+    });
+  });
+
   it("rejects equal-timestamp ids whose persisted order would differ from the prefix", () => {
     const equalTimestampThread = {
       messages: [

@@ -55,15 +55,16 @@ function resolveRunningTurnBoundaryIndex(thread: ForkSourceThread): number | nul
   const activeAssistantIndex = thread.messages.findIndex(
     (message) => message.role === "assistant" && message.turnId === thread.latestTurn?.turnId,
   );
-  if (activeAssistantIndex >= 0) {
-    return activeAssistantIndex;
-  }
-
   const requestedUserIndex = thread.messages.findIndex(
     (message) => message.role === "user" && message.createdAt === thread.latestTurn?.requestedAt,
   );
-  if (requestedUserIndex >= 0) {
-    return requestedUserIndex + 1;
+
+  const knownUnsafeIndexes = [
+    ...(activeAssistantIndex >= 0 ? [activeAssistantIndex] : []),
+    ...(requestedUserIndex >= 0 ? [requestedUserIndex + 1] : []),
+  ];
+  if (knownUnsafeIndexes.length > 0) {
+    return Math.min(...knownUnsafeIndexes);
   }
 
   return 0;

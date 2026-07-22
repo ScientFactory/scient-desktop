@@ -10,6 +10,7 @@ import {
   type ModelSelection,
   MessageId,
   type OrchestrationEvent,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ProviderMentionReference,
   type ProviderRuntimeEvent,
@@ -143,6 +144,24 @@ function attachmentTitleSeed(attachment: ChatAttachment | undefined): string {
     return attachment.name;
   }
   return attachment.text.trim();
+}
+
+function isInitialMessageForkContextBootstrap(
+  thread: Pick<OrchestrationThread, "forkSourceMessageId" | "messages">,
+  currentMessageId: string,
+): boolean {
+  if (thread.forkSourceMessageId == null) {
+    return false;
+  }
+  const currentMessageIndex = thread.messages.findIndex(
+    (message) => message.id === currentMessageId,
+  );
+  if (currentMessageIndex < 0) {
+    return false;
+  }
+  return !thread.messages.slice(0, currentMessageIndex).some((message) => {
+    return message.role === "assistant" && message.source === "native";
+  });
 }
 
 function mapProviderSessionStatusToOrchestrationStatus(
@@ -374,6 +393,10 @@ const make = Effect.gen(function* () {
   // Fresh sessions that cannot inherit native conversation state need one
   // transcript bootstrap (fork fallbacks and non-resumable Droid model changes).
   const freshSessionContextBootstrapThreadIds = new Set<string>();
+  // Message-boundary forks attach imported physical files only while their
+  // initial fresh-session bootstrap is pending. Later rollback/session restart
+  // replays the retained native transcript without resending those files.
+  const initialMessageForkContextBootstrapThreadIds = new Set<string>();
   // Providers without native rewind restart after rollback and receive the
   // retained projection transcript once on their next prompt.
   const rollbackContextBootstrapThreadIds = new Set<string>();
@@ -390,6 +413,7 @@ const make = Effect.gen(function* () {
   const clearPendingContextBootstraps = (threadId: string) => {
     sidechatContextBootstrapThreadIds.delete(threadId);
     freshSessionContextBootstrapThreadIds.delete(threadId);
+    initialMessageForkContextBootstrapThreadIds.delete(threadId);
     rollbackContextBootstrapThreadIds.delete(threadId);
     pendingContextBootstrapAttempts.delete(threadId);
   };
@@ -410,6 +434,7 @@ const make = Effect.gen(function* () {
     }
     if (attempt.clearPriorTranscript) {
       freshSessionContextBootstrapThreadIds.delete(threadId);
+      initialMessageForkContextBootstrapThreadIds.delete(threadId);
       rollbackContextBootstrapThreadIds.delete(threadId);
       sidechatContextBootstrapThreadIds.delete(threadId);
     }
@@ -796,6 +821,7 @@ const make = Effect.gen(function* () {
       readonly modelSelection?: ModelSelection;
       readonly providerOptions?: ProviderStartOptions;
       readonly runtimeMode?: RuntimeMode;
+      readonly initialMessageForkContextBootstrap?: boolean;
     },
   ) {
     const thread = yield* resolveThread(threadId);
@@ -807,6 +833,16 @@ const make = Effect.gen(function* () {
     const shouldRegisterContextBootstrap =
       thread.session?.status !== "stopped" &&
       !suppressContextBootstrapOnNextStartThreadIds.has(threadId);
+    const registerInitialMessageForkContextBootstrap = () => {
+      if (
+        shouldRegisterContextBootstrap &&
+        options?.initialMessageForkContextBootstrap === true &&
+        thread.forkSourceMessageId != null
+      ) {
+        freshSessionContextBootstrapThreadIds.add(threadId);
+        initialMessageForkContextBootstrapThreadIds.add(threadId);
+      }
+    };
 
     const desiredRuntimeMode = options?.runtimeMode ?? thread.runtimeMode;
     const currentProvider: ProviderKind | undefined = Schema.is(ProviderKind)(
@@ -918,6 +954,7 @@ const make = Effect.gen(function* () {
         !shouldRestartForModelChange &&
         !shouldRestartForModelSelectionChange
       ) {
+        registerInitialMessageForkContextBootstrap();
         return existingSessionThreadId;
       }
 
@@ -950,6 +987,7 @@ const make = Effect.gen(function* () {
       ) {
         freshSessionContextBootstrapThreadIds.add(threadId);
       }
+      registerInitialMessageForkContextBootstrap();
       threadSessionModelSelections.set(threadId, desiredModelSelection);
       yield* Effect.logInfo("provider command reactor restarted provider session", {
         threadId,
@@ -1015,6 +1053,7 @@ const make = Effect.gen(function* () {
       // fork must instead start fresh and bootstrap only the persisted imported prefix, or
       // messages after the selected boundary could silently leak into the new conversation.
       freshSessionContextBootstrapThreadIds.add(threadId);
+      registerInitialMessageForkContextBootstrap();
     }
 
     if (
@@ -1063,6 +1102,10 @@ const make = Effect.gen(function* () {
       ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
       ...(input.providerOptions !== undefined ? { providerOptions: input.providerOptions } : {}),
       ...(input.runtimeMode !== undefined ? { runtimeMode: input.runtimeMode } : {}),
+      initialMessageForkContextBootstrap: isInitialMessageForkContextBootstrap(
+        thread,
+        input.messageId,
+      ),
     });
     if (input.providerOptions !== undefined) {
       threadProviderOptions.set(input.threadId, input.providerOptions);
@@ -1105,7 +1148,8 @@ const make = Effect.gen(function* () {
       freshSessionContextBootstrapThreadIds.has(input.threadId) ||
       rollbackContextBootstrapThreadIds.has(input.threadId);
     const isPendingMessageBoundaryForkBootstrap =
-      hasPendingPriorTranscriptBootstrap && thread.forkSourceMessageId != null;
+      hasPendingPriorTranscriptBootstrap &&
+      initialMessageForkContextBootstrapThreadIds.has(input.threadId);
     const shouldBootstrapSidechatContext =
       thread.sidechatSourceThreadId !== null &&
       sidechatContextBootstrapThreadIds.has(input.threadId) &&
@@ -1246,13 +1290,24 @@ const make = Effect.gen(function* () {
         ...(input.skills !== undefined ? { skills: input.skills } : {}),
       }),
     );
-    const normalizedAttachments = [
-      ...(isPendingMessageBoundaryForkBootstrap ? listImportedForkProviderAttachments(thread) : []),
-      ...(input.attachments ?? []),
-    ].filter(
+    const currentAttachments = (input.attachments ?? []).filter(
       (attachment, index, attachments) =>
         attachments.findIndex((candidate) => candidate.id === attachment.id) === index,
     );
+    const currentAttachmentIds = new Set(currentAttachments.map((attachment) => attachment.id));
+    const importedAttachmentBudget = Math.max(
+      0,
+      PROVIDER_SEND_TURN_MAX_ATTACHMENTS - currentAttachments.length,
+    );
+    const importedBootstrapAttachments = isPendingMessageBoundaryForkBootstrap
+      ? listImportedForkProviderAttachments(thread)
+          .filter((attachment) => !currentAttachmentIds.has(attachment.id))
+          .slice(0, importedAttachmentBudget)
+      : [];
+    // Keep the user's current prompt complete, then fill the remaining provider
+    // slots deterministically from the imported prefix. All omitted file names
+    // remain visible in the serialized transcript bootstrap.
+    const normalizedAttachments = [...currentAttachments, ...importedBootstrapAttachments];
     const activeSession = yield* providerService
       .listSessions()
       .pipe(
@@ -1386,6 +1441,10 @@ const make = Effect.gen(function* () {
                 ? { providerOptions: input.providerOptions }
                 : {}),
               ...(input.runtimeMode !== undefined ? { runtimeMode: input.runtimeMode } : {}),
+              initialMessageForkContextBootstrap: isInitialMessageForkContextBootstrap(
+                thread,
+                input.messageId,
+              ),
             });
 
             const retryBootstrapText =
@@ -1484,6 +1543,7 @@ const make = Effect.gen(function* () {
       (priorTranscriptBootstrapText !== null || !hasPriorTranscriptBootstrapContent)
     ) {
       freshSessionContextBootstrapThreadIds.delete(input.threadId);
+      initialMessageForkContextBootstrapThreadIds.delete(input.threadId);
       rollbackContextBootstrapThreadIds.delete(input.threadId);
       sidechatContextBootstrapThreadIds.delete(input.threadId);
     }

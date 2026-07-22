@@ -17,6 +17,7 @@ interface ThreadCreatedRow {
   readonly forkTitleBase: string | null;
   readonly forkTitleOrdinal: number | null;
   readonly currentProjectionTitle?: string | null;
+  readonly hasHistoricalTitleChange?: number;
 }
 
 const familyRootId = (
@@ -26,7 +27,7 @@ const familyRootId = (
   let current = row;
   const visited = new Set<string>();
 
-  while (current.forkSourceThreadId) {
+  while (current.forkSourceThreadId && current.hasHistoricalTitleChange !== 1) {
     if (visited.has(current.threadId)) {
       return [...visited, current.threadId].toSorted()[0] ?? current.threadId;
     }
@@ -59,23 +60,34 @@ export default Effect.gen(function* () {
 
   const createdRows = yield* sql<ThreadCreatedRow>`
     SELECT
-      sequence,
-      stream_id AS "threadId",
-      json_extract(payload_json, '$.projectId') AS "projectId",
-      json_extract(payload_json, '$.title') AS title,
-      json_extract(payload_json, '$.forkSourceThreadId') AS "forkSourceThreadId",
-      json_extract(payload_json, '$.sidechatSourceThreadId') AS "sidechatSourceThreadId",
-      json_extract(payload_json, '$.forkTitleBase') AS "forkTitleBase",
-      json_extract(payload_json, '$.forkTitleOrdinal') AS "forkTitleOrdinal",
+      created_event.sequence,
+      created_event.stream_id AS "threadId",
+      json_extract(created_event.payload_json, '$.projectId') AS "projectId",
+      json_extract(created_event.payload_json, '$.title') AS title,
+      json_extract(created_event.payload_json, '$.forkSourceThreadId') AS "forkSourceThreadId",
+      json_extract(created_event.payload_json, '$.sidechatSourceThreadId') AS "sidechatSourceThreadId",
+      json_extract(created_event.payload_json, '$.forkTitleBase') AS "forkTitleBase",
+      json_extract(created_event.payload_json, '$.forkTitleOrdinal') AS "forkTitleOrdinal",
       (
         SELECT projection_threads.title
         FROM projection_threads
-        WHERE projection_threads.thread_id = orchestration_events.stream_id
-      ) AS "currentProjectionTitle"
-    FROM orchestration_events
-    WHERE event_type = 'thread.created'
-      AND json_valid(payload_json)
-    ORDER BY sequence ASC
+        WHERE projection_threads.thread_id = created_event.stream_id
+      ) AS "currentProjectionTitle",
+      EXISTS (
+        SELECT 1
+        FROM orchestration_events AS renamed_event
+        WHERE renamed_event.stream_id = created_event.stream_id
+          AND renamed_event.sequence > created_event.sequence
+          AND renamed_event.event_type = 'thread.meta-updated'
+          AND json_valid(renamed_event.payload_json)
+          AND json_type(renamed_event.payload_json, '$.title') = 'text'
+          AND json_extract(renamed_event.payload_json, '$.title')
+            <> json_extract(created_event.payload_json, '$.title')
+      ) AS "hasHistoricalTitleChange"
+    FROM orchestration_events AS created_event
+    WHERE created_event.event_type = 'thread.created'
+      AND json_valid(created_event.payload_json)
+    ORDER BY created_event.sequence ASC
   `;
   const rowsByThreadId = new Map(createdRows.map((row) => [row.threadId, row]));
   const highestOrdinalBySeries = new Map<string, number>();
@@ -86,6 +98,7 @@ export default Effect.gen(function* () {
       !row.title ||
       !row.forkSourceThreadId ||
       row.sidechatSourceThreadId ||
+      row.hasHistoricalTitleChange === 1 ||
       (row.currentProjectionTitle !== null &&
         row.currentProjectionTitle !== undefined &&
         row.currentProjectionTitle !== row.title)

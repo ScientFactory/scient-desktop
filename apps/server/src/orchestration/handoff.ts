@@ -36,7 +36,7 @@ function bootstrapMessageContent(message: OrchestrationMessage): string {
   const text = normalizeMessageText(message.text);
   const attachmentLines = (message.attachments ?? []).flatMap((attachment) =>
     attachment.type === "assistant-selection"
-      ? []
+      ? [`[Selected assistant text: ${normalizeMessageText(attachment.text)}]`]
       : [`[Attachment: ${attachment.name} (${attachment.mimeType})]`],
   );
   return [text, ...attachmentLines].filter((part) => part.length > 0).join("\n");
