@@ -685,6 +685,20 @@ describe("voice helpers", () => {
       canStartVoiceNotes: false,
       showVoiceNotesControl: true,
     });
+
+    expect(
+      deriveComposerVoiceState({
+        authStatus: "unauthenticated",
+        voiceTranscriptionAvailable: false,
+        desktopVoiceAvailable: true,
+        isRecording: false,
+        isTranscribing: false,
+      }),
+    ).toEqual({
+      canRenderVoiceNotes: true,
+      canStartVoiceNotes: true,
+      showVoiceNotesControl: true,
+    });
   });
 });
 

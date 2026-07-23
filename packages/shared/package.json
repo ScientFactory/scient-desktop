@@ -187,6 +187,18 @@
     "./formatBytes": {
       "types": "./src/formatBytes.ts",
       "import": "./src/formatBytes.ts"
+    },
+    "./voiceTranscription": {
+      "types": "./src/voiceTranscription.ts",
+      "import": "./src/voiceTranscription.ts"
+    },
+    "./voiceTranscriptionRouter": {
+      "types": "./src/voiceTranscriptionRouter.ts",
+      "import": "./src/voiceTranscriptionRouter.ts"
+    },
+    "./chatGptVoiceAuth": {
+      "types": "./src/chatGptVoiceAuth.ts",
+      "import": "./src/chatGptVoiceAuth.ts"
     }
   },
   "scripts": {

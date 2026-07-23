@@ -86,6 +86,9 @@ export const UiDensity = Schema.Literals(UI_DENSITY_MODES);
 export type UiDensity = typeof UiDensity.Type;
 export { DEFAULT_UI_DENSITY };
 
+export const VoiceTranscriptionMode = Schema.Literals(["automatic", "offline-only"]);
+export type VoiceTranscriptionMode = typeof VoiceTranscriptionMode.Type;
+
 export function getDefaultNativeFontSmoothing(platform = globalThis.navigator?.platform ?? "") {
   return /mac|iphone|ipad|ipod/i.test(platform);
 }
@@ -221,6 +224,9 @@ export const AppSettingsSchema = Schema.Struct({
   enableNativeFontSmoothing: Schema.Boolean.pipe(withDefaults(getDefaultNativeFontSmoothing)),
   enableTaskCompletionToasts: Schema.Boolean.pipe(withDefaults(() => true)),
   enableSystemTaskCompletionNotifications: Schema.Boolean.pipe(withDefaults(() => true)),
+  // Local UI preference. Automatic prefers an eligible ChatGPT subscription
+  // and always falls back to the verified on-device model.
+  voiceTranscriptionMode: VoiceTranscriptionMode.pipe(withDefaults(() => "automatic" as const)),
   // Local desktop preference. Native capability/permission state remains owned by Electron.
   // AppSnap is opt-in because enabling its Settings toggle requests macOS
   // Input Monitoring and Screen Recording permissions.

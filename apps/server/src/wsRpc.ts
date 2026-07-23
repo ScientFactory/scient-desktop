@@ -1178,19 +1178,23 @@ export const makeWsRpcLayer = () =>
           ),
         [WS_METHODS.serverTranscribeVoice]: (input) =>
           rpcEffect(
-            providerAdapterRegistry
-              .getByProvider(input.provider)
-              .pipe(
-                Effect.flatMap((adapter) =>
-                  adapter.transcribeVoice
-                    ? adapter.transcribeVoice(input)
-                    : Effect.fail(
-                        new Error(
-                          `Voice transcription is unavailable for provider '${input.provider}'.`,
-                        ),
-                      ),
+            input.mode === "offline-only"
+              ? Effect.fail(
+                  new Error("Offline voice transcription is available in the Scient desktop app."),
+                )
+              : providerAdapterRegistry.getByProvider("codex").pipe(
+                  Effect.flatMap((adapter) =>
+                    adapter.transcribeVoice
+                      ? adapter.transcribeVoice(input).pipe(
+                          Effect.map((result) => ({
+                            ...result,
+                            engine: "chatgpt" as const,
+                            fallbackUsed: false,
+                          })),
+                        )
+                      : Effect.fail(new Error("Voice transcription is unavailable right now.")),
+                  ),
                 ),
-              ),
             "Voice transcription failed",
           ),
         [WS_METHODS.serverGenerateThreadRecap]: (input) =>
