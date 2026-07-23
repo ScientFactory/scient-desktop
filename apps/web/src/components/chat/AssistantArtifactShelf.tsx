@@ -2,7 +2,7 @@
 // Purpose: Show explicitly linked HTML/Markdown deliverables beneath a settled assistant reply.
 // Layer: Chat timeline presentation
 
-import type { EditorId } from "@synara/contracts";
+import type { EditorId, ProjectInspectHtmlArtifactResult } from "@synara/contracts";
 import { isLocalAbsolutePath, joinWorkspaceRelativePath } from "@synara/shared/path";
 import { useQuery } from "@tanstack/react-query";
 import { memo, useEffect, useId, useMemo, useState } from "react";
@@ -18,6 +18,7 @@ import {
   FolderIcon,
 } from "~/lib/icons";
 import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
+import { projectInspectHtmlArtifactQueryOptions } from "~/lib/projectReactQuery";
 import { cn } from "~/lib/utils";
 import { openWorkspaceFileReference, useWorkspaceFileOpener } from "~/lib/workspaceFileOpener";
 import { readNativeApi } from "~/nativeApi";
@@ -35,8 +36,23 @@ function absoluteArtifactPath(path: string, workspaceRoot: string | undefined): 
   return workspaceRoot ? joinWorkspaceRelativePath(workspaceRoot, path) : null;
 }
 
-function artifactSubtitle(kind: MessageArtifactReference["kind"]): string {
-  return kind === "html" ? "Web page · HTML" : "Document · MD";
+function artifactSubtitle(
+  kind: MessageArtifactReference["kind"],
+  inspection?: ProjectInspectHtmlArtifactResult,
+): string {
+  if (kind !== "html") return "Document · MD";
+  switch (inspection?.mode) {
+    case "static-document":
+      return "Static web page · HTML";
+    case "interactive-bundle":
+      return "Interactive web page · HTML";
+    case "dev-server-entrypoint":
+      return "Web app source · runs a dev server";
+    case "unsupported":
+      return "HTML · preview unavailable";
+    default:
+      return "Web page · inspecting…";
+  }
 }
 
 function HtmlArtifactThumbnail(props: {
@@ -120,6 +136,13 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
     [serverConfigQuery.data?.availableEditors],
   );
   const absolutePath = absoluteArtifactPath(props.artifact.path, props.workspaceRoot);
+  const inspectionQuery = useQuery(
+    projectInspectHtmlArtifactQueryOptions({
+      cwd: props.workspaceRoot ?? null,
+      path: props.artifact.kind === "html" ? absolutePath : null,
+      enabled: props.artifact.kind === "html" && absolutePath !== null,
+    }),
+  );
   const [openError, setOpenError] = useState<string | null>(null);
 
   const reportOpenError = (error: unknown) => {
@@ -147,7 +170,9 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
         title={`Preview ${props.artifact.path}`}
         onClick={preview}
       >
-        {props.artifact.kind === "html" && props.loadHtmlThumbnail !== false ? (
+        {props.artifact.kind === "html" &&
+        props.loadHtmlThumbnail !== false &&
+        inspectionQuery.data?.mode === "static-document" ? (
           <HtmlArtifactThumbnail
             path={props.artifact.path}
             label={props.artifact.label}
@@ -163,7 +188,16 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
             {props.artifact.label}
           </span>
           <span className="mt-0.5 block truncate text-xs text-muted-foreground/75">
-            {artifactSubtitle(props.artifact.kind)}
+            <span
+              title={[
+                inspectionQuery.data?.reason,
+                ...(inspectionQuery.data?.warnings.map((warning) => warning.message) ?? []),
+              ]
+                .filter((message): message is string => Boolean(message))
+                .join("\n")}
+            >
+              {artifactSubtitle(props.artifact.kind, inspectionQuery.data)}
+            </span>
           </span>
         </span>
       </button>
@@ -198,7 +232,10 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
             </MenuItem>
             {props.artifact.kind === "html" ? (
               <MenuItem
-                disabled={!opener?.openHtmlInExternalBrowser}
+                disabled={
+                  !opener?.openHtmlInExternalBrowser ||
+                  inspectionQuery.data?.mode === "interactive-bundle"
+                }
                 onClick={() => {
                   setOpenError(null);
                   if (!opener?.openHtmlInExternalBrowser?.(props.artifact.path)) {

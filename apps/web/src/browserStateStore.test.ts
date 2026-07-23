@@ -2,6 +2,7 @@ import { ThreadId } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  browserHistoryAfterThreadState,
   createDedupedBrowserStateStorage,
   sanitizeRecentHistoryByThreadId,
   selectThreadBrowserHistory,
@@ -24,6 +25,34 @@ describe("browserStateStore selectors", () => {
 
     expect(first).toBe(second);
     expect(first).toEqual([]);
+  });
+
+  it("never persists artifact capability URLs into browser history", () => {
+    const history = browserHistoryAfterThreadState([], {
+      threadId: THREAD_ID,
+      version: 1,
+      open: true,
+      activeTabId: "artifact",
+      tabs: [
+        {
+          id: "artifact",
+          kind: "artifact",
+          url: "http://g-secret.preview.localhost:5000/",
+          displayUrl: "/workspace/report.html",
+          title: "Report",
+          status: "live",
+          isLoading: false,
+          canGoBack: false,
+          canGoForward: false,
+          faviconUrl: null,
+          lastCommittedUrl: "http://g-secret.preview.localhost:5000/",
+          lastError: null,
+        },
+      ],
+      lastError: null,
+    });
+
+    expect(history).toEqual([]);
   });
 });
 

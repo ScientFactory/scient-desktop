@@ -4127,7 +4127,7 @@ export default function Sidebar() {
       if (!api || !project || !runCommand) {
         return;
       }
-      if (projectRunsByProjectId[projectId]) {
+      if (projectRunsByProjectId[projectId]?.status !== "failed") {
         return;
       }
       // The dialog lets the user edit the default command before launching, so an
@@ -4144,6 +4144,7 @@ export default function Sidebar() {
       // immediately; the server's authoritative snapshot replaces this on success.
       storeUpsertProjectRun({
         projectId,
+        runId: `client-starting:${Date.now()}`,
         command,
         cwd: runCommand.cwd,
         pid: null,
@@ -4158,6 +4159,17 @@ export default function Sidebar() {
           env,
         });
         storeUpsertProjectRun(server);
+        if (server.status === "failed") {
+          activityManager.publish({
+            dedupeKey: `sidebar:run:project:${projectId}`,
+            source: "terminal",
+            status: "needs_attention",
+            tone: "error",
+            title: `Failed to run "${project.name}"`,
+            description: server.error ?? "The development server did not become ready.",
+          });
+          return;
+        }
         activityManager.remove(`sidebar:run:project:${projectId}`);
         void queryClient.invalidateQueries({ queryKey: serverQueryKeys.localServers() });
       } catch (error) {
@@ -4656,7 +4668,7 @@ export default function Sidebar() {
   // Keep manual server attribution alive without repeating the expensive
   // port/process scan while no Synara-owned run needs near-real-time status.
   const hasActiveProjectRun = useMemo(
-    () => Object.keys(projectRunsByProjectId).length > 0,
+    () => Object.values(projectRunsByProjectId).some((run) => run.status !== "failed"),
     [projectRunsByProjectId],
   );
   const projectRunLocalServersQuery = useQuery(
@@ -5964,7 +5976,8 @@ export default function Sidebar() {
     const projectRunServer = projectRunServerByProjectId.get(project.id) ?? null;
     // A project reads as "running" when Synara tracks a run for it or when a
     // local server (possibly started outside Synara) is attributed by cwd.
-    const isProjectRunning = projectRun !== null || projectRunServer !== null;
+    const isProjectRunning =
+      (projectRun !== null && projectRun.status !== "failed") || projectRunServer !== null;
     const collapsedProjectStatus = project.expanded ? null : projectStatus;
     // The "open dev server" affordance now lives in the project context menu, so
     // the hover toolbar always reserves space for the three thread actions. The
@@ -6902,7 +6915,10 @@ export default function Sidebar() {
     ? pinnedProjectIdSet.has(projectContextMenuProject.id)
     : false;
   const projectContextMenuIsRunning = projectContextMenuProject
-    ? Boolean(projectRunsByProjectId[projectContextMenuProject.id])
+    ? Boolean(
+        projectRunsByProjectId[projectContextMenuProject.id] &&
+        projectRunsByProjectId[projectContextMenuProject.id]?.status !== "failed",
+      )
     : false;
   const projectContextMenuServer = projectContextMenuProject
     ? (projectRunServerByProjectId.get(projectContextMenuProject.id) ?? null)

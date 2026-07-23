@@ -16,6 +16,7 @@ import type {
 } from "@synara/contracts";
 
 const PROCESS_OUTPUT_MAX_BUFFER_BYTES = 2 * 1024 * 1024;
+const PROCESS_DISCOVERY_TIMEOUT_MS = 5_000;
 const STOP_SIGNAL_SETTLE_MS = 450;
 const MAX_PROCESS_ARGS_CHARS = 1_000;
 const PROCESS_LINEAGE_MAX_DEPTH = 4;
@@ -41,6 +42,12 @@ export interface ParsedLsofListener {
 export interface LocalServerProcessInfo {
   readonly ppid: number;
   readonly commandLine: string;
+  readonly ancestorPids?: readonly number[];
+}
+
+export interface ParsedWindowsListenerSnapshot {
+  readonly listeners: readonly ParsedLsofListener[];
+  readonly processInfoByPid: ReadonlyMap<number, LocalServerProcessInfo>;
 }
 
 interface DevServerCandidateInput {
@@ -125,7 +132,12 @@ function execFileText(command: string, args: readonly string[]): Promise<string>
     execFile(
       command,
       [...args],
-      { encoding: "utf8", maxBuffer: PROCESS_OUTPUT_MAX_BUFFER_BYTES },
+      {
+        encoding: "utf8",
+        maxBuffer: PROCESS_OUTPUT_MAX_BUFFER_BYTES,
+        timeout: PROCESS_DISCOVERY_TIMEOUT_MS,
+        windowsHide: true,
+      },
       (error, stdout) => {
         if (error) {
           reject(error);
@@ -271,6 +283,61 @@ function parseProcessInfo(output: string): Map<number, LocalServerProcessInfo> {
     });
   }
   return rows;
+}
+
+export function parseWindowsTcpListenOutput(output: string): ParsedWindowsListenerSnapshot {
+  const listeners: ParsedLsofListener[] = [];
+  const processInfoByPid = new Map<number, LocalServerProcessInfo>();
+  for (const rawLine of output.split(/\r?\n/g)) {
+    const [
+      hostValue,
+      portValue,
+      pidValue,
+      commandValue,
+      ppidValue,
+      encodedCommand,
+      ancestorsValue,
+    ] = rawLine.split("\t");
+    const port = Number(portValue);
+    const pid = Number(pidValue);
+    const ppid = Number(ppidValue);
+    const host = hostValue?.trim() ?? "";
+    if (
+      host.length === 0 ||
+      !Number.isInteger(port) ||
+      port <= 0 ||
+      port > 65_535 ||
+      !Number.isInteger(pid) ||
+      pid <= 0
+    ) {
+      continue;
+    }
+    const commandLine = (() => {
+      try {
+        return redactProcessArgs(Buffer.from(encodedCommand ?? "", "base64").toString("utf8"));
+      } catch {
+        return commandValue?.trim() || "unknown";
+      }
+    })();
+    const ancestorPids = (ancestorsValue ?? "")
+      .split(",")
+      .map(Number)
+      .filter((ancestorPid) => Number.isInteger(ancestorPid) && ancestorPid > 1);
+    listeners.push({
+      pid,
+      command: commandValue?.trim() || "unknown",
+      protocol: "tcp",
+      host,
+      port,
+      family: host.includes(":") ? "tcp6" : "tcp4",
+    });
+    processInfoByPid.set(pid, {
+      ppid: Number.isInteger(ppid) && ppid > 0 ? ppid : 1,
+      commandLine: commandLine || commandValue?.trim() || "unknown",
+      ...(ancestorPids.length > 0 ? { ancestorPids } : {}),
+    });
+  }
+  return { listeners, processInfoByPid };
 }
 
 function tokenizeCommandLine(commandLine: string): string[] {
@@ -712,7 +779,7 @@ async function mapWithConcurrency<T, R>(
   limit: number,
   mapper: (item: T) => Promise<R>,
 ): Promise<R[]> {
-  const results = new Array<R>(items.length);
+  const results: R[] = [];
   let nextIndex = 0;
   async function worker(): Promise<void> {
     while (nextIndex < items.length) {
@@ -801,6 +868,9 @@ function toServerProcess(
     ...(typeof processInfo?.ppid === "number" && processInfo.ppid > 0
       ? { ppid: processInfo.ppid }
       : {}),
+    ...(processInfo?.ancestorPids && processInfo.ancestorPids.length > 0
+      ? { ancestorPids: [...processInfo.ancestorPids] }
+      : {}),
     command,
     displayName: formatDisplayName(command, detectionArgs),
     ...(cwd ? { cwd } : {}),
@@ -853,13 +923,43 @@ function groupListenersByPid(
 }
 
 async function readLsofListeners(): Promise<ParsedLsofListener[]> {
-  if (process.platform === "win32") {
-    return [];
-  }
   const output = await execFileText("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pcPn"]).catch(
     () => "",
   );
   return parseLsofTcpListenOutput(output);
+}
+
+async function readWindowsListenerSnapshot(): Promise<ParsedWindowsListenerSnapshot> {
+  const script = [
+    "$ErrorActionPreference = 'SilentlyContinue'",
+    "$connections = Get-NetTCPConnection -State Listen",
+    "foreach ($connection in $connections) {",
+    "  $process = Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $connection.OwningProcess)",
+    "  if ($null -eq $process) { continue }",
+    "  $lineage = @()",
+    "  $ancestorIds = @()",
+    "  $current = $process",
+    "  for ($depth = 0; $depth -lt 4 -and $null -ne $current; $depth++) {",
+    "    if ($current.CommandLine) { $lineage += $current.CommandLine }",
+    "    $parentId = [int]$current.ParentProcessId",
+    "    if ($parentId -le 1) { break }",
+    "    $ancestorIds += $parentId",
+    "    $current = Get-CimInstance Win32_Process -Filter ('ProcessId = ' + $parentId)",
+    "  }",
+    "  $commandLine = [string]::Join(' || ', $lineage)",
+    "  $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($commandLine))",
+    "  $fields = @($connection.LocalAddress, $connection.LocalPort, $connection.OwningProcess, $process.Name, $process.ParentProcessId, $encoded, [string]::Join(',', $ancestorIds))",
+    "  [Console]::WriteLine([string]::Join([char]9, $fields))",
+    "}",
+  ].join("\n");
+  const output = await execFileText("powershell.exe", [
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    script,
+  ]).catch(() => "");
+  return parseWindowsTcpListenOutput(output);
 }
 
 async function readProcessInfoBatch(
@@ -934,17 +1034,25 @@ export function buildLocalServerProcesses(
   );
 }
 
-export async function listLocalServers(): Promise<ServerListLocalServersResult> {
-  const listeners = await readLsofListeners();
+export async function listLocalServers(options?: {
+  includePageTitles?: boolean;
+}): Promise<ServerListLocalServersResult> {
+  const windowsSnapshot = process.platform === "win32" ? await readWindowsListenerSnapshot() : null;
+  const listeners = windowsSnapshot?.listeners ?? (await readLsofListeners());
   const pids = [...new Set(listeners.map((listener) => listener.pid))];
-  const processInfoByPid = await readProcessInfoWithAncestors(pids);
+  const processInfoByPid = windowsSnapshot
+    ? new Map(windowsSnapshot.processInfoByPid)
+    : await readProcessInfoWithAncestors(pids);
   // Resolve cwd across the full lineage so a generic port-holding child can fall
   // back to its dev-tool parent's directory (cwd is inherited across fork/exec).
   const cwdByPid = await readProcessCwdBatch([...new Set([...pids, ...processInfoByPid.keys()])]);
   const servers = buildLocalServerProcesses(listeners, processInfoByPid, cwdByPid);
   return {
     generatedAt: new Date().toISOString(),
-    servers: await enrichLocalServerProcessesWithPageTitles(servers),
+    servers:
+      options?.includePageTitles === false
+        ? servers
+        : await enrichLocalServerProcessesWithPageTitles(servers),
   };
 }
 
