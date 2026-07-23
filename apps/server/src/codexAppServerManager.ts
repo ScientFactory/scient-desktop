@@ -6,6 +6,7 @@ import readline from "node:readline";
 
 import {
   ApprovalRequestId,
+  DEFAULT_MODEL_BY_PROVIDER,
   EventId,
   type ProviderComposerCapabilities,
   ProviderItemId,
@@ -242,7 +243,7 @@ const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "unknown thread",
   "does not exist",
 ];
-const CODEX_DEFAULT_MODEL = "gpt-5.5";
+const CODEX_DEFAULT_MODEL = DEFAULT_MODEL_BY_PROVIDER.codex;
 const CODEX_SPARK_MODEL = "gpt-5.3-codex-spark";
 const CODEX_SPARK_DISABLED_PLAN_TYPES = new Set<CodexPlanType>(["free", "go", "plus"]);
 const CODEX_DISCOVERY_SESSION_IDLE_MS = 10 * 60 * 1000;
@@ -3423,6 +3424,8 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         this.readString(model, "defaultReasoningEffort") ??
         this.readString(model, "default_reasoning_effort");
       const trimmedDefaultReasoningEffort = defaultReasoningEffort?.trim();
+      const isDefault = this.readFirstBoolean(model, ["isDefault", "is_default"]);
+      const description = this.readString(model, "description")?.trim();
       const additionalSpeedTiers =
         this.readArray(model, "additionalSpeedTiers") ??
         this.readArray(model, "additional_speed_tiers") ??
@@ -3445,6 +3448,8 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         {
           slug: trimmedSlug,
           name: trimmedName,
+          ...(description ? { description } : {}),
+          ...(isDefault === true ? { isDefault: true as const } : {}),
           ...(supportedReasoningEfforts.length > 0 ? { supportedReasoningEfforts } : {}),
           ...(trimmedDefaultReasoningEffort &&
           supportedReasoningEfforts.some(

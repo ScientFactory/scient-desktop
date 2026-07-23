@@ -45,6 +45,11 @@ describe("resolveFirstSendTarget", () => {
         title: "Yes it takes",
         kind: "chat",
         createWorkspaceRootIfMissing: true,
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5.6-sol",
+          options: { reasoningEffort: "high" },
+        },
       },
     });
   });
@@ -70,6 +75,11 @@ describe("resolveFirstSendTarget", () => {
         title: "app",
         kind: "project",
         createWorkspaceRootIfMissing: false,
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5.6-sol",
+          options: { reasoningEffort: "high" },
+        },
       },
     });
   });

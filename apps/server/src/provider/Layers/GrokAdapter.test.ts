@@ -96,6 +96,11 @@ describe("GrokAdapter runtime event scoping", () => {
             object: "model",
             aliases: ["grok-code-fast", "grok-code-fast-1", "grok-build-0.1", "ignored-alias"],
           },
+          {
+            id: "grok-4.5",
+            object: "model",
+            aliases: ["grok-4.5-latest", "grok-build-latest"],
+          },
           { id: "grok-code-fast-1-0825", object: "model" },
           { id: "grok-4.3", object: "model" },
           { id: "   " },
@@ -106,6 +111,9 @@ describe("GrokAdapter runtime event scoping", () => {
       { slug: "grok-build-0.1", name: "Grok Build 0.1" },
       { slug: "grok-code-fast", name: "Grok Code Fast" },
       { slug: "grok-code-fast-1", name: "Grok Code Fast 1" },
+      { slug: "grok-4.5", name: "Grok 4.5" },
+      { slug: "grok-4.5-latest", name: "Grok 4.5" },
+      { slug: "grok-build-latest", name: "Grok Build Latest" },
       { slug: "grok-code-fast-1-0825", name: "Grok Code Fast 1 0825" },
     ]);
   });

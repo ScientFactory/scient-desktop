@@ -32,9 +32,16 @@ export type ProviderOptions = ProviderModelOptions[ProviderKind];
 export interface ProviderModelOption {
   slug: string;
   name: string;
+  resolvedModel?: string;
+  isDefault?: true;
   description?: string;
   upstreamProviderId?: string;
   upstreamProviderName?: string;
+  supportedReasoningEfforts?: ReadonlyArray<{
+    value: string;
+    label?: string | undefined;
+    description?: string | undefined;
+  }>;
 }
 
 export interface ProviderModelOptionGroup {
@@ -112,12 +119,32 @@ export function mergeDynamicModelOptions(input: {
   dynamicModels: ReadonlyArray<{
     slug: string;
     name?: string | null | undefined;
+    resolvedModel?: string | null | undefined;
+    isDefault?: true | undefined;
     description?: string | null | undefined;
     upstreamProviderId?: string | null | undefined;
     upstreamProviderName?: string | null | undefined;
+    supportedReasoningEfforts?:
+      | ReadonlyArray<{
+          value: string;
+          label?: string | undefined;
+          description?: string | undefined;
+        }>
+      | undefined;
   }>;
 }): ReadonlyArray<ProviderModelOption & { isCustom?: boolean }> {
   const staticNameBySlug = new Map(input.staticOptions.map((model) => [model.slug, model.name]));
+  const claudeResolvedDefaultSlug =
+    input.provider === "claudeAgent"
+      ? input.dynamicModels
+          .find(
+            (model) => model.isDefault === true || model.slug.trim().toLowerCase() === "default",
+          )
+          ?.resolvedModel?.trim()
+      : undefined;
+  const normalizedClaudeResolvedDefaultSlug = claudeResolvedDefaultSlug
+    ? normalizeDynamicModelSlug("claudeAgent", claudeResolvedDefaultSlug)
+    : undefined;
   const dynamicNormalizedSlugs = new Set<string>();
   const normalizedDynamicOptions: ProviderModelOption[] = [];
 
@@ -133,6 +160,8 @@ export function mergeDynamicModelOptions(input: {
     }
 
     const normalizedSlug = normalizeDynamicModelSlug(input.provider, dynamicModel.slug);
+    const isDefault =
+      dynamicModel.isDefault === true || normalizedSlug === normalizedClaudeResolvedDefaultSlug;
     const rawSlug = dynamicModel.slug.trim().toLowerCase();
     const displayNameFallback = formatProviderModelOptionName({
       provider: input.provider,
@@ -151,12 +180,19 @@ export function mergeDynamicModelOptions(input: {
         rawName.toLowerCase() !== normalizedSlug.toLowerCase()
           ? rawName
           : displayNameFallback),
+      ...(dynamicModel.resolvedModel?.trim()
+        ? { resolvedModel: dynamicModel.resolvedModel.trim() }
+        : {}),
+      ...(isDefault ? { isDefault: true as const } : {}),
       ...(dynamicModel.description?.trim() ? { description: dynamicModel.description.trim() } : {}),
       ...(dynamicModel.upstreamProviderId?.trim()
         ? { upstreamProviderId: dynamicModel.upstreamProviderId.trim() }
         : {}),
       ...(dynamicModel.upstreamProviderName?.trim()
         ? { upstreamProviderName: dynamicModel.upstreamProviderName.trim() }
+        : {}),
+      ...(dynamicModel.supportedReasoningEfforts?.length
+        ? { supportedReasoningEfforts: dynamicModel.supportedReasoningEfforts }
         : {}),
     });
   }
@@ -185,12 +221,7 @@ export function mergeDynamicModelOptions(input: {
       ? []
       : staticBuiltInModels.filter((model) => !dynamicNormalizedSlugs.has(model.slug));
 
-  const orderedDynamicOptions =
-    input.provider === "claudeAgent"
-      ? normalizedDynamicOptions.toReversed()
-      : normalizedDynamicOptions;
-
-  return [...orderedDynamicOptions, ...missingStaticBuiltIns, ...customOnlyModels];
+  return [...normalizedDynamicOptions, ...missingStaticBuiltIns, ...customOnlyModels];
 }
 
 /** Returns a compact label for provider descriptions that begin with an `Nx` cost multiplier. */

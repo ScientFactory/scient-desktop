@@ -70,6 +70,11 @@ describe("createOrRecoverProjectFromPath", () => {
         title: "synara",
         workspaceRoot: WORKSPACE_ROOT,
         createWorkspaceRootIfMissing: false,
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5.6-sol",
+          options: { reasoningEffort: "high" },
+        },
       }),
     );
     expect(createdProjectId).not.toBeNull();

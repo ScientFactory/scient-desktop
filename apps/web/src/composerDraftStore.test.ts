@@ -2485,6 +2485,206 @@ describe("composerDraftStore modelSelection", () => {
     expect(state.selectedModel).toBe("opencode/gpt-5-nano");
   });
 
+  it("applies the recommended Codex model and high effort independently of catalog order", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: { modelSelectionByProvider: {}, activeProvider: "codex" },
+      selectedProvider: "codex",
+      threadModelSelection: null,
+      projectModelSelection: null,
+      customModelsByProvider: {
+        codex: [],
+        claudeAgent: [],
+        cursor: [],
+        antigravity: [],
+        grok: [],
+        droid: [],
+        kilo: [],
+        opencode: [],
+        pi: [],
+      },
+      availableModelOptionsByProvider: {
+        codex: [
+          { slug: "gpt-5.5", name: "GPT-5.5" },
+          {
+            slug: "gpt-5.6-sol",
+            name: "GPT-5.6 Sol",
+            supportedReasoningEfforts: [{ value: "low" }, { value: "high" }],
+          },
+        ],
+      },
+    });
+
+    expect(state).toEqual({
+      selectedModel: "gpt-5.6-sol",
+      modelOptions: { codex: { reasoningEffort: "high" } },
+    });
+  });
+
+  it("does not select an unavailable static recommendation over the live account catalog", () => {
+    const runtimeModels = [
+      {
+        slug: "gpt-5.6-terra",
+        name: "GPT-5.6 Terra",
+        isDefault: true as const,
+        supportedReasoningEfforts: [{ value: "low" }, { value: "high" }],
+      },
+    ];
+    const state = deriveEffectiveComposerModelState({
+      draft: { modelSelectionByProvider: {}, activeProvider: "codex" },
+      selectedProvider: "codex",
+      threadModelSelection: null,
+      projectModelSelection: null,
+      customModelsByProvider: {
+        codex: [],
+        claudeAgent: [],
+        cursor: [],
+        antigravity: [],
+        grok: [],
+        droid: [],
+        kilo: [],
+        opencode: [],
+        pi: [],
+      },
+      availableModelOptionsByProvider: {
+        codex: [
+          ...runtimeModels,
+          { slug: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+          { slug: "gpt-5.5", name: "GPT-5.5" },
+        ],
+      },
+      runtimeModelOptionsByProvider: { codex: runtimeModels },
+    });
+
+    expect(state).toEqual({
+      selectedModel: "gpt-5.6-terra",
+      modelOptions: { codex: { reasoningEffort: "high" } },
+    });
+  });
+
+  it("preserves an explicit thread model instead of silently upgrading it", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: { modelSelectionByProvider: {}, activeProvider: "codex" },
+      selectedProvider: "codex",
+      threadModelSelection: modelSelection("codex", "gpt-5.5"),
+      projectModelSelection: null,
+      customModelsByProvider: {
+        codex: [],
+        claudeAgent: [],
+        cursor: [],
+        antigravity: [],
+        grok: [],
+        droid: [],
+        kilo: [],
+        opencode: [],
+        pi: [],
+      },
+      availableModelOptionsByProvider: {
+        codex: [
+          { slug: "gpt-5.6-sol", name: "GPT-5.6 Sol" },
+          { slug: "gpt-5.5", name: "GPT-5.5" },
+        ],
+      },
+    });
+
+    expect(state).toEqual({ selectedModel: "gpt-5.5", modelOptions: null });
+  });
+
+  it("preserves an explicit draft model before provider discovery is available", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: {
+        modelSelectionByProvider: {
+          claudeAgent: modelSelection("claudeAgent", "claude-haiku-4-5", {
+            thinking: true,
+          }),
+        },
+        activeProvider: "claudeAgent",
+      },
+      selectedProvider: "claudeAgent",
+      threadModelSelection: null,
+      projectModelSelection: null,
+      customModelsByProvider: {
+        codex: [],
+        claudeAgent: [],
+        cursor: [],
+        antigravity: [],
+        grok: [],
+        droid: [],
+        kilo: [],
+        opencode: [],
+        pi: [],
+      },
+    });
+
+    expect(state).toEqual({
+      selectedModel: "claude-haiku-4-5",
+      modelOptions: { claudeAgent: { thinking: true } },
+    });
+  });
+
+  it("selects Claude Opus from resolved metadata instead of a stale first row", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: { modelSelectionByProvider: {}, activeProvider: "claudeAgent" },
+      selectedProvider: "claudeAgent",
+      threadModelSelection: null,
+      projectModelSelection: null,
+      customModelsByProvider: {
+        codex: [],
+        claudeAgent: [],
+        cursor: [],
+        antigravity: [],
+        grok: [],
+        droid: [],
+        kilo: [],
+        opencode: [],
+        pi: [],
+      },
+      availableModelOptionsByProvider: {
+        claudeAgent: [
+          { slug: "sonnet", name: "Sonnet", resolvedModel: "claude-sonnet-5" },
+          {
+            slug: "opus[1m]",
+            name: "Opus",
+            resolvedModel: "claude-opus-4-8[1m]",
+            supportedReasoningEfforts: [{ value: "high" }],
+          },
+        ],
+      },
+    });
+
+    expect(state).toEqual({
+      selectedModel: "opus[1m]",
+      modelOptions: { claudeAgent: { effort: "high" } },
+    });
+  });
+
+  it("selects Droid Auto without adding a reasoning override", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: { modelSelectionByProvider: {}, activeProvider: "droid" },
+      selectedProvider: "droid",
+      threadModelSelection: null,
+      projectModelSelection: null,
+      customModelsByProvider: {
+        codex: [],
+        claudeAgent: [],
+        cursor: [],
+        antigravity: [],
+        grok: [],
+        droid: [],
+        kilo: [],
+        opencode: [],
+        pi: [],
+      },
+      availableModelOptionsByProvider: {
+        droid: [
+          { slug: "claude-opus-4-8", name: "Claude Opus 4.8" },
+          { slug: "auto", name: "Auto Model" },
+        ],
+      },
+    });
+
+    expect(state).toEqual({ selectedModel: "auto", modelOptions: null });
+  });
+
   it("preserves the persisted OpenCode thread model when discovery omits it", () => {
     const state = deriveEffectiveComposerModelState({
       draft: {
