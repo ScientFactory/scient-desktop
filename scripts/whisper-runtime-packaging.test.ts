@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   assertPinnedWhisperServerSource,
   resolvePrebuiltArtifact,
+  WHISPER_CPP_COMMIT,
   verifyPackagedWhisperRuntime,
   WHISPER_CPP_PREBUILT,
   WHISPER_CPP_SOURCE,
@@ -26,8 +27,9 @@ afterEach(async () => {
 describe("whisper.cpp runtime packaging", () => {
   it("pins immutable, checksum-verified v1.9.1 inputs", () => {
     expect(WHISPER_CPP_VERSION).toBe("v1.9.1");
+    expect(WHISPER_CPP_COMMIT).toBe("f049fff95a089aa9969deb009cdd4892b3e74916");
     expect(WHISPER_CPP_SOURCE.url).toBe(
-      "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.9.1.tar.gz",
+      `https://github.com/ggml-org/whisper.cpp/archive/${WHISPER_CPP_COMMIT}.tar.gz`,
     );
     expect(WHISPER_CPP_SOURCE.sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(Object.keys(WHISPER_CPP_PREBUILT)).toEqual(["linux-arm64", "linux-x64", "win-x64"]);

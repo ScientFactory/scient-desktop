@@ -63,7 +63,6 @@ describe("localWhisperRuntime", () => {
       "--language",
       "auto",
       "--no-timestamps",
-      "--no-context",
     ]);
   });
 
