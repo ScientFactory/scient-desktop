@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { ThreadId } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
@@ -23,6 +25,31 @@ describe("createLatestAppSnapRequestGuard", () => {
 
     expect(guard.isCurrent(enableRequest)).toBe(false);
     expect(guard.isCurrent(disableRequest)).toBe(true);
+  });
+
+  it("keeps only the newest result current across repeated preference changes", () => {
+    const guard = createLatestAppSnapRequestGuard();
+    const first = guard.begin();
+    const second = guard.begin();
+    const third = guard.begin();
+
+    expect(guard.isCurrent(first)).toBe(false);
+    expect(guard.isCurrent(second)).toBe(false);
+    expect(guard.isCurrent(third)).toBe(true);
+  });
+
+  it("guards coordinator preference results and dismisses recovery alerts when actions start", () => {
+    const source = readFileSync(
+      new URL("./components/AppSnapCoordinator.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain("appSnapPreferenceRequestGuardRef.current.begin()");
+    expect(
+      source.match(/appSnapPreferenceRequestGuardRef\.current\.isCurrent\(requestId\)/g),
+    ).toHaveLength(2);
+    expect(source.match(/transientAlertManager\.close\(alertId\)/g)).toHaveLength(2);
+    expect(source).toContain('title: "Restarting AppSnap"');
   });
 });
 

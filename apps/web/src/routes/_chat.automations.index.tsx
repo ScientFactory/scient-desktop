@@ -86,6 +86,8 @@ function AutomationListRow({
   meta,
   trailing,
   onDelete,
+  deleteDisabled = false,
+  error,
 }: {
   readonly onClick: () => void;
   readonly leading: ReactNode;
@@ -94,6 +96,8 @@ function AutomationListRow({
   readonly meta?: ReactNode;
   readonly trailing?: ReactNode;
   readonly onDelete?: () => void;
+  readonly deleteDisabled?: boolean;
+  readonly error?: string | undefined;
 }) {
   return (
     // A div with role="button" (not a real <button>) so inline controls like the hover delete
@@ -114,7 +118,15 @@ function AutomationListRow({
     >
       {leading}
       <span className="min-w-0 max-w-[45%] truncate text-[0.8125rem] text-foreground">{title}</span>
-      <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{detail}</span>
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate text-xs",
+          error ? "text-destructive" : "text-muted-foreground",
+        )}
+        title={error}
+      >
+        {error ?? detail}
+      </span>
       {meta == null ? null : (
         <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{meta}</span>
       )}
@@ -123,11 +135,13 @@ function AutomationListRow({
           type="button"
           aria-label="Delete automation"
           title="Delete"
+          disabled={deleteDisabled}
           onClick={(event) => {
             event.stopPropagation();
+            if (deleteDisabled) return;
             onDelete();
           }}
-          className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+          className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-30 group-hover:opacity-100"
         >
           <CentralIcon name="trash-can-simple" className="size-3.5" />
         </button>
@@ -162,6 +176,7 @@ function AutomationsRouteView() {
     ReadonlySet<AutomationDraftWarningId>
   >(() => new Set());
   const [triageFilter, setTriageFilter] = useState<"unread" | "all">("unread");
+  const [deleteErrors, setDeleteErrors] = useState<ReadonlyMap<string, string>>(() => new Map());
   const fallbackProjectId = projects[0]?.id ?? "";
   const [form, setForm] = useState<AutomationFormState>(() =>
     formFromDefinition(null, fallbackProjectId, projectModelSelection(projects, fallbackProjectId)),
@@ -170,6 +185,8 @@ function AutomationsRouteView() {
   const {
     data,
     isLoading,
+    isFetching,
+    error: automationsError,
     refetch,
     createMutation,
     updateMutation,
@@ -196,6 +213,9 @@ function AutomationsRouteView() {
   };
 
   const openCreateDialog = () => {
+    if (createMutation.isPending || updateMutation.isPending) return;
+    createMutation.reset();
+    updateMutation.reset();
     setEditingDefinition(null);
     const nextForm = formFromDefinition(
       null,
@@ -209,6 +229,7 @@ function AutomationsRouteView() {
   };
 
   const submitForm = () => {
+    if (createMutation.isPending || updateMutation.isPending) return;
     if (!isFormSubmittable(form)) return;
     if (hasBlockingAutomationDraftWarnings(dialogWarnings, acknowledgedWarningIds)) return;
     const acknowledgedRisks = acknowledgedRiskIdsForFormWarnings(
@@ -235,10 +256,34 @@ function AutomationsRouteView() {
   };
 
   const deleteDefinition = async (definition: AutomationDefinition) => {
+    if (deleteMutation.isPending) return;
     const confirmed = await ensureNativeApi().dialogs.confirm(`Delete "${definition.name}"?`);
     if (!confirmed) return;
-    deleteMutation.mutate(definition);
+    setDeleteErrors((current) => {
+      if (!current.has(definition.id)) return current;
+      const next = new Map(current);
+      next.delete(definition.id);
+      return next;
+    });
+    deleteMutation.mutate(definition, {
+      onError: (error) => {
+        setDeleteErrors((current) =>
+          new Map(current).set(
+            definition.id,
+            error instanceof Error ? error.message : "The automation could not be deleted.",
+          ),
+        );
+      },
+    });
   };
+
+  const dialogMutation = editingDefinition ? updateMutation : createMutation;
+  const dialogError = dialogMutation.isError
+    ? dialogMutation.error instanceof Error
+      ? dialogMutation.error.message
+      : "The automation could not be saved."
+    : null;
+  const listError = automationsError instanceof Error ? automationsError.message : null;
 
   const active = data.definitions.filter((definition) => definition.enabled);
   const inactive = data.definitions.filter((definition) => !definition.enabled);
@@ -292,6 +337,12 @@ function AutomationsRouteView() {
         detail={subtitle(definition)}
         meta={rowMeta(definition, latestRun)}
         onDelete={() => void deleteDefinition(definition)}
+        deleteDisabled={deleteMutation.isPending}
+        error={
+          deleteErrors.has(definition.id)
+            ? `Could not delete: ${deleteErrors.get(definition.id)}`
+            : undefined
+        }
       />
     );
   };
@@ -395,15 +446,21 @@ function AutomationsRouteView() {
                 variant="ghost"
                 aria-label="Refresh"
                 title="Refresh"
+                disabled={isFetching}
                 onClick={() => void refetch()}
               >
-                <CentralIcon name="arrow-rotate-clockwise" className="size-4" />
+                <CentralIcon
+                  name="arrow-rotate-clockwise"
+                  className={cn("size-4", isFetching && "animate-spin")}
+                />
               </Button>
               <Button
                 type="button"
                 size="sm"
                 onClick={openCreateDialog}
-                disabled={projects.length === 0}
+                disabled={
+                  projects.length === 0 || createMutation.isPending || updateMutation.isPending
+                }
               >
                 <CentralIcon name="plus-small" className="size-4" />
                 New automation
@@ -417,9 +474,26 @@ function AutomationsRouteView() {
             <h1 className="px-2 font-heading text-2xl font-semibold tracking-tight text-foreground">
               Automations
             </h1>
+            {listError && data.definitions.length > 0 ? (
+              <div
+                role="alert"
+                className="mx-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+              >
+                Could not load automations: {listError}
+              </div>
+            ) : null}
             {isLoading ? (
               <div className="py-16 text-center text-sm text-muted-foreground">
                 Loading automations...
+              </div>
+            ) : listError && data.definitions.length === 0 ? (
+              <div className="flex flex-col items-center gap-3 py-16 text-center">
+                <p role="alert" className="max-w-md text-sm text-destructive">
+                  Could not load automations: {listError}
+                </p>
+                <Button type="button" size="sm" variant="outline" onClick={() => void refetch()}>
+                  Try again
+                </Button>
               </div>
             ) : data.definitions.length === 0 ? (
               <div className="flex flex-col items-center gap-1 py-16 text-center">
@@ -448,10 +522,19 @@ function AutomationsRouteView() {
         warnings={dialogWarnings}
         acknowledgedWarningIds={acknowledgedWarningIds}
         onToggleWarning={toggleWarning}
-        onOpenChange={setDialogOpen}
-        onFormChange={updateDialogForm}
+        onOpenChange={(open) => {
+          if (dialogMutation.isPending) return;
+          setDialogOpen(open);
+          if (!open) dialogMutation.reset();
+        }}
+        onFormChange={(nextForm) => {
+          if (dialogMutation.isPending) return;
+          dialogMutation.reset();
+          updateDialogForm(nextForm);
+        }}
         onSubmit={submitForm}
         busy={createMutation.isPending || updateMutation.isPending}
+        error={dialogError ? `Could not save automation: ${dialogError}` : null}
       />
     </RouteInsetSurface>
   );

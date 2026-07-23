@@ -24,7 +24,6 @@ import { readNativeApi } from "~/nativeApi";
 import { Button } from "../ui/button";
 import { DisclosureRegion } from "../ui/DisclosureRegion";
 import { Menu, MenuItem, MenuSeparator, MenuTrigger } from "../ui/menu";
-import { toastManager } from "../ui/toast";
 import { ComposerPickerMenuPopup } from "./ComposerPickerMenuPopup";
 import { FileEntryIcon } from "./FileEntryIcon";
 
@@ -121,23 +120,27 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
     [serverConfigQuery.data?.availableEditors],
   );
   const absolutePath = absoluteArtifactPath(props.artifact.path, props.workspaceRoot);
+  const [openError, setOpenError] = useState<string | null>(null);
 
   const reportOpenError = (error: unknown) => {
-    toastManager.add({
-      type: "error",
-      title: "Could not open file",
-      description: error instanceof Error ? error.message : "The file could not be opened.",
-    });
+    setOpenError(error instanceof Error ? error.message : "The file could not be opened.");
   };
-  const preview = () => openWorkspaceFileReference(opener, props.artifact.path);
+  const preview = () => {
+    setOpenError(null);
+    openWorkspaceFileReference(opener, props.artifact.path, { onError: reportOpenError });
+  };
   const openInEditor = (editorId: EditorId) => {
+    setOpenError(null);
     const api = readNativeApi();
-    if (!api || !absolutePath) return;
+    if (!api || !absolutePath) {
+      reportOpenError(new Error("The desktop file opener is unavailable."));
+      return;
+    }
     void api.shell.openInEditor(absolutePath, editorId).catch(reportOpenError);
   };
 
   return (
-    <div className="group/artifact-row flex min-w-0 items-center gap-3 px-3 py-2.5">
+    <div className="group/artifact-row flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5">
       <button
         type="button"
         className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
@@ -196,7 +199,12 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
             {props.artifact.kind === "html" ? (
               <MenuItem
                 disabled={!opener?.openHtmlInExternalBrowser}
-                onClick={() => opener?.openHtmlInExternalBrowser?.(props.artifact.path)}
+                onClick={() => {
+                  setOpenError(null);
+                  if (!opener?.openHtmlInExternalBrowser?.(props.artifact.path)) {
+                    reportOpenError(new Error("The browser could not open this preview."));
+                  }
+                }}
               >
                 <ExternalLinkIcon aria-hidden="true" className="size-4 text-muted-foreground" />
                 Default browser
@@ -218,9 +226,12 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
             <MenuItem
               disabled={!absolutePath}
               onClick={() => {
+                setOpenError(null);
                 const api = readNativeApi();
                 if (api && absolutePath) {
                   void api.shell.showInFolder(absolutePath).catch(reportOpenError);
+                } else {
+                  reportOpenError(new Error("The desktop file browser is unavailable."));
                 }
               }}
             >
@@ -230,6 +241,15 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
           </ComposerPickerMenuPopup>
         </Menu>
       </div>
+      <p
+        className={cn(
+          "basis-full pl-[66px] text-destructive text-xs sm:pl-[84px]",
+          !openError && "sr-only",
+        )}
+        aria-live="polite"
+      >
+        {openError ? `Could not open file: ${openError}` : ""}
+      </p>
     </div>
   );
 });

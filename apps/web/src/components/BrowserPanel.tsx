@@ -18,6 +18,7 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   CameraIcon,
+  CheckIcon,
   EllipsisIcon,
   ExternalLinkIcon,
   GlobeIcon,
@@ -35,10 +36,7 @@ import {
   isBlankBrowserTabUrl,
   resolveCopyableBrowserTabUrl,
 } from "@synara/shared/browserSession";
-import {
-  BROWSER_COPY_LINK_TOAST_TITLE,
-  isBrowserCopyLinkChord,
-} from "@synara/shared/browserShortcuts";
+import { isBrowserCopyLinkChord } from "@synara/shared/browserShortcuts";
 
 import { isElectron } from "~/env";
 import { readNativeApi } from "~/nativeApi";
@@ -54,18 +52,19 @@ import {
   selectThreadBrowserState,
 } from "../browserStateStore";
 import { useComposerDraftStore } from "../composerDraftStore";
-import { anchoredToastManager } from "./ui/toast";
 import {
   composerImageFromBrowserScreenshot,
   screenshotAttachmentName,
 } from "../lib/browserPromptContext";
 import {
   browserAddressDisplayValue,
+  browserCopyFeedbackMatches,
   buildBrowserAddressSuggestions,
   normalizeBrowserAddressInput,
   resolveBrowserChromeStatus,
   resolveBrowserAddressSync,
   type BrowserAddressSuggestion,
+  type BrowserCopyFeedback,
 } from "./BrowserPanel.logic";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { LocalServerIdentity } from "./LocalServerIdentity";
@@ -74,7 +73,6 @@ import { ComposerPickerMenuPopup } from "./chat/ComposerPickerMenuPopup";
 import { Input } from "./ui/input";
 import { Menu, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu";
 import { Skeleton } from "./ui/skeleton";
-import { toastManager } from "./ui/toast";
 
 interface BrowserPanelProps {
   mode: DiffPanelMode;
@@ -526,6 +524,7 @@ export function BrowserPanel({
   const browserWebviewTabIdRef = useRef<string | null>(null);
   const browserWebviewAttachKeyRef = useRef<string | null>(null);
   const copyScreenshotButtonRef = useRef<HTMLButtonElement>(null);
+  const [copyFeedback, setCopyFeedback] = useState<BrowserCopyFeedback | null>(null);
   const addressDraftsByTabIdRef = useRef(new Map<string, string>());
   const lastSyncedAddressByTabIdRef = useRef(new Map<string, string>());
   const previousActiveTabIdRef = useRef<string | null>(null);
@@ -558,6 +557,17 @@ export function BrowserPanel({
     threadBrowserState?.tabs.find((tab) => tab.id === threadBrowserState.activeTabId) ??
     threadBrowserState?.tabs[0] ??
     null;
+  const activeCopyScope = activeTab
+    ? {
+        tabId: activeTab.id,
+        url: resolveCopyableBrowserTabUrl(activeTab) ?? activeTab.url,
+      }
+    : null;
+  const visibleCopyFeedback = browserCopyFeedbackMatches(copyFeedback, activeCopyScope)
+    ? copyFeedback
+    : null;
+  const copiedBrowserItem =
+    visibleCopyFeedback?.tone === "success" ? visibleCopyFeedback.item : null;
   const loading = activeTab?.isLoading ?? false;
   const activeTabIsBlank = isBlankBrowserTabUrl(activeTab);
   const showLocalServersHome = isLiveRuntime && workspaceReady && (!activeTab || activeTabIsBlank);
@@ -1154,33 +1164,29 @@ export function BrowserPanel({
       return;
     }
 
-    void runBrowserAction(() =>
-      api.browser.copyScreenshotToClipboard({ threadId, tabId: activeTab.id }),
-    ).then((result) => {
-      if (result === null) {
-        return;
-      }
-      const anchor = copyScreenshotButtonRef.current;
-      if (anchor) {
-        anchoredToastManager.add({
-          data: {
-            tooltipStyle: true,
-          },
-          positionerProps: {
-            anchor,
-          },
-          timeout: 1_200,
-          title: "Browser screenshot copied",
+    const scope = {
+      tabId: activeTab.id,
+      url: resolveCopyableBrowserTabUrl(activeTab) ?? activeTab.url,
+    };
+    void api.browser.copyScreenshotToClipboard({ threadId, tabId: activeTab.id }).then(
+      () => {
+        setCopyFeedback({
+          ...scope,
+          item: "screenshot",
+          tone: "success",
+          message: "Screenshot copied",
         });
-        return;
-      }
-
-      toastManager.add({
-        type: "success",
-        title: "Browser screenshot copied",
-      });
-    });
-  }, [activeTab, api, ensureLiveRuntime, runBrowserAction, threadId]);
+      },
+      (error) => {
+        setCopyFeedback({
+          ...scope,
+          item: "screenshot",
+          tone: "error",
+          message: formatBrowserActionError(error) ?? "Could not copy the screenshot.",
+        });
+      },
+    );
+  }, [activeTab, api, ensureLiveRuntime, threadId]);
 
   const copyActiveTabLink = useCallback(() => {
     if (!activeTab) {
@@ -1190,8 +1196,19 @@ export function BrowserPanel({
     // with "Document is not focused" while the native browser view holds focus, so this
     // mirrors the keyboard chord — main writes the URL and emits onCopyLink, which surfaces
     // the toast in the listener below.
+    const scope = {
+      tabId: activeTab.id,
+      url: resolveCopyableBrowserTabUrl(activeTab) ?? activeTab.url,
+    };
     if (isElectron && api) {
-      void runBrowserAction(() => api.browser.copyLink({ threadId, tabId: activeTab.id }));
+      void api.browser.copyLink({ threadId, tabId: activeTab.id }).catch((error) => {
+        setCopyFeedback({
+          ...scope,
+          item: "link",
+          tone: "error",
+          message: formatBrowserActionError(error) ?? "Could not copy the link.",
+        });
+      });
       return;
     }
     const url = resolveCopyableBrowserTabUrl(activeTab);
@@ -1200,17 +1217,28 @@ export function BrowserPanel({
     }
     const clipboard = typeof navigator !== "undefined" ? navigator.clipboard : undefined;
     if (!clipboard) {
+      setCopyFeedback({
+        ...scope,
+        item: "link",
+        tone: "error",
+        message: "Clipboard access is unavailable.",
+      });
       return;
     }
     void clipboard.writeText(url).then(
       () => {
-        toastManager.add({ type: "success", title: BROWSER_COPY_LINK_TOAST_TITLE });
+        setCopyFeedback({ ...scope, item: "link", tone: "success", message: "Link copied" });
       },
-      () => {
-        // Clipboard writes can reject without user gesture; nothing actionable to surface.
+      (error) => {
+        setCopyFeedback({
+          ...scope,
+          item: "link",
+          tone: "error",
+          message: formatBrowserActionError(error) ?? "Could not copy the link.",
+        });
       },
     );
-  }, [activeTab, api, runBrowserAction, threadId]);
+  }, [activeTab, api, threadId]);
 
   // React chrome focus path: the native page handles the chord through the desktop main
   // process, so this only fires when the address bar/tab strip (not the page) is focused.
@@ -1244,7 +1272,7 @@ export function BrowserPanel({
     };
   }, [copyActiveTabLink, isLiveRuntime]);
 
-  // Native page focus path: main already wrote the URL to the clipboard, so just toast.
+  // Native page focus path: main already wrote the URL to the clipboard.
   useEffect(() => {
     if (!api || !isLiveRuntime) {
       return;
@@ -1253,9 +1281,21 @@ export function BrowserPanel({
       if (event.threadId !== threadId) {
         return;
       }
-      toastManager.add({ type: "success", title: BROWSER_COPY_LINK_TOAST_TITLE });
+      setCopyFeedback({
+        item: "link",
+        tabId: event.tabId,
+        url: event.url,
+        tone: "success",
+        message: "Link copied",
+      });
     });
   }, [api, isLiveRuntime, threadId]);
+
+  useEffect(() => {
+    if (!copyFeedback) return;
+    const timeoutId = window.setTimeout(() => setCopyFeedback(null), 2_500);
+    return () => window.clearTimeout(timeoutId);
+  }, [copyFeedback]);
 
   const onCloseTab = useCallback(
     (tabId: string) => {
@@ -1426,6 +1466,16 @@ export function BrowserPanel({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+        <span
+          className={cn(
+            "max-w-40 truncate text-xs",
+            visibleCopyFeedback?.tone === "error" ? "text-destructive" : "sr-only",
+          )}
+          role="status"
+          aria-live="polite"
+        >
+          {visibleCopyFeedback?.message ?? ""}
+        </span>
         <Button
           ref={copyScreenshotButtonRef}
           type="button"
@@ -1433,12 +1483,18 @@ export function BrowserPanel({
           size="icon-sm"
           className="size-7"
           disabled={!activeTab}
-          aria-label="Copy screenshot"
-          title="Copy screenshot"
+          aria-label={copiedBrowserItem === "screenshot" ? "Screenshot copied" : "Copy screenshot"}
+          title={copiedBrowserItem === "screenshot" ? "Copied" : "Copy screenshot"}
           onClick={onCopyScreenshotToClipboard}
         >
-          <CameraIcon className="size-3.5" />
-          <span className="sr-only">Copy screenshot</span>
+          {copiedBrowserItem === "screenshot" ? (
+            <CheckIcon className="size-3.5 text-success" />
+          ) : (
+            <CameraIcon className="size-3.5" />
+          )}
+          <span className="sr-only">
+            {copiedBrowserItem === "screenshot" ? "Screenshot copied" : "Copy screenshot"}
+          </span>
         </Button>
         <Button
           type="button"
@@ -1446,12 +1502,18 @@ export function BrowserPanel({
           size="icon-sm"
           className="size-7"
           disabled={!activeTab}
-          aria-label="Copy link"
-          title="Copy link"
+          aria-label={copiedBrowserItem === "link" ? "Link copied" : "Copy link"}
+          title={copiedBrowserItem === "link" ? "Copied" : "Copy link"}
           onClick={copyActiveTabLink}
         >
-          <LinkIcon className="size-3.5" />
-          <span className="sr-only">Copy link</span>
+          {copiedBrowserItem === "link" ? (
+            <CheckIcon className="size-3.5 text-success" />
+          ) : (
+            <LinkIcon className="size-3.5" />
+          )}
+          <span className="sr-only">
+            {copiedBrowserItem === "link" ? "Link copied" : "Copy link"}
+          </span>
         </Button>
         <Menu modal={false}>
           <MenuTrigger

@@ -2007,7 +2007,7 @@ export class DesktopBrowserManager {
       return;
     }
     clipboard.writeText(url);
-    const event: BrowserCopyLinkEvent = { threadId, url };
+    const event: BrowserCopyLinkEvent = { threadId, tabId, url };
     for (const listener of this.copyLinkListeners) {
       listener(event);
     }

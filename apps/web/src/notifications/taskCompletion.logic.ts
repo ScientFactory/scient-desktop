@@ -9,6 +9,7 @@ import {
   type TerminalVisualState,
 } from "@synara/shared/terminalThreads";
 import type { Thread, ThreadSession } from "../types";
+import type { ActivityItem } from "./activityStore";
 import {
   derivePendingApprovals,
   derivePendingUserInputs,
@@ -55,6 +56,49 @@ export interface TerminalAttentionCandidate {
   terminalId: string;
   threadId: Thread["id"];
   title: string;
+}
+
+export function activeThreadAttentionActivityKeys(threads: readonly Thread[]): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const thread of threads) {
+    for (const approval of derivePendingApprovals(thread.activities)) {
+      keys.add(`thread:${thread.id}:attention:${approval.requestId}`);
+    }
+    for (const request of derivePendingUserInputs(thread.activities)) {
+      keys.add(`thread:${thread.id}:attention:${request.requestId}`);
+    }
+  }
+  return keys;
+}
+
+export function activeTerminalAttentionActivityKeys(
+  byThreadId: Record<string, TerminalNotificationThreadState>,
+): ReadonlySet<string> {
+  const keys = new Set<string>();
+  for (const [threadId, state] of Object.entries(byThreadId)) {
+    for (const [terminalId, attentionState] of Object.entries(
+      state.terminalAttentionStatesById ?? {},
+    )) {
+      if (attentionState === "attention") {
+        keys.add(`terminal:${threadId}:${terminalId}:attention`);
+      }
+    }
+  }
+  return keys;
+}
+
+export function staleAttentionActivityKeys(
+  items: readonly Pick<ActivityItem, "dedupeKey">[],
+  activeKeys: ReadonlySet<string>,
+): readonly string[] {
+  return items
+    .map((item) => item.dedupeKey)
+    .filter(
+      (dedupeKey) =>
+        ((dedupeKey.startsWith("thread:") && dedupeKey.includes(":attention:")) ||
+          (dedupeKey.startsWith("terminal:") && dedupeKey.endsWith(":attention"))) &&
+        !activeKeys.has(dedupeKey),
+    );
 }
 
 type ThreadSessionStatus = ThreadSession["status"];

@@ -13,12 +13,13 @@ import { type MouseEvent, useCallback, useMemo, useState } from "react";
 
 import { useAppSettings } from "~/appSettings";
 import { RenameThreadDialog } from "~/components/RenameThreadDialog";
-import { useCopyPathToClipboard, useCopyThreadIdToClipboard } from "~/hooks/useCopyToClipboard";
+import { copyTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { reconcileDeletedThreadFromClient } from "~/lib/deletedThreadClientReconciliation";
 import { gitRemoveWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { pinActionLabel } from "~/lib/pin";
 import { dispatchThreadRename } from "~/lib/threadRename";
 import { newCommandId } from "~/lib/utils";
+import { activityManager } from "~/notifications/activityStore";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useKanbanUiStore } from "../../kanbanUiStore";
 import { readNativeApi } from "../../nativeApi";
@@ -30,9 +31,9 @@ import {
   formatWorktreePathForDisplay,
   getOrphanedWorktreePathForThread,
 } from "../../worktreeCleanup";
-import { toastManager } from "../ui/toast";
 import { terminalRuntimeRegistry } from "../terminal/terminalRuntimeRegistry";
 import { isKanbanDraftOnlyCard, type KanbanCard } from "./kanban.logic";
+import type { KanbanFeedback } from "./KanbanInlineFeedback";
 
 interface RenameTarget {
   threadId: ThreadId;
@@ -44,6 +45,9 @@ export interface KanbanCardContextMenuController {
   onCardContextMenu: (card: KanbanCard, event: MouseEvent) => void;
   /** Render once near the board root. */
   renameDialog: React.ReactNode;
+  /** Local result or error from the most recent card action. */
+  feedback: KanbanFeedback | null;
+  clearFeedback: () => void;
 }
 
 export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
@@ -57,9 +61,21 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
   );
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
   const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null);
+  const [feedback, setFeedback] = useState<KanbanFeedback | null>(null);
+  const clearFeedback = useCallback(() => setFeedback(null), []);
 
-  const copyPathToClipboard = useCopyPathToClipboard();
-  const copyThreadIdToClipboard = useCopyThreadIdToClipboard();
+  const copyWithFeedback = useCallback(async (value: string, label: string) => {
+    try {
+      await copyTextToClipboard(value);
+      setFeedback({ tone: "success", title: `${label} copied` });
+    } catch (error) {
+      setFeedback({
+        tone: "error",
+        title: `Failed to copy ${label.toLowerCase()}`,
+        description: error instanceof Error ? error.message : "Clipboard access failed.",
+      });
+    }
+  }, []);
 
   const resolveCardWorkspacePath = useCallback((card: KanbanCard): string | null => {
     const appState = useStore.getState();
@@ -73,12 +89,19 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
 
   const archiveCardThread = useCallback(async (threadId: ThreadId) => {
     const api = readNativeApi();
-    if (!api) return;
+    if (!api) {
+      setFeedback({
+        tone: "error",
+        title: "Not connected",
+        description: "Reconnect to the server before archiving.",
+      });
+      return;
+    }
     const thread = getThreadFromState(useStore.getState(), threadId);
     if (!thread) return;
     if (isThreadRunningTurn(thread)) {
-      toastManager.add({
-        type: "error",
+      setFeedback({
+        tone: "error",
         title: "Cannot archive",
         description: "Stop the running session before archiving this thread.",
       });
@@ -110,7 +133,14 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
         return;
       }
       const api = readNativeApi();
-      if (!api) return;
+      if (!api) {
+        setFeedback({
+          tone: "error",
+          title: "Not connected",
+          description: "Reconnect to the server before deleting this thread.",
+        });
+        return;
+      }
       const state = useStore.getState();
       const thread = getThreadFromState(state, card.threadId);
       if (!thread) return;
@@ -173,12 +203,21 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
           force: true,
         });
       } catch (error) {
-        toastManager.add({
-          type: "error",
+        const description = `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${
+          error instanceof Error ? error.message : "Unknown error."
+        }`;
+        setFeedback({
+          tone: "error",
           title: "Thread deleted, but worktree removal failed",
-          description: `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${
-            error instanceof Error ? error.message : "Unknown error."
-          }`,
+          description,
+        });
+        activityManager.publish({
+          dedupeKey: `kanban:worktree-removal:${card.threadId}`,
+          source: "system",
+          status: "needs_attention",
+          tone: "error",
+          title: "Worktree removal failed",
+          description,
         });
       }
     },
@@ -193,7 +232,9 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
 
   const setThreadPinned = useCallback(async (threadId: ThreadId, isPinned: boolean) => {
     const api = readNativeApi();
-    if (!api) return;
+    if (!api) {
+      throw new Error("Native API unavailable.");
+    }
     await api.orchestration.dispatchCommand({
       type: "thread.meta.update",
       commandId: newCommandId(),
@@ -207,7 +248,14 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
       event.preventDefault();
       event.stopPropagation();
       const api = readNativeApi();
-      if (!api) return;
+      if (!api) {
+        setFeedback({
+          tone: "error",
+          title: "Not connected",
+          description: "Reconnect to the server before using card actions.",
+        });
+        return;
+      }
       const position = { x: event.clientX, y: event.clientY };
       const isDraftOnlyCard = isKanbanDraftOnlyCard(card);
       const isThreadBacked = card.thread !== null;
@@ -251,8 +299,8 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
         if (clicked === "toggle-pin" && isThreadActionCard && card.thread) {
           const next = !card.thread.isPinned;
           void setThreadPinned(card.threadId, next).catch(() => {
-            toastManager.add({
-              type: "error",
+            setFeedback({
+              tone: "error",
               title: next ? "Unable to pin thread" : "Unable to unpin thread",
             });
           });
@@ -260,11 +308,11 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
         }
         if (clicked === "copy-path") {
           if (!workspacePath) return;
-          copyPathToClipboard(workspacePath);
+          await copyWithFeedback(workspacePath, "Path");
           return;
         }
         if (clicked === "copy-thread-id") {
-          copyThreadIdToClipboard(card.threadId);
+          await copyWithFeedback(card.threadId, "Thread ID");
           return;
         }
         if (clicked === "archive") {
@@ -294,12 +342,17 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
           if (!confirmed) return;
         }
         await deleteCardThread(card);
-      })();
+      })().catch((error: unknown) => {
+        setFeedback({
+          tone: "error",
+          title: "Card action failed",
+          description: error instanceof Error ? error.message : "Unexpected error.",
+        });
+      });
     },
     [
       archiveCardThread,
-      copyPathToClipboard,
-      copyThreadIdToClipboard,
+      copyWithFeedback,
       deleteCardThread,
       resolveCardWorkspacePath,
       setThreadPinned,
@@ -318,25 +371,35 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
         }}
         onSave={async (newTitle) => {
           if (!renameTarget) return;
-          const outcome = await dispatchThreadRename({
-            threadId: renameTarget.threadId,
-            newTitle,
-            unchangedTitles: [renameTarget.title],
-          });
-          if (outcome === "unavailable") {
-            toastManager.add({
-              type: "error",
-              title: "Not connected",
-              description: "Reconnect to the server before renaming.",
+          try {
+            const outcome = await dispatchThreadRename({
+              threadId: renameTarget.threadId,
+              newTitle,
+              unchangedTitles: [renameTarget.title],
             });
-            return;
+            if (outcome === "unavailable") {
+              setFeedback({
+                tone: "error",
+                title: "Not connected",
+                description: "Reconnect to the server before renaming.",
+              });
+              setRenameTarget(null);
+              return;
+            }
+            setRenameTarget(null);
+          } catch (error) {
+            setFeedback({
+              tone: "error",
+              title: "Unable to rename thread",
+              description: error instanceof Error ? error.message : "Unexpected error.",
+            });
+            setRenameTarget(null);
           }
-          setRenameTarget(null);
         }}
       />
     ),
     [renameTarget],
   );
 
-  return { onCardContextMenu, renameDialog };
+  return { onCardContextMenu, renameDialog, feedback, clearFeedback };
 }

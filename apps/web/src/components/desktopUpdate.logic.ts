@@ -58,6 +58,10 @@ export function shouldShowDesktopUpdateButton(state: DesktopUpdateState | null):
   );
 }
 
+export function shouldClearDesktopUpdateActivity(state: DesktopUpdateState | null): boolean {
+  return state?.status === "disabled" || state?.status === "idle" || state?.status === "up-to-date";
+}
+
 export function shouldShowArm64IntelBuildWarning(state: DesktopUpdateState | null): boolean {
   return state?.hostArch === "arm64" && state.appArch === "x64";
 }

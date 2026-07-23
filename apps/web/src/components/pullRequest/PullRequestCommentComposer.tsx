@@ -12,7 +12,6 @@ import type { PullRequestDetail } from "@synara/contracts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 
-import { toastManager } from "~/components/ui/toast";
 import { ArrowUpIcon, GitHubIcon } from "~/lib/icons";
 import { pullRequestCommentMutationOptions } from "~/lib/pullRequestReactQuery";
 import { PR_BODY_TEXT_CLASS_NAME } from "./pullRequestText";
@@ -22,6 +21,7 @@ export function PullRequestCommentComposer({ detail }: { detail: PullRequestDeta
   const queryClient = useQueryClient();
   const mutation = useMutation(pullRequestCommentMutationOptions(queryClient));
   const [body, setBody] = useState("");
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
   // Synchronous re-entrancy lock: mutation.isPending updates on React's schedule, which is
   // too late to stop a rapid double Enter from posting the comment twice.
   const submittingRef = useRef(false);
@@ -31,6 +31,7 @@ export function PullRequestCommentComposer({ detail }: { detail: PullRequestDeta
   const submit = async () => {
     if (!canSubmit || submittingRef.current) return;
     submittingRef.current = true;
+    setSubmissionError(null);
     try {
       await mutation.mutateAsync({
         projectId: detail.projectId,
@@ -41,55 +42,70 @@ export function PullRequestCommentComposer({ detail }: { detail: PullRequestDeta
       setBody("");
     } catch (error) {
       // The draft stays in the field on failure — nothing to re-type.
-      toastManager.add({
-        type: "error",
-        title: "Could not post comment",
-        description: error instanceof Error ? error.message : "GitHub CLI comment failed.",
-      });
+      setSubmissionError(
+        error instanceof Error ? error.message : "GitHub CLI could not post the comment.",
+      );
     } finally {
       submittingRef.current = false;
     }
   };
 
   return (
-    <div className="flex items-center gap-2 rounded-3xl border border-border/60 bg-background py-1 pl-3 pr-1.5 shadow-sm">
-      <span
-        className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[var(--color-background-elevated-secondary)] text-muted-foreground"
-        title="Commenting as your GitHub account"
-      >
-        <GitHubIcon className="size-3" />
-      </span>
-      <textarea
-        rows={Math.min(6, body.split("\n").length)}
-        value={body}
-        disabled={mutation.isPending}
-        placeholder="Leave a comment"
-        aria-label="Leave a comment"
-        onChange={(event) => setBody(event.target.value)}
-        onKeyDown={(event) => {
-          // Enter during IME composition confirms the composition, not the comment.
-          if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-            event.preventDefault();
-            void submit();
-          }
-        }}
-        // font-system-ui overrides the global `textarea { font-family: mono }` reset — this is
-        // UI chrome, not code, exactly like the chat composer's editor.
+    <div className="space-y-1.5">
+      <div
         className={cn(
-          PR_BODY_TEXT_CLASS_NAME,
-          "font-system-ui min-w-0 flex-1 resize-none bg-transparent py-1.5 outline-none placeholder:text-muted-foreground disabled:opacity-60",
+          "flex items-center gap-2 rounded-3xl border bg-background py-1 pl-3 pr-1.5 shadow-sm",
+          submissionError ? "border-destructive/50" : "border-border/60",
         )}
-      />
-      <button
-        type="button"
-        disabled={!canSubmit}
-        aria-label="Post comment"
-        title="Post comment"
-        onClick={() => void submit()}
-        className="flex size-7 shrink-0 items-center justify-center self-end rounded-full bg-primary text-primary-foreground transition-opacity disabled:opacity-35"
       >
-        <ArrowUpIcon className="size-4" />
-      </button>
+        <span
+          className="flex size-5 shrink-0 items-center justify-center rounded-full bg-[var(--color-background-elevated-secondary)] text-muted-foreground"
+          title="Commenting as your GitHub account"
+        >
+          <GitHubIcon className="size-3" />
+        </span>
+        <textarea
+          rows={Math.min(6, body.split("\n").length)}
+          value={body}
+          disabled={mutation.isPending}
+          placeholder="Leave a comment"
+          aria-label="Leave a comment"
+          aria-invalid={submissionError ? true : undefined}
+          aria-describedby={submissionError ? "pull-request-comment-error" : undefined}
+          onChange={(event) => {
+            setBody(event.target.value);
+            if (submissionError) setSubmissionError(null);
+          }}
+          onKeyDown={(event) => {
+            // Enter during IME composition confirms the composition, not the comment.
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              void submit();
+            }
+          }}
+          // font-system-ui overrides the global `textarea { font-family: mono }` reset — this is
+          // UI chrome, not code, exactly like the chat composer's editor.
+          className={cn(
+            PR_BODY_TEXT_CLASS_NAME,
+            "font-system-ui min-w-0 flex-1 resize-none bg-transparent py-1.5 outline-none placeholder:text-muted-foreground disabled:opacity-60",
+          )}
+        />
+        <button
+          type="button"
+          disabled={!canSubmit}
+          aria-label="Post comment"
+          title="Post comment"
+          onClick={() => void submit()}
+          className="flex size-7 shrink-0 items-center justify-center self-end rounded-full bg-primary text-primary-foreground transition-opacity disabled:opacity-35"
+        >
+          <ArrowUpIcon className="size-4" />
+        </button>
+      </div>
+      {submissionError ? (
+        <p id="pull-request-comment-error" role="alert" className="px-3 text-xs text-destructive">
+          Could not post comment: {submissionError}
+        </p>
+      ) : null}
     </div>
   );
 }

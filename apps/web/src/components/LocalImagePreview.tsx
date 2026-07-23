@@ -20,7 +20,6 @@ import { downloadUrlAsBlob } from "~/lib/browserDownload";
 import { DownloadIcon, Loader2Icon, TriangleAlertIcon } from "~/lib/icons";
 import { buildLocalImageUrl, localImageFileName } from "~/lib/localImageUrls";
 import { cn } from "~/lib/utils";
-import { toastManager } from "./ui/toast";
 
 export type LocalImagePreviewStatus = "loading" | "ready" | "error";
 
@@ -76,30 +75,30 @@ export function useLocalImagePreview(input: {
   return { previewUrl, downloadUrl, fileName, downloadName: fileName || "", status, imgProps };
 }
 
-// Handles local-image downloads imperatively so failed API responses surface as
-// toasts instead of replacing the whole desktop window with a 404 page.
+// Handles local-image downloads imperatively so failed API responses stay on
+// the owning image instead of replacing the whole desktop window with a 404 page.
 export function useLocalImageDownloadClick(input: {
   downloadUrl: string;
   downloadName: string;
-  errorTitle?: string | undefined;
+  onDownloadStart?: (() => void) | undefined;
+  onDownloadError: (message: string) => void;
 }) {
+  const { downloadName, downloadUrl, onDownloadError, onDownloadStart } = input;
   return useCallback(
     (event: MouseEvent<HTMLElement>) => {
       event.preventDefault();
       event.stopPropagation();
+      onDownloadStart?.();
       void downloadUrlAsBlob({
-        url: input.downloadUrl,
-        filename: input.downloadName,
+        url: downloadUrl,
+        filename: downloadName,
       }).catch((error: unknown) => {
-        toastManager.add({
-          type: "error",
-          title: input.errorTitle ?? "Could not download image",
-          description:
-            error instanceof Error ? error.message : "The file may have moved or be unavailable.",
-        });
+        const description =
+          error instanceof Error ? error.message : "The file may have moved or be unavailable.";
+        onDownloadError(description);
       });
     },
-    [input.downloadName, input.downloadUrl, input.errorTitle],
+    [downloadName, downloadUrl, onDownloadError, onDownloadStart],
   );
 }
 
@@ -111,6 +110,7 @@ export function LocalImageErrorCard(props: {
   className?: string | undefined;
   downloadAriaLabel?: string;
   onDownloadClick?: ((event: MouseEvent<HTMLElement>) => void) | undefined;
+  downloadError?: string | null | undefined;
 }) {
   return (
     <span className={cn("local-image-error", props.className)}>
@@ -119,8 +119,14 @@ export function LocalImageErrorCard(props: {
       </span>
       <span className="local-image-error__body">
         <span className="local-image-error__title">Couldn’t open this image</span>
-        <span className="local-image-error__subtitle">
-          The file may have moved or be unavailable.
+        <span
+          className={cn(
+            "local-image-error__subtitle",
+            props.downloadError ? "text-destructive" : undefined,
+          )}
+          role={props.downloadError ? "alert" : undefined}
+        >
+          {props.downloadError ?? "The file may have moved or be unavailable."}
         </span>
       </span>
       <a
@@ -150,7 +156,14 @@ export function LocalImagePreview(props: {
     cwd: props.cwd,
     previewGrant: props.previewGrant,
   });
-  const handleDownloadClick = useLocalImageDownloadClick({ downloadUrl, downloadName });
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  useEffect(() => setDownloadError(null), [downloadUrl]);
+  const handleDownloadClick = useLocalImageDownloadClick({
+    downloadUrl,
+    downloadName,
+    onDownloadStart: () => setDownloadError(null),
+    onDownloadError: setDownloadError,
+  });
 
   if (status === "error") {
     return (
@@ -159,6 +172,7 @@ export function LocalImagePreview(props: {
         downloadName={downloadName}
         className={props.className}
         onDownloadClick={handleDownloadClick}
+        downloadError={downloadError}
       />
     );
   }
@@ -185,6 +199,14 @@ export function LocalImagePreview(props: {
       >
         <DownloadIcon className="size-3.5" aria-hidden="true" />
       </a>
+      {downloadError ? (
+        <span
+          className="absolute inset-x-3 bottom-3 rounded-md border border-destructive/25 bg-popover/95 px-2.5 py-2 text-destructive text-xs shadow-sm backdrop-blur"
+          role="alert"
+        >
+          {downloadError}
+        </span>
+      ) : null}
     </div>
   );
 }
