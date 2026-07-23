@@ -19,7 +19,11 @@ import {
   ServerConfig,
   type ServerConfigShape,
 } from "./config";
-import { attachmentsEffectRouteLayer, localImageEffectRouteLayer } from "./http";
+import {
+  attachmentsEffectRouteLayer,
+  localHtmlPreviewEffectRouteLayer,
+  localImageEffectRouteLayer,
+} from "./http";
 import { createLocalPreviewGrant } from "./localImageFiles";
 
 const tempDirs: string[] = [];
@@ -115,7 +119,10 @@ function makeFakeServerAuth(): ServerAuthShape {
 
 async function withEffectServer(
   config: ServerConfigShape,
-  routeLayer: typeof localImageEffectRouteLayer | typeof attachmentsEffectRouteLayer,
+  routeLayer:
+    | typeof localImageEffectRouteLayer
+    | typeof localHtmlPreviewEffectRouteLayer
+    | typeof attachmentsEffectRouteLayer,
   run: (origin: string) => Promise<void>,
 ): Promise<void> {
   const scope = await Effect.runPromise(Scope.make("sequential"));
@@ -299,6 +306,61 @@ describe("localImageEffectRouteLayer", () => {
       const response = await fetch(`${origin}/api/local-image?${params}`);
       expect(response.status).toBe(404);
     });
+  });
+});
+
+describe("localHtmlPreviewEffectRouteLayer", () => {
+  it("renders only the exact granted HTML file with inert document policy", async () => {
+    const workspace = makeTempDir("synara-effect-html-workspace-");
+    const htmlPath = path.join(workspace, "lesson.html");
+    const html =
+      "<!doctype html><title>Lesson</title><script>window.pwned = true</script><p>Study</p>";
+    writeFileSync(htmlPath, html);
+    const grant = await createLocalPreviewGrant({ requestedPath: htmlPath });
+
+    await withEffectServer(
+      makeServerConfig({ cwd: workspace }),
+      localHtmlPreviewEffectRouteLayer,
+      async (origin) => {
+        const response = await fetch(
+          `${origin}/api/local-html-preview?grant=${encodeURIComponent(grant.grant)}`,
+        );
+
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toContain("text/html");
+        expect(response.headers.get("cache-control")).toBe("no-store");
+        expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+        expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(response.headers.get("content-security-policy")).toContain("script-src 'none'");
+        expect(response.headers.get("content-security-policy")).toContain(
+          "sandbox allow-top-navigation-by-user-activation",
+        );
+        await expect(response.text()).resolves.toBe(html);
+      },
+    );
+  });
+
+  it("rejects missing grants and grants for non-HTML files", async () => {
+    const workspace = makeTempDir("synara-effect-html-rejection-");
+    const markdownPath = path.join(workspace, "lesson.md");
+    writeFileSync(markdownPath, "# Lesson");
+    const markdownGrant = await createLocalPreviewGrant({ requestedPath: markdownPath });
+
+    await withEffectServer(
+      makeServerConfig({ cwd: workspace }),
+      localHtmlPreviewEffectRouteLayer,
+      async (origin) => {
+        await expect(fetch(`${origin}/api/local-html-preview`)).resolves.toHaveProperty(
+          "status",
+          404,
+        );
+        await expect(
+          fetch(
+            `${origin}/api/local-html-preview?grant=${encodeURIComponent(markdownGrant.grant)}`,
+          ),
+        ).resolves.toHaveProperty("status", 404);
+      },
+    );
   });
 });
 

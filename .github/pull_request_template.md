@@ -1,33 +1,39 @@
-<!--
-⚠️ READ BEFORE OPENING ⚠️
+## Problem And Outcome
 
-We are not actively accepting contributions right now.
+<!-- What problem or need does this address, and what should change? -->
 
-You can still open a PR, but please do so knowing there is a high chance
-we may close it without merging it, or never review it.
+## Scope
 
-- Small, focused PRs are strongly preferred. Bug fixes are most likely to be merged.
-- New features will most likely just annoy us.
-- 1,000+ line PRs with a bunch of new features will probably get you banned from the repo.
--->
+<!-- Why does this belong in scient-desktop? Note anything intentionally out of scope. -->
 
-## What Changed
+## Risk And Affected Behavior
 
-<!-- Describe the change clearly and keep scope tight. -->
+<!-- What behavior, boundary, state, or invariant could regress? Keep this proportional to the change. -->
 
-## Why
+## Automated Verification
 
-<!-- Explain the problem being solved and why this approach is the right one. -->
+<!-- List exact commands and results. Include regression proof for bug fixes when practical. -->
 
-## UI Changes
+## Manual Verification
 
-<!-- If this PR changes UI, include clear before/after screenshots.
-     If the change involves motion or interaction, include a short video.
-     Delete this section if not applicable. -->
+<!-- Record environment, starting state, steps, and observed result. Write "Not applicable" with a reason when no user-facing behavior changed. -->
 
-## Checklist
+## UI Evidence
 
-- [ ] This PR is small and focused
-- [ ] I explained what changed and why
-- [ ] I included before/after screenshots for any UI changes
-- [ ] I included a video for animation/interaction changes
+<!-- Add before/after screenshots for visible changes and a recording for motion or interaction. Remove when not applicable. -->
+
+## Known Limitations Or Deferrals
+
+<!-- State remaining gaps or write "None." -->
+
+## Author Self-Review
+
+- [ ] I reviewed the complete final diff, not only individual commits
+- [ ] Every changed file belongs to the stated outcome
+- [ ] I considered existing primitives and important failure or recovery paths
+- [ ] Tests and documentation match the implemented behavior
+- [ ] I removed temporary logging, debugging artifacts, secrets, and unrelated changes
+
+## Integration And Release Impact
+
+<!-- Note cross-repository dependencies, migrations, deployment impact, updater impact, or release requirements. Write "None" when not applicable. -->

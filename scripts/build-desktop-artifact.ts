@@ -677,6 +677,7 @@ const installLockedStageDependencies = Effect.fn("installLockedStageDependencies
 const verifyStagedPatchedDependencies = Effect.fn("verifyStagedPatchedDependencies")(function* (
   repoRoot: string,
   stageAppDir: string,
+  stagedRuntimeDependencies: Readonly<Record<string, unknown>>,
 ) {
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
@@ -685,6 +686,11 @@ const verifyStagedPatchedDependencies = Effect.fn("verifyStagedPatchedDependenci
     rootPackageJson.patchedDependencies ?? {},
   )) {
     const packageName = patchedPackageName(dependency);
+    // Build-tool patches (for example app-builder-lib) are applied in the
+    // repository install but intentionally omitted from the packaged runtime.
+    if (!(packageName in stagedRuntimeDependencies)) {
+      continue;
+    }
     const patchContents = yield* fs.readFileString(path.join(repoRoot, patchRelativePath));
     for (const expectation of parsePatchAddedLines(patchContents)) {
       const stagedFilePath = path.join(stageAppDir, "node_modules", packageName, expectation.file);
@@ -1016,7 +1022,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
 
-  yield* verifyStagedPatchedDependencies(repoRoot, stageAppDir);
+  yield* verifyStagedPatchedDependencies(repoRoot, stageAppDir, stagePackageJson.dependencies);
 
   yield* prepareStagedNodePty(repoRoot, stageAppDir, options.verbose);
   yield* verifyStagedNodePty(stageAppDir, options.verbose);

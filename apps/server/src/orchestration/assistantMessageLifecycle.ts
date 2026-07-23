@@ -56,7 +56,7 @@ export function collectAssistantMessagesToSettle(input: {
 
 /** A late provider delta may enrich settled text, but must never reopen its turn. */
 export function isAssistantTurnTerminal(
-  thread: OrchestrationThread,
+  thread: Pick<OrchestrationThread, "latestTurn">,
   turnId: TurnId | null | undefined,
 ): boolean {
   return (

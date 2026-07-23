@@ -2,11 +2,21 @@
 
 ## Task Completion Requirements
 
-- Do not run `bun fmt`, `bun lint`, or `bun typecheck` unless the user explicitly asks for them in the current conversation.
-- All of `bun fmt`, `bun lint`, and `bun typecheck` must pass before considering tasks completed.
-- Treat `bun fmt`, `bun lint`, and `bun typecheck` as heavyweight workspace checks: bundle them into one final verification pass per task whenever possible, and avoid rerunning the full set repeatedly during iteration.
-- If a user asks for a small follow-up right after a recent full verification pass, prefer no rerun or the smallest reasonable re-check unless the user explicitly asks for full validation again.
-- If the user asks to focus on code only, do not run `bun fmt`, `bun lint`, or `bun typecheck` automatically. In that mode, make the code changes first and only run verification if the user explicitly asks for it.
+- Follow [CONTRIBUTING.md](CONTRIBUTING.md) for branch, verification,
+  self-review, and pull-request evidence requirements.
+- Run focused checks while iterating. Bundle heavyweight workspace checks into
+  one final verification pass once the change is stable instead of rerunning
+  the full set after every edit.
+- Before considering a code task verified or a pull request ready, run the
+  relevant baseline and scope-specific checks from `CONTRIBUTING.md`.
+- If the user explicitly requests code-only work or declines verification,
+  report which checks were skipped and do not describe the result as verified
+  or review-ready.
+- For a small follow-up immediately after a recent full verification pass, use
+  the smallest reasonable recheck unless the change invalidates that evidence
+  or the user asks for the full suite again.
+- Do not run the mutating formatter across unrelated files. Use
+  `bun run fmt:check` for verification and scope any formatting fix to the task.
 - NEVER run `bun test`. Always use `bun run test` (runs Vitest).
 
 ## Project Snapshot

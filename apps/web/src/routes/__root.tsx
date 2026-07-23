@@ -23,7 +23,6 @@ import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { APP_DISPLAY_NAME } from "../branding";
 import { DesktopWindowControls } from "../components/DesktopWindowControls";
 import { AppSnapCoordinator } from "../components/AppSnapCoordinator";
-import { AppSnapWelcomeDialog } from "../components/AppSnapWelcomeDialog";
 import { FeedbackDialog } from "../components/FeedbackDialog";
 import { ProviderConnectionDialog } from "../components/ProviderConnectionDialog";
 import { ConnectionRecoveryNotifications } from "../components/ConnectionRecoveryNotifications";
@@ -206,7 +205,6 @@ function RootRouteView() {
           <ConnectionRecoveryNotifications />
           <GlobalWhatsNewSurface />
           <TaskCompletionNotifications />
-          <AppSnapWelcomeDialog />
           <AppSnapCoordinator />
           <ProviderUpdateNotifications />
           <DesktopProjectBootstrap />

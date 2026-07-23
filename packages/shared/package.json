@@ -8,6 +8,10 @@
       "types": "./src/model.ts",
       "import": "./src/model.ts"
     },
+    "./messageOrder": {
+      "types": "./src/messageOrder.ts",
+      "import": "./src/messageOrder.ts"
+    },
     "./git": {
       "types": "./src/git.ts",
       "import": "./src/git.ts"
@@ -71,6 +75,10 @@
     "./chatThreads": {
       "types": "./src/chatThreads.ts",
       "import": "./src/chatThreads.ts"
+    },
+    "./assistantSelections": {
+      "types": "./src/assistantSelections.ts",
+      "import": "./src/assistantSelections.ts"
     },
     "./localServers": {
       "types": "./src/localServers.ts",

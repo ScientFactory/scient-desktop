@@ -1002,6 +1002,146 @@ function recordProjectCreateCommand(command: unknown): boolean {
   return true;
 }
 
+function recordThreadForkCreateCommand(command: unknown): boolean {
+  if (
+    !command ||
+    typeof command !== "object" ||
+    !("type" in command) ||
+    command.type !== "thread.fork.create" ||
+    !("threadId" in command) ||
+    !("sourceThreadId" in command) ||
+    !("importedMessages" in command) ||
+    !Array.isArray(command.importedMessages)
+  ) {
+    return false;
+  }
+
+  const sourceThread = fixture.snapshot.threads.find(
+    (thread) => thread.id === command.sourceThreadId,
+  );
+  if (!sourceThread) {
+    return false;
+  }
+
+  const createdAt =
+    "createdAt" in command && typeof command.createdAt === "string" ? command.createdAt : NOW_ISO;
+  const importedMessages = command.importedMessages.map((message) => {
+    const imported = message as {
+      messageId: MessageId;
+      role: "user" | "assistant";
+      text: string;
+      attachments?: OrchestrationReadModel["threads"][number]["messages"][number]["attachments"];
+      createdAt: string;
+      updatedAt: string;
+    };
+    return {
+      id: imported.messageId,
+      role: imported.role,
+      text: imported.text,
+      ...(imported.attachments ? { attachments: imported.attachments } : {}),
+      turnId: null,
+      streaming: false,
+      source: "fork-import" as const,
+      createdAt: imported.createdAt,
+      updatedAt: imported.updatedAt,
+    };
+  });
+  const forkedThread: OrchestrationReadModel["threads"][number] = {
+    ...sourceThread,
+    id: command.threadId as ThreadId,
+    title: `${sourceThread.title} (2)`,
+    modelSelection:
+      "modelSelection" in command &&
+      command.modelSelection &&
+      typeof command.modelSelection === "object"
+        ? (command.modelSelection as typeof sourceThread.modelSelection)
+        : sourceThread.modelSelection,
+    runtimeMode:
+      "runtimeMode" in command &&
+      (command.runtimeMode === "approval-required" || command.runtimeMode === "full-access")
+        ? command.runtimeMode
+        : sourceThread.runtimeMode,
+    interactionMode:
+      "interactionMode" in command &&
+      (command.interactionMode === "default" || command.interactionMode === "plan")
+        ? command.interactionMode
+        : sourceThread.interactionMode,
+    envMode:
+      "envMode" in command && (command.envMode === "local" || command.envMode === "worktree")
+        ? command.envMode
+        : sourceThread.envMode,
+    branch: "branch" in command && typeof command.branch === "string" ? command.branch : null,
+    worktreePath:
+      "worktreePath" in command && typeof command.worktreePath === "string"
+        ? command.worktreePath
+        : null,
+    associatedWorktreePath:
+      "associatedWorktreePath" in command && typeof command.associatedWorktreePath === "string"
+        ? command.associatedWorktreePath
+        : null,
+    associatedWorktreeBranch:
+      "associatedWorktreeBranch" in command && typeof command.associatedWorktreeBranch === "string"
+        ? command.associatedWorktreeBranch
+        : null,
+    associatedWorktreeRef:
+      "associatedWorktreeRef" in command && typeof command.associatedWorktreeRef === "string"
+        ? command.associatedWorktreeRef
+        : null,
+    createBranchFlowCompleted: false,
+    isPinned: false,
+    parentThreadId: null,
+    subagentAgentId: null,
+    subagentNickname: null,
+    subagentRole: null,
+    forkSourceThreadId: sourceThread.id,
+    forkSourceMessageId:
+      "sourceMessageId" in command && typeof command.sourceMessageId === "string"
+        ? MessageId.makeUnsafe(command.sourceMessageId)
+        : null,
+    forkTitleBase: sourceThread.title,
+    forkTitleOrdinal: 2,
+    sidechatSourceThreadId: null,
+    lastKnownPr: null,
+    latestTurn: null,
+    createdAt,
+    updatedAt: createdAt,
+    archivedAt: null,
+    deletedAt: null,
+    handoff: null,
+    messages: importedMessages,
+    activities: [],
+    proposedPlans: [],
+    checkpoints: [],
+    session: null,
+  };
+
+  fixture = {
+    ...fixture,
+    snapshot: {
+      ...fixture.snapshot,
+      snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+      threads: [
+        ...fixture.snapshot.threads.filter((thread) => thread.id !== forkedThread.id),
+        forkedThread,
+      ],
+      updatedAt: createdAt,
+    },
+  };
+  return true;
+}
+
+function findRecordedThreadForkCreateCommand(): Record<string, unknown> | null {
+  const request = wsRequests.find(
+    (entry) =>
+      entry._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+      typeof entry.command === "object" &&
+      entry.command !== null &&
+      "type" in entry.command &&
+      entry.command.type === "thread.fork.create",
+  );
+  return (request?.command as Record<string, unknown> | undefined) ?? null;
+}
+
 function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   const tag = body._tag;
   if (tag === ORCHESTRATION_WS_METHODS.getShellSnapshot) {
@@ -1012,6 +1152,9 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   }
   if (tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
     if (recordProjectCreateCommand(body.command)) {
+      return { sequence: fixture.snapshot.snapshotSequence };
+    }
+    if (recordThreadForkCreateCommand(body.command)) {
       return { sequence: fixture.snapshot.snapshotSequence };
     }
     return { sequence: fixture.snapshot.snapshotSequence + 1 };
@@ -1162,7 +1305,12 @@ function installDeterministicActionNativeApi(): () => void {
             _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
             command,
           });
-          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+          const recordedFork = recordThreadForkCreateCommand(command);
+          return {
+            sequence: recordedFork
+              ? fixture.snapshot.snapshotSequence
+              : fixture.snapshot.snapshotSequence + 1,
+          };
         },
       },
       automation: {
@@ -1325,6 +1473,7 @@ async function waitForProductionStyles(): Promise<void> {
 async function waitForElement<T extends Element>(
   query: () => T | null,
   errorMessage: string,
+  timeout = 8_000,
 ): Promise<T> {
   let element: T | null = null;
   await vi.waitFor(
@@ -1333,7 +1482,7 @@ async function waitForElement<T extends Element>(
       expect(element, errorMessage).toBeTruthy();
     },
     {
-      timeout: 8_000,
+      timeout,
       interval: 16,
     },
   );
@@ -1578,6 +1727,7 @@ async function measureUserRow(options: {
   const scrollContainer = await waitForElement(
     () => host.querySelector<HTMLElement>("[data-chat-scroll-container='true']"),
     "Unable to find ChatView message scroll container.",
+    20_000,
   );
 
   let row: HTMLElement | null = null;
@@ -1786,6 +1936,267 @@ describe("ChatView timeline estimator parity (full app)", () => {
     resetRetainedThreadDetailSubscriptionsForTests();
     resetWsNativeApiForTest();
     document.body.innerHTML = "";
+  });
+
+  it("dispatches a bounded fork command from the message action and navigates to the new task", async () => {
+    const sourceMessageId = MessageId.makeUnsafe("msg-user-message-fork-source");
+    const sourceSnapshot = createSnapshotForTargetUser({
+      targetMessageId: sourceMessageId,
+      targetText: "Fork exactly here",
+    });
+    const sourceThread = sourceSnapshot.threads[0]!;
+    const sourceMessageIndex = sourceThread.messages.findIndex(
+      (message) => message.id === sourceMessageId,
+    );
+    const snapshot: OrchestrationReadModel = {
+      ...sourceSnapshot,
+      threads: [
+        {
+          ...sourceThread,
+          messages: sourceThread.messages.slice(sourceMessageIndex, sourceMessageIndex + 2),
+        },
+      ],
+    };
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      const sourceRow = await waitForElement(
+        () =>
+          document.querySelector<HTMLElement>(
+            `[data-message-id="${sourceMessageId}"][data-message-role="user"]`,
+          ),
+        "Unable to find source message for the fork action.",
+        20_000,
+      );
+      await userEvent.hover(sourceRow);
+      const forkButton = sourceRow.querySelector<HTMLButtonElement>(
+        'button[aria-label="Fork conversation from this message"]',
+      );
+      expect(forkButton).not.toBeNull();
+      forkButton?.click();
+      forkButton?.click();
+
+      await vi.waitFor(
+        () => {
+          expect(findRecordedThreadForkCreateCommand()).not.toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      const forkCommand = findRecordedThreadForkCreateCommand();
+      if (!forkCommand) {
+        throw new Error("Expected a recorded thread fork command.");
+      }
+
+      expect(forkCommand).toMatchObject({
+        type: "thread.fork.create",
+        sourceThreadId: THREAD_ID,
+        sourceMessageId,
+        projectId: PROJECT_ID,
+        envMode: "local",
+        branch: "main",
+      });
+      expect(forkCommand?.importedMessages).toEqual([
+        expect.objectContaining({
+          role: "user",
+          text: "Fork exactly here",
+        }),
+      ]);
+      expect(
+        wsRequests.filter(
+          (entry) =>
+            entry._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            typeof entry.command === "object" &&
+            entry.command !== null &&
+            "type" in entry.command &&
+            entry.command.type === "thread.fork.create",
+        ),
+      ).toHaveLength(1);
+
+      const forkThreadId = forkCommand?.threadId;
+      expect(typeof forkThreadId).toBe("string");
+      await vi.waitFor(
+        () => {
+          expect(mounted.router.state.location.pathname).toBe(`/${forkThreadId}`);
+          expect(
+            useStore.getState().threads.find((thread) => thread.id === forkThreadId)?.title,
+          ).toBe(`${THREAD_TITLE} (2)`);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("intercepts Claude /fork in the app instead of sending it to the provider", async () => {
+    const sourceSnapshot = createSnapshotForTargetUser({
+      targetMessageId: MessageId.makeUnsafe("msg-user-claude-fork-slash-source"),
+      targetText: "Claude fork slash source",
+    });
+    const claudeSnapshot: OrchestrationReadModel = {
+      ...sourceSnapshot,
+      threads: sourceSnapshot.threads.map((thread) => ({
+        ...thread,
+        modelSelection: { provider: "claudeAgent", model: "claude-opus-4-8" },
+        session: thread.session
+          ? {
+              ...thread.session,
+              providerName: "claudeAgent",
+            }
+          : null,
+      })),
+    };
+
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/fork");
+    const forkMounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: claudeSnapshot,
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => expect(composerEditor.textContent ?? "").toContain("/fork"));
+      wsRequests.length = 0;
+      await userEvent.click(await waitForSendButton());
+
+      await expect.element(page.getByText("Fork Into New Worktree", { exact: true })).toBeVisible();
+      await expect.element(page.getByText("Fork Into Local", { exact: true })).toBeVisible();
+      expect(hasDispatchedCommandType("thread.turn.start")).toBe(false);
+    } finally {
+      await forkMounted.cleanup();
+    }
+  });
+
+  it("forks from an assistant row that first rendered while streaming", async () => {
+    const targetUserMessageId = MessageId.makeUnsafe("msg-user-message-fork-settling-source");
+    const sourceSnapshot = createSnapshotForTargetUser({
+      targetMessageId: targetUserMessageId,
+      targetText: "Wait for the answer",
+    });
+    const sourceThread = sourceSnapshot.threads[0]!;
+    const sourceMessageIndex = sourceThread.messages.findIndex(
+      (message) => message.id === targetUserMessageId,
+    );
+    const settledMessages = sourceThread.messages.slice(sourceMessageIndex, sourceMessageIndex + 2);
+    const assistantMessage = settledMessages[1]!;
+    const activeTurnId = TurnId.makeUnsafe("turn-message-fork-settling");
+    const streamingSnapshot: OrchestrationReadModel = {
+      ...sourceSnapshot,
+      threads: [
+        {
+          ...sourceThread,
+          latestTurn: {
+            turnId: activeTurnId,
+            state: "running",
+            requestedAt: isoAt(1_100),
+            startedAt: isoAt(1_101),
+            completedAt: null,
+            assistantMessageId: assistantMessage.id,
+          },
+          messages: [
+            settledMessages[0]!,
+            {
+              ...assistantMessage,
+              turnId: activeTurnId,
+              streaming: true,
+            },
+          ],
+          session: sourceThread.session
+            ? {
+                ...sourceThread.session,
+                status: "running",
+                activeTurnId,
+              }
+            : null,
+        },
+      ],
+    };
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: streamingSnapshot,
+    });
+
+    try {
+      const assistantRowSelector = `[data-message-id="${assistantMessage.id}"][data-message-role="assistant"]`;
+      const assistantRow = await waitForElement(
+        () => document.querySelector<HTMLElement>(assistantRowSelector),
+        "Unable to find the streaming assistant message for the fork action.",
+      );
+      expect(
+        assistantRow.querySelector('button[aria-label="Fork conversation from this message"]'),
+      ).toBeNull();
+
+      const settledSnapshot: OrchestrationReadModel = {
+        ...streamingSnapshot,
+        snapshotSequence: streamingSnapshot.snapshotSequence + 1,
+        threads: [
+          {
+            ...streamingSnapshot.threads[0]!,
+            latestTurn: {
+              ...streamingSnapshot.threads[0]!.latestTurn!,
+              state: "completed",
+              completedAt: isoAt(1_108),
+            },
+            messages: [
+              settledMessages[0]!,
+              {
+                ...assistantMessage,
+                turnId: activeTurnId,
+                // The provider lifecycle is settled, but a delayed transport snapshot can
+                // briefly leave the raw message flag true. The terminal footer intentionally
+                // treats lifecycle state as authoritative in this case.
+                streaming: true,
+              },
+            ],
+            session: sourceThread.session
+              ? {
+                  ...sourceThread.session,
+                  status: "ready",
+                  activeTurnId: null,
+                }
+              : null,
+          },
+        ],
+        updatedAt: isoAt(1_109),
+      };
+      fixture = { ...fixture, snapshot: settledSnapshot };
+      useStore.getState().syncServerReadModel(settledSnapshot);
+
+      const forkButton = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>(
+            `${assistantRowSelector} button[aria-label="Fork conversation from this message"]`,
+          ),
+        "Unable to find the fork action after the assistant message settled.",
+      );
+      forkButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(findRecordedThreadForkCreateCommand()).not.toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      const forkCommand = findRecordedThreadForkCreateCommand();
+      if (!forkCommand) {
+        throw new Error("Expected a recorded thread fork command.");
+      }
+
+      expect(forkCommand).toMatchObject({
+        type: "thread.fork.create",
+        sourceThreadId: THREAD_ID,
+        sourceMessageId: assistantMessage.id,
+      });
+      expect(forkCommand?.importedMessages).toEqual([
+        expect.objectContaining({ role: "user", text: "Wait for the answer" }),
+        expect.objectContaining({ role: "assistant", text: assistantMessage.text }),
+      ]);
+    } finally {
+      await mounted.cleanup();
+    }
   });
 
   it.each(TEXT_VIEWPORT_MATRIX)(
@@ -2854,7 +3265,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         expect(
           useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.modelSelectionByProvider
             .codex,
-        ).toMatchObject({ provider: "codex", model: "gpt-5.5" });
+        ).toMatchObject({ provider: "codex", model: "gpt-5.6-sol" });
       });
       expect(document.querySelector('[data-slot="menu-popup"]')).toBeNull();
 

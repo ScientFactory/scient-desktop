@@ -88,6 +88,7 @@ import { Switch } from "../components/ui/switch";
 import { toastManager } from "../components/ui/toast";
 import { ThemePackEditor } from "../components/ThemePackEditor";
 import { DebouncedSettingTextInput } from "../components/settings/DebouncedSettingTextInput";
+import { SettingNumberInput } from "../components/settings/SettingNumberInput";
 import {
   SettingsCard,
   SettingsListRow,
@@ -2075,7 +2076,7 @@ function SettingsRouteView() {
             }
             control={
               <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
-                <Input
+                <SettingNumberInput
                   type="number"
                   size="sm"
                   min={MIN_CHAT_FONT_SIZE_PX}
@@ -2084,12 +2085,11 @@ function SettingsRouteView() {
                   inputMode="numeric"
                   variant="soft"
                   className="w-full text-right sm:w-20"
-                  value={String(settings.chatFontSizePx)}
-                  onChange={(event) => {
-                    const nextValue = event.target.value.trim();
-                    if (nextValue.length === 0) return;
+                  value={settings.chatFontSizePx}
+                  normalizeValue={normalizeChatFontSizePx}
+                  onCommit={(chatFontSizePx) => {
                     updateSettings({
-                      chatFontSizePx: normalizeChatFontSizePx(Number(nextValue)),
+                      chatFontSizePx,
                     });
                   }}
                   aria-label="Base font size in pixels"
@@ -2116,7 +2116,7 @@ function SettingsRouteView() {
             }
             control={
               <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
-                <Input
+                <SettingNumberInput
                   type="number"
                   size="sm"
                   min={MIN_TERMINAL_FONT_SIZE_PX}
@@ -2125,12 +2125,11 @@ function SettingsRouteView() {
                   inputMode="numeric"
                   variant="soft"
                   className="w-full text-right sm:w-20"
-                  value={String(settings.terminalFontSizePx)}
-                  onChange={(event) => {
-                    const nextValue = event.target.value.trim();
-                    if (nextValue.length === 0) return;
+                  value={settings.terminalFontSizePx}
+                  normalizeValue={normalizeTerminalFontSizePx}
+                  onCommit={(terminalFontSizePx) => {
                     updateSettings({
-                      terminalFontSizePx: normalizeTerminalFontSizePx(Number(nextValue)),
+                      terminalFontSizePx,
                     });
                   }}
                   aria-label="Terminal font size in pixels"

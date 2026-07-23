@@ -1,5 +1,6 @@
 import {
   type ModelSelection,
+  type MessageId,
   type OrchestrationShellSnapshot,
   type ProviderInteractionMode,
   type ProviderKind,
@@ -10,7 +11,7 @@ import {
 } from "@synara/contracts";
 import { buildPromptThreadTitleFallback } from "@synara/shared/chatThreads";
 import { deriveAssociatedWorktreeMetadata } from "@synara/shared/threadWorkspace";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { newCommandId, newMessageId, newThreadId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import type { Project, Thread } from "../types";
@@ -26,7 +27,10 @@ import {
   parseForkSlashCommandArgs,
   type ForkSlashCommandTarget,
 } from "../composerSlashCommands";
-import { buildThreadHandoffImportedMessages } from "../lib/threadHandoff";
+import {
+  buildThreadForkImportedMessagesThrough,
+  buildThreadHandoffImportedMessages,
+} from "../lib/threadHandoff";
 import { toastManager } from "../components/ui/toast";
 import type { ComposerCommandItem } from "../components/chat/ComposerCommandMenu";
 import { buildNextProviderOptions } from "../providerModelOptions";
@@ -100,6 +104,7 @@ export function useComposerSlashCommands(input: {
   };
 }) {
   const [isSlashStatusDialogOpen, setIsSlashStatusDialogOpen] = useState(false);
+  const forkCreationInFlightRef = useRef(false);
   const openGlobalFeedbackDialog = useFeedbackDialogStore((state) => state.openDialog);
   const {
     activeProject,
@@ -243,7 +248,7 @@ export function useComposerSlashCommands(input: {
   );
 
   const createForkThreadFromSlashCommand = useCallback(
-    async (inputOptions?: { target?: ForkSlashCommandTarget }) => {
+    async (inputOptions?: { target?: ForkSlashCommandTarget; sourceMessageId?: MessageId }) => {
       const api = readNativeApi();
       if (!api || !activeProject || !activeThread || !isServerThread) {
         toastManager.add({
@@ -254,9 +259,23 @@ export function useComposerSlashCommands(input: {
         return true;
       }
 
-      const importedMessages = buildThreadHandoffImportedMessages(activeThread);
-
       const nextThreadId = newThreadId();
+      const importedMessages = inputOptions?.sourceMessageId
+        ? buildThreadForkImportedMessagesThrough(
+            activeThread,
+            inputOptions.sourceMessageId,
+            nextThreadId,
+          )
+        : buildThreadHandoffImportedMessages(activeThread);
+      if (inputOptions?.sourceMessageId && importedMessages.length === 0) {
+        toastManager.add({
+          type: "warning",
+          title: "Fork is unavailable",
+          description: "That message is not available as a completed conversation boundary.",
+        });
+        return true;
+      }
+
       const createdAt = new Date().toISOString();
       // Fork first, then let the normal first-send worktree bootstrap create the cwd if needed.
       const resolvedTarget = resolveForkThreadEnvironment({
@@ -270,6 +289,7 @@ export function useComposerSlashCommands(input: {
         commandId: newCommandId(),
         threadId: nextThreadId,
         sourceThreadId: activeThread.id,
+        ...(inputOptions?.sourceMessageId ? { sourceMessageId: inputOptions.sourceMessageId } : {}),
         projectId: activeProject.id,
         title: activeThread.title,
         modelSelection: selectedModelSelection,
@@ -301,7 +321,6 @@ export function useComposerSlashCommands(input: {
       syncServerShellSnapshot,
     ],
   );
-
   const createSidechatFromSlashCommand = useCallback(
     async (inputOptions?: { initialPrompt?: string }) => {
       const api = readNativeApi();
@@ -511,6 +530,8 @@ export function useComposerSlashCommands(input: {
 
   const handleForkTargetSelection = useCallback(
     async (target: ForkSlashCommandTarget) => {
+      if (forkCreationInFlightRef.current) return;
+      forkCreationInFlightRef.current = true;
       try {
         await createForkThreadFromSlashCommand({ target });
       } catch (error) {
@@ -522,6 +543,33 @@ export function useComposerSlashCommands(input: {
               ? error.message
               : "An error occurred while creating the forked thread.",
         });
+      } finally {
+        forkCreationInFlightRef.current = false;
+      }
+    },
+    [createForkThreadFromSlashCommand],
+  );
+
+  const handleForkFromMessage = useCallback(
+    async (sourceMessageId: MessageId) => {
+      if (forkCreationInFlightRef.current) return;
+      forkCreationInFlightRef.current = true;
+      try {
+        await createForkThreadFromSlashCommand({
+          target: "local",
+          sourceMessageId,
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Could not fork from message",
+          description:
+            error instanceof Error
+              ? error.message
+              : "An error occurred while creating the message fork.",
+        });
+      } finally {
+        forkCreationInFlightRef.current = false;
       }
     },
     [createForkThreadFromSlashCommand],
@@ -1003,6 +1051,7 @@ export function useComposerSlashCommands(input: {
   );
 
   return {
+    handleForkFromMessage,
     handleForkTargetSelection,
     handleReviewTargetSelection,
     isSlashStatusDialogOpen,
