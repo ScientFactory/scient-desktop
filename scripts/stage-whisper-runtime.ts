@@ -84,7 +84,24 @@ interface WhisperRuntimeReceipt {
 }
 
 export type MacWhisperSignatureMode = "adhoc" | "developer-id";
-export type WhisperRuntimeFileVerification = "mac-code-signature" | "sha256";
+export type WindowsWhisperSignatureMode = "authenticode" | "unsigned";
+export type WhisperRuntimeFileVerification =
+  | "mac-code-signature"
+  | "sha256"
+  | "windows-authenticode-or-sha256";
+
+export interface WindowsAuthenticodeSignatureDetails {
+  readonly signerSubject: string | null;
+  readonly signerThumbprint: string | null;
+  readonly status: string;
+  readonly statusMessage: string;
+  readonly timestampSubject: string | null;
+}
+
+export interface WindowsAuthenticodeVerificationDetails {
+  readonly app: WindowsAuthenticodeSignatureDetails;
+  readonly executable: WindowsAuthenticodeSignatureDetails;
+}
 
 function run(command: string, args: ReadonlyArray<string>, options: { cwd?: string } = {}) {
   return new Promise<void>((resolvePromise, reject) => {
@@ -208,6 +225,30 @@ export const WINDOWS_EXPAND_ARCHIVE_SCRIPT = [
   "",
 ].join("\r\n");
 
+export const WINDOWS_AUTHENTICODE_VERIFY_SCRIPT = [
+  "param(",
+  "  [Parameter(Mandatory = $true)][string]$AppPath,",
+  "  [Parameter(Mandatory = $true)][string]$ExecutablePath",
+  ")",
+  "Set-StrictMode -Version Latest",
+  "$ErrorActionPreference = 'Stop'",
+  "function Read-AuthenticodeSignature([string]$Path) {",
+  "  $Signature = Get-AuthenticodeSignature -LiteralPath $Path",
+  "  [pscustomobject]@{",
+  "    status = [string]$Signature.Status",
+  "    statusMessage = [string]$Signature.StatusMessage",
+  "    signerSubject = if ($null -eq $Signature.SignerCertificate) { $null } else { [string]$Signature.SignerCertificate.Subject }",
+  "    signerThumbprint = if ($null -eq $Signature.SignerCertificate) { $null } else { [string]$Signature.SignerCertificate.Thumbprint }",
+  "    timestampSubject = if ($null -eq $Signature.TimeStamperCertificate) { $null } else { [string]$Signature.TimeStamperCertificate.Subject }",
+  "  }",
+  "}",
+  "[pscustomobject]@{",
+  "  app = Read-AuthenticodeSignature $AppPath",
+  "  executable = Read-AuthenticodeSignature $ExecutablePath",
+  "} | ConvertTo-Json -Compress -Depth 4",
+  "",
+].join("\r\n");
+
 export function windowsZipExtractionPlan(
   scriptPath: string,
   archive: string,
@@ -234,6 +275,36 @@ export function windowsZipExtractionPlan(
       archive,
       "-DestinationPath",
       destination,
+    ],
+  };
+}
+
+export function windowsAuthenticodeVerificationPlan(
+  scriptPath: string,
+  appPath: string,
+  executablePath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { readonly command: string; readonly args: ReadonlyArray<string> } {
+  return {
+    command: win32.join(
+      resolveWindowsSystemRoot(env),
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    ),
+    args: [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      scriptPath,
+      "-AppPath",
+      appPath,
+      "-ExecutablePath",
+      executablePath,
     ],
   };
 }
@@ -319,7 +390,11 @@ export function whisperRuntimeFileVerification(
   platform: WhisperRuntimePlatform,
   file: string,
 ): WhisperRuntimeFileVerification {
-  return platform === "mac" && file === "whisper-server" ? "mac-code-signature" : "sha256";
+  if (platform === "mac" && file === "whisper-server") return "mac-code-signature";
+  if (platform === "win" && file === "whisper-server.exe") {
+    return "windows-authenticode-or-sha256";
+  }
+  return "sha256";
 }
 
 async function collectReceiptFiles(
@@ -366,7 +441,9 @@ function isStagedFileReceipt(value: unknown): value is StagedFileReceipt {
     typeof candidate.size === "number" &&
     Number.isSafeInteger(candidate.size) &&
     candidate.size >= 0 &&
-    (candidate.verification === "mac-code-signature" || candidate.verification === "sha256")
+    (candidate.verification === "mac-code-signature" ||
+      candidate.verification === "sha256" ||
+      candidate.verification === "windows-authenticode-or-sha256")
   );
 }
 
@@ -447,16 +524,108 @@ async function verifyMacWhisperSignature(input: {
   assertMacWhisperSignatureDetails({ appDetails, executableDetails, mode: input.mode });
 }
 
+function isWindowsAuthenticodeSignatureDetails(
+  value: unknown,
+): value is WindowsAuthenticodeSignatureDetails {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<WindowsAuthenticodeSignatureDetails>;
+  return (
+    typeof candidate.status === "string" &&
+    typeof candidate.statusMessage === "string" &&
+    (typeof candidate.signerSubject === "string" || candidate.signerSubject === null) &&
+    (typeof candidate.signerThumbprint === "string" || candidate.signerThumbprint === null) &&
+    (typeof candidate.timestampSubject === "string" || candidate.timestampSubject === null)
+  );
+}
+
+function nonEmptySignatureValue(value: string | null, label: string): string {
+  const normalized = value?.trim();
+  if (!normalized) throw new Error(`${label} is missing.`);
+  return normalized;
+}
+
+export function assertWindowsAuthenticodeSignatureDetails(
+  input: WindowsAuthenticodeVerificationDetails,
+): void {
+  const signatures = [
+    ["Packaged app", input.app],
+    ["Packaged whisper-server.exe", input.executable],
+  ] as const;
+  for (const [label, signature] of signatures) {
+    if (signature.status !== "Valid") {
+      throw new Error(
+        `${label} Authenticode signature is not valid (${signature.status}: ${signature.statusMessage}).`,
+      );
+    }
+    nonEmptySignatureValue(signature.signerSubject, `${label} signer subject`);
+    nonEmptySignatureValue(signature.signerThumbprint, `${label} signer thumbprint`);
+    nonEmptySignatureValue(signature.timestampSubject, `${label} timestamp signer`);
+  }
+  const appPublisher = nonEmptySignatureValue(
+    input.app.signerSubject,
+    "Packaged app signer subject",
+  );
+  const executablePublisher = nonEmptySignatureValue(
+    input.executable.signerSubject,
+    "Packaged whisper-server.exe signer subject",
+  );
+  if (appPublisher !== executablePublisher) {
+    throw new Error(
+      `Packaged whisper-server.exe publisher ${executablePublisher} does not match app publisher ${appPublisher}.`,
+    );
+  }
+}
+
+async function verifyWindowsWhisperSignature(input: {
+  readonly appExecutable: string;
+  readonly executable: string;
+}): Promise<void> {
+  const workspace = await mkdtemp(join(tmpdir(), "scient-whisper-authenticode-"));
+  try {
+    const scriptPath = join(workspace, "verify-authenticode.ps1");
+    await writeFile(scriptPath, WINDOWS_AUTHENTICODE_VERIFY_SCRIPT, {
+      encoding: "utf8",
+      flag: "wx",
+    });
+    const plan = windowsAuthenticodeVerificationPlan(
+      scriptPath,
+      input.appExecutable,
+      input.executable,
+    );
+    const output = await capture(plan.command, plan.args);
+    const parsed = JSON.parse(output.trim()) as Partial<WindowsAuthenticodeVerificationDetails>;
+    if (
+      !isWindowsAuthenticodeSignatureDetails(parsed.app) ||
+      !isWindowsAuthenticodeSignatureDetails(parsed.executable)
+    ) {
+      throw new Error("Windows Authenticode verifier returned invalid signature details.");
+    }
+    assertWindowsAuthenticodeSignatureDetails({
+      app: parsed.app,
+      executable: parsed.executable,
+    });
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+}
+
 export async function verifyPackagedWhisperRuntime(input: {
   readonly distDir: string;
   readonly macSignatureMode?: MacWhisperSignatureMode;
   readonly platform: WhisperRuntimePlatform;
+  readonly windowsSignatureMode?: WindowsWhisperSignatureMode;
 }): Promise<ReadonlyArray<string>> {
   if (input.platform === "mac" && !input.macSignatureMode) {
     throw new Error("macOS whisper.cpp verification requires an explicit signature mode.");
   }
   if (input.platform !== "mac" && input.macSignatureMode) {
     throw new Error("A macOS signature mode cannot be used for a non-macOS runtime.");
+  }
+  if (input.platform === "win" && !input.windowsSignatureMode) {
+    throw new Error("Windows whisper.cpp verification requires an explicit signature mode.");
+  }
+  if (input.platform !== "win" && input.windowsSignatureMode) {
+    throw new Error("A Windows signature mode cannot be used for a non-Windows runtime.");
   }
   const distEntries = await readdir(input.distDir, { withFileTypes: true });
   const unpackedDirectories = distEntries
@@ -517,8 +686,12 @@ export async function verifyPackagedWhisperRuntime(input: {
       }
       const filePath = join(runtimeDirectory, file.file);
       const fileStat = await stat(filePath);
+      const requiresSha256 =
+        file.verification === "sha256" ||
+        (file.verification === "windows-authenticode-or-sha256" &&
+          input.windowsSignatureMode === "unsigned");
       if (
-        file.verification === "sha256" &&
+        requiresSha256 &&
         (fileStat.size !== file.size || (await sha256File(filePath)) !== file.sha256)
       ) {
         throw new Error(`Packaged whisper.cpp file verification failed: ${filePath}`);
@@ -536,6 +709,12 @@ export async function verifyPackagedWhisperRuntime(input: {
         appBundle,
         executable,
         mode: input.macSignatureMode!,
+      });
+    }
+    if (input.platform === "win" && input.windowsSignatureMode === "authenticode") {
+      await verifyWindowsWhisperSignature({
+        appExecutable: join(unpacked, "Scient.exe"),
+        executable,
       });
     }
     verified.push(runtimeDirectory);

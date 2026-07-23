@@ -5,17 +5,20 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  assertWindowsAuthenticodeSignatureDetails,
   assertMacWhisperSignatureDetails,
   assertPinnedWhisperServerSource,
   resolvePrebuiltArtifact,
   tarExtractionArguments,
   WHISPER_CPP_COMMIT,
   verifyPackagedWhisperRuntime,
+  WINDOWS_AUTHENTICODE_VERIFY_SCRIPT,
   WINDOWS_EXPAND_ARCHIVE_SCRIPT,
   WHISPER_CPP_PREBUILT,
   WHISPER_CPP_SOURCE,
   WHISPER_CPP_VERSION,
   whisperRuntimeFileVerification,
+  windowsAuthenticodeVerificationPlan,
   windowsZipExtractionPlan,
 } from "./stage-whisper-runtime.ts";
 
@@ -28,6 +31,25 @@ function developerIdSignatureDetails(team: string): string {
     "Timestamp=Jul 24, 2026 at 12:00:00",
     `TeamIdentifier=${team}`,
   ].join("\n");
+}
+
+function windowsSignatureDetails(
+  signerSubject = "CN=ScientFactory, O=ScientFactory",
+  overrides: Partial<{
+    readonly signerThumbprint: string | null;
+    readonly status: string;
+    readonly statusMessage: string;
+    readonly timestampSubject: string | null;
+  }> = {},
+) {
+  return {
+    signerSubject,
+    signerThumbprint: "0123456789ABCDEF",
+    status: "Valid",
+    statusMessage: "Signature verified.",
+    timestampSubject: "CN=Trusted Timestamp Authority",
+    ...overrides,
+  };
 }
 
 afterEach(async () => {
@@ -115,13 +137,78 @@ describe("whisper.cpp runtime packaging", () => {
       "`${WHISPER_RUNTIME_STAGE_RUNNER} ${stageScript} --platform ${platform}",
     );
     expect(buildSource).toContain('macSignatureMode: options.signed ? "developer-id" : "adhoc"');
+    expect(buildSource).toContain(
+      'windowsSignatureMode: options.signed ? "authenticode" : "unsigned"',
+    );
   });
 
-  it("allows code-signature verification only for the exact macOS executable", () => {
+  it("allows platform signature verification only for exact signed executables", () => {
     expect(whisperRuntimeFileVerification("mac", "whisper-server")).toBe("mac-code-signature");
     expect(whisperRuntimeFileVerification("mac", "LICENSE.whisper.cpp")).toBe("sha256");
     expect(whisperRuntimeFileVerification("linux", "whisper-server")).toBe("sha256");
-    expect(whisperRuntimeFileVerification("win", "whisper-server.exe")).toBe("sha256");
+    expect(whisperRuntimeFileVerification("win", "whisper-server.exe")).toBe(
+      "windows-authenticode-or-sha256",
+    );
+    expect(whisperRuntimeFileVerification("win", "whisper.dll")).toBe("sha256");
+  });
+
+  it("uses literal Windows paths for Authenticode verification", () => {
+    expect(WINDOWS_AUTHENTICODE_VERIFY_SCRIPT).toContain(
+      "Get-AuthenticodeSignature -LiteralPath $Path",
+    );
+    expect(
+      windowsAuthenticodeVerificationPlan(
+        "D:\\temp\\verify-authenticode.ps1",
+        "D:\\build\\Scient.exe",
+        "D:\\build\\resources\\whisper-runtime\\whisper-server.exe",
+        { SystemRoot: "D:\\Windows" },
+      ),
+    ).toEqual({
+      command: "D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      args: [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "D:\\temp\\verify-authenticode.ps1",
+        "-AppPath",
+        "D:\\build\\Scient.exe",
+        "-ExecutablePath",
+        "D:\\build\\resources\\whisper-runtime\\whisper-server.exe",
+      ],
+    });
+  });
+
+  it("requires valid timestamped Authenticode signatures from the same publisher", () => {
+    expect(() =>
+      assertWindowsAuthenticodeSignatureDetails({
+        app: windowsSignatureDetails(),
+        executable: windowsSignatureDetails(),
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertWindowsAuthenticodeSignatureDetails({
+        app: windowsSignatureDetails(),
+        executable: windowsSignatureDetails("CN=Different Publisher"),
+      }),
+    ).toThrow(/does not match app publisher/);
+    expect(() =>
+      assertWindowsAuthenticodeSignatureDetails({
+        app: windowsSignatureDetails(),
+        executable: windowsSignatureDetails(undefined, {
+          status: "HashMismatch",
+          statusMessage: "The contents have changed.",
+        }),
+      }),
+    ).toThrow(/not valid.*HashMismatch/);
+    expect(() =>
+      assertWindowsAuthenticodeSignatureDetails({
+        app: windowsSignatureDetails(),
+        executable: windowsSignatureDetails(undefined, { timestampSubject: null }),
+      }),
+    ).toThrow(/timestamp signer.*missing/);
   });
 
   it("requires matching timestamped Developer ID teams and hardened runtime", () => {
@@ -251,7 +338,7 @@ describe("whisper.cpp runtime packaging", () => {
     );
   });
 
-  it("requires an explicit signature mode only for macOS verification", async () => {
+  it("requires explicit platform signature modes only on their own platforms", async () => {
     const distDir = await mkdtemp(join(tmpdir(), "scient-whisper-mode-test-"));
     temporaryDirectories.push(distDir);
     await expect(verifyPackagedWhisperRuntime({ distDir, platform: "mac" })).rejects.toThrow(
@@ -264,6 +351,65 @@ describe("whisper.cpp runtime packaging", () => {
         platform: "linux",
       }),
     ).rejects.toThrow(/cannot be used for a non-macOS runtime/);
+    await expect(verifyPackagedWhisperRuntime({ distDir, platform: "win" })).rejects.toThrow(
+      /Windows whisper.cpp verification requires an explicit signature mode/,
+    );
+    await expect(
+      verifyPackagedWhisperRuntime({
+        distDir,
+        platform: "linux",
+        windowsSignatureMode: "authenticode",
+      }),
+    ).rejects.toThrow(/cannot be used for a non-Windows runtime/);
+  });
+
+  it("keeps exact SHA-256 verification for unsigned Windows packages", async () => {
+    const distDir = await mkdtemp(join(tmpdir(), "scient-whisper-win-package-test-"));
+    temporaryDirectories.push(distDir);
+    const unpackedDirectory = join(distDir, "win-unpacked");
+    const runtimeDirectory = join(unpackedDirectory, "resources", "whisper-runtime");
+    await mkdir(runtimeDirectory, { recursive: true });
+    const files = [
+      {
+        file: "whisper-server.exe",
+        bytes: Buffer.from("server"),
+        verification: "windows-authenticode-or-sha256",
+      },
+      { file: "whisper.dll", bytes: Buffer.from("library"), verification: "sha256" },
+    ] as const;
+    await writeFile(join(unpackedDirectory, "Scient.exe"), "app");
+    for (const file of files) await writeFile(join(runtimeDirectory, file.file), file.bytes);
+    await writeFile(
+      join(runtimeDirectory, "provenance.json"),
+      JSON.stringify({
+        schemaVersion: 2,
+        component: "whisper.cpp",
+        version: WHISPER_CPP_VERSION,
+        platform: "win",
+        files: files.map((file) => ({
+          file: file.file,
+          size: file.bytes.byteLength,
+          sha256: createHash("sha256").update(file.bytes).digest("hex"),
+          verification: file.verification,
+        })),
+      }),
+    );
+
+    await expect(
+      verifyPackagedWhisperRuntime({
+        distDir,
+        platform: "win",
+        windowsSignatureMode: "unsigned",
+      }),
+    ).resolves.toEqual([runtimeDirectory]);
+    await writeFile(join(runtimeDirectory, "whisper-server.exe"), "tampered");
+    await expect(
+      verifyPackagedWhisperRuntime({
+        distDir,
+        platform: "win",
+        windowsSignatureMode: "unsigned",
+      }),
+    ).rejects.toThrow(/verification failed/);
   });
 
   it("rejects receipt attempts to relabel hashed files as code-signed", async () => {
