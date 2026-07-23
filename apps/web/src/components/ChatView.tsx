@@ -386,6 +386,7 @@ import {
   deriveLatestContextWindowSnapshot,
   deriveSelectedContextWindowSnapshot,
 } from "../lib/contextWindow";
+import { LiveVoicePreviewSession } from "../lib/liveVoicePreview";
 import { formatVoiceRecordingDuration, useVoiceRecorder } from "../lib/voiceRecorder";
 import {
   composerFooterPlanForTier,
@@ -1163,11 +1164,17 @@ export default function ChatView({
     durationMs: voiceRecordingDurationMs,
     waveformLevels: voiceWaveformLevels,
     startRecording: startVoiceRecording,
+    snapshotRecording: snapshotVoiceRecording,
     stopRecording: stopVoiceRecording,
     cancelRecording: cancelVoiceRecording,
   } = useVoiceRecorder();
   const [voiceCompletionIntent, setVoiceCompletionIntent] =
     useState<ComposerVoiceCompletionIntent | null>(null);
+  const [liveVoicePreview, setLiveVoicePreview] = useState<string | null>(null);
+  const liveVoicePreviewSessionRef = useRef<LiveVoicePreviewSession | null>(null);
+  if (liveVoicePreviewSessionRef.current === null) {
+    liveVoicePreviewSessionRef.current = new LiveVoicePreviewSession();
+  }
   const isVoiceTranscribing = voiceCompletionIntent !== null;
   const sendVoiceTranscriptRef = useRef<(prompt: string) => Promise<boolean>>(async () => false);
   const composerFeedbackIdRef = useRef(0);
@@ -1191,6 +1198,12 @@ export default function ChatView({
   useEffect(() => {
     setComposerLocalFeedback(null);
   }, [threadId]);
+  useEffect(
+    () => () => {
+      void liveVoicePreviewSessionRef.current?.stop();
+    },
+    [],
+  );
   const composerSendState = useMemo(
     () =>
       deriveComposerSendState({
@@ -2895,7 +2908,11 @@ export default function ChatView({
     activeThreadId === null ? null : `${activeThreadId}:${activeLatestTurn?.turnId ?? "idle"}`;
   const activeTurnInProgress = activeTurnLayoutLive || keepSettledActiveTurnLayout;
   const isComposerApprovalState = activePendingApproval !== null;
-  const isComposerEditorDisabled = isConnecting || isComposerApprovalState;
+  const liveVoicePreviewPrompt = liveVoicePreview
+    ? (appendVoiceTranscriptToPrompt(prompt, liveVoicePreview) ?? prompt)
+    : null;
+  const isComposerEditorDisabled =
+    isConnecting || isComposerApprovalState || isVoiceRecording || isVoiceTranscribing;
   const canCollapsePastedTextToDraft = shouldEnableComposerPastedTextCollapse({
     isComposerApprovalState,
     hasPendingUserInput: pendingUserInputs.length > 0,
@@ -5563,6 +5580,8 @@ export default function ChatView({
     voiceTranscriptionRequestIdRef.current += 1;
     voiceCompletionInFlightRef.current = false;
     voiceRecordingStartedAtRef.current = null;
+    setLiveVoicePreview(null);
+    void liveVoicePreviewSessionRef.current?.stop();
     void readNativeApi()?.server.cancelVoiceTranscription?.();
     void cancelVoiceRecording();
     setVoiceCompletionIntent(null);
@@ -5594,6 +5613,8 @@ export default function ChatView({
     voiceTranscriptionRequestIdRef.current += 1;
     voiceCompletionInFlightRef.current = false;
     voiceRecordingStartedAtRef.current = null;
+    setLiveVoicePreview(null);
+    void liveVoicePreviewSessionRef.current?.stop();
     void cancelVoiceRecording();
     setVoiceCompletionIntent(null);
   }, [
@@ -6243,8 +6264,34 @@ export default function ChatView({
     }
 
     try {
+      await liveVoicePreviewSessionRef.current?.stop();
       await startVoiceRecording();
       voiceRecordingStartedAtRef.current = performance.now();
+      setLiveVoicePreview(null);
+      if (desktopVoiceAvailable) {
+        const api = readNativeApi();
+        if (api) {
+          try {
+            liveVoicePreviewSessionRef.current?.start({
+              captureSnapshot: snapshotVoiceRecording,
+              transcribeSnapshot: async (payload) => {
+                const result = await api.server.transcribeVoice({
+                  mode: "offline-only",
+                  cwd: activeProject.cwd,
+                  ...(activeThread ? { threadId: activeThread.id } : {}),
+                  ...payload,
+                });
+                return result.text;
+              },
+              cancelActiveTranscription: () =>
+                api.server.cancelVoiceTranscription?.() ?? Promise.resolve(),
+              onPreview: setLiveVoicePreview,
+            });
+          } catch {
+            // Preview is opportunistic; the authoritative Stop/Send pass still works.
+          }
+        }
+      }
     } catch (error) {
       reportComposerFeedback({
         type: "error",
@@ -6254,11 +6301,13 @@ export default function ChatView({
     }
   }, [
     activeProject,
+    activeThread,
     canStartVoiceNotes,
     desktopVoiceAvailable,
     pendingUserInputs.length,
     reportComposerFeedback,
     settings.voiceTranscriptionMode,
+    snapshotVoiceRecording,
     startVoiceRecording,
     voiceProviderStatus?.authStatus,
   ]);
@@ -6305,6 +6354,12 @@ export default function ChatView({
         voiceProviderRef.current === requestProvider;
 
       try {
+        // A partial uses the same serialized local helper as the final pass.
+        // Cancel and drain it first so Stop/Send never waits behind stale work.
+        await liveVoicePreviewSessionRef.current?.stop();
+        if (!isCurrentVoiceRequest()) {
+          return;
+        }
         const payload = await stopVoiceRecording();
         if (!isCurrentVoiceRequest()) {
           return;
@@ -6380,6 +6435,7 @@ export default function ChatView({
         if (isCurrentVoiceRequest()) {
           voiceCompletionInFlightRef.current = false;
           voiceRecordingStartedAtRef.current = null;
+          setLiveVoicePreview(null);
           setVoiceCompletionIntent(null);
         }
       }
@@ -6404,7 +6460,9 @@ export default function ChatView({
     voiceTranscriptionRequestIdRef.current += 1;
     voiceCompletionInFlightRef.current = false;
     voiceRecordingStartedAtRef.current = null;
+    setLiveVoicePreview(null);
     setVoiceCompletionIntent(null);
+    void liveVoicePreviewSessionRef.current?.stop();
     void readNativeApi()?.server.cancelVoiceTranscription?.();
     void cancelVoiceRecording();
   }, [cancelVoiceRecording]);
@@ -10729,9 +10787,11 @@ export default function ChatView({
                         ? ""
                         : activePendingProgress
                           ? activePendingProgress.customAnswer
-                          : prompt
+                          : liveVoicePreviewPrompt
+                            ? liveVoicePreviewPrompt
+                            : prompt
                     }
-                    cursor={composerCursor}
+                    cursor={liveVoicePreviewPrompt ? liveVoicePreviewPrompt.length : composerCursor}
                     terminalContexts={
                       !isComposerApprovalState && pendingUserInputs.length === 0
                         ? composerTerminalContexts
@@ -10760,6 +10820,7 @@ export default function ChatView({
                                 ? "Ask for follow-up changes or attach images"
                                 : "Ask anything, @tag files/folders, or use / to show available commands"
                     }
+                    {...(liveVoicePreview ? { className: "opacity-55" } : {})}
                     disabled={isComposerEditorDisabled}
                   />
                 </div>
