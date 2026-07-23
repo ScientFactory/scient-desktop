@@ -150,6 +150,18 @@ function verifyCanonicalIdentity(): void {
   if (!linux || linux.executableName !== "scient") {
     throw new Error("Expected Linux desktop releases to install the scient executable.");
   }
+  if (!Array.isArray(linux.executableArgs) || linux.executableArgs.length !== 0) {
+    throw new Error("Expected Linux desktop entries to preserve Electron's sandbox.");
+  }
+  const appImageLauncherGenerator = readFileSync(
+    resolve(repoRoot, "node_modules/app-builder-lib/out/targets/appimage/appImageUtil.js"),
+    "utf8",
+  );
+  assertNotContains(
+    appImageLauncherGenerator,
+    "--no-sandbox",
+    "The installed AppImage launcher generator must not disable Electron's sandbox.",
+  );
   const startupWmClass = (linux.desktop as { entry?: { StartupWMClass?: unknown } } | undefined)
     ?.entry?.StartupWMClass;
   if (startupWmClass !== "scient") {
@@ -412,6 +424,16 @@ function verifyReleaseWorkflowSafety(): void {
     workflow,
     '"Scient-${RELEASE_VERSION}-x86_64.AppImage"',
     "Expected the public contract to validate the Linux AppImage filename.",
+  );
+  assertContains(
+    workflow,
+    "Verify Linux AppImage sandbox policy",
+    "Expected the release workflow to inspect the packaged Linux launcher.",
+  );
+  assertContains(
+    workflow,
+    "grep -F -- '--no-sandbox' \"$launcher\"",
+    "Expected the release workflow to reject AppImages that disable Electron's sandbox.",
   );
   assertContains(
     workflow,

@@ -125,6 +125,10 @@ export function createDesktopPlatformBuildConfig(
       linux: {
         target: [input.target],
         executableName: "scient",
+        // electron-builder otherwise supplies --no-sandbox to legacy desktop
+        // entries. The tracked app-builder patch also removes its runtime
+        // fallback so every AppImage launch stays fail-closed.
+        executableArgs: [],
         syncDesktopName: true,
         icon: "icon.png",
         category: "Development",
