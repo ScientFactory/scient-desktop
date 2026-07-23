@@ -145,6 +145,7 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
   const [highlightedValue, setHighlightedValue] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const submitInFlightRef = useRef(false);
   const pendingNameSelectionRef = useRef<{ query: string; start: number; end: number } | null>(
     null,
   );
@@ -218,7 +219,7 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
   };
 
   const submit = async () => {
-    if (props.isBusy) return;
+    if (props.isBusy || submitInFlightRef.current) return;
     if (!trimmedQuery) {
       setError("Enter a folder path.");
       return;
@@ -231,6 +232,7 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
       setError("Use an absolute path or start with ~/.");
       return;
     }
+    submitInFlightRef.current = true;
     try {
       const resolved = resolvePath();
       if (!resolved.createIfMissing) {
@@ -244,6 +246,8 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
       await props.onSubmit(created.path, { createIfMissing: true });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to add project.");
+    } finally {
+      submitInFlightRef.current = false;
     }
   };
 
@@ -431,6 +435,8 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
             className="h-auto px-2 text-xs text-muted-foreground/80 hover:bg-transparent hover:text-foreground"
             disabled={props.isBusy}
             onClick={async () => {
+              if (submitInFlightRef.current) return;
+              submitInFlightRef.current = true;
               try {
                 const api = readNativeApi();
                 if (!api) throw new Error("The app server is unavailable.");
@@ -442,6 +448,8 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
                 await props.onSubmit(target, { createIfMissing: false });
               } catch (cause) {
                 setError(cause instanceof Error ? cause.message : "Unable to add project.");
+              } finally {
+                submitInFlightRef.current = false;
               }
             }}
           >

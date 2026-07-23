@@ -250,6 +250,27 @@ describe("AddProjectDialog", () => {
     },
   );
 
+  it("opens a displayed folder only once when Enter is pressed twice quickly", async () => {
+    let finishOpen!: (shouldClose: boolean) => void;
+    const onAddProjectPath = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finishOpen = resolve;
+        }),
+    );
+    const restore = installNativeApi({
+      statuses: vi.fn().mockResolvedValue({ sources: [] }),
+    });
+    renderDialog(onAddProjectPath);
+
+    await page.getByText("Local folder", { exact: true }).click();
+    await userEvent.keyboard("{Enter}{Enter}");
+
+    await vi.waitFor(() => expect(onAddProjectPath).toHaveBeenCalledTimes(1));
+    finishOpen(false);
+    restore();
+  });
+
   it("uses ArrowRight to browse highlighted folders and parent entries", async () => {
     const browse = vi.fn(async ({ partialPath }: { partialPath: string }) => {
       if (partialPath === "/Users/tester/") {
