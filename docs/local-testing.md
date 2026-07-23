@@ -35,6 +35,12 @@ without starting the app. Check that they do not conflict with another running
 instance, then use the URL printed by the real run. The temporary directory
 keeps test settings, projects, and history separate from the normal app.
 
+It does not isolate the operating-system user, provider installations,
+credentials, browser sessions, keychain, or Electron's normal development
+user-data profile. For installation, onboarding, and release claims, follow the
+isolation tiers and platform procedures in
+[Cross-platform manual verification](manual-platform-verification.md).
+
 ## Choose the right test surface
 
 Localhost is the default for testing product flows, UI behavior, server logic,
