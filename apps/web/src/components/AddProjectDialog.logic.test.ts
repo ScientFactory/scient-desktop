@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildCloneProjectSourceInput,
+  getAvailableNewFolderName,
   inferCloneDirectoryName,
   joinProjectPath,
 } from "./AddProjectDialog.logic";
@@ -19,6 +20,12 @@ describe("AddProjectDialog logic", () => {
     expect(joinProjectPath("C:\\Users\\tester\\projects\\", "repo")).toBe(
       "C:\\Users\\tester\\projects\\repo",
     );
+  });
+
+  it("chooses a collision-safe new folder name across case-sensitive filesystems", () => {
+    expect(getAvailableNewFolderName([])).toBe("New folder");
+    expect(getAvailableNewFolderName(["New folder", "New folder 2"])).toBe("New folder 3");
+    expect(getAvailableNewFolderName(["NEW FOLDER"])).toBe("New folder 2");
   });
 
   it("builds the source-specific clone payload", () => {

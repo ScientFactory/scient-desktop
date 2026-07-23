@@ -86,7 +86,7 @@ import {
   ScientProjectInitializationPreviewInput,
 } from "./scientProjectInitialization";
 import { StudioListThreadOutputsInput } from "./studio";
-import { FilesystemBrowseInput } from "./filesystem";
+import { FilesystemBrowseInput, FilesystemCreateDirectoryInput } from "./filesystem";
 import { OpenInEditorInput } from "./editor";
 import {
   ServerConfigUpdatedPayload,
@@ -160,8 +160,9 @@ export const WS_METHODS = {
   // Studio methods
   studioListThreadOutputs: "studio.listThreadOutputs",
 
-  // Filesystem browse methods
+  // Filesystem methods
   filesystemBrowse: "filesystem.browse",
+  filesystemCreateDirectory: "filesystem.createDirectory",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -349,11 +350,12 @@ const WebSocketRequestBody = Schema.Union([
     ScientProjectInitializationActionInput,
   ),
 
-  // Filesystem browse
   // Studio
   tagRequestBody(WS_METHODS.studioListThreadOutputs, StudioListThreadOutputsInput),
 
+  // Filesystem
   tagRequestBody(WS_METHODS.filesystemBrowse, FilesystemBrowseInput),
+  tagRequestBody(WS_METHODS.filesystemCreateDirectory, FilesystemCreateDirectoryInput),
 
   // Shell methods
   tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),

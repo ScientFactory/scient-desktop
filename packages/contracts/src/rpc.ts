@@ -19,7 +19,12 @@ import {
   AutomationUpdateInput,
 } from "./automation";
 import { OpenInEditorInput } from "./editor";
-import { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem";
+import {
+  FilesystemBrowseInput,
+  FilesystemBrowseResult,
+  FilesystemCreateDirectoryInput,
+  FilesystemCreateDirectoryResult,
+} from "./filesystem";
 import { StudioListThreadOutputsInput, StudioListThreadOutputsResult } from "./studio";
 import {
   GitCheckoutInput,
@@ -426,6 +431,12 @@ export const WsStudioListThreadOutputsRpc = Rpc.make(WS_METHODS.studioListThread
 export const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   payload: FilesystemBrowseInput,
   success: FilesystemBrowseResult,
+  error: WsRpcError,
+});
+
+export const WsFilesystemCreateDirectoryRpc = Rpc.make(WS_METHODS.filesystemCreateDirectory, {
+  payload: FilesystemCreateDirectoryInput,
+  success: FilesystemCreateDirectoryResult,
   error: WsRpcError,
 });
 
@@ -1040,6 +1051,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsScientProjectInitializationRollbackRpc,
   WsStudioListThreadOutputsRpc,
   WsFilesystemBrowseRpc,
+  WsFilesystemCreateDirectoryRpc,
   WsShellOpenInEditorRpc,
   WsGitGithubRepositoryRpc,
   WsGitStatusRpc,
