@@ -471,6 +471,7 @@ import { ComposerInputBanners } from "./chat/ComposerInputBanners";
 import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
 import { ComposerVoiceButton } from "./chat/ComposerVoiceButton";
 import { ComposerVoiceRecorderBar } from "./chat/ComposerVoiceRecorderBar";
+import type { ComposerVoiceCompletionIntent } from "./chat/composerVoiceState";
 import { ComposerReferenceAttachments } from "./chat/ComposerReferenceAttachments";
 import { TranscriptSelectionActionLayer } from "./chat/TranscriptSelectionActionLayer";
 import { ComposerActiveTaskListCard } from "./chat/ComposerActiveTaskListCard";
@@ -516,6 +517,7 @@ import {
 import {
   ACTIVE_TURN_LAYOUT_SETTLE_DELAY_MS,
   appendVoiceTranscriptToPrompt,
+  completeComposerVoiceTranscript,
   describeVoiceRecordingStartError,
   isVoiceAuthExpiredMessage,
   sanitizeVoiceErrorMessage,
@@ -1164,7 +1166,10 @@ export default function ChatView({
     stopRecording: stopVoiceRecording,
     cancelRecording: cancelVoiceRecording,
   } = useVoiceRecorder();
-  const [isVoiceTranscribing, setIsVoiceTranscribing] = useState(false);
+  const [voiceCompletionIntent, setVoiceCompletionIntent] =
+    useState<ComposerVoiceCompletionIntent | null>(null);
+  const isVoiceTranscribing = voiceCompletionIntent !== null;
+  const sendVoiceTranscriptRef = useRef<(prompt: string) => Promise<boolean>>(async () => false);
   const composerFeedbackIdRef = useRef(0);
   const [composerLocalFeedback, setComposerLocalFeedback] = useState<
     (ComposerLocalFeedback & { id: number }) | null
@@ -2091,6 +2096,7 @@ export default function ChatView({
     provider: ProviderKind;
   } | null>(null);
   const voiceTranscriptionRequestIdRef = useRef(0);
+  const voiceCompletionInFlightRef = useRef(false);
   const voiceThreadIdRef = useRef(threadId);
   const voiceProviderRef = useRef<ProviderKind>(selectedProvider);
   const voiceRecordingStartedAtRef = useRef<number | null>(null);
@@ -5555,10 +5561,11 @@ export default function ChatView({
 
   useEffect(() => {
     voiceTranscriptionRequestIdRef.current += 1;
+    voiceCompletionInFlightRef.current = false;
     voiceRecordingStartedAtRef.current = null;
     void readNativeApi()?.server.cancelVoiceTranscription?.();
     void cancelVoiceRecording();
-    setIsVoiceTranscribing(false);
+    setVoiceCompletionIntent(null);
     setOptimisticUserMessages((existing) => {
       if (existing.length === 0) return existing;
       for (const message of existing) {
@@ -5585,9 +5592,10 @@ export default function ChatView({
       isVoiceRecording,
     });
     voiceTranscriptionRequestIdRef.current += 1;
+    voiceCompletionInFlightRef.current = false;
     voiceRecordingStartedAtRef.current = null;
     void cancelVoiceRecording();
-    setIsVoiceTranscribing(false);
+    setVoiceCompletionIntent(null);
   }, [
     canStartVoiceNotes,
     cancelVoiceRecording,
@@ -6255,135 +6263,148 @@ export default function ChatView({
     voiceProviderStatus?.authStatus,
   ]);
 
-  const submitComposerVoiceRecording = useCallback(async () => {
-    if (!activeProject || !isVoiceRecording) {
-      return;
-    }
-    const recordedForMs =
-      voiceRecordingStartedAtRef.current === null
-        ? null
-        : Math.round(performance.now() - voiceRecordingStartedAtRef.current);
-    if (
-      recordedForMs !== null &&
-      recordedForMs >= 0 &&
-      recordedForMs < VOICE_RECORDER_ACTION_ARM_DELAY_MS
-    ) {
-      warnVoiceGuard("ignored recorder action immediately after start", {
-        recordedForMs,
-      });
-      return;
-    }
-
-    const api = readNativeApi();
-    if (!api) {
-      reportComposerFeedback({
-        type: "error",
-        title: "Voice transcription is unavailable right now.",
-      });
-      void cancelVoiceRecording();
-      return;
-    }
-
-    setIsVoiceTranscribing(true);
-    const requestId = voiceTranscriptionRequestIdRef.current + 1;
-    voiceTranscriptionRequestIdRef.current = requestId;
-    const requestThreadId = threadId;
-    const requestProvider = selectedProvider;
-    const isCurrentVoiceRequest = () =>
-      voiceTranscriptionRequestIdRef.current === requestId &&
-      voiceThreadIdRef.current === requestThreadId &&
-      voiceProviderRef.current === requestProvider;
-
-    try {
-      const payload = await stopVoiceRecording();
-      if (!isCurrentVoiceRequest()) {
+  const finishComposerVoiceRecording = useCallback(
+    async (intent: ComposerVoiceCompletionIntent) => {
+      if (!activeProject || !isVoiceRecording || voiceCompletionInFlightRef.current) {
         return;
       }
-      if (!payload) {
-        reportComposerFeedback({
-          type: "warning",
-          title: "No audio was captured.",
+      const recordedForMs =
+        voiceRecordingStartedAtRef.current === null
+          ? null
+          : Math.round(performance.now() - voiceRecordingStartedAtRef.current);
+      if (
+        recordedForMs !== null &&
+        recordedForMs >= 0 &&
+        recordedForMs < VOICE_RECORDER_ACTION_ARM_DELAY_MS
+      ) {
+        warnVoiceGuard("ignored recorder action immediately after start", {
+          recordedForMs,
         });
         return;
       }
-      const result = await api.server.transcribeVoice({
-        mode: settings.voiceTranscriptionMode,
-        cwd: activeProject.cwd,
-        ...(activeThread ? { threadId: activeThread.id } : {}),
-        ...payload,
-      });
-      if (!isCurrentVoiceRequest()) {
+
+      const api = readNativeApi();
+      if (!api) {
+        reportComposerFeedback({
+          type: "error",
+          title: "Voice transcription is unavailable right now.",
+        });
+        void cancelVoiceRecording();
         return;
       }
-      appendVoiceTranscriptToComposer(result.text);
-    } catch (error) {
-      if (!isCurrentVoiceRequest()) {
-        return;
-      }
-      const description =
-        error instanceof Error
-          ? sanitizeVoiceErrorMessage(error.message)
-          : "The voice note could not be transcribed.";
-      const authExpired = !desktopVoiceAvailable && isVoiceAuthExpiredMessage(description);
-      if (authExpired) {
-        void refreshProviderStatuses();
-      }
-      reportComposerFeedback({
-        type: "error",
-        title: authExpired ? "Sign in to ChatGPT again" : "Couldn't transcribe voice note",
-        description: authExpired
-          ? "Your ChatGPT session was rejected. Sign in again and retry."
-          : description,
-        ...(authExpired
-          ? {
-              actionProps: {
-                children: "Refresh status",
-                onClick: () => {
-                  void refreshProviderStatuses();
-                },
-              },
+
+      setVoiceCompletionIntent(intent);
+      voiceCompletionInFlightRef.current = true;
+      const requestId = voiceTranscriptionRequestIdRef.current + 1;
+      voiceTranscriptionRequestIdRef.current = requestId;
+      const requestThreadId = threadId;
+      const requestProvider = selectedProvider;
+      const isCurrentVoiceRequest = () =>
+        voiceTranscriptionRequestIdRef.current === requestId &&
+        voiceThreadIdRef.current === requestThreadId &&
+        voiceProviderRef.current === requestProvider;
+
+      try {
+        const payload = await stopVoiceRecording();
+        if (!isCurrentVoiceRequest()) {
+          return;
+        }
+        if (!payload) {
+          reportComposerFeedback({
+            type: "warning",
+            title: "No audio was captured.",
+          });
+          return;
+        }
+        const result = await api.server.transcribeVoice({
+          mode: settings.voiceTranscriptionMode,
+          cwd: activeProject.cwd,
+          ...(activeThread ? { threadId: activeThread.id } : {}),
+          ...payload,
+        });
+        if (!isCurrentVoiceRequest()) {
+          return;
+        }
+        if (intent === "send") {
+          setVoiceCompletionIntent(null);
+        }
+        const completion = await completeComposerVoiceTranscript({
+          intent,
+          currentPrompt: promptRef.current,
+          transcript: result.text,
+          insertTranscript: (transcript, completedPrompt) => {
+            if (promptRef.current === completedPrompt) {
+              return false;
             }
-          : {}),
-      });
-    } finally {
-      if (isCurrentVoiceRequest()) {
-        voiceRecordingStartedAtRef.current = null;
-        setIsVoiceTranscribing(false);
+            appendVoiceTranscriptToComposer(transcript);
+            return true;
+          },
+          sendPrompt: (nextPrompt) => sendVoiceTranscriptRef.current(nextPrompt),
+        });
+        if (completion === "empty") {
+          reportComposerFeedback({
+            type: "warning",
+            title: "No speech was detected.",
+          });
+        }
+      } catch (error) {
+        if (!isCurrentVoiceRequest()) {
+          return;
+        }
+        const description =
+          error instanceof Error
+            ? sanitizeVoiceErrorMessage(error.message)
+            : "The voice note could not be transcribed.";
+        const authExpired = !desktopVoiceAvailable && isVoiceAuthExpiredMessage(description);
+        if (authExpired) {
+          void refreshProviderStatuses();
+        }
+        reportComposerFeedback({
+          type: "error",
+          title: authExpired ? "Sign in to ChatGPT again" : "Couldn't transcribe voice note",
+          description: authExpired
+            ? "Your ChatGPT session was rejected. Sign in again and retry."
+            : description,
+          ...(authExpired
+            ? {
+                actionProps: {
+                  children: "Refresh status",
+                  onClick: () => {
+                    void refreshProviderStatuses();
+                  },
+                },
+              }
+            : {}),
+        });
+      } finally {
+        if (isCurrentVoiceRequest()) {
+          voiceCompletionInFlightRef.current = false;
+          voiceRecordingStartedAtRef.current = null;
+          setVoiceCompletionIntent(null);
+        }
       }
-    }
-  }, [
-    activeProject,
-    activeThread,
-    appendVoiceTranscriptToComposer,
-    cancelVoiceRecording,
-    desktopVoiceAvailable,
-    isVoiceRecording,
-    reportComposerFeedback,
-    refreshProviderStatuses,
-    selectedProvider,
-    settings.voiceTranscriptionMode,
-    stopVoiceRecording,
-    threadId,
-  ]);
+    },
+    [
+      activeProject,
+      activeThread,
+      appendVoiceTranscriptToComposer,
+      cancelVoiceRecording,
+      desktopVoiceAvailable,
+      isVoiceRecording,
+      reportComposerFeedback,
+      refreshProviderStatuses,
+      selectedProvider,
+      settings.voiceTranscriptionMode,
+      stopVoiceRecording,
+      threadId,
+    ],
+  );
 
   const cancelComposerVoiceRecording = useCallback(() => {
-    const recordedForMs =
-      voiceRecordingStartedAtRef.current === null
-        ? null
-        : Math.round(performance.now() - voiceRecordingStartedAtRef.current);
-    if (
-      recordedForMs !== null &&
-      recordedForMs >= 0 &&
-      recordedForMs < VOICE_RECORDER_ACTION_ARM_DELAY_MS
-    ) {
-      warnVoiceGuard("ignored recorder action immediately after start", {
-        recordedForMs,
-      });
-      return;
-    }
     voiceTranscriptionRequestIdRef.current += 1;
+    voiceCompletionInFlightRef.current = false;
     voiceRecordingStartedAtRef.current = null;
-    setIsVoiceTranscribing(false);
+    setVoiceCompletionIntent(null);
     void readNativeApi()?.server.cancelVoiceTranscription?.();
     void cancelVoiceRecording();
   }, [cancelVoiceRecording]);
@@ -6395,7 +6416,7 @@ export default function ChatView({
       return;
     }
     if (isVoiceRecording) {
-      void submitComposerVoiceRecording();
+      void finishComposerVoiceRecording("insert");
       return;
     }
     void startComposerVoiceRecording();
@@ -6403,7 +6424,7 @@ export default function ChatView({
     isVoiceRecording,
     isVoiceTranscribing,
     startComposerVoiceRecording,
-    submitComposerVoiceRecording,
+    finishComposerVoiceRecording,
   ]);
 
   // --- Composer attachment entry points -------------------------------------
@@ -7155,6 +7176,7 @@ export default function ChatView({
     e?: { preventDefault: () => void },
     dispatchMode: "queue" | "steer" = "queue",
     queuedTurn?: QueuedComposerChatTurn,
+    voicePromptOverride?: string,
   ): Promise<boolean> => {
     e?.preventDefault();
     const api = readNativeApi();
@@ -7163,7 +7185,7 @@ export default function ChatView({
       !activeThread ||
       isSendBusy ||
       isConnecting ||
-      isVoiceTranscribing ||
+      (isVoiceTranscribing && voicePromptOverride === undefined) ||
       sendPreflightInFlightRef.current ||
       sendInFlightRef.current
     ) {
@@ -7207,7 +7229,11 @@ export default function ChatView({
     const queuedChatTurn = queuedTurn ?? null;
     const liveComposerSnapshot =
       queuedChatTurn === null ? (composerEditorRef.current?.readSnapshot() ?? null) : null;
-    let promptForSend = queuedChatTurn?.prompt ?? liveComposerSnapshot?.value ?? promptRef.current;
+    let promptForSend =
+      queuedChatTurn?.prompt ??
+      voicePromptOverride ??
+      liveComposerSnapshot?.value ??
+      promptRef.current;
     let composerImagesForSend = queuedChatTurn?.images ?? composerImages;
     // AppSnap captures persist as IndexedDB blobs and hydrate into `images`
     // asynchronously (see AppSnapCoordinator). Right after a reload the user can
@@ -8173,6 +8199,8 @@ export default function ChatView({
     }
     return turnStartSucceeded;
   };
+  sendVoiceTranscriptRef.current = (voicePrompt) =>
+    onSend(undefined, "queue", undefined, voicePrompt);
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
@@ -10879,20 +10907,12 @@ export default function ChatView({
                       {showVoiceNotesControl && (isVoiceRecording || isVoiceTranscribing) ? (
                         <ComposerVoiceRecorderBar
                           disabled={isComposerApprovalState || isConnecting || isSendBusy}
-                          isRecording={isVoiceRecording}
-                          isTranscribing={isVoiceTranscribing}
+                          completionIntent={voiceCompletionIntent}
                           durationLabel={voiceRecordingDurationLabel}
                           waveformLevels={voiceWaveformLevels}
-                          onCancel={() => {
-                            if (isVoiceRecording) {
-                              void submitComposerVoiceRecording();
-                              return;
-                            }
-                            cancelComposerVoiceRecording();
-                          }}
-                          onSubmit={() => {
-                            void submitComposerVoiceRecording();
-                          }}
+                          onCancel={cancelComposerVoiceRecording}
+                          onInsert={() => void finishComposerVoiceRecording("insert")}
+                          onSend={() => void finishComposerVoiceRecording("send")}
                         />
                       ) : null}
                       {activePendingProgress ? (
@@ -10978,7 +10998,7 @@ export default function ChatView({
                           )
                         ) : (
                           <>
-                            {showVoiceNotesControl ? (
+                            {showVoiceNotesControl && !isVoiceRecording && !isVoiceTranscribing ? (
                               <ComposerVoiceButton
                                 disabled={isComposerApprovalState || isConnecting || isSendBusy}
                                 isRecording={isVoiceRecording}

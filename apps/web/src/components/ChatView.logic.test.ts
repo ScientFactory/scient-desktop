@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   appendVoiceTranscriptToPrompt,
+  completeComposerVoiceTranscript,
   buildComposerMenuSelectionKey,
   createLocalDispatchSnapshot,
   createWorktreeSetupSnapshot,
@@ -629,6 +630,94 @@ describe("voice helpers", () => {
 
   it("returns null when the transcript is empty", () => {
     expect(appendVoiceTranscriptToPrompt("Hello", "   ")).toBeNull();
+  });
+
+  it("inserts a completed voice transcript without sending", async () => {
+    const inserted: string[] = [];
+    const sent: string[] = [];
+
+    await expect(
+      completeComposerVoiceTranscript({
+        intent: "insert",
+        currentPrompt: "Existing draft",
+        transcript: "Voice text",
+        insertTranscript: (transcript) => {
+          inserted.push(transcript);
+          return true;
+        },
+        sendPrompt: async (prompt) => {
+          sent.push(prompt);
+          return true;
+        },
+      }),
+    ).resolves.toBe("inserted");
+    expect(inserted).toEqual(["Voice text"]);
+    expect(sent).toEqual([]);
+  });
+
+  it("sends the existing draft and transcript as one completed voice message", async () => {
+    const inserted: string[] = [];
+    const sent: string[] = [];
+
+    await expect(
+      completeComposerVoiceTranscript({
+        intent: "send",
+        currentPrompt: "Existing draft   ",
+        transcript: "  Voice text  ",
+        insertTranscript: (transcript) => {
+          inserted.push(transcript);
+          return true;
+        },
+        sendPrompt: async (prompt) => {
+          sent.push(prompt);
+          return true;
+        },
+      }),
+    ).resolves.toBe("sent");
+    expect(sent).toEqual(["Existing draft\nVoice text"]);
+    expect(inserted).toEqual([]);
+  });
+
+  it("keeps the transcript in the composer when direct send cannot start", async () => {
+    const inserted: string[] = [];
+
+    await expect(
+      completeComposerVoiceTranscript({
+        intent: "send",
+        currentPrompt: "Existing draft",
+        transcript: "Voice text",
+        insertTranscript: (transcript) => {
+          inserted.push(transcript);
+          return true;
+        },
+        sendPrompt: async () => false,
+      }),
+    ).resolves.toBe("inserted");
+    expect(inserted).toEqual(["Voice text"]);
+  });
+
+  it("does not duplicate a transcript already restored by the send pipeline", async () => {
+    let composerPrompt = "Existing draft";
+
+    await expect(
+      completeComposerVoiceTranscript({
+        intent: "send",
+        currentPrompt: composerPrompt,
+        transcript: "Voice text",
+        insertTranscript: (_transcript, completedPrompt) => {
+          if (composerPrompt === completedPrompt) {
+            return false;
+          }
+          composerPrompt = completedPrompt;
+          return true;
+        },
+        sendPrompt: async (completedPrompt) => {
+          composerPrompt = completedPrompt;
+          return false;
+        },
+      }),
+    ).resolves.toBe("preserved");
+    expect(composerPrompt).toBe("Existing draft\nVoice text");
   });
 
   it("sanitizes inline stack traces from voice errors", () => {

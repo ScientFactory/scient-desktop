@@ -43,6 +43,7 @@ import {
 } from "../session-logic";
 import { localSubagentThreadId } from "./ChatView.selectors";
 import type { ProviderModelOption } from "../providerModelOptions";
+import type { ComposerVoiceCompletionIntent } from "./chat/composerVoiceState";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "scient:last-invoked-script-by-project";
 export const DISMISSED_PROVIDER_HEALTH_BANNERS_KEY = "scient:dismissed-provider-health-banners";
@@ -627,6 +628,23 @@ export function appendVoiceTranscriptToPrompt(
   return currentPrompt.trim().length === 0
     ? trimmedTranscript
     : `${currentPrompt.replace(/\s+$/, "")}\n${trimmedTranscript}`;
+}
+
+export async function completeComposerVoiceTranscript(input: {
+  intent: ComposerVoiceCompletionIntent;
+  currentPrompt: string;
+  transcript: string;
+  insertTranscript: (transcript: string, completedPrompt: string) => boolean;
+  sendPrompt: (prompt: string) => Promise<boolean>;
+}): Promise<"empty" | "inserted" | "preserved" | "sent"> {
+  const nextPrompt = appendVoiceTranscriptToPrompt(input.currentPrompt, input.transcript);
+  if (!nextPrompt) {
+    return "empty";
+  }
+  if (input.intent === "send" && (await input.sendPrompt(nextPrompt))) {
+    return "sent";
+  }
+  return input.insertTranscript(input.transcript, nextPrompt) ? "inserted" : "preserved";
 }
 
 export function sanitizeVoiceErrorMessage(message: string): string {

@@ -403,7 +403,6 @@ export async function requestDesktopVoiceTranscription(input: {
     request.setHeader("User-Agent", "Scient Desktop");
     request.setHeader("originator", "scient-desktop");
     request.setHeader("Content-Type", `multipart/form-data; boundary=${boundary}`);
-    request.setHeader("Content-Length", String(body.byteLength));
 
     request.once("error", (cause) => {
       if (settled || timedOut) return;

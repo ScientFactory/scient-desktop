@@ -18,6 +18,7 @@ import {
   isVoiceAuthExpiredMessage,
   sanitizeVoiceErrorMessage,
 } from "../ChatView.logic";
+import type { ComposerVoiceCompletionIntent } from "./composerVoiceState";
 
 export interface ComposerLocalFeedback {
   type: "error" | "info" | "success" | "warning";
@@ -46,11 +47,12 @@ interface UseComposerVoiceControllerOptions {
 interface UseComposerVoiceControllerResult {
   isVoiceRecording: boolean;
   isVoiceTranscribing: boolean;
+  voiceCompletionIntent: ComposerVoiceCompletionIntent | null;
   voiceWaveformLevels: readonly number[];
   voiceRecordingDurationLabel: string;
   showVoiceNotesControl: boolean;
   startComposerVoiceRecording: () => Promise<void>;
-  submitComposerVoiceRecording: () => Promise<void>;
+  finishComposerVoiceRecording: () => Promise<void>;
   cancelComposerVoiceRecording: () => void;
 }
 
@@ -79,8 +81,11 @@ export function useComposerVoiceController(
     stopRecording: stopVoiceRecording,
     cancelRecording: cancelVoiceRecording,
   } = useVoiceRecorder();
-  const [isVoiceTranscribing, setIsVoiceTranscribing] = useState(false);
+  const [voiceCompletionIntent, setVoiceCompletionIntent] =
+    useState<ComposerVoiceCompletionIntent | null>(null);
+  const isVoiceTranscribing = voiceCompletionIntent !== null;
   const voiceTranscriptionRequestIdRef = useRef(0);
+  const voiceCompletionInFlightRef = useRef(false);
   const voiceThreadIdRef = useRef(threadId);
   const voiceProviderRef = useRef<ProviderKind>(selectedProvider);
   voiceThreadIdRef.current = threadId;
@@ -126,9 +131,10 @@ export function useComposerVoiceController(
 
   useEffect(() => {
     voiceTranscriptionRequestIdRef.current += 1;
+    voiceCompletionInFlightRef.current = false;
     void readNativeApi()?.server.cancelVoiceTranscription?.();
     void cancelVoiceRecording();
-    setIsVoiceTranscribing(false);
+    setVoiceCompletionIntent(null);
   }, [cancelVoiceRecording, threadId]);
 
   useEffect(() => {
@@ -136,8 +142,9 @@ export function useComposerVoiceController(
       return;
     }
     voiceTranscriptionRequestIdRef.current += 1;
+    voiceCompletionInFlightRef.current = false;
     void cancelVoiceRecording();
-    setIsVoiceTranscribing(false);
+    setVoiceCompletionIntent(null);
   }, [canStartVoiceNotes, cancelVoiceRecording, isVoiceRecording]);
 
   const startComposerVoiceRecording = useCallback(async () => {
@@ -188,8 +195,8 @@ export function useComposerVoiceController(
     startVoiceRecording,
   ]);
 
-  const submitComposerVoiceRecording = useCallback(async () => {
-    if (!activeProject || !isVoiceRecording) {
+  const finishComposerVoiceRecording = useCallback(async () => {
+    if (!activeProject || !isVoiceRecording || voiceCompletionInFlightRef.current) {
       return;
     }
 
@@ -203,7 +210,8 @@ export function useComposerVoiceController(
       return;
     }
 
-    setIsVoiceTranscribing(true);
+    setVoiceCompletionIntent("insert");
+    voiceCompletionInFlightRef.current = true;
     const requestId = voiceTranscriptionRequestIdRef.current + 1;
     voiceTranscriptionRequestIdRef.current = requestId;
     const requestThreadId = threadId;
@@ -265,7 +273,8 @@ export function useComposerVoiceController(
       });
     } finally {
       if (isCurrentVoiceRequest()) {
-        setIsVoiceTranscribing(false);
+        voiceCompletionInFlightRef.current = false;
+        setVoiceCompletionIntent(null);
       }
     }
   }, [
@@ -285,7 +294,8 @@ export function useComposerVoiceController(
 
   const cancelComposerVoiceRecording = useCallback(() => {
     voiceTranscriptionRequestIdRef.current += 1;
-    setIsVoiceTranscribing(false);
+    voiceCompletionInFlightRef.current = false;
+    setVoiceCompletionIntent(null);
     void readNativeApi()?.server.cancelVoiceTranscription?.();
     void cancelVoiceRecording();
   }, [cancelVoiceRecording]);
@@ -293,11 +303,12 @@ export function useComposerVoiceController(
   return {
     isVoiceRecording,
     isVoiceTranscribing,
+    voiceCompletionIntent,
     voiceWaveformLevels,
     voiceRecordingDurationLabel,
     showVoiceNotesControl,
     startComposerVoiceRecording,
-    submitComposerVoiceRecording,
+    finishComposerVoiceRecording,
     cancelComposerVoiceRecording,
   };
 }
