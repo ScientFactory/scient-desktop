@@ -1142,6 +1142,20 @@ export function deriveComposerFooterActionPlan(options: {
   };
 }
 
+export function shouldRouteComposerSendToPendingInput(options: {
+  hasActivePendingProgress: boolean;
+  hasVoicePromptOverride: boolean;
+}): boolean {
+  return options.hasActivePendingProgress && !options.hasVoicePromptOverride;
+}
+
+export function shouldRenderComposerFooter(options: {
+  hasPendingApproval: boolean;
+  isVoiceActive: boolean;
+}): boolean {
+  return !options.hasPendingApproval || options.isVoiceActive;
+}
+
 export function collectUserMessageAssistantSelections(
   message: ChatMessage,
 ): ChatAssistantSelectionAttachment[] {

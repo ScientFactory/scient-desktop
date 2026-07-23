@@ -5,6 +5,7 @@
 import type { VoiceRecordingPayload } from "./voiceRecorder";
 
 export interface LiveVoicePreviewOptions {
+  readonly getRecordingDurationMs: () => number;
   readonly captureSnapshot: () => Promise<VoiceRecordingPayload | null>;
   readonly transcribeSnapshot: (payload: VoiceRecordingPayload) => Promise<string>;
   readonly cancelActiveTranscription: () => Promise<void>;
@@ -12,12 +13,14 @@ export interface LiveVoicePreviewOptions {
   readonly initialDelayMs?: number;
   readonly intervalMs?: number;
   readonly maximumIntervalMs?: number;
+  readonly maximumDurationMs?: number;
   readonly minimumDurationMs?: number;
 }
 
 const DEFAULT_INITIAL_DELAY_MS = 1_800;
 const DEFAULT_INTERVAL_MS = 2_500;
 const DEFAULT_MAXIMUM_INTERVAL_MS = 8_000;
+export const DEFAULT_MAXIMUM_PREVIEW_DURATION_MS = 30_000;
 const DEFAULT_MINIMUM_DURATION_MS = 1_000;
 
 /**
@@ -67,6 +70,7 @@ export class LiveVoicePreviewSession {
     let delayMs = options.initialDelayMs ?? DEFAULT_INITIAL_DELAY_MS;
     const intervalMs = options.intervalMs ?? DEFAULT_INTERVAL_MS;
     const maximumIntervalMs = options.maximumIntervalMs ?? DEFAULT_MAXIMUM_INTERVAL_MS;
+    const maximumDurationMs = options.maximumDurationMs ?? DEFAULT_MAXIMUM_PREVIEW_DURATION_MS;
     const minimumDurationMs = options.minimumDurationMs ?? DEFAULT_MINIMUM_DURATION_MS;
 
     while (!signal.aborted) {
@@ -74,6 +78,13 @@ export class LiveVoicePreviewSession {
         return;
       }
       delayMs = intervalMs;
+
+      // Encoding a full growing WAV is synchronous renderer work. Stop taking
+      // provisional snapshots before long clips can contend with the browser's
+      // microphone callback; Stop/Send still performs the authoritative full pass.
+      if (options.getRecordingDurationMs() >= maximumDurationMs) {
+        return;
+      }
 
       const payload = await options.captureSnapshot();
       if (signal.aborted) {

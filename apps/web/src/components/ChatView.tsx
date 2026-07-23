@@ -534,6 +534,8 @@ import {
   deriveComposerSendState,
   failWorktreeSetupSnapshot,
   filterSidechatTranscriptMessages,
+  shouldRenderComposerFooter,
+  shouldRouteComposerSendToPendingInput,
   hasServerAcknowledgedLocalDispatch,
   resolveNextLocalDispatchSnapshot,
   WORKTREE_SETUP_ERROR_HOLD_MS,
@@ -1177,6 +1179,7 @@ export default function ChatView({
     liveVoicePreviewSessionRef.current = new LiveVoicePreviewSession();
   }
   const isVoiceTranscribing = voiceCompletionIntent !== null;
+  const isVoiceActive = isVoiceRecording || isVoiceTranscribing;
   const sendVoiceTranscriptRef = useRef<(prompt: string) => Promise<boolean>>(async () => false);
   const composerFeedbackIdRef = useRef(0);
   const [composerLocalFeedback, setComposerLocalFeedback] = useState<
@@ -2913,11 +2916,7 @@ export default function ChatView({
     ? (appendVoiceTranscriptToPrompt(prompt, liveVoicePreview) ?? prompt)
     : null;
   const isComposerEditorDisabled =
-    isConnecting ||
-    isComposerApprovalState ||
-    isVoiceRecording ||
-    isVoiceTranscribing ||
-    liveVoicePreview !== null;
+    isConnecting || isComposerApprovalState || isVoiceActive || liveVoicePreview !== null;
   const canCollapsePastedTextToDraft = shouldEnableComposerPastedTextCollapse({
     isComposerApprovalState,
     hasPendingUserInput: pendingUserInputs.length > 0,
@@ -2973,8 +2972,26 @@ export default function ChatView({
   }, [activeLatestTurn?.startedAt, activeTurnLayoutKey, activeTurnLayoutLive]);
 
   useEffect(() => {
+    // A provider question can arrive while microphone capture is already active.
+    // Keep promptRef anchored to the untouched chat draft until voice settles;
+    // otherwise the question's empty custom answer drops that draft from Send.
+    if (isVoiceActive) {
+      return;
+    }
     const nextCustomAnswer = activePendingProgress?.customAnswer;
     if (typeof nextCustomAnswer !== "string") {
+      if (lastSyncedPendingInputRef.current !== null) {
+        // The question temporarily borrowed promptRef without replacing the
+        // persisted chat draft. Restore that draft when the question settles
+        // so the next voice note or keyboard send cannot reuse a stale answer.
+        promptRef.current = prompt;
+        const nextCursor = collapseExpandedComposerCursor(prompt, prompt.length);
+        setComposerCursor(nextCursor);
+        setComposerTrigger(
+          detectComposerTrigger(prompt, expandCollapsedComposerCursor(prompt, nextCursor)),
+        );
+        setComposerHighlightedItemId(null);
+      }
       lastSyncedPendingInputRef.current = null;
       return;
     }
@@ -3008,6 +3025,8 @@ export default function ChatView({
     activePendingProgress?.customAnswer,
     activePendingUserInput?.requestId,
     activePendingProgress?.activeQuestion?.id,
+    isVoiceActive,
+    prompt,
   ]);
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
@@ -3814,7 +3833,7 @@ export default function ChatView({
     hasActivePendingProgress: activePendingProgress !== null,
     hasPendingApproval: isComposerApprovalState,
     hasPendingUserInput: pendingUserInputs.length > 0,
-    isVoiceActive: isVoiceRecording || isVoiceTranscribing,
+    isVoiceActive,
     showPlanFollowUpPrompt,
     canShowVoiceNotes: showVoiceNotesControl,
   });
@@ -6293,6 +6312,12 @@ export default function ChatView({
         if (api) {
           try {
             liveVoicePreviewSessionRef.current?.start({
+              getRecordingDurationMs: () => {
+                const startedAt = voiceRecordingStartedAtRef.current;
+                return startedAt === null
+                  ? Number.POSITIVE_INFINITY
+                  : Math.max(0, performance.now() - startedAt);
+              },
               captureSnapshot: snapshotVoiceRecording,
               transcribeSnapshot: async (payload) => {
                 const result = await api.server.transcribeVoice({
@@ -7266,7 +7291,13 @@ export default function ChatView({
     ) {
       return false;
     }
-    if (activePendingProgress) {
+    if (
+      shouldRouteComposerSendToPendingInput({
+        hasActivePendingProgress: activePendingProgress !== null,
+        hasVoicePromptOverride: voicePromptOverride !== undefined,
+      }) &&
+      activePendingProgress
+    ) {
       const activeQuestion = activePendingProgress.activeQuestion;
       const liveComposerSnapshot = composerEditorRef.current?.readSnapshot() ?? null;
       const livePendingAnswerText = liveComposerSnapshot?.value ?? promptRef.current;
@@ -10800,13 +10831,15 @@ export default function ChatView({
                   <ComposerPromptEditor
                     ref={composerEditorRef}
                     value={
-                      isComposerApprovalState
-                        ? ""
-                        : activePendingProgress
-                          ? activePendingProgress.customAnswer
-                          : liveVoicePreviewPrompt
-                            ? liveVoicePreviewPrompt
-                            : prompt
+                      isVoiceActive
+                        ? (liveVoicePreviewPrompt ?? prompt)
+                        : isComposerApprovalState
+                          ? ""
+                          : activePendingProgress
+                            ? activePendingProgress.customAnswer
+                            : liveVoicePreviewPrompt
+                              ? liveVoicePreviewPrompt
+                              : prompt
                     }
                     cursor={liveVoicePreviewPrompt ? liveVoicePreviewPrompt.length : composerCursor}
                     terminalContexts={
@@ -10823,28 +10856,32 @@ export default function ChatView({
                       ? { onCollapsePastedText: addPastedTextToDraft }
                       : {})}
                     placeholder={
-                      isComposerApprovalState
-                        ? "Resolve this approval request to continue"
-                        : activePendingProgress
-                          ? activePendingProgress.activeQuestion?.options.length === 0
-                            ? "Type your answer to continue"
-                            : "Type your own answer, or leave this blank to use the selected option"
-                          : showPlanFollowUpPrompt && activeProposedPlan
-                            ? "Add feedback to refine the plan, or leave this blank to implement it"
-                            : hasLiveTurn
-                              ? "Ask for follow-up changes"
-                              : phase === "disconnected"
-                                ? "Ask for follow-up changes or attach images"
-                                : "Ask anything, @tag files/folders, or use / to show available commands"
+                      isVoiceActive
+                        ? "Listening..."
+                        : isComposerApprovalState
+                          ? "Resolve this approval request to continue"
+                          : activePendingProgress
+                            ? activePendingProgress.activeQuestion?.options.length === 0
+                              ? "Type your answer to continue"
+                              : "Type your own answer, or leave this blank to use the selected option"
+                            : showPlanFollowUpPrompt && activeProposedPlan
+                              ? "Add feedback to refine the plan, or leave this blank to implement it"
+                              : hasLiveTurn
+                                ? "Ask for follow-up changes"
+                                : phase === "disconnected"
+                                  ? "Ask for follow-up changes or attach images"
+                                  : "Ask anything, @tag files/folders, or use / to show available commands"
                     }
                     {...(liveVoicePreview ? { className: "opacity-55" } : {})}
                     disabled={isComposerEditorDisabled}
                   />
                 </div>
-                {/* Bottom toolbar — hidden while an approval takes over the composer,
-                    since the approve/decline actions live in the detached approval card
-                    floating above (see ComposerPendingApprovalPanel). */}
-                {activePendingApproval ? null : (
+                {/* An idle approval owns the composer footer. If it arrives during active
+                    voice capture, keep recorder controls mounted until voice settles. */}
+                {shouldRenderComposerFooter({
+                  hasPendingApproval: activePendingApproval !== null,
+                  isVoiceActive,
+                }) ? (
                   <div
                     data-chat-composer-footer="true"
                     className={cn(
@@ -10984,7 +11021,7 @@ export default function ChatView({
                       {!isVoiceRecording && !isVoiceTranscribing ? composerPickerControls : null}
                       {showVoiceNotesControl && (isVoiceRecording || isVoiceTranscribing) ? (
                         <ComposerVoiceRecorderBar
-                          disabled={isComposerApprovalState || isConnecting || isSendBusy}
+                          disabled={isConnecting || isSendBusy}
                           completionIntent={voiceCompletionIntent}
                           durationLabel={voiceRecordingDurationLabel}
                           waveformLevels={voiceWaveformLevels}
@@ -11137,7 +11174,7 @@ export default function ChatView({
                       ) : null}
                     </div>
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
           </ComposerColumnFrame>

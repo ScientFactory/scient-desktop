@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { VoiceRecordingPayload } from "./voiceRecorder";
-import { LiveVoicePreviewSession } from "./liveVoicePreview";
+import { DEFAULT_MAXIMUM_PREVIEW_DURATION_MS, LiveVoicePreviewSession } from "./liveVoicePreview";
 
 const payload: VoiceRecordingPayload = {
   audioBase64: "UklGRg==",
@@ -25,6 +25,7 @@ describe("LiveVoicePreviewSession", () => {
     const session = new LiveVoicePreviewSession();
 
     session.start({
+      getRecordingDurationMs: () => payload.durationMs,
       captureSnapshot: vi.fn(async () => payload),
       transcribeSnapshot,
       cancelActiveTranscription: vi.fn(async () => undefined),
@@ -56,6 +57,7 @@ describe("LiveVoicePreviewSession", () => {
     });
     const session = new LiveVoicePreviewSession();
     session.start({
+      getRecordingDurationMs: () => payload.durationMs,
       captureSnapshot: vi.fn(async () => payload),
       transcribeSnapshot,
       cancelActiveTranscription,
@@ -74,6 +76,7 @@ describe("LiveVoicePreviewSession", () => {
     const captureSnapshot = vi.fn(async () => payload);
     const session = new LiveVoicePreviewSession();
     session.start({
+      getRecordingDurationMs: () => payload.durationMs,
       captureSnapshot,
       transcribeSnapshot: vi.fn(async () => {
         throw new Error("model missing");
@@ -95,6 +98,7 @@ describe("LiveVoicePreviewSession", () => {
     const captureSnapshot = vi.fn(async () => ({ ...payload, durationMs: 30_000 }));
     const session = new LiveVoicePreviewSession();
     session.start({
+      getRecordingDurationMs: () => 30_000,
       captureSnapshot,
       transcribeSnapshot: vi.fn(async () => "preview"),
       cancelActiveTranscription: vi.fn(async () => undefined),
@@ -102,6 +106,7 @@ describe("LiveVoicePreviewSession", () => {
       initialDelayMs: 1,
       intervalMs: 20,
       maximumIntervalMs: 10_000,
+      maximumDurationMs: 60_000,
     });
 
     await vi.advanceTimersByTimeAsync(1);
@@ -109,6 +114,34 @@ describe("LiveVoicePreviewSession", () => {
     expect(captureSnapshot).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(1);
     expect(captureSnapshot).toHaveBeenCalledTimes(2);
+    await session.stop();
+  });
+
+  it("stops before encoding another full clip at the preview duration bound", async () => {
+    vi.useFakeTimers();
+    let recordingDurationMs = DEFAULT_MAXIMUM_PREVIEW_DURATION_MS - 1;
+    const captureSnapshot = vi.fn(async () => ({
+      ...payload,
+      durationMs: recordingDurationMs,
+    }));
+    const session = new LiveVoicePreviewSession();
+    session.start({
+      getRecordingDurationMs: () => recordingDurationMs,
+      captureSnapshot,
+      transcribeSnapshot: vi.fn(async () => "bounded preview"),
+      cancelActiveTranscription: vi.fn(async () => undefined),
+      onPreview: vi.fn(),
+      initialDelayMs: 1,
+      intervalMs: 1,
+      maximumIntervalMs: 1,
+    });
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(captureSnapshot).toHaveBeenCalledOnce();
+
+    recordingDurationMs = DEFAULT_MAXIMUM_PREVIEW_DURATION_MS;
+    await vi.advanceTimersByTimeAsync(1);
+    expect(captureSnapshot).toHaveBeenCalledOnce();
     await session.stop();
   });
 });

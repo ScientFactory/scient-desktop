@@ -44,6 +44,8 @@ import {
   shouldEnableComposerPastedTextCollapse,
   shouldHandlePromptHistoryNavigationKey,
   shouldRenderProviderHealthBanner,
+  shouldRenderComposerFooter,
+  shouldRouteComposerSendToPendingInput,
   shouldShowComposerModelBootstrapSkeleton,
   shouldStartActiveTurnLayoutGrace,
   shouldRenderTerminalWorkspace,
@@ -1525,6 +1527,41 @@ describe("deriveComposerFooterActionPlan", () => {
         showPlanFollowUpPrompt: true,
       }),
     ).toEqual({ primaryAction: "plan-follow-up", showVoiceButton: false });
+  });
+});
+
+describe("composer voice transition invariants", () => {
+  it("routes ordinary pending-question submits to the question flow", () => {
+    expect(
+      shouldRouteComposerSendToPendingInput({
+        hasActivePendingProgress: true,
+        hasVoicePromptOverride: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a completed voice prompt on the message path when a question arrives", () => {
+    expect(
+      shouldRouteComposerSendToPendingInput({
+        hasActivePendingProgress: true,
+        hasVoicePromptOverride: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the footer mounted for active voice and hides it after voice settles", () => {
+    expect(
+      shouldRenderComposerFooter({
+        hasPendingApproval: true,
+        isVoiceActive: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRenderComposerFooter({
+        hasPendingApproval: true,
+        isVoiceActive: false,
+      }),
+    ).toBe(false);
   });
 });
 

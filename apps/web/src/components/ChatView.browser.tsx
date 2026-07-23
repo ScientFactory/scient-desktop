@@ -7,8 +7,10 @@ import {
   type AutomationDefinition,
   EventId,
   MessageId,
+  type NativeApi,
   ORCHESTRATION_WS_METHODS,
   type OrchestrationReadModel,
+  type OrchestrationThreadActivity,
   type ProjectId,
   type ServerConfig,
   ThreadId,
@@ -245,6 +247,116 @@ function createComposerImage(input: {
     previewUrl: input.previewUrl,
     file,
   };
+}
+
+function installFakeMicrophoneCapture(): {
+  emitSamples: () => void;
+  restore: () => void;
+} {
+  const mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(navigator, "mediaDevices");
+  const audioContextDescriptor = Object.getOwnPropertyDescriptor(globalThis, "AudioContext");
+  const trackStop = vi.fn();
+  const processor = {
+    onaudioprocess: null as
+      | ((event: {
+          inputBuffer: {
+            numberOfChannels: number;
+            length: number;
+            getChannelData: (channel: number) => Float32Array;
+          };
+        }) => void)
+      | null,
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  };
+  const source = { connect: vi.fn(), disconnect: vi.fn() };
+  const gain = {
+    gain: { value: 1 },
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  };
+
+  class FakeAudioContext {
+    readonly sampleRate = 48_000;
+    readonly destination = {};
+
+    resume = vi.fn(async () => undefined);
+    close = vi.fn(async () => undefined);
+    createMediaStreamSource = vi.fn(() => source);
+    createScriptProcessor = vi.fn(() => processor);
+    createGain = vi.fn(() => gain);
+  }
+
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: {
+      getUserMedia: vi.fn(async () => ({
+        getTracks: () => [{ stop: trackStop }],
+      })),
+    },
+  });
+  Object.defineProperty(globalThis, "AudioContext", {
+    configurable: true,
+    value: FakeAudioContext,
+  });
+
+  return {
+    emitSamples: () => {
+      const samples = new Float32Array(4_096).fill(0.25);
+      processor.onaudioprocess?.({
+        inputBuffer: {
+          numberOfChannels: 1,
+          length: samples.length,
+          getChannelData: () => samples,
+        },
+      });
+    },
+    restore: () => {
+      if (mediaDevicesDescriptor) {
+        Object.defineProperty(navigator, "mediaDevices", mediaDevicesDescriptor);
+      } else {
+        Reflect.deleteProperty(navigator, "mediaDevices");
+      }
+      if (audioContextDescriptor) {
+        Object.defineProperty(globalThis, "AudioContext", audioContextDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, "AudioContext");
+      }
+    },
+  };
+}
+
+function appendActiveThreadActivity(activity: OrchestrationThreadActivity): void {
+  const snapshot: OrchestrationReadModel = {
+    ...fixture.snapshot,
+    snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+    threads: fixture.snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? {
+            ...thread,
+            activities: [...thread.activities, activity],
+            updatedAt: activity.createdAt,
+          }
+        : thread,
+    ),
+    updatedAt: activity.createdAt,
+  };
+  fixture = { ...fixture, snapshot };
+  useStore.getState().syncServerReadModel(snapshot);
+}
+
+function configureSuccessfulVoiceTranscription(transcript: string): (api: NativeApi) => NativeApi {
+  return (api) => ({
+    ...api,
+    server: {
+      ...api.server,
+      transcribeVoice: vi.fn(async () => ({
+        text: transcript,
+        engine: "local" as const,
+      })),
+      cancelVoiceTranscription: vi.fn(async () => undefined),
+    },
+  });
 }
 
 function createSnapshotForTargetUser(options: {
@@ -1244,89 +1356,91 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   return {};
 }
 
-function installDeterministicActionNativeApi(): () => void {
+function installDeterministicActionNativeApi(
+  configure?: (api: NativeApi) => NativeApi,
+): () => void {
   const previousNativeApi = window.nativeApi;
   const wsNativeApi = readNativeApi();
   if (!wsNativeApi) {
     throw new Error("Expected browser native API fixture.");
   }
 
-  Object.defineProperty(window, "nativeApi", {
-    configurable: true,
-    value: {
-      ...wsNativeApi,
-      shell: {
-        ...wsNativeApi.shell,
-        openInEditor: async (
-          cwd: Parameters<typeof wsNativeApi.shell.openInEditor>[0],
-          editor: Parameters<typeof wsNativeApi.shell.openInEditor>[1],
-        ) => {
-          wsRequests.push({
-            _tag: WS_METHODS.shellOpenInEditor,
-            cwd,
-            editor,
-          });
-        },
-      },
-      git: {
-        ...wsNativeApi.git,
-        createWorktree: async (input: Parameters<typeof wsNativeApi.git.createWorktree>[0]) => {
-          const request: WsRequestEnvelope["body"] = {
-            _tag: WS_METHODS.gitCreateWorktree,
-            ...input,
-          };
-          wsRequests.push(request);
-          return resolveWsRpc(request) as Awaited<
-            ReturnType<typeof wsNativeApi.git.createWorktree>
-          >;
-        },
-      },
-      terminal: {
-        ...wsNativeApi.terminal,
-        open: async (input: Parameters<typeof wsNativeApi.terminal.open>[0]) => {
-          const request: WsRequestEnvelope["body"] = {
-            _tag: WS_METHODS.terminalOpen,
-            ...input,
-          };
-          wsRequests.push(request);
-          return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.terminal.open>>;
-        },
-        write: async (input: Parameters<typeof wsNativeApi.terminal.write>[0]) => {
-          wsRequests.push({
-            _tag: WS_METHODS.terminalWrite,
-            ...input,
-          });
-        },
-      },
-      orchestration: {
-        ...wsNativeApi.orchestration,
-        dispatchCommand: async (
-          command: Parameters<typeof wsNativeApi.orchestration.dispatchCommand>[0],
-        ) => {
-          wsRequests.push({
-            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
-            command,
-          });
-          const recordedFork = recordThreadForkCreateCommand(command);
-          return {
-            sequence: recordedFork
-              ? fixture.snapshot.snapshotSequence
-              : fixture.snapshot.snapshotSequence + 1,
-          };
-        },
-      },
-      automation: {
-        ...wsNativeApi.automation,
-        create: async (input: Parameters<typeof wsNativeApi.automation.create>[0]) => {
-          const request: WsRequestEnvelope["body"] = {
-            _tag: WS_METHODS.automationCreate,
-            ...input,
-          };
-          wsRequests.push(request);
-          return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.automation.create>>;
-        },
+  const deterministicApi: NativeApi = {
+    ...wsNativeApi,
+    shell: {
+      ...wsNativeApi.shell,
+      openInEditor: async (
+        cwd: Parameters<typeof wsNativeApi.shell.openInEditor>[0],
+        editor: Parameters<typeof wsNativeApi.shell.openInEditor>[1],
+      ) => {
+        wsRequests.push({
+          _tag: WS_METHODS.shellOpenInEditor,
+          cwd,
+          editor,
+        });
       },
     },
+    git: {
+      ...wsNativeApi.git,
+      createWorktree: async (input: Parameters<typeof wsNativeApi.git.createWorktree>[0]) => {
+        const request: WsRequestEnvelope["body"] = {
+          _tag: WS_METHODS.gitCreateWorktree,
+          ...input,
+        };
+        wsRequests.push(request);
+        return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.git.createWorktree>>;
+      },
+    },
+    terminal: {
+      ...wsNativeApi.terminal,
+      open: async (input: Parameters<typeof wsNativeApi.terminal.open>[0]) => {
+        const request: WsRequestEnvelope["body"] = {
+          _tag: WS_METHODS.terminalOpen,
+          ...input,
+        };
+        wsRequests.push(request);
+        return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.terminal.open>>;
+      },
+      write: async (input: Parameters<typeof wsNativeApi.terminal.write>[0]) => {
+        wsRequests.push({
+          _tag: WS_METHODS.terminalWrite,
+          ...input,
+        });
+      },
+    },
+    orchestration: {
+      ...wsNativeApi.orchestration,
+      dispatchCommand: async (
+        command: Parameters<typeof wsNativeApi.orchestration.dispatchCommand>[0],
+      ) => {
+        wsRequests.push({
+          _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+          command,
+        });
+        const recordedFork = recordThreadForkCreateCommand(command);
+        return {
+          sequence: recordedFork
+            ? fixture.snapshot.snapshotSequence
+            : fixture.snapshot.snapshotSequence + 1,
+        };
+      },
+    },
+    automation: {
+      ...wsNativeApi.automation,
+      create: async (input: Parameters<typeof wsNativeApi.automation.create>[0]) => {
+        const request: WsRequestEnvelope["body"] = {
+          _tag: WS_METHODS.automationCreate,
+          ...input,
+        };
+        wsRequests.push(request);
+        return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.automation.create>>;
+      },
+    },
+  };
+
+  Object.defineProperty(window, "nativeApi", {
+    configurable: true,
+    value: configure ? configure(deterministicApi) : deterministicApi,
   });
 
   return () => {
@@ -1805,6 +1919,7 @@ async function mountChatView(options: {
   viewport: ViewportSpec;
   snapshot: OrchestrationReadModel;
   configureFixture?: (fixture: TestFixture) => void;
+  configureNativeApi?: (api: NativeApi) => NativeApi;
   initialEntry?: string;
 }): Promise<MountedChatView> {
   fixture = buildFixture(options.snapshot);
@@ -1813,7 +1928,7 @@ async function mountChatView(options: {
   // transport-level contract. Record mutating native actions synchronously so
   // a slow Linux WebSocket round trip cannot outlive unmount and dispose the
   // next test's Effect runtime.
-  const restoreNativeApi = installDeterministicActionNativeApi();
+  const restoreNativeApi = installDeterministicActionNativeApi(options.configureNativeApi);
   await setViewport(options.viewport);
   await waitForProductionStyles();
 
@@ -3697,6 +3812,174 @@ describe("ChatView timeline estimator parity (full app)", () => {
       expect(hasDispatchedCommandType("thread.turn.interrupt")).toBe(false);
     } finally {
       await mounted.cleanup();
+    }
+  });
+
+  it("keeps active recorder controls usable when an approval arrives", async () => {
+    const microphone = installFakeMicrophoneCapture();
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-voice-approval-transition" as MessageId,
+        targetText: "voice approval transition target",
+        sessionStatus: "running",
+      }),
+      configureNativeApi: configureSuccessfulVoiceTranscription("approval-safe transcript"),
+    });
+
+    try {
+      const recordButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Record voice note"]'),
+        "Unable to find voice recording button.",
+      );
+      recordButton.click();
+      await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>('button[aria-label="Cancel voice recording"]'),
+        "Voice recorder did not start.",
+      );
+      microphone.emitSamples();
+
+      appendActiveThreadActivity({
+        id: EventId.makeUnsafe("approval-during-voice"),
+        createdAt: isoAt(1_200),
+        kind: "approval.requested",
+        summary: "Command approval requested",
+        tone: "approval",
+        turnId: null,
+        payload: {
+          requestId: "approval-during-voice",
+          requestKind: "command",
+          detail: "bun run test",
+        },
+      });
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("bun run test");
+          expect(
+            document.querySelector<HTMLButtonElement>(
+              'button[aria-label="Cancel voice recording"]',
+            ),
+          ).not.toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const insertButton = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Stop and insert voice note"]',
+      );
+      const sendButton = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Send voice note"]',
+      );
+      expect(insertButton?.disabled).toBe(false);
+      expect(sendButton?.disabled).toBe(false);
+
+      document
+        .querySelector<HTMLButtonElement>('button[aria-label="Cancel voice recording"]')
+        ?.click();
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-chat-composer-footer="true"]')).toBeNull();
+      });
+    } finally {
+      await mounted.cleanup();
+      microphone.restore();
+    }
+  });
+
+  it("queues voice Send instead of answering a question that arrives mid-recording", async () => {
+    const microphone = installFakeMicrophoneCapture();
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "existing draft");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-voice-question-transition" as MessageId,
+        targetText: "voice question transition target",
+        sessionStatus: "running",
+      }),
+      configureNativeApi: configureSuccessfulVoiceTranscription("spoken follow-up"),
+    });
+
+    try {
+      const recordButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Record voice note"]'),
+        "Unable to find voice recording button.",
+      );
+      recordButton.click();
+      await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>('button[aria-label="Cancel voice recording"]'),
+        "Voice recorder did not start.",
+      );
+      microphone.emitSamples();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 300));
+
+      appendActiveThreadActivity({
+        id: EventId.makeUnsafe("question-during-voice"),
+        createdAt: isoAt(1_210),
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        turnId: null,
+        payload: {
+          requestId: "question-during-voice",
+          questions: [
+            {
+              id: "release_choice",
+              header: "Release",
+              question: "Which release path should be used?",
+              options: [
+                {
+                  label: "safe",
+                  description: "Use the safe release path",
+                },
+              ],
+            },
+          ],
+        },
+      });
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Which release path should be used?");
+          expect(
+            document.querySelector<HTMLButtonElement>('button[aria-label="Send voice note"]'),
+          ).not.toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      document.querySelector<HTMLButtonElement>('button[aria-label="Send voice note"]')?.click();
+
+      await vi.waitFor(
+        () => {
+          const queuedRow = document.querySelector<HTMLElement>(
+            '[data-testid="queued-follow-up-row"]',
+          );
+          const queuedTurn =
+            useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.queuedTurns[0];
+          expect(queuedRow?.textContent).toContain("existing draft");
+          expect(queuedTurn?.kind).toBe("chat");
+          expect(queuedTurn?.kind === "chat" ? queuedTurn.prompt : null).toBe(
+            "existing draft\nspoken follow-up",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            typeof request.command === "object" &&
+            request.command !== null &&
+            "type" in request.command &&
+            request.command.type === "thread.user-input.respond",
+        ),
+      ).toBe(false);
+      expect(document.body.textContent).toContain("Which release path should be used?");
+    } finally {
+      await mounted.cleanup();
+      microphone.restore();
     }
   });
 
