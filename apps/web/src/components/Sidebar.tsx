@@ -2712,9 +2712,6 @@ export default function Sidebar() {
       }
 
       isAddingProjectRef.current = true;
-      const finishAddingProject = () => {
-        setAddProjectDialogOpen(false);
-      };
 
       try {
         const preparation = await prepareScientProjectForOpening({
@@ -2724,7 +2721,7 @@ export default function Sidebar() {
           onCompletion: notifyProjectInitializationCompletion,
         });
         if (preparation === "cancel") {
-          return;
+          return false;
         }
 
         const existing = findWorkspaceRootMatch(projects, cwd, (project) => project.cwd);
@@ -2736,8 +2733,7 @@ export default function Sidebar() {
             recoverExistingProjectByWorkspaceRootFromServer(api, workspaceRoot),
         });
         if (existingRecovery === "recovered") {
-          finishAddingProject();
-          return;
+          return true;
         }
         if (existing) {
           // Local project state can briefly outlive a server-side project.deleted event.
@@ -2768,16 +2764,14 @@ export default function Sidebar() {
                 creationResult.snapshot,
               );
           if (recovered) {
-            finishAddingProject();
-            return;
+            return true;
           }
         }
 
         if (!creationResult.created) {
           const recovered = await recoverExistingProjectFromServer(api, creationResult.projectId);
           if (recovered) {
-            finishAddingProject();
-            return;
+            return true;
           }
           throw new Error(PROJECT_CREATE_EXISTING_SYNC_ERROR);
         }
@@ -2789,8 +2783,7 @@ export default function Sidebar() {
         void handleNewThread(creationResult.projectId, {
           envMode: appSettings.defaultThreadEnvMode,
         }).catch(() => undefined);
-        finishAddingProject();
-        return;
+        return true;
       } catch (error) {
         const description =
           error instanceof Error ? error.message : "An error occurred while adding the project.";

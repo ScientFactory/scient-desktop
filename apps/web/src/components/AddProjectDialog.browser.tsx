@@ -49,7 +49,7 @@ function installNativeApi(overrides: {
   };
 }
 
-function renderDialog(onAddProjectPath = vi.fn().mockResolvedValue(undefined)) {
+function renderDialog(onAddProjectPath = vi.fn().mockResolvedValue(true)) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
@@ -123,7 +123,7 @@ describe("AddProjectDialog", () => {
 
   it("clones an available GitHub repository and passes the result to Scient initialization", async () => {
     const cloneSource = vi.fn().mockResolvedValue({ path: "/Users/tester/scient" });
-    const onAddProjectPath = vi.fn().mockResolvedValue(undefined);
+    const onAddProjectPath = vi.fn().mockResolvedValue(true);
     const restore = installNativeApi({
       statuses: vi.fn().mockResolvedValue({
         sources: [
@@ -150,5 +150,166 @@ describe("AddProjectDialog", () => {
     });
     expect(onAddProjectPath).toHaveBeenCalledWith("/Users/tester/scient");
     restore();
+  });
+
+  it("ignores a clone completion after the dialog is dismissed and reopened", async () => {
+    let resolveClone!: (value: { path: string }) => void;
+    const cloneSource = vi.fn(
+      () =>
+        new Promise<{ path: string }>((resolve) => {
+          resolveClone = resolve;
+        }),
+    );
+    const onAddProjectPath = vi.fn().mockResolvedValue(true);
+    const onOpenChange = vi.fn();
+    const restore = installNativeApi({
+      statuses: vi.fn().mockResolvedValue({
+        sources: [{ provider: "github", status: "available", message: "GitHub CLI is ready." }],
+      }),
+      cloneSource,
+      browse: vi.fn().mockResolvedValue({ parentPath: "/Users/tester", entries: [] }),
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const dialog = (open: boolean) => (
+      <QueryClientProvider client={queryClient}>
+        <AddProjectDialog
+          open={open}
+          onOpenChange={onOpenChange}
+          onAddProjectPath={onAddProjectPath}
+          homeDir="/Users/tester"
+          defaultCloneDirectory="/Users/tester"
+        />
+      </QueryClientProvider>
+    );
+    const screen = await render(dialog(true));
+
+    try {
+      await page.getByText("GitHub repository", { exact: true }).click();
+      await page.getByPlaceholder("owner/repository").fill("ScientFactory/scient");
+      await page.getByRole("button", { name: /Continue/ }).click();
+      await page.getByRole("button", { name: /Clone/ }).click();
+      expect(cloneSource).toHaveBeenCalledTimes(1);
+
+      await screen.rerender(dialog(false));
+      await screen.rerender(dialog(true));
+      await expect.element(page.getByText("Sources", { exact: true })).toBeVisible();
+
+      resolveClone({ path: "/Users/tester/scient" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(onAddProjectPath).not.toHaveBeenCalled();
+      expect(onOpenChange).not.toHaveBeenCalled();
+      await expect.element(page.getByText("Sources", { exact: true })).toBeVisible();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restore();
+    }
+  });
+
+  it("ignores a clone completion after navigating back from its destination", async () => {
+    let resolveClone!: (value: { path: string }) => void;
+    const cloneSource = vi.fn(
+      () =>
+        new Promise<{ path: string }>((resolve) => {
+          resolveClone = resolve;
+        }),
+    );
+    const onAddProjectPath = vi.fn().mockResolvedValue(true);
+    const onOpenChange = vi.fn();
+    const restore = installNativeApi({
+      statuses: vi.fn().mockResolvedValue({
+        sources: [{ provider: "github", status: "available", message: "GitHub CLI is ready." }],
+      }),
+      cloneSource,
+      browse: vi.fn().mockResolvedValue({ parentPath: "/Users/tester", entries: [] }),
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <AddProjectDialog
+          open
+          onOpenChange={onOpenChange}
+          onAddProjectPath={onAddProjectPath}
+          homeDir="/Users/tester"
+          defaultCloneDirectory="/Users/tester"
+        />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await page.getByText("GitHub repository", { exact: true }).click();
+      await page.getByPlaceholder("owner/repository").fill("ScientFactory/scient");
+      await page.getByRole("button", { name: /Continue/ }).click();
+      await page.getByRole("button", { name: /Clone/ }).click();
+      expect(cloneSource).toHaveBeenCalledTimes(1);
+
+      await page.getByRole("button", { name: "Back", exact: true }).click();
+      await expect.element(page.getByPlaceholder("owner/repository")).toBeVisible();
+
+      resolveClone({ path: "/Users/tester/scient" });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(onAddProjectPath).not.toHaveBeenCalled();
+      expect(onOpenChange).not.toHaveBeenCalled();
+      await expect.element(page.getByPlaceholder("owner/repository")).toBeVisible();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restore();
+    }
+  });
+
+  it("ignores project initialization completion after the dialog is dismissed and reopened", async () => {
+    let resolveAdd!: (shouldClose: boolean) => void;
+    const onAddProjectPath = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveAdd = resolve;
+        }),
+    );
+    const onOpenChange = vi.fn();
+    const restore = installNativeApi({
+      statuses: vi.fn().mockResolvedValue({
+        sources: [{ provider: "github", status: "available", message: "GitHub CLI is ready." }],
+      }),
+      cloneSource: vi.fn().mockResolvedValue({ path: "/Users/tester/scient" }),
+      browse: vi.fn().mockResolvedValue({ parentPath: "/Users/tester", entries: [] }),
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const dialog = (open: boolean) => (
+      <QueryClientProvider client={queryClient}>
+        <AddProjectDialog
+          open={open}
+          onOpenChange={onOpenChange}
+          onAddProjectPath={onAddProjectPath}
+          homeDir="/Users/tester"
+          defaultCloneDirectory="/Users/tester"
+        />
+      </QueryClientProvider>
+    );
+    const screen = await render(dialog(true));
+
+    try {
+      await page.getByText("GitHub repository", { exact: true }).click();
+      await page.getByPlaceholder("owner/repository").fill("ScientFactory/scient");
+      await page.getByRole("button", { name: /Continue/ }).click();
+      await page.getByRole("button", { name: /Clone/ }).click();
+      await vi.waitFor(() => expect(onAddProjectPath).toHaveBeenCalledTimes(1));
+
+      await screen.rerender(dialog(false));
+      await screen.rerender(dialog(true));
+      await expect.element(page.getByText("Sources", { exact: true })).toBeVisible();
+
+      resolveAdd(true);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(onOpenChange).not.toHaveBeenCalled();
+      await expect.element(page.getByText("Sources", { exact: true })).toBeVisible();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restore();
+    }
   });
 });

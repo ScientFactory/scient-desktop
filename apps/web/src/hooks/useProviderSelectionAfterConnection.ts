@@ -306,14 +306,13 @@ export function useApplyProviderSelectionAfterConnection(input: {
           ACTIVE_CONNECTION_STATUSES.has(status.connectionState.status)) ||
         (status?.installationState &&
           ACTIVE_INSTALLATION_STATUSES.has(status.installationState.status));
-      const operationWasObserved =
-        outcome.intent.observedConnectionOperationId !== null ||
-        outcome.intent.observedInstallationOperationId !== null;
+      // Closing the matching picker after every operation has stopped is an
+      // explicit cancellation, even when an earlier operation completed without
+      // making the provider usable. Do not let that stale intent apply later.
       if (
         seenPickerDialogTokenRef.current === intent.token &&
         !pickerDialogMatchesIntent &&
-        !operationStillRunning &&
-        !operationWasObserved
+        !operationStillRunning
       ) {
         controller.clear(intent.token);
         return;

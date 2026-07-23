@@ -723,6 +723,8 @@ describe("ProviderCommandReactor", () => {
       },
     });
     const now = new Date().toISOString();
+    const boundaryCreatedAt = new Date(Date.parse(now) + 1).toISOString();
+    const afterBoundaryCreatedAt = new Date(Date.parse(now) + 2).toISOString();
     const importedAttachments = Array.from({ length: 9 }, (_, index) => ({
       type: "file" as const,
       id: `attachment-before-boundary-${index + 1}`,
@@ -757,8 +759,8 @@ describe("ProviderCommandReactor", () => {
             role: "assistant",
             text: "Answer at the branch boundary",
             attachments: importedAttachments.slice(8),
-            createdAt: now,
-            updatedAt: now,
+            createdAt: boundaryCreatedAt,
+            updatedAt: boundaryCreatedAt,
           },
           {
             messageId: asMessageId("source-after-boundary-user"),
@@ -773,8 +775,8 @@ describe("ProviderCommandReactor", () => {
                 sizeBytes: 11,
               },
             ],
-            createdAt: now,
-            updatedAt: now,
+            createdAt: afterBoundaryCreatedAt,
+            updatedAt: afterBoundaryCreatedAt,
           },
         ],
         createdAt: now,
@@ -813,8 +815,8 @@ describe("ProviderCommandReactor", () => {
             role: "assistant",
             text: "Answer at the branch boundary",
             attachments: importedAttachments.slice(8),
-            createdAt: now,
-            updatedAt: now,
+            createdAt: boundaryCreatedAt,
+            updatedAt: boundaryCreatedAt,
           },
         ],
         createdAt: now,
@@ -902,6 +904,7 @@ describe("ProviderCommandReactor", () => {
     const forkThreadId = ThreadId.makeUnsafe("thread-message-fork-restart");
     const sourceBoundaryId = asMessageId("source-message-fork-restart-boundary");
     const createdAt = new Date().toISOString();
+    const boundaryCreatedAt = new Date(Date.parse(createdAt) + 1).toISOString();
     const firstHarness = await createHarness({ baseDir, filePersistence: true });
 
     await Effect.runPromise(
@@ -930,8 +933,8 @@ describe("ProviderCommandReactor", () => {
             messageId: sourceBoundaryId,
             role: "assistant",
             text: "Persisted answer before restart",
-            createdAt,
-            updatedAt: createdAt,
+            createdAt: boundaryCreatedAt,
+            updatedAt: boundaryCreatedAt,
           },
         ],
         createdAt,
@@ -973,8 +976,8 @@ describe("ProviderCommandReactor", () => {
             messageId: asMessageId("fork-00000001-message-restart-assistant"),
             role: "assistant",
             text: "Persisted answer before restart",
-            createdAt,
-            updatedAt: createdAt,
+            createdAt: boundaryCreatedAt,
+            updatedAt: boundaryCreatedAt,
           },
         ],
         createdAt,
@@ -1021,6 +1024,116 @@ describe("ProviderCommandReactor", () => {
     expect(providerInput?.attachments?.map((attachment) => attachment.id)).toEqual([
       "attachment-before-restart",
     ]);
+  });
+
+  it("includes an interrupted first fork prompt when a fresh provider session restarts", async () => {
+    const harness = await createHarness();
+    const forkThreadId = ThreadId.makeUnsafe("thread-message-fork-interrupted-restart");
+    const sourceBoundaryId = asMessageId("source-message-fork-interrupted-boundary");
+    const createdAt = "2026-07-22T10:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.messages.import",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-interrupted-source-import"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messages: [
+          {
+            messageId: asMessageId("source-message-fork-interrupted-user"),
+            role: "user",
+            text: "Imported question before interruption",
+            createdAt,
+            updatedAt: createdAt,
+          },
+          {
+            messageId: sourceBoundaryId,
+            role: "assistant",
+            text: "Imported answer before interruption",
+            createdAt: "2026-07-22T10:00:01.000Z",
+            updatedAt: "2026-07-22T10:00:01.000Z",
+          },
+        ],
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork.create",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-interrupted-create"),
+        threadId: forkThreadId,
+        sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+        sourceMessageId: sourceBoundaryId,
+        projectId: asProjectId("project-1"),
+        title: "Interrupted message fork",
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        importedMessages: [
+          {
+            messageId: asMessageId("fork-interrupted-a-user"),
+            role: "user",
+            text: "Imported question before interruption",
+            createdAt,
+            updatedAt: createdAt,
+          },
+          {
+            messageId: asMessageId("fork-interrupted-b-assistant"),
+            role: "assistant",
+            text: "Imported answer before interruption",
+            createdAt: "2026-07-22T10:00:01.000Z",
+            updatedAt: "2026-07-22T10:00:01.000Z",
+          },
+        ],
+        createdAt: "2026-07-22T10:00:02.000Z",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-interrupted-first-turn"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-fork-interrupted-first-user"),
+          role: "user",
+          text: "Interrupted native prompt",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: "2026-07-22T10:00:03.000Z",
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(harness.stopSession({ threadId: forkThreadId }));
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-interrupted-second-turn"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-fork-interrupted-second-user"),
+          role: "user",
+          text: "Continue after the provider restart",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: "2026-07-22T10:00:04.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    const restartedInput = harness.sendTurn.mock.calls[1]?.[0] as { input?: string } | undefined;
+    expect(restartedInput?.input).toContain("<thread_context>");
+    expect(restartedInput?.input).toContain("Imported question before interruption");
+    expect(restartedInput?.input).toContain("Imported answer before interruption");
+    expect(restartedInput?.input).toContain("Interrupted native prompt");
+    expect(restartedInput?.input).toContain("Continue after the provider restart");
   });
 
   it("bootstraps Droid sidechat context after a native provider fork", async () => {

@@ -4,7 +4,7 @@ import type {
   RepositorySourceStatus,
 } from "@synara/contracts";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { SiGithub, SiGitlab } from "react-icons/si";
 import { LuArrowLeft, LuCornerLeftUp, LuFolderPlus, LuLink } from "react-icons/lu";
 
@@ -53,7 +53,7 @@ type DialogStep = "sources" | "local" | "repository" | "destination";
 interface AddProjectDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAddProjectPath: (path: string, options?: { createIfMissing?: boolean }) => Promise<void>;
+  onAddProjectPath: (path: string, options?: { createIfMissing?: boolean }) => Promise<boolean>;
   homeDir: string | null;
   defaultCloneDirectory: string | null;
 }
@@ -378,6 +378,9 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
   const [error, setError] = useState<string | null>(null);
   const [isWorking, setIsWorking] = useState(false);
   const [highlightedSource, setHighlightedSource] = useState<string | null>(null);
+  const openRef = useRef(props.open);
+  const operationGenerationRef = useRef(0);
+  openRef.current = props.open;
   const statusesQuery = useQuery({
     queryKey: ["repository-source-statuses"],
     queryFn: async () => {
@@ -391,6 +394,7 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
 
   useEffect(() => {
     if (!props.open) {
+      operationGenerationRef.current += 1;
       setStep("sources");
       setSource(null);
       setQuery("");
@@ -401,7 +405,41 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
     }
   }, [props.open]);
 
+  const handleOpenChange = (open: boolean) => {
+    if (!open) {
+      // Native clone requests are not cancellable. Invalidate their completion
+      // synchronously so a dismissed request cannot mutate a later dialog session.
+      operationGenerationRef.current += 1;
+    }
+    props.onOpenChange(open);
+  };
+
+  const beginOperation = (): number => {
+    const generation = operationGenerationRef.current + 1;
+    operationGenerationRef.current = generation;
+    setIsWorking(true);
+    return generation;
+  };
+
+  const isCurrentOperation = (generation: number): boolean =>
+    openRef.current && operationGenerationRef.current === generation;
+
+  const finishCurrentOperation = (generation: number): void => {
+    if (isCurrentOperation(generation)) {
+      setIsWorking(false);
+    }
+  };
+
+  const cancelCurrentOperation = (): void => {
+    // Clone and project-initialization requests cannot be cancelled natively.
+    // Invalidate their completion before navigating so an old request cannot
+    // advance or close the dialog from a different step.
+    operationGenerationRef.current += 1;
+    setIsWorking(false);
+  };
+
   const returnToSources = () => {
+    cancelCurrentOperation();
     setStep("sources");
     setSource(null);
     setQuery("");
@@ -468,7 +506,7 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
   };
 
   return (
-    <CommandDialog open={props.open} onOpenChange={props.onOpenChange}>
+    <CommandDialog open={props.open} onOpenChange={handleOpenChange}>
       <CommandDialogPopup className="overflow-hidden" aria-label="Add project">
         {step === "local" ? (
           <ProjectPathBrowser
@@ -479,12 +517,16 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
             isBusy={isWorking}
             onBack={returnToSources}
             onSubmit={async (path, options) => {
-              setIsWorking(true);
+              const operationGeneration = beginOperation();
               try {
-                await props.onAddProjectPath(path, options);
-                props.onOpenChange(false);
+                const shouldClose = await props.onAddProjectPath(path, options);
+                if (!isCurrentOperation(operationGeneration)) return;
+                if (shouldClose) {
+                  setIsWorking(false);
+                  handleOpenChange(false);
+                }
               } finally {
-                setIsWorking(false);
+                finishCurrentOperation(operationGeneration);
               }
             }}
           />
@@ -497,13 +539,14 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
             isBusy={isWorking}
             cloneDirectoryName={cloneName}
             onBack={() => {
+              cancelCurrentOperation();
               setQuery(repositoryInput);
               setStep("repository");
             }}
             onSubmit={async (destinationPath) => {
               const api = readNativeApi();
               if (!api) throw new Error("The app server is unavailable.");
-              setIsWorking(true);
+              const operationGeneration = beginOperation();
               try {
                 const result = await api.projects.cloneSource(
                   buildCloneProjectSourceInput({
@@ -512,10 +555,15 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
                     destinationPath,
                   }),
                 );
-                await props.onAddProjectPath(result.path);
-                props.onOpenChange(false);
+                if (!isCurrentOperation(operationGeneration)) return;
+                const shouldClose = await props.onAddProjectPath(result.path);
+                if (!isCurrentOperation(operationGeneration)) return;
+                if (shouldClose) {
+                  setIsWorking(false);
+                  handleOpenChange(false);
+                }
               } finally {
-                setIsWorking(false);
+                finishCurrentOperation(operationGeneration);
               }
             }}
           />
@@ -531,9 +579,7 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
               <div className="relative">
                 <DialogBackButton
                   label={step === "sources" ? "Close" : "Back"}
-                  onClick={() =>
-                    step === "sources" ? props.onOpenChange(false) : returnToSources()
-                  }
+                  onClick={() => (step === "sources" ? handleOpenChange(false) : returnToSources())}
                 />
                 <CommandInput
                   value={query}

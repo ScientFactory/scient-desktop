@@ -106,6 +106,28 @@ function SelectionHarness() {
     ]);
   };
 
+  const setClaudeInstallation = (installationStatus: "installing" | "installed") => {
+    setStatuses([
+      CODEX_READY,
+      {
+        ...CLAUDE_UNAVAILABLE,
+        available: installationStatus === "installed",
+        checkedAt: "2026-07-23T10:00:02.000Z",
+        installationState: {
+          operationId: "install-claude-1",
+          operation: "install",
+          status: installationStatus,
+          startedAt: "2099-07-23T10:00:01.000Z",
+          finishedAt: installationStatus === "installed" ? "2099-07-23T10:00:02.000Z" : null,
+          message:
+            installationStatus === "installed"
+              ? "Claude is installed and verified."
+              : "Installing Claude.",
+        },
+      },
+    ]);
+  };
+
   return (
     <>
       <output aria-label="Selected provider and model">{`${provider}:${model}`}</output>
@@ -126,6 +148,12 @@ function SelectionHarness() {
       </button>
       <button type="button" onClick={() => setClaudeConnection("failed")}>
         Fail connection
+      </button>
+      <button type="button" onClick={() => setClaudeInstallation("installing")}>
+        Start installation
+      </button>
+      <button type="button" onClick={() => setClaudeInstallation("installed")}>
+        Complete installation
       </button>
       <button type="button" onClick={() => setLockedProvider("codex")}>
         Start Codex thread
@@ -178,6 +206,24 @@ describe("provider selection after connection browser journey", () => {
     try {
       await page.getByRole("button", { name: "GPT-5.5" }).click();
       await page.getByRole("menuitem", { name: /Claude.*Set up/u }).click();
+      useProviderConnectionDialogStore.getState().setOpen(false);
+      await page.getByRole("button", { name: "Complete connection" }).click();
+
+      await expect
+        .element(page.getByLabelText("Selected provider and model"))
+        .toHaveTextContent("codex:gpt-5.5");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("clears the selection intent when setup is dismissed after installation", async () => {
+    const screen = await render(<SelectionHarness />);
+    try {
+      await page.getByRole("button", { name: "GPT-5.5" }).click();
+      await page.getByRole("menuitem", { name: /Claude.*Set up/u }).click();
+      await page.getByRole("button", { name: "Start installation" }).click();
+      await page.getByRole("button", { name: "Complete installation" }).click();
       useProviderConnectionDialogStore.getState().setOpen(false);
       await page.getByRole("button", { name: "Complete connection" }).click();
 

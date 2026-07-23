@@ -13,6 +13,7 @@ import {
   type ProviderKind,
   type ThreadHandoffImportedMessage,
 } from "@synara/contracts";
+import { compareProjectionMessageOrderValues } from "@synara/shared/messageOrder";
 import { getRecommendedDefaultModelSelection } from "@synara/shared/model";
 import { isLatestTurnSettled } from "../session-logic";
 import { type Thread } from "../types";
@@ -46,6 +47,15 @@ function isImportableThreadMessage(
 }
 
 type ForkSourceThread = Pick<Thread, "messages"> & Partial<Pick<Thread, "latestTurn" | "session">>;
+
+function inProjectionMessageOrder(thread: ForkSourceThread): ForkSourceThread {
+  return {
+    ...thread,
+    messages: thread.messages.toSorted((left, right) =>
+      compareProjectionMessageOrderValues(left.createdAt, left.id, right.createdAt, right.id),
+    ),
+  };
+}
 
 function resolveRunningTurnBoundaryIndex(thread: ForkSourceThread): number | null {
   if (!thread.latestTurn || isLatestTurnSettled(thread.latestTurn, thread.session ?? null)) {
@@ -182,9 +192,12 @@ export function buildThreadForkImportedMessagesThrough(
   sourceMessageId: MessageId,
   destinationThreadId: ThreadId,
 ): ReadonlyArray<ThreadHandoffImportedMessage> {
-  const sourceMessageIndex = thread.messages.findIndex((message) => message.id === sourceMessageId);
-  const sourceMessage = thread.messages[sourceMessageIndex];
-  const runningTurnBoundaryIndex = resolveRunningTurnBoundaryIndex(thread);
+  const orderedThread = inProjectionMessageOrder(thread);
+  const sourceMessageIndex = orderedThread.messages.findIndex(
+    (message) => message.id === sourceMessageId,
+  );
+  const sourceMessage = orderedThread.messages[sourceMessageIndex];
+  const runningTurnBoundaryIndex = resolveRunningTurnBoundaryIndex(orderedThread);
   if (
     sourceMessageIndex < 0 ||
     !sourceMessage ||
@@ -193,12 +206,12 @@ export function buildThreadForkImportedMessagesThrough(
     return [];
   }
 
-  const conversationPrefix = thread.messages
+  const conversationPrefix = orderedThread.messages
     .slice(0, sourceMessageIndex + 1)
     .filter((message) => message.role === "user" || message.role === "assistant");
   if (
     conversationPrefix.length === 0 ||
-    conversationPrefix.some((message) => !isForkImportableThreadMessage(thread, message)) ||
+    conversationPrefix.some((message) => !isForkImportableThreadMessage(orderedThread, message)) ||
     conversationPrefix.some((message, index, messages) => {
       const previous = messages[index - 1];
       return previous !== undefined && previous.createdAt > message.createdAt;
@@ -209,7 +222,7 @@ export function buildThreadForkImportedMessagesThrough(
 
   return buildImportedMessages(
     conversationPrefix,
-    (message) => isForkImportableThreadMessage(thread, message),
+    (message) => isForkImportableThreadMessage(orderedThread, message),
     (index) =>
       MessageId.makeUnsafe(
         `fork:${destinationThreadId}:${String(index).padStart(8, "0")}:${randomUUID()}`,
@@ -223,18 +236,19 @@ export function buildThreadForkImportedMessagesThrough(
  * or assistant boundary stay hidden until the lifecycle settles.
  */
 export function resolveThreadForkableMessageIds(thread: ForkSourceThread): ReadonlySet<MessageId> {
+  const orderedThread = inProjectionMessageOrder(thread);
   const forkableMessageIds = new Set<MessageId>();
   let prefixIsImportable = true;
-  const runningTurnBoundaryIndex = resolveRunningTurnBoundaryIndex(thread);
+  const runningTurnBoundaryIndex = resolveRunningTurnBoundaryIndex(orderedThread);
 
-  for (const [messageIndex, message] of thread.messages.entries()) {
+  for (const [messageIndex, message] of orderedThread.messages.entries()) {
     if (message.role !== "user" && message.role !== "assistant") {
       continue;
     }
     prefixIsImportable =
       prefixIsImportable &&
       (runningTurnBoundaryIndex === null || messageIndex < runningTurnBoundaryIndex) &&
-      isForkImportableThreadMessage(thread, message);
+      isForkImportableThreadMessage(orderedThread, message);
     if (prefixIsImportable) {
       forkableMessageIds.add(message.id);
     }

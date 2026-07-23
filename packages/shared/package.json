@@ -8,6 +8,10 @@
       "types": "./src/model.ts",
       "import": "./src/model.ts"
     },
+    "./messageOrder": {
+      "types": "./src/messageOrder.ts",
+      "import": "./src/messageOrder.ts"
+    },
     "./git": {
       "types": "./src/git.ts",
       "import": "./src/git.ts"
