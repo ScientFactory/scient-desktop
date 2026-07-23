@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -157,7 +165,7 @@ describe("ProviderRuntimeManager managed integrity", () => {
             pathValue: baseDir,
             platform: "win32",
           }),
-        ).toBe(executable);
+        ).toBe(realpathSync(executable));
       } finally {
         rmSync(baseDir, { recursive: true, force: true });
       }
@@ -177,9 +185,18 @@ describe("ProviderRuntimeManager managed integrity", () => {
         "releases",
         releaseId,
       );
-      const executablePath = path.join(releaseDir, "bin", "agy");
+      const executableRelativePath = path.join(
+        "bin",
+        process.platform === "win32" ? "agy.cmd" : "agy",
+      );
+      const executablePath = path.join(releaseDir, executableRelativePath);
       mkdirSync(path.dirname(executablePath), { recursive: true });
-      writeFileSync(executablePath, "#!/bin/sh\necho 'Antigravity CLI 1.1.4'\n");
+      writeFileSync(
+        executablePath,
+        process.platform === "win32"
+          ? "@echo off\r\necho Antigravity CLI 1.1.4\r\n"
+          : "#!/bin/sh\necho 'Antigravity CLI 1.1.4'\n",
+      );
       chmodSync(executablePath, 0o700);
       const record: ProviderRuntimeCurrentRecord = {
         version: 1,
@@ -187,7 +204,7 @@ describe("ProviderRuntimeManager managed integrity", () => {
         releaseId,
         previousReleaseId: null,
         runtimeVersion: "1.1.4",
-        executableRelativePath: path.join("bin", "agy"),
+        executableRelativePath,
         executablePath,
         smokeArgs: ["--version"],
         digestAlgorithm: "sha256",
@@ -211,7 +228,12 @@ describe("ProviderRuntimeManager managed integrity", () => {
       expect(first.source).toBe("managed");
       expect(first.executable).toBe(executablePath);
 
-      writeFileSync(executablePath, "#!/bin/sh\necho 'tampered'\n");
+      writeFileSync(
+        executablePath,
+        process.platform === "win32"
+          ? "@echo off\r\necho tampered\r\n"
+          : "#!/bin/sh\necho 'tampered'\n",
+      );
       chmodSync(executablePath, 0o700);
       const afterRestart = await Effect.runPromise(resolveAntigravity(baseDir));
       expect(afterRestart.source).toBe("missing");
