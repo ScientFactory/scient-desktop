@@ -3,6 +3,7 @@ import {
   CLAUDE_API_EFFORT_OPTIONS,
   CLAUDE_CODE_MODE_OPTIONS,
   CLAUDE_PROMPT_MODE_OPTIONS,
+  DEFAULT_GIT_TEXT_GENERATION_MODEL,
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   MODEL_OPTIONS,
@@ -108,6 +109,13 @@ describe("resolveModelSlug", () => {
     expect(getDefaultModel()).toBe(DEFAULT_MODEL);
     expect(getModelOptions()).toEqual(MODEL_OPTIONS);
     expect(getModelOptions("claudeAgent")).toEqual(MODEL_OPTIONS_BY_PROVIDER.claudeAgent);
+  });
+
+  it("uses GPT-5.6 Luna as the default Git writing model", () => {
+    expect(DEFAULT_GIT_TEXT_GENERATION_MODEL).toBe("gpt-5.6-luna");
+    expect(MODEL_OPTIONS_BY_PROVIDER.codex).toContainEqual(
+      expect.objectContaining({ slug: DEFAULT_GIT_TEXT_GENERATION_MODEL, name: "GPT-5.6 Luna" }),
+    );
   });
 });
 
