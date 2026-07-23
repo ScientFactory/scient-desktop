@@ -187,6 +187,10 @@
     "./formatBytes": {
       "types": "./src/formatBytes.ts",
       "import": "./src/formatBytes.ts"
+    },
+    "./voiceTranscription": {
+      "types": "./src/voiceTranscription.ts",
+      "import": "./src/voiceTranscription.ts"
     }
   },
   "scripts": {
