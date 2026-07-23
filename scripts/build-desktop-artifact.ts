@@ -1127,7 +1127,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     try: () =>
       verifyPackagedWhisperRuntime({
         distDir: stageDistDir,
+        ...(options.platform === "mac"
+          ? { macSignatureMode: options.signed ? "developer-id" : "adhoc" }
+          : {}),
         platform: options.platform,
+        ...(options.platform === "win"
+          ? { windowsSignatureMode: options.signed ? "authenticode" : "unsigned" }
+          : {}),
       }),
     catch: (cause) =>
       new BuildScriptError({
