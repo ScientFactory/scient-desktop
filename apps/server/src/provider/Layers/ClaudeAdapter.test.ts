@@ -5,6 +5,7 @@ import path from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
   Options as ClaudeQueryOptions,
+  ModelInfo,
   PermissionMode,
   PermissionResult,
   SDKControlGetContextUsageResponse,
@@ -339,13 +340,27 @@ describe("ClaudeAdapterLive", () => {
 
   it.effect("uses the configured Claude executable for pre-session model discovery", () => {
     const harness = makeHarness();
+    (harness.query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels =
+      async () => [
+        {
+          value: "opus[1m]",
+          resolvedModel: "claude-opus-4-8[1m]",
+          displayName: "Claude Opus 4.8 (1M context)",
+          description: "Complex agentic coding",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: true,
+          supportsAutoMode: false,
+        },
+      ];
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       if (!adapter.listModels) {
         return assert.fail("Claude adapter should support model discovery.");
       }
 
-      yield* adapter.listModels({
+      const result = yield* adapter.listModels({
         provider: "claudeAgent",
         cwd: "/tmp/claude-model-discovery",
         binaryPath: "/managed/claude-models",
@@ -356,6 +371,22 @@ describe("ClaudeAdapterLive", () => {
         "/managed/claude-models",
       );
       assert.equal(harness.query.closeCalls, 1);
+      assert.deepEqual(result.models, [
+        {
+          slug: "opus[1m]",
+          name: "Claude Opus 4.8 (1M context)",
+          resolvedModel: "claude-opus-4-8[1m]",
+          description: "Complex agentic coding",
+          supportedReasoningEfforts: [
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High" },
+            { value: "xhigh", label: "Extra High" },
+            { value: "max", label: "Max" },
+          ],
+          supportsFastMode: true,
+        },
+      ]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

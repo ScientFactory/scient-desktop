@@ -38,7 +38,11 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
 } from "@synara/contracts";
-import { getModelCapabilities, normalizeModelSlug } from "@synara/shared/model";
+import {
+  getModelCapabilities,
+  getRecommendedDefaultModelSelection,
+  normalizeModelSlug,
+} from "@synara/shared/model";
 import { resolveTailUserMessageEditTarget } from "@synara/shared/conversationEdit";
 import { threadExportBlockedReason } from "@synara/shared/threadExport";
 import { buildTemporaryWorktreeBranchName } from "@synara/shared/git";
@@ -1674,10 +1678,8 @@ export default function ChatView({
         ? buildLocalDraftThread(
             threadId,
             draftThread,
-            fallbackDraftProject?.defaultModelSelection ?? {
-              provider: "codex",
-              model: DEFAULT_MODEL_BY_PROVIDER.codex,
-            },
+            fallbackDraftProject?.defaultModelSelection ??
+              getRecommendedDefaultModelSelection("codex")!,
             localDraftError,
           )
         : undefined,
@@ -2380,14 +2382,6 @@ export default function ChatView({
     openCodeDynamicModelsQuery.data,
     piDynamicModelsQuery.data,
   ]);
-  const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
-    threadId,
-    selectedProvider,
-    threadModelSelection: activeThread?.modelSelection,
-    projectModelSelection: activeProject?.defaultModelSelection,
-    customModelsByProvider,
-    availableModelOptionsByProvider: modelOptionsByProvider,
-  });
   const runtimeModelsByProvider = useMemo(
     () => ({
       claudeAgent: claudeDynamicModelsQuery.data?.models ?? [],
@@ -2412,6 +2406,15 @@ export default function ChatView({
       piDynamicModelsQuery.data?.models,
     ],
   );
+  const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
+    threadId,
+    selectedProvider,
+    threadModelSelection: activeThread?.modelSelection,
+    projectModelSelection: activeProject?.defaultModelSelection,
+    customModelsByProvider,
+    availableModelOptionsByProvider: modelOptionsByProvider,
+    runtimeModelOptionsByProvider: runtimeModelsByProvider,
+  });
   const providerModelsQueryByProvider = {
     claudeAgent: claudeDynamicModelsQuery,
     codex: codexDynamicModelsQuery,

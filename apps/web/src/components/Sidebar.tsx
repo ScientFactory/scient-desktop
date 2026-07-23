@@ -88,7 +88,7 @@ import {
   type ServerLocalServerProcess,
 } from "@synara/contracts";
 import { isGenericChatThreadTitle } from "@synara/shared/chatThreads";
-import { getDefaultModel } from "@synara/shared/model";
+import { getDefaultModel, getRecommendedDefaultModelSelection } from "@synara/shared/model";
 import { pluralize } from "@synara/shared/text";
 import { localServerAddressLabel, localServerMatchesRun } from "@synara/shared/localServers";
 import { resolveThreadWorkspaceCwd } from "@synara/shared/threadEnvironment";
@@ -2915,16 +2915,10 @@ export default function Sidebar() {
         throw new Error("The target project could not be resolved.");
       }
 
-      const providerDefaultModel = getDefaultModel(provider);
       const modelSelection =
         activeProject.defaultModelSelection?.provider === provider
           ? activeProject.defaultModelSelection
-          : providerDefaultModel
-            ? {
-                provider,
-                model: providerDefaultModel,
-              }
-            : null;
+          : getRecommendedDefaultModelSelection(provider);
       if (!modelSelection) {
         throw new Error("Select a Pi model before importing a Pi thread.");
       }

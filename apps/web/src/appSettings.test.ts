@@ -65,6 +65,9 @@ describe("getAppModelOptions", () => {
     const options = getAppModelOptions("codex", ["custom/internal-model"]);
 
     expect(options.map((option) => option.slug)).toEqual([
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
       "gpt-5.5",
       "gpt-5.4",
       "gpt-5.4-mini",
@@ -223,7 +226,7 @@ describe("resolveAppModelSelection", () => {
         },
         "",
       ),
-    ).toBe("gpt-5.5");
+    ).toBe("gpt-5.6-sol");
   });
 
   it("resolves display names through the shared resolver", () => {
@@ -294,8 +297,8 @@ describe("timestamp format defaults", () => {
 });
 
 describe("chat font size defaults", () => {
-  it("defaults chat font size to 12px", () => {
-    expect(DEFAULT_CHAT_FONT_SIZE_PX).toBe(12);
+  it("defaults chat font size to 15px", () => {
+    expect(DEFAULT_CHAT_FONT_SIZE_PX).toBe(15);
   });
 
   it("clamps chat font size updates into the supported range", () => {

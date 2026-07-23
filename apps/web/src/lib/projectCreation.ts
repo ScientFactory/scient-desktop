@@ -4,7 +4,7 @@
 // Exports: createOrRecoverProjectFromPath
 
 import { type NativeApi, type OrchestrationShellSnapshot, type ProjectId } from "@synara/contracts";
-import { getDefaultModel } from "@synara/shared/model";
+import { getRecommendedDefaultModelSelection } from "@synara/shared/model";
 
 import {
   extractDuplicateProjectCreateProjectId,
@@ -60,10 +60,7 @@ export async function createOrRecoverProjectFromPath(input: {
       title,
       workspaceRoot,
       createWorkspaceRootIfMissing: input.createIfMissing === true,
-      defaultModelSelection: {
-        provider: "codex",
-        model: getDefaultModel("codex"),
-      },
+      defaultModelSelection: getRecommendedDefaultModelSelection("codex")!,
       createdAt,
     });
 

@@ -14,7 +14,7 @@ import {
   type ThreadHandoffImportedMessage,
 } from "@synara/contracts";
 import { compareProjectionMessageOrderValues } from "@synara/shared/messageOrder";
-import { getDefaultModel } from "@synara/shared/model";
+import { getRecommendedDefaultModelSelection } from "@synara/shared/model";
 import { isLatestTurnSettled } from "../session-logic";
 import { type Thread } from "../types";
 import { stripEmbeddedAssistantSelections } from "./assistantSelections";
@@ -325,12 +325,9 @@ export function resolveThreadHandoffModelSelection(input: {
   if (isCompatibleSelection(input.projectDefaultModelSelection)) {
     return input.projectDefaultModelSelection;
   }
-  const defaultModel = getDefaultModel(input.targetProvider);
-  if (!defaultModel) {
+  const defaultSelection = getRecommendedDefaultModelSelection(input.targetProvider);
+  if (!defaultSelection) {
     throw new Error("Select a Pi model before handing off to Pi.");
   }
-  return {
-    provider: input.targetProvider,
-    model: defaultModel,
-  };
+  return defaultSelection;
 }
