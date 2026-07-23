@@ -71,10 +71,7 @@ export class VoiceTranscriptionBackendError extends Error {
   readonly retryAfterMs?: number;
 
   constructor(options: VoiceTranscriptionBackendErrorOptions) {
-    super(
-      options.safeMessage,
-      options.cause === undefined ? undefined : { cause: options.cause },
-    );
+    super(options.safeMessage, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = "VoiceTranscriptionBackendError";
     this.kind = options.kind;
     this.fallbackAllowed = options.fallbackAllowed;
@@ -91,8 +88,6 @@ export function isVoiceTranscriptionBackendError(
   return value instanceof VoiceTranscriptionBackendError;
 }
 
-export function voiceTranscriptionFailureAllowsFallback(
-  value: unknown,
-): boolean {
+export function voiceTranscriptionFailureAllowsFallback(value: unknown): boolean {
   return isVoiceTranscriptionBackendError(value) && value.fallbackAllowed;
 }

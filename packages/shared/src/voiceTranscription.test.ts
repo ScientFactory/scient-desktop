@@ -36,8 +36,6 @@ describe("VoiceTranscriptionBackendError", () => {
     });
 
     expect(voiceTranscriptionFailureAllowsFallback(cancelled)).toBe(false);
-    expect(voiceTranscriptionFailureAllowsFallback(new Error("network"))).toBe(
-      false,
-    );
+    expect(voiceTranscriptionFailureAllowsFallback(new Error("network"))).toBe(false);
   });
 });
