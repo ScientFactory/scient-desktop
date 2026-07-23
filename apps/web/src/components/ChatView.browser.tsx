@@ -3613,6 +3613,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       expect(getComputedStyle(stopButton).cursor).toBe("pointer");
+      expect(document.querySelector('button[aria-label="Record voice note"]')).not.toBeNull();
+      expect(document.querySelector('button[aria-label="Queue follow-up"]')).toBeNull();
     } finally {
       await mounted.cleanup();
     }
@@ -3659,11 +3661,18 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const composerForm = await waitForElement(
-        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
-        "Unable to find composer form.",
+      const queueButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Queue follow-up"]'),
+        "Unable to find the running-turn queue button.",
       );
-      composerForm.requestSubmit();
+      expect(queueButton.title).toContain("Enter");
+      expect(queueButton.title).toContain("Cmd/Ctrl+Enter");
+      expect(document.querySelector('button[aria-label="Stop generation"]')).toBeNull();
+      expect(document.querySelector('button[aria-label="Record voice note"]')).not.toBeNull();
+      await mounted.setViewport(TEXT_VIEWPORT_MATRIX[3]);
+      expect(document.querySelector('button[aria-label="Queue follow-up"]')).not.toBeNull();
+      expect(document.querySelector('button[aria-label="Record voice note"]')).not.toBeNull();
+      document.querySelector<HTMLButtonElement>('button[aria-label="Queue follow-up"]')?.click();
 
       await vi.waitFor(
         () => {
@@ -3684,6 +3693,51 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "Unable to find stop generation button.",
       );
       expect(stopButton).not.toBeNull();
+      expect(document.querySelector('button[aria-label="Record voice note"]')).not.toBeNull();
+      expect(hasDispatchedCommandType("thread.turn.interrupt")).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps Cmd/Ctrl+Enter as the immediate steering shortcut while a turn is running", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "steer this follow-up now");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-running-steer-shortcut" as MessageId,
+        targetText: "running steer shortcut target",
+        sessionStatus: "running",
+      }),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      const useMetaForMod = isMacPlatform(navigator.platform);
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          metaKey: useMetaForMod,
+          ctrlKey: !useMetaForMod,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const steeredTurn = wsRequests
+            .map((request) => readDispatchedCommand(request))
+            .find(
+              (command) =>
+                command?.type === "thread.turn.start" && command.dispatchMode === "steer",
+            );
+          expect(steeredTurn).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(document.querySelector('[data-testid="queued-follow-up-row"]')).toBeNull();
     } finally {
       await mounted.cleanup();
     }

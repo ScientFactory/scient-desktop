@@ -7,6 +7,7 @@ import {
   buildComposerMenuSelectionKey,
   createLocalDispatchSnapshot,
   createWorktreeSetupSnapshot,
+  deriveComposerFooterActionPlan,
   derivePromptHistoryFromMessages,
   failWorktreeSetupSnapshot,
   filterSidechatTranscriptMessages,
@@ -1416,6 +1417,114 @@ describe("deriveComposerSendState", () => {
     });
 
     expect(state.hasSendableContent).toBe(true);
+  });
+});
+
+describe("deriveComposerFooterActionPlan", () => {
+  const baseOptions = {
+    hasLiveTurn: false,
+    hasSendableContent: false,
+    hasActivePendingProgress: false,
+    hasPendingApproval: false,
+    hasPendingUserInput: false,
+    isVoiceActive: false,
+    showPlanFollowUpPrompt: false,
+    canShowVoiceNotes: true,
+  };
+
+  it("keeps Stop and the microphone available for an empty active-turn composer", () => {
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        hasLiveTurn: true,
+      }),
+    ).toEqual({ primaryAction: "stop-generation", showVoiceButton: true });
+  });
+
+  it("morphs Stop into Queue when active-turn content becomes sendable", () => {
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        hasLiveTurn: true,
+        hasSendableContent: true,
+      }),
+    ).toEqual({ primaryAction: "queue-message", showVoiceButton: true });
+  });
+
+  it("morphs to Queue after a finalized voice transcript is inserted", () => {
+    const prompt = appendVoiceTranscriptToPrompt("", "voice follow-up") ?? "";
+    const sendState = deriveComposerSendState({
+      prompt,
+      imageCount: 0,
+      fileCount: 0,
+      assistantSelectionCount: 0,
+      fileCommentCount: 0,
+      terminalContexts: [],
+      pastedTexts: [],
+    });
+
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        hasLiveTurn: true,
+        hasSendableContent: sendState.hasSendableContent,
+      }),
+    ).toEqual({ primaryAction: "queue-message", showVoiceButton: true });
+  });
+
+  it("leaves the dedicated recorder controls exclusive during active-turn voice capture", () => {
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        hasLiveTurn: true,
+        hasSendableContent: true,
+        isVoiceActive: true,
+      }),
+    ).toEqual({ primaryAction: "none", showVoiceButton: false });
+  });
+
+  it("keeps an active recorder exclusive when a question or approval arrives", () => {
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        hasLiveTurn: true,
+        hasActivePendingProgress: true,
+        isVoiceActive: true,
+      }),
+    ).toEqual({ primaryAction: "none", showVoiceButton: false });
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        hasLiveTurn: true,
+        hasPendingApproval: true,
+        isVoiceActive: true,
+      }),
+    ).toEqual({ primaryAction: "none", showVoiceButton: false });
+  });
+
+  it("keeps approval, pending-input, and plan-follow-up controls exclusive", () => {
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        hasLiveTurn: true,
+        hasSendableContent: true,
+        hasActivePendingProgress: true,
+      }),
+    ).toEqual({ primaryAction: "pending-input", showVoiceButton: false });
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        hasLiveTurn: true,
+        hasSendableContent: true,
+        hasPendingApproval: true,
+      }),
+    ).toEqual({ primaryAction: "none", showVoiceButton: false });
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        showPlanFollowUpPrompt: true,
+      }),
+    ).toEqual({ primaryAction: "plan-follow-up", showVoiceButton: false });
   });
 });
 

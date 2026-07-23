@@ -530,6 +530,7 @@ import {
   DismissedProviderHealthBannersSchema,
   shouldRenderTerminalWorkspace,
   collectUserMessageBlobPreviewUrls,
+  deriveComposerFooterActionPlan,
   deriveComposerSendState,
   failWorktreeSetupSnapshot,
   filterSidechatTranscriptMessages,
@@ -3807,6 +3808,21 @@ export default function ChatView({
     (voiceProviderStatus?.authStatus !== "unauthenticated" &&
       voiceProviderStatus?.voiceTranscriptionAvailable !== false);
   const showVoiceNotesControl = canRenderVoiceNotes || isVoiceRecording || isVoiceTranscribing;
+  const composerFooterActionPlan = deriveComposerFooterActionPlan({
+    hasLiveTurn,
+    hasSendableContent: composerSendState.hasSendableContent,
+    hasActivePendingProgress: activePendingProgress !== null,
+    hasPendingApproval: isComposerApprovalState,
+    hasPendingUserInput: pendingUserInputs.length > 0,
+    isVoiceActive: isVoiceRecording || isVoiceTranscribing,
+    showPlanFollowUpPrompt,
+    canShowVoiceNotes: showVoiceNotesControl,
+  });
+  const composerSubmitIsQueue = composerFooterActionPlan.primaryAction === "queue-message";
+  const composerSubmitLabel = composerSubmitIsQueue ? "Queue follow-up" : "Send message";
+  const composerSubmitTitle = composerSubmitIsQueue
+    ? "Queue follow-up (Enter). Press Cmd/Ctrl+Enter to steer the current response instead."
+    : undefined;
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const hasNativeUserMessages = useMemo(
@@ -10977,7 +10993,17 @@ export default function ChatView({
                           onSend={() => void finishComposerVoiceRecording("send")}
                         />
                       ) : null}
-                      {activePendingProgress ? (
+                      {composerFooterActionPlan.showVoiceButton ? (
+                        <ComposerVoiceButton
+                          disabled={isComposerApprovalState || isConnecting || isSendBusy}
+                          isRecording={isVoiceRecording}
+                          isTranscribing={isVoiceTranscribing}
+                          durationLabel={voiceRecordingDurationLabel}
+                          onClick={toggleComposerVoiceRecording}
+                        />
+                      ) : null}
+                      {composerFooterActionPlan.primaryAction === "pending-input" &&
+                      activePendingProgress ? (
                         <Button
                           type="submit"
                           size="sm"
@@ -10995,7 +11021,7 @@ export default function ChatView({
                               ? "Submit answers"
                               : "Next question"}
                         </Button>
-                      ) : phase === "running" ? (
+                      ) : composerFooterActionPlan.primaryAction === "stop-generation" ? (
                         <Button
                           type="button"
                           variant="prominent"
@@ -11010,9 +11036,7 @@ export default function ChatView({
                             className="block size-2 rounded-[1px] bg-current"
                           />
                         </Button>
-                      ) : pendingUserInputs.length === 0 &&
-                        !isVoiceRecording &&
-                        !isVoiceTranscribing ? (
+                      ) : composerFooterActionPlan.primaryAction === "plan-follow-up" ? (
                         showPlanFollowUpPrompt ? (
                           prompt.trim().length > 0 ? (
                             <Button
@@ -11058,68 +11082,58 @@ export default function ChatView({
                               </Menu>
                             </div>
                           )
-                        ) : (
-                          <>
-                            {showVoiceNotesControl && !isVoiceRecording && !isVoiceTranscribing ? (
-                              <ComposerVoiceButton
-                                disabled={isComposerApprovalState || isConnecting || isSendBusy}
-                                isRecording={isVoiceRecording}
-                                isTranscribing={isVoiceTranscribing}
-                                durationLabel={voiceRecordingDurationLabel}
-                                onClick={toggleComposerVoiceRecording}
-                              />
-                            ) : null}
-                            <Button
-                              type="submit"
-                              variant="prominent"
-                              size="icon-xs"
-                              className="size-7 rounded-full sm:size-7"
-                              disabled={
-                                isSendBusy ||
-                                isConnecting ||
-                                isVoiceTranscribing ||
-                                !composerSendState.hasSendableContent
-                              }
-                              aria-label={
-                                isConnecting
-                                  ? "Connecting"
-                                  : isVoiceTranscribing
-                                    ? "Transcribing voice note"
-                                    : isPreparingWorktree
-                                      ? "Preparing worktree"
-                                      : isSendBusy
-                                        ? "Sending"
-                                        : "Send message"
-                              }
+                        ) : null
+                      ) : composerFooterActionPlan.primaryAction === "queue-message" ||
+                        composerFooterActionPlan.primaryAction === "send-message" ? (
+                        <Button
+                          type="submit"
+                          variant="prominent"
+                          size="icon-xs"
+                          className="size-7 rounded-full sm:size-7"
+                          disabled={
+                            isSendBusy ||
+                            isConnecting ||
+                            isVoiceTranscribing ||
+                            !composerSendState.hasSendableContent
+                          }
+                          aria-label={
+                            isConnecting
+                              ? "Connecting"
+                              : isVoiceTranscribing
+                                ? "Transcribing voice note"
+                                : isPreparingWorktree
+                                  ? "Preparing worktree"
+                                  : isSendBusy
+                                    ? composerSubmitIsQueue
+                                      ? "Queueing follow-up"
+                                      : "Sending"
+                                    : composerSubmitLabel
+                          }
+                          title={composerSubmitTitle}
+                        >
+                          {isConnecting || isSendBusy ? (
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 14 14"
+                              fill="none"
+                              className="animate-spin"
+                              aria-hidden="true"
                             >
-                              {isConnecting || isSendBusy ? (
-                                <svg
-                                  width="12"
-                                  height="12"
-                                  viewBox="0 0 14 14"
-                                  fill="none"
-                                  className="animate-spin"
-                                  aria-hidden="true"
-                                >
-                                  <circle
-                                    cx="7"
-                                    cy="7"
-                                    r="5.5"
-                                    stroke="currentColor"
-                                    strokeWidth="1.5"
-                                    strokeLinecap="round"
-                                    strokeDasharray="20 12"
-                                  />
-                                </svg>
-                              ) : (
-                                <ComposerSendArrowIcon
-                                  aria-hidden="true"
-                                  className="size-5 shrink-0"
-                                />
-                              )}
-                            </Button>
-                          </>
-                        )
+                              <circle
+                                cx="7"
+                                cy="7"
+                                r="5.5"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                                strokeDasharray="20 12"
+                              />
+                            </svg>
+                          ) : (
+                            <ComposerSendArrowIcon aria-hidden="true" className="size-5 shrink-0" />
+                          )}
+                        </Button>
                       ) : null}
                     </div>
                   </div>

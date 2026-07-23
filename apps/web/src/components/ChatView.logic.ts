@@ -1084,6 +1084,64 @@ export function deriveComposerSendState(options: {
   };
 }
 
+export type ComposerFooterPrimaryAction =
+  | "none"
+  | "pending-input"
+  | "plan-follow-up"
+  | "stop-generation"
+  | "queue-message"
+  | "send-message";
+
+export function deriveComposerFooterActionPlan(options: {
+  hasLiveTurn: boolean;
+  hasSendableContent: boolean;
+  hasActivePendingProgress: boolean;
+  hasPendingApproval: boolean;
+  hasPendingUserInput: boolean;
+  isVoiceActive: boolean;
+  showPlanFollowUpPrompt: boolean;
+  canShowVoiceNotes: boolean;
+}): {
+  primaryAction: ComposerFooterPrimaryAction;
+  showVoiceButton: boolean;
+} {
+  if (options.isVoiceActive) {
+    return { primaryAction: "none", showVoiceButton: false };
+  }
+
+  if (options.hasActivePendingProgress) {
+    return { primaryAction: "pending-input", showVoiceButton: false };
+  }
+
+  if (options.hasPendingApproval) {
+    return { primaryAction: "none", showVoiceButton: false };
+  }
+
+  if (options.hasLiveTurn) {
+    const composerCanAcceptActions = !options.hasPendingUserInput;
+    return {
+      primaryAction:
+        composerCanAcceptActions && options.hasSendableContent
+          ? "queue-message"
+          : "stop-generation",
+      showVoiceButton: composerCanAcceptActions && options.canShowVoiceNotes,
+    };
+  }
+
+  if (options.hasPendingUserInput) {
+    return { primaryAction: "none", showVoiceButton: false };
+  }
+
+  if (options.showPlanFollowUpPrompt) {
+    return { primaryAction: "plan-follow-up", showVoiceButton: false };
+  }
+
+  return {
+    primaryAction: "send-message",
+    showVoiceButton: options.canShowVoiceNotes,
+  };
+}
+
 export function collectUserMessageAssistantSelections(
   message: ChatMessage,
 ): ChatAssistantSelectionAttachment[] {
