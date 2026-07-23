@@ -191,6 +191,10 @@
     "./voiceTranscription": {
       "types": "./src/voiceTranscription.ts",
       "import": "./src/voiceTranscription.ts"
+    },
+    "./voiceTranscriptionRouter": {
+      "types": "./src/voiceTranscriptionRouter.ts",
+      "import": "./src/voiceTranscriptionRouter.ts"
     }
   },
   "scripts": {
