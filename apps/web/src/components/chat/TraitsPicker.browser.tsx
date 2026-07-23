@@ -408,7 +408,7 @@ describe("TraitsPicker (Codex)", () => {
 
   it("shows Fast in the trigger label when fast mode is active", async () => {
     await using _ = await mountCodexPicker({
-      options: { fastMode: true },
+      options: { reasoningEffort: "medium", fastMode: true },
     });
 
     await vi.waitFor(() => {

@@ -2,6 +2,7 @@ import { ThreadId, TurnId } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  resolveDockDiffAvailable,
   resolveFilePreviewWorkspaceRoot,
   resolveRoutePanelBootstrap,
   resolveSplitPaneCloseDecision,
@@ -56,6 +57,22 @@ describe("resolveFilePreviewWorkspaceRoot", () => {
         threadWorktreePath: null,
       }),
     ).toBeNull();
+  });
+});
+
+describe("resolveDockDiffAvailable", () => {
+  it("keeps repository changes available before a thread has turn-scoped diffs", () => {
+    expect(resolveDockDiffAvailable({ turnDiffCount: 0, hasWorkingTreeChanges: true })).toBe(true);
+  });
+
+  it("uses turn-scoped diffs when the repository working tree is clean", () => {
+    expect(resolveDockDiffAvailable({ turnDiffCount: 1, hasWorkingTreeChanges: false })).toBe(true);
+  });
+
+  it("reports no diff only when both sources are empty", () => {
+    expect(resolveDockDiffAvailable({ turnDiffCount: 0, hasWorkingTreeChanges: false })).toBe(
+      false,
+    );
   });
 });
 

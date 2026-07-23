@@ -30,6 +30,10 @@ export interface WorkspaceFileOpener {
    * external editor (path outside the workspace, no viewer on this surface).
    */
   openFile: (path: string) => boolean;
+  /** Opens the inert rendered HTML preview in the user's external browser. */
+  openHtmlInExternalBrowser?: (path: string) => boolean;
+  /** Resolves a short-lived inert HTML preview URL for thumbnail rendering. */
+  getHtmlPreviewUrl?: (path: string) => Promise<string | null>;
   /** Optional hover warm-up for the file contents + syntax highlighter. */
   prefetchFile?: (path: string) => void;
 }

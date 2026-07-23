@@ -85,6 +85,7 @@ function shouldKeepBuiltInSlashCommandDespiteNativeCollision(
     command === "automation" ||
     command === "export" ||
     command === "feedback" ||
+    (provider === "claudeAgent" && command === "fork") ||
     (providerUsesAppOwnedReviewSlashCommand(provider) && command === "review")
   );
 }
@@ -421,8 +422,9 @@ export function getAvailableComposerSlashCommands(input: {
           "automation",
         ]
       : [
-          // Claude owns most slash-command UX natively; sidechat remains app-level because it
-          // creates a Synara split/context clone before the provider sees the first turn.
+          // Claude owns most slash-command UX natively. Fork and sidechat remain app-level
+          // because they create Scient-owned tasks before the provider sees the first turn.
+          ...(input.canOfferForkCommand ? (["fork"] as const) : []),
           // /export is app-level too — Synara owns the thread transcript, so the download
           // happens in the app rather than being forwarded to Claude's native /export.
           ...(input.canOfferSideCommand ? (["side"] as const) : []),

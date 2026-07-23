@@ -288,7 +288,7 @@ describe("composerSlashCommands", () => {
     expect(shouldHideProviderNativeCommandFromComposerMenu("claudeAgent", "feedback")).toBe(true);
   });
 
-  it("only exposes Synara-owned app commands for claude", () => {
+  it("offers Scient-owned fork handling for Claude", () => {
     expect(
       getAvailableComposerSlashCommands({
         provider: "claudeAgent",
@@ -299,7 +299,27 @@ describe("composerSlashCommands", () => {
         canOfferSideCommand: true,
         canOfferExportCommand: true,
       }),
-    ).toEqual(["side", "export", "feedback", "automation"]);
+    ).toEqual(["fork", "side", "export", "feedback", "automation"]);
+  });
+
+  it("keeps app-level /fork for Claude when native /branch advertises the fork alias", () => {
+    const commands = getAvailableComposerSlashCommands({
+      provider: "claudeAgent",
+      supportsFastSlashCommand: true,
+      canOfferCompactCommand: true,
+      canOfferReviewCommand: true,
+      canOfferForkCommand: true,
+      canOfferSideCommand: true,
+      canOfferExportCommand: true,
+      providerNativeCommandNames: ["branch"],
+    });
+
+    expect(commands).toContain("fork");
+    expect(parseComposerSlashInvocationForCommands("/fork", commands)).toEqual({
+      command: "fork",
+      args: "",
+    });
+    expect(parseComposerSlashInvocationForCommands("/branch", commands)).toBeNull();
   });
 
   it("offers the app-level /export command on every provider", () => {

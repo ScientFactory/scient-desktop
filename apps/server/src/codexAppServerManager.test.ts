@@ -819,7 +819,7 @@ describe("resolveCodexModelForAccount", () => {
         planType: "plus",
         sparkEnabled: false,
       }),
-    ).toBe("gpt-5.5");
+    ).toBe("gpt-5.6-sol");
   });
 
   it("keeps spark for supported plans", () => {
@@ -1394,6 +1394,7 @@ describe("CodexAppServerManager discovery", () => {
         name: "GPT-5.6 Sol",
         supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
         defaultReasoningEffort: "low",
+        isDefault: true,
         additionalSpeedTiers: ["fast"],
       },
     },
@@ -1404,6 +1405,7 @@ describe("CodexAppServerManager discovery", () => {
         name: "GPT-5.6 Sol",
         supported_reasoning_efforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
         default_reasoning_effort: "low",
+        is_default: true,
         additional_speed_tiers: ["fast"],
       },
     },
@@ -1459,6 +1461,7 @@ describe("CodexAppServerManager discovery", () => {
       {
         slug: "gpt-5.6-sol",
         name: "GPT-5.6 Sol",
+        isDefault: true,
         supportedReasoningEfforts: [
           { value: "low" },
           { value: "medium" },

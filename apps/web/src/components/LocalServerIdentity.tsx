@@ -15,9 +15,9 @@ import { cn } from "~/lib/utils";
 /**
  * Visual context the identity column renders into. Both surfaces share an
  * identical structure — a truncating primary label above a horizontal
- * "address · folder" meta line — and differ only in typography/color tokens:
+ * "address · folder" meta line — and differ only in typography/emphasis:
  * - "menu": the Environment panel's Local Servers popup (app font tokens, muted foreground).
- * - "browser": the in-app browser's local-servers home (larger white-on-dark cards).
+ * - "browser": the in-app browser's theme-aware local-servers home (larger cards).
  */
 export type LocalServerIdentityTone = "menu" | "browser";
 
@@ -39,11 +39,11 @@ const IDENTITY_TONE: Record<LocalServerIdentityTone, LocalServerIdentityToneToke
     folder: "text-muted-foreground/45",
   },
   browser: {
-    primary: "text-[14px] font-semibold text-white",
-    meta: "text-[12px] text-white/35",
+    primary: "text-[14px] font-semibold text-foreground",
+    meta: "text-[12px] text-muted-foreground/65",
     address: "",
-    separator: "text-white/20",
-    folder: "text-white/30",
+    separator: "text-muted-foreground/35",
+    folder: "text-muted-foreground/55",
   },
 };
 

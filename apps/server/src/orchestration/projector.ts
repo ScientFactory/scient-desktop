@@ -403,6 +403,10 @@ export function projectEvent(
             subagentNickname: payload.subagentNickname,
             subagentRole: payload.subagentRole,
             forkSourceThreadId: payload.forkSourceThreadId,
+            forkSourceMessageId: payload.forkSourceMessageId,
+            forkTitleFamilyRootId: payload.forkTitleFamilyRootId,
+            forkTitleBase: payload.forkTitleBase,
+            forkTitleOrdinal: payload.forkTitleOrdinal,
             sidechatSourceThreadId: payload.sidechatSourceThreadId,
             lastKnownPr: payload.lastKnownPr ?? null,
             latestTurn: null,
@@ -480,10 +484,23 @@ export function projectEvent(
                   payload.branch !== existingThread.branch
                 ? false
                 : undefined;
+          const titleBreaksAutomaticForkLineage =
+            payload.title !== undefined &&
+            existingThread !== null &&
+            payload.title !== existingThread.title &&
+            existingThread.forkTitleBase !== null &&
+            existingThread.forkTitleBase !== undefined;
           return {
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               ...(payload.title !== undefined ? { title: payload.title } : {}),
+              ...(titleBreaksAutomaticForkLineage
+                ? {
+                    forkTitleFamilyRootId: null,
+                    forkTitleBase: null,
+                    forkTitleOrdinal: null,
+                  }
+                : {}),
               ...(payload.modelSelection !== undefined
                 ? { modelSelection: payload.modelSelection }
                 : {}),

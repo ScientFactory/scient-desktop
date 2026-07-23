@@ -322,6 +322,36 @@ jobs:
             "${{ matrix.arch }}" \
             "${{ needs.preflight.outputs.version }}"
 
+      - name: Verify Linux AppImage sandbox policy
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          appimage_path="$(find release -maxdepth 1 -type f -name '*.AppImage' -print -quit)"
+          if [[ -z "$appimage_path" ]]; then
+            echo "Linux release did not produce an AppImage." >&2
+            exit 1
+          fi
+
+          chmod +x "$appimage_path"
+          extraction_directory="$(mktemp -d)"
+          trap 'rm -rf "$extraction_directory"' EXIT
+          (
+            cd "$extraction_directory"
+            "$GITHUB_WORKSPACE/$appimage_path" --appimage-extract >/dev/null
+          )
+
+          launcher="$extraction_directory/squashfs-root/AppRun"
+          if [[ ! -f "$launcher" ]]; then
+            echo "Extracted AppImage is missing AppRun." >&2
+            exit 1
+          fi
+          if grep -F -- '--no-sandbox' "$launcher"; then
+            echo "Packaged Linux launcher disables Electron's sandbox." >&2
+            exit 1
+          fi
+
       - name: Collect release assets
         shell: bash
         run: |

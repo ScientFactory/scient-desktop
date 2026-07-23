@@ -33,7 +33,10 @@ import { TextGenerationError } from "../../git/Errors.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import {
+  makeSqlitePersistenceLive,
+  SqlitePersistenceMemory,
+} from "../../persistence/Layers/Sqlite.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
@@ -131,11 +134,13 @@ describe("ProviderCommandReactor", () => {
     readonly studioOutputReactor?: Partial<StudioOutputReactorShape>;
     readonly forkThreadResult?: ProviderForkThreadResult | null;
     readonly skillAuthoringEnabled?: boolean;
+    readonly filePersistence?: boolean;
+    readonly seedInitialState?: boolean;
   }) {
     const now = new Date().toISOString();
     const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "synara-reactor-"));
     createdBaseDirs.add(baseDir);
-    const { stateDir } = deriveServerPathsSync(baseDir, undefined);
+    const { dbPath, stateDir } = deriveServerPathsSync(baseDir, undefined);
     createdStateDirs.add(stateDir);
     const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
     let nextSessionIndex = 1;
@@ -397,6 +402,9 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(OrchestrationEventStoreLive),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     );
+    const persistenceLayer = input?.filePersistence
+      ? makeSqlitePersistenceLive(dbPath).pipe(Layer.provide(NodeServices.layer))
+      : SqlitePersistenceMemory;
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
@@ -430,44 +438,59 @@ describe("ProviderCommandReactor", () => {
       ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
-      Layer.provideMerge(SqlitePersistenceMemory),
+      Layer.provideMerge(persistenceLayer),
     );
-    const runtime = ManagedRuntime.make(layer);
+    const harnessRuntime = ManagedRuntime.make(layer);
+    runtime = harnessRuntime;
     const emitRuntimeEvent = (event: ProviderRuntimeEvent) =>
       Effect.runPromise(PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid));
 
-    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
-    const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
-    scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(reactor.start.pipe(Scope.provide(scope)));
+    const engine = await harnessRuntime.runPromise(Effect.service(OrchestrationEngineService));
+    const reactor = await harnessRuntime.runPromise(Effect.service(ProviderCommandReactor));
+    const harnessScope = await Effect.runPromise(Scope.make("sequential"));
+    scope = harnessScope;
+    await Effect.runPromise(reactor.start.pipe(Scope.provide(harnessScope)));
     const drain = () => Effect.runPromise(reactor.drain);
 
-    await Effect.runPromise(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.makeUnsafe("cmd-project-create"),
-        projectId: asProjectId("project-1"),
-        title: "Provider Project",
-        workspaceRoot: "/tmp/provider-project",
-        defaultModelSelection: modelSelection,
-        createdAt: now,
-      }),
-    );
-    await Effect.runPromise(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.makeUnsafe("cmd-thread-create"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        projectId: asProjectId("project-1"),
-        title: "Thread",
-        modelSelection: modelSelection,
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt: now,
-      }),
-    );
+    if (input?.seedInitialState !== false) {
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe("cmd-project-create"),
+          projectId: asProjectId("project-1"),
+          title: "Provider Project",
+          workspaceRoot: "/tmp/provider-project",
+          defaultModelSelection: modelSelection,
+          createdAt: now,
+        }),
+      );
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("cmd-thread-create"),
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          projectId: asProjectId("project-1"),
+          title: "Thread",
+          modelSelection: modelSelection,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        }),
+      );
+    }
+
+    const dispose = async () => {
+      await Effect.runPromise(Scope.close(harnessScope, Exit.void));
+      if (scope === harnessScope) {
+        scope = null;
+      }
+      await harnessRuntime.dispose();
+      if (runtime === harnessRuntime) {
+        runtime = null;
+      }
+    };
 
     return {
       engine,
@@ -496,6 +519,7 @@ describe("ProviderCommandReactor", () => {
       drain,
       emitRuntimeEvent,
       setRuntimeSessionTurnState,
+      dispose,
     };
   }
 
@@ -687,6 +711,429 @@ describe("ProviderCommandReactor", () => {
     expect(secondInput?.input).not.toContain("Earlier question");
     expect(secondInput?.input).not.toContain("Earlier answer");
     expect(secondInput?.input).toContain("Second side question");
+  });
+
+  it("starts fresh and bootstraps only the selected prefix for a message-level fork", async () => {
+    const forkThreadId = ThreadId.makeUnsafe("thread-message-boundary-fork");
+    const sourceBoundaryId = asMessageId("source-boundary-assistant");
+    const harness = await createHarness({
+      forkThreadResult: {
+        threadId: forkThreadId,
+        resumeCursor: { sessionId: "native-tip-that-must-not-be-used" },
+      },
+    });
+    const now = new Date().toISOString();
+    const boundaryCreatedAt = new Date(Date.parse(now) + 1).toISOString();
+    const afterBoundaryCreatedAt = new Date(Date.parse(now) + 2).toISOString();
+    const importedAttachments = Array.from({ length: 9 }, (_, index) => ({
+      type: "file" as const,
+      id: `attachment-before-boundary-${index + 1}`,
+      name: `before-${index + 1}.txt`,
+      mimeType: "text/plain",
+      sizeBytes: index + 1,
+    }));
+    const currentAttachment = {
+      type: "file" as const,
+      id: "attachment-current-fork-turn",
+      name: "current.txt",
+      mimeType: "text/plain",
+      sizeBytes: 10,
+    };
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.messages.import",
+        commandId: CommandId.makeUnsafe("cmd-message-boundary-source-import"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messages: [
+          {
+            messageId: asMessageId("source-prefix-user"),
+            role: "user",
+            text: "Question before the branch",
+            attachments: importedAttachments.slice(0, 8),
+            createdAt: now,
+            updatedAt: now,
+          },
+          {
+            messageId: sourceBoundaryId,
+            role: "assistant",
+            text: "Answer at the branch boundary",
+            attachments: importedAttachments.slice(8),
+            createdAt: boundaryCreatedAt,
+            updatedAt: boundaryCreatedAt,
+          },
+          {
+            messageId: asMessageId("source-after-boundary-user"),
+            role: "user",
+            text: "This later source message must not be inherited",
+            attachments: [
+              {
+                type: "file",
+                id: "attachment-after-boundary",
+                name: "after.txt",
+                mimeType: "text/plain",
+                sizeBytes: 11,
+              },
+            ],
+            createdAt: afterBoundaryCreatedAt,
+            updatedAt: afterBoundaryCreatedAt,
+          },
+        ],
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork.create",
+        commandId: CommandId.makeUnsafe("cmd-message-boundary-fork-create"),
+        threadId: forkThreadId,
+        sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+        sourceMessageId: sourceBoundaryId,
+        projectId: asProjectId("project-1"),
+        title: "Message boundary fork",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        importedMessages: [
+          {
+            messageId: asMessageId("fork-00000000-prefix-user"),
+            role: "user",
+            text: "Question before the branch",
+            attachments: importedAttachments.slice(0, 8),
+            createdAt: now,
+            updatedAt: now,
+          },
+          {
+            messageId: asMessageId("fork-00000001-boundary-assistant"),
+            role: "assistant",
+            text: "Answer at the branch boundary",
+            attachments: importedAttachments.slice(8),
+            createdAt: boundaryCreatedAt,
+            updatedAt: boundaryCreatedAt,
+          },
+        ],
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-message-boundary-fork-turn"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-boundary-fork-new-user"),
+          role: "user",
+          text: "Take this in a different direction",
+          attachments: [currentAttachment],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.forkThread).not.toHaveBeenCalled();
+    expect(harness.startSession).toHaveBeenCalled();
+    const input = harness.sendTurn.mock.calls[0]?.[0] as
+      | { input?: string; attachments?: ReadonlyArray<{ id: string }> }
+      | undefined;
+    expect(input?.input).toContain("<thread_context>");
+    expect(input?.input).toContain("Question before the branch");
+    expect(input?.input).toContain("Answer at the branch boundary");
+    expect(input?.input).not.toContain("This later source message must not be inherited");
+    expect(input?.input).toContain("Take this in a different direction");
+    expect(input?.input).toContain("before-9.txt");
+    expect(input?.attachments?.map((attachment) => attachment.id)).toEqual([
+      currentAttachment.id,
+      ...importedAttachments.slice(0, 7).map((attachment) => attachment.id),
+    ]);
+    expect(input?.attachments).toHaveLength(8);
+
+    const followUpAttachment = {
+      type: "file" as const,
+      id: "attachment-after-bootstrap",
+      name: "follow-up.txt",
+      mimeType: "text/plain",
+      sizeBytes: 11,
+    };
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-message-boundary-fork-follow-up"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-boundary-fork-follow-up-user"),
+          role: "user",
+          text: "Continue the fork",
+          attachments: [followUpAttachment],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    const followUpInput = harness.sendTurn.mock.calls[1]?.[0] as
+      | { input?: string; attachments?: ReadonlyArray<{ id: string }> }
+      | undefined;
+    expect(followUpInput?.input).not.toContain("<thread_context>");
+    expect(followUpInput?.attachments?.map((attachment) => attachment.id)).toEqual([
+      followUpAttachment.id,
+    ]);
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const forkedThread = readModel.threads.find((thread) => thread.id === forkThreadId);
+    expect(forkedThread?.title).toBe("Thread (2)");
+    expect(forkedThread?.forkSourceThreadId).toBe("thread-1");
+    expect(forkedThread?.forkSourceMessageId).toBe(sourceBoundaryId);
+    expect(forkedThread?.forkTitleBase).toBe("Thread");
+    expect(forkedThread?.forkTitleOrdinal).toBe(2);
+  });
+
+  it("reconstructs message-fork bootstrap context after a reactor restart", async () => {
+    const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), "synara-reactor-fork-restart-"));
+    const forkThreadId = ThreadId.makeUnsafe("thread-message-fork-restart");
+    const sourceBoundaryId = asMessageId("source-message-fork-restart-boundary");
+    const createdAt = new Date().toISOString();
+    const boundaryCreatedAt = new Date(Date.parse(createdAt) + 1).toISOString();
+    const firstHarness = await createHarness({ baseDir, filePersistence: true });
+
+    await Effect.runPromise(
+      firstHarness.engine.dispatch({
+        type: "thread.messages.import",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-restart-source-import"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messages: [
+          {
+            messageId: asMessageId("source-message-fork-restart-user"),
+            role: "user",
+            text: "Persisted question before restart",
+            attachments: [
+              {
+                type: "file",
+                id: "attachment-before-restart",
+                name: "restart.txt",
+                mimeType: "text/plain",
+                sizeBytes: 15,
+              },
+            ],
+            createdAt,
+            updatedAt: createdAt,
+          },
+          {
+            messageId: sourceBoundaryId,
+            role: "assistant",
+            text: "Persisted answer before restart",
+            createdAt: boundaryCreatedAt,
+            updatedAt: boundaryCreatedAt,
+          },
+        ],
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      firstHarness.engine.dispatch({
+        type: "thread.fork.create",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-restart-create"),
+        threadId: forkThreadId,
+        sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+        sourceMessageId: sourceBoundaryId,
+        projectId: asProjectId("project-1"),
+        title: "Message fork restart",
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        importedMessages: [
+          {
+            messageId: asMessageId("fork-00000000-message-restart-user"),
+            role: "user",
+            text: "Persisted question before restart",
+            attachments: [
+              {
+                type: "file",
+                id: "attachment-before-restart",
+                name: "restart.txt",
+                mimeType: "text/plain",
+                sizeBytes: 15,
+              },
+            ],
+            createdAt,
+            updatedAt: createdAt,
+          },
+          {
+            messageId: asMessageId("fork-00000001-message-restart-assistant"),
+            role: "assistant",
+            text: "Persisted answer before restart",
+            createdAt: boundaryCreatedAt,
+            updatedAt: boundaryCreatedAt,
+          },
+        ],
+        createdAt,
+      }),
+    );
+    await firstHarness.dispose();
+
+    const restartedHarness = await createHarness({
+      baseDir,
+      filePersistence: true,
+      seedInitialState: false,
+    });
+    // The reactor streams are scoped fibers; let their subscriptions attach before publishing the
+    // post-restart turn so this test measures reconstruction rather than subscription scheduling.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await Effect.runPromise(
+      restartedHarness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-restart-turn"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-fork-restart-new-user"),
+          role: "user",
+          text: "Continue after restart",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt,
+      }),
+    );
+
+    await waitFor(() => restartedHarness.sendTurn.mock.calls.length === 1);
+    const providerInput = restartedHarness.sendTurn.mock.calls[0]?.[0] as
+      | { input?: string; attachments?: ReadonlyArray<{ id: string }> }
+      | undefined;
+    expect(providerInput?.input).toContain("<thread_context>");
+    expect(providerInput?.input).toContain("Persisted question before restart");
+    expect(providerInput?.input).toContain("Persisted answer before restart");
+    expect(providerInput?.input?.indexOf("Persisted question before restart")).toBeLessThan(
+      providerInput?.input?.indexOf("Persisted answer before restart") ?? -1,
+    );
+    expect(providerInput?.input).toContain("Continue after restart");
+    expect(providerInput?.attachments?.map((attachment) => attachment.id)).toEqual([
+      "attachment-before-restart",
+    ]);
+  });
+
+  it("includes an interrupted first fork prompt when a fresh provider session restarts", async () => {
+    const harness = await createHarness();
+    const forkThreadId = ThreadId.makeUnsafe("thread-message-fork-interrupted-restart");
+    const sourceBoundaryId = asMessageId("source-message-fork-interrupted-boundary");
+    const createdAt = "2026-07-22T10:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.messages.import",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-interrupted-source-import"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messages: [
+          {
+            messageId: asMessageId("source-message-fork-interrupted-user"),
+            role: "user",
+            text: "Imported question before interruption",
+            createdAt,
+            updatedAt: createdAt,
+          },
+          {
+            messageId: sourceBoundaryId,
+            role: "assistant",
+            text: "Imported answer before interruption",
+            createdAt: "2026-07-22T10:00:01.000Z",
+            updatedAt: "2026-07-22T10:00:01.000Z",
+          },
+        ],
+        createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork.create",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-interrupted-create"),
+        threadId: forkThreadId,
+        sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+        sourceMessageId: sourceBoundaryId,
+        projectId: asProjectId("project-1"),
+        title: "Interrupted message fork",
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        importedMessages: [
+          {
+            messageId: asMessageId("fork-interrupted-a-user"),
+            role: "user",
+            text: "Imported question before interruption",
+            createdAt,
+            updatedAt: createdAt,
+          },
+          {
+            messageId: asMessageId("fork-interrupted-b-assistant"),
+            role: "assistant",
+            text: "Imported answer before interruption",
+            createdAt: "2026-07-22T10:00:01.000Z",
+            updatedAt: "2026-07-22T10:00:01.000Z",
+          },
+        ],
+        createdAt: "2026-07-22T10:00:02.000Z",
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-interrupted-first-turn"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-fork-interrupted-first-user"),
+          role: "user",
+          text: "Interrupted native prompt",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: "2026-07-22T10:00:03.000Z",
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(harness.stopSession({ threadId: forkThreadId }));
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-interrupted-second-turn"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-fork-interrupted-second-user"),
+          role: "user",
+          text: "Continue after the provider restart",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: "2026-07-22T10:00:04.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    const restartedInput = harness.sendTurn.mock.calls[1]?.[0] as { input?: string } | undefined;
+    expect(restartedInput?.input).toContain("<thread_context>");
+    expect(restartedInput?.input).toContain("Imported question before interruption");
+    expect(restartedInput?.input).toContain("Imported answer before interruption");
+    expect(restartedInput?.input).toContain("Interrupted native prompt");
+    expect(restartedInput?.input).toContain("Continue after the provider restart");
   });
 
   it("bootstraps Droid sidechat context after a native provider fork", async () => {
@@ -1272,6 +1719,15 @@ describe("ProviderCommandReactor", () => {
     });
     const now = new Date().toISOString();
     const importedAt = new Date(Date.parse(now) - 1_000).toISOString();
+    const importedAssistantAt = new Date(Date.parse(importedAt) + 1).toISOString();
+    const sourceBoundaryId = asMessageId("droid-async-bootstrap-source-boundary");
+    const importedAttachment = {
+      type: "file" as const,
+      id: "droid-async-bootstrap-imported-file",
+      name: "retained-context.txt",
+      mimeType: "text/plain",
+      sizeBytes: 21,
+    };
     harness.sendTurn
       .mockImplementationOnce(() => Effect.succeed({ threadId, turnId: firstTurnId }))
       .mockImplementationOnce(() => Effect.succeed({ threadId, turnId: retryTurnId }))
@@ -1279,10 +1735,37 @@ describe("ProviderCommandReactor", () => {
 
     await Effect.runPromise(
       harness.engine.dispatch({
+        type: "thread.messages.import",
+        commandId: CommandId.makeUnsafe("cmd-droid-async-bootstrap-source"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messages: [
+          {
+            messageId: asMessageId("droid-async-bootstrap-source-user"),
+            role: "user",
+            text: "Context retained across the failed prompt",
+            attachments: [importedAttachment],
+            createdAt: importedAt,
+            updatedAt: importedAt,
+          },
+          {
+            messageId: sourceBoundaryId,
+            role: "assistant",
+            text: "Source answer at the fork boundary",
+            createdAt: importedAssistantAt,
+            updatedAt: importedAssistantAt,
+          },
+        ],
+        createdAt: importedAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
         type: "thread.fork.create",
         commandId: CommandId.makeUnsafe("cmd-droid-async-bootstrap-fork"),
         threadId,
         sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+        sourceMessageId: sourceBoundaryId,
         projectId: asProjectId("project-1"),
         title: "Droid async bootstrap failure",
         modelSelection: {
@@ -1299,8 +1782,16 @@ describe("ProviderCommandReactor", () => {
             messageId: asMessageId("droid-async-bootstrap-imported-user"),
             role: "user",
             text: "Context retained across the failed prompt",
+            attachments: [importedAttachment],
             createdAt: importedAt,
             updatedAt: importedAt,
+          },
+          {
+            messageId: asMessageId("droid-async-bootstrap-imported-assistant"),
+            role: "assistant",
+            text: "Source answer at the fork boundary",
+            createdAt: importedAssistantAt,
+            updatedAt: importedAssistantAt,
           },
         ],
         createdAt: now,
@@ -1324,8 +1815,13 @@ describe("ProviderCommandReactor", () => {
       }),
     );
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    const firstInput = harness.sendTurn.mock.calls[0]?.[0] as { input?: string } | undefined;
+    const firstInput = harness.sendTurn.mock.calls[0]?.[0] as
+      | { input?: string; attachments?: ReadonlyArray<{ id: string }> }
+      | undefined;
     expect(firstInput?.input).toContain("<thread_context>");
+    expect(firstInput?.attachments?.map((attachment) => attachment.id)).toEqual([
+      importedAttachment.id,
+    ]);
 
     await harness.emitRuntimeEvent({
       type: "turn.completed",
@@ -1360,10 +1856,15 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.sendTurn.mock.calls.length === 2);
-    const retryInput = harness.sendTurn.mock.calls[1]?.[0] as { input?: string } | undefined;
+    const retryInput = harness.sendTurn.mock.calls[1]?.[0] as
+      | { input?: string; attachments?: ReadonlyArray<{ id: string }> }
+      | undefined;
     expect(retryInput?.input).toContain("<thread_context>");
     expect(retryInput?.input).toContain("Context retained across the failed prompt");
     expect(retryInput?.input).toContain("Retry after async failure");
+    expect(retryInput?.attachments?.map((attachment) => attachment.id)).toEqual([
+      importedAttachment.id,
+    ]);
 
     await harness.emitRuntimeEvent({
       type: "turn.completed",
@@ -1397,8 +1898,11 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.sendTurn.mock.calls.length === 3);
-    const followUpInput = harness.sendTurn.mock.calls[2]?.[0] as { input?: string } | undefined;
+    const followUpInput = harness.sendTurn.mock.calls[2]?.[0] as
+      | { input?: string; attachments?: ReadonlyArray<{ id: string }> }
+      | undefined;
     expect(followUpInput?.input).not.toContain("<thread_context>");
+    expect(followUpInput?.attachments).toBeUndefined();
     expectSkillAwareProviderInput(followUpInput?.input, "Continue after successful retry");
   });
 
@@ -1667,6 +2171,203 @@ describe("ProviderCommandReactor", () => {
     expect(resent?.input).toContain("Earlier answer");
     expect(resent?.input).toContain("edited prompt");
     expect(resent?.input).not.toContain("old prompt");
+  });
+
+  it("replays retained native context after rollback in a message fork without imported files", async () => {
+    const harness = await createHarness({
+      threadModelSelection: { provider: "droid", model: "claude-opus-4-8" },
+      conversationRollback: "restart-session",
+    });
+    const forkThreadId = ThreadId.makeUnsafe("thread-message-fork-later-rollback");
+    const sourceBoundaryId = asMessageId("message-fork-later-rollback-source-assistant");
+    const importedFile = {
+      type: "file" as const,
+      id: "message-fork-later-rollback-imported-file",
+      name: "source-only.txt",
+      mimeType: "text/plain",
+      sizeBytes: 17,
+    };
+    const sourceUserAt = "2026-07-22T10:10:00.000Z";
+    const sourceAssistantAt = "2026-07-22T10:10:01.000Z";
+    const nativeAt = "2026-07-22T10:11:00.000Z";
+    const targetAt = "2026-07-22T10:12:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.messages.import",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-later-rollback-source"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messages: [
+          {
+            messageId: asMessageId("message-fork-later-rollback-source-user"),
+            role: "user",
+            text: "Imported source question",
+            attachments: [importedFile],
+            createdAt: sourceUserAt,
+            updatedAt: sourceUserAt,
+          },
+          {
+            messageId: sourceBoundaryId,
+            role: "assistant",
+            text: "Imported source answer",
+            createdAt: sourceAssistantAt,
+            updatedAt: sourceAssistantAt,
+          },
+        ],
+        createdAt: sourceUserAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork.create",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-later-rollback-create"),
+        threadId: forkThreadId,
+        sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+        sourceMessageId: sourceBoundaryId,
+        projectId: asProjectId("project-1"),
+        title: "Message fork later rollback",
+        modelSelection: { provider: "droid", model: "claude-opus-4-8" },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        importedMessages: [
+          {
+            messageId: asMessageId("fork-00000000-later-rollback-user"),
+            role: "user",
+            text: "Imported source question",
+            attachments: [importedFile],
+            createdAt: sourceUserAt,
+            updatedAt: sourceUserAt,
+          },
+          {
+            messageId: asMessageId("fork-00000001-later-rollback-assistant"),
+            role: "assistant",
+            text: "Imported source answer",
+            createdAt: sourceAssistantAt,
+            updatedAt: sourceAssistantAt,
+          },
+        ],
+        createdAt: sourceAssistantAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-retained-native-turn"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-fork-retained-native-user"),
+          role: "user",
+          text: "Retained native question",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: nativeAt,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await harness.emitRuntimeEvent({
+      type: "turn.completed",
+      eventId: asEventId("evt-message-fork-initial-bootstrap-completed"),
+      provider: "droid",
+      threadId: forkThreadId,
+      createdAt: nativeAt,
+      turnId: asTurnId("turn-1"),
+      payload: { state: "completed" },
+      providerRefs: {},
+    } as ProviderRuntimeEvent);
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-retained-native-assistant-delta"),
+        threadId: forkThreadId,
+        messageId: asMessageId("message-fork-retained-native-assistant"),
+        delta: "Retained native answer",
+        turnId: asTurnId("turn-message-fork-retained-native"),
+        createdAt: nativeAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-retained-native-assistant-complete"),
+        threadId: forkThreadId,
+        messageId: asMessageId("message-fork-retained-native-assistant"),
+        turnId: asTurnId("turn-message-fork-retained-native"),
+        createdAt: nativeAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-later-edit-target"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("message-fork-later-edit-target"),
+          role: "user",
+          text: "old later prompt",
+          attachments: [],
+        },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: targetAt,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    harness.sendTurn.mockClear();
+    harness.setRuntimeSessionTurnState({
+      threadId: forkThreadId,
+      status: "running",
+      activeTurnId: asTurnId("turn-message-fork-later-edit-active"),
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-later-edit-session"),
+        threadId: forkThreadId,
+        session: {
+          threadId: forkThreadId,
+          status: "running",
+          providerName: "droid",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-message-fork-later-edit-active"),
+          lastError: null,
+          updatedAt: targetAt,
+        },
+        createdAt: targetAt,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.edit-and-resend",
+        commandId: CommandId.makeUnsafe("cmd-message-fork-later-edit-resend"),
+        threadId: forkThreadId,
+        messageId: asMessageId("message-fork-later-edit-target"),
+        text: "edited later prompt",
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: targetAt,
+      }),
+    );
+
+    await waitFor(() => harness.clearSessionResumeCursor.mock.calls.length === 1);
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const resent = harness.sendTurn.mock.calls[0]?.[0] as
+      | { input?: string; attachments?: ReadonlyArray<{ id: string }> }
+      | undefined;
+    expect(resent?.input).toContain("<thread_context>");
+    expect(resent?.input).toContain("Imported source question");
+    expect(resent?.input).toContain("Retained native question");
+    expect(resent?.input).toContain("Retained native answer");
+    expect(resent?.input).toContain("edited later prompt");
+    expect(resent?.input).not.toContain("old later prompt");
+    expect(resent?.attachments).toBeUndefined();
   });
 
   it("keeps queued-message edits queued while an active provider turn continues", async () => {
@@ -2297,6 +2998,131 @@ describe("ProviderCommandReactor", () => {
     expect(retrySendInput.input).toContain("nice but bring it on the left.");
     expect(retrySendInput.input).toContain('id="scient.skill-authoring"');
     expect(retrySendInput.input).toContain("scient-skill-authoring/SKILL.md");
+  });
+
+  it("preserves the complete message-fork attachment manifest on a stale Claude retry", async () => {
+    const harness = await createHarness({
+      threadModelSelection: { provider: "claudeAgent", model: "claude-opus-4-8" },
+    });
+    const importedAt = "2026-07-22T10:00:00.000Z";
+    const boundaryAt = "2026-07-22T10:00:01.000Z";
+    const forkThreadId = ThreadId.makeUnsafe("thread-claude-message-fork-stale-retry");
+    const sourceBoundaryId = asMessageId("claude-message-fork-source-boundary");
+    const importedAttachments = Array.from({ length: 10 }, (_, index) => ({
+      type: "file" as const,
+      id: `claude-message-fork-imported-${index}`,
+      name: `claude-imported-${index}.txt`,
+      mimeType: "text/plain",
+      sizeBytes: index + 1,
+    }));
+    const currentAttachment = {
+      type: "file" as const,
+      id: "claude-message-fork-current",
+      name: "current.txt",
+      mimeType: "text/plain",
+      sizeBytes: 1,
+    };
+    harness.sendTurn.mockImplementationOnce(() =>
+      Effect.fail(
+        new ProviderAdapterRequestError({
+          provider: "claudeAgent",
+          method: "session/prompt",
+          detail: "No conversation found with session ID: stale-message-fork-session",
+        }),
+      ),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.messages.import",
+        commandId: CommandId.makeUnsafe("cmd-claude-message-fork-source-import"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        messages: [
+          {
+            messageId: asMessageId("claude-message-fork-source-user"),
+            role: "user",
+            text: "Source question with files",
+            attachments: importedAttachments,
+            createdAt: importedAt,
+            updatedAt: importedAt,
+          },
+          {
+            messageId: sourceBoundaryId,
+            role: "assistant",
+            text: "Source answer",
+            createdAt: boundaryAt,
+            updatedAt: boundaryAt,
+          },
+        ],
+        createdAt: importedAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.fork.create",
+        commandId: CommandId.makeUnsafe("cmd-claude-message-fork-create"),
+        threadId: forkThreadId,
+        sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+        sourceMessageId: sourceBoundaryId,
+        projectId: asProjectId("project-1"),
+        title: "Claude message fork",
+        modelSelection: { provider: "claudeAgent", model: "claude-opus-4-8" },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        importedMessages: [
+          {
+            messageId: asMessageId("claude-message-fork-imported-user"),
+            role: "user",
+            text: "Source question with files",
+            attachments: importedAttachments,
+            createdAt: importedAt,
+            updatedAt: importedAt,
+          },
+          {
+            messageId: asMessageId("claude-message-fork-imported-assistant"),
+            role: "assistant",
+            text: "Source answer",
+            createdAt: boundaryAt,
+            updatedAt: boundaryAt,
+          },
+        ],
+        createdAt: boundaryAt,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-claude-message-fork-stale-turn"),
+        threadId: forkThreadId,
+        message: {
+          messageId: asMessageId("claude-message-fork-new-user"),
+          role: "user",
+          text: "Continue from the exact boundary",
+          attachments: [currentAttachment],
+        },
+        modelSelection: { provider: "claudeAgent", model: "claude-opus-4-8" },
+        runtimeMode: "approval-required",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        createdAt: "2026-07-22T10:01:00.000Z",
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    for (const call of harness.sendTurn.mock.calls) {
+      const sendInput = call[0] as {
+        readonly input?: string;
+        readonly attachments?: ReadonlyArray<{ readonly id: string }>;
+      };
+      expect(sendInput.input).toContain("Imported attachment manifest:");
+      expect(sendInput.input).toContain("claude-imported-9.txt");
+      expect(sendInput.attachments?.map((attachment) => attachment.id)).toEqual([
+        currentAttachment.id,
+        ...importedAttachments.slice(0, 7).map((attachment) => attachment.id),
+      ]);
+    }
   });
 
   it("marks the thread session errored when normal turn start fails", async () => {

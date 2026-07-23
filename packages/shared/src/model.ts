@@ -18,6 +18,7 @@ import {
   type OpenCodeModelOptions,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
+  type ProviderModelDescriptor,
   type PiModelOptions,
   type PiThinkingLevel,
   type ProviderKind,
@@ -41,6 +42,180 @@ const MODEL_SLUG_SET_BY_PROVIDER: Record<ProviderKind, ReadonlySet<ModelSlug>> =
 export interface SelectableModelOption {
   slug: string;
   name: string;
+}
+
+export type RecommendedModelCandidate = SelectableModelOption &
+  Partial<
+    Pick<ProviderModelDescriptor, "resolvedModel" | "isDefault" | "supportedReasoningEfforts">
+  >;
+
+const RECOMMENDED_MODEL_IDENTIFIERS: Record<ProviderKind, ReadonlyArray<ReadonlyArray<string>>> = {
+  codex: [["gpt-5-6-sol"], ["gpt-5-6"], ["gpt-5-5"]],
+  claudeAgent: [["claude-opus-4-8"], ["opus"]],
+  cursor: [["gpt-5-6-sol"], ["auto"]],
+  antigravity: [["gemini-3-6-flash"], ["gemini-3-5-flash"]],
+  grok: [["grok-build-latest"], ["grok-4-5-latest"], ["grok-4-5"], ["grok-build"]],
+  droid: [["auto"]],
+  kilo: [["kilo-auto/frontier"]],
+  opencode: [["gpt-5-6-sol"], ["claude-opus-4-8"], ["gemini-3-6-flash"], ["grok-4-5"]],
+  pi: [["gpt-5-6-sol"], ["claude-opus-4-8"], ["gemini-3-6-flash"], ["grok-4-5"]],
+};
+
+function canonicalModelIdentity(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\[[^\]]*\]$/u, "")
+    .replace(/[._\s]+/gu, "-")
+    .replace(/-+/gu, "-");
+}
+
+function candidateModelIdentities(candidate: RecommendedModelCandidate): string[] {
+  return [candidate.slug, candidate.resolvedModel, candidate.name]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map(canonicalModelIdentity);
+}
+
+function candidateMatchesIdentifier(
+  candidate: RecommendedModelCandidate,
+  identifier: string,
+): boolean {
+  const canonicalIdentifier = canonicalModelIdentity(identifier);
+  return candidateModelIdentities(candidate).some(
+    (identity) =>
+      identity === canonicalIdentifier ||
+      identity.endsWith(`/${canonicalIdentifier}`) ||
+      identity.endsWith(`:${canonicalIdentifier}`),
+  );
+}
+
+function findRecommendedCandidate(
+  provider: ProviderKind,
+  candidates: ReadonlyArray<RecommendedModelCandidate>,
+): RecommendedModelCandidate | undefined {
+  for (const identifiers of RECOMMENDED_MODEL_IDENTIFIERS[provider]) {
+    const candidate = candidates.find((option) =>
+      identifiers.some((identifier) => candidateMatchesIdentifier(option, identifier)),
+    );
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  if (provider === "claudeAgent") {
+    return candidates
+      .filter((candidate) =>
+        candidateModelIdentities(candidate).some((identity) => identity.includes("opus")),
+      )
+      .toSorted((left, right) =>
+        candidateModelIdentities(right)
+          .join(" ")
+          .localeCompare(candidateModelIdentities(left).join(" "), undefined, {
+            numeric: true,
+          }),
+      )[0];
+  }
+
+  return undefined;
+}
+
+function candidateSupportsHighEffort(
+  provider: ProviderKind,
+  candidate: RecommendedModelCandidate,
+): boolean {
+  const runtimeEfforts = candidate.supportedReasoningEfforts;
+  if (runtimeEfforts && runtimeEfforts.length > 0) {
+    return runtimeEfforts.some((effort) => effort.value === "high");
+  }
+
+  // Antigravity has no static catalog, but this product-recommended model supports
+  // the high reasoning option. Live metadata remains authoritative when present.
+  if (provider === "antigravity" && candidateMatchesIdentifier(candidate, "gemini-3-6-flash")) {
+    return true;
+  }
+
+  const capabilities = getModelCapabilities(provider, candidate.slug);
+  return [...capabilities.reasoningEffortLevels, ...(capabilities.variantOptions ?? [])].some(
+    (effort) => effort.value === "high",
+  );
+}
+
+function recommendedModelSelection(
+  provider: ProviderKind,
+  candidate: RecommendedModelCandidate,
+): ModelSelection {
+  const highEffort = candidateSupportsHighEffort(provider, candidate);
+  switch (provider) {
+    case "codex":
+      return {
+        provider,
+        model: candidate.slug,
+        ...(highEffort ? { options: { reasoningEffort: "high" } } : {}),
+      };
+    case "claudeAgent":
+      return {
+        provider,
+        model: candidate.slug,
+        ...(highEffort ? { options: { effort: "high" } } : {}),
+      };
+    case "cursor":
+    case "antigravity":
+      return {
+        provider,
+        model: candidate.slug,
+        ...(highEffort ? { options: { reasoningEffort: "high" } } : {}),
+      };
+    case "grok":
+      return {
+        provider,
+        model: candidate.slug,
+        ...(highEffort ? { options: { reasoningEffort: "high" } } : {}),
+      };
+    case "droid":
+      // Droid's Auto model owns both routing and reasoning effort.
+      return { provider, model: candidate.slug };
+    case "kilo":
+      // Kilo Frontier routes the request to the best model for the task.
+      return { provider, model: candidate.slug };
+    case "opencode":
+      return {
+        provider,
+        model: candidate.slug,
+        ...(highEffort ? { options: { variant: "high" } } : {}),
+      };
+    case "pi":
+      return {
+        provider,
+        model: candidate.slug,
+        ...(highEffort ? { options: { thinkingLevel: "high" } } : {}),
+      };
+  }
+}
+
+/** Product-level default used before a provider catalog is available. */
+export function getRecommendedDefaultModelSelection(provider: ProviderKind): ModelSelection | null {
+  const model = getDefaultModel(provider);
+  return model ? recommendedModelSelection(provider, { slug: model, name: model }) : null;
+}
+
+/**
+ * Resolves a fresh provider selection against the models that account can actually use.
+ * Catalog order is presentation-only: policy wins, then the provider's advertised default,
+ * and only then the first available model.
+ */
+export function resolveRecommendedModelSelection(
+  provider: ProviderKind,
+  candidates: ReadonlyArray<RecommendedModelCandidate> | null | undefined,
+): ModelSelection | null {
+  if (!candidates || candidates.length === 0) {
+    return getRecommendedDefaultModelSelection(provider);
+  }
+
+  const candidate =
+    findRecommendedCandidate(provider, candidates) ??
+    candidates.find((option) => option.isDefault === true) ??
+    candidates[0];
+  return candidate ? recommendedModelSelection(provider, candidate) : null;
 }
 
 const PI_THINKING_LEVEL_SET = new Set<PiThinkingLevel>([

@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import {
   CheckpointRef,
   CommandId,
@@ -14,7 +18,10 @@ import { describe, expect, it } from "vitest";
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import {
+  makeSqlitePersistenceLive,
+  SqlitePersistenceMemory,
+} from "../../persistence/Layers/Sqlite.ts";
 import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
@@ -45,6 +52,31 @@ async function createOrchestrationSystem() {
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(SqlitePersistenceMemory),
+    Layer.provideMerge(ServerConfigLayer),
+    Layer.provideMerge(NodeServices.layer),
+  );
+  const runtime = ManagedRuntime.make(orchestrationLayer);
+  const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+  return {
+    engine,
+    run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
+    dispose: () => runtime.dispose(),
+  };
+}
+
+async function createFileBackedOrchestrationSystem(dbPath: string) {
+  const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
+    prefix: "synara-orchestration-engine-restart-test-",
+  });
+  const persistenceLayer = makeSqlitePersistenceLive(dbPath).pipe(
+    Layer.provide(NodeServices.layer),
+  );
+  const orchestrationLayer = OrchestrationEngineLive.pipe(
+    Layer.provide(OrchestrationProjectionPipelineLive),
+    Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+    Layer.provide(OrchestrationEventStoreLive),
+    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+    Layer.provide(persistenceLayer),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -119,6 +151,510 @@ describe("OrchestrationEngine", () => {
     const readModelA = await system.run(engine.getReadModel());
     const readModelB = await system.run(engine.getReadModel());
     expect(readModelB).toEqual(readModelA);
+    await system.dispose();
+  });
+
+  it("serializes concurrent forks into distinct authoritative title ordinals", async () => {
+    const createdAt = now();
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const projectId = asProjectId("project-concurrent-forks");
+    const sourceThreadId = ThreadId.makeUnsafe("thread-concurrent-forks-source");
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-concurrent-forks-create"),
+        projectId,
+        title: "Concurrent Fork Project",
+        workspaceRoot: "/tmp/project-concurrent-forks",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-thread-concurrent-forks-source-create"),
+        threadId: sourceThreadId,
+        projectId,
+        title: "Greeting",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    const forkCommand = (suffix: string) => ({
+      type: "thread.fork.create" as const,
+      commandId: CommandId.makeUnsafe(`cmd-thread-concurrent-fork-${suffix}`),
+      threadId: ThreadId.makeUnsafe(`thread-concurrent-fork-${suffix}`),
+      sourceThreadId,
+      projectId,
+      title: "stale client title",
+      modelSelection: {
+        provider: "codex" as const,
+        model: "gpt-5-codex",
+      },
+      runtimeMode: "approval-required" as const,
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      envMode: "local" as const,
+      branch: null,
+      worktreePath: null,
+      importedMessages: [],
+      createdAt,
+    });
+    await Promise.all([
+      system.run(engine.dispatch(forkCommand("a"))),
+      system.run(engine.dispatch(forkCommand("b"))),
+    ]);
+
+    const forkedThreads = (await system.run(engine.getReadModel())).threads
+      .filter((thread) => thread.forkSourceThreadId === sourceThreadId)
+      .toSorted((left, right) => (left.forkTitleOrdinal ?? 0) - (right.forkTitleOrdinal ?? 0));
+    expect(
+      forkedThreads.map((thread) => ({
+        title: thread.title,
+        base: thread.forkTitleBase,
+        ordinal: thread.forkTitleOrdinal,
+      })),
+    ).toEqual([
+      { title: "Greeting (2)", base: "Greeting", ordinal: 2 },
+      { title: "Greeting (3)", base: "Greeting", ordinal: 3 },
+    ]);
+    await system.dispose();
+  });
+
+  it("validates a post-restart fork against the complete persisted transcript", async () => {
+    const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "scient-fork-restart-"));
+    const dbPath = path.join(tempDirectory, "orchestration.sqlite");
+    const projectId = asProjectId("project-restart-fork");
+    const sourceThreadId = ThreadId.makeUnsafe("thread-restart-fork-source");
+    const oldCreatedAt = "2026-07-22T10:00:00.000Z";
+    const newCreatedAt = "2026-07-22T10:01:00.000Z";
+    let firstSystem: Awaited<ReturnType<typeof createFileBackedOrchestrationSystem>> | null = null;
+    let restartedSystem: Awaited<ReturnType<typeof createFileBackedOrchestrationSystem>> | null =
+      null;
+    try {
+      firstSystem = await createFileBackedOrchestrationSystem(dbPath);
+      await firstSystem.run(
+        firstSystem.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe("cmd-project-restart-fork-create"),
+          projectId,
+          title: "Restart Fork Project",
+          workspaceRoot: "/tmp/project-restart-fork",
+          defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
+          createdAt: oldCreatedAt,
+        }),
+      );
+      await firstSystem.run(
+        firstSystem.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("cmd-thread-restart-fork-create"),
+          threadId: sourceThreadId,
+          projectId,
+          title: "Restart source",
+          modelSelection: { provider: "codex", model: "gpt-5-codex" },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: oldCreatedAt,
+        }),
+      );
+      await firstSystem.run(
+        firstSystem.engine.dispatch({
+          type: "thread.messages.import",
+          commandId: CommandId.makeUnsafe("cmd-restart-fork-old-messages"),
+          threadId: sourceThreadId,
+          messages: [
+            {
+              messageId: asMessageId("restart-old-user"),
+              role: "user",
+              text: "Old question",
+              createdAt: oldCreatedAt,
+              updatedAt: oldCreatedAt,
+            },
+            {
+              messageId: asMessageId("restart-old-assistant"),
+              role: "assistant",
+              text: "Old answer",
+              createdAt: "2026-07-22T10:00:01.000Z",
+              updatedAt: "2026-07-22T10:00:01.000Z",
+            },
+          ],
+          createdAt: oldCreatedAt,
+        }),
+      );
+      await firstSystem.dispose();
+      firstSystem = null;
+
+      restartedSystem = await createFileBackedOrchestrationSystem(dbPath);
+      await restartedSystem.run(
+        restartedSystem.engine.dispatch({
+          type: "thread.messages.import",
+          commandId: CommandId.makeUnsafe("cmd-restart-fork-new-messages"),
+          threadId: sourceThreadId,
+          messages: [
+            {
+              messageId: asMessageId("restart-new-user"),
+              role: "user",
+              text: "New question",
+              createdAt: newCreatedAt,
+              updatedAt: newCreatedAt,
+            },
+            {
+              messageId: asMessageId("restart-new-assistant"),
+              role: "assistant",
+              text: "New answer",
+              createdAt: "2026-07-22T10:01:01.000Z",
+              updatedAt: "2026-07-22T10:01:01.000Z",
+            },
+          ],
+          createdAt: newCreatedAt,
+        }),
+      );
+
+      await expect(
+        restartedSystem.run(
+          restartedSystem.engine.dispatch({
+            type: "thread.fork.create",
+            commandId: CommandId.makeUnsafe("cmd-restart-fork-create-destination"),
+            threadId: ThreadId.makeUnsafe("thread-restart-fork-destination"),
+            sourceThreadId,
+            sourceMessageId: asMessageId("restart-new-assistant"),
+            projectId,
+            title: "stale client title",
+            modelSelection: { provider: "codex", model: "gpt-5-codex" },
+            runtimeMode: "approval-required",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            envMode: "local",
+            branch: null,
+            worktreePath: null,
+            importedMessages: [
+              ["fork-old-user", "user", "Old question", oldCreatedAt],
+              ["fork-old-assistant", "assistant", "Old answer", "2026-07-22T10:00:01.000Z"],
+              ["fork-new-user", "user", "New question", newCreatedAt],
+              ["fork-new-assistant", "assistant", "New answer", "2026-07-22T10:01:01.000Z"],
+            ].map(([id, role, text, createdAt]) => ({
+              messageId: asMessageId(id!),
+              role: role as "user" | "assistant",
+              text: text!,
+              createdAt: createdAt!,
+              updatedAt: createdAt!,
+            })),
+            createdAt: "2026-07-22T10:02:00.000Z",
+          }),
+        ),
+      ).resolves.toEqual(expect.objectContaining({ sequence: expect.any(Number) }));
+
+      const destination = (
+        await restartedSystem.run(restartedSystem.engine.getReadModel())
+      ).threads.find(
+        (thread) => thread.id === ThreadId.makeUnsafe("thread-restart-fork-destination"),
+      );
+      expect(destination?.messages.map((message) => message.text)).toEqual([
+        "Old question",
+        "Old answer",
+        "New question",
+        "New answer",
+      ]);
+    } finally {
+      if (firstSystem) await firstSystem.dispose();
+      if (restartedSystem) await restartedSystem.dispose();
+      fs.rmSync(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("validates long message-boundary forks against the renderer-retained source window", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const projectId = asProjectId("project-long-fork");
+    const sourceThreadId = ThreadId.makeUnsafe("thread-long-fork-source");
+    const baseTimestamp = Date.parse("2026-07-22T10:00:00.000Z");
+    const sourceMessages = Array.from({ length: 2_002 }, (_, index) => {
+      const sequence = String(index).padStart(4, "0");
+      const createdAt = new Date(baseTimestamp + index).toISOString();
+      return {
+        messageId: asMessageId(`long-source-${sequence}`),
+        role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+        text: `Long transcript message ${sequence}`,
+        createdAt,
+        updatedAt: createdAt,
+      };
+    });
+
+    try {
+      await system.run(
+        engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe("cmd-project-long-fork-create"),
+          projectId,
+          title: "Long fork project",
+          workspaceRoot: "/tmp/project-long-fork",
+          defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
+          createdAt: sourceMessages[0]!.createdAt,
+        }),
+      );
+      await system.run(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("cmd-thread-long-fork-source-create"),
+          threadId: sourceThreadId,
+          projectId,
+          title: "Long source",
+          modelSelection: { provider: "codex", model: "gpt-5-codex" },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: sourceMessages[0]!.createdAt,
+        }),
+      );
+      await system.run(
+        engine.dispatch({
+          type: "thread.messages.import",
+          commandId: CommandId.makeUnsafe("cmd-thread-long-fork-source-import"),
+          threadId: sourceThreadId,
+          messages: sourceMessages,
+          createdAt: sourceMessages.at(-1)!.createdAt,
+        }),
+      );
+
+      await expect(
+        system.run(
+          engine.dispatch({
+            type: "thread.fork.create",
+            commandId: CommandId.makeUnsafe("cmd-thread-long-fork-create"),
+            threadId: ThreadId.makeUnsafe("thread-long-fork-destination"),
+            sourceThreadId,
+            sourceMessageId: sourceMessages.at(-1)!.messageId,
+            projectId,
+            title: "Long fork",
+            modelSelection: { provider: "codex", model: "gpt-5-codex" },
+            runtimeMode: "approval-required",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            envMode: "local",
+            branch: null,
+            worktreePath: null,
+            importedMessages: sourceMessages.slice(-2_000).map((message, index) => ({
+              ...message,
+              messageId: asMessageId(`long-fork-${String(index).padStart(4, "0")}`),
+            })),
+            createdAt: new Date(baseTimestamp + sourceMessages.length).toISOString(),
+          }),
+        ),
+      ).resolves.toEqual(expect.objectContaining({ sequence: expect.any(Number) }));
+
+      const destination = (await system.run(engine.getReadModel())).threads.find(
+        (thread) => thread.id === ThreadId.makeUnsafe("thread-long-fork-destination"),
+      );
+      expect(destination?.messages).toHaveLength(2_000);
+      expect(destination?.messages[0]?.text).toBe("Long transcript message 0002");
+      expect(destination?.messages.at(-1)?.text).toBe("Long transcript message 2001");
+    } finally {
+      await system.dispose();
+    }
+  });
+
+  it("validates hot same-timestamp fork messages in persistent projection order", async () => {
+    const createdAt = "2026-07-22T10:00:00.000Z";
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const projectId = asProjectId("project-same-time-fork");
+    const sourceThreadId = ThreadId.makeUnsafe("thread-same-time-fork-source");
+
+    try {
+      await system.run(
+        engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe("cmd-project-same-time-fork-create"),
+          projectId,
+          title: "Same-time fork project",
+          workspaceRoot: "/tmp/project-same-time-fork",
+          defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
+          createdAt,
+        }),
+      );
+      await system.run(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("cmd-thread-same-time-fork-source-create"),
+          threadId: sourceThreadId,
+          projectId,
+          title: "Same-time source",
+          modelSelection: { provider: "codex", model: "gpt-5-codex" },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        }),
+      );
+      // Deliberately append in the opposite order from the projection's
+      // created_at/message_id ordering to exercise the hot overlay.
+      await system.run(
+        engine.dispatch({
+          type: "thread.messages.import",
+          commandId: CommandId.makeUnsafe("cmd-thread-same-time-fork-source-import"),
+          threadId: sourceThreadId,
+          messages: [
+            {
+              messageId: asMessageId("same-time-z-assistant"),
+              role: "assistant",
+              text: "Same-time answer",
+              createdAt,
+              updatedAt: createdAt,
+            },
+            {
+              messageId: asMessageId("same-time-a-user"),
+              role: "user",
+              text: "Same-time question",
+              createdAt,
+              updatedAt: createdAt,
+            },
+          ],
+          createdAt,
+        }),
+      );
+
+      await expect(
+        system.run(
+          engine.dispatch({
+            type: "thread.fork.create",
+            commandId: CommandId.makeUnsafe("cmd-thread-same-time-fork-create"),
+            threadId: ThreadId.makeUnsafe("thread-same-time-fork-destination"),
+            sourceThreadId,
+            sourceMessageId: asMessageId("same-time-z-assistant"),
+            projectId,
+            title: "Same-time fork",
+            modelSelection: { provider: "codex", model: "gpt-5-codex" },
+            runtimeMode: "approval-required",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            envMode: "local",
+            branch: null,
+            worktreePath: null,
+            importedMessages: [
+              {
+                messageId: asMessageId("same-time-fork-a-user"),
+                role: "user",
+                text: "Same-time question",
+                createdAt,
+                updatedAt: createdAt,
+              },
+              {
+                messageId: asMessageId("same-time-fork-z-assistant"),
+                role: "assistant",
+                text: "Same-time answer",
+                createdAt,
+                updatedAt: createdAt,
+              },
+            ],
+            createdAt,
+          }),
+        ),
+      ).resolves.toEqual(expect.objectContaining({ sequence: expect.any(Number) }));
+    } finally {
+      await system.dispose();
+    }
+  });
+
+  it("rejects a fork import that reuses a source message id without moving the source row", async () => {
+    const createdAt = now();
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const projectId = asProjectId("project-fork-message-id-collision");
+    const sourceThreadId = ThreadId.makeUnsafe("thread-fork-message-id-collision-source");
+    const sourceMessageId = asMessageId("message-fork-message-id-collision-source");
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-fork-message-id-collision"),
+        projectId,
+        title: "Fork collision project",
+        workspaceRoot: "/tmp/project-fork-message-id-collision",
+        defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-thread-fork-message-id-collision-source"),
+        threadId: sourceThreadId,
+        projectId,
+        title: "Source",
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-fork-message-id-collision-source"),
+        threadId: sourceThreadId,
+        message: {
+          messageId: sourceMessageId,
+          role: "user",
+          text: "Source message",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      }),
+    );
+
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "thread.fork.create",
+          commandId: CommandId.makeUnsafe("cmd-fork-message-id-collision"),
+          threadId: ThreadId.makeUnsafe("thread-fork-message-id-collision-destination"),
+          sourceThreadId,
+          sourceMessageId,
+          projectId,
+          title: "Source",
+          modelSelection: { provider: "codex", model: "gpt-5-codex" },
+          runtimeMode: "approval-required",
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          envMode: "local",
+          branch: null,
+          worktreePath: null,
+          importedMessages: [
+            {
+              messageId: sourceMessageId,
+              role: "user",
+              text: "Source message",
+              attachments: [],
+              createdAt,
+              updatedAt: createdAt,
+            },
+          ],
+          createdAt,
+        }),
+      ),
+    ).rejects.toThrow("must be unique and must not already exist");
+
+    const sourceThread = (await system.run(engine.getReadModel())).threads.find(
+      (thread) => thread.id === sourceThreadId,
+    );
+    expect(sourceThread?.messages.map((message) => message.id)).toEqual([sourceMessageId]);
     await system.dispose();
   });
 

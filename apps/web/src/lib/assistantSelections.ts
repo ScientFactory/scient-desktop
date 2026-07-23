@@ -3,14 +3,15 @@
 // Layer: Chat composer and transcript helpers
 
 import { CHAT_ASSISTANT_SELECTION_TEXT_MAX_CHARS } from "@synara/contracts";
+import { stripEmbeddedAssistantSelections } from "@synara/shared/assistantSelections";
+
+export { stripEmbeddedAssistantSelections } from "@synara/shared/assistantSelections";
 
 import type { ChatAssistantSelectionAttachment } from "../types";
 import { randomUUID } from "./utils";
 
 const TRAILING_ASSISTANT_SELECTIONS_PATTERN =
   /\n*<assistant_selection>\n([\s\S]*?)\n<\/assistant_selection>\s*$/;
-const EMBEDDED_ASSISTANT_SELECTIONS_PATTERN =
-  /\n*<assistant_selection>\n[\s\S]*?\n<\/assistant_selection>(?=\n*(<terminal_context>\n[\s\S]*?\n<\/terminal_context>\s*)?(<file_comments>\n[\s\S]*?\n<\/file_comments>\s*)?(<pasted_text>\n[\s\S]*?\n<\/pasted_text>\s*)?$)/;
 const ASSISTANT_SELECTION_PREVIEW_MAX_CHARS = 44;
 
 export interface ExtractedAssistantSelections {
@@ -153,10 +154,6 @@ export function extractTrailingAssistantSelections(prompt: string): ExtractedAss
 
 export function stripTrailingAssistantSelections(prompt: string): string {
   return extractTrailingAssistantSelections(prompt).promptText;
-}
-
-export function stripEmbeddedAssistantSelections(prompt: string): string {
-  return prompt.replace(EMBEDDED_ASSISTANT_SELECTIONS_PATTERN, "");
 }
 
 function parseAssistantSelectionEntries(block: string): ParsedAssistantSelectionEntry[] {

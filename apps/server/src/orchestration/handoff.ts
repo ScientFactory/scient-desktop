@@ -1,5 +1,6 @@
 import {
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  type ChatAttachment,
   type OrchestrationMessage,
   type OrchestrationThread,
 } from "@synara/contracts";
@@ -31,6 +32,16 @@ function roleLabel(message: Pick<OrchestrationMessage, "role">): "User" | "Assis
   return message.role === "assistant" ? "Assistant" : "User";
 }
 
+function bootstrapMessageContent(message: OrchestrationMessage): string {
+  const text = normalizeMessageText(message.text);
+  const attachmentLines = (message.attachments ?? []).flatMap((attachment) =>
+    attachment.type === "assistant-selection"
+      ? [`[Selected assistant text: ${normalizeMessageText(attachment.text)}]`]
+      : [`[Attachment: ${attachment.name} (${attachment.mimeType})]`],
+  );
+  return [text, ...attachmentLines].filter((part) => part.length > 0).join("\n");
+}
+
 function earlierSummaryHeader(omittedCount: number): string {
   return omittedCount > 0
     ? `Earlier conversation summary (${omittedCount} older ${
@@ -59,6 +70,36 @@ export function listImportedForkMessages(
       (message.role === "user" || message.role === "assistant") &&
       message.streaming === false,
   );
+}
+
+export function listImportedForkProviderAttachments(
+  thread: Pick<OrchestrationThread, "messages">,
+): ReadonlyArray<Exclude<ChatAttachment, { readonly type: "assistant-selection" }>> {
+  const attachmentsById = new Map<
+    string,
+    Exclude<ChatAttachment, { readonly type: "assistant-selection" }>
+  >();
+  for (const message of listImportedForkMessages(thread)) {
+    for (const attachment of message.attachments ?? []) {
+      if (attachment.type !== "assistant-selection") {
+        attachmentsById.set(attachment.id, attachment);
+      }
+    }
+  }
+  return [...attachmentsById.values()];
+}
+
+export function buildImportedForkAttachmentManifest(
+  thread: Pick<OrchestrationThread, "messages">,
+): string | null {
+  const attachments = listImportedForkProviderAttachments(thread);
+  if (attachments.length === 0) {
+    return null;
+  }
+  return [
+    "Imported attachment manifest:",
+    ...attachments.map((attachment) => `- ${attachment.name} (${attachment.mimeType})`),
+  ].join("\n");
 }
 
 export function hasNativeHandoffMessages(thread: Pick<OrchestrationThread, "messages">): boolean {
@@ -131,7 +172,7 @@ function buildImportedMessagesBootstrapText(input: {
     recentMessages
       .map((message) => {
         const normalized = truncateText(
-          normalizeMessageText(message.text),
+          bootstrapMessageContent(message),
           RECENT_MESSAGE_CHAR_LIMIT,
         );
         return `${roleLabel(message)}:\n${normalized}`;
@@ -149,10 +190,7 @@ function buildImportedMessagesBootstrapText(input: {
     const summaryLines: string[] = [];
     for (let index = earlierMessages.length - 1; index >= 0; index -= 1) {
       const message = earlierMessages[index]!;
-      const normalized = truncateText(
-        normalizeMessageText(message.text),
-        EARLIER_MESSAGE_CHAR_LIMIT,
-      );
+      const normalized = truncateText(bootstrapMessageContent(message), EARLIER_MESSAGE_CHAR_LIMIT);
       const line = `- ${roleLabel(message)}: ${normalized}`;
       if (remaining < line.length + 1) {
         break;
@@ -223,6 +261,28 @@ export function buildForkBootstrapText(
     thread,
     importedMessages,
     intro: "This sidechat was cloned from an earlier conversation.",
+    maxChars,
+    ceilingChars: AUTOMATIC_BOOTSTRAP_TRANSCRIPT_CHAR_BUDGET,
+  });
+}
+
+export function buildMessageForkBootstrapText(
+  thread: Pick<OrchestrationThread, "title" | "branch" | "worktreePath" | "messages">,
+  maxChars = HANDOFF_BOOTSTRAP_CHAR_BUDGET,
+): string | null {
+  const importedMessages = listImportedForkMessages(thread);
+  if (importedMessages.length === 0) {
+    return null;
+  }
+
+  const attachmentManifest = buildImportedForkAttachmentManifest(thread);
+
+  return buildImportedMessagesBootstrapText({
+    thread,
+    importedMessages,
+    intro: ["This task was forked from an exact earlier conversation boundary.", attachmentManifest]
+      .filter((section): section is string => section !== null)
+      .join("\n\n"),
     maxChars,
     ceilingChars: AUTOMATIC_BOOTSTRAP_TRANSCRIPT_CHAR_BUDGET,
   });
