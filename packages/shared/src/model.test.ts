@@ -18,6 +18,7 @@ import {
   getDefaultAutoCompactWindow,
   getDefaultContextWindow,
   getDefaultModel,
+  getRecommendedDefaultModelSelection,
   getModelCapabilities,
   getModelOptions,
   hasContextWindowOption,
@@ -32,6 +33,7 @@ import {
   resolveSelectableModel,
   resolveModelSlug,
   resolveModelSlugForProvider,
+  resolveRecommendedModelSelection,
   getDefaultEffort,
   getProviderOptionCurrentLabel,
   getProviderOptionDescriptors,
@@ -69,7 +71,7 @@ describe("normalizeModelSlug", () => {
     expect(normalizeModelSlug("opus-4.6", "claudeAgent")).toBe("claude-opus-4-6");
     expect(normalizeModelSlug("claude-haiku-4-5-20251001", "claudeAgent")).toBe("claude-haiku-4-5");
     expect(normalizeModelSlug("4.3", "grok")).toBe("grok-build");
-    expect(normalizeModelSlug("grok-latest", "grok")).toBe("grok-build");
+    expect(normalizeModelSlug("grok-latest", "grok")).toBe("grok-build-latest");
     expect(normalizeModelSlug("grok-code-fast-1", "grok")).toBe("grok-build-0.1");
     expect(normalizeModelSlug("grok-code-fast-1-0825", "grok")).toBe("grok-build-0.1");
   });
@@ -177,6 +179,129 @@ describe("resolveSelectableModel", () => {
         { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
       ]),
     ).toBeNull();
+  });
+});
+
+describe("recommended provider defaults", () => {
+  it("uses current product defaults with explicit high effort where Scient owns it", () => {
+    expect(getRecommendedDefaultModelSelection("codex")).toEqual({
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      options: { reasoningEffort: "high" },
+    });
+    expect(getRecommendedDefaultModelSelection("claudeAgent")).toEqual({
+      provider: "claudeAgent",
+      model: "claude-opus-4-8",
+      options: { effort: "high" },
+    });
+    expect(getRecommendedDefaultModelSelection("cursor")).toEqual({
+      provider: "cursor",
+      model: "gpt-5.6-sol",
+      options: { reasoningEffort: "high" },
+    });
+    expect(getRecommendedDefaultModelSelection("antigravity")).toEqual({
+      provider: "antigravity",
+      model: "gemini-3.6-flash",
+      options: { reasoningEffort: "high" },
+    });
+    expect(getRecommendedDefaultModelSelection("grok")).toEqual({
+      provider: "grok",
+      model: "grok-build-latest",
+      options: { reasoningEffort: "high" },
+    });
+    expect(getRecommendedDefaultModelSelection("droid")).toEqual({
+      provider: "droid",
+      model: "auto",
+    });
+    expect(getRecommendedDefaultModelSelection("kilo")).toEqual({
+      provider: "kilo",
+      model: "kilo/kilo-auto/frontier",
+    });
+    expect(getRecommendedDefaultModelSelection("opencode")).toEqual({
+      provider: "opencode",
+      model: "openai/gpt-5.6-sol",
+      options: { variant: "high" },
+    });
+    expect(getRecommendedDefaultModelSelection("pi")).toBeNull();
+  });
+
+  it("chooses Claude Opus through resolved SDK metadata regardless of catalog order", () => {
+    expect(
+      resolveRecommendedModelSelection("claudeAgent", [
+        {
+          slug: "sonnet",
+          name: "Claude Sonnet 5",
+          resolvedModel: "claude-sonnet-5",
+          supportedReasoningEfforts: [{ value: "high" }],
+        },
+        {
+          slug: "opus[1m]",
+          name: "Claude Opus 4.8 (1M context)",
+          resolvedModel: "claude-opus-4-8[1m]",
+          supportedReasoningEfforts: [{ value: "low" }, { value: "high" }],
+        },
+      ]),
+    ).toEqual({
+      provider: "claudeAgent",
+      model: "opus[1m]",
+      options: { effort: "high" },
+    });
+  });
+
+  it("uses the recommended available model instead of the first catalog row", () => {
+    expect(
+      resolveRecommendedModelSelection("codex", [
+        { slug: "gpt-5.5", name: "GPT-5.5" },
+        {
+          slug: "gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          supportedReasoningEfforts: [{ value: "low" }, { value: "high" }],
+        },
+      ]),
+    ).toEqual({
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      options: { reasoningEffort: "high" },
+    });
+  });
+
+  it("keeps Droid on its provider router without forcing reasoning effort", () => {
+    expect(
+      resolveRecommendedModelSelection("droid", [
+        { slug: "claude-opus-4-8", name: "Claude Opus 4.8" },
+        {
+          slug: "auto",
+          name: "Auto Model",
+          supportedReasoningEfforts: [{ value: "high" }],
+        },
+      ]),
+    ).toEqual({ provider: "droid", model: "auto" });
+  });
+
+  it("selects the best available Pi model and high thinking from its live catalog", () => {
+    expect(
+      resolveRecommendedModelSelection("pi", [
+        { slug: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5" },
+        {
+          slug: "openai/gpt-5.6-sol",
+          name: "GPT-5.6 Sol",
+          supportedReasoningEfforts: [{ value: "medium" }, { value: "high" }],
+        },
+      ]),
+    ).toEqual({
+      provider: "pi",
+      model: "openai/gpt-5.6-sol",
+      options: { thinkingLevel: "high" },
+    });
+  });
+
+  it("falls back to the provider-advertised default when preferred models are unavailable", () => {
+    expect(
+      resolveRecommendedModelSelection("opencode", [
+        { slug: "vendor/tiny", name: "Tiny" },
+        { slug: "vendor/reliable", name: "Reliable", isDefault: true },
+      ]),
+    ).toEqual({ provider: "opencode", model: "vendor/reliable" });
   });
 });
 

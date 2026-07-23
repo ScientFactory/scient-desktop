@@ -54,6 +54,7 @@ import {
   type ProviderListSkillsResult,
   type ProviderListAgentsResult,
   type ProviderListModelsResult,
+  type ProviderModelDescriptor,
   getAgentMentionAliases,
 } from "@synara/contracts";
 import {
@@ -296,6 +297,25 @@ function mapSupportedCommands(commands: SlashCommand[]): ProviderListCommandsRes
     })),
     source: "claudeAgent",
     cached: false,
+  };
+}
+
+function mapClaudeModelInfo(model: ModelInfo): ProviderModelDescriptor {
+  const resolvedModel = model.resolvedModel?.trim();
+  const description = model.description.trim();
+  const supportedReasoningEfforts = model.supportedEffortLevels?.map((effort) => ({
+    value: effort,
+    label:
+      effort === "xhigh" ? "Extra High" : `${effort.charAt(0).toUpperCase()}${effort.slice(1)}`,
+  }));
+  return {
+    slug: model.value,
+    name: model.displayName,
+    ...(resolvedModel ? { resolvedModel } : {}),
+    ...(model.value === "default" ? { isDefault: true as const } : {}),
+    ...(description ? { description } : {}),
+    ...(supportedReasoningEfforts?.length ? { supportedReasoningEfforts } : {}),
+    ...(model.supportsFastMode !== undefined ? { supportsFastMode: model.supportsFastMode } : {}),
   };
 }
 
@@ -3748,7 +3768,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
               .supportedModels()
               .then((models) => {
                 modelsCache.set(modelCacheKey, {
-                  models: models.map((m) => ({ slug: m.value, name: m.displayName })),
+                  models: models.map(mapClaudeModelInfo),
                   source: "sdk",
                   cached: false,
                 });
@@ -4327,7 +4347,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         })().catch(() => undefined);
         const models = await tempQuery.supportedModels();
         return {
-          models: models.map((model) => ({ slug: model.value, name: model.displayName })),
+          models: models.map(mapClaudeModelInfo),
           source: "sdk",
           cached: false,
         };

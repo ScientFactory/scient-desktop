@@ -475,7 +475,8 @@ describe("threadHandoff", () => {
       }),
     ).toEqual({
       provider: "codex",
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
+      options: { reasoningEffort: "high" },
     });
   });
 });
