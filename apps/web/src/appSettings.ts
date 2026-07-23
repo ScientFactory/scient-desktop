@@ -45,6 +45,7 @@ const APP_SETTINGS_STORAGE_KEY = "scient:app-settings:v1";
 const SERVER_SETTINGS_MIGRATION_STORAGE_KEY = "scient:server-settings-migrated:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
+export const CURRENT_APP_SETTINGS_VERSION = 1;
 export const MIN_CHAT_FONT_SIZE_PX = 11;
 export const MAX_CHAT_FONT_SIZE_PX = 18;
 export const DEFAULT_CHAT_FONT_SIZE_PX = 15;
@@ -160,6 +161,10 @@ const PersistedProviderKind = Schema.Literals([
 );
 
 export const AppSettingsSchema = Schema.Struct({
+  appSettingsVersion: Schema.Number.pipe(
+    Schema.withConstructorDefault(() => Option.some(CURRENT_APP_SETTINGS_VERSION)),
+    Schema.withDecodingDefault(() => 0),
+  ),
   telemetryPrivacyLevel: TelemetryPrivacyLevel.pipe(withDefaults(() => "essential" as const)),
   claudeBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
   uiDensity: UiDensity.pipe(withDefaults(() => DEFAULT_UI_DENSITY)),
@@ -202,7 +207,7 @@ export const AppSettingsSchema = Schema.Struct({
   // (rootless chats not tied to a project). `showStudioSection` and
   // `showWorkspaceSection` control optional tabs in the section switcher.
   showChatsSection: Schema.Boolean.pipe(withDefaults(() => true)),
-  showStudioSection: Schema.Boolean.pipe(withDefaults(() => true)),
+  showStudioSection: Schema.Boolean.pipe(withDefaults(() => false)),
   showWorkspaceSection: Schema.Boolean.pipe(withDefaults(() => false)),
   // Local-only UI preferences: which optional sections of the chat Environment panel are
   // shown. The git block (Changes/Worktree/branch/Commit and Push) is always visible; these
@@ -791,7 +796,20 @@ function buildInitialServerSettingsMigrationPatch(settings: AppSettings): Server
 }
 
 export function normalizeStoredAppSettings(settings: AppSettings): AppSettings {
-  return normalizeAppSettings(settings);
+  const normalizedSettings = normalizeAppSettings(settings);
+  if (normalizedSettings.appSettingsVersion >= CURRENT_APP_SETTINGS_VERSION) {
+    return normalizedSettings;
+  }
+
+  // v1 intentionally applies the new product defaults once to every existing local profile,
+  // including profiles with explicit values. Persisting the version alongside the settings
+  // ensures later user changes remain untouched.
+  return normalizeAppSettings({
+    ...normalizedSettings,
+    appSettingsVersion: CURRENT_APP_SETTINGS_VERSION,
+    chatFontSizePx: DEFAULT_CHAT_FONT_SIZE_PX,
+    showStudioSection: false,
+  });
 }
 
 export function getCustomModelsForProvider(
@@ -1172,13 +1190,18 @@ export function useAppSettings() {
     [],
   );
 
+  const migratedLocalSettings = useMemo(
+    () => normalizeStoredAppSettings(localSettings),
+    [localSettings],
+  );
+
   const settings = useMemo(
     () =>
       normalizeAppSettings({
-        ...localSettings,
+        ...migratedLocalSettings,
         ...(serverSettingsQuery.data ? serverSettingsToAppSettings(serverSettingsQuery.data) : {}),
       }),
-    [localSettings, serverSettingsQuery.data],
+    [migratedLocalSettings, serverSettingsQuery.data],
   );
 
   useEffect(() => {
@@ -1221,7 +1244,9 @@ export function useAppSettings() {
 
   const updateSettings = useCallback(
     (patch: Partial<AppSettings>) => {
-      setSettings((prev) => normalizeAppSettings({ ...prev, ...patch }));
+      setSettings((previous) =>
+        normalizeAppSettings({ ...normalizeStoredAppSettings(previous), ...patch }),
+      );
       if (touchesProviderDiscoverySettings(patch)) {
         void queryClient.invalidateQueries({ queryKey: providerDiscoveryQueryKeys.all });
       }
