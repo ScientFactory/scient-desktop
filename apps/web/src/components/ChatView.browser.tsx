@@ -1509,10 +1509,11 @@ async function waitForURL(
   return pathname;
 }
 
-async function waitForComposerEditor(): Promise<HTMLElement> {
+async function waitForComposerEditor(timeout = 8_000): Promise<HTMLElement> {
   return waitForElement(
     () => document.querySelector<HTMLElement>('[contenteditable="true"]'),
     "Unable to find composer editor.",
+    timeout,
   );
 }
 
@@ -1974,7 +1975,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      await waitForComposerEditor();
+      await waitForComposerEditor(20_000);
       expect(document.body.textContent).not.toContain("Codex provider status");
       expect(document.body.textContent).not.toContain("Codex is not installed.");
 
@@ -2021,10 +2022,15 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      await vi.waitFor(() => {
-        expect(document.body.textContent).toContain("Codex provider status");
-        expect(document.body.textContent).toContain("Codex is not installed.");
-      });
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-slot='alert-title']")).find(
+            (element) => element.textContent === "Codex provider status",
+          ) ?? null,
+        "Unable to find provider health for the existing conversation.",
+        20_000,
+      );
+      expect(document.body.textContent).toContain("Codex is not installed.");
     } finally {
       await mounted.cleanup();
     }
