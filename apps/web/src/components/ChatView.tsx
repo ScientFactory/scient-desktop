@@ -2912,7 +2912,11 @@ export default function ChatView({
     ? (appendVoiceTranscriptToPrompt(prompt, liveVoicePreview) ?? prompt)
     : null;
   const isComposerEditorDisabled =
-    isConnecting || isComposerApprovalState || isVoiceRecording || isVoiceTranscribing;
+    isConnecting ||
+    isComposerApprovalState ||
+    isVoiceRecording ||
+    isVoiceTranscribing ||
+    liveVoicePreview !== null;
   const canCollapsePastedTextToDraft = shouldEnableComposerPastedTextCollapse({
     isComposerApprovalState,
     hasPendingUserInput: pendingUserInputs.length > 0,
@@ -6379,9 +6383,6 @@ export default function ChatView({
         });
         if (!isCurrentVoiceRequest()) {
           return;
-        }
-        if (intent === "send") {
-          setVoiceCompletionIntent(null);
         }
         const completion = await completeComposerVoiceTranscript({
           intent,
