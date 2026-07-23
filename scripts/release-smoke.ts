@@ -4,7 +4,15 @@
 // Depends on: update-release-package-versions.ts and merge-mac-update-manifests.ts.
 
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
@@ -155,7 +163,7 @@ function verifyCanonicalIdentity(): void {
     throw new Error("Expected Linux desktop entries to preserve Electron's sandbox.");
   }
   const requireFromElectronBuilder = createRequire(
-    resolve(repoRoot, "node_modules/electron-builder/package.json"),
+    realpathSync(resolve(repoRoot, "node_modules/electron-builder/package.json")),
   );
   const appImageLauncherGenerator = readFileSync(
     requireFromElectronBuilder.resolve("app-builder-lib/out/targets/appimage/appImageUtil.js"),
