@@ -3519,6 +3519,34 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps slash-command validation feedback inside the composer controls", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/review unsupported-target");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-local-slash-feedback" as MessageId,
+        targetText: "local slash feedback target",
+      }),
+    });
+
+    try {
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find composer form.",
+      );
+      composerForm.requestSubmit();
+
+      const feedback = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-composer-local-feedback="true"]'),
+        "Unable to find composer-local slash feedback.",
+      );
+      expect(feedback.textContent).toContain("Invalid /review command");
+      expect(feedback.closest('[data-chat-composer-footer="true"]')).not.toBeNull();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("shows a queued follow-up row while a turn is running", async () => {
     useComposerDraftStore.getState().setPrompt(THREAD_ID, "queue this follow-up");
 

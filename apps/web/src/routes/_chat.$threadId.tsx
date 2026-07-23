@@ -143,7 +143,7 @@ import {
   splitViewPaneScopeId,
 } from "../lib/chatPaneScope";
 import { getSidechatCreator } from "../lib/sidechatCreatorRegistry";
-import { toastManager } from "../components/ui/toast";
+import { transientAlertManager } from "../notifications/transientAlert";
 import { useAppSettings } from "../appSettings";
 import { useStore } from "../store";
 import { readNativeApi } from "../nativeApi";
@@ -1820,7 +1820,7 @@ function SingleChatSurface(props: {
           }
         })
         .catch((error: unknown) => {
-          toastManager.add({
+          transientAlertManager.add({
             type: "error",
             title: "Could not preview HTML",
             description:
@@ -2057,7 +2057,7 @@ function SingleChatSurface(props: {
   const handleSelectEditorProject = useCallback(
     (projectId: ProjectId) => {
       void openEditorProject(projectId).catch((error: unknown) => {
-        toastManager.add({
+        transientAlertManager.add({
           type: "error",
           title: "Unable to open project",
           description: error instanceof Error ? error.message : "The project could not be opened.",
@@ -2137,7 +2137,7 @@ function SingleChatSurface(props: {
         // selection) published via the registry instead of opening an empty pane.
         const createSidechat = getSidechatCreator(props.threadId);
         if (!createSidechat) {
-          toastManager.add({
+          transientAlertManager.add({
             type: "warning",
             title: "Side is unavailable",
             description: "Open a server-backed main thread before starting Side.",
@@ -2145,7 +2145,7 @@ function SingleChatSurface(props: {
           return;
         }
         void createSidechat().catch((error) => {
-          toastManager.add({
+          transientAlertManager.add({
             type: "error",
             title: "Could not start Side",
             description:

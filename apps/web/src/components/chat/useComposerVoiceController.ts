@@ -9,13 +9,25 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Project } from "../../types";
 import { formatVoiceRecordingDuration, useVoiceRecorder } from "../../lib/voiceRecorder";
 import { readNativeApi } from "../../nativeApi";
-import { toastManager } from "../ui/toast";
+import { transientAlertManager } from "../../notifications/transientAlert";
 import {
   deriveComposerVoiceState,
   describeVoiceRecordingStartError,
   isVoiceAuthExpiredMessage,
   sanitizeVoiceErrorMessage,
 } from "../ChatView.logic";
+
+export interface ComposerLocalFeedback {
+  type: "error" | "info" | "success" | "warning";
+  title: string;
+  description?: string;
+  actionProps?: {
+    children: string;
+    onClick: () => void;
+  };
+}
+
+export type ReportComposerLocalFeedback = (feedback: ComposerLocalFeedback) => void;
 
 interface UseComposerVoiceControllerOptions {
   activeProject: Project | undefined;
@@ -26,6 +38,7 @@ interface UseComposerVoiceControllerOptions {
   pendingUserInputCount: number;
   onTranscriptReady: (transcript: string) => void;
   refreshVoiceStatus: () => void;
+  onFeedback?: ReportComposerLocalFeedback;
 }
 
 interface UseComposerVoiceControllerResult {
@@ -52,6 +65,7 @@ export function useComposerVoiceController(
     pendingUserInputCount,
     onTranscriptReady,
     refreshVoiceStatus,
+    onFeedback,
   } = options;
   const {
     isRecording: isVoiceRecording,
@@ -87,6 +101,22 @@ export function useComposerVoiceController(
       isVoiceTranscribing,
     ],
   );
+  // This hook is also used by the Kanban task dialog. Composer callers provide
+  // an owning-control reporter; the legacy toast is retained only as a fallback
+  // for that out-of-scope non-composer consumer until it gains local feedback.
+  const reportFeedback = useCallback<ReportComposerLocalFeedback>(
+    (feedback) => {
+      if (onFeedback) {
+        onFeedback(feedback);
+        return;
+      }
+      transientAlertManager.add({
+        ...feedback,
+        type: feedback.type === "warning" ? "warning" : "error",
+      });
+    },
+    [onFeedback],
+  );
 
   useEffect(() => {
     voiceTranscriptionRequestIdRef.current += 1;
@@ -108,21 +138,21 @@ export function useComposerVoiceController(
       return;
     }
     if (activeProviderStatus?.authStatus === "unauthenticated") {
-      toastManager.add({
+      reportFeedback({
         type: "error",
         title: "Sign in to ChatGPT in Codex before using voice notes.",
       });
       return;
     }
     if (!canStartVoiceNotes) {
-      toastManager.add({
+      reportFeedback({
         type: "error",
         title: "Voice notes require a ChatGPT-authenticated Codex session.",
       });
       return;
     }
     if (pendingUserInputCount > 0) {
-      toastManager.add({
+      reportFeedback({
         type: "error",
         title: "Answer plan questions before recording a voice note.",
       });
@@ -132,7 +162,7 @@ export function useComposerVoiceController(
     try {
       await startVoiceRecording();
     } catch (error) {
-      toastManager.add({
+      reportFeedback({
         type: "error",
         title: "Could not start recording",
         description: describeVoiceRecordingStartError(error),
@@ -143,6 +173,7 @@ export function useComposerVoiceController(
     activeProviderStatus?.authStatus,
     canStartVoiceNotes,
     pendingUserInputCount,
+    reportFeedback,
     startVoiceRecording,
   ]);
 
@@ -153,7 +184,7 @@ export function useComposerVoiceController(
 
     const api = readNativeApi();
     if (!api) {
-      toastManager.add({
+      reportFeedback({
         type: "error",
         title: "Voice transcription is unavailable right now.",
       });
@@ -177,7 +208,7 @@ export function useComposerVoiceController(
         return;
       }
       if (!payload) {
-        toastManager.add({
+        reportFeedback({
           type: "warning",
           title: "No audio was captured.",
         });
@@ -206,7 +237,7 @@ export function useComposerVoiceController(
       if (authExpired) {
         refreshVoiceStatus();
       }
-      toastManager.add({
+      reportFeedback({
         type: "error",
         title: authExpired ? "Sign in to ChatGPT again" : "Voice transcription failed",
         description: authExpired
@@ -232,6 +263,7 @@ export function useComposerVoiceController(
     cancelVoiceRecording,
     isVoiceRecording,
     onTranscriptReady,
+    reportFeedback,
     refreshVoiceStatus,
     selectedProvider,
     stopVoiceRecording,

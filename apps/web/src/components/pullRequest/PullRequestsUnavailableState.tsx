@@ -8,7 +8,6 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
-import { toastManager } from "~/components/ui/toast";
 import {
   Empty,
   EmptyContent,
@@ -43,6 +42,7 @@ function githubCliInstallCommand(platform: string): string | null {
 /** A single copyable terminal command — the `brew install gh` / `gh auth login` affordances. */
 function CommandLine({ command }: { command: string }) {
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const resetTimerRef = useRef<number | null>(null);
 
@@ -55,55 +55,75 @@ function CommandLine({ command }: { command: string }) {
   }, []);
 
   return (
-    <button
-      type="button"
-      onClick={() => {
-        void copyTextToClipboard(command).then(
-          () => {
-            if (!mountedRef.current) return;
-            setCopied(true);
-            if (resetTimerRef.current !== null) window.clearTimeout(resetTimerRef.current);
-            resetTimerRef.current = window.setTimeout(() => {
-              resetTimerRef.current = null;
-              setCopied(false);
-            }, 1500);
-          },
-          (error) => {
-            if (!mountedRef.current) return;
-            toastManager.add({
-              type: "error",
-              title: "Could not copy command",
-              description: error instanceof Error ? error.message : "Clipboard access failed.",
-            });
-          },
-        );
-      }}
-      title="Copy to clipboard"
-      className="group flex w-full items-center gap-2 rounded-lg border border-border/60 bg-[var(--color-background-elevated-secondary)] px-3 py-2 text-left transition-colors hover:border-border"
-    >
-      <code
-        className={cn(PR_META_TEXT_CLASS_NAME, "min-w-0 flex-1 truncate font-mono text-foreground")}
-      >
-        {command}
-      </code>
-      <span
+    <div className="w-full space-y-1.5">
+      <button
+        type="button"
+        aria-describedby={copyError ? "pull-request-command-copy-error" : undefined}
+        aria-invalid={copyError ? true : undefined}
+        onClick={() => {
+          setCopyError(null);
+          setCopied(false);
+          if (resetTimerRef.current !== null) {
+            window.clearTimeout(resetTimerRef.current);
+            resetTimerRef.current = null;
+          }
+          void copyTextToClipboard(command).then(
+            () => {
+              if (!mountedRef.current) return;
+              setCopied(true);
+              resetTimerRef.current = window.setTimeout(() => {
+                resetTimerRef.current = null;
+                setCopied(false);
+              }, 1500);
+            },
+            (error) => {
+              if (!mountedRef.current) return;
+              setCopyError(error instanceof Error ? error.message : "Clipboard access failed.");
+            },
+          );
+        }}
+        title="Copy to clipboard"
         className={cn(
-          PR_FINE_TEXT_CLASS_NAME,
-          "flex shrink-0 items-center gap-1 text-muted-foreground transition-colors group-hover:text-foreground",
-          copied && "text-emerald-600 dark:text-emerald-400",
+          "group flex w-full items-center gap-2 rounded-lg border bg-[var(--color-background-elevated-secondary)] px-3 py-2 text-left transition-colors hover:border-border",
+          copyError ? "border-destructive/50" : "border-border/60",
         )}
       >
-        {copied ? (
-          <>
-            <CheckIcon className="size-3" /> Copied
-          </>
-        ) : (
-          <>
-            <CopyIcon className="size-3" /> Copy
-          </>
-        )}
-      </span>
-    </button>
+        <code
+          className={cn(
+            PR_META_TEXT_CLASS_NAME,
+            "min-w-0 flex-1 truncate font-mono text-foreground",
+          )}
+        >
+          {command}
+        </code>
+        <span
+          className={cn(
+            PR_FINE_TEXT_CLASS_NAME,
+            "flex shrink-0 items-center gap-1 text-muted-foreground transition-colors group-hover:text-foreground",
+            copied && "text-emerald-600 dark:text-emerald-400",
+          )}
+        >
+          {copied ? (
+            <>
+              <CheckIcon className="size-3" /> Copied
+            </>
+          ) : (
+            <>
+              <CopyIcon className="size-3" /> Copy
+            </>
+          )}
+        </span>
+      </button>
+      {copyError ? (
+        <p
+          id="pull-request-command-copy-error"
+          role="alert"
+          className={cn(PR_FINE_TEXT_CLASS_NAME, "px-1 text-destructive")}
+        >
+          Could not copy command: {copyError}
+        </p>
+      ) : null}
+    </div>
   );
 }
 

@@ -395,6 +395,8 @@ interface MessagesTimelineProps {
   controllerRef?: RefObject<MessagesTimelineController | null>;
   /** Message ids currently pinned for the active thread (drives the footer pin toggle state). */
   pinnedMessageIds?: ReadonlySet<MessageId>;
+  /** Message whose pin control most recently hit the per-thread limit. */
+  pinLimitMessageId?: MessageId | null;
   /** Excludes transient rows from persistent pin affordances. */
   canPinMessage?: (messageId: MessageId) => boolean;
   /** Toggle a message's pinned state from the assistant footer. */
@@ -461,6 +463,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   listRef,
   controllerRef,
   pinnedMessageIds,
+  pinLimitMessageId,
   canPinMessage,
   onTogglePinMessage,
   threadMarkers = [],
@@ -1610,6 +1613,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     ) : null}
                   </div>
                 )}
+                {pinLimitMessageId === row.message.id ? (
+                  <p
+                    className="mt-1 font-system-ui text-destructive text-xs"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    You’ve reached the pinned-message limit for this thread. Unpin one to add
+                    another.
+                  </p>
+                ) : null}
                 {(() => {
                   // Hold the end-of-turn changes card (Undo / Review) until the
                   // turn settles. While the turn is live the composer's own

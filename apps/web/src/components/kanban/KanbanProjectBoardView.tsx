@@ -16,20 +16,21 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   getProviderStartOptions,
   resolveAssistantDeliveryMode,
   useAppSettings,
 } from "~/appSettings";
-import { toastManager } from "~/components/ui/toast";
+import { DisclosureRegion } from "~/components/ui/DisclosureRegion";
 import { useProviderStatusesForLocalConfig } from "~/hooks/useProviderStatusesForLocalConfig";
 import { useRefreshProviderStatusesNow } from "~/hooks/useProviderStatusRefresh";
 import { resolveProviderSendAvailabilityWithRefresh } from "~/lib/providerAvailability";
 import { dispatchKanbanDraftCard } from "../../lib/kanbanDispatch";
 import { KanbanCardView } from "./KanbanCardView";
 import { KanbanColumn, parseKanbanColumnDropId } from "./KanbanColumn";
+import { KanbanInlineFeedback, type KanbanFeedback } from "./KanbanInlineFeedback";
 import {
   reorderDraftCardIds,
   type KanbanCard,
@@ -67,15 +68,29 @@ export function KanbanProjectBoardView({
   const refreshProviderStatuses = useRefreshProviderStatusesNow();
   const setDraftOrder = useKanbanUiStore((state) => state.setDraftOrder);
   const [activeCard, setActiveCard] = useState<KanbanCard | null>(null);
+  const [feedback, setFeedback] = useState<KanbanFeedback | null>(null);
   // A completed drag still emits a click on the source card; swallow exactly that one
   // so dropping a card never also opens its chat.
   const suppressClickRef = useRef(false);
+
+  useEffect(() => {
+    setActiveCard(null);
+    setFeedback(null);
+  }, [board.projectId]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 6 },
     }),
   );
+
+  useEffect(() => {
+    if (feedback?.tone !== "info" && feedback?.tone !== "success") {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => setFeedback(null), 3_000);
+    return () => window.clearTimeout(timeoutId);
+  }, [feedback]);
   const collisionDetection = useCallback<CollisionDetection>((args) => {
     const pointerCollisions = pointerWithin(args);
     if (pointerCollisions.length > 0) {
@@ -103,9 +118,10 @@ export function KanbanProjectBoardView({
         refreshStatuses: () => refreshProviderStatuses({ silent: true }),
       });
       if (!sendAvailability.usable) {
-        toastManager.add({
-          type: "error",
+        setFeedback({
+          tone: "error",
           title: sendAvailability.unavailableReason,
+          description: "Reconnect the provider, then drag the task to In Progress again.",
         });
         return;
       }
@@ -118,38 +134,24 @@ export function KanbanProjectBoardView({
         providerOptions: providerOptionsForDispatch,
       });
       if (result.kind === "dispatched") {
-        toastManager.add({
-          type: "success",
-          title: "Draft sent",
-          description: card.title,
-        });
+        setFeedback(null);
         return;
       }
       if (result.kind === "open-thread") {
-        const description =
-          result.reason === "empty"
-            ? "Nothing to send yet — write the prompt in the composer."
-            : result.reason === "worktree-pending"
-              ? "Open the chat to create the worktree with the normal send flow."
-              : "Open the chat to continue this task.";
-        toastManager.add({
-          type: "info",
-          title: "Finish this draft in the chat",
-          description,
-        });
+        setFeedback(null);
         onOpenCard(card);
         return;
       }
       if (result.kind === "unavailable") {
-        toastManager.add({
-          type: "error",
+        setFeedback({
+          tone: "error",
           title: "Not connected",
           description: "Reconnect to the server before sending drafts.",
         });
         return;
       }
-      toastManager.add({
-        type: "error",
+      setFeedback({
+        tone: "error",
         title: "Could not send draft",
         description: result.message,
       });
@@ -221,12 +223,18 @@ export function KanbanProjectBoardView({
         if (useKanbanUiStore.getState().optimisticDispatchByThreadId[card.threadId]) {
           return;
         }
-        void handleDispatchDrop(card);
+        void handleDispatchDrop(card).catch((error: unknown) => {
+          setFeedback({
+            tone: "error",
+            title: "Could not send draft",
+            description: error instanceof Error ? error.message : "Unexpected error.",
+          });
+        });
         return;
       }
       if (targetColumn === "done") {
-        toastManager.add({
-          type: "info",
+        setFeedback({
+          tone: "info",
           title: "Done is derived automatically",
           description: "Cards move here when their runs complete.",
         });
@@ -243,39 +251,48 @@ export function KanbanProjectBoardView({
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      <div className="flex h-full min-h-0 gap-3 overflow-x-auto px-4 pb-4">
-        <KanbanColumn
-          projectId={board.projectId}
-          columnKey="draft"
-          cards={board.draft}
-          onOpenCard={handleOpenCard}
-          onCardContextMenu={onCardContextMenu}
-          sortable
-          droppable
-          activeCard={activeCard}
-          onNewCard={onNewTask}
-          {...(nowMs !== undefined ? { nowMs } : {})}
-        />
-        <KanbanColumn
-          projectId={board.projectId}
-          columnKey="inProgress"
-          cards={board.inProgress}
-          onOpenCard={handleOpenCard}
-          onCardContextMenu={onCardContextMenu}
-          droppable
-          activeCard={activeCard}
-          {...(nowMs !== undefined ? { nowMs } : {})}
-        />
-        <KanbanColumn
-          projectId={board.projectId}
-          columnKey="done"
-          cards={board.done}
-          onOpenCard={handleOpenCard}
-          onCardContextMenu={onCardContextMenu}
-          droppable
-          activeCard={activeCard}
-          {...(nowMs !== undefined ? { nowMs } : {})}
-        />
+      <div className="flex h-full min-h-0 flex-col">
+        <DisclosureRegion open={feedback !== null} className="shrink-0 px-4">
+          <div className="pb-2">
+            {feedback ? (
+              <KanbanInlineFeedback feedback={feedback} onDismiss={() => setFeedback(null)} />
+            ) : null}
+          </div>
+        </DisclosureRegion>
+        <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto px-4 pb-4">
+          <KanbanColumn
+            projectId={board.projectId}
+            columnKey="draft"
+            cards={board.draft}
+            onOpenCard={handleOpenCard}
+            onCardContextMenu={onCardContextMenu}
+            sortable
+            droppable
+            activeCard={activeCard}
+            onNewCard={onNewTask}
+            {...(nowMs !== undefined ? { nowMs } : {})}
+          />
+          <KanbanColumn
+            projectId={board.projectId}
+            columnKey="inProgress"
+            cards={board.inProgress}
+            onOpenCard={handleOpenCard}
+            onCardContextMenu={onCardContextMenu}
+            droppable
+            activeCard={activeCard}
+            {...(nowMs !== undefined ? { nowMs } : {})}
+          />
+          <KanbanColumn
+            projectId={board.projectId}
+            columnKey="done"
+            cards={board.done}
+            onOpenCard={handleOpenCard}
+            onCardContextMenu={onCardContextMenu}
+            droppable
+            activeCard={activeCard}
+            {...(nowMs !== undefined ? { nowMs } : {})}
+          />
+        </div>
       </div>
       <DragOverlay dropAnimation={null}>
         {activeCard ? (
