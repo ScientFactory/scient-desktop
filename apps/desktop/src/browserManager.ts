@@ -16,6 +16,10 @@ import {
   WebContentsView,
 } from "electron";
 import type { WebContents } from "electron";
+import {
+  artifactPreviewNavigationAllowed,
+  artifactPreviewRequestAllowed,
+} from "./artifactPreviewPolicy";
 import type {
   BrowserAttachWebviewInput,
   BrowserCaptureScreenshotResult,
@@ -28,6 +32,7 @@ import type {
   BrowserPanelBounds,
   BrowserSetPanelBoundsInput,
   BrowserTabInput,
+  BrowserTabKind,
   BrowserTabState,
   BrowserThreadInput,
   ThreadBrowserState,
@@ -36,6 +41,8 @@ import type {
 import { isBrowserCopyLinkChord } from "@synara/shared/browserShortcuts";
 import {
   BROWSER_BLANK_URL as ABOUT_BLANK_URL,
+  BROWSER_WEB_SESSION_PARTITION,
+  browserSessionPartition,
   buildAcceptLanguageHeader,
   buildChromeClientHints,
   classifyBrowserWindowOpen,
@@ -45,7 +52,7 @@ import {
   resolveCopyableBrowserTabUrl,
 } from "@synara/shared/browserSession";
 
-const BROWSER_SESSION_PARTITION = "persist:scient-browser";
+const BROWSER_SESSION_PARTITION = BROWSER_WEB_SESSION_PARTITION;
 const BROWSER_INACTIVE_TAB_SUSPEND_DELAY_MS = 1_500;
 const BROWSER_INACTIVE_TAB_SUSPEND_DELAY_PRESSURED_MS = 400;
 const BROWSER_MAX_WARM_INACTIVE_RUNTIMES_PER_THREAD = 1;
@@ -88,6 +95,17 @@ interface PendingRuntimeSync {
 const LIVE_TAB_STATUS: BrowserTabState["status"] = "live";
 const SUSPENDED_TAB_STATUS: BrowserTabState["status"] = "suspended";
 
+function safeUrlOrigin(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
 interface BrowserPerformanceSnapshot {
   counters: {
     setPanelBoundsCalls: number;
@@ -116,10 +134,16 @@ export interface BrowserUseCdpEvent {
   params?: unknown;
 }
 
-function createBrowserTab(url = ABOUT_BLANK_URL): BrowserTabState {
+function createBrowserTab(
+  url = ABOUT_BLANK_URL,
+  kind: BrowserTabKind = "web",
+  displayUrl?: string,
+): BrowserTabState {
   return {
     id: Crypto.randomUUID(),
+    kind,
     url,
+    displayUrl: displayUrl?.trim() || null,
     title: defaultTitleForUrl(url),
     status: SUSPENDED_TAB_STATUS,
     isLoading: false,
@@ -260,6 +284,7 @@ export class DesktopBrowserManager {
   private readonly popupRuntimes = new Map<BrowserWindow, OAuthPopupRuntime>();
   private spoofedUserAgent: string | null = null;
   private sessionConfigured = false;
+  private readonly previewSessionsConfigured = new Set<string>();
   private readonly tabSuspendTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly suspendTimers = new Map<ThreadId, ReturnType<typeof setTimeout>>();
   private runtimeSyncFlushScheduled = false;
@@ -351,6 +376,55 @@ export class DesktopBrowserManager {
       // If the session can't be configured yet, leave it for the per-webContents fallback.
       this.sessionConfigured = false;
     }
+  }
+
+  private ensurePreviewSessionConfigured(partition: string, artifactOrigin?: string): void {
+    if (this.previewSessionsConfigured.has(partition)) {
+      return;
+    }
+    const partitionSession = session.fromPartition(partition);
+    partitionSession.setUserAgent(this.resolveSpoofedUserAgent());
+    partitionSession.setPermissionCheckHandler(() => false);
+    partitionSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+      callback(false);
+    });
+    if (artifactOrigin) {
+      partitionSession.webRequest.onBeforeRequest((details, callback) => {
+        callback({
+          cancel: !artifactPreviewRequestAllowed({
+            url: details.url,
+            allowedOrigin: artifactOrigin,
+            resourceType: details.resourceType,
+          }),
+        });
+      });
+      partitionSession.on("will-download", (event) => {
+        event.preventDefault();
+      });
+    }
+    this.previewSessionsConfigured.add(partition);
+  }
+
+  private configureTabSession(threadId: ThreadId, tab: BrowserTabState): void {
+    if (tab.kind === "web") {
+      return;
+    }
+    const partition = browserSessionPartition(tab.kind, threadId, tab.id);
+    const artifactOrigin =
+      tab.kind === "artifact" ? (safeUrlOrigin(tab.url) ?? undefined) : undefined;
+    this.ensurePreviewSessionConfigured(partition, artifactOrigin);
+  }
+
+  private clearArtifactSession(threadId: ThreadId, tab: BrowserTabState): void {
+    if (tab.kind !== "artifact") {
+      return;
+    }
+    const partition = browserSessionPartition("artifact", threadId, tab.id);
+    const artifactSession = session.fromPartition(partition);
+    this.previewSessionsConfigured.delete(partition);
+    void Promise.all([artifactSession.clearStorageData(), artifactSession.clearCache()]).catch(
+      () => undefined,
+    );
   }
 
   // Options for an OAuth/sign-in popup. Stays on the shared persistent partition and keeps the
@@ -601,12 +675,33 @@ export class DesktopBrowserManager {
   }
 
   open(input: BrowserOpenInput): ThreadBrowserState {
-    const state = this.ensureWorkspace(input.threadId, input.initialUrl);
+    const requestedKind = input.kind ?? "web";
+    const state = this.ensureWorkspace(
+      input.threadId,
+      input.initialUrl,
+      requestedKind,
+      input.displayUrl,
+    );
     const didChange = !state.open;
     state.open = true;
     const nextInitialUrl = input.initialUrl ? normalizeUrlInput(input.initialUrl) : null;
     const activeTab = nextInitialUrl ? this.getActiveTab(state) : null;
+    if (
+      nextInitialUrl &&
+      activeTab &&
+      (activeTab.kind !== requestedKind ||
+        (requestedKind === "artifact" && activeTab.url !== nextInitialUrl))
+    ) {
+      return this.newTab({
+        threadId: input.threadId,
+        url: nextInitialUrl,
+        kind: requestedKind,
+        ...(input.displayUrl ? { displayUrl: input.displayUrl } : {}),
+        activate: true,
+      });
+    }
     if (nextInitialUrl && activeTab && activeTab.url !== nextInitialUrl) {
+      activeTab.displayUrl = input.displayUrl?.trim() || null;
       return this.navigate({
         threadId: input.threadId,
         tabId: activeTab.id,
@@ -647,6 +742,7 @@ export class DesktopBrowserManager {
     this.destroyThreadRuntimes(input.threadId);
 
     const state = this.getOrCreateState(input.threadId);
+    const closedArtifactTabs = state.tabs.filter((tab) => tab.kind === "artifact");
     state.open = false;
     state.activeTabId = null;
     state.tabs = [];
@@ -654,6 +750,9 @@ export class DesktopBrowserManager {
     this.markThreadStateChanged(input.threadId);
     this.lastEmittedVersionByThreadId.delete(input.threadId);
     this.emitState(input.threadId);
+    for (const tab of closedArtifactTabs) {
+      this.clearArtifactSession(input.threadId, tab);
+    }
     return this.snapshotThreadState(input.threadId, state);
   }
 
@@ -823,6 +922,9 @@ export class DesktopBrowserManager {
     const state = this.ensureWorkspace(input.threadId);
     const tab = this.resolveTab(state, input.tabId);
     const nextUrl = normalizeUrlInput(input.url);
+    if (tab.kind === "artifact" && safeUrlOrigin(nextUrl) !== safeUrlOrigin(tab.url)) {
+      throw new Error("Artifact previews cannot navigate outside their capability origin.");
+    }
     tab.url = nextUrl;
     tab.title = defaultTitleForUrl(nextUrl);
     tab.lastCommittedUrl = null;
@@ -884,7 +986,12 @@ export class DesktopBrowserManager {
 
   newTab(input: BrowserNewTabInput): ThreadBrowserState {
     const state = this.ensureWorkspace(input.threadId);
-    const tab = createBrowserTab(normalizeUrlInput(input.url));
+    const tab = createBrowserTab(
+      normalizeUrlInput(input.url),
+      input.kind ?? "web",
+      input.displayUrl,
+    );
+    this.configureTabSession(input.threadId, tab);
     state.tabs = [...state.tabs, tab];
     if (input.activate !== false || !state.activeTabId) {
       state.activeTabId = tab.id;
@@ -908,6 +1015,7 @@ export class DesktopBrowserManager {
 
   closeTab(input: BrowserTabInput): ThreadBrowserState {
     const state = this.ensureWorkspace(input.threadId);
+    const closedTab = state.tabs.find((tab) => tab.id === input.tabId);
     const nextTabs = state.tabs.filter((tab) => tab.id !== input.tabId);
     if (nextTabs.length === state.tabs.length) {
       return this.snapshotThreadState(input.threadId, state);
@@ -916,6 +1024,9 @@ export class DesktopBrowserManager {
     this.closePopupWindowsForTab(input.threadId, input.tabId);
     this.destroyRuntime(input.threadId, input.tabId);
     state.tabs = nextTabs;
+    if (closedTab) {
+      this.clearArtifactSession(input.threadId, closedTab);
+    }
 
     if (nextTabs.length === 0) {
       // Closing the last tab keeps the browser open on a fresh blank tab (the same state
@@ -1509,9 +1620,15 @@ export class DesktopBrowserManager {
   }
 
   private createLiveRuntime(threadId: ThreadId, tabId: string): LiveTabRuntime {
+    const state = this.ensureWorkspace(threadId);
+    const tab = this.resolveTab(state, tabId);
+    const partition = browserSessionPartition(tab.kind, threadId, tab.id);
+    if (tab.kind !== "web") {
+      this.configureTabSession(threadId, tab);
+    }
     const view = new WebContentsView({
       webPreferences: {
-        partition: BROWSER_SESSION_PARTITION,
+        partition,
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
@@ -1532,6 +1649,10 @@ export class DesktopBrowserManager {
 
   private configureRuntimeWebContents(runtime: LiveTabRuntime): void {
     const { threadId, tabId, webContents } = runtime;
+    const state = this.ensureWorkspace(threadId);
+    const sourceTab = this.getTab(state, tabId);
+    const tabKind = sourceTab?.kind ?? "web";
+    const artifactOrigin = tabKind === "artifact" ? safeUrlOrigin(sourceTab?.url) : null;
 
     // Belt-and-suspenders alongside the session-level UA: also covers an adopted renderer
     // <webview> for any navigation after it attaches.
@@ -1542,17 +1663,23 @@ export class DesktopBrowserManager {
       const isWebUrl =
         url.startsWith("http://") || url.startsWith("https://") || url === ABOUT_BLANK_URL;
       if (!isWebUrl) {
-        void shell.openExternal(url);
+        if (tabKind === "web") {
+          void shell.openExternal(url);
+        }
         return { action: "deny" };
       }
 
-      const kind = classifyBrowserWindowOpen({
+      if (tabKind === "artifact") {
+        return { action: "deny" };
+      }
+
+      const windowKind = classifyBrowserWindowOpen({
         url,
         frameName: details.frameName,
         features: details.features,
         disposition: details.disposition,
       });
-      if (kind === "popup") {
+      if (tabKind === "web" && windowKind === "popup") {
         // Allow (don't deny) so Electron creates a real child window that keeps
         // `window.opener`, which the OAuth callback needs to message the page back.
         return {
@@ -1564,6 +1691,7 @@ export class DesktopBrowserManager {
       this.newTab({
         threadId,
         url,
+        kind: tabKind,
         activate: true,
       });
       const bounds = this.getVisibleBoundsForThread(threadId);
@@ -1572,6 +1700,26 @@ export class DesktopBrowserManager {
       }
       return { action: "deny" };
     });
+
+    if (artifactOrigin) {
+      const blockArtifactFrameNavigation = (
+        event: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>,
+      ) => {
+        if (
+          !artifactPreviewNavigationAllowed({
+            url: event.url,
+            allowedOrigin: artifactOrigin,
+            isMainFrame: event.isMainFrame,
+          })
+        ) {
+          event.preventDefault();
+        }
+      };
+      webContents.on("will-frame-navigate", blockArtifactFrameNavigation);
+      runtime.listenerDisposers.push(() => {
+        webContents.removeListener("will-frame-navigate", blockArtifactFrameNavigation);
+      });
+    }
 
     const didCreateWindow = (childWindow: BrowserWindow) => {
       this.registerOAuthPopupWindow(childWindow, { threadId, tabId });
@@ -1944,11 +2092,17 @@ export class DesktopBrowserManager {
     return BROWSER_INACTIVE_TAB_SUSPEND_DELAY_MS;
   }
 
-  private ensureWorkspace(threadId: ThreadId, initialUrl?: string): ThreadBrowserState {
+  private ensureWorkspace(
+    threadId: ThreadId,
+    initialUrl?: string,
+    kind: BrowserTabKind = "web",
+    displayUrl?: string,
+  ): ThreadBrowserState {
     this.ensureSessionConfigured();
     const state = this.getOrCreateState(threadId);
     if (state.tabs.length === 0) {
-      const initialTab = createBrowserTab(normalizeUrlInput(initialUrl));
+      const initialTab = createBrowserTab(normalizeUrlInput(initialUrl), kind, displayUrl);
+      this.configureTabSession(threadId, initialTab);
       state.tabs = [initialTab];
       state.activeTabId = initialTab.id;
     }
@@ -1995,6 +2149,9 @@ export class DesktopBrowserManager {
   ): string | null {
     const state = this.states.get(threadId);
     const tab = state ? this.getTab(state, tabId) : null;
+    if (tab?.kind === "artifact") {
+      return null;
+    }
     const liveUrl =
       runtime && !runtime.webContents.isDestroyed() ? runtime.webContents.getURL() : null;
     return resolveCopyableBrowserTabUrl(tab, liveUrl);

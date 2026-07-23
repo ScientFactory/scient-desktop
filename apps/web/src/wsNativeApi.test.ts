@@ -594,6 +594,37 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards HTML artifact inspection, preparation, and revocation", async () => {
+    requestMock
+      .mockResolvedValueOnce({ mode: "static-document", warnings: [] })
+      .mockResolvedValueOnce({
+        mode: "static-document",
+        warnings: [],
+        previewUrl: "http://g-test.preview.localhost:5000/",
+        expiresAt: "2026-01-01T00:00:00.000Z",
+      })
+      .mockResolvedValueOnce({ revoked: true });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    const input = { cwd: "/tmp/project", path: "report.html" };
+
+    await api.projects.inspectHtmlArtifact(input);
+    await api.projects.prepareHtmlArtifactPreview(input);
+    await api.projects.revokeHtmlArtifactPreview({
+      previewUrl: "http://g-test.preview.localhost:5000/",
+    });
+
+    expect(requestMock).toHaveBeenNthCalledWith(1, WS_METHODS.projectsInspectHtmlArtifact, input);
+    expect(requestMock).toHaveBeenNthCalledWith(
+      2,
+      WS_METHODS.projectsPrepareHtmlArtifactPreview,
+      input,
+    );
+    expect(requestMock).toHaveBeenNthCalledWith(3, WS_METHODS.projectsRevokeHtmlArtifactPreview, {
+      previewUrl: "http://g-test.preview.localhost:5000/",
+    });
+  });
+
   it("forwards project source status and clone requests", async () => {
     requestMock.mockResolvedValueOnce({ sources: [] }).mockResolvedValueOnce({ path: "/tmp/repo" });
     const { createWsNativeApi } = await import("./wsNativeApi");

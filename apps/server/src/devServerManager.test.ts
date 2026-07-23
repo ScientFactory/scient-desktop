@@ -6,11 +6,16 @@ import { describe, expect, it } from "vitest";
 
 import { ProjectId, type ProjectDevServer, type ServerLocalServerProcess } from "@synara/contracts";
 
-import { findProjectDevServerForLocalServer } from "./devServerManager";
+import {
+  failProjectDevServerGeneration,
+  findProjectDevServerForLocalServer,
+  waitForProjectDevServerReadiness,
+} from "./devServerManager";
 
 function makeDevServer(overrides: Partial<ProjectDevServer> = {}): ProjectDevServer {
   return {
     projectId: ProjectId.makeUnsafe("project-1"),
+    runId: "run-1",
     command: "pnpm run dev",
     cwd: "/repo/app",
     pid: 100,
@@ -66,5 +71,46 @@ describe("findProjectDevServerForLocalServer", () => {
         devServers: [makeDevServer({ cwd: "/repo/app" })],
       }),
     ).toBeNull();
+  });
+});
+
+describe("waitForProjectDevServerReadiness", () => {
+  it("returns only after the tracked run owns a reachable listener", async () => {
+    let calls = 0;
+    const result = await waitForProjectDevServerReadiness(makeDevServer({ status: "starting" }), {
+      timeoutMs: 100,
+      pollMs: 0,
+      discover: async () => {
+        calls += 1;
+        return calls === 1 ? [] : [makeLocalServer({ cwd: "/repo/app" })];
+      },
+      probe: async () => true,
+      sleep: async () => undefined,
+    });
+
+    expect(calls).toBe(2);
+    expect(result).toEqual({ url: "http://127.0.0.1:5173", ports: [5173] });
+  });
+
+  it("fails closed when no listener becomes ready", async () => {
+    expect(
+      await waitForProjectDevServerReadiness(makeDevServer({ status: "starting" }), {
+        timeoutMs: 0,
+        discover: async () => [],
+        sleep: async () => undefined,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("failProjectDevServerGeneration", () => {
+  it("ignores a delayed exit from a superseded run", () => {
+    const current = makeDevServer({ runId: "new-run", status: "starting" });
+    expect(failProjectDevServerGeneration(current, "old-run", "late exit")).toBeNull();
+    expect(failProjectDevServerGeneration(current, "new-run", "current exit")).toMatchObject({
+      runId: "new-run",
+      status: "failed",
+      error: "current exit",
+    });
   });
 });

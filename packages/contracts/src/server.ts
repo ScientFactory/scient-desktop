@@ -283,6 +283,7 @@ export const ServerLocalServerProcess = Schema.Struct({
   id: TrimmedNonEmptyString,
   pid: PositiveInt,
   ppid: Schema.optional(PositiveInt),
+  ancestorPids: Schema.optional(Schema.Array(PositiveInt)),
   command: TrimmedNonEmptyString,
   displayName: TrimmedNonEmptyString,
   pageTitle: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),

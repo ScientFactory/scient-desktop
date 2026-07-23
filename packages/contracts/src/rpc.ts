@@ -118,11 +118,17 @@ import {
   ProjectDevServerEvent,
   ProjectDiscoverScriptsInput,
   ProjectDiscoverScriptsResult,
+  ProjectInspectHtmlArtifactInput,
+  ProjectInspectHtmlArtifactResult,
   ProjectListDevServersResult,
   ProjectListDirectoriesInput,
   ProjectListDirectoriesResult,
   ProjectReadFileInput,
   ProjectReadFileResult,
+  ProjectPrepareHtmlArtifactPreviewInput,
+  ProjectPrepareHtmlArtifactPreviewResult,
+  ProjectRevokeHtmlArtifactPreviewInput,
+  ProjectRevokeHtmlArtifactPreviewResult,
   ProjectRunDevServerInput,
   ProjectRunDevServerResult,
   ProjectSearchEntriesInput,
@@ -384,6 +390,30 @@ export const WsProjectsCreateLocalFilePreviewGrantRpc = Rpc.make(
   {
     payload: ProjectCreateLocalFilePreviewGrantInput,
     success: ProjectCreateLocalFilePreviewGrantResult,
+    error: WsRpcError,
+  },
+);
+
+export const WsProjectsInspectHtmlArtifactRpc = Rpc.make(WS_METHODS.projectsInspectHtmlArtifact, {
+  payload: ProjectInspectHtmlArtifactInput,
+  success: ProjectInspectHtmlArtifactResult,
+  error: WsRpcError,
+});
+
+export const WsProjectsPrepareHtmlArtifactPreviewRpc = Rpc.make(
+  WS_METHODS.projectsPrepareHtmlArtifactPreview,
+  {
+    payload: ProjectPrepareHtmlArtifactPreviewInput,
+    success: ProjectPrepareHtmlArtifactPreviewResult,
+    error: WsRpcError,
+  },
+);
+
+export const WsProjectsRevokeHtmlArtifactPreviewRpc = Rpc.make(
+  WS_METHODS.projectsRevokeHtmlArtifactPreview,
+  {
+    payload: ProjectRevokeHtmlArtifactPreviewInput,
+    success: ProjectRevokeHtmlArtifactPreviewResult,
     error: WsRpcError,
   },
 );
@@ -1038,6 +1068,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchLocalEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsCreateLocalFilePreviewGrantRpc,
+  WsProjectsInspectHtmlArtifactRpc,
+  WsProjectsPrepareHtmlArtifactPreviewRpc,
+  WsProjectsRevokeHtmlArtifactPreviewRpc,
   WsProjectsWriteFileRpc,
   WsProjectsRunDevServerRpc,
   WsProjectsStopDevServerRpc,

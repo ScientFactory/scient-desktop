@@ -38,7 +38,9 @@ function browserState(activeTabId: string): ThreadBrowserState {
     tabs: [
       {
         id: "tab-1",
+        kind: "web",
         url: "https://scientfactory.com/",
+        displayUrl: null,
         title: "ScientFactory",
         status: "suspended",
         isLoading: false,
@@ -50,7 +52,9 @@ function browserState(activeTabId: string): ThreadBrowserState {
       },
       {
         id: "tab-2",
+        kind: "web",
         url: "https://example.com/",
+        displayUrl: null,
         title: "Example",
         status: "suspended",
         isLoading: false,

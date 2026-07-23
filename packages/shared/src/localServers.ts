@@ -58,7 +58,10 @@ export function localServerMatchesRun(
   server: ServerLocalServerProcess,
   run: LocalServerRunIdentity,
 ): boolean {
-  if (run.pid !== null && (server.pid === run.pid || server.ppid === run.pid)) {
+  if (
+    run.pid !== null &&
+    (server.pid === run.pid || server.ppid === run.pid || server.ancestorPids?.includes(run.pid))
+  ) {
     return true;
   }
   return Boolean(server.cwd && isWorkspaceRootWithin(server.cwd, run.cwd));

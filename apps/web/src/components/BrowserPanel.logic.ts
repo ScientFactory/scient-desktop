@@ -72,9 +72,9 @@ export function browserCopyFeedbackMatches(
 
 // Hides about:blank from the address bar so new tabs behave like real browsers.
 export function browserAddressDisplayValue(
-  tab: Pick<BrowserTabState, "url"> | null | undefined,
+  tab: { url: string; displayUrl?: string | null } | null | undefined,
 ): string {
-  const nextUrl = tab?.url?.trim() ?? "";
+  const nextUrl = tab?.displayUrl?.trim() || tab?.url?.trim() || "";
   return nextUrl === BROWSER_BLANK_URL ? "" : nextUrl;
 }
 

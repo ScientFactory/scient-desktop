@@ -33,6 +33,7 @@ import {
 import { localServerPrimaryLabel } from "@synara/shared/localServers";
 import {
   BROWSER_BLANK_URL,
+  browserSessionPartition,
   isBlankBrowserTabUrl,
   resolveCopyableBrowserTabUrl,
 } from "@synara/shared/browserSession";
@@ -84,7 +85,6 @@ interface BrowserPanelProps {
 
 const BROWSER_BOUNDS_SYNC_BURST_FRAMES = 30;
 const BROWSER_BOUNDS_SYNC_STABLE_FRAME_TARGET = 2;
-const BROWSER_WEBVIEW_PARTITION = "persist:scient-browser";
 const BROWSER_PERF_SAMPLE_INTERVAL_MS = 5_000;
 const SYNARA_BROWSER_LABEL = "Scient browser";
 // The address field and tab pills share one chrome-control surface so the whole row reads
@@ -528,6 +528,11 @@ export function BrowserPanel({
   const addressDraftsByTabIdRef = useRef(new Map<string, string>());
   const lastSyncedAddressByTabIdRef = useRef(new Map<string, string>());
   const previousActiveTabIdRef = useRef<string | null>(null);
+  const artifactPreviewUrlsRef = useRef(
+    new Set(
+      threadBrowserState?.tabs.filter((tab) => tab.kind === "artifact").map((tab) => tab.url) ?? [],
+    ),
+  );
   const lastSentBoundsRef = useRef<string | null>(null);
   const lastMeasuredBoundsKeyRef = useRef<string | null>(null);
   const lastOverlayObscuredRef = useRef(false);
@@ -583,11 +588,15 @@ export function BrowserPanel({
   const browserAddressSuggestions = buildBrowserAddressSuggestions({
     query: addressValue,
     activeTabId: activeTab?.id ?? null,
-    tabs: threadBrowserState?.tabs ?? [],
+    tabs: threadBrowserState?.tabs.filter((tab) => tab.kind !== "artifact") ?? [],
     recentHistory,
   });
   const showBrowserAddressSuggestions =
-    isLiveRuntime && isAddressFocused && browserAddressSuggestions.length > 0 && runtimeReady;
+    activeTab?.kind !== "artifact" &&
+    isLiveRuntime &&
+    isAddressFocused &&
+    browserAddressSuggestions.length > 0 &&
+    runtimeReady;
 
   const requestLiveRuntime = useCallback(() => {
     onRequestLive?.();
@@ -644,9 +653,22 @@ export function BrowserPanel({
     }
 
     return api.browser.onState((state) => {
+      if (state.threadId === threadId) {
+        const nextArtifactUrls = new Set(
+          state.tabs.filter((tab) => tab.kind === "artifact").map((tab) => tab.url),
+        );
+        for (const previewUrl of artifactPreviewUrlsRef.current) {
+          if (!nextArtifactUrls.has(previewUrl)) {
+            void api.projects
+              .revokeHtmlArtifactPreview({ previewUrl })
+              .catch(() => ({ revoked: false }));
+          }
+        }
+        artifactPreviewUrlsRef.current = nextArtifactUrls;
+      }
       upsertThreadState(state);
     });
-  }, [api, isLiveRuntime, upsertThreadState]);
+  }, [api, isLiveRuntime, threadId, upsertThreadState]);
 
   useEffect(() => {
     if (!api || !isLiveRuntime) {
@@ -718,6 +740,11 @@ export function BrowserPanel({
     }
 
     let webview = browserWebviewRef.current;
+    const expectedPartition = browserSessionPartition(activeTab.kind, threadId, activeTab.id);
+    if (webview?.getAttribute("partition") !== expectedPartition) {
+      detachRendererBrowserWebview();
+      webview = null;
+    }
     if (!webview) {
       webview = document.createElement("webview") as BrowserWebviewElement;
       webview.className = "h-full w-full";
@@ -725,13 +752,15 @@ export function BrowserPanel({
       webview.style.width = "100%";
       webview.style.height = "100%";
       webview.style.backgroundColor = "#0d0d0d";
-      webview.setAttribute("partition", BROWSER_WEBVIEW_PARTITION);
+      webview.setAttribute("partition", expectedPartition);
       webview.setAttribute("webpreferences", "contextIsolation=yes,nodeIntegration=no,sandbox=yes");
       // A <webview> blocks window.open() unless `allowpopups` is set. Without it, clicking
       // "Continue with Google" (and any OAuth/popup flow) is silently dropped before the main
       // process's window-open handler ever runs. Enabling it lets the popup classifier in
       // browserManager decide popup-vs-tab and keep the OAuth `window.opener` handshake alive.
-      webview.setAttribute("allowpopups", "true");
+      if (activeTab.kind === "web") {
+        webview.setAttribute("allowpopups", "true");
+      }
       // No `useragent` attribute on purpose: the desktop main process spoofs a desktop Chrome
       // UA on the shared persistent partition, so this webview (and OAuth popups) inherit the
       // same identity. This keeps in-app Google/OAuth sign-in working without duplicating the
@@ -1305,7 +1334,15 @@ export function BrowserPanel({
       if (!api) {
         return;
       }
-      void runBrowserAction(() => api.browser.closeTab({ threadId, tabId })).then((state) => {
+      const closingTab = threadBrowserState?.tabs.find((tab) => tab.id === tabId);
+      void runBrowserAction(async () => {
+        if (closingTab?.kind === "artifact") {
+          await api.projects
+            .revokeHtmlArtifactPreview({ previewUrl: closingTab.url })
+            .catch(() => ({ revoked: false }));
+        }
+        return api.browser.closeTab({ threadId, tabId });
+      }).then((state) => {
         if (!state) {
           return;
         }
@@ -1315,7 +1352,15 @@ export function BrowserPanel({
         }
       });
     },
-    [api, ensureLiveRuntime, onClosePanel, runBrowserAction, threadId, upsertThreadState],
+    [
+      api,
+      ensureLiveRuntime,
+      onClosePanel,
+      runBrowserAction,
+      threadBrowserState?.tabs,
+      threadId,
+      upsertThreadState,
+    ],
   );
 
   const header = (
@@ -1401,6 +1446,12 @@ export function BrowserPanel({
           <Input
             ref={addressInputRef}
             value={addressValue}
+            readOnly={activeTab?.kind === "artifact"}
+            title={
+              activeTab?.kind === "artifact"
+                ? "This isolated artifact preview cannot navigate to another origin."
+                : undefined
+            }
             onChange={(event) => {
               if (!isLiveRuntime) {
                 requestLiveRuntime();
@@ -1501,7 +1552,7 @@ export function BrowserPanel({
           variant="ghost"
           size="icon-sm"
           className="size-7"
-          disabled={!activeTab}
+          disabled={!activeTab || activeTab.kind === "artifact"}
           aria-label={copiedBrowserItem === "link" ? "Link copied" : "Copy link"}
           title={copiedBrowserItem === "link" ? "Copied" : "Copy link"}
           onClick={copyActiveTabLink}
