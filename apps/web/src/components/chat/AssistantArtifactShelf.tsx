@@ -5,20 +5,31 @@
 import type { EditorId } from "@synara/contracts";
 import { isLocalAbsolutePath, joinWorkspaceRelativePath } from "@synara/shared/path";
 import { useQuery } from "@tanstack/react-query";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useId, useMemo, useState } from "react";
 
 import { resolveAvailableEditorOptions } from "~/editorMetadata";
 import { extractMessageArtifacts, type MessageArtifactReference } from "~/lib/messageArtifacts";
-import { AppsIcon, ChevronDownIcon, ExternalLinkIcon, EyeIcon, FolderIcon } from "~/lib/icons";
+import {
+  AppsIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  ExternalLinkIcon,
+  EyeIcon,
+  FolderIcon,
+} from "~/lib/icons";
 import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
 import { cn } from "~/lib/utils";
 import { openWorkspaceFileReference, useWorkspaceFileOpener } from "~/lib/workspaceFileOpener";
 import { readNativeApi } from "~/nativeApi";
 import { Button } from "../ui/button";
+import { DisclosureRegion } from "../ui/DisclosureRegion";
 import { Menu, MenuItem, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { toastManager } from "../ui/toast";
 import { ComposerPickerMenuPopup } from "./ComposerPickerMenuPopup";
 import { FileEntryIcon } from "./FileEntryIcon";
+
+const COLLAPSED_FULL_ARTIFACT_COUNT = 2;
+const MIN_ARTIFACT_COUNT_TO_COLLAPSE = 4;
 
 function absoluteArtifactPath(path: string, workspaceRoot: string | undefined): string | null {
   if (isLocalAbsolutePath(path)) return path;
@@ -97,6 +108,7 @@ function HtmlArtifactThumbnail(props: {
 const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
   artifact: MessageArtifactReference;
   workspaceRoot: string | undefined;
+  loadHtmlThumbnail?: boolean;
 }) {
   const opener = useWorkspaceFileOpener();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
@@ -132,7 +144,7 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
         title={`Preview ${props.artifact.path}`}
         onClick={preview}
       >
-        {props.artifact.kind === "html" ? (
+        {props.artifact.kind === "html" && props.loadHtmlThumbnail !== false ? (
           <HtmlArtifactThumbnail
             path={props.artifact.path}
             label={props.artifact.label}
@@ -153,7 +165,7 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
         </span>
       </button>
 
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div data-artifact-actions className="flex shrink-0 items-center gap-1.5">
         <Button
           variant="link"
           size="sm"
@@ -227,25 +239,99 @@ export const AssistantArtifactShelf = memo(function AssistantArtifactShelf(props
   markdownCwd: string | undefined;
   workspaceRoot: string | undefined;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const disclosureId = useId();
   const artifacts = useMemo(
     () => extractMessageArtifacts(props.markdown, props.markdownCwd),
     [props.markdown, props.markdownCwd],
   );
   if (artifacts.length === 0) return null;
 
+  const canCollapse = artifacts.length >= MIN_ARTIFACT_COUNT_TO_COLLAPSE;
+  const alwaysVisibleArtifacts = canCollapse
+    ? artifacts.slice(0, COLLAPSED_FULL_ARTIFACT_COUNT)
+    : artifacts;
+  const disclosedArtifacts = canCollapse ? artifacts.slice(COLLAPSED_FULL_ARTIFACT_COUNT) : [];
+  const hiddenArtifactCount = disclosedArtifacts.length;
+  const toggleLabel = expanded
+    ? "Show fewer files"
+    : `Show ${hiddenArtifactCount} more ${hiddenArtifactCount === 1 ? "file" : "files"}`;
+
   return (
     <section className="mt-3 font-system-ui" aria-label="Files cited in this response">
       <div className="mb-1.5 px-0.5 text-xs font-medium text-muted-foreground/65">
         {artifacts.length === 1 ? "File" : `${artifacts.length} files`}
       </div>
-      <div className="divide-y divide-border/65 overflow-visible rounded-xl border border-border/75 bg-[var(--color-background-elevated-primary)] shadow-xs">
-        {artifacts.map((artifact) => (
-          <AssistantArtifactRow
-            key={artifact.path}
-            artifact={artifact}
-            workspaceRoot={props.workspaceRoot}
-          />
-        ))}
+      <div className="overflow-visible rounded-xl border border-border/75 bg-[var(--color-background-elevated-primary)] shadow-xs">
+        <div className="divide-y divide-border/65">
+          {alwaysVisibleArtifacts.map((artifact) => (
+            <AssistantArtifactRow
+              key={artifact.path}
+              artifact={artifact}
+              workspaceRoot={props.workspaceRoot}
+            />
+          ))}
+        </div>
+
+        {canCollapse ? (
+          <div className="relative">
+            {!expanded ? (
+              <div className="h-[60px] overflow-hidden border-t border-border/65">
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none select-none opacity-55 [&_[data-artifact-actions]]:opacity-0"
+                  inert
+                >
+                  <AssistantArtifactRow
+                    artifact={disclosedArtifacts[0]!}
+                    workspaceRoot={props.workspaceRoot}
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            <DisclosureRegion open={expanded}>
+              <div
+                id={disclosureId}
+                className="divide-y divide-border/65 border-t border-border/65"
+              >
+                {disclosedArtifacts.map((artifact) => (
+                  <AssistantArtifactRow
+                    key={artifact.path}
+                    artifact={artifact}
+                    workspaceRoot={props.workspaceRoot}
+                    loadHtmlThumbnail={expanded}
+                  />
+                ))}
+              </div>
+            </DisclosureRegion>
+
+            <div
+              className={cn(
+                "relative z-10 flex justify-center bg-[var(--color-background-elevated-primary)] px-3 py-2",
+                expanded
+                  ? "border-t border-border/65"
+                  : "absolute inset-x-0 bottom-0 shadow-[0_-12px_18px_var(--color-background-elevated-primary)]",
+              )}
+            >
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 rounded-full bg-[var(--color-background-elevated-primary)] px-3 text-xs font-medium"
+                aria-controls={disclosureId}
+                aria-expanded={expanded}
+                onClick={() => setExpanded((current) => !current)}
+              >
+                {toggleLabel}
+                {expanded ? (
+                  <ChevronUpIcon aria-hidden="true" className="size-3.5" />
+                ) : (
+                  <ChevronDownIcon aria-hidden="true" className="size-3.5" />
+                )}
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </div>
     </section>
   );
