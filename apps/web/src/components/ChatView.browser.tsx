@@ -37,6 +37,7 @@ import {
 } from "../lib/terminalContext";
 import { isMacPlatform } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
+import { useProviderConnectionDialogStore } from "../providerConnectionDialogStore";
 import { resetHomeChatProjectPrewarmStateForTests } from "../lib/chatProjects";
 import { resetStudioProjectPrewarmStateForTests } from "../lib/studioProjects";
 import { getRouter } from "../router";
@@ -1936,6 +1937,98 @@ describe("ChatView timeline estimator parity (full app)", () => {
     resetRetainedThreadDetailSubscriptionsForTests();
     resetWsNativeApiForTest();
     document.body.innerHTML = "";
+  });
+
+  it("keeps unavailable provider setup out of an empty chat until the user tries to send", async () => {
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-empty-provider-health" as MessageId,
+      targetText: "This message is removed to create an empty thread",
+    });
+    const emptyThreadSnapshot: OrchestrationReadModel = {
+      ...snapshot,
+      threads: snapshot.threads.map((thread) => ({
+        ...thread,
+        latestTurn: null,
+        messages: [],
+        session: null,
+      })),
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: emptyThreadSnapshot,
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [
+            {
+              provider: "codex",
+              status: "error",
+              available: false,
+              authStatus: "unauthenticated",
+              message: "Codex is not installed.",
+              checkedAt: NOW_ISO,
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForComposerEditor();
+      expect(document.body.textContent).not.toContain("Codex provider status");
+      expect(document.body.textContent).not.toContain("Codex is not installed.");
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Help me connect Codex");
+      const sendButton = await waitForSendButton();
+      await vi.waitFor(() => expect(sendButton.disabled).toBe(false));
+      sendButton.click();
+
+      await vi.waitFor(() => {
+        expect(useProviderConnectionDialogStore.getState()).toMatchObject({
+          isOpen: true,
+          provider: "codex",
+          source: "send",
+        });
+      });
+    } finally {
+      useProviderConnectionDialogStore.getState().setOpen(false);
+      await mounted.cleanup();
+    }
+  });
+
+  it("still shows provider health when an existing conversation loses its provider", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-provider-health" as MessageId,
+        targetText: "Keep this existing conversation visible",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [
+            {
+              provider: "codex",
+              status: "error",
+              available: false,
+              authStatus: "unauthenticated",
+              message: "Codex is not installed.",
+              checkedAt: NOW_ISO,
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(document.body.textContent).toContain("Codex provider status");
+        expect(document.body.textContent).toContain("Codex is not installed.");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
   });
 
   it("dispatches a bounded fork command from the message action and navigates to the new task", async () => {

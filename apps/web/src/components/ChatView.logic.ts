@@ -121,8 +121,13 @@ export function resolveRuntimeModeAfterApprovalDecision(
 export function shouldRenderProviderHealthBanner(input: {
   threadEntryPoint: ThreadPrimarySurface;
   terminalWorkspaceTerminalTabActive: boolean;
+  hasThreadStarted: boolean;
 }): boolean {
-  return input.threadEntryPoint === "chat" && !input.terminalWorkspaceTerminalTabActive;
+  return (
+    input.hasThreadStarted &&
+    input.threadEntryPoint === "chat" &&
+    !input.terminalWorkspaceTerminalTabActive
+  );
 }
 
 // Big-paste cards are sent only by the normal chat path; non-chat composer flows

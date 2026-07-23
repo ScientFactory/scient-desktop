@@ -3925,6 +3925,7 @@ export default function ChatView({
   const shouldShowProviderHealthBanner = shouldRenderProviderHealthBanner({
     threadEntryPoint: terminalState.entryPoint,
     terminalWorkspaceTerminalTabActive,
+    hasThreadStarted,
   });
   // Terminal-only threads should not pay to mount the hidden chat/composer pane.
   const shouldRenderChatPaneContent = !(
