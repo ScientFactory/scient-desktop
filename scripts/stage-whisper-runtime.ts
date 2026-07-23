@@ -30,10 +30,12 @@ interface VerifiedArtifact {
   readonly url: string;
 }
 
-export const WHISPER_CPP_SOURCE: VerifiedArtifact = {
-  fileName: "whisper.cpp-v1.9.1.tar.gz",
-  sha256: "147267177eef7b22ec3d2476dd514d1b12e160e176230b740e3d1bd600118447",
-  url: "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v1.9.1.tar.gz",
+export const WHISPER_CPP_COMMIT = "f049fff95a089aa9969deb009cdd4892b3e74916";
+export const WHISPER_CPP_SOURCE = {
+  commit: WHISPER_CPP_COMMIT,
+  fileName: `whisper.cpp-${WHISPER_CPP_COMMIT}.tar.gz`,
+  sha256: "279af4ce60dbf397362868f3bacc75b56a4332ac2541cae155070093f6aaf0e3",
+  url: `https://github.com/ggml-org/whisper.cpp/archive/${WHISPER_CPP_COMMIT}.tar.gz`,
 };
 
 export const WHISPER_CPP_PREBUILT = {
@@ -164,7 +166,7 @@ export function resolvePrebuiltArtifact(
 
 async function extractSource(sourceArchive: string, workspace: string): Promise<string> {
   await run("tar", ["-xzf", sourceArchive, "-C", workspace]);
-  const sourceDir = join(workspace, "whisper.cpp-1.9.1");
+  const sourceDir = join(workspace, `whisper.cpp-${WHISPER_CPP_COMMIT}`);
   const serverSource = await readFile(join(sourceDir, "examples/server/server.cpp"), "utf8");
   assertPinnedWhisperServerSource(serverSource);
   return sourceDir;
