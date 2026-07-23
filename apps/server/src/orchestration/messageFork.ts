@@ -10,6 +10,7 @@ import type {
   ThreadHandoffImportedMessage,
 } from "@synara/contracts";
 import { stripEmbeddedAssistantSelections } from "@synara/shared/assistantSelections";
+import { compareProjectionMessageOrderValues } from "@synara/shared/messageOrder";
 
 import { isAssistantTurnTerminal } from "./assistantMessageLifecycle.ts";
 
@@ -194,8 +195,12 @@ export function validateMessageForkImport(input: {
       return true;
     }
     return (
-      previous.createdAt < message.createdAt ||
-      (previous.createdAt === message.createdAt && previous.messageId < message.messageId)
+      compareProjectionMessageOrderValues(
+        previous.createdAt,
+        previous.messageId,
+        message.createdAt,
+        message.messageId,
+      ) < 0
     );
   });
   if (!importOrderIsPersistent) {

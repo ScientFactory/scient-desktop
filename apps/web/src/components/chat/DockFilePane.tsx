@@ -14,7 +14,7 @@ import { cn } from "~/lib/utils";
 import { WorkspaceFilePreview } from "../WorkspaceFilePreview";
 import { PanelStateMessage } from "./PanelStateMessage";
 import { WorkspaceExplorerSidebar } from "./workspaceExplorer";
-import { useDockWorkspaceExplorer } from "./useDockWorkspaceExplorer";
+import type { DockWorkspaceExplorerController } from "./useDockWorkspaceExplorer";
 
 const DOCK_FILE_EXPLORER_WIDTH_CLASS = "w-[min(22rem,46%)]";
 const DOCK_FILE_EXPLORER_CONTENT_CLASS =
@@ -24,12 +24,12 @@ export const DockFilePane = memo(function DockFilePane(props: {
   workspaceRoot: string | null;
   filePath: string | null;
   explorerOpen: boolean;
+  explorer: DockWorkspaceExplorerController;
   onOpenFile: (path: string) => void;
   onReferenceInChat?: ((reference: ChatFileReference) => void) | undefined;
   onAskWhyInChat?: ((reference: ChatFileReference) => void) | undefined;
   onCommentInChat?: ((comment: FileCommentSelection) => void) | undefined;
 }) {
-  const explorer = useDockWorkspaceExplorer();
   const hasFile = props.filePath !== null;
   const selectedWorkspaceFilePath =
     props.filePath !== null && isWorkspaceRelativePathSafe(props.filePath) ? props.filePath : null;
@@ -66,12 +66,12 @@ export const DockFilePane = memo(function DockFilePane(props: {
         <WorkspaceExplorerSidebar
           workspaceRoot={props.workspaceRoot}
           selectedFilePath={selectedWorkspaceFilePath}
-          expandedDirectories={explorer.expandedDirectories}
-          query={explorer.searchQuery}
-          onQueryChange={explorer.setSearchQuery}
+          expandedDirectories={props.explorer.expandedDirectories}
+          query={props.explorer.searchQuery}
+          onQueryChange={props.explorer.setSearchQuery}
           containerClassName={DOCK_FILE_EXPLORER_CONTENT_CLASS}
           onSelectFile={props.onOpenFile}
-          onToggleDirectory={explorer.toggleDirectory}
+          onToggleDirectory={props.explorer.toggleDirectory}
           onReferenceInChat={props.onReferenceInChat}
         />
       </div>

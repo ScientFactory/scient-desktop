@@ -20,7 +20,7 @@ import {
   LOCAL_HTML_PREVIEW_ROUTE_PATH,
   isSupportedLocalHtmlPath,
 } from "@synara/shared/localPreviewFiles";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   Suspense,
@@ -49,6 +49,7 @@ import {
 } from "../components/DiffPanelShell";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useDockPaneRuntimeActivation } from "../hooks/useDockPaneRuntimeActivation";
+import { useDockWorkspaceExplorer } from "../components/chat/useDockWorkspaceExplorer";
 import {
   type ChatRightPanel,
   type DiffRouteSearch,
@@ -116,6 +117,7 @@ import {
   storeDockFileExplorerOpen,
 } from "../lib/dockFileExplorerPreference";
 import { FoldersIcon } from "../lib/icons";
+import { passiveGitStatusQueryOptions } from "../lib/gitReactQuery";
 import {
   projectListDirectoriesQueryOptions,
   projectLocalPreviewGrantQueryOptions,
@@ -166,6 +168,7 @@ import {
   DialogTitle,
 } from "../components/ui/dialog";
 import {
+  resolveDockDiffAvailable,
   resolveFilePreviewWorkspaceRoot,
   resolveRoutePanelBootstrap,
   resolveSplitPaneCloseDecision,
@@ -1491,8 +1494,8 @@ function SingleChatSurface(props: {
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[props.threadId] ?? null,
   );
-  const diffAvailable = useStore(
-    (store) => (store.turnDiffIdsByThreadId?.[props.threadId]?.length ?? 0) > 0,
+  const turnDiffCount = useStore(
+    (store) => store.turnDiffIdsByThreadId?.[props.threadId]?.length ?? 0,
   );
   const newThreadLandingRef = useRef<{ threadId: ThreadIdType; deferMount: boolean } | null>(null);
   if (newThreadLandingRef.current?.threadId !== props.threadId) {
@@ -1514,6 +1517,17 @@ function SingleChatSurface(props: {
     threadEnvMode: threadWorkspaceMetadata.envMode ?? draftThread?.envMode ?? null,
     threadWorktreePath: threadWorkspaceMetadata.worktreePath ?? draftThread?.worktreePath ?? null,
   });
+  const gitStatusQuery = useQuery(passiveGitStatusQueryOptions(workspaceRoot));
+  const diffAvailable = resolveDockDiffAvailable({
+    turnDiffCount,
+    hasWorkingTreeChanges: gitStatusQuery.data?.hasWorkingTreeChanges ?? false,
+  });
+  // Explorer state belongs to the chat surface, not an individual pane. The
+  // standalone explorer is replaced by a file pane on selection and inactive
+  // file panes unmount, so pane-local state would be lost on every transition.
+  const dockWorkspaceExplorer = useDockWorkspaceExplorer(
+    `${props.threadId}\u0000${workspaceRoot ?? ""}`,
+  );
   const projects = useStore((store) => store.projects);
   const { settings: appSettings } = useAppSettings();
   const { handleNewThread } = useHandleNewThread();
@@ -2243,6 +2257,7 @@ function SingleChatSurface(props: {
             <Suspense fallback={<PanelStateMessage>Loading explorer...</PanelStateMessage>}>
               <DockExplorerPane
                 workspaceRoot={workspaceRoot}
+                explorer={dockWorkspaceExplorer}
                 onOpenFile={handleOpenDockFile}
                 onReferenceInChat={handleReferenceInChat}
               />
@@ -2255,6 +2270,7 @@ function SingleChatSurface(props: {
                 workspaceRoot={workspaceRoot}
                 filePath={pane.filePath}
                 explorerOpen={dockFileExplorerOpen}
+                explorer={dockWorkspaceExplorer}
                 onOpenFile={handleOpenDockFile}
                 onReferenceInChat={handleReferenceInChat}
                 onAskWhyInChat={handleAskWhyInChat}
@@ -2296,6 +2312,7 @@ function SingleChatSurface(props: {
       handleOpenDockFile,
       handleReferenceInChat,
       dockFileExplorerOpen,
+      dockWorkspaceExplorer,
       props.projectId,
       props.threadId,
       requestActiveDockPaneLive,
