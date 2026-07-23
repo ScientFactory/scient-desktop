@@ -207,6 +207,26 @@ describe("HtmlArtifactPreviewLive", () => {
     });
   });
 
+  it("revalidates the root file after it is replaced by an escaping symlink", async () => {
+    const workspace = await makeWorkspace();
+    const outside = await makeWorkspace();
+    const entryPath = path.join(workspace, "index.html");
+    await fs.writeFile(entryPath, "<p>Original</p>");
+    await fs.writeFile(path.join(outside, "secret.html"), "<p>Secret</p>");
+
+    await withPreviewService(async (service) => {
+      const prepared = await Effect.runPromise(
+        service.prepare({ cwd: workspace, path: "index.html" }),
+      );
+      await fs.rm(entryPath);
+      await fs.symlink(path.join(outside, "secret.html"), entryPath);
+
+      const response = await requestPreview(prepared.previewUrl!);
+      expect(response.status).toBe(404);
+      expect(response.body).not.toContain("Secret");
+    });
+  });
+
   it("revokes a capability explicitly and refuses every later request", async () => {
     const workspace = await makeWorkspace();
     await fs.writeFile(path.join(workspace, "index.html"), "<p>Short lived</p>");

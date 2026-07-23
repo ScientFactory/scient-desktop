@@ -58,13 +58,27 @@ export function localServerMatchesRun(
   server: ServerLocalServerProcess,
   run: LocalServerRunIdentity,
 ): boolean {
-  if (
-    run.pid !== null &&
-    (server.pid === run.pid || server.ppid === run.pid || server.ancestorPids?.includes(run.pid))
-  ) {
+  if (localServerProcessMatchesRun(server, run)) {
     return true;
   }
   return Boolean(server.cwd && isWorkspaceRootWithin(server.cwd, run.cwd));
+}
+
+/**
+ * Authoritative ownership check for lifecycle operations and readiness gates.
+ *
+ * A matching cwd is useful presentation context, but it does not prove that a
+ * listener belongs to the managed process. Only an exact pid or process-lineage
+ * match is strong enough to trust or stop the listener.
+ */
+export function localServerProcessMatchesRun(
+  server: ServerLocalServerProcess,
+  run: LocalServerRunIdentity,
+): boolean {
+  return Boolean(
+    run.pid !== null &&
+    (server.pid === run.pid || server.ppid === run.pid || server.ancestorPids?.includes(run.pid)),
+  );
 }
 
 function firstAddressPort(server: ServerLocalServerProcess): readonly number[] {

@@ -170,16 +170,17 @@ async function resolveGrantedFile(
 ): Promise<string | null> {
   const relativePath = decodeRequestedAssetPath(rawUrl);
   if (relativePath === null) return null;
-  if (relativePath.length === 0) return grant.entryPath;
+  if (relativePath.length > 0) {
+    const extension = path.extname(relativePath).toLowerCase();
+    const allowedExtensions =
+      grant.mode === "interactive-bundle"
+        ? PREVIEW_ASSET_EXTENSIONS
+        : STATIC_PREVIEW_ASSET_EXTENSIONS;
+    if (!allowedExtensions.has(extension)) return null;
+  }
 
-  const extension = path.extname(relativePath).toLowerCase();
-  const allowedExtensions =
-    grant.mode === "interactive-bundle"
-      ? PREVIEW_ASSET_EXTENSIONS
-      : STATIC_PREVIEW_ASSET_EXTENSIONS;
-  if (!allowedExtensions.has(extension)) return null;
-
-  const candidate = path.resolve(grant.baseDirectory, relativePath);
+  const candidate =
+    relativePath.length === 0 ? grant.entryPath : path.resolve(grant.baseDirectory, relativePath);
   const canonicalFile = await fs.realpath(candidate).catch(() => null);
   if (!canonicalFile || !isPathInside(canonicalFile, grant.baseDirectory)) return null;
   if (!grant.allowedFiles.has(canonicalFile)) return null;

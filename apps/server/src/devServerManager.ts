@@ -22,7 +22,7 @@ import {
   type ServerLocalServerProcess,
 } from "@synara/contracts";
 import * as Crypto from "node:crypto";
-import { localServerMatchesRun } from "@synara/shared/localServers";
+import { localServerProcessMatchesRun } from "@synara/shared/localServers";
 import { Effect, Layer, PubSub, Ref, ServiceMap, Stream } from "effect";
 
 import { TerminalManager, type TerminalError } from "./terminal/Services/Manager";
@@ -60,7 +60,7 @@ export function findProjectDevServerForLocalServer(input: {
   devServers: readonly ProjectDevServer[];
 }): ProjectDevServer | null {
   for (const devServer of input.devServers) {
-    if (localServerMatchesRun(input.localServer, devServer)) {
+    if (localServerProcessMatchesRun(input.localServer, devServer)) {
       return devServer;
     }
   }
@@ -119,7 +119,7 @@ export async function waitForProjectDevServerReadiness(
 
   while (Date.now() <= deadline) {
     const localServers = await discover().catch(() => []);
-    const match = localServers.find((candidate) => localServerMatchesRun(candidate, server));
+    const match = localServers.find((candidate) => localServerProcessMatchesRun(candidate, server));
     const url = match ? preferredLocalServerUrl(match) : null;
     if (match && url && (await probe(url))) {
       return { url, ports: match.ports };

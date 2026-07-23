@@ -53,15 +53,15 @@ describe("findProjectDevServerForLocalServer", () => {
     ).toBe(devServer);
   });
 
-  it("uses the shared local-server ownership rule for cwd matches", () => {
-    const devServer = makeDevServer({ cwd: "/repo/app", pid: null });
+  it("does not treat a matching cwd as process ownership", () => {
+    const devServer = makeDevServer({ cwd: "/repo/app", pid: 100 });
 
     expect(
       findProjectDevServerForLocalServer({
         localServer: makeLocalServer({ cwd: "/repo/app/packages/web", pid: 200 }),
         devServers: [devServer],
       }),
-    ).toBe(devServer);
+    ).toBeNull();
   });
 
   it("does not match sibling folders with the same prefix", () => {
@@ -82,7 +82,7 @@ describe("waitForProjectDevServerReadiness", () => {
       pollMs: 0,
       discover: async () => {
         calls += 1;
-        return calls === 1 ? [] : [makeLocalServer({ cwd: "/repo/app" })];
+        return calls === 1 ? [] : [makeLocalServer({ cwd: "/repo/app", ppid: 100 })];
       },
       probe: async () => true,
       sleep: async () => undefined,
@@ -90,6 +90,25 @@ describe("waitForProjectDevServerReadiness", () => {
 
     expect(calls).toBe(2);
     expect(result).toEqual({ url: "http://127.0.0.1:5173", ports: [5173] });
+  });
+
+  it("does not probe an unrelated reachable listener with the same cwd", async () => {
+    let probes = 0;
+    const result = await waitForProjectDevServerReadiness(
+      makeDevServer({ pid: 100, status: "starting" }),
+      {
+        timeoutMs: 0,
+        discover: async () => [makeLocalServer({ cwd: "/repo/app", pid: 200, ppid: 1 })],
+        probe: async () => {
+          probes += 1;
+          return true;
+        },
+        sleep: async () => undefined,
+      },
+    );
+
+    expect(result).toBeNull();
+    expect(probes).toBe(0);
   });
 
   it("fails closed when no listener becomes ready", async () => {
