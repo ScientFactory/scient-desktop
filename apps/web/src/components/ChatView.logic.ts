@@ -121,10 +121,10 @@ export function resolveRuntimeModeAfterApprovalDecision(
 export function shouldRenderProviderHealthBanner(input: {
   threadEntryPoint: ThreadPrimarySurface;
   terminalWorkspaceTerminalTabActive: boolean;
-  hasThreadStarted: boolean;
+  hasConversationActivity: boolean;
 }): boolean {
   return (
-    input.hasThreadStarted &&
+    input.hasConversationActivity &&
     input.threadEntryPoint === "chat" &&
     !input.terminalWorkspaceTerminalTabActive
   );

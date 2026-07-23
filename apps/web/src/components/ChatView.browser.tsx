@@ -1950,7 +1950,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
         ...thread,
         latestTurn: null,
         messages: [],
-        session: null,
       })),
     };
 

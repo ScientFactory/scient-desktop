@@ -1421,7 +1421,7 @@ describe("shouldRenderProviderHealthBanner", () => {
       shouldRenderProviderHealthBanner({
         threadEntryPoint: "chat",
         terminalWorkspaceTerminalTabActive: false,
-        hasThreadStarted: false,
+        hasConversationActivity: false,
       }),
     ).toBe(false);
   });
@@ -1431,7 +1431,7 @@ describe("shouldRenderProviderHealthBanner", () => {
       shouldRenderProviderHealthBanner({
         threadEntryPoint: "terminal",
         terminalWorkspaceTerminalTabActive: false,
-        hasThreadStarted: true,
+        hasConversationActivity: true,
       }),
     ).toBe(false);
   });
@@ -1441,7 +1441,7 @@ describe("shouldRenderProviderHealthBanner", () => {
       shouldRenderProviderHealthBanner({
         threadEntryPoint: "chat",
         terminalWorkspaceTerminalTabActive: true,
-        hasThreadStarted: true,
+        hasConversationActivity: true,
       }),
     ).toBe(false);
   });
@@ -1451,7 +1451,7 @@ describe("shouldRenderProviderHealthBanner", () => {
       shouldRenderProviderHealthBanner({
         threadEntryPoint: "chat",
         terminalWorkspaceTerminalTabActive: false,
-        hasThreadStarted: true,
+        hasConversationActivity: true,
       }),
     ).toBe(true);
   });
