@@ -1416,11 +1416,22 @@ describe("resolveProjectScriptTerminalTarget", () => {
 });
 
 describe("shouldRenderProviderHealthBanner", () => {
+  it("does not show provider setup health on a new empty chat", () => {
+    expect(
+      shouldRenderProviderHealthBanner({
+        threadEntryPoint: "chat",
+        terminalWorkspaceTerminalTabActive: false,
+        hasConversationActivity: false,
+      }),
+    ).toBe(false);
+  });
+
   it("does not show chat provider health while a terminal thread is active", () => {
     expect(
       shouldRenderProviderHealthBanner({
         threadEntryPoint: "terminal",
         terminalWorkspaceTerminalTabActive: false,
+        hasConversationActivity: true,
       }),
     ).toBe(false);
   });
@@ -1430,15 +1441,17 @@ describe("shouldRenderProviderHealthBanner", () => {
       shouldRenderProviderHealthBanner({
         threadEntryPoint: "chat",
         terminalWorkspaceTerminalTabActive: true,
+        hasConversationActivity: true,
       }),
     ).toBe(false);
   });
 
-  it("shows chat provider health only on the chat surface", () => {
+  it("shows provider health for a started conversation on the chat surface", () => {
     expect(
       shouldRenderProviderHealthBanner({
         threadEntryPoint: "chat",
         terminalWorkspaceTerminalTabActive: false,
+        hasConversationActivity: true,
       }),
     ).toBe(true);
   });
