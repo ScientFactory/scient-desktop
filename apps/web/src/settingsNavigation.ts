@@ -85,7 +85,7 @@ export const SETTINGS_NAV_ITEMS: readonly SettingsNavItem[] = [
     id: "notifications",
     group: "app",
     label: "Notifications",
-    description: "In-app toasts and desktop alerts.",
+    description: "Activity history, transient feedback, and desktop alerts.",
     icon: "bell",
     eyebrow: "Alerts",
   },

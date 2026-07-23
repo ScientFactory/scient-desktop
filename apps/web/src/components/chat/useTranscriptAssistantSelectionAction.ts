@@ -13,7 +13,6 @@ import {
   type TouchEventHandler,
   type WheelEventHandler,
 } from "react";
-import { toastManager } from "../ui/toast";
 import { type ComposerAssistantSelectionAttachment } from "../../composerDraftStore";
 import {
   createAssistantSelectionAttachment,
@@ -24,6 +23,7 @@ import {
   resolveTranscriptSelectionActionLayout,
   type TranscriptAssistantSelection,
 } from "./chatSelectionActions";
+import type { ReportComposerLocalFeedback } from "./useComposerVoiceController";
 
 export interface PendingTranscriptSelectionAction {
   selection: TranscriptAssistantSelection;
@@ -44,6 +44,7 @@ interface UseTranscriptAssistantSelectionActionOptions {
     selection: ComposerAssistantSelectionAttachment,
   ) => boolean;
   canReferenceAssistantSelection?: (selection: TranscriptAssistantSelection) => boolean;
+  reportComposerFeedback: ReportComposerLocalFeedback;
   scheduleComposerFocus: () => void;
   onMessagesClickCaptureBase: MouseEventHandler<HTMLDivElement>;
   onMessagesPointerDownBase: PointerEventHandler<HTMLDivElement>;
@@ -67,6 +68,7 @@ export function useTranscriptAssistantSelectionAction(
     composerAssistantSelectionsRef,
     addComposerAssistantSelectionToDraft,
     canReferenceAssistantSelection,
+    reportComposerFeedback,
     scheduleComposerFocus,
     onMessagesClickCaptureBase,
     onMessagesPointerDownBase,
@@ -210,7 +212,7 @@ export function useTranscriptAssistantSelectionAction(
       PROVIDER_SEND_TURN_MAX_ATTACHMENTS
     ) {
       setPendingTranscriptSelectionAction(null);
-      toastManager.add({
+      reportComposerFeedback({
         type: "warning",
         title: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} references per message.`,
       });
@@ -221,7 +223,7 @@ export function useTranscriptAssistantSelectionAction(
     if (!nextSelection) {
       setPendingTranscriptSelectionAction(null);
       if (getAssistantSelectionValidationError(pendingSelection.selection) === "too-long") {
-        toastManager.add({
+        reportComposerFeedback({
           type: "warning",
           title: "Selections can be up to 4,000 characters.",
         });
@@ -242,6 +244,7 @@ export function useTranscriptAssistantSelectionAction(
     composerFilesRef,
     composerImagesRef,
     pendingTranscriptSelectionAction,
+    reportComposerFeedback,
     scheduleComposerFocus,
   ]);
 

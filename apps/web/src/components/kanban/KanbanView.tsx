@@ -10,6 +10,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { SidebarHeaderNavigationControls } from "~/components/SidebarHeaderNavigationControls";
 import { Button } from "~/components/ui/button";
+import { DisclosureRegion } from "~/components/ui/DisclosureRegion";
 import { Kbd, KbdGroup } from "~/components/ui/kbd";
 import { RouteInsetSurface } from "../RouteInsetSurface";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -49,6 +50,7 @@ import {
 } from "../chat/chatHeaderControls";
 import { CHAT_BACKGROUND_CLASS_NAME } from "../chat/composerPickerStyles";
 import { KanbanNewTaskDialog } from "./KanbanNewTaskDialog";
+import { KanbanInlineFeedback } from "./KanbanInlineFeedback";
 import { KanbanOverview } from "./KanbanOverview";
 import { KanbanProjectBoardView } from "./KanbanProjectBoardView";
 import { useKanbanBoard } from "./useKanbanBoard";
@@ -147,7 +149,24 @@ export default function KanbanView({ projectId }: { projectId: string | null }) 
     [navigate],
   );
 
-  const { onCardContextMenu, renameDialog } = useKanbanCardContextMenu();
+  const {
+    onCardContextMenu,
+    renameDialog,
+    feedback: cardActionFeedback,
+    clearFeedback: clearCardActionFeedback,
+  } = useKanbanCardContextMenu();
+
+  useEffect(() => {
+    clearCardActionFeedback();
+  }, [clearCardActionFeedback, projectId]);
+
+  useEffect(() => {
+    if (cardActionFeedback?.tone !== "success" && cardActionFeedback?.tone !== "info") {
+      return;
+    }
+    const timeoutId = window.setTimeout(clearCardActionFeedback, 3_000);
+    return () => window.clearTimeout(timeoutId);
+  }, [cardActionFeedback, clearCardActionFeedback]);
 
   const handleOpenProject = useCallback(
     (targetProjectId: ProjectId) => {
@@ -226,25 +245,37 @@ export default function KanbanView({ projectId }: { projectId: string | null }) 
           </div>
         </header>
 
-        <div className="min-h-0 min-w-0 flex-1 pt-3">
-          {projectBoard ? (
-            <KanbanProjectBoardView
-              board={projectBoard}
-              onOpenCard={handleOpenCard}
-              onCardContextMenu={onCardContextMenu}
-              onNewTask={handleNewDraftInProjectBoard}
-              nowMs={nowMs}
-            />
-          ) : (
-            <KanbanOverview
-              board={board}
-              onOpenProject={handleOpenProject}
-              onOpenCard={handleOpenCard}
-              onCardContextMenu={onCardContextMenu}
-              onNewTask={handleNewTask}
-              nowMs={nowMs}
-            />
-          )}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col pt-3">
+          <DisclosureRegion open={cardActionFeedback !== null} className="shrink-0 px-4">
+            <div className="pb-2">
+              {cardActionFeedback ? (
+                <KanbanInlineFeedback
+                  feedback={cardActionFeedback}
+                  onDismiss={clearCardActionFeedback}
+                />
+              ) : null}
+            </div>
+          </DisclosureRegion>
+          <div className="min-h-0 min-w-0 flex-1">
+            {projectBoard ? (
+              <KanbanProjectBoardView
+                board={projectBoard}
+                onOpenCard={handleOpenCard}
+                onCardContextMenu={onCardContextMenu}
+                onNewTask={handleNewDraftInProjectBoard}
+                nowMs={nowMs}
+              />
+            ) : (
+              <KanbanOverview
+                board={board}
+                onOpenProject={handleOpenProject}
+                onOpenCard={handleOpenCard}
+                onCardContextMenu={onCardContextMenu}
+                onNewTask={handleNewTask}
+                nowMs={nowMs}
+              />
+            )}
+          </div>
         </div>
       </div>
 

@@ -55,6 +55,21 @@ export interface BrowserChromeStatus {
   label: string;
 }
 
+export interface BrowserCopyFeedback {
+  item: "link" | "screenshot";
+  tabId: string;
+  url: string;
+  tone: "success" | "error";
+  message: string;
+}
+
+export function browserCopyFeedbackMatches(
+  feedback: BrowserCopyFeedback | null,
+  scope: { tabId: string; url: string } | null,
+): feedback is BrowserCopyFeedback {
+  return Boolean(feedback && scope && feedback.tabId === scope.tabId && feedback.url === scope.url);
+}
+
 // Hides about:blank from the address bar so new tabs behave like real browsers.
 export function browserAddressDisplayValue(
   tab: Pick<BrowserTabState, "url"> | null | undefined,

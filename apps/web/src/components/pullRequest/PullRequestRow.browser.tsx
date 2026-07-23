@@ -185,6 +185,27 @@ describe("PullRequestRow pin control", () => {
     expect(page.getByRole("button", { name: "Pin pull request #42 in Project One" })).toBeVisible();
   });
 
+  it("announces a pin failure from the owning control", async () => {
+    await render(
+      <PullRequestRow
+        entry={makeEntry(false)}
+        selected={false}
+        onClick={vi.fn()}
+        onTogglePinned={vi.fn()}
+        pinError="GitHub is unavailable"
+      />,
+    );
+
+    const failedPin = page.getByRole("button", {
+      name: "Could not update pin: GitHub is unavailable",
+    });
+    expect(failedPin).toBeVisible();
+    expect(failedPin).toHaveAttribute("aria-invalid", "true");
+    expect(page.getByRole("alert")).toHaveTextContent(
+      "Could not update pin: GitHub is unavailable",
+    );
+  });
+
   it("summarizes shared repository rows without implying one owning project", async () => {
     const entry = makeEntry(false);
     await render(

@@ -11,6 +11,7 @@ import { useAppSettings } from "../appSettings";
 import {
   type AppSnapThreadTarget,
   type TimedAppSnapThreadTarget,
+  createLatestAppSnapRequestGuard,
   didAppSnapHydrationInputsChange,
   hasHydratedAppSnapCapture,
   hasPersistedAppSnapCapture,
@@ -43,12 +44,23 @@ import {
   isComposerAppSnapCaptureSource,
 } from "../lib/composerImageSource";
 import { resolveRecentThreadSplitActivation } from "../recentViewActivation.logic";
+import { activityManager } from "../notifications/activityStore";
+import { transientAlertManager } from "../notifications/transientAlert";
 import { useSplitViewStore } from "../splitViewStore";
 import { useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
-import { toastManager } from "./ui/toast";
 
 const MAX_REMEMBERED_CAPTURE_IDS = 100;
+const APPSNAP_LISTENER_ACTIVITY_KEY = "appsnap:listener";
+const APPSNAP_PENDING_RESTORE_ACTIVITY_KEY = "appsnap:pending-restore";
+
+function appSnapCaptureActivityKey(captureId: string): string {
+  return `appsnap:capture:${captureId}`;
+}
+
+function errorDescription(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
 
 interface PersistedAppSnapHydrationTarget {
   attachments: ReadonlyArray<PersistedComposerImageAttachment>;
@@ -123,6 +135,7 @@ export function AppSnapCoordinator() {
   playCaptureSoundRef.current = settings.appSnapPlaySound;
   const enableAppSnapRef = useRef(settings.enableAppSnap);
   enableAppSnapRef.current = settings.enableAppSnap;
+  const appSnapPreferenceRequestGuardRef = useRef(createLatestAppSnapRequestGuard());
 
   useEffect(() => {
     let disposed = false;
@@ -283,11 +296,33 @@ export function AppSnapCoordinator() {
   useEffect(() => {
     const bridge = window.desktopBridge?.appSnap;
     if (!bridge) return;
+    const requestId = appSnapPreferenceRequestGuardRef.current.begin();
+    let disposed = false;
     // The opt-in preference lives in the renderer settings store. This root
     // coordinator is mounted for the full UI lifetime and owns the native listener.
-    void bridge.setEnabled(settings.enableAppSnap).catch((error) => {
-      console.warn("[appsnap] Could not update native listener state", error);
-    });
+    void bridge
+      .setEnabled(settings.enableAppSnap)
+      .then(() => {
+        if (disposed || !appSnapPreferenceRequestGuardRef.current.isCurrent(requestId)) return;
+        activityManager.remove(APPSNAP_LISTENER_ACTIVITY_KEY);
+      })
+      .catch((error) => {
+        if (disposed || !appSnapPreferenceRequestGuardRef.current.isCurrent(requestId)) return;
+        const description = errorDescription(error, "Could not update AppSnap capture state.");
+        console.warn("[appsnap] Could not update native listener state", error);
+        activityManager.publish({
+          dedupeKey: APPSNAP_LISTENER_ACTIVITY_KEY,
+          source: "system",
+          status: "needs_attention",
+          tone: "error",
+          title: "AppSnap needs attention",
+          description,
+          destination: { type: "settings", section: "appsnap" },
+        });
+      });
+    return () => {
+      disposed = true;
+    };
   }, [settings.enableAppSnap]);
 
   const activateExistingTarget = useCallback(
@@ -432,18 +467,22 @@ export function AppSnapCoordinator() {
       }
       lastAppSnapRef.current = { ...target, atMs: captureAtMs };
       requestComposerFocus(target.threadId);
-      toastManager.add({
-        type: persistenceResult === "unverified" ? "warning" : "success",
-        title:
-          persistenceResult === "unverified" ? "AppSnap added with a warning" : "AppSnap added",
-        description:
-          persistenceResult === "unverified"
-            ? "The capture is attached, but Scient could not verify its draft metadata. If it is missing after a reload, Scient will attach it again."
-            : capture.sourceAppName
-              ? `Captured ${capture.sourceAppName} and added it to the composer.`
-              : "The frontmost window was added to the composer.",
-        data: { allowCrossThreadVisibility: true },
-      });
+      const captureActivityKey = appSnapCaptureActivityKey(capture.id);
+      if (persistenceResult === "unverified") {
+        activityManager.publish({
+          dedupeKey: captureActivityKey,
+          source: "system",
+          status: "needs_attention",
+          tone: "warning",
+          title: "AppSnap attached, but not fully verified",
+          description:
+            "The capture is visible in the composer, but Scient could not verify its saved draft metadata. It will retry from the recovery copy after a reload.",
+          destination: { type: "thread", threadId: target.threadId },
+        });
+      } else {
+        // The attachment chip is the local success state; clear any prior failure for this capture.
+        activityManager.remove(captureActivityKey);
+      }
       return persistenceResult;
     },
     [activateExistingTarget, handleNewChat, openChatThreadPage],
@@ -496,13 +535,36 @@ export function AppSnapCoordinator() {
             if (!attach) throw new Error("The AppSnap composer is not ready yet.");
             persistence = await attach(capture);
           } catch (error) {
-            toastManager.add({
+            const description = errorDescription(error, "AppSnap capture failed.");
+            const captureActivityKey = appSnapCaptureActivityKey(capture.id);
+            activityManager.publish({
+              dedupeKey: captureActivityKey,
+              source: "system",
+              status: "needs_attention",
+              tone: "error",
+              title: "AppSnap could not be added",
+              description,
+            });
+            // This coordinator has no owning visual surface. Keep the rare global error solely
+            // to expose the immediate Retry action; the durable record lives in Activity.
+            let alertId: ReturnType<typeof transientAlertManager.add>;
+            alertId = transientAlertManager.add({
               type: "error",
               title: "AppSnap could not be added",
-              description: error instanceof Error ? error.message : "AppSnap capture failed.",
+              description,
               actionProps: {
                 children: "Retry",
                 onClick: () => {
+                  transientAlertManager.close(alertId);
+                  activityManager.publish({
+                    dedupeKey: captureActivityKey,
+                    source: "system",
+                    status: "in_progress",
+                    tone: "info",
+                    title: "Retrying AppSnap",
+                    description: "Scient is trying to attach the recovered capture again.",
+                    preserveRead: true,
+                  });
                   captureIdsRef.current.delete(capture.id);
                   enqueueCapture(capture);
                 },
@@ -531,24 +593,59 @@ export function AppSnapCoordinator() {
       enqueueCapture(capture);
     });
     const unsubscribeError = bridge.onError((error) => {
-      toastManager.add({
-        type: "error",
+      activityManager.publish({
+        dedupeKey: APPSNAP_LISTENER_ACTIVITY_KEY,
+        source: "system",
+        status: "needs_attention",
+        tone: "error",
         title: "AppSnap failed",
         description: error.message,
-        ...(error.code === "helper-stopped"
-          ? {
-              actionProps: {
-                children: "Restart",
-                onClick: () => {
-                  void bridge
-                    .setEnabled(enableAppSnapRef.current)
-                    .catch((restartError) =>
-                      console.warn("[appsnap] Could not restart native listener", restartError),
-                    );
-                },
-              },
-            }
-          : {}),
+        destination: { type: "settings", section: "appsnap" },
+      });
+      if (error.code !== "helper-stopped") return;
+
+      // The native helper stopped outside any visible owning surface. Retain one global error
+      // only because Activity does not yet host actions and immediate Restart must remain available.
+      let alertId: ReturnType<typeof transientAlertManager.add>;
+      alertId = transientAlertManager.add({
+        type: "error",
+        title: "AppSnap stopped",
+        description: error.message,
+        actionProps: {
+          children: "Restart",
+          onClick: () => {
+            transientAlertManager.close(alertId);
+            activityManager.publish({
+              dedupeKey: APPSNAP_LISTENER_ACTIVITY_KEY,
+              source: "system",
+              status: "in_progress",
+              tone: "info",
+              title: "Restarting AppSnap",
+              description: "Scient is restarting the AppSnap listener.",
+              preserveRead: true,
+              destination: { type: "settings", section: "appsnap" },
+            });
+            void bridge
+              .setEnabled(enableAppSnapRef.current)
+              .then(() => activityManager.remove(APPSNAP_LISTENER_ACTIVITY_KEY))
+              .catch((restartError) => {
+                const description = errorDescription(
+                  restartError,
+                  "Scient could not restart AppSnap.",
+                );
+                console.warn("[appsnap] Could not restart native listener", restartError);
+                activityManager.publish({
+                  dedupeKey: APPSNAP_LISTENER_ACTIVITY_KEY,
+                  source: "system",
+                  status: "needs_attention",
+                  tone: "error",
+                  title: "AppSnap could not restart",
+                  description,
+                  destination: { type: "settings", section: "appsnap" },
+                });
+              });
+          },
+        },
         data: {
           allowCrossThreadVisibility: true,
           copyText: `${error.code}: ${error.message}`,
@@ -557,8 +654,23 @@ export function AppSnapCoordinator() {
     });
     void bridge
       .listPendingCaptures()
-      .then((captures) => captures.forEach(enqueueCapture))
-      .catch((error) => console.warn("[appsnap] Could not restore pending captures", error));
+      .then((captures) => {
+        activityManager.remove(APPSNAP_PENDING_RESTORE_ACTIVITY_KEY);
+        captures.forEach(enqueueCapture);
+      })
+      .catch((error) => {
+        const description = errorDescription(error, "Could not restore pending AppSnaps.");
+        console.warn("[appsnap] Could not restore pending captures", error);
+        activityManager.publish({
+          dedupeKey: APPSNAP_PENDING_RESTORE_ACTIVITY_KEY,
+          source: "system",
+          status: "needs_attention",
+          tone: "warning",
+          title: "Pending AppSnaps could not be restored",
+          description,
+          destination: { type: "settings", section: "appsnap" },
+        });
+      });
 
     return () => {
       disposed = true;
