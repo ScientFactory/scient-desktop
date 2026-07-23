@@ -70,8 +70,8 @@ describe("transcribeVoiceWithChatGptSession", () => {
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
 
-    expect(resolveAuth).toHaveBeenNthCalledWith(1, false);
-    expect(resolveAuth).toHaveBeenNthCalledWith(2, true);
+    expect(resolveAuth).toHaveBeenNthCalledWith(1, false, expect.any(AbortSignal));
+    expect(resolveAuth).toHaveBeenNthCalledWith(2, true, expect.any(AbortSignal));
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     const secondRequest = vi.mocked(fetchImpl).mock.calls[1]?.[1];
     expect(new Headers(secondRequest?.headers).get("chatgpt-account-id")).toBe("fresh-account");
@@ -90,8 +90,8 @@ describe("transcribeVoiceWithChatGptSession", () => {
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
 
-    expect(resolveAuth).toHaveBeenNthCalledWith(1, false);
-    expect(resolveAuth).toHaveBeenNthCalledWith(2, true);
+    expect(resolveAuth).toHaveBeenNthCalledWith(1, false, expect.any(AbortSignal));
+    expect(resolveAuth).toHaveBeenNthCalledWith(2, true, expect.any(AbortSignal));
   });
 
   it("fails before upload when the session has no account context", async () => {

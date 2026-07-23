@@ -5,6 +5,7 @@
 import type { NormalizedVoiceClip } from "@synara/shared/voiceTranscription";
 import { describe, expect, it, vi } from "vitest";
 import { LocalWhisperBackend, type LocalWhisperRuntimeLike } from "./localWhisperBackend";
+import { LocalWhisperRuntimeError } from "./localWhisperRuntime";
 
 const clip: NormalizedVoiceClip = {
   audioBytes: new Uint8Array([1]),
@@ -29,6 +30,8 @@ function modelManager(state: "missing" | "ready" | "downloading") {
 function runtime(overrides: Partial<LocalWhisperRuntimeLike> = {}): LocalWhisperRuntimeLike {
   return {
     isInstalled: vi.fn(async () => true),
+    isBusy: vi.fn(() => false),
+    stopIdle: vi.fn(async () => undefined),
     transcribe: vi.fn(async () => ({ text: "offline transcript" })),
     dispose: vi.fn(async () => undefined),
     ...overrides,
@@ -72,6 +75,24 @@ describe("LocalWhisperBackend", () => {
       kind: "provider-error",
       fallbackAllowed: false,
       safeMessage: "Offline voice transcription failed.",
+    });
+  });
+
+  it("preserves the typed inference timeout", async () => {
+    const backend = new LocalWhisperBackend(
+      modelManager("ready") as never,
+      runtime({
+        transcribe: vi.fn(async () => {
+          throw new LocalWhisperRuntimeError("timeout", "timed out");
+        }),
+      }),
+    );
+
+    await expect(
+      backend.transcribe(clip, { signal: new AbortController().signal }),
+    ).rejects.toMatchObject({
+      kind: "timeout",
+      safeMessage: "Offline voice transcription timed out.",
     });
   });
 });

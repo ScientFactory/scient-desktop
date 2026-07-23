@@ -123,6 +123,7 @@ import {
   saveConfirmedCustomBinaryPaths,
 } from "../confirmedCustomBinaryPathStore";
 import { isElectron } from "../env";
+import { ensureDesktopVoiceReady, hasDesktopVoiceRuntime } from "../lib/desktopVoiceSetup";
 import { stripDiffSearchParams } from "../diffRouteSearch";
 import { resolveSubagentPresentationForThread } from "../lib/subagentPresentation";
 import { ensureHomeChatProject, isHomeChatContainerProject } from "../lib/chatProjects";
@@ -3766,15 +3767,18 @@ export default function ChatView({
     () => findProviderStatus(providerStatuses, "codex"),
     [providerStatuses],
   );
+  const desktopVoiceAvailable = hasDesktopVoiceRuntime();
   const refreshProviderStatuses = useRefreshProviderStatusesNow();
   const voiceRecordingDurationLabel = useMemo(
     () => formatVoiceRecordingDuration(voiceRecordingDurationMs),
     [voiceRecordingDurationMs],
   );
-  const canRenderVoiceNotes = voiceProviderStatus?.authStatus !== "unauthenticated";
+  const canRenderVoiceNotes =
+    desktopVoiceAvailable || voiceProviderStatus?.authStatus !== "unauthenticated";
   const canStartVoiceNotes =
-    voiceProviderStatus?.authStatus !== "unauthenticated" &&
-    voiceProviderStatus?.voiceTranscriptionAvailable !== false;
+    desktopVoiceAvailable ||
+    (voiceProviderStatus?.authStatus !== "unauthenticated" &&
+      voiceProviderStatus?.voiceTranscriptionAvailable !== false);
   const showVoiceNotesControl = canRenderVoiceNotes || isVoiceRecording || isVoiceTranscribing;
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
@@ -5552,6 +5556,7 @@ export default function ChatView({
   useEffect(() => {
     voiceTranscriptionRequestIdRef.current += 1;
     voiceRecordingStartedAtRef.current = null;
+    void readNativeApi()?.server.cancelVoiceTranscription?.();
     void cancelVoiceRecording();
     setIsVoiceTranscribing(false);
     setOptimisticUserMessages((existing) => {
@@ -6206,14 +6211,14 @@ export default function ChatView({
     if (!activeProject) {
       return;
     }
-    if (voiceProviderStatus?.authStatus === "unauthenticated") {
+    if (!desktopVoiceAvailable && voiceProviderStatus?.authStatus === "unauthenticated") {
       useProviderConnectionDialogStore.getState().openDialog("codex", "runtime_error");
       return;
     }
     if (!canStartVoiceNotes) {
       reportComposerFeedback({
         type: "error",
-        title: "Voice notes require a ChatGPT-authenticated Codex session.",
+        title: "Voice transcription is unavailable in this browser session.",
       });
       return;
     }
@@ -6222,6 +6227,10 @@ export default function ChatView({
         type: "error",
         title: "Answer plan questions before recording a voice note.",
       });
+      return;
+    }
+
+    if (!(await ensureDesktopVoiceReady(settings.voiceTranscriptionMode, reportComposerFeedback))) {
       return;
     }
 
@@ -6238,8 +6247,10 @@ export default function ChatView({
   }, [
     activeProject,
     canStartVoiceNotes,
+    desktopVoiceAvailable,
     pendingUserInputs.length,
     reportComposerFeedback,
+    settings.voiceTranscriptionMode,
     startVoiceRecording,
     voiceProviderStatus?.authStatus,
   ]);
@@ -6296,7 +6307,7 @@ export default function ChatView({
         return;
       }
       const result = await api.server.transcribeVoice({
-        provider: "codex",
+        mode: settings.voiceTranscriptionMode,
         cwd: activeProject.cwd,
         ...(activeThread ? { threadId: activeThread.id } : {}),
         ...payload,
@@ -6313,7 +6324,7 @@ export default function ChatView({
         error instanceof Error
           ? sanitizeVoiceErrorMessage(error.message)
           : "The voice note could not be transcribed.";
-      const authExpired = isVoiceAuthExpiredMessage(description);
+      const authExpired = !desktopVoiceAvailable && isVoiceAuthExpiredMessage(description);
       if (authExpired) {
         void refreshProviderStatuses();
       }
@@ -6321,7 +6332,7 @@ export default function ChatView({
         type: "error",
         title: authExpired ? "Sign in to ChatGPT again" : "Couldn't transcribe voice note",
         description: authExpired
-          ? "Voice transcription uses your ChatGPT session in Codex. That session was rejected, so sign in again there and retry."
+          ? "Your ChatGPT session was rejected. Sign in again and retry."
           : description,
         ...(authExpired
           ? {
@@ -6345,10 +6356,12 @@ export default function ChatView({
     activeThread,
     appendVoiceTranscriptToComposer,
     cancelVoiceRecording,
+    desktopVoiceAvailable,
     isVoiceRecording,
     reportComposerFeedback,
     refreshProviderStatuses,
     selectedProvider,
+    settings.voiceTranscriptionMode,
     stopVoiceRecording,
     threadId,
   ]);
@@ -6371,6 +6384,7 @@ export default function ChatView({
     voiceTranscriptionRequestIdRef.current += 1;
     voiceRecordingStartedAtRef.current = null;
     setIsVoiceTranscribing(false);
+    void readNativeApi()?.server.cancelVoiceTranscription?.();
     void cancelVoiceRecording();
   }, [cancelVoiceRecording]);
 

@@ -10,9 +10,12 @@ import {
   type VoiceTranscript,
 } from "@synara/shared/voiceTranscription";
 import type { LocalVoiceModelManager } from "./localVoiceModelManager";
+import { LocalWhisperRuntimeError } from "./localWhisperRuntime";
 
 export interface LocalWhisperRuntimeLike {
   isInstalled(): Promise<boolean>;
+  isBusy(): boolean;
+  stopIdle(): Promise<void>;
   transcribe(
     modelPath: string,
     clip: NormalizedVoiceClip,
@@ -27,15 +30,27 @@ export class LocalWhisperBackend implements VoiceTranscriptionBackend {
   constructor(
     private readonly modelManager: LocalVoiceModelManager,
     private readonly runtime: LocalWhisperRuntimeLike,
+    private readonly isMaintenanceActive: () => boolean = () => false,
   ) {}
 
   async getAvailability(): Promise<VoiceTranscriptionBackendAvailability> {
+    if (this.isMaintenanceActive()) {
+      return {
+        state: "temporarily-unavailable",
+        reason: "Offline voice model maintenance is in progress.",
+      };
+    }
     const runtimeInstalled = await this.runtime.isInstalled();
     if (!runtimeInstalled) {
       return { state: "unavailable", reason: "The bundled offline voice runtime is missing." };
     }
     const modelStatus = await this.modelManager.getStatus();
-    if (modelStatus.state === "ready") return { state: "ready" };
+    if (
+      modelStatus.state === "ready" ||
+      (modelStatus.state === "downloading" && modelStatus.readyModelPath)
+    ) {
+      return { state: "ready" };
+    }
     if (modelStatus.state === "downloading") {
       return {
         state: "temporarily-unavailable",
@@ -50,8 +65,21 @@ export class LocalWhisperBackend implements VoiceTranscriptionBackend {
     options: { readonly signal: AbortSignal },
   ): Promise<VoiceTranscript> {
     options.signal.throwIfAborted();
+    if (this.isMaintenanceActive()) {
+      throw new VoiceTranscriptionBackendError({
+        kind: "backend-unavailable",
+        fallbackAllowed: false,
+        safeMessage: "Wait for offline voice model maintenance to finish.",
+      });
+    }
     const status = await this.modelManager.getStatus();
-    if (status.state !== "ready") {
+    const modelPath =
+      status.state === "ready"
+        ? status.modelPath
+        : status.state === "downloading"
+          ? status.readyModelPath
+          : undefined;
+    if (!modelPath) {
       throw new VoiceTranscriptionBackendError({
         kind: "backend-unavailable",
         fallbackAllowed: false,
@@ -59,13 +87,29 @@ export class LocalWhisperBackend implements VoiceTranscriptionBackend {
       });
     }
     try {
-      return await this.runtime.transcribe(status.modelPath, clip, options.signal);
+      return await this.runtime.transcribe(modelPath, clip, options.signal);
     } catch (error) {
       if (options.signal.aborted) {
         throw new VoiceTranscriptionBackendError({
           kind: "cancelled",
           fallbackAllowed: false,
           safeMessage: "Voice transcription was cancelled.",
+          cause: error,
+        });
+      }
+      if (error instanceof LocalWhisperRuntimeError && error.kind === "timeout") {
+        throw new VoiceTranscriptionBackendError({
+          kind: "timeout",
+          fallbackAllowed: false,
+          safeMessage: "Offline voice transcription timed out.",
+          cause: error,
+        });
+      }
+      if (error instanceof LocalWhisperRuntimeError && error.kind === "disposed") {
+        throw new VoiceTranscriptionBackendError({
+          kind: "backend-unavailable",
+          fallbackAllowed: false,
+          safeMessage: "Offline voice transcription is shutting down.",
           cause: error,
         });
       }

@@ -104,7 +104,7 @@ export class VoiceTranscriptionRouter {
     } else {
       let availability: Awaited<ReturnType<VoiceTranscriptionBackend["getAvailability"]>>;
       try {
-        availability = await this.options.remote.getAvailability();
+        availability = await this.options.remote.getAvailability({ signal: options.signal });
         options.signal.throwIfAborted();
       } catch (error) {
         if (options.signal.aborted || isNonFallbackFailure(error)) throw error;
@@ -151,7 +151,7 @@ export class VoiceTranscriptionRouter {
     signal: AbortSignal,
     fallbackUsed: boolean,
   ): Promise<RoutedVoiceTranscript> {
-    const availability = await this.options.local.getAvailability();
+    const availability = await this.options.local.getAvailability({ signal });
     signal.throwIfAborted();
     if (availability.state !== "ready") {
       throw new VoiceTranscriptionBackendError({

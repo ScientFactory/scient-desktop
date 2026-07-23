@@ -687,6 +687,8 @@ export function createWsNativeApi(): NativeApi {
         }
         return transport.request(WS_METHODS.serverTranscribeVoice, input);
       },
+      cancelVoiceTranscription: () =>
+        window.desktopBridge?.server?.cancelVoiceTranscription?.() ?? Promise.resolve(),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
     },
     stats: {

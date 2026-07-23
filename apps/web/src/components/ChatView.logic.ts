@@ -683,6 +683,7 @@ export function describeVoiceRecordingStartError(error: unknown): string {
 export function deriveComposerVoiceState(input: {
   authStatus: ServerProviderAuthStatus | null | undefined;
   voiceTranscriptionAvailable: boolean | undefined;
+  desktopVoiceAvailable?: boolean;
   isRecording: boolean;
   isTranscribing: boolean;
 }): {
@@ -690,8 +691,11 @@ export function deriveComposerVoiceState(input: {
   canStartVoiceNotes: boolean;
   showVoiceNotesControl: boolean;
 } {
-  const canRenderVoiceNotes = input.authStatus !== "unauthenticated";
-  const canStartVoiceNotes = canRenderVoiceNotes && input.voiceTranscriptionAvailable !== false;
+  const canRenderVoiceNotes =
+    input.desktopVoiceAvailable === true || input.authStatus !== "unauthenticated";
+  const canStartVoiceNotes =
+    input.desktopVoiceAvailable === true ||
+    (canRenderVoiceNotes && input.voiceTranscriptionAvailable !== false);
 
   return {
     canRenderVoiceNotes,

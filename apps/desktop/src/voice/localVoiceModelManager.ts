@@ -15,6 +15,7 @@ export type LocalVoiceModelStatus =
       readonly state: "downloading";
       readonly downloadedBytes: number;
       readonly totalBytes: number;
+      readonly readyModelPath?: string;
     }
   | {
       readonly state: "ready";
@@ -46,25 +47,34 @@ export interface LocalVoiceModelManagerOptions {
 export class LocalVoiceModelManager {
   readonly modelPath: string;
   readonly partialPath: string;
+  readonly repairPartialPath: string;
   readonly receiptPath: string;
 
   private readonly fetchImpl: typeof fetch;
   private activeDownload: Promise<string> | null = null;
+  private activeTransferPath: string | null = null;
+  private activeOperation: "install" | "repair" | null = null;
 
   constructor(private readonly options: LocalVoiceModelManagerOptions) {
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
     this.modelPath = Path.join(options.modelsDirectory, options.manifest.fileName);
     this.partialPath = `${this.modelPath}.partial`;
+    this.repairPartialPath = `${this.modelPath}.repair.partial`;
     this.receiptPath = `${this.modelPath}.json`;
   }
 
   async getStatus(): Promise<LocalVoiceModelStatus> {
     if (this.activeDownload) {
-      const downloadedBytes = await fileSize(this.partialPath);
+      const downloadedBytes = await fileSize(this.activeTransferPath ?? this.partialPath);
+      const readyModelPath =
+        this.activeOperation === "repair" && (await this.hasVerifiedReceipt())
+          ? this.modelPath
+          : undefined;
       return {
         state: "downloading",
         downloadedBytes,
         totalBytes: this.options.manifest.byteSize,
+        ...(readyModelPath ? { readyModelPath } : {}),
       };
     }
 
@@ -78,6 +88,10 @@ export class LocalVoiceModelManager {
       : { state: "missing" };
   }
 
+  isDownloading(): boolean {
+    return this.activeDownload !== null;
+  }
+
   async ensureInstalled(
     signal: AbortSignal,
     onProgress?: (progress: LocalVoiceModelDownloadProgress) => void,
@@ -89,13 +103,41 @@ export class LocalVoiceModelManager {
       return this.activeDownload;
     }
 
-    const download = this.downloadAndVerify(signal, onProgress).finally(() => {
+    this.activeTransferPath = this.partialPath;
+    this.activeOperation = "install";
+    const download = this.downloadAndVerify(signal, onProgress, this.partialPath).finally(() => {
       if (this.activeDownload === download) {
         this.activeDownload = null;
+        this.activeTransferPath = null;
+        this.activeOperation = null;
       }
     });
     this.activeDownload = download;
     return download;
+  }
+
+  async repair(
+    signal: AbortSignal,
+    onProgress?: (progress: LocalVoiceModelDownloadProgress) => void,
+  ): Promise<string> {
+    if (this.activeDownload) {
+      throw new Error("The offline voice model is already downloading.");
+    }
+    await FS.rm(this.repairPartialPath, { force: true });
+    this.activeTransferPath = this.repairPartialPath;
+    this.activeOperation = "repair";
+    const repair = this.downloadAndVerify(signal, onProgress, this.repairPartialPath).finally(
+      async () => {
+        if (this.activeDownload === repair) {
+          this.activeDownload = null;
+          this.activeTransferPath = null;
+          this.activeOperation = null;
+        }
+        await FS.rm(this.repairPartialPath, { force: true });
+      },
+    );
+    this.activeDownload = repair;
+    return repair;
   }
 
   async verifyInstalledModel(): Promise<boolean> {
@@ -103,7 +145,10 @@ export class LocalVoiceModelManager {
     if (!stats?.isFile() || stats.size !== this.options.manifest.byteSize) {
       return false;
     }
-    return (await sha256File(this.modelPath)) === this.options.manifest.sha256;
+    return (
+      (await sha256File(this.modelPath)) === this.options.manifest.sha256 &&
+      (await fileStartsWithHex(this.modelPath, this.options.manifest.headerHex))
+    );
   }
 
   async remove(): Promise<void> {
@@ -113,6 +158,7 @@ export class LocalVoiceModelManager {
     await Promise.all([
       FS.rm(this.modelPath, { force: true }),
       FS.rm(this.partialPath, { force: true }),
+      FS.rm(this.repairPartialPath, { force: true }),
       FS.rm(this.receiptPath, { force: true }),
     ]);
   }
@@ -137,6 +183,7 @@ export class LocalVoiceModelManager {
   private async downloadAndVerify(
     signal: AbortSignal,
     onProgress?: (progress: LocalVoiceModelDownloadProgress) => void,
+    partialPath = this.partialPath,
   ): Promise<string> {
     if (typeof this.fetchImpl !== "function") {
       throw new Error("Offline voice model downloads are unavailable in this runtime.");
@@ -147,11 +194,11 @@ export class LocalVoiceModelManager {
       mode: 0o700,
     });
     const manifest = this.options.manifest;
-    let existingBytes = Math.min(await fileSize(this.partialPath), manifest.byteSize);
+    let existingBytes = Math.min(await fileSize(partialPath), manifest.byteSize);
     if (existingBytes === manifest.byteSize) {
-      const valid = (await sha256File(this.partialPath)) === manifest.sha256;
+      const valid = (await sha256File(partialPath)) === manifest.sha256;
       if (!valid) {
-        await FS.rm(this.partialPath, { force: true });
+        await FS.rm(partialPath, { force: true });
         existingBytes = 0;
       }
     }
@@ -171,10 +218,10 @@ export class LocalVoiceModelManager {
       const resumed = existingBytes > 0 && response.status === 206;
       if (!resumed && existingBytes > 0) {
         existingBytes = 0;
-        await FS.rm(this.partialPath, { force: true });
+        await FS.rm(partialPath, { force: true });
       }
 
-      const handle = await FS.open(this.partialPath, existingBytes > 0 ? "a" : "w", 0o600);
+      const handle = await FS.open(partialPath, existingBytes > 0 ? "a" : "w", 0o600);
       let downloadedBytes = existingBytes;
       try {
         const reader = response.body.getReader();
@@ -194,21 +241,26 @@ export class LocalVoiceModelManager {
       }
     }
 
-    const downloadedStats = await statOrNull(this.partialPath);
+    const downloadedStats = await statOrNull(partialPath);
     if (downloadedStats?.size !== manifest.byteSize) {
       throw new Error(
         `Offline voice model download is incomplete (${downloadedStats?.size ?? 0}/${manifest.byteSize} bytes).`,
       );
     }
 
-    const digest = await sha256File(this.partialPath);
+    const digest = await sha256File(partialPath);
     if (digest !== manifest.sha256) {
-      await FS.rm(this.partialPath, { force: true });
+      await FS.rm(partialPath, { force: true });
       throw new Error("Offline voice model checksum verification failed.");
     }
+    if (!(await fileStartsWithHex(partialPath, manifest.headerHex))) {
+      await FS.rm(partialPath, { force: true });
+      throw new Error("Offline voice model header verification failed.");
+    }
 
-    await FS.rm(this.modelPath, { force: true });
-    await FS.rename(this.partialPath, this.modelPath);
+    // Rename only after all verification passes. Node uses replacement rename
+    // semantics for files, so repair never exposes an unverified model path.
+    await FS.rename(partialPath, this.modelPath);
     const receipt: LocalVoiceModelReceipt = {
       id: manifest.id,
       fileName: manifest.fileName,
@@ -267,6 +319,18 @@ async function sha256File(path: string): Promise<string> {
     hash.update(chunk as Buffer);
   }
   return hash.digest("hex");
+}
+
+async function fileStartsWithHex(path: string, expectedHex: string): Promise<boolean> {
+  const expected = Buffer.from(expectedHex, "hex");
+  const handle = await FS.open(path, "r");
+  try {
+    const actual = Buffer.alloc(expected.byteLength);
+    const { bytesRead } = await handle.read(actual, 0, actual.byteLength, 0);
+    return bytesRead === expected.byteLength && actual.equals(expected);
+  } finally {
+    await handle.close();
+  }
 }
 
 function isNodeError(value: unknown): value is NodeJS.ErrnoException {

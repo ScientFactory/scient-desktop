@@ -7,6 +7,7 @@ import {
   PROVIDER_DISPLAY_NAMES,
   type DesktopAppSnapPermission,
   type DesktopAppSnapState,
+  type DesktopVoiceState,
   type ProviderKind,
   type ServerProviderStatus,
   type ThreadId,
@@ -262,6 +263,21 @@ function appSnapStatusText(state: DesktopAppSnapState | null): string {
   if (state.status === "disabled") return "Off";
   if (state.status === "starting") return "Starting the capture listener…";
   return state.message ?? "Permission setup required";
+}
+
+function voiceModelStatusText(state: DesktopVoiceState | null): string {
+  if (!state) return "Available in the Scient desktop app";
+  if (!state.runtimeAvailable) return "Offline runtime missing — reinstall or update Scient";
+  switch (state.model.state) {
+    case "missing":
+      return `Not downloaded · ${Math.ceil(state.modelByteSize / (1024 * 1024))} MB`;
+    case "downloading":
+      return `Downloading · ${Math.floor((state.model.downloadedBytes / state.model.totalBytes) * 100)}%`;
+    case "ready":
+      return `Ready · ${Math.ceil(state.model.byteSize / (1024 * 1024))} MB on this device`;
+    case "error":
+      return state.model.message;
+  }
 }
 
 const APPSNAP_PERMISSION_LABELS: Record<DesktopAppSnapPermission, string> = {
@@ -839,6 +855,11 @@ function SettingsRouteView() {
     null,
   );
   const [appSnapState, setAppSnapState] = useState<DesktopAppSnapState | null>(null);
+  const [voiceState, setVoiceState] = useState<DesktopVoiceState | null>(null);
+  const [voiceFeedback, setVoiceFeedback] = useState<SettingsFeedback | null>(null);
+  const [voiceModelMutation, setVoiceModelMutation] = useState<
+    "download" | "remove" | "repair" | null
+  >(null);
   const appSnapRequestGuardRef = useRef(createLatestAppSnapRequestGuard());
   const shouldShowFontSmoothing = isMacPlatform(
     typeof navigator === "undefined" ? "" : navigator.platform,
@@ -870,6 +891,29 @@ function SettingsRouteView() {
     return () => {
       disposed = true;
       unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    const voice = window.desktopBridge?.voice;
+    if (!voice) {
+      setVoiceState(null);
+      return;
+    }
+    let disposed = false;
+    const refresh = () => {
+      void voice
+        .getState()
+        .then((state) => {
+          if (!disposed) setVoiceState(state);
+        })
+        .catch(() => undefined);
+    };
+    refresh();
+    const interval = window.setInterval(refresh, 1_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
     };
   }, []);
 
@@ -1145,6 +1189,9 @@ function SettingsRouteView() {
       : []),
     ...(settings.enableAssistantStreaming !== defaults.enableAssistantStreaming
       ? ["Assistant output"]
+      : []),
+    ...(settings.voiceTranscriptionMode !== defaults.voiceTranscriptionMode
+      ? ["Voice transcription mode"]
       : []),
     ...(settings.enableAppSnap !== defaults.enableAppSnap ? ["AppSnap"] : []),
     ...(settings.appSnapPlaySound !== defaults.appSnapPlaySound ? ["AppSnap capture sound"] : []),
@@ -1601,6 +1648,74 @@ function SettingsRouteView() {
         tone: "error",
         message: error instanceof Error ? error.message : "Could not configure AppSnap.",
       });
+    }
+  }
+
+  async function downloadVoiceModel() {
+    const voice = window.desktopBridge?.voice;
+    if (!voice || voiceModelMutation) return;
+    setVoiceModelMutation("download");
+    setVoiceFeedback({ tone: "info", message: "Downloading and verifying the offline model..." });
+    try {
+      const state = await voice.downloadModel();
+      setVoiceState(state);
+      setVoiceFeedback({ tone: "success", message: "Offline voice is ready." });
+    } catch {
+      setVoiceFeedback({
+        tone: "error",
+        message: "Could not install the offline model. Check your connection and try again.",
+      });
+    } finally {
+      setVoiceModelMutation(null);
+    }
+  }
+
+  async function removeVoiceModel() {
+    const voice = window.desktopBridge?.voice;
+    if (!voice || voiceModelMutation) return;
+    const confirmed = await window.desktopBridge?.confirm(
+      "Remove the offline voice model? Automatic mode can still use ChatGPT, but local fallback and Offline only mode will stop working.",
+    );
+    if (!confirmed) return;
+    setVoiceModelMutation("remove");
+    setVoiceFeedback(null);
+    try {
+      const state = await voice.removeModel();
+      setVoiceState(state);
+      setVoiceFeedback({ tone: "success", message: "Offline voice model removed." });
+    } catch (error) {
+      setVoiceFeedback({
+        tone: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Could not remove the offline voice model right now.",
+      });
+    } finally {
+      setVoiceModelMutation(null);
+    }
+  }
+
+  async function repairVoiceModel() {
+    const voice = window.desktopBridge?.voice;
+    if (!voice || voiceModelMutation) return;
+    setVoiceModelMutation("repair");
+    setVoiceFeedback({
+      tone: "info",
+      message: "Downloading and verifying a fresh model before replacing the current copy...",
+    });
+    try {
+      const state = await voice.repairModel();
+      setVoiceState(state);
+      setVoiceFeedback({ tone: "success", message: "Offline voice model repaired." });
+    } catch (error) {
+      setVoiceFeedback({
+        tone: "error",
+        message:
+          error instanceof Error ? error.message : "Could not repair the offline voice model.",
+      });
+    } finally {
+      setVoiceModelMutation(null);
     }
   }
 
@@ -2653,6 +2768,84 @@ function SettingsRouteView() {
           resetLabel: "diff line wrapping",
           ariaLabel: "Wrap diff lines by default",
         })}
+      </SettingsSection>
+
+      <SettingsSection title="Voice transcription">
+        <SettingsRow
+          title="Transcription mode"
+          description="Automatic prefers your connected ChatGPT subscription, then quietly falls back to private on-device transcription. Offline only never sends audio to ChatGPT."
+          resetAction={
+            settings.voiceTranscriptionMode !== defaults.voiceTranscriptionMode ? (
+              <SettingResetButton
+                label="voice transcription mode"
+                onClick={() =>
+                  updateSettings({ voiceTranscriptionMode: defaults.voiceTranscriptionMode })
+                }
+              />
+            ) : null
+          }
+          control={
+            <SettingsSegmentedControl
+              value={settings.voiceTranscriptionMode}
+              onValueChange={(voiceTranscriptionMode) => updateSettings({ voiceTranscriptionMode })}
+              options={[
+                { value: "automatic", label: "Automatic" },
+                { value: "offline-only", label: "Offline only" },
+              ]}
+              ariaLabel="Voice transcription mode"
+            />
+          }
+        />
+        <SettingsRow
+          title={voiceState?.modelName ?? "Offline multilingual model"}
+          description="A verified Small Q5 Whisper model stored only on this device. It provides voice with no provider connected and catches recoverable ChatGPT failures."
+          status={voiceModelStatusText(voiceState)}
+          control={
+            voiceState ? (
+              voiceState.model.state === "ready" ? (
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={voiceModelMutation !== null}
+                    onClick={() => void repairVoiceModel()}
+                  >
+                    {voiceModelMutation === "repair" ? "Repairing..." : "Repair"}
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={voiceModelMutation !== null}
+                    onClick={() => void removeVoiceModel()}
+                  >
+                    {voiceModelMutation === "remove" ? "Removing..." : "Remove"}
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={
+                    !voiceState.runtimeAvailable ||
+                    voiceModelMutation !== null ||
+                    voiceState.model.state === "downloading"
+                  }
+                  onClick={() => void downloadVoiceModel()}
+                >
+                  {voiceState.model.state === "downloading" || voiceModelMutation === "download"
+                    ? "Downloading..."
+                    : "Download"}
+                </Button>
+              )
+            ) : (
+              <span className="text-xs font-medium text-muted-foreground">
+                Desktop app required
+              </span>
+            )
+          }
+        >
+          <SettingsInlineFeedback feedback={voiceFeedback} className="mt-2" />
+        </SettingsRow>
       </SettingsSection>
 
       <SettingsSection title="Safety confirmations">

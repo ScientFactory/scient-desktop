@@ -815,6 +815,7 @@ describe("AppSettingsSchema", () => {
       enableAppSnap: false,
       appSnapPlaySound: true,
       enableAssistantStreaming: true,
+      voiceTranscriptionMode: "automatic",
       sidebarProjectSortOrder: DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
       sidebarThreadSortOrder: DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
       showStudioSection: true,
@@ -827,6 +828,13 @@ describe("AppSettingsSchema", () => {
       customKiloModels: [],
       customOpenCodeModels: [],
       customPiModels: [],
+    });
+  });
+
+  it("preserves an explicit offline-only voice preference", () => {
+    const decode = Schema.decodeSync(Schema.fromJsonString(AppSettingsSchema));
+    expect(decode(JSON.stringify({ voiceTranscriptionMode: "offline-only" }))).toMatchObject({
+      voiceTranscriptionMode: "offline-only",
     });
   });
 

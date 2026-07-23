@@ -27,6 +27,7 @@ const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
 const MAX_DURATION_MS = 120_000;
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const AUTH_DISCOVERY_TIMEOUT_MS = 10_000;
+const AUTH_CONTEXT_CACHE_MS = 15_000;
 
 interface ChatGptAccountContext {
   readonly token: string;
@@ -39,7 +40,15 @@ interface DesktopVoiceUploadResult {
   readonly retryAfter?: string;
 }
 
-type ResolveDesktopVoiceAuth = (refreshToken: boolean) => Promise<{ readonly token: string }>;
+type ResolveDesktopVoiceAuth = (
+  refreshToken: boolean,
+  signal?: AbortSignal,
+) => Promise<{ readonly token: string }>;
+
+export interface DesktopVoiceProcessContext {
+  readonly binaryPath: string;
+  readonly env: NodeJS.ProcessEnv;
+}
 
 type UploadDesktopVoice = (input: {
   readonly clip: NormalizedVoiceClip;
@@ -52,6 +61,7 @@ type UploadDesktopVoice = (input: {
 export interface DesktopChatGptVoiceBackendOptions {
   readonly cwd: string;
   readonly resolveAuth?: ResolveDesktopVoiceAuth;
+  readonly resolveProcessContext?: () => Promise<DesktopVoiceProcessContext>;
   readonly upload?: UploadDesktopVoice;
   readonly requestTimeoutMs?: number;
 }
@@ -154,9 +164,10 @@ function requireAccountContext(auth: { readonly token: string }): ChatGptAccount
 async function resolveAccountContext(
   resolveAuth: ResolveDesktopVoiceAuth,
   refreshToken: boolean,
+  signal?: AbortSignal,
 ): Promise<ChatGptAccountContext> {
   try {
-    return requireAccountContext(await resolveAuth(refreshToken));
+    return requireAccountContext(await resolveAuth(refreshToken, signal));
   } catch (cause) {
     if (cause instanceof VoiceTranscriptionBackendError) throw cause;
     throw backendError({
@@ -170,15 +181,18 @@ async function resolveAccountContext(
 export async function resolveDesktopVoiceAuth(
   cwd: string,
   refreshToken: boolean,
+  processContext: DesktopVoiceProcessContext = { binaryPath: "codex", env: process.env },
+  signal?: AbortSignal,
 ): Promise<{ readonly token: string }> {
+  signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
-    const prepared = prepareWindowsSafeProcess("codex", ["app-server"], {
+    const prepared = prepareWindowsSafeProcess(processContext.binaryPath, ["app-server"], {
       cwd,
-      env: process.env,
+      env: processContext.env,
     });
     const child = ChildProcess.spawn(prepared.command, prepared.args, {
       cwd,
-      env: process.env,
+      env: processContext.env,
       stdio: ["pipe", "pipe", "pipe"],
       shell: prepared.shell,
       windowsHide: prepared.windowsHide,
@@ -212,6 +226,7 @@ export async function resolveDesktopVoiceAuth(
       clearTimeout(initializeTimer);
       clearTimeout(discoveryTimer);
       child.kill();
+      signal?.removeEventListener("abort", abortAuthDiscovery);
     }
     function rejectOnce(error: Error): void {
       if (settled) return;
@@ -230,6 +245,11 @@ export async function resolveDesktopVoiceAuth(
         child.stdin.write(`${JSON.stringify(payload)}\n`);
       }
     }
+    function abortAuthDiscovery(): void {
+      rejectOnce(new Error("ChatGPT auth discovery was cancelled."));
+    }
+
+    signal?.addEventListener("abort", abortAuthDiscovery, { once: true });
 
     child.once("error", (error) => {
       rejectOnce(new Error(`Could not start Codex auth discovery: ${error.message}`));
@@ -495,17 +515,39 @@ export function createDesktopChatGptVoiceTranscriptionBackend(
 ): VoiceTranscriptionBackend {
   const cwd = options.cwd.trim() || process.cwd();
   const resolveAuth =
-    options.resolveAuth ?? ((refreshToken: boolean) => resolveDesktopVoiceAuth(cwd, refreshToken));
+    options.resolveAuth ??
+    (async (refreshToken: boolean, signal?: AbortSignal) =>
+      resolveDesktopVoiceAuth(
+        cwd,
+        refreshToken,
+        options.resolveProcessContext
+          ? await options.resolveProcessContext()
+          : { binaryPath: "codex", env: process.env },
+        signal,
+      ));
   const upload = options.upload ?? requestDesktopVoiceTranscription;
   const timeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  let cachedAccount: {
+    readonly account: ChatGptAccountContext;
+    readonly expiresAt: number;
+  } | null = null;
+
+  const takeCachedAccount = (): ChatGptAccountContext | null => {
+    const cached = cachedAccount;
+    cachedAccount = null;
+    return cached && cached.expiresAt > Date.now() ? cached.account : null;
+  };
 
   return {
     id: "chatgpt",
-    async getAvailability() {
+    async getAvailability({ signal }: { readonly signal?: AbortSignal } = {}) {
       try {
-        await resolveAccountContext(resolveAuth, false);
+        const account = await resolveAccountContext(resolveAuth, false, signal);
+        signal?.throwIfAborted();
+        cachedAccount = { account, expiresAt: Date.now() + AUTH_CONTEXT_CACHE_MS };
         return { state: "ready" };
       } catch (cause) {
+        cachedAccount = null;
         return {
           state: "unavailable",
           reason: cause instanceof VoiceTranscriptionBackendError ? cause.kind : "authentication",
@@ -514,11 +556,13 @@ export function createDesktopChatGptVoiceTranscriptionBackend(
     },
     async transcribe(clip, { signal }) {
       validateClip(clip);
-      let account = await resolveAccountContext(resolveAuth, false);
+      let account =
+        takeCachedAccount() ?? (await resolveAccountContext(resolveAuth, false, signal));
       let response = await upload({ clip, ...account, signal, timeoutMs });
 
       if (response.statusCode === 401 || response.statusCode === 403) {
-        account = await resolveAccountContext(resolveAuth, true);
+        cachedAccount = null;
+        account = await resolveAccountContext(resolveAuth, true, signal);
         response = await upload({ clip, ...account, signal, timeoutMs });
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {

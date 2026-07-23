@@ -28,7 +28,10 @@ export interface ChatGptVoiceAuthContext {
   readonly token: string;
 }
 
-type ResolveChatGptVoiceAuth = (refreshToken: boolean) => Promise<ChatGptVoiceAuthContext>;
+type ResolveChatGptVoiceAuth = (
+  refreshToken: boolean,
+  signal?: AbortSignal,
+) => Promise<ChatGptVoiceAuthContext>;
 
 interface ChatGptVoiceBackendOptions {
   readonly resolveAuth: ResolveChatGptVoiceAuth;
@@ -79,9 +82,10 @@ function requireChatGptAccountContext(auth: ChatGptVoiceAuthContext): {
 async function resolveAccountContext(
   resolveAuth: ResolveChatGptVoiceAuth,
   refreshToken: boolean,
+  signal?: AbortSignal,
 ): Promise<{ readonly token: string; readonly accountId: string }> {
   try {
-    return requireChatGptAccountContext(await resolveAuth(refreshToken));
+    return requireChatGptAccountContext(await resolveAuth(refreshToken, signal));
   } catch (cause) {
     if (cause instanceof VoiceTranscriptionBackendError) throw cause;
     throw backendError({
@@ -295,12 +299,12 @@ export function createChatGptVoiceTranscriptionBackend(
 
   return {
     id: "chatgpt",
-    async getAvailability() {
+    async getAvailability({ signal }: { readonly signal?: AbortSignal } = {}) {
       if (typeof fetchImpl !== "function") {
         return { state: "unavailable", reason: "fetch-unavailable" };
       }
       try {
-        await resolveAccountContext(options.resolveAuth, false);
+        await resolveAccountContext(options.resolveAuth, false, signal);
         return { state: "ready" };
       } catch (cause) {
         return {
@@ -318,7 +322,7 @@ export function createChatGptVoiceTranscriptionBackend(
         });
       }
 
-      let account = await resolveAccountContext(options.resolveAuth, false);
+      let account = await resolveAccountContext(options.resolveAuth, false, signal);
       let response = await postTranscription({
         fetchImpl,
         clip,
@@ -328,7 +332,7 @@ export function createChatGptVoiceTranscriptionBackend(
       });
 
       if (response.status === 401 || response.status === 403) {
-        account = await resolveAccountContext(options.resolveAuth, true);
+        account = await resolveAccountContext(options.resolveAuth, true, signal);
         response = await postTranscription({
           fetchImpl,
           clip,

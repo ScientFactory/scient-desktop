@@ -50,6 +50,22 @@ describe("createDesktopChatGptVoiceTranscriptionBackend", () => {
     );
   });
 
+  it("reuses the successful eligibility account context for the immediate transcription", async () => {
+    const resolveAuth = vi.fn(async () => ({ token: chatGptToken() }));
+    const upload = vi.fn(async () => ({ statusCode: 200, body: '{"text":"hello"}' }));
+    const backend = createDesktopChatGptVoiceTranscriptionBackend({
+      cwd: clip.cwd,
+      resolveAuth,
+      upload,
+    });
+    const signal = new AbortController().signal;
+
+    await expect(backend.getAvailability({ signal })).resolves.toMatchObject({ state: "ready" });
+    await expect(backend.transcribe(clip, { signal })).resolves.toEqual({ text: "hello" });
+
+    expect(resolveAuth).toHaveBeenCalledOnce();
+  });
+
   it("refreshes auth exactly once after a forbidden response", async () => {
     const upload = vi
       .fn()
@@ -66,8 +82,8 @@ describe("createDesktopChatGptVoiceTranscriptionBackend", () => {
 
     await backend.transcribe(clip, { signal: new AbortController().signal });
 
-    expect(resolveAuth).toHaveBeenNthCalledWith(1, false);
-    expect(resolveAuth).toHaveBeenNthCalledWith(2, true);
+    expect(resolveAuth).toHaveBeenNthCalledWith(1, false, expect.any(AbortSignal));
+    expect(resolveAuth).toHaveBeenNthCalledWith(2, true, expect.any(AbortSignal));
     expect(upload).toHaveBeenCalledTimes(2);
     expect(upload.mock.calls[1]?.[0]).toMatchObject({ accountId: "fresh-account" });
   });
@@ -96,5 +112,25 @@ describe("createDesktopChatGptVoiceTranscriptionBackend", () => {
     await expect(
       backend.transcribe(clip, { signal: new AbortController().signal }),
     ).rejects.toMatchObject({ kind: "entitlement", fallbackAllowed: true });
+  });
+
+  it("propagates cancellation while checking ChatGPT eligibility", async () => {
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const backend = createDesktopChatGptVoiceTranscriptionBackend({
+      cwd: clip.cwd,
+      resolveAuth: (_refreshToken, signal) =>
+        new Promise((_resolve, reject) => {
+          observedSignal = signal;
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+      upload: vi.fn(),
+    });
+
+    const availability = backend.getAvailability({ signal: controller.signal });
+    controller.abort(new Error("cancelled"));
+
+    await expect(availability).resolves.toMatchObject({ state: "unavailable" });
+    expect(observedSignal?.aborted).toBe(true);
   });
 });

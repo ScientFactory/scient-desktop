@@ -13,7 +13,9 @@ import type { LocalVoiceModelManifest } from "./localVoiceModelManifest";
 
 const temporaryDirectories: string[] = [];
 
-async function makeFixture(bytes = new TextEncoder().encode("verified whisper model")) {
+async function makeFixture(
+  bytes = new Uint8Array([0x6c, 0x6d, 0x67, 0x67, ...new TextEncoder().encode(" model")]),
+) {
   const directory = await FS.mkdtemp(Path.join(OS.tmpdir(), "scient-voice-model-test-"));
   temporaryDirectories.push(directory);
   const manifest: LocalVoiceModelManifest = {
@@ -22,6 +24,7 @@ async function makeFixture(bytes = new TextEncoder().encode("verified whisper mo
     displayName: "Test model",
     byteSize: bytes.byteLength,
     sha256: createHash("sha256").update(bytes).digest("hex"),
+    headerHex: "6c6d6767",
     sourceRevision: "test-revision",
     downloadUrl: "https://models.invalid/model.bin",
     license: "MIT",
@@ -68,7 +71,9 @@ describe("LocalVoiceModelManager", () => {
   });
 
   it("resumes an interrupted partial download with an HTTP range", async () => {
-    const fixture = await makeFixture(new TextEncoder().encode("0123456789abcdef"));
+    const fixture = await makeFixture(
+      new Uint8Array([0x6c, 0x6d, 0x67, 0x67, ...new TextEncoder().encode("456789abcdef")]),
+    );
     const manager = new LocalVoiceModelManager({
       modelsDirectory: fixture.directory,
       manifest: fixture.manifest,
@@ -104,6 +109,21 @@ describe("LocalVoiceModelManager", () => {
     });
   });
 
+  it("rejects a checksum-valid file with an invalid GGML header", async () => {
+    const invalidHeader = new TextEncoder().encode("notg-model");
+    const fixture = await makeFixture(invalidHeader);
+    const manager = new LocalVoiceModelManager({
+      modelsDirectory: fixture.directory,
+      manifest: fixture.manifest,
+      fetchImpl: (async () => new Response(invalidHeader, { status: 200 })) as typeof fetch,
+    });
+
+    await expect(manager.ensureInstalled(new AbortController().signal)).rejects.toThrow(
+      /header verification failed/i,
+    );
+    await expect(FS.stat(manager.modelPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("removes the installed model and receipt", async () => {
     const fixture = await makeFixture();
     const manager = new LocalVoiceModelManager({
@@ -116,5 +136,40 @@ describe("LocalVoiceModelManager", () => {
     await manager.remove();
 
     await expect(manager.getStatus()).resolves.toEqual({ state: "missing" });
+  });
+
+  it("repairs through a separate verified file and preserves the installed model on failure", async () => {
+    const fixture = await makeFixture();
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(fixture.bytes, { status: 200 }))
+      .mockRejectedValueOnce(new Error("offline"));
+    const manager = new LocalVoiceModelManager({
+      modelsDirectory: fixture.directory,
+      manifest: fixture.manifest,
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+    await manager.ensureInstalled(new AbortController().signal);
+    const before = await FS.readFile(manager.modelPath);
+
+    await expect(manager.repair(new AbortController().signal)).rejects.toThrow("offline");
+    await expect(FS.readFile(manager.modelPath)).resolves.toEqual(before);
+    await expect(manager.verifyInstalledModel()).resolves.toBe(true);
+    await expect(FS.stat(manager.repairPartialPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("re-downloads and atomically replaces a valid installed model during repair", async () => {
+    const fixture = await makeFixture();
+    const fetchImpl = vi.fn(async () => new Response(fixture.bytes, { status: 200 }));
+    const manager = new LocalVoiceModelManager({
+      modelsDirectory: fixture.directory,
+      manifest: fixture.manifest,
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+    await manager.ensureInstalled(new AbortController().signal);
+    await manager.repair(new AbortController().signal);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    await expect(manager.verifyInstalledModel()).resolves.toBe(true);
   });
 });

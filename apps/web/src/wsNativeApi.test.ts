@@ -854,12 +854,14 @@ describe("wsNativeApi", () => {
 
   it("uses the desktop voice bridge when available", async () => {
     const transcribeVoice = vi.fn().mockResolvedValue({ text: "hello" });
+    const cancelVoiceTranscription = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(getWindowForTest(), "desktopBridge", {
       configurable: true,
       writable: true,
       value: {
         server: {
           transcribeVoice,
+          cancelVoiceTranscription,
         },
       },
     });
@@ -867,16 +869,17 @@ describe("wsNativeApi", () => {
     const { createWsNativeApi } = await import("./wsNativeApi");
     const api = createWsNativeApi();
     await api.server.transcribeVoice({
-      provider: "codex",
+      mode: "offline-only",
       cwd: "/repo",
       audioBase64: "UklGRgAAAAAAAAAAAAAAAAAAAAA=",
       mimeType: "audio/wav",
       sampleRateHz: 24_000,
       durationMs: 1000,
     });
+    await api.server.cancelVoiceTranscription?.();
 
     expect(transcribeVoice).toHaveBeenCalledWith({
-      provider: "codex",
+      mode: "offline-only",
       cwd: "/repo",
       audioBase64: "UklGRgAAAAAAAAAAAAAAAAAAAAA=",
       mimeType: "audio/wav",
@@ -887,5 +890,26 @@ describe("wsNativeApi", () => {
       WS_METHODS.serverTranscribeVoice,
       expect.anything(),
     );
+    expect(cancelVoiceTranscription).toHaveBeenCalledOnce();
+  });
+
+  it("uses the provider-neutral server route when the desktop bridge is unavailable", async () => {
+    Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
+    requestMock.mockResolvedValueOnce({ text: "browser transcript", engine: "chatgpt" });
+    const input = {
+      mode: "automatic" as const,
+      cwd: "/repo",
+      audioBase64: "UklGRgAAAAAAAAAAAAAAAAAAAAA=",
+      mimeType: "audio/wav",
+      sampleRateHz: 24_000,
+      durationMs: 1_000,
+    };
+
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    await api.server.transcribeVoice(input);
+    await expect(api.server.cancelVoiceTranscription?.()).resolves.toBeUndefined();
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverTranscribeVoice, input);
   });
 });

@@ -48,7 +48,9 @@ export interface VoiceTranscriptionBackend {
    * consuming transcription probe. For remote backends this proves only
    * authentication eligibility; observed endpoint health remains router-owned.
    */
-  getAvailability(): Promise<VoiceTranscriptionBackendAvailability>;
+  getAvailability(options?: {
+    readonly signal?: AbortSignal;
+  }): Promise<VoiceTranscriptionBackendAvailability>;
 
   transcribe(
     clip: NormalizedVoiceClip,

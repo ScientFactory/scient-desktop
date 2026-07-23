@@ -108,7 +108,10 @@ import {
   shouldBroadcastDownloadProgress,
   shouldCheckForUpdatesOnForeground,
 } from "./updateState";
-import { registerDesktopVoiceTranscriptionHandler } from "./voiceTranscription";
+import {
+  disposeDesktopVoiceTranscription,
+  registerDesktopVoiceTranscriptionHandler,
+} from "./voiceTranscription";
 import {
   resolveDesktopMenuAccelerator,
   resolveKeyboardShortcutsMenuAccelerator,
@@ -2996,6 +2999,7 @@ async function shutdownDesktopRuntime(reason: string): Promise<void> {
     appSnapManager?.dispose();
     appSnapManager = null;
     await disposeBrowserUsePipeServerForShutdown(reason);
+    await disposeDesktopVoiceTranscription();
     await stopBackendAndWaitForExit(reason);
     browserManager.dispose();
     restoreStdIoCapture?.();
@@ -3350,7 +3354,10 @@ function registerIpcHandlers(): void {
   if (appSnapManager) {
     registerAppSnapIpcHandlers(ipcMain, appSnapManager);
   }
-  registerDesktopVoiceTranscriptionHandler();
+  registerDesktopVoiceTranscriptionHandler({
+    scientHome: BASE_DIR,
+    stateDirectory: Path.join(BASE_DIR, isDevelopment ? "dev" : "userdata"),
+  });
   startBrowserPerformanceLogging();
   void ensureBrowserUsePipeServer().catch((error) => {
     console.warn("[Scient browser] Failed to start browser-use native pipe", error);

@@ -7,6 +7,8 @@ import { type ProviderKind, type ServerProviderStatus, type ThreadId } from "@sy
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Project } from "../../types";
+import { useAppSettings } from "../../appSettings";
+import { ensureDesktopVoiceReady, hasDesktopVoiceRuntime } from "../../lib/desktopVoiceSetup";
 import { formatVoiceRecordingDuration, useVoiceRecorder } from "../../lib/voiceRecorder";
 import { readNativeApi } from "../../nativeApi";
 import { transientAlertManager } from "../../notifications/transientAlert";
@@ -67,6 +69,8 @@ export function useComposerVoiceController(
     refreshVoiceStatus,
     onFeedback,
   } = options;
+  const { settings } = useAppSettings();
+  const desktopVoiceAvailable = hasDesktopVoiceRuntime();
   const {
     isRecording: isVoiceRecording,
     durationMs: voiceRecordingDurationMs,
@@ -91,12 +95,14 @@ export function useComposerVoiceController(
       deriveComposerVoiceState({
         authStatus: activeProviderStatus?.authStatus,
         voiceTranscriptionAvailable: activeProviderStatus?.voiceTranscriptionAvailable,
+        desktopVoiceAvailable,
         isRecording: isVoiceRecording,
         isTranscribing: isVoiceTranscribing,
       }),
     [
       activeProviderStatus?.authStatus,
       activeProviderStatus?.voiceTranscriptionAvailable,
+      desktopVoiceAvailable,
       isVoiceRecording,
       isVoiceTranscribing,
     ],
@@ -120,6 +126,7 @@ export function useComposerVoiceController(
 
   useEffect(() => {
     voiceTranscriptionRequestIdRef.current += 1;
+    void readNativeApi()?.server.cancelVoiceTranscription?.();
     void cancelVoiceRecording();
     setIsVoiceTranscribing(false);
   }, [cancelVoiceRecording, threadId]);
@@ -137,17 +144,17 @@ export function useComposerVoiceController(
     if (!activeProject) {
       return;
     }
-    if (activeProviderStatus?.authStatus === "unauthenticated") {
+    if (!desktopVoiceAvailable && activeProviderStatus?.authStatus === "unauthenticated") {
       reportFeedback({
         type: "error",
-        title: "Sign in to ChatGPT in Codex before using voice notes.",
+        title: "Sign in to ChatGPT before using voice notes in the browser.",
       });
       return;
     }
     if (!canStartVoiceNotes) {
       reportFeedback({
         type: "error",
-        title: "Voice notes require a ChatGPT-authenticated Codex session.",
+        title: "Voice transcription is unavailable in this browser session.",
       });
       return;
     }
@@ -158,6 +165,8 @@ export function useComposerVoiceController(
       });
       return;
     }
+
+    if (!(await ensureDesktopVoiceReady(settings.voiceTranscriptionMode, reportFeedback))) return;
 
     try {
       await startVoiceRecording();
@@ -172,8 +181,10 @@ export function useComposerVoiceController(
     activeProject,
     activeProviderStatus?.authStatus,
     canStartVoiceNotes,
+    desktopVoiceAvailable,
     pendingUserInputCount,
     reportFeedback,
+    settings.voiceTranscriptionMode,
     startVoiceRecording,
   ]);
 
@@ -215,7 +226,7 @@ export function useComposerVoiceController(
         return;
       }
       const result = await api.server.transcribeVoice({
-        provider: "codex",
+        mode: settings.voiceTranscriptionMode,
         cwd: activeProject.cwd,
         ...(activeThreadId ? { threadId: activeThreadId } : {}),
         ...payload,
@@ -233,7 +244,7 @@ export function useComposerVoiceController(
         error instanceof Error
           ? sanitizeVoiceErrorMessage(error.message)
           : "The voice note could not be transcribed.";
-      const authExpired = isVoiceAuthExpiredMessage(description);
+      const authExpired = !desktopVoiceAvailable && isVoiceAuthExpiredMessage(description);
       if (authExpired) {
         refreshVoiceStatus();
       }
@@ -241,7 +252,7 @@ export function useComposerVoiceController(
         type: "error",
         title: authExpired ? "Sign in to ChatGPT again" : "Voice transcription failed",
         description: authExpired
-          ? "Voice transcription uses your ChatGPT session in Codex. That session was rejected, so sign in again there and retry."
+          ? "Your ChatGPT session was rejected. Sign in again and retry."
           : description,
         ...(authExpired
           ? {
@@ -261,11 +272,13 @@ export function useComposerVoiceController(
     activeProject,
     activeThreadId,
     cancelVoiceRecording,
+    desktopVoiceAvailable,
     isVoiceRecording,
     onTranscriptReady,
     reportFeedback,
     refreshVoiceStatus,
     selectedProvider,
+    settings.voiceTranscriptionMode,
     stopVoiceRecording,
     threadId,
   ]);
@@ -273,6 +286,7 @@ export function useComposerVoiceController(
   const cancelComposerVoiceRecording = useCallback(() => {
     voiceTranscriptionRequestIdRef.current += 1;
     setIsVoiceTranscribing(false);
+    void readNativeApi()?.server.cancelVoiceTranscription?.();
     void cancelVoiceRecording();
   }, [cancelVoiceRecording]);
 

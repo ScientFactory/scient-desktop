@@ -218,6 +218,26 @@ export interface ContextMenuItem<T extends string = string> {
   destructive?: boolean;
 }
 
+export type DesktopVoiceModelStatus =
+  | { readonly state: "missing" }
+  | {
+      readonly state: "downloading";
+      readonly downloadedBytes: number;
+      readonly totalBytes: number;
+    }
+  | {
+      readonly state: "ready";
+      readonly byteSize: number;
+    }
+  | { readonly state: "error"; readonly message: string };
+
+export interface DesktopVoiceState {
+  readonly runtimeAvailable: boolean;
+  readonly model: DesktopVoiceModelStatus;
+  readonly modelName: string;
+  readonly modelByteSize: number;
+}
+
 export type DesktopUpdateStatus =
   | "disabled"
   | "idle"
@@ -492,6 +512,13 @@ export interface DesktopBridge {
     transcribeVoice: (
       input: ServerVoiceTranscriptionInput,
     ) => Promise<ServerVoiceTranscriptionResult>;
+    cancelVoiceTranscription: () => Promise<void>;
+  };
+  voice?: {
+    getState: () => Promise<DesktopVoiceState>;
+    downloadModel: () => Promise<DesktopVoiceState>;
+    removeModel: () => Promise<DesktopVoiceState>;
+    repairModel: () => Promise<DesktopVoiceState>;
   };
   browser: {
     open: (input: BrowserOpenInput) => Promise<ThreadBrowserState>;
@@ -703,6 +730,7 @@ export interface NativeApi {
     transcribeVoice: (
       input: ServerVoiceTranscriptionInput,
     ) => Promise<ServerVoiceTranscriptionResult>;
+    cancelVoiceTranscription?: () => Promise<void>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
   };
   stats: {
