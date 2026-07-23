@@ -31,6 +31,36 @@ function readyPreview(
 }
 
 describe("ScientProjectInitializationDialog", () => {
+  it("keeps the ready project choices compact and balanced on desktop", async () => {
+    await page.viewport(1280, 800);
+    render(
+      <ScientProjectInitializationDialog
+        preview={readyPreview()}
+        error={null}
+        onDecision={vi.fn()}
+      />,
+    );
+
+    const setupChoice = page.getByRole("button", { name: /^Set up a Scient project/ });
+    const emptyChoice = page.getByRole("button", { name: /^Open an empty project/ });
+    await expect.element(setupChoice).toBeVisible();
+    await expect.element(emptyChoice).toBeVisible();
+
+    const setupButton = await setupChoice.element();
+    const emptyButton = await emptyChoice.element();
+    const popup = document.querySelector<HTMLElement>('[data-slot="dialog-popup"]');
+    const setupRect = setupButton.getBoundingClientRect();
+    const emptyRect = emptyButton.getBoundingClientRect();
+    const popupRect = popup?.getBoundingClientRect();
+
+    expect(popupRect?.width).toBeLessThanOrEqual(580);
+    expect(popupRect?.height).toBeLessThan(200);
+    expect(setupRect.height).toBeGreaterThanOrEqual(72);
+    expect(setupRect.height).toBeLessThan(100);
+    expect(Math.abs(setupRect.top - emptyRect.top)).toBeLessThan(1);
+    expect(Math.abs(setupRect.height - emptyRect.height)).toBeLessThan(1);
+  });
+
   it("applies setup directly from the initial project choice", async () => {
     const onDecision = vi.fn();
     render(
