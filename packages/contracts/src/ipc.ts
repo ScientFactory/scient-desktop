@@ -117,7 +117,12 @@ import type {
   ScientProjectInitializationPreviewResult,
   ScientProjectInitializationRollbackResult,
 } from "./scientProjectInitialization";
-import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem";
+import type {
+  FilesystemBrowseInput,
+  FilesystemBrowseResult,
+  FilesystemCreateDirectoryInput,
+  FilesystemCreateDirectoryResult,
+} from "./filesystem";
 import type { StudioListThreadOutputsInput, StudioListThreadOutputsResult } from "./studio";
 import type {
   ServerConfig,
@@ -601,6 +606,9 @@ export interface NativeApi {
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
+    createDirectory: (
+      input: FilesystemCreateDirectoryInput,
+    ) => Promise<FilesystemCreateDirectoryResult>;
   };
   studio: {
     listThreadOutputs: (

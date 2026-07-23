@@ -24,6 +24,9 @@ const OPERATION_LABELS = {
   conflict: "Needs attention",
 } as const;
 
+const readyProjectChoiceButtonClassName =
+  "flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-[var(--color-background-elevated-primary-opaque)] p-3 text-left outline-none transition-colors hover:border-border hover:bg-[var(--color-background-elevated-secondary)] focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50";
+
 function InitializationError({ error }: { readonly error: string | null }) {
   if (!error) return null;
 
@@ -48,33 +51,33 @@ function ReadyProjectChoice(props: {
   return (
     <>
       <DialogHeader className="pr-10">
-        <DialogTitle className="text-xl sm:text-2xl">Open “{name}”</DialogTitle>
+        <DialogTitle>Open “{name}”</DialogTitle>
         <DialogDescription>Choose how you want to use this folder in Scient.</DialogDescription>
       </DialogHeader>
 
-      <DialogPanel className="space-y-3 pt-1">
+      <DialogPanel className="space-y-2.5 pt-1">
         <InitializationError error={props.error} />
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-2.5 sm:grid-cols-2">
           <button
             type="button"
             disabled={!props.preview.canApply}
             onClick={() => props.onDecision("apply")}
-            className="group flex min-h-32 cursor-pointer items-center gap-3.5 rounded-xl border border-[color:var(--color-border)] bg-[var(--color-background-elevated-primary-opaque)] p-4 text-left outline-none transition-colors hover:bg-[var(--color-background-elevated-secondary)] focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+            className={readyProjectChoiceButtonClassName}
           >
-            <span className="relative flex size-12 shrink-0 items-center justify-center rounded-full bg-secondary text-foreground">
-              <IconFolder aria-hidden className="size-7" stroke={1.7} />
+            <span className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-secondary text-foreground">
+              <IconFolder aria-hidden className="size-5.5" stroke={1.7} />
               <IconSparkles
                 aria-hidden
-                className="absolute top-[55%] left-1/2 size-3.5 -translate-x-1/2 -translate-y-1/2"
+                className="absolute top-[55%] left-1/2 size-3 -translate-x-1/2 -translate-y-1/2"
                 stroke={1.8}
               />
             </span>
             <span className="min-w-0">
-              <span className="block text-sm font-semibold text-foreground">
+              <span className="block text-sm font-semibold leading-5 text-foreground">
                 {migratingPapiLabProject ? "Migrate to Scient" : "Set up a Scient project"}
               </span>
-              <span className="mt-1.5 block text-xs leading-relaxed text-muted-foreground">
+              <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
                 {migratingPapiLabProject
                   ? "Keep the same project identity and add the new .scient metadata."
                   : "Add a small portable foundation for your agents."}
@@ -85,16 +88,16 @@ function ReadyProjectChoice(props: {
           <button
             type="button"
             onClick={() => props.onDecision("open-only")}
-            className="group flex min-h-32 cursor-pointer items-center gap-3.5 rounded-xl border border-[color:var(--color-border)] bg-[var(--color-background-elevated-primary-opaque)] p-4 text-left outline-none transition-colors hover:bg-[var(--color-background-elevated-secondary)] focus-visible:ring-1 focus-visible:ring-ring/60 focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+            className={readyProjectChoiceButtonClassName}
           >
-            <span className="flex size-12 shrink-0 items-center justify-center rounded-full bg-secondary text-foreground">
-              <IconFolder aria-hidden className="size-7" stroke={1.7} />
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-secondary text-foreground">
+              <IconFolder aria-hidden className="size-5.5" stroke={1.7} />
             </span>
             <span className="min-w-0">
-              <span className="block text-sm font-semibold text-foreground">
+              <span className="block text-sm font-semibold leading-5 text-foreground">
                 Open an empty project
               </span>
-              <span className="mt-1.5 block text-xs leading-relaxed text-muted-foreground">
+              <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
                 Write your own agent instructions later.
               </span>
             </span>
@@ -207,7 +210,7 @@ export function ScientProjectInitializationDialog(props: {
         if (!open) props.onDecision("cancel");
       }}
     >
-      <DialogPopup surface="solid" className="max-w-2xl" showCloseButton>
+      <DialogPopup surface="solid" className={ready ? "max-w-xl" : "max-w-2xl"} showCloseButton>
         {preview ? (
           ready ? (
             <ReadyProjectChoice

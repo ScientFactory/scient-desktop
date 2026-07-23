@@ -797,6 +797,13 @@ export const makeWsRpcLayer = () =>
           ),
         [WS_METHODS.filesystemBrowse]: (input) =>
           rpcEffect(workspaceEntries.browse(input), "Failed to browse filesystem"),
+        [WS_METHODS.filesystemCreateDirectory]: (input) =>
+          rpcEffect(
+            canonicalizeProjectWorkspaceRoot(input.path, { createIfMissing: true }).pipe(
+              Effect.map((createdPath) => ({ path: createdPath })),
+            ),
+            "Failed to create directory",
+          ),
         [WS_METHODS.shellOpenInEditor]: (input) =>
           rpcEffect(open.openInEditor(input), "Failed to open editor"),
 

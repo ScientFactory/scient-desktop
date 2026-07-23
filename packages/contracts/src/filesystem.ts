@@ -23,3 +23,13 @@ export const FilesystemBrowseResult = Schema.Struct({
   entries: Schema.Array(FilesystemBrowseEntry),
 });
 export type FilesystemBrowseResult = typeof FilesystemBrowseResult.Type;
+
+export const FilesystemCreateDirectoryInput = Schema.Struct({
+  path: FilesystemBrowsePath,
+});
+export type FilesystemCreateDirectoryInput = typeof FilesystemCreateDirectoryInput.Type;
+
+export const FilesystemCreateDirectoryResult = Schema.Struct({
+  path: FilesystemEntryValue,
+});
+export type FilesystemCreateDirectoryResult = typeof FilesystemCreateDirectoryResult.Type;

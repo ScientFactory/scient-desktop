@@ -517,6 +517,7 @@ export function createWsNativeApi(): NativeApi {
     },
     filesystem: {
       browse: (input) => transport.request(WS_METHODS.filesystemBrowse, input),
+      createDirectory: (input) => transport.request(WS_METHODS.filesystemCreateDirectory, input),
     },
     studio: {
       listThreadOutputs: (input) => transport.request(WS_METHODS.studioListThreadOutputs, input),
