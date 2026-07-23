@@ -25,6 +25,7 @@ import { page, userEvent } from "vitest/browser";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
+import { CURRENT_APP_SETTINGS_VERSION } from "../appSettings";
 import { type ComposerImageAttachment, useComposerDraftStore } from "../composerDraftStore";
 import {
   AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
@@ -4168,6 +4169,15 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("coalesces repeated Studio new-chat clicks and stays in Studio after navigation settles", async () => {
+    // Studio is hidden by default; this Studio-specific regression test opts in explicitly.
+    localStorage.setItem(
+      "scient:app-settings:v1",
+      JSON.stringify({
+        appSettingsVersion: CURRENT_APP_SETTINGS_VERSION,
+        showStudioSection: true,
+      }),
+    );
+
     useComposerDraftStore.setState({
       draftThreadsByThreadId: {
         [STUDIO_DRAFT_THREAD_ID]: {
