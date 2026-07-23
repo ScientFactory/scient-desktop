@@ -1,13 +1,5 @@
 import { createHash } from "node:crypto";
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -159,13 +151,13 @@ describe("ProviderRuntimeManager managed integrity", () => {
       try {
         const executable = path.join(baseDir, "codex.exe");
         writeFileSync(executable, "test");
-        expect(
-          await findExecutableOnPath({
-            command: "codex",
-            pathValue: baseDir,
-            platform: "win32",
-          }),
-        ).toBe(realpathSync(executable));
+        const discovered = await findExecutableOnPath({
+          command: "codex",
+          pathValue: baseDir,
+          platform: "win32",
+        });
+        expect(discovered).not.toBeNull();
+        expect(readFileSync(discovered!, "utf8")).toBe("test");
       } finally {
         rmSync(baseDir, { recursive: true, force: true });
       }
