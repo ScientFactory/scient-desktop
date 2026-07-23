@@ -19,8 +19,10 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { resolveWindowsSystemRoot } from "@synara/shared/windowsProcess";
 
 export const WHISPER_CPP_VERSION = "v1.9.1";
 
@@ -70,13 +72,19 @@ interface StagedFileReceipt {
   readonly file: string;
   readonly sha256: string;
   readonly size: number;
+  readonly verification: WhisperRuntimeFileVerification;
 }
 
 interface WhisperRuntimeReceipt {
+  readonly schemaVersion: 2;
   readonly component: "whisper.cpp";
   readonly version: string;
+  readonly platform: WhisperRuntimePlatform;
   readonly files: ReadonlyArray<StagedFileReceipt>;
 }
+
+export type MacWhisperSignatureMode = "adhoc" | "developer-id";
+export type WhisperRuntimeFileVerification = "mac-code-signature" | "sha256";
 
 function run(command: string, args: ReadonlyArray<string>, options: { cwd?: string } = {}) {
   return new Promise<void>((resolvePromise, reject) => {
@@ -165,11 +173,80 @@ export function resolvePrebuiltArtifact(
 }
 
 async function extractSource(sourceArchive: string, workspace: string): Promise<string> {
-  await run("tar", ["-xzf", sourceArchive, "-C", workspace]);
+  await run("tar", tarExtractionArguments(sourceArchive, workspace, true));
   const sourceDir = join(workspace, `whisper.cpp-${WHISPER_CPP_COMMIT}`);
   const serverSource = await readFile(join(sourceDir, "examples/server/server.cpp"), "utf8");
   assertPinnedWhisperServerSource(serverSource);
   return sourceDir;
+}
+
+export function tarExtractionArguments(
+  archive: string,
+  destination: string,
+  gzip: boolean,
+  platform: NodeJS.Platform = process.platform,
+): ReadonlyArray<string> {
+  // Git for Windows provides GNU tar. Without --force-local, its archive parser treats the
+  // drive prefix in C:\path\archive as a remote host and fails with "Cannot connect to C".
+  return [
+    ...(platform === "win32" ? ["--force-local"] : []),
+    gzip ? "-xzf" : "-xf",
+    archive,
+    "-C",
+    destination,
+  ];
+}
+
+export const WINDOWS_EXPAND_ARCHIVE_SCRIPT = [
+  "param(",
+  "  [Parameter(Mandatory = $true)][string]$ArchivePath,",
+  "  [Parameter(Mandatory = $true)][string]$DestinationPath",
+  ")",
+  "Set-StrictMode -Version Latest",
+  "$ErrorActionPreference = 'Stop'",
+  "Expand-Archive -LiteralPath $ArchivePath -DestinationPath $DestinationPath -Force",
+  "",
+].join("\r\n");
+
+export function windowsZipExtractionPlan(
+  scriptPath: string,
+  archive: string,
+  destination: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { readonly command: string; readonly args: ReadonlyArray<string> } {
+  return {
+    command: win32.join(
+      resolveWindowsSystemRoot(env),
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    ),
+    args: [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      scriptPath,
+      "-ArchivePath",
+      archive,
+      "-DestinationPath",
+      destination,
+    ],
+  };
+}
+
+async function extractWindowsZip(
+  archive: string,
+  destination: string,
+  workspace: string,
+): Promise<void> {
+  const scriptPath = join(workspace, "expand-archive.ps1");
+  await writeFile(scriptPath, WINDOWS_EXPAND_ARCHIVE_SCRIPT, { encoding: "utf8", flag: "wx" });
+  const plan = windowsZipExtractionPlan(scriptPath, archive, destination);
+  await run(plan.command, plan.args);
 }
 
 async function buildMacRuntime(
@@ -212,7 +289,11 @@ async function stagePrebuiltRuntime(
 ): Promise<void> {
   const extracted = join(workspace, "prebuilt");
   await mkdir(extracted);
-  await run("tar", ["-xf", archive, "-C", extracted]);
+  if (platform === "win" && process.platform === "win32") {
+    await extractWindowsZip(archive, extracted, workspace);
+  } else {
+    await run("tar", tarExtractionArguments(archive, extracted, false));
+  }
 
   if (platform === "win") {
     const releaseDir = join(extracted, "Release");
@@ -234,13 +315,28 @@ async function stagePrebuiltRuntime(
   }
 }
 
-async function collectReceiptFiles(output: string): Promise<ReadonlyArray<StagedFileReceipt>> {
+export function whisperRuntimeFileVerification(
+  platform: WhisperRuntimePlatform,
+  file: string,
+): WhisperRuntimeFileVerification {
+  return platform === "mac" && file === "whisper-server" ? "mac-code-signature" : "sha256";
+}
+
+async function collectReceiptFiles(
+  output: string,
+  platform: WhisperRuntimePlatform,
+): Promise<ReadonlyArray<StagedFileReceipt>> {
   const files = (await readdir(output)).filter((file) => file !== "provenance.json").toSorted();
   return Promise.all(
     files.map(async (file) => {
       const filePath = join(output, file);
       const fileStat = await stat(filePath);
-      return { file, sha256: await sha256File(filePath), size: fileStat.size };
+      return {
+        file,
+        sha256: await sha256File(filePath),
+        size: fileStat.size,
+        verification: whisperRuntimeFileVerification(platform, file),
+      };
     }),
   );
 }
@@ -260,10 +356,108 @@ function assertRuntimeFileSet(
   }
 }
 
+function isStagedFileReceipt(value: unknown): value is StagedFileReceipt {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<StagedFileReceipt>;
+  return (
+    typeof candidate.file === "string" &&
+    typeof candidate.sha256 === "string" &&
+    /^[a-f0-9]{64}$/u.test(candidate.sha256) &&
+    typeof candidate.size === "number" &&
+    Number.isSafeInteger(candidate.size) &&
+    candidate.size >= 0 &&
+    (candidate.verification === "mac-code-signature" || candidate.verification === "sha256")
+  );
+}
+
+function signatureDetailValue(details: string, key: string): string | undefined {
+  const prefix = `${key}=`;
+  return details
+    .split(/\r?\n/u)
+    .find((line) => line.startsWith(prefix))
+    ?.slice(prefix.length)
+    .trim();
+}
+
+function assertDeveloperIdSignature(details: string, label: string): string {
+  if (
+    !details.split(/\r?\n/u).some((line) => line.startsWith("Authority=Developer ID Application:"))
+  ) {
+    throw new Error(`${label} is not signed by a Developer ID Application identity.`);
+  }
+  const timestamp = signatureDetailValue(details, "Timestamp");
+  if (!timestamp || timestamp.toLowerCase() === "none") {
+    throw new Error(`${label} is missing a trusted signing timestamp.`);
+  }
+  const codeDirectory = details.split(/\r?\n/u).find((line) => line.startsWith("CodeDirectory "));
+  const signingFlags = codeDirectory?.match(/\bflags=(\S+)/u)?.[1];
+  if (!signingFlags || !/(?:^|[,(])runtime(?:[,)]|$)/u.test(signingFlags)) {
+    throw new Error(`${label} is missing hardened-runtime signing flags.`);
+  }
+  const teamIdentifier = signatureDetailValue(details, "TeamIdentifier");
+  if (!teamIdentifier || teamIdentifier.toLowerCase() === "not set") {
+    throw new Error(`${label} is missing a Developer ID team identifier.`);
+  }
+  return teamIdentifier;
+}
+
+function assertAdhocSignature(details: string, label: string): void {
+  if (signatureDetailValue(details, "Signature") !== "adhoc") {
+    throw new Error(`${label} is not ad-hoc signed.`);
+  }
+  if (signatureDetailValue(details, "TeamIdentifier") !== "not set") {
+    throw new Error(`${label} has an unexpected team identifier for an ad-hoc signature.`);
+  }
+}
+
+export function assertMacWhisperSignatureDetails(input: {
+  readonly appDetails: string;
+  readonly executableDetails: string;
+  readonly mode: MacWhisperSignatureMode;
+}): void {
+  if (input.mode === "developer-id") {
+    const appTeam = assertDeveloperIdSignature(input.appDetails, "Packaged app");
+    const executableTeam = assertDeveloperIdSignature(
+      input.executableDetails,
+      "Packaged whisper-server",
+    );
+    if (appTeam !== executableTeam) {
+      throw new Error(
+        `Packaged whisper-server team identifier ${executableTeam} does not match app team ${appTeam}.`,
+      );
+    }
+    return;
+  }
+  assertAdhocSignature(input.appDetails, "Packaged app");
+  assertAdhocSignature(input.executableDetails, "Packaged whisper-server");
+}
+
+async function verifyMacWhisperSignature(input: {
+  readonly appBundle: string;
+  readonly executable: string;
+  readonly mode: MacWhisperSignatureMode;
+}): Promise<void> {
+  const codesign = "/usr/bin/codesign";
+  await capture(codesign, ["--verify", "--strict", "--verbose=4", input.executable]);
+  await capture(codesign, ["--verify", "--deep", "--strict", "--verbose=4", input.appBundle]);
+  const [appDetails, executableDetails] = await Promise.all([
+    capture(codesign, ["--display", "--verbose=4", input.appBundle]),
+    capture(codesign, ["--display", "--verbose=4", input.executable]),
+  ]);
+  assertMacWhisperSignatureDetails({ appDetails, executableDetails, mode: input.mode });
+}
+
 export async function verifyPackagedWhisperRuntime(input: {
   readonly distDir: string;
+  readonly macSignatureMode?: MacWhisperSignatureMode;
   readonly platform: WhisperRuntimePlatform;
 }): Promise<ReadonlyArray<string>> {
+  if (input.platform === "mac" && !input.macSignatureMode) {
+    throw new Error("macOS whisper.cpp verification requires an explicit signature mode.");
+  }
+  if (input.platform !== "mac" && input.macSignatureMode) {
+    throw new Error("A macOS signature mode cannot be used for a non-macOS runtime.");
+  }
   const distEntries = await readdir(input.distDir, { withFileTypes: true });
   const unpackedDirectories = distEntries
     .filter(
@@ -280,24 +474,53 @@ export async function verifyPackagedWhisperRuntime(input: {
 
   const verified: string[] = [];
   for (const unpacked of unpackedDirectories) {
+    const appBundle = join(unpacked, "Scient.app");
     const runtimeDirectory =
       input.platform === "mac"
-        ? join(unpacked, "Scient.app", "Contents", "Resources", "whisper-runtime")
+        ? join(appBundle, "Contents", "Resources", "whisper-runtime")
         : join(unpacked, "resources", "whisper-runtime");
     const receipt = JSON.parse(
       await readFile(join(runtimeDirectory, "provenance.json"), "utf8"),
-    ) as WhisperRuntimeReceipt;
-    if (receipt.component !== "whisper.cpp" || receipt.version !== WHISPER_CPP_VERSION) {
+    ) as Partial<WhisperRuntimeReceipt>;
+    if (
+      receipt.schemaVersion !== 2 ||
+      receipt.component !== "whisper.cpp" ||
+      receipt.version !== WHISPER_CPP_VERSION ||
+      receipt.platform !== input.platform ||
+      !Array.isArray(receipt.files) ||
+      !receipt.files.every(isStagedFileReceipt)
+    ) {
       throw new Error(`Packaged whisper.cpp provenance is invalid at ${runtimeDirectory}.`);
+    }
+    const actualFiles = (await readdir(runtimeDirectory))
+      .filter((file) => file !== "provenance.json")
+      .toSorted();
+    const receiptFiles = receipt.files.map((file) => file.file).toSorted();
+    if (
+      actualFiles.length !== receiptFiles.length ||
+      actualFiles.some((file, index) => file !== receiptFiles[index])
+    ) {
+      throw new Error(
+        `Packaged whisper.cpp file set does not match provenance at ${runtimeDirectory}.`,
+      );
     }
     assertRuntimeFileSet(input.platform, receipt.files);
     for (const file of receipt.files) {
       if (file.file.includes("/") || file.file.includes("\\") || file.file === "..") {
         throw new Error(`Invalid packaged whisper.cpp receipt path: ${file.file}`);
       }
+      const expectedVerification = whisperRuntimeFileVerification(input.platform, file.file);
+      if (file.verification !== expectedVerification) {
+        throw new Error(
+          `Invalid packaged whisper.cpp verification policy for ${file.file}: expected ${expectedVerification}.`,
+        );
+      }
       const filePath = join(runtimeDirectory, file.file);
       const fileStat = await stat(filePath);
-      if (fileStat.size !== file.size || (await sha256File(filePath)) !== file.sha256) {
+      if (
+        file.verification === "sha256" &&
+        (fileStat.size !== file.size || (await sha256File(filePath)) !== file.sha256)
+      ) {
         throw new Error(`Packaged whisper.cpp file verification failed: ${filePath}`);
       }
     }
@@ -308,7 +531,13 @@ export async function verifyPackagedWhisperRuntime(input: {
     if (input.platform !== "win" && ((await stat(executable)).mode & 0o111) === 0) {
       throw new Error(`Packaged whisper.cpp executable is not executable: ${executable}`);
     }
-    if (input.platform === "mac") await capture("codesign", ["--verify", "--strict", executable]);
+    if (input.platform === "mac") {
+      await verifyMacWhisperSignature({
+        appBundle,
+        executable,
+        mode: input.macSignatureMode!,
+      });
+    }
     verified.push(runtimeDirectory);
   }
   return verified;
@@ -348,10 +577,10 @@ export async function stageWhisperRuntime(options: StageOptions): Promise<void> 
       throw new Error("Staged whisper-server does not advertise --request-path.");
     }
 
-    const files = await collectReceiptFiles(temporaryOutput);
+    const files = await collectReceiptFiles(temporaryOutput, options.platform);
     assertRuntimeFileSet(options.platform, files);
     const receipt = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       component: "whisper.cpp",
       version: WHISPER_CPP_VERSION,
       platform: options.platform,
