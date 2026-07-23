@@ -29,6 +29,10 @@ This document covers build-only native validation, promotion through the protect
 
 - Runtime updater: `electron-updater` in `apps/desktop/src/main.ts`.
 - Client update checks are enabled in packaged production builds by `SCIENT_DESKTOP_UPDATES_ENABLED = true`. Development builds, unpackaged builds, builds without `app-update.yml`, Linux builds not running as an AppImage, and installations with `SYNARA_DISABLE_AUTO_UPDATE=1` remain disabled.
+- Linux AppImage launch is fail-closed: release packaging removes electron-builder's
+  automatic `--no-sandbox` fallback. A host must provide working unprivileged user
+  namespaces or a correctly configured Chromium sandbox helper; Scient never trades
+  sandboxing for startup compatibility.
 - `v0.5.6` was published with client update checks disabled. Existing `v0.5.6`
   installations therefore require one manual installation of the first
   updater-enabled release; the application cannot remotely enable code that is

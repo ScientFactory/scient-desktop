@@ -110,6 +110,7 @@ describe("createDesktopPlatformBuildConfig", () => {
     assert.deepStrictEqual(linux.linux, {
       target: ["AppImage"],
       executableName: "scient",
+      executableArgs: [],
       syncDesktopName: true,
       icon: "icon.png",
       category: "Development",
