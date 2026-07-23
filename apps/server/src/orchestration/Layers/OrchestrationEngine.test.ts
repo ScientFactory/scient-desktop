@@ -376,7 +376,7 @@ describe("OrchestrationEngine", () => {
     }
   });
 
-  it("validates message-boundary forks against transcripts beyond the UI message cap", async () => {
+  it("validates long message-boundary forks against the renderer-retained source window", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;
     const projectId = asProjectId("project-long-fork");
@@ -447,7 +447,7 @@ describe("OrchestrationEngine", () => {
             envMode: "local",
             branch: null,
             worktreePath: null,
-            importedMessages: sourceMessages.map((message, index) => ({
+            importedMessages: sourceMessages.slice(-2_000).map((message, index) => ({
               ...message,
               messageId: asMessageId(`long-fork-${String(index).padStart(4, "0")}`),
             })),
@@ -460,6 +460,7 @@ describe("OrchestrationEngine", () => {
         (thread) => thread.id === ThreadId.makeUnsafe("thread-long-fork-destination"),
       );
       expect(destination?.messages).toHaveLength(2_000);
+      expect(destination?.messages[0]?.text).toBe("Long transcript message 0002");
       expect(destination?.messages.at(-1)?.text).toBe("Long transcript message 2001");
     } finally {
       await system.dispose();
