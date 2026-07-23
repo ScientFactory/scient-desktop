@@ -7,9 +7,23 @@
 import { useCallback, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ServerProviderStatus } from "@synara/contracts";
-import { toastManager } from "../components/ui/toast";
 import { readNativeApi } from "../nativeApi";
 import { applyProviderStatusesToCache } from "../lib/providerStatusCache";
+import { activityManager } from "../notifications/activityStore";
+
+const PROVIDER_REFRESH_ACTIVITY_KEY = "provider:status-refresh";
+
+function clearResolvedProviderActivities(providers: readonly ServerProviderStatus[]): void {
+  activityManager.remove(PROVIDER_REFRESH_ACTIVITY_KEY);
+  for (const provider of providers) {
+    if (
+      provider.versionAdvisory?.status === "current" ||
+      provider.updateState?.status === "succeeded"
+    ) {
+      activityManager.remove(`provider:update:${provider.provider}`);
+    }
+  }
+}
 
 export type RefreshProviderStatusesOptions = {
   readonly silent?: boolean;
@@ -21,7 +35,8 @@ export type RefreshProviderStatusesNow = (
 
 /**
  * Imperative one-shot provider-status refresh: re-checks providers on the server
- * and folds the result into the cached server config. Surfaces failures as a toast.
+ * and folds the result into the cached server config. Non-silent failures are
+ * retained in Activity so they stay reviewable without interrupting the current task.
  */
 export function useRefreshProviderStatusesNow(): RefreshProviderStatusesNow {
   const queryClient = useQueryClient();
@@ -32,14 +47,19 @@ export function useRefreshProviderStatusesNow(): RefreshProviderStatusesNow {
       try {
         const result = await api.server.refreshProviders();
         applyProviderStatusesToCache(queryClient, result.providers);
+        clearResolvedProviderActivities(result.providers);
         return result.providers;
       } catch (error) {
         if (!options?.silent) {
-          toastManager.add({
-            type: "error",
+          activityManager.publish({
+            dedupeKey: PROVIDER_REFRESH_ACTIVITY_KEY,
+            source: "provider",
+            status: "needs_attention",
+            tone: "error",
             title: "Unable to refresh provider status",
             description:
               error instanceof Error ? error.message : "Unknown error refreshing provider status.",
+            destination: { type: "settings", section: "providers" },
           });
         }
         return null;
@@ -82,6 +102,7 @@ export function useProviderStatusRefresh(options: ProviderStatusRefreshOptions):
             return;
           }
           applyProviderStatusesToCache(queryClient, result.providers);
+          clearResolvedProviderActivities(result.providers);
         })
         .catch(() => undefined);
     };

@@ -1,11 +1,16 @@
 import type { ServerConfig, ServerProviderStatus } from "@synara/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { page } from "vitest/browser";
 import { render } from "vitest-browser-react";
 
 import { serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
-import { useProviderStatusRefresh } from "./useProviderStatusRefresh";
+import { useActivityStore } from "../notifications/activityStore";
+import {
+  useProviderStatusRefresh,
+  useRefreshProviderStatusesNow,
+} from "./useProviderStatusRefresh";
 
 const runtime = {
   source: "missing" as const,
@@ -50,8 +55,18 @@ function ScheduledRefreshHarness() {
   return null;
 }
 
+function ImperativeRefreshHarness({ silent = false }: { silent?: boolean }) {
+  const refresh = useRefreshProviderStatusesNow();
+  return (
+    <button type="button" onClick={() => void refresh({ silent })}>
+      Refresh providers
+    </button>
+  );
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
+  useActivityStore.getState().reset();
 });
 
 describe("useProviderStatusRefresh", () => {
@@ -126,6 +141,84 @@ describe("useProviderStatusRefresh", () => {
         queryClient.getQueryData<ServerConfig>(serverQueryKeys.config())?.providers[0]?.runtime
           ?.canInstall,
       ).toBe(true);
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      Object.defineProperty(window, "nativeApi", {
+        configurable: true,
+        value: previousNativeApi,
+      });
+    }
+  });
+
+  it("routes an imperative refresh failure to durable Activity feedback", async () => {
+    const queryClient = new QueryClient();
+    const refreshProviders = vi.fn().mockRejectedValue(new Error("Provider probe failed."));
+    const previousNativeApi = window.nativeApi;
+    const baseApi = readNativeApi();
+    if (!baseApi) throw new Error("Expected browser native API fixture.");
+    Object.defineProperty(window, "nativeApi", {
+      configurable: true,
+      value: {
+        ...baseApi,
+        server: { ...baseApi.server, refreshProviders },
+      },
+    });
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ImperativeRefreshHarness />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await page.getByRole("button", { name: "Refresh providers" }).click();
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() =>
+        expect(useActivityStore.getState().items).toEqual([
+          expect.objectContaining({
+            dedupeKey: "provider:status-refresh",
+            status: "needs_attention",
+            tone: "error",
+            title: "Unable to refresh provider status",
+            description: "Provider probe failed.",
+          }),
+        ]),
+      );
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      Object.defineProperty(window, "nativeApi", {
+        configurable: true,
+        value: previousNativeApi,
+      });
+    }
+  });
+
+  it("keeps silent refresh failures out of Activity", async () => {
+    const queryClient = new QueryClient();
+    const refreshProviders = vi.fn().mockRejectedValue(new Error("Background probe failed."));
+    const previousNativeApi = window.nativeApi;
+    const baseApi = readNativeApi();
+    if (!baseApi) throw new Error("Expected browser native API fixture.");
+    Object.defineProperty(window, "nativeApi", {
+      configurable: true,
+      value: {
+        ...baseApi,
+        server: { ...baseApi.server, refreshProviders },
+      },
+    });
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ImperativeRefreshHarness silent />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await page.getByRole("button", { name: "Refresh providers" }).click();
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledTimes(1));
+      expect(useActivityStore.getState().items).toEqual([]);
     } finally {
       await screen.unmount();
       queryClient.clear();

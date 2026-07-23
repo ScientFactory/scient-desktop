@@ -2,11 +2,43 @@ import { describe, expect, it } from "vitest";
 
 import {
   browserAddressDisplayValue,
+  browserCopyFeedbackMatches,
   buildBrowserAddressSuggestions,
   normalizeBrowserAddressInput,
   resolveBrowserChromeStatus,
   resolveBrowserAddressSync,
 } from "./BrowserPanel.logic";
+
+describe("browserCopyFeedbackMatches", () => {
+  const feedback = {
+    item: "link" as const,
+    tabId: "tab-1",
+    url: "https://scientfactory.com/",
+    tone: "success" as const,
+    message: "Link copied",
+  };
+
+  it("keeps feedback scoped to the exact tab and URL that was copied", () => {
+    expect(
+      browserCopyFeedbackMatches(feedback, {
+        tabId: "tab-1",
+        url: "https://scientfactory.com/",
+      }),
+    ).toBe(true);
+    expect(
+      browserCopyFeedbackMatches(feedback, {
+        tabId: "tab-2",
+        url: "https://scientfactory.com/",
+      }),
+    ).toBe(false);
+    expect(
+      browserCopyFeedbackMatches(feedback, {
+        tabId: "tab-1",
+        url: "https://scientfactory.com/docs",
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("browserAddressDisplayValue", () => {
   it("hides about:blank for new tabs", () => {

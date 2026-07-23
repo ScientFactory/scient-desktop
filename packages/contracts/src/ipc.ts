@@ -397,6 +397,7 @@ export interface BrowserExecuteCdpInput extends BrowserTabInput {
 // while the native page (not the React chrome) holds keyboard focus.
 export interface BrowserCopyLinkEvent {
   threadId: ThreadId;
+  tabId: string;
   url: string;
 }
 
