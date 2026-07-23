@@ -7,6 +7,7 @@ import { compareSemverVersions } from "@synara/shared/providerVersions";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import {
   CLAUDE_CONNECTION_METHOD_OPTIONS,
   describeProviderConnection,
@@ -62,6 +63,9 @@ export function ProviderConnectionDialog() {
   const activeAuthorizationCodeSubmissionRef = useRef<{
     readonly operationId: string;
   } | null>(null);
+  const openedAuthorizationUrlsRef = useRef(new Set<string>());
+  const { copyToClipboard: copyDeviceCode, isCopied: isDeviceCodeCopied } =
+    useCopyToClipboard<void>();
   const activeConnectionOperationIdRef = useRef<string | null>(null);
   const status = provider
     ? configQuery.data?.providers.find((entry) => entry.provider === provider)
@@ -95,7 +99,14 @@ export function ProviderConnectionDialog() {
     ["starting", "waiting_for_browser", "verifying"].includes(status.connectionState.status)
       ? status.connectionState
       : null;
-  activeConnectionOperationIdRef.current = activeConnection?.operationId ?? null;
+  const activeConnectionOperationId = activeConnection?.operationId ?? null;
+  const activeConnectionMethod = activeConnection?.method ?? null;
+  const activeConnectionAuthorizationUrl = activeConnection?.authorizationUrl ?? null;
+  const activeCodexDeviceCode =
+    provider === "codex" && activeConnectionMethod === "codex_device_code"
+      ? (activeConnection?.userCode ?? null)
+      : null;
+  activeConnectionOperationIdRef.current = activeConnectionOperationId;
 
   useEffect(() => {
     setRuntimeReconnectBaselineOperationId(undefined);
@@ -155,6 +166,32 @@ export function ProviderConnectionDialog() {
   useEffect(() => {
     if (!isOpen) setAuthorizationCode("");
   }, [isOpen]);
+
+  useEffect(() => {
+    if (
+      !isOpen ||
+      activeConnectionMethod !== "codex_device_code" ||
+      !activeConnectionOperationId ||
+      !activeConnectionAuthorizationUrl
+    ) {
+      return;
+    }
+    const key = `${activeConnectionOperationId}:${activeConnectionAuthorizationUrl}`;
+    if (openedAuthorizationUrlsRef.current.has(key)) return;
+    openedAuthorizationUrlsRef.current.add(key);
+    void ensureNativeApi()
+      .shell.openExternal(activeConnectionAuthorizationUrl)
+      .catch(() =>
+        setActionError(
+          "Scient could not open the browser automatically. Use Open browser again below.",
+        ),
+      );
+  }, [
+    isOpen,
+    activeConnectionOperationId,
+    activeConnectionMethod,
+    activeConnectionAuthorizationUrl,
+  ]);
 
   if (!provider || !presentation || !Icon) return null;
   const startsProviderSignIn =
@@ -242,6 +279,20 @@ export function ProviderConnectionDialog() {
     });
   };
 
+  const switchToCodexDeviceCode = () => {
+    const operation = status?.connectionState;
+    if (provider !== "codex" || !operation) return Promise.resolve();
+    invalidateAuthorizationCodeSubmission(operation.operationId);
+    return runAction(async () => {
+      const cancelled = await ensureNativeApi().server.cancelProviderConnection({
+        provider,
+        operationId: operation.operationId,
+      });
+      applyProviderStatusesToCache(queryClient, cancelled.providers);
+      await performStartSignIn("codex_device_code");
+    });
+  };
+
   const reopenAuthorization = () => {
     const authorizationUrl = activeConnection?.authorizationUrl;
     if (!authorizationUrl) return Promise.resolve();
@@ -303,9 +354,11 @@ export function ProviderConnectionDialog() {
         setInstallPlan(plan);
         return;
       }
+      const connectionMethod = managedUpdateFlow ? null : providerConnectionMethod(provider);
       const result = await ensureNativeApi().server.installProvider({
         provider,
         planToken: installPlan.planToken,
+        ...(connectionMethod ? { connectionMethod } : {}),
       });
       if (managedUpdateFlow) setManagedUpdateStarted(true);
       setInstallPlan(null);
@@ -394,8 +447,7 @@ export function ProviderConnectionDialog() {
                   role="group"
                   aria-label="Sign-in progress actions"
                 >
-                  {(provider === "grok" || provider === "antigravity") &&
-                  activeConnection.authorizationUrl ? (
+                  {activeConnection.authorizationUrl ? (
                     <Button
                       type="button"
                       variant="outline"
@@ -403,6 +455,16 @@ export function ProviderConnectionDialog() {
                       onClick={reopenAuthorization}
                     >
                       Open browser again
+                    </Button>
+                  ) : null}
+                  {provider === "codex" && activeConnection.method === "codex_browser" ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={actionPending}
+                      onClick={switchToCodexDeviceCode}
+                    >
+                      Use device code instead
                     </Button>
                   ) : null}
                   {presentation.canRestart ? (
@@ -463,6 +525,26 @@ export function ProviderConnectionDialog() {
                 </>
               )}
             </form>
+          ) : null}
+
+          {activeCodexDeviceCode ? (
+            <div className="space-y-2 rounded-xl border border-[color:var(--color-border)] bg-[var(--color-background-elevated-secondary)] px-3 py-3">
+              <p className="text-xs font-medium text-muted-foreground">
+                Enter this one-time code on the OpenAI page
+              </p>
+              <div className="flex items-center gap-2">
+                <code className="min-w-0 flex-1 select-all rounded-lg bg-background px-3 py-2 text-center text-base font-semibold tracking-widest">
+                  {activeCodexDeviceCode}
+                </code>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => copyDeviceCode(activeCodexDeviceCode, undefined)}
+                >
+                  {isDeviceCodeCopied ? "Copied" : "Copy code"}
+                </Button>
+              </div>
+            </div>
           ) : null}
 
           {provider === "claudeAgent" && presentation.primaryAction === "sign_in" ? (
@@ -550,7 +632,9 @@ export function ProviderConnectionDialog() {
               {installPlan && managedUpdateFlow
                 ? "Download and update"
                 : installPlan
-                  ? "Download and install"
+                  ? providerConnectionMethod(provider)
+                    ? "Download, install and sign in"
+                    : "Download and install"
                   : presentation.primaryLabel}
             </Button>
           ) : null}

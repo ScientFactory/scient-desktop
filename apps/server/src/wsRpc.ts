@@ -1070,6 +1070,15 @@ export const makeWsRpcLayer = () =>
           providerRuntimeManager.prepareInstall(input.provider),
         [WS_METHODS.serverInstallProvider]: (input) =>
           providerRuntimeManager.install(input).pipe(
+            Effect.tap(() =>
+              input.connectionMethod
+                ? providerConnection.startAfterInstallation({
+                    provider: input.provider,
+                    method: input.connectionMethod,
+                    installationOperationId: input.planToken,
+                  })
+                : Effect.void,
+            ),
             Effect.andThen(providerClientStatusProjection.getStatuses),
             Effect.map((providers) => ({ providers })),
           ),

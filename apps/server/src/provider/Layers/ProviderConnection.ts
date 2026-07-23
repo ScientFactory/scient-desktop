@@ -49,6 +49,8 @@ import { ProviderRuntimeManager } from "../Services/ProviderRuntimeManager";
 import { parseAntigravityModelsAuthStatus, resolveProviderProbeCwd } from "./ProviderHealth";
 
 const CONNECTION_TIMEOUT = Duration.minutes(10);
+const INSTALLATION_HANDOFF_TIMEOUT = Duration.minutes(30);
+const INSTALLATION_HANDOFF_POLL_INTERVAL = Duration.millis(250);
 const ANTIGRAVITY_AUTHORIZATION_WINDOW_SECONDS = 10 * 60;
 const ANTIGRAVITY_CODE_WINDOW_TIMEOUT = Duration.seconds(ANTIGRAVITY_AUTHORIZATION_WINDOW_SECONDS);
 const ANTIGRAVITY_AUTHENTICATION_PROBE_INTERVAL = Duration.millis(500);
@@ -89,10 +91,19 @@ const GOOGLE_OAUTH_AUTHORIZATION_ORIGIN = "https://accounts.google.com";
 const GOOGLE_OAUTH_AUTHORIZATION_PATHS = new Set(["/o/oauth2/auth", "/o/oauth2/v2/auth"]);
 const ANTIGRAVITY_OAUTH_CALLBACK_ORIGIN = "https://antigravity.google";
 const ANTIGRAVITY_OAUTH_CALLBACK_PATH = "/oauth-callback";
+const CODEX_OAUTH_AUTHORIZATION_ORIGINS = new Set([
+  "https://auth.openai.com",
+  "https://chatgpt.com",
+]);
+const CODEX_DEVICE_PATH = "/codex/device";
 const OAUTH_OUTPUT_BUFFER_MAX_CHARS = 16 * 1024;
 const ANTIGRAVITY_AUTH_PROMPT =
   "Authenticate this Antigravity CLI only. Do not inspect or modify files and do not perform a task.";
 const authorizationCodeEncoder = new TextEncoder();
+const ANSI_SEQUENCE_PATTERN = new RegExp(
+  String.raw`\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))`,
+  "gu",
+);
 
 function outputUrlCandidates(output: string): ReadonlyArray<string> {
   return (output.match(/https:\/\/[^\s<>"']+/gu) ?? []).filter(
@@ -102,6 +113,85 @@ function outputUrlCandidates(output: string): ReadonlyArray<string> {
         return codePoint < 0x20 || codePoint === 0x7f;
       }),
   );
+}
+
+function stripAnsi(output: string): string {
+  return output.replace(ANSI_SEQUENCE_PATTERN, "");
+}
+
+function isSafeCodexUrl(candidate: string): URL | null {
+  if (candidate.length > 8_192) return null;
+  try {
+    const url = new URL(candidate);
+    return url.protocol === "https:" &&
+      CODEX_OAUTH_AUTHORIZATION_ORIGINS.has(url.origin) &&
+      !url.hash &&
+      !url.username &&
+      !url.password
+      ? url
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function parseCodexOAuthAuthorizationUrl(output: string): string | null {
+  for (const candidate of outputUrlCandidates(stripAnsi(output))) {
+    const url = isSafeCodexUrl(candidate);
+    if (
+      url &&
+      url.pathname === "/oauth/authorize" &&
+      url.searchParams.get("response_type") === "code" &&
+      url.searchParams.get("client_id") &&
+      url.searchParams.get("state") &&
+      url.searchParams.get("code_challenge") &&
+      url.searchParams.get("code_challenge_method") === "S256"
+    ) {
+      const redirectValue = url.searchParams.get("redirect_uri");
+      if (!redirectValue) continue;
+      try {
+        const redirectUrl = new URL(redirectValue);
+        if (
+          redirectUrl.protocol === "http:" &&
+          (redirectUrl.hostname === "localhost" || redirectUrl.hostname === "127.0.0.1") &&
+          redirectUrl.port &&
+          redirectUrl.pathname === "/auth/callback" &&
+          !redirectUrl.search &&
+          !redirectUrl.hash &&
+          !redirectUrl.username &&
+          !redirectUrl.password
+        ) {
+          return url.toString();
+        }
+      } catch {
+        // Ignore malformed or incomplete output while the CLI is still streaming.
+      }
+    }
+  }
+  return null;
+}
+
+export function parseCodexDeviceAuthorization(output: string): {
+  readonly authorizationUrl?: string;
+  readonly userCode?: string;
+} {
+  const cleaned = stripAnsi(output);
+  let authorizationUrl: string | undefined;
+  for (const candidate of outputUrlCandidates(cleaned)) {
+    const url = isSafeCodexUrl(candidate);
+    if (url?.pathname === CODEX_DEVICE_PATH && !url.search) {
+      authorizationUrl = url.toString();
+      break;
+    }
+  }
+  const userCode = cleaned
+    .split(/\r?\n/gu)
+    .map((line) => line.trim())
+    .find((line) => /^[A-Z0-9]{4,}(?:-[A-Z0-9]{2,})+$/u.test(line) && line.length <= 64);
+  return {
+    ...(authorizationUrl ? { authorizationUrl } : {}),
+    ...(userCode ? { userCode } : {}),
+  };
 }
 
 export function parseGrokOAuthAuthorizationUrl(output: string): string | null {
@@ -230,6 +320,9 @@ export function providerConnectionCommandArgs(
   method: ServerProviderConnectionMethod,
 ): ReadonlyArray<string> | null {
   if (provider === "codex" && method === "codex_browser") return ["login"];
+  if (provider === "codex" && method === "codex_device_code") {
+    return ["login", "--device-auth"];
+  }
   if (provider === "claudeAgent" && method === "claude_account") {
     return ["auth", "login"];
   }
@@ -394,7 +487,10 @@ export function makeProviderConnectionLive(options?: {
               ...runtimeEnv,
               CODEX_HOME: resolveBaseCodexHomePath(process.env, homePath),
             },
-            waitingMessage: "Finish signing in to ChatGPT in the browser window.",
+            waitingMessage:
+              method === "codex_device_code"
+                ? "Open the secure OpenAI page and enter the one-time code shown here."
+                : "Finish signing in to ChatGPT in the browser window.",
           } satisfies ConnectionCommand;
         }
 
@@ -766,6 +862,7 @@ export function makeProviderConnectionLive(options?: {
             readonly message: string;
             readonly finished?: boolean;
             readonly authorizationUrl?: string;
+            readonly userCode?: string;
           }): ServerProviderConnectionState => ({
             operationId,
             method,
@@ -774,11 +871,12 @@ export function makeProviderConnectionLive(options?: {
             finishedAt: input.finished ? new Date().toISOString() : null,
             message: input.message,
             ...(input.authorizationUrl ? { authorizationUrl: input.authorizationUrl } : {}),
+            ...(input.userCode ? { userCode: input.userCode } : {}),
           });
 
           yield* publishState(
             provider,
-            state({ status: "starting", message: "Starting secure browser sign in." }),
+            state({ status: "starting", message: "Starting secure provider sign in." }),
           );
 
           const operation = Effect.gen(function* () {
@@ -788,27 +886,46 @@ export function makeProviderConnectionLive(options?: {
             );
             let oauthOutputBuffer = "";
             let publishedAuthorizationUrl: string | null = null;
+            let publishedUserCode: string | null = null;
             const oauthOutputObserver: ConnectionOutputObserver | undefined =
-              provider === "grok" || provider === "antigravity"
+              provider === "grok" || provider === "antigravity" || provider === "codex"
                 ? {
                     onOutputChunk: (chunk) => {
-                      if (publishedAuthorizationUrl) return undefined;
                       oauthOutputBuffer =
                         `${oauthOutputBuffer}${Buffer.from(chunk).toString("utf8")}`.slice(
                           -OAUTH_OUTPUT_BUFFER_MAX_CHARS,
                         );
-                      const authorizationUrl =
-                        provider === "grok"
-                          ? parseGrokOAuthAuthorizationUrl(oauthOutputBuffer)
-                          : parseAntigravityOAuthAuthorizationUrl(oauthOutputBuffer);
-                      if (!authorizationUrl) return undefined;
-                      publishedAuthorizationUrl = authorizationUrl;
+                      const codexDevice =
+                        provider === "codex" && method === "codex_device_code"
+                          ? parseCodexDeviceAuthorization(oauthOutputBuffer)
+                          : null;
+                      const authorizationUrl = codexDevice
+                        ? (codexDevice.authorizationUrl ?? null)
+                        : provider === "codex"
+                          ? parseCodexOAuthAuthorizationUrl(oauthOutputBuffer)
+                          : provider === "grok"
+                            ? parseGrokOAuthAuthorizationUrl(oauthOutputBuffer)
+                            : parseAntigravityOAuthAuthorizationUrl(oauthOutputBuffer);
+                      const userCode = codexDevice?.userCode ?? null;
+                      const nextAuthorizationUrl = authorizationUrl ?? publishedAuthorizationUrl;
+                      const nextUserCode = userCode ?? publishedUserCode;
+                      if (
+                        nextAuthorizationUrl === publishedAuthorizationUrl &&
+                        nextUserCode === publishedUserCode
+                      ) {
+                        return undefined;
+                      }
+                      publishedAuthorizationUrl = nextAuthorizationUrl;
+                      publishedUserCode = nextUserCode;
                       return publishState(
                         provider,
                         state({
                           status: "waiting_for_browser",
                           message: command.waitingMessage,
-                          authorizationUrl,
+                          ...(nextAuthorizationUrl
+                            ? { authorizationUrl: nextAuthorizationUrl }
+                            : {}),
+                          ...(nextUserCode ? { userCode: nextUserCode } : {}),
                         }),
                       ).pipe(Effect.asVoid);
                     },
@@ -989,6 +1106,60 @@ export function makeProviderConnectionLive(options?: {
         },
       );
 
+      const startAfterInstallation: ProviderConnectionShape["startAfterInstallation"] = Effect.fn(
+        "ProviderConnection.startAfterInstallation",
+      )(function* (input) {
+        if (
+          providerConnectionCommandArgs(input.provider, input.method) === null ||
+          (input.provider !== "codex" && expectedMethodForProvider(input.provider) !== input.method)
+        ) {
+          yield* Effect.logWarning("Ignoring an invalid provider installation handoff.", {
+            provider: input.provider,
+            method: input.method,
+          });
+          return;
+        }
+
+        const monitor = Effect.gen(function* () {
+          const initial = yield* providerRuntimeManager.getSnapshot(input.provider);
+          if (initial.installationState?.operationId !== input.installationOperationId) {
+            yield* Effect.logWarning("Ignoring a stale provider installation handoff.", {
+              provider: input.provider,
+              installationOperationId: input.installationOperationId,
+            });
+            return;
+          }
+          while (true) {
+            const snapshot = yield* providerRuntimeManager.getSnapshot(input.provider);
+            const installation = snapshot.installationState;
+            if (installation?.operationId === input.installationOperationId) {
+              if (installation.status === "installed") {
+                const result = yield* Effect.result(
+                  start({ provider: input.provider, method: input.method }),
+                );
+                if (Result.isFailure(result)) {
+                  const now = new Date().toISOString();
+                  yield* publishState(input.provider, {
+                    operationId: `handoff-${input.installationOperationId}`,
+                    method: input.method,
+                    status: "failed",
+                    startedAt: now,
+                    finishedAt: now,
+                    message: `Installation succeeded, but sign in could not start: ${result.failure.message}`,
+                  });
+                }
+                return;
+              }
+              if (installation.status === "failed" || installation.status === "cancelled") {
+                return;
+              }
+            }
+            yield* Effect.sleep(INSTALLATION_HANDOFF_POLL_INTERVAL);
+          }
+        }).pipe(Effect.timeoutOption(INSTALLATION_HANDOFF_TIMEOUT), Effect.asVoid);
+        yield* monitor.pipe(Effect.forkIn(operationScope));
+      });
+
       const cancel: ProviderConnectionShape["cancel"] = Effect.fn("ProviderConnection.cancel")(
         function* (input) {
           const active = (yield* Ref.get(activeConnectionsRef)).get(input.provider);
@@ -1075,7 +1246,12 @@ export function makeProviderConnectionLive(options?: {
         return { providers: yield* providerHealth.getStatuses };
       });
 
-      return { start, cancel, submitAuthorizationCode } satisfies ProviderConnectionShape;
+      return {
+        start,
+        cancel,
+        submitAuthorizationCode,
+        startAfterInstallation,
+      } satisfies ProviderConnectionShape;
     }),
   );
 }
