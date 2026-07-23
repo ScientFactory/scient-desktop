@@ -121,6 +121,58 @@ describe("AddProjectDialog", () => {
     restore();
   });
 
+  it("browses through a whitespace-ended folder and selects its child", async () => {
+    const browse = vi.fn(async ({ partialPath }: { partialPath: string }) => {
+      if (partialPath === "/Users/tester/") {
+        return {
+          parentPath: "/Users/tester",
+          entries: [
+            { name: "Research ", fullPath: "/Users/tester/Research " },
+            { name: "Sibling", fullPath: "/Users/tester/Sibling" },
+          ],
+        };
+      }
+      if (partialPath === "/Users/tester/Research /") {
+        return {
+          parentPath: "/Users/tester/Research ",
+          entries: [{ name: "notes", fullPath: "/Users/tester/Research /notes" }],
+        };
+      }
+      if (partialPath === "/Users/tester/Research /notes/") {
+        return {
+          parentPath: "/Users/tester/Research /notes",
+          entries: [],
+        };
+      }
+      throw new Error(`Unexpected browse path: ${partialPath}`);
+    });
+    const onAddProjectPath = vi.fn().mockResolvedValue(true);
+    const restore = installNativeApi({
+      statuses: vi.fn().mockResolvedValue({ sources: [] }),
+      browse,
+    });
+    renderDialog(onAddProjectPath);
+
+    await page.getByText("Local folder", { exact: true }).click();
+    await page.getByText("Research", { exact: true }).click();
+    await expect.element(page.getByText("notes", { exact: true })).toBeVisible();
+    expect(browse).toHaveBeenCalledWith({ partialPath: "/Users/tester/Research /" });
+
+    await page.getByText("notes", { exact: true }).click();
+    await expect
+      .element(page.getByPlaceholder("Type or browse a folder path"))
+      .toHaveValue("/Users/tester/Research /notes/");
+    await vi.waitFor(() =>
+      expect(browse).toHaveBeenCalledWith({ partialPath: "/Users/tester/Research /notes/" }),
+    );
+    await page.getByRole("button", { name: /Add/ }).click();
+
+    expect(onAddProjectPath).toHaveBeenCalledWith("/Users/tester/Research /notes", {
+      createIfMissing: false,
+    });
+    restore();
+  });
+
   it("clones an available GitHub repository and passes the result to Scient initialization", async () => {
     const cloneSource = vi.fn().mockResolvedValue({ path: "/Users/tester/scient" });
     const onAddProjectPath = vi.fn().mockResolvedValue(true);
