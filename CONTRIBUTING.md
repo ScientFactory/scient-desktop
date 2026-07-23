@@ -7,7 +7,7 @@ in an issue before investing in a large implementation.
 
 Pull requests are labeled with a `vouch:*` contributor-trust status and a
 `size:*` diff size. These labels help maintainers route review; they do not
-replace verification or approval.
+replace verification or maintainer judgment.
 
 ## Choose A Focused Change
 
@@ -33,8 +33,8 @@ workaround.
    same branch, and push again. GitHub reruns the checks for the new head.
 6. Before marking the pull request ready, complete the baseline verification,
    manual verification, and author self-review below.
-7. Request review only when the pull-request description and evidence match the
-   final diff.
+7. Request peer review when another person's judgment would improve the change.
+   Peer review is useful but is not a default merge gate.
 
 Do not create a second staging branch that copies `main`. The task branch and
 its pull request already provide the integration and CI loop. If `main` moves,
@@ -90,8 +90,8 @@ For changes with no user-facing behavior, manual product testing may be marked
 
 ## Author Self-Review
 
-Before requesting another person's review, inspect the complete final diff in
-the pull request as if someone else wrote it. Confirm that:
+Before marking a pull request ready or merging it, inspect the complete final
+diff as if someone else wrote it. Confirm that:
 
 - every changed file belongs to the stated outcome;
 - the change addresses the real failure or need;
@@ -104,7 +104,9 @@ the pull request as if someone else wrote it. Confirm that:
 
 Agent-assisted work has the same requirement. The contributor who submits the
 pull request remains accountable for understanding and reviewing the result.
-Self-review does not replace approval by another person.
+Request peer review when it adds useful judgment, especially for risky,
+security-sensitive, or product-direction changes. Do not request a reviewer
+solely to satisfy a mergeability gate.
 
 ## Review And Completion
 
@@ -112,12 +114,12 @@ A pull request is ready to merge only when:
 
 - its scope and evidence match the final diff;
 - required checks pass on the current head;
-- review conversations are resolved; and
-- at least one person other than the author approves.
+- relevant manual verification and author self-review are complete; and
+- review conversations are resolved.
 
 Passing CI is necessary but does not prove that the product behavior, design,
-ownership boundaries, or recovery behavior is correct. Review must judge those
-alongside the test evidence.
+ownership boundaries, or recovery behavior is correct. Author self-review and
+any requested peer review must judge those alongside the test evidence.
 
 Security vulnerabilities must be reported privately through
 [SECURITY.md](SECURITY.md), not through a public issue or pull request.
