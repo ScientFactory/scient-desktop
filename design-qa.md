@@ -63,20 +63,21 @@ The new row was compared in both resting and drag-over states. The implementatio
 
 ## Verification
 
-- Full repository test suite: 12/12 tasks passed.
+- Full repository test suite on the previously certified feature head `e118d0a33ec65890f79a490d56bf1134e8b851e0`: 12/12 tasks passed.
+- Full repository test suite on post-merge feature head `3a8d5616cdc984609cc41dc0bd23552fb363f1ca`: 11/12 tasks passed. The sole failure was `apps/server/src/localServerMonitor.platform.test.ts`, whose native macOS listener discovery returned no processes. The same isolated test failed identically on exact `origin/main` `fffd9e7797b8df34d19ac2bb4439740fb29f11f6`; neither that test nor its implementation differs in this branch.
 - Server project-source tests: 10/10 passed.
 - Folder-drop logic tests: 11/11 passed.
 - Add-project browser tests: 22/22 passed.
-- Stable browser certification: 274 passed, 11 skipped across all four isolated groups.
+- Stable browser certification on the current head: 289 passed, 14 skipped across all four isolated groups.
 - Repository typecheck: 9/9 packages passed.
 - Repository lint: 0 errors (existing warnings remain outside this feature).
 - Brand and identity check passed.
 - Production web build, desktop bundle, server bundle, and CLI bundle passed (5/5 tasks).
 - Release smoke passed, including a native `node-pty` spawn.
-- The folder-plus tile opened the native macOS directory picker from the exact isolated build.
+- The folder-plus tile opened Finder at the current folder from the exact isolated build, matching the footer action.
 - Real Finder-to-Electron drag remains a manual acceptance gate: automated cross-window pointer
   drags did not produce renderer drag events, so this record does not claim native drop proof.
 - Sanitized evidence scan found no local user names, private paths, or embedded image text.
 - `git diff --check` passed.
 
-final result: passed
+final result: affected feature and intake gates passed; literal Finder drag acceptance remains required, and the unrelated `origin/main` platform-listener baseline failure is disclosed above
