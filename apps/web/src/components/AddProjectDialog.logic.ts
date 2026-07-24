@@ -24,6 +24,17 @@ export function canAcceptProjectFolderDrop(dataTransfer: ProjectFolderDataTransf
   return fileItems.length === 1 && isDroppedComposerDirectory(fileItems[0]);
 }
 
+function getDroppedProjectFile(
+  item: ComposerDroppedFileItem | undefined,
+  files: Iterable<File>,
+): File | null {
+  try {
+    return item?.getAsFile() ?? Array.from(files)[0] ?? null;
+  } catch {
+    return Array.from(files)[0] ?? null;
+  }
+}
+
 export function resolveDroppedProjectFolder(
   dataTransfer: ProjectFolderDataTransfer,
 ): DroppedProjectFolderResult {
@@ -33,7 +44,7 @@ export function resolveDroppedProjectFolder(
   }
 
   const item = fileItems[0];
-  const file = item?.getAsFile() ?? Array.from(dataTransfer.files)[0] ?? null;
+  const file = getDroppedProjectFile(item, dataTransfer.files);
   if (!item || !file) {
     return { error: "Could not read the dropped folder. Use browse below instead." };
   }
@@ -47,7 +58,8 @@ export function resolveDroppedProjectFolder(
   }
   if (absolutePath !== absolutePath.trim()) {
     return {
-      error: "Folders with names ending in whitespace cannot be dropped. Use browse below instead.",
+      error:
+        "Folders with names ending in whitespace are not supported. Rename the folder and try again.",
     };
   }
   return { path: absolutePath };

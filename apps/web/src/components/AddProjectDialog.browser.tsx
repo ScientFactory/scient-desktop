@@ -330,9 +330,11 @@ describe("AddProjectDialog", () => {
         .toHaveTextContent("Drop your folder here or browse below");
 
       dispatchWindowDrag("drop", transfer);
-      await expect
-        .element(page.getByText("Drop a folder, not a file.", { exact: true }))
-        .toBeVisible();
+      const alert = page.getByRole("alert");
+      await expect.element(alert).toHaveTextContent("Drop a folder, not a file.");
+      expect((await page.getByRole("listbox").element()).contains(await alert.element())).toBe(
+        false,
+      );
       await expect.element(page.getByText("Documents", { exact: true })).toBeVisible();
       expect(onAddProjectPath).not.toHaveBeenCalled();
     } finally {
@@ -362,7 +364,7 @@ describe("AddProjectDialog", () => {
       await expect
         .element(
           page.getByText(
-            "Folders with names ending in whitespace cannot be dropped. Use browse below instead.",
+            "Folders with names ending in whitespace are not supported. Rename the folder and try again.",
             { exact: true },
           ),
         )

@@ -70,6 +70,30 @@ describe("AddProjectDialog logic", () => {
     ).toEqual({ path: "/Users/tester/Research (2)" });
   });
 
+  it("falls back to the transfer file when Chromium cannot expose the item file", () => {
+    const folder = makeFile("Research");
+    vi.stubGlobal("window", {
+      desktopBridge: {
+        getPathForFile: () => "/Users/tester/Research",
+      },
+    });
+
+    expect(
+      resolveDroppedProjectFolder({
+        items: [
+          {
+            kind: "file",
+            getAsFile: () => {
+              throw new Error("unavailable");
+            },
+            webkitGetAsEntry: () => ({ isDirectory: true }),
+          },
+        ],
+        files: [folder],
+      }),
+    ).toEqual({ path: "/Users/tester/Research" });
+  });
+
   it("rejects files, ambiguous multi-folder drops, and unavailable absolute paths", () => {
     const file = makeFile("notes.md");
     const folder = makeFile("Research");
@@ -109,7 +133,8 @@ describe("AddProjectDialog logic", () => {
         files: [folder],
       }),
     ).toEqual({
-      error: "Folders with names ending in whitespace cannot be dropped. Use browse below instead.",
+      error:
+        "Folders with names ending in whitespace are not supported. Rename the folder and try again.",
     });
   });
 

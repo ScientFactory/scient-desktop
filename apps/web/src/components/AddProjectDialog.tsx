@@ -516,15 +516,18 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
           {!isFetching && filteredEntries.length === 0 && !canBrowseUp ? (
             <CommandEmpty className="py-10">No matching folders.</CommandEmpty>
           ) : null}
-          {error || browseError ? (
-            <div className="mx-2 my-2 rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-              {error ??
-                (browseError instanceof Error
-                  ? browseError.message
-                  : "Unable to browse this folder.")}
-            </div>
-          ) : null}
         </CommandList>
+        {error || browseError ? (
+          <div
+            role="alert"
+            className="mx-3 my-2 rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-sm text-destructive"
+          >
+            {error ??
+              (browseError instanceof Error
+                ? browseError.message
+                : "Unable to browse this folder.")}
+          </div>
+        ) : null}
       </CommandPanel>
       <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">
         <NavigationKeyHints
