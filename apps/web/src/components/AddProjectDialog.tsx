@@ -724,13 +724,7 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
 
   return (
     <CommandDialog open={props.open} onOpenChange={handleOpenChange}>
-      <CommandDialogPopup
-        className={cn(
-          "overflow-hidden",
-          step === "local" && "[&>*]:flex [&>*]:min-h-0 [&>*]:flex-1 [&>*]:flex-col",
-        )}
-        aria-label="Add project"
-      >
+      <CommandDialogPopup className="overflow-hidden" aria-label="Add project">
         {step === "local" ? (
           <ProjectPathBrowser
             homeDir={props.homeDir}

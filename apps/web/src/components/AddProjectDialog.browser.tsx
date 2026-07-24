@@ -347,10 +347,18 @@ describe("AddProjectDialog", () => {
         const popupRect = popup!.getBoundingClientRect();
         const alertRect = (await alert.element()).getBoundingClientRect();
         const footerRect = footer!.getBoundingClientRect();
+        const footerStyle = getComputedStyle(footer!);
         expect(alertRect.height).toBeGreaterThan(0);
         expect(alertRect.top).toBeGreaterThanOrEqual(popupRect.top - 1);
         expect(alertRect.bottom).toBeLessThanOrEqual(popupRect.bottom + 1);
         expect(footerRect.bottom).toBeLessThanOrEqual(popupRect.bottom + 1);
+        if (viewport.width >= 640) {
+          expect(footerStyle.flexDirection).toBe("row");
+          expect(footerRect.height).toBeLessThanOrEqual(64);
+        } else {
+          expect(footerStyle.flexDirection).toBe("column");
+          expect(footerRect.height).toBeLessThanOrEqual(112);
+        }
       }
       await expect.element(page.getByText("Documents", { exact: true })).toBeVisible();
       expect(onAddProjectPath).not.toHaveBeenCalled();
