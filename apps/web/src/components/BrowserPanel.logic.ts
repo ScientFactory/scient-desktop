@@ -70,6 +70,12 @@ export function browserCopyFeedbackMatches(
   return Boolean(feedback && scope && feedback.tabId === scope.tabId && feedback.url === scope.url);
 }
 
+export function shouldCloseBrowserPanelAfterTabClose(
+  state: { open: boolean; tabs: readonly unknown[] } | null | undefined,
+): boolean {
+  return state?.open === false && state.tabs.length === 0;
+}
+
 // Hides about:blank from the address bar so new tabs behave like real browsers.
 export function browserAddressDisplayValue(
   tab: { url: string; displayUrl?: string | null } | null | undefined,

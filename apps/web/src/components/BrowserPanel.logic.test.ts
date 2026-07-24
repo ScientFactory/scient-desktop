@@ -7,7 +7,16 @@ import {
   normalizeBrowserAddressInput,
   resolveBrowserChromeStatus,
   resolveBrowserAddressSync,
+  shouldCloseBrowserPanelAfterTabClose,
 } from "./BrowserPanel.logic";
+
+describe("shouldCloseBrowserPanelAfterTabClose", () => {
+  it("closes the dock pane only after the browser session has fully closed", () => {
+    expect(shouldCloseBrowserPanelAfterTabClose({ open: false, tabs: [] })).toBe(true);
+    expect(shouldCloseBrowserPanelAfterTabClose({ open: true, tabs: [] })).toBe(false);
+    expect(shouldCloseBrowserPanelAfterTabClose({ open: false, tabs: [{}] })).toBe(false);
+  });
+});
 
 describe("browserCopyFeedbackMatches", () => {
   const feedback = {
