@@ -6,11 +6,31 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const electron = vi.hoisted(() => {
-  const createdWebContents: Array<{ loadURL: ReturnType<typeof vi.fn> }> = [];
+  const createdWebContents: Array<{
+    loadURL: ReturnType<typeof vi.fn>;
+    handlers: Map<string, Array<(...args: any[]) => void>>;
+    windowOpenHandler: ((details: any) => { action: string }) | null;
+  }> = [];
+  const sessions = new Map<
+    string,
+    {
+      setUserAgent: ReturnType<typeof vi.fn>;
+      setPermissionCheckHandler: ReturnType<typeof vi.fn>;
+      setPermissionRequestHandler: ReturnType<typeof vi.fn>;
+      on: ReturnType<typeof vi.fn>;
+      clearStorageData: ReturnType<typeof vi.fn>;
+      clearCache: ReturnType<typeof vi.fn>;
+      webRequest: {
+        onBeforeSendHeaders: ReturnType<typeof vi.fn>;
+        onBeforeRequest: ReturnType<typeof vi.fn>;
+      };
+    }
+  >();
   let nextWebContentsId = 1;
 
   function createWebContents() {
     let currentUrl = "about:blank";
+    const handlers = new Map<string, Array<(...args: any[]) => void>>();
     const webContents = {
       id: nextWebContentsId++,
       debugger: {
@@ -30,9 +50,20 @@ const electron = vi.hoisted(() => {
         currentUrl = url;
       }),
       setUserAgent: vi.fn(),
-      setWindowOpenHandler: vi.fn(),
-      on: vi.fn(),
-      removeListener: vi.fn(),
+      handlers,
+      windowOpenHandler: null as ((details: any) => { action: string }) | null,
+      setWindowOpenHandler: vi.fn((handler: (details: any) => { action: string }) => {
+        webContents.windowOpenHandler = handler;
+      }),
+      on: vi.fn((name: string, handler: (...args: any[]) => void) => {
+        handlers.set(name, [...(handlers.get(name) ?? []), handler]);
+      }),
+      removeListener: vi.fn((name: string, handler: (...args: any[]) => void) => {
+        handlers.set(
+          name,
+          (handlers.get(name) ?? []).filter((candidate) => candidate !== handler),
+        );
+      }),
       close: vi.fn(),
       reload: vi.fn(),
       goBack: vi.fn(),
@@ -43,11 +74,30 @@ const electron = vi.hoisted(() => {
     return webContents;
   }
 
+  function sessionFor(partition: string) {
+    let existing = sessions.get(partition);
+    if (existing) return existing;
+    existing = {
+      setUserAgent: vi.fn(),
+      setPermissionCheckHandler: vi.fn(),
+      setPermissionRequestHandler: vi.fn(),
+      on: vi.fn(),
+      clearStorageData: vi.fn(async () => undefined),
+      clearCache: vi.fn(async () => undefined),
+      webRequest: {
+        onBeforeSendHeaders: vi.fn(),
+        onBeforeRequest: vi.fn(),
+      },
+    };
+    sessions.set(partition, existing);
+    return existing;
+  }
+
   return {
-    setUserAgent: vi.fn(),
-    onBeforeSendHeaders: vi.fn(),
     createdWebContents,
+    sessions,
     createWebContents,
+    sessionFor,
   };
 });
 
@@ -68,12 +118,7 @@ vi.mock("electron", () => ({
     createFromBuffer: vi.fn(),
   },
   session: {
-    fromPartition: () => ({
-      setUserAgent: electron.setUserAgent,
-      webRequest: {
-        onBeforeSendHeaders: electron.onBeforeSendHeaders,
-      },
-    }),
+    fromPartition: (partition: string) => electron.sessionFor(partition),
   },
   shell: {
     openExternal: vi.fn(),
@@ -84,6 +129,7 @@ vi.mock("electron", () => ({
   WebContentsView: class {
     readonly webContents = electron.createWebContents();
     readonly setBounds = vi.fn();
+    readonly setBackgroundColor = vi.fn();
   },
 }));
 
@@ -97,6 +143,7 @@ describe("DesktopBrowserManager reliability", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     electron.createdWebContents.splice(0);
+    electron.sessions.clear();
   });
 
   it("closes the browser session when its final tab closes", () => {
@@ -174,6 +221,97 @@ describe("DesktopBrowserManager reliability", () => {
       expect(electron.createdWebContents[0]?.loadURL).toHaveBeenCalledWith("https://example.com/");
     });
     expect(manager.getState({ threadId: THREAD_ID }).lastError).toBeNull();
+    manager.dispose();
+  });
+
+  it("isolates local HTML requests in a per-tab session and clears it on close", async () => {
+    const manager = new DesktopBrowserManager();
+    const previewUrl = "http://g-12345678-1234-4123-8123-123456789abc.preview.localhost:43123/";
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: previewUrl,
+      kind: "local-html",
+    });
+    const tabId = opened.activeTabId;
+    expect(tabId).toBeTruthy();
+
+    const partition = `scient-local-html-preview-${THREAD_ID}-${tabId}`;
+    const previewSession = electron.sessions.get(partition);
+    expect(previewSession).toBeDefined();
+    expect(partition.startsWith("persist:")).toBe(false);
+
+    const beforeRequest = previewSession?.webRequest.onBeforeRequest.mock.calls[0]?.[0];
+    expect(beforeRequest).toBeTypeOf("function");
+    const exactOriginResult = vi.fn();
+    beforeRequest({ url: `${previewUrl}app.js` }, exactOriginResult);
+    expect(exactOriginResult).toHaveBeenCalledWith({ cancel: false });
+    const publicResult = vi.fn();
+    beforeRequest({ url: "https://cdn.example/app.js" }, publicResult);
+    expect(publicResult).toHaveBeenCalledWith({ cancel: false });
+    const privateResult = vi.fn();
+    beforeRequest({ url: "http://127.0.0.1:8080/private" }, privateResult);
+    expect(privateResult).toHaveBeenCalledWith({ cancel: true });
+    const fileResult = vi.fn();
+    beforeRequest({ url: "file:///etc/passwd" }, fileResult);
+    expect(fileResult).toHaveBeenCalledWith({ cancel: true });
+
+    manager.close({ threadId: THREAD_ID });
+    await vi.waitFor(() => {
+      expect(previewSession?.clearStorageData).toHaveBeenCalledOnce();
+      expect(previewSession?.clearCache).toHaveBeenCalledOnce();
+    });
+    manager.dispose();
+  });
+
+  it("keeps same-origin local navigation and separates public links into web tabs", async () => {
+    const manager = new DesktopBrowserManager();
+    const previewUrl = "http://g-12345678-1234-4123-8123-123456789abc.preview.localhost:43123/";
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: previewUrl,
+      kind: "local-html",
+    });
+    const tabId = opened.activeTabId;
+    expect(tabId).toBeTruthy();
+
+    const internals = manager as unknown as {
+      ensureLiveRuntime: (threadId: ThreadId, tabId: string) => unknown;
+    };
+    internals.ensureLiveRuntime(THREAD_ID, tabId ?? "");
+    const contents = electron.createdWebContents.at(-1);
+    const navigate = contents?.handlers.get("will-frame-navigate")?.[0];
+    expect(navigate).toBeTypeOf("function");
+    if (!navigate) throw new Error("Expected local HTML navigation policy listener.");
+
+    const sameOriginEvent = {
+      url: `${previewUrl}linked.html`,
+      isMainFrame: true,
+      preventDefault: vi.fn(),
+    };
+    navigate(sameOriginEvent);
+    expect(sameOriginEvent.preventDefault).not.toHaveBeenCalled();
+
+    const privateEvent = {
+      url: "http://localhost:9000/admin",
+      isMainFrame: true,
+      preventDefault: vi.fn(),
+    };
+    navigate(privateEvent);
+    expect(privateEvent.preventDefault).toHaveBeenCalledOnce();
+    expect(manager.getState({ threadId: THREAD_ID }).tabs).toHaveLength(1);
+
+    const publicEvent = {
+      url: "https://example.com/reference",
+      isMainFrame: true,
+      preventDefault: vi.fn(),
+    };
+    navigate(publicEvent);
+    expect(publicEvent.preventDefault).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(manager.getState({ threadId: THREAD_ID }).tabs).toContainEqual(
+        expect.objectContaining({ kind: "web", url: publicEvent.url }),
+      );
+    });
     manager.dispose();
   });
 });

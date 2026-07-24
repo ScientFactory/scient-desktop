@@ -114,10 +114,10 @@ describe("HtmlArtifactPreviewLive", () => {
       });
       await expect(
         requestPreview(prepared.previewUrl!, "/unreferenced.css"),
-      ).resolves.toMatchObject({ status: 200 });
+      ).resolves.toMatchObject({ status: 404 });
 
       await expect(requestPreview(prepared.previewUrl!, "/ignored.js")).resolves.toMatchObject({
-        status: 200,
+        status: 404,
       });
     });
   });
@@ -127,6 +127,7 @@ describe("HtmlArtifactPreviewLive", () => {
     await fs.mkdir(path.join(workspace, "reports"));
     await fs.mkdir(path.join(workspace, "assets"));
     await fs.writeFile(path.join(workspace, "assets", "theme.css"), "body { color: green; }");
+    await fs.writeFile(path.join(workspace, "private.txt"), "must not be served");
     await fs.writeFile(
       path.join(workspace, "reports", "report.html"),
       '<link rel="stylesheet" href="../assets/theme.css"><h1>Parent asset</h1>',
@@ -146,6 +147,9 @@ describe("HtmlArtifactPreviewLive", () => {
       ).resolves.toMatchObject({
         status: 200,
         body: expect.stringContaining("color: green"),
+      });
+      await expect(requestPreview(prepared.previewUrl!, "/private.txt")).resolves.toMatchObject({
+        status: 404,
       });
     });
   });
@@ -177,7 +181,7 @@ describe("HtmlArtifactPreviewLive", () => {
         status: 200,
       });
       await expect(requestPreview(prepared.previewUrl!, "/secret.js")).resolves.toMatchObject({
-        status: 200,
+        status: 404,
       });
     });
   });
@@ -197,6 +201,61 @@ describe("HtmlArtifactPreviewLive", () => {
       expect(response).toMatchObject({ status: 206, body: "2345" });
       expect(response.headers["accept-ranges"]).toBe("bytes");
       expect(response.headers["content-range"]).toBe("bytes 2-5/10");
+    });
+  });
+
+  it("isolates exact dependency capabilities between previews in the same directory", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(path.join(workspace, "one.css"), "body { color: red; }");
+    await fs.writeFile(path.join(workspace, "two.css"), "body { color: blue; }");
+    await fs.writeFile(
+      path.join(workspace, "one.html"),
+      '<link rel="stylesheet" href="one.css"><p>One</p>',
+    );
+    await fs.writeFile(
+      path.join(workspace, "two.html"),
+      '<link rel="stylesheet" href="two.css"><p>Two</p>',
+    );
+
+    await withPreviewService(async (service) => {
+      const one = await Effect.runPromise(service.prepare({ cwd: workspace, path: "one.html" }));
+      const two = await Effect.runPromise(service.prepare({ cwd: workspace, path: "two.html" }));
+
+      await expect(requestPreview(one.previewUrl!, "/one.css")).resolves.toMatchObject({
+        status: 200,
+      });
+      await expect(requestPreview(one.previewUrl!, "/two.css")).resolves.toMatchObject({
+        status: 404,
+      });
+      await expect(requestPreview(two.previewUrl!, "/two.css")).resolves.toMatchObject({
+        status: 200,
+      });
+      await expect(requestPreview(two.previewUrl!, "/one.css")).resolves.toMatchObject({
+        status: 404,
+      });
+    });
+  });
+
+  it("allows declared local navigation but denies undeclared neighboring documents", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(path.join(workspace, "index.html"), '<a href="linked.html">Linked</a>');
+    await fs.writeFile(
+      path.join(workspace, "linked.html"),
+      '<a href="index.html">Back</a><p>Linked page</p>',
+    );
+    await fs.writeFile(path.join(workspace, "private.html"), "<p>Private neighbor</p>");
+
+    await withPreviewService(async (service) => {
+      const prepared = await Effect.runPromise(
+        service.prepare({ cwd: workspace, path: "index.html" }),
+      );
+      await expect(requestPreview(prepared.previewUrl!, "/linked.html")).resolves.toMatchObject({
+        status: 200,
+        body: expect.stringContaining("Linked page"),
+      });
+      await expect(requestPreview(prepared.previewUrl!, "/private.html")).resolves.toMatchObject({
+        status: 404,
+      });
     });
   });
 
@@ -325,7 +384,10 @@ describe("HtmlArtifactPreviewLive", () => {
     const workspace = await makeWorkspace();
     const outside = await makeWorkspace();
     const outsideFile = path.join(outside, "report.html");
-    await fs.writeFile(outsideFile, "<h1>External report</h1>");
+    await fs.writeFile(
+      outsideFile,
+      '<link rel="stylesheet" href="theme.css"><h1>External report</h1>',
+    );
     await fs.writeFile(path.join(outside, "theme.css"), "body { color: rebeccapurple; }");
 
     await withPreviewService(async (service) => {
@@ -343,12 +405,13 @@ describe("HtmlArtifactPreviewLive", () => {
     });
   });
 
-  it("loads parent-directory assets for an absolute HTML file", async () => {
+  it("denies parent-directory assets for an absolute HTML file", async () => {
     const workspace = await makeWorkspace();
     const outside = await makeWorkspace();
     await fs.mkdir(path.join(outside, "reports"));
     await fs.mkdir(path.join(outside, "assets"));
     await fs.writeFile(path.join(outside, "assets", "theme.css"), "body { color: teal; }");
+    await fs.writeFile(path.join(outside, "unrelated.txt"), "must remain private");
     const outsideFile = path.join(outside, "reports", "report.html");
     await fs.writeFile(
       outsideFile,
@@ -359,12 +422,19 @@ describe("HtmlArtifactPreviewLive", () => {
       const prepared = await Effect.runPromise(
         service.prepare({ cwd: workspace, path: outsideFile }),
       );
-      expect(new URL(prepared.previewUrl!).pathname).toBe("/reports/report.html");
+      expect(new URL(prepared.previewUrl!).pathname).toBe("/");
+      expect(prepared.warnings).toContainEqual({
+        code: "local-resource-denied",
+        message:
+          "Local preview resource is outside the opened file's authority: ../assets/theme.css",
+      });
       await expect(
         requestPreview(prepared.previewUrl!, "/assets/theme.css"),
       ).resolves.toMatchObject({
-        status: 200,
-        body: expect.stringContaining("color: teal"),
+        status: 404,
+      });
+      await expect(requestPreview(prepared.previewUrl!, "/unrelated.txt")).resolves.toMatchObject({
+        status: 404,
       });
     });
   });

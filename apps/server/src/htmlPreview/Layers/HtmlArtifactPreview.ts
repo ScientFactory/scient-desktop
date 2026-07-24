@@ -29,6 +29,7 @@ interface PreviewGrant {
   readonly id: string;
   readonly entryPath: string;
   readonly siteRoot: string;
+  readonly filesByRoute: ReadonlyMap<string, string>;
   readonly listenerPort: number;
   readonly dedicatedServer?: http.Server;
 }
@@ -124,16 +125,15 @@ async function resolveGrantedFile(
 ): Promise<string | null> {
   const relativePath = decodeRequestedAssetPath(rawUrl);
   if (relativePath === null) return null;
-  const candidate =
-    relativePath.length === 0 ? grant.entryPath : path.resolve(grant.siteRoot, relativePath);
-  let canonicalFile = await fs.realpath(candidate).catch(() => null);
-  if (!canonicalFile || !isPathInside(canonicalFile, grant.siteRoot)) return null;
-  let stat = await fs.stat(canonicalFile).catch(() => null);
-  if (stat?.isDirectory()) {
-    canonicalFile = await fs.realpath(path.join(canonicalFile, "index.html")).catch(() => null);
-    if (!canonicalFile || !isPathInside(canonicalFile, grant.siteRoot)) return null;
-    stat = await fs.stat(canonicalFile).catch(() => null);
-  }
+  const grantedFile = grant.filesByRoute.get(relativePath);
+  if (!grantedFile) return null;
+
+  // Re-resolve on every request so replacing a granted path with a symlink cannot
+  // retarget an already-issued capability. The route map is the authority; the
+  // directory containing the HTML is never an implicit file-server root.
+  const canonicalFile = await fs.realpath(grantedFile).catch(() => null);
+  if (canonicalFile !== grantedFile) return null;
+  const stat = await fs.stat(canonicalFile).catch(() => null);
   return stat?.isFile() ? canonicalFile : null;
 }
 
@@ -141,6 +141,8 @@ function browserHeaders(): Record<string, string> {
   return {
     "Cache-Control": "no-store",
     "Accept-Ranges": "bytes",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
   };
 }
 
@@ -177,6 +179,40 @@ function previewPathFor(entryPath: string, siteRoot: string): string {
   const relativePath = path.relative(siteRoot, entryPath);
   if (!relativePath || relativePath === path.basename(entryPath)) return "/";
   return `/${relativePath.split(path.sep).map(encodeURIComponent).join("/")}`;
+}
+
+function grantedRouteFor(filePath: string, siteRoot: string): string | null {
+  const relativePath = path.relative(siteRoot, filePath);
+  if (!isPathInside(filePath, siteRoot) || path.isAbsolute(relativePath)) return null;
+  return relativePath.split(path.sep).join("/");
+}
+
+function buildGrantedFileRoutes(input: {
+  entryPath: string;
+  siteRoot: string;
+  resourcePaths: readonly string[];
+}): ReadonlyMap<string, string> {
+  const routes = new Map<string, string>();
+  const addRoute = (route: string, filePath: string) => {
+    if (route.split("/").some((segment) => segment.startsWith("."))) return;
+    routes.set(route, filePath);
+  };
+
+  for (const filePath of [input.entryPath, ...input.resourcePaths]) {
+    const route = grantedRouteFor(filePath, input.siteRoot);
+    if (route === null) continue;
+    addRoute(route, filePath);
+    if (path.basename(filePath).toLowerCase() === "index.html") {
+      const directoryRoute = route.slice(0, -"index.html".length).replace(/\/$/, "");
+      addRoute(directoryRoute, filePath);
+      addRoute(directoryRoute.length > 0 ? `${directoryRoute}/` : "", filePath);
+    }
+  }
+
+  // The capability URL itself always opens the selected entry document. Keep
+  // its canonical route too so relative navigation/back-forward remain stable.
+  addRoute("", input.entryPath);
+  return routes;
 }
 
 async function closeServer(server: http.Server): Promise<void> {
@@ -337,6 +373,11 @@ export const HtmlArtifactPreviewLive = Layer.effect(
             return inspected.result;
           }
           const canonicalSiteRoot = await fs.realpath(inspected.siteRoot);
+          const filesByRoute = buildGrantedFileRoutes({
+            entryPath: inspected.absolutePath,
+            siteRoot: canonicalSiteRoot,
+            resourcePaths: inspected.allowedResourcePaths,
+          });
           reserveGrantCapacity();
           const id = crypto.randomUUID();
           const dedicatedServer = process.platform === "win32" ? createServer(id) : undefined;
@@ -347,6 +388,7 @@ export const HtmlArtifactPreviewLive = Layer.effect(
             id,
             entryPath: inspected.absolutePath,
             siteRoot: canonicalSiteRoot,
+            filesByRoute,
             listenerPort: grantListenerPort,
             ...(dedicatedServer ? { dedicatedServer } : {}),
           });

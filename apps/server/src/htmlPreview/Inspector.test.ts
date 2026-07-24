@@ -61,6 +61,42 @@ describe("inspectHtmlArtifact", () => {
     expect(inspected.result.warnings).toEqual([]);
   });
 
+  it("collects literal fetch/worker assets, inline CSS, and linked HTML transitively", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(path.join(workspace, "data.json"), '{"ok":true}');
+    await fs.writeFile(path.join(workspace, "worker.js"), "postMessage('ready');");
+    await fs.writeFile(path.join(workspace, "background.svg"), "<svg></svg>");
+    await fs.writeFile(
+      path.join(workspace, "app.js"),
+      'fetch("data.json"); new Worker("worker.js", { type: "module" });',
+    );
+    await fs.writeFile(path.join(workspace, "linked.css"), "body { color: navy; }");
+    await fs.writeFile(
+      path.join(workspace, "linked.html"),
+      '<link rel="stylesheet" href="linked.css"><p>Linked</p>',
+    );
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      [
+        '<style>body { background-image: url("background.svg") }</style>',
+        '<a href="linked.html">Linked</a>',
+        '<script type="module" src="app.js"></script>',
+      ].join(""),
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(new Set(inspected.allowedResourcePaths)).toEqual(
+      new Set(
+        await Promise.all(
+          ["app.js", "data.json", "worker.js", "background.svg", "linked.html", "linked.css"].map(
+            (file) => fs.realpath(path.join(workspace, file)),
+          ),
+        ),
+      ),
+    );
+  });
+
   it("routes Vite TSX source entrypoints to the nearest package run target", async () => {
     const workspace = await makeWorkspace();
     const appDirectory = path.join(workspace, "packages", "app");
@@ -128,5 +164,31 @@ describe("inspectHtmlArtifact", () => {
 
     expect(inspected.result.mode).toBe("static-document");
     expect(inspected.absolutePath).toBe(await fs.realpath(outsideFile));
+  });
+
+  it("does not let an absolute file enlarge its authority with parent references", async () => {
+    const workspace = await makeWorkspace();
+    const outside = await makeWorkspace();
+    const documentDirectory = path.join(outside, "document");
+    const privateFile = path.join(outside, "private.txt");
+    await fs.mkdir(documentDirectory);
+    await fs.writeFile(privateFile, "not preview content");
+    await fs.writeFile(
+      path.join(documentDirectory, "outside.html"),
+      '<link rel="preload" href="../private.txt" as="fetch"><p>Document</p>',
+    );
+
+    const inspected = await inspectHtmlArtifact({
+      cwd: workspace,
+      path: path.join(documentDirectory, "outside.html"),
+    });
+
+    expect(inspected.allowedResourcePaths).not.toContain(await fs.realpath(privateFile));
+    expect(inspected.result.warnings).toEqual([
+      {
+        code: "local-resource-denied",
+        message: "Local preview resource is outside the opened file's authority: ../private.txt",
+      },
+    ]);
   });
 });

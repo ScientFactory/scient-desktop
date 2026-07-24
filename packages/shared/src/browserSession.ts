@@ -21,8 +21,9 @@ export function browserSessionPartition(
     case "artifact":
       return `${BROWSER_ARTIFACT_SESSION_PARTITION}-${threadId}-${tabId ?? "pending"}`;
     case "local-app":
-    case "local-html":
       return `persist:scient-local-preview-${threadId}`;
+    case "local-html":
+      return `scient-local-html-preview-${threadId}-${tabId ?? "pending"}`;
     case "web":
       return BROWSER_WEB_SESSION_PARTITION;
   }

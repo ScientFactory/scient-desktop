@@ -100,13 +100,6 @@ function resolveLocalResourcePath(value: string, baseDirectory: string): string 
   return path.resolve(baseDirectory, decoded.replace(/^\/+/, ""));
 }
 
-async function resourceExists(value: string, baseDirectory: string): Promise<boolean> {
-  const resolved = resolveLocalResourcePath(value, baseDirectory);
-  if (!resolved) return true;
-  const stat = await fs.stat(resolved).catch(() => null);
-  return Boolean(stat?.isFile());
-}
-
 async function nearestRunTarget(
   entryPath: string,
   workspaceRoot: string,
@@ -157,6 +150,57 @@ function unsupported(reason: string): InspectedHtmlArtifact {
 }
 
 const CSS_RESOURCE_PATTERN = /(?:url\(\s*|@import\s+(?:url\(\s*)?)["']?([^"')\s]+)["']?\s*\)?/gi;
+const JAVASCRIPT_RESOURCE_PATTERN =
+  /(?:\bfetch|new\s+(?:Shared)?Worker|navigator\.serviceWorker\.register|importScripts|new\s+URL)\s*\(\s*(["'])([^"']+)\1/g;
+
+function cssResourceReferences(source: string): readonly string[] {
+  return [...source.matchAll(CSS_RESOURCE_PATTERN)].flatMap((match) =>
+    match[1] ? [match[1]] : [],
+  );
+}
+
+function javascriptResourceReferences(source: string): readonly string[] {
+  return [...source.matchAll(JAVASCRIPT_RESOURCE_PATTERN)].flatMap((match) =>
+    match[2] ? [match[2]] : [],
+  );
+}
+
+function resourceReferencesForElement(element: Element): readonly string[] {
+  const tagName = element.tagName.toLowerCase();
+  const resources: string[] = [];
+  const add = (attributeName: string) => {
+    const value = attributeOf(element, attributeName);
+    if (value) resources.push(value);
+  };
+
+  if (tagName === "link" || tagName === "a" || tagName === "area") add("href");
+  else if (tagName === "form") add("action");
+  else if (tagName === "object") add("data");
+  else add("src");
+  if (tagName === "video") add("poster");
+
+  const inlineStyle = attributeOf(element, "style");
+  if (inlineStyle) resources.push(...cssResourceReferences(inlineStyle));
+  if (tagName === "style") resources.push(...cssResourceReferences(textContentOf(element)));
+
+  const srcset = attributeOf(element, "srcset");
+  if (srcset) {
+    for (const candidate of srcset.split(",")) {
+      const resource = candidate.trim().split(/\s+/, 1)[0];
+      if (resource) resources.push(resource);
+    }
+  }
+  return resources;
+}
+
+function htmlResourceReferences(source: string): readonly string[] {
+  const document = parse(source) as DocumentNode;
+  const resources: string[] = [];
+  visit(document, (element) => {
+    resources.push(...resourceReferencesForElement(element));
+  });
+  return resources;
+}
 
 async function collectAllowedResourcePaths(
   resources: readonly string[],
@@ -181,15 +225,28 @@ async function collectAllowedResourcePaths(
     const extension = path.extname(canonical).toLowerCase();
     if (
       stat.size > RESOURCE_GRAPH_PARSE_MAX_BYTES ||
-      (extension !== ".css" && extension !== ".js" && extension !== ".mjs")
+      (extension !== ".css" &&
+        extension !== ".js" &&
+        extension !== ".mjs" &&
+        extension !== ".html" &&
+        extension !== ".htm")
     ) {
       continue;
     }
     const contents = await fs.readFile(canonical, "utf8");
     const dependencyDirectory = path.dirname(canonical);
+    if (extension === ".html" || extension === ".htm") {
+      for (const dependency of htmlResourceReferences(contents)) {
+        const resolved = resolveLocalResourcePath(
+          dependency,
+          dependency.startsWith("/") ? baseDirectory : dependencyDirectory,
+        );
+        if (resolved) pending.push(resolved);
+      }
+      continue;
+    }
     if (extension === ".css") {
-      for (const match of contents.matchAll(CSS_RESOURCE_PATTERN)) {
-        const dependency = match[1];
+      for (const dependency of cssResourceReferences(contents)) {
         const resolved = dependency
           ? resolveLocalResourcePath(
               dependency,
@@ -199,6 +256,14 @@ async function collectAllowedResourcePaths(
         if (resolved) pending.push(resolved);
       }
       continue;
+    }
+
+    for (const dependency of javascriptResourceReferences(contents)) {
+      const resolved = resolveLocalResourcePath(
+        dependency,
+        dependency.startsWith("/") ? baseDirectory : dependencyDirectory,
+      );
+      if (resolved) pending.push(resolved);
     }
 
     await initializeModuleLexer;
@@ -280,6 +345,12 @@ export async function inspectHtmlArtifact(
   const source = await readInspectionPrefix(absolutePath);
   const document = parse(source) as DocumentNode;
   const baseDirectory = path.dirname(absolutePath);
+  // Opening a workspace file carries the workspace as its resource authority.
+  // An absolute file outside that workspace carries only its own directory;
+  // markup cannot enlarge that authority by naming ../../ files.
+  const resourceBoundary = isPathInside(absolutePath, canonicalWorkspaceRoot)
+    ? canonicalWorkspaceRoot
+    : baseDirectory;
   const warnings: ProjectHtmlArtifactWarning[] = [];
   if (stat.size > HTML_INSPECTION_MAX_BYTES) {
     warnings.push({
@@ -317,7 +388,13 @@ export async function inspectHtmlArtifact(
     if (tagName === "script") {
       const sourcePath = attributeOf(element, "src");
       if (!sourcePath) {
-        hasInlineScript = textContentOf(element).trim().length > 0;
+        const inlineScript = textContentOf(element);
+        hasInlineScript = inlineScript.trim().length > 0;
+        for (const resource of javascriptResourceReferences(inlineScript)) {
+          if (!isExternalResource(resource)) {
+            localResources.push({ value: resource, executable: false });
+          }
+        }
         return;
       }
       if (isExternalResource(sourcePath)) {
@@ -340,20 +417,28 @@ export async function inspectHtmlArtifact(
       return;
     }
 
-    const resourceAttribute =
-      tagName === "link" ? attributeOf(element, "href") : attributeOf(element, "src");
-    if (!resourceAttribute) return;
-    if (isExternalResource(resourceAttribute)) {
-      return;
+    for (const resource of resourceReferencesForElement(element)) {
+      if (!isExternalResource(resource)) {
+        localResources.push({ value: resource, executable: false });
+      }
     }
-    localResources.push({ value: resourceAttribute, executable: false });
   });
 
   for (const resource of localResources) {
-    if (!(await resourceExists(resource.value, baseDirectory))) {
+    const resolved = resolveLocalResourcePath(resource.value, baseDirectory);
+    if (!resolved) continue;
+    const canonical = await fs.realpath(resolved).catch(() => null);
+    if (!canonical) {
       addWarning({
         code: "missing-local-resource",
         message: `Local preview resource was not found: ${resource.value.slice(0, 300)}`,
+      });
+      continue;
+    }
+    if (!isPathInside(canonical, resourceBoundary)) {
+      addWarning({
+        code: "local-resource-denied",
+        message: `Local preview resource is outside the opened file's authority: ${resource.value.slice(0, 300)}`,
       });
     }
   }
@@ -373,13 +458,6 @@ export async function inspectHtmlArtifact(
       ? "This HTML file references source modules and must run through its development server."
       : undefined;
 
-  // A workspace-relative document stays rooted in its project. An explicitly
-  // absolute document may itself be nested below a site root and legitimately
-  // reference `../assets/...`; infer that common root from the resources the
-  // document actually names instead of assuming its immediate directory.
-  const resourceBoundary = isPathInside(absolutePath, canonicalWorkspaceRoot)
-    ? canonicalWorkspaceRoot
-    : path.parse(absolutePath).root;
   const allowedResourcePaths = await collectAllowedResourcePaths(
     localResources.map((resource) => resource.value),
     baseDirectory,

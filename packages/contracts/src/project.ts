@@ -183,6 +183,7 @@ export type ProjectHtmlArtifactMode = typeof ProjectHtmlArtifactMode.Type;
 
 export const ProjectHtmlArtifactWarningCode = Schema.Literals([
   "external-resource-blocked",
+  "local-resource-denied",
   "missing-local-resource",
   "unsupported-local-resource",
   "inspection-truncated",

@@ -21,6 +21,10 @@ import {
   artifactPreviewRequestAllowed,
 } from "./artifactPreviewPolicy";
 import { loadBrowserRuntimeUrl } from "./browserRuntimeLoad";
+import {
+  localHtmlPreviewNavigationDisposition,
+  localHtmlPreviewRequestAllowed,
+} from "./localHtmlPreviewPolicy";
 import type {
   BrowserAttachWebviewInput,
   BrowserCaptureScreenshotResult,
@@ -385,7 +389,10 @@ export class DesktopBrowserManager {
     }
   }
 
-  private ensurePreviewSessionConfigured(partition: string, artifactOrigin?: string): void {
+  private ensurePreviewSessionConfigured(
+    partition: string,
+    preview?: { kind: "artifact" | "local-html"; origin: string },
+  ): void {
     if (this.previewSessionsConfigured.has(partition)) {
       return;
     }
@@ -395,14 +402,21 @@ export class DesktopBrowserManager {
     partitionSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
       callback(false);
     });
-    if (artifactOrigin) {
+    if (preview) {
       partitionSession.webRequest.onBeforeRequest((details, callback) => {
+        const allowed =
+          preview.kind === "artifact"
+            ? artifactPreviewRequestAllowed({
+                url: details.url,
+                allowedOrigin: preview.origin,
+                resourceType: details.resourceType,
+              })
+            : localHtmlPreviewRequestAllowed({
+                url: details.url,
+                allowedOrigin: preview.origin,
+              });
         callback({
-          cancel: !artifactPreviewRequestAllowed({
-            url: details.url,
-            allowedOrigin: artifactOrigin,
-            resourceType: details.resourceType,
-          }),
+          cancel: !allowed,
         });
       });
       partitionSession.on("will-download", (event) => {
@@ -417,19 +431,24 @@ export class DesktopBrowserManager {
       return;
     }
     const partition = browserSessionPartition(tab.kind, threadId, tab.id);
-    const artifactOrigin =
-      tab.kind === "artifact" ? (safeUrlOrigin(tab.url) ?? undefined) : undefined;
-    this.ensurePreviewSessionConfigured(partition, artifactOrigin);
+    const previewOrigin =
+      tab.kind === "artifact" || tab.kind === "local-html" ? safeUrlOrigin(tab.url) : null;
+    this.ensurePreviewSessionConfigured(
+      partition,
+      previewOrigin && (tab.kind === "artifact" || tab.kind === "local-html")
+        ? { kind: tab.kind, origin: previewOrigin }
+        : undefined,
+    );
   }
 
-  private clearArtifactSession(threadId: ThreadId, tab: BrowserTabState): void {
-    if (tab.kind !== "artifact") {
+  private clearPreviewSession(threadId: ThreadId, tab: BrowserTabState): void {
+    if (tab.kind !== "artifact" && tab.kind !== "local-html") {
       return;
     }
-    const partition = browserSessionPartition("artifact", threadId, tab.id);
-    const artifactSession = session.fromPartition(partition);
+    const partition = browserSessionPartition(tab.kind, threadId, tab.id);
+    const previewSession = session.fromPartition(partition);
     this.previewSessionsConfigured.delete(partition);
-    void Promise.all([artifactSession.clearStorageData(), artifactSession.clearCache()]).catch(
+    void Promise.all([previewSession.clearStorageData(), previewSession.clearCache()]).catch(
       () => undefined,
     );
   }
@@ -749,7 +768,9 @@ export class DesktopBrowserManager {
     this.destroyThreadRuntimes(input.threadId);
 
     const state = this.getOrCreateState(input.threadId);
-    const closedArtifactTabs = state.tabs.filter((tab) => tab.kind === "artifact");
+    const closedPreviewTabs = state.tabs.filter(
+      (tab) => tab.kind === "artifact" || tab.kind === "local-html",
+    );
     state.open = false;
     state.activeTabId = null;
     state.tabs = [];
@@ -757,8 +778,8 @@ export class DesktopBrowserManager {
     this.markThreadStateChanged(input.threadId);
     this.lastEmittedVersionByThreadId.delete(input.threadId);
     this.emitState(input.threadId);
-    for (const tab of closedArtifactTabs) {
-      this.clearArtifactSession(input.threadId, tab);
+    for (const tab of closedPreviewTabs) {
+      this.clearPreviewSession(input.threadId, tab);
     }
     return this.snapshotThreadState(input.threadId, state);
   }
@@ -932,6 +953,16 @@ export class DesktopBrowserManager {
     if (tab.kind === "artifact" && safeUrlOrigin(nextUrl) !== safeUrlOrigin(tab.url)) {
       throw new Error("Artifact previews cannot navigate outside their capability origin.");
     }
+    if (
+      tab.kind === "local-html" &&
+      localHtmlPreviewNavigationDisposition({
+        url: nextUrl,
+        allowedOrigin: safeUrlOrigin(tab.url) ?? "",
+        isMainFrame: true,
+      }) !== "allow"
+    ) {
+      throw new Error("Local HTML previews cannot replace their capability tab with another site.");
+    }
     tab.url = nextUrl;
     tab.title = defaultTitleForUrl(nextUrl);
     tab.lastCommittedUrl = null;
@@ -1037,7 +1068,7 @@ export class DesktopBrowserManager {
     this.destroyRuntime(input.threadId, input.tabId);
     state.tabs = nextTabs;
     if (closedTab) {
-      this.clearArtifactSession(input.threadId, closedTab);
+      this.clearPreviewSession(input.threadId, closedTab);
     }
 
     if (!state.activeTabId || state.activeTabId === input.tabId) {
@@ -1655,6 +1686,7 @@ export class DesktopBrowserManager {
     const sourceTab = this.getTab(state, tabId);
     const tabKind = sourceTab?.kind ?? "web";
     const artifactOrigin = tabKind === "artifact" ? safeUrlOrigin(sourceTab?.url) : null;
+    const localHtmlOrigin = tabKind === "local-html" ? safeUrlOrigin(sourceTab?.url) : null;
 
     // Belt-and-suspenders alongside the session-level UA: also covers an adopted renderer
     // <webview> for any navigation after it attaches.
@@ -1672,6 +1704,18 @@ export class DesktopBrowserManager {
       }
 
       if (tabKind === "artifact") {
+        return { action: "deny" };
+      }
+
+      const localHtmlDisposition =
+        tabKind === "local-html" && localHtmlOrigin
+          ? localHtmlPreviewNavigationDisposition({
+              url,
+              allowedOrigin: localHtmlOrigin,
+              isMainFrame: true,
+            })
+          : null;
+      if (localHtmlDisposition === "deny") {
         return { action: "deny" };
       }
 
@@ -1693,7 +1737,7 @@ export class DesktopBrowserManager {
       this.newTab({
         threadId,
         url,
-        kind: tabKind,
+        kind: localHtmlDisposition === "open-web" ? "web" : tabKind,
         activate: true,
       });
       const bounds = this.getVisibleBoundsForThread(threadId);
@@ -1720,6 +1764,29 @@ export class DesktopBrowserManager {
       webContents.on("will-frame-navigate", blockArtifactFrameNavigation);
       runtime.listenerDisposers.push(() => {
         webContents.removeListener("will-frame-navigate", blockArtifactFrameNavigation);
+      });
+    }
+
+    if (localHtmlOrigin) {
+      const separateLocalHtmlNavigation = (
+        event: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>,
+      ) => {
+        const disposition = localHtmlPreviewNavigationDisposition({
+          url: event.url,
+          allowedOrigin: localHtmlOrigin,
+          isMainFrame: event.isMainFrame,
+        });
+        if (disposition === "allow") return;
+        event.preventDefault();
+        if (disposition === "open-web") {
+          queueMicrotask(() => {
+            this.newTab({ threadId, url: event.url, kind: "web", activate: true });
+          });
+        }
+      };
+      webContents.on("will-frame-navigate", separateLocalHtmlNavigation);
+      runtime.listenerDisposers.push(() => {
+        webContents.removeListener("will-frame-navigate", separateLocalHtmlNavigation);
       });
     }
 

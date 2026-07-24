@@ -18,10 +18,16 @@ const ELECTRON_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Synara/0.3.1 Chrome/124.0.6367.91 Electron/30.0.1 Safari/537.36";
 
 describe("browserSessionPartition", () => {
-  it("gives full local HTML and local apps the thread-local persistent browser session", () => {
+  it("keeps executable local HTML ephemeral and isolated per tab", () => {
     expect(browserSessionPartition("local-html", "thread-1", "tab-1")).toBe(
-      "persist:scient-local-preview-thread-1",
+      "scient-local-html-preview-thread-1-tab-1",
     );
+    expect(browserSessionPartition("local-html", "thread-1", "tab-2")).not.toBe(
+      browserSessionPartition("local-html", "thread-1", "tab-1"),
+    );
+  });
+
+  it("keeps trusted local apps in the thread-local persistent browser session", () => {
     expect(browserSessionPartition("local-app", "thread-1", "tab-2")).toBe(
       "persist:scient-local-preview-thread-1",
     );
