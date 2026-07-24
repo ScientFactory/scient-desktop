@@ -13,7 +13,7 @@ import {
   HtmlArtifactPreview,
   type HtmlArtifactPreviewShape,
 } from "../Services/HtmlArtifactPreview";
-import { HtmlArtifactPreviewLive } from "./HtmlArtifactPreview";
+import { HtmlArtifactPreviewLive, makeHtmlArtifactPreviewLayer } from "./HtmlArtifactPreview";
 
 const temporaryDirectories: string[] = [];
 
@@ -68,13 +68,16 @@ async function requestPreview(
   });
 }
 
-function withPreviewService<A>(use: (service: HtmlArtifactPreviewShape) => Promise<A>): Promise<A> {
+function withPreviewService<A>(
+  use: (service: HtmlArtifactPreviewShape) => Promise<A>,
+  layer = HtmlArtifactPreviewLive,
+): Promise<A> {
   return Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const service = yield* HtmlArtifactPreview;
         return yield* Effect.promise(() => use(service));
-      }).pipe(Effect.provide(HtmlArtifactPreviewLive)),
+      }).pipe(Effect.provide(layer)),
     ),
   );
 }
@@ -401,6 +404,25 @@ describe("HtmlArtifactPreviewLive", () => {
       await expect(requestPreview(urls[0]!)).resolves.toMatchObject({ status: 200 });
       await expect(requestPreview(urls.at(-1)!)).resolves.toMatchObject({ status: 200 });
     });
+  });
+
+  it("reserves dedicated-listener capacity before asynchronous startup", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(path.join(workspace, "index.html"), "<p>Concurrent</p>");
+    const oneGrantLayer = makeHtmlArtifactPreviewLayer({
+      maxActiveGrants: 1,
+      useDedicatedServers: true,
+    });
+
+    await withPreviewService(async (service) => {
+      const results = await Promise.allSettled([
+        Effect.runPromise(service.prepare({ cwd: workspace, path: "index.html" })),
+        Effect.runPromise(service.prepare({ cwd: workspace, path: "index.html" })),
+      ]);
+
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    }, oneGrantLayer);
   });
 
   it("opens executable HTML by default", async () => {

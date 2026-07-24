@@ -270,195 +270,231 @@ async function listenOnLoopback(server: http.Server): Promise<number> {
   });
 }
 
-export const HtmlArtifactPreviewLive = Layer.effect(
-  HtmlArtifactPreview,
-  Effect.gen(function* () {
-    const grants = new Map<string, PreviewGrant>();
-    let listenerPort = 0;
+export function makeHtmlArtifactPreviewLayer(
+  options: {
+    readonly maxActiveGrants?: number;
+    readonly useDedicatedServers?: boolean;
+  } = {},
+) {
+  const maxActiveGrants = options.maxActiveGrants ?? PREVIEW_MAX_ACTIVE_GRANTS;
+  const useDedicatedServers = options.useDedicatedServers ?? process.platform === "win32";
+  return Layer.effect(
+    HtmlArtifactPreview,
+    Effect.gen(function* () {
+      const grants = new Map<string, PreviewGrant>();
+      let listenerPort = 0;
+      let reservedGrantSlots = 0;
 
-    const reserveGrantCapacity = (): void => {
-      if (grants.size >= PREVIEW_MAX_ACTIVE_GRANTS) {
-        throw new Error("Too many HTML previews are open. Close a preview and try again.");
-      }
-    };
+      const reserveGrantCapacity = (): (() => void) => {
+        if (grants.size + reservedGrantSlots >= maxActiveGrants) {
+          throw new Error("Too many HTML previews are open. Close a preview and try again.");
+        }
+        reservedGrantSlots += 1;
+        let released = false;
+        return () => {
+          if (released) return;
+          released = true;
+          reservedGrantSlots -= 1;
+        };
+      };
 
-    const createServer = (dedicatedGrantId?: string): http.Server =>
-      http.createServer((request, response) => {
-        void (async () => {
-          if (request.method !== "GET" && request.method !== "HEAD") {
-            writeNotFound(response);
-            return;
-          }
-          const grantId = dedicatedGrantId
-            ? normalizedHostName(request.headers.host) === "127.0.0.1"
-              ? dedicatedGrantId
-              : null
-            : grantIdFromHost(request.headers.host);
-          const grant = grantId ? grants.get(grantId) : undefined;
-          if (!grant) {
-            writeNotFound(response);
-            return;
-          }
-          const resolvedFile = await resolveGrantedFile(grant, request.url);
-          if (!resolvedFile) {
-            writeNotFound(response);
-            return;
-          }
-          const { file, path: filePath, stat } = resolvedFile;
-          const contentType = contentTypeFor(filePath);
-          const range = parseSingleByteRange(request.headers.range, stat.size);
-          if (range === "invalid") {
-            response.writeHead(416, {
+      const createServer = (dedicatedGrantId?: string): http.Server =>
+        http.createServer((request, response) => {
+          void (async () => {
+            if (request.method !== "GET" && request.method !== "HEAD") {
+              writeNotFound(response);
+              return;
+            }
+            const grantId = dedicatedGrantId
+              ? normalizedHostName(request.headers.host) === "127.0.0.1"
+                ? dedicatedGrantId
+                : null
+              : grantIdFromHost(request.headers.host);
+            const grant = grantId ? grants.get(grantId) : undefined;
+            if (!grant) {
+              writeNotFound(response);
+              return;
+            }
+            const resolvedFile = await resolveGrantedFile(grant, request.url);
+            if (!resolvedFile) {
+              writeNotFound(response);
+              return;
+            }
+            const { file, path: filePath, stat } = resolvedFile;
+            const contentType = contentTypeFor(filePath);
+            const range = parseSingleByteRange(request.headers.range, stat.size);
+            if (range === "invalid") {
+              response.writeHead(416, {
+                ...browserHeaders(grant),
+                "Content-Range": `bytes */${stat.size}`,
+              });
+              response.end();
+              await file.close().catch(() => undefined);
+              return;
+            }
+            const responseSize = range ? range.end - range.start + 1 : stat.size;
+            response.writeHead(range ? 206 : 200, {
               ...browserHeaders(grant),
-              "Content-Range": `bytes */${stat.size}`,
+              "Content-Length": String(responseSize),
+              "Content-Type": contentType,
+              ...(range
+                ? { "Content-Range": `bytes ${range.start}-${range.end}/${stat.size}` }
+                : {}),
             });
-            response.end();
-            await file.close().catch(() => undefined);
-            return;
-          }
-          const responseSize = range ? range.end - range.start + 1 : stat.size;
-          response.writeHead(range ? 206 : 200, {
-            ...browserHeaders(grant),
-            "Content-Length": String(responseSize),
-            "Content-Type": contentType,
-            ...(range ? { "Content-Range": `bytes ${range.start}-${range.end}/${stat.size}` } : {}),
+            if (request.method === "HEAD") {
+              response.end();
+              await file.close().catch(() => undefined);
+              return;
+            }
+            const stream = file.createReadStream(
+              range
+                ? { start: range.start, end: range.end, autoClose: false }
+                : { autoClose: false },
+            );
+            let fileClosed = false;
+            const closeFile = () => {
+              if (fileClosed) return;
+              fileClosed = true;
+              void file.close().catch(() => undefined);
+            };
+            stream.on("error", () => {
+              closeFile();
+              response.destroy();
+            });
+            stream.on("end", closeFile);
+            response.on("close", closeFile);
+            stream.pipe(response);
+          })().catch(() => {
+            if (!response.headersSent) writeNotFound(response);
+            else response.destroy();
           });
-          if (request.method === "HEAD") {
-            response.end();
-            await file.close().catch(() => undefined);
-            return;
-          }
-          const stream = file.createReadStream(
-            range ? { start: range.start, end: range.end, autoClose: false } : { autoClose: false },
-          );
-          let fileClosed = false;
-          const closeFile = () => {
-            if (fileClosed) return;
-            fileClosed = true;
-            void file.close().catch(() => undefined);
-          };
-          stream.on("error", () => {
-            closeFile();
-            response.destroy();
-          });
-          stream.on("end", closeFile);
-          response.on("close", closeFile);
-          stream.pipe(response);
-        })().catch(() => {
-          if (!response.headersSent) writeNotFound(response);
-          else response.destroy();
         });
-      });
 
-    const server = createServer();
+      const server = createServer();
 
-    yield* Effect.acquireRelease(
-      Effect.tryPromise({
-        try: async () => {
-          listenerPort = await listenOnLoopback(server);
-        },
-        catch: (cause) =>
-          new HtmlArtifactPreviewError({
-            message: "Failed to start the local HTML preview listener.",
-            cause,
-          }),
-      }),
-      () =>
-        Effect.promise(async () => {
-          const dedicatedServers = [...grants.values()].flatMap((grant) =>
-            grant.dedicatedServer ? [grant.dedicatedServer] : [],
-          );
-          grants.clear();
-          await Promise.all([closeServer(server), ...dedicatedServers.map(closeServer)]);
+      yield* Effect.acquireRelease(
+        Effect.tryPromise({
+          try: async () => {
+            listenerPort = await listenOnLoopback(server);
+          },
+          catch: (cause) =>
+            new HtmlArtifactPreviewError({
+              message: "Failed to start the local HTML preview listener.",
+              cause,
+            }),
         }),
-    );
-
-    const inspect: HtmlArtifactPreviewShape["inspect"] = (input: ProjectInspectHtmlArtifactInput) =>
-      Effect.tryPromise({
-        try: async () => (await inspectHtmlArtifact(input)).result,
-        catch: (cause) =>
-          new HtmlArtifactPreviewError({ message: "Failed to inspect the HTML artifact.", cause }),
-      });
-
-    const prepare: HtmlArtifactPreviewShape["prepare"] = (
-      input: ProjectPrepareHtmlArtifactPreviewInput,
-    ) =>
-      Effect.tryPromise({
-        try: async () => {
-          const inspected = await inspectHtmlArtifact(input);
-          if (
-            !inspected.absolutePath ||
-            !inspected.baseDirectory ||
-            !inspected.siteRoot ||
-            (inspected.result.mode !== "static-document" &&
-              inspected.result.mode !== "interactive-bundle")
-          ) {
-            return inspected.result;
-          }
-          const canonicalSiteRoot = await fs.realpath(inspected.siteRoot);
-          const filesByRoute = await buildGrantedFileRoutes({
-            entryPath: inspected.absolutePath,
-            siteRoot: canonicalSiteRoot,
-            resourcePaths: inspected.allowedResourcePaths,
-          });
-          reserveGrantCapacity();
-          const id = crypto.randomUUID();
-          const dedicatedServer = process.platform === "win32" ? createServer(id) : undefined;
-          const grantListenerPort = dedicatedServer
-            ? await listenOnLoopback(dedicatedServer)
-            : listenerPort;
-          grants.set(id, {
-            id,
-            entryPath: inspected.absolutePath,
-            siteRoot: canonicalSiteRoot,
-            filesByRoute,
-            listenerPort: grantListenerPort,
-            thumbnail: input.thumbnail === true,
-            ...(dedicatedServer ? { dedicatedServer } : {}),
-          });
-          return {
-            ...inspected.result,
-            allowedExternalUrls: inspected.allowedExternalUrls,
-            previewUrl: dedicatedServer
-              ? `http://127.0.0.1:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`
-              : `http://g-${id}${PREVIEW_HOST_SUFFIX}:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`,
-          };
-        },
-        catch: (cause) =>
-          new HtmlArtifactPreviewError({
-            message: "Failed to prepare the HTML artifact preview.",
-            cause,
+        () =>
+          Effect.promise(async () => {
+            const dedicatedServers = [...grants.values()].flatMap((grant) =>
+              grant.dedicatedServer ? [grant.dedicatedServer] : [],
+            );
+            grants.clear();
+            await Promise.all([closeServer(server), ...dedicatedServers.map(closeServer)]);
           }),
-      });
+      );
 
-    const revoke: HtmlArtifactPreviewShape["revoke"] = (
-      input: ProjectRevokeHtmlArtifactPreviewInput,
-    ) =>
-      Effect.promise(async () => {
-        try {
-          const previewUrl = new URL(input.previewUrl);
-          const grantId =
-            grantIdFromHost(previewUrl.host) ??
-            (previewUrl.hostname === "127.0.0.1"
-              ? ([...grants.values()].find(
-                  (grant) =>
-                    grant.dedicatedServer && String(grant.listenerPort) === previewUrl.port,
-                )?.id ?? null)
-              : null);
-          const grant = grantId ? grants.get(grantId) : undefined;
-          if (!grant || String(grant.listenerPort) !== previewUrl.port) {
+      const inspect: HtmlArtifactPreviewShape["inspect"] = (
+        input: ProjectInspectHtmlArtifactInput,
+      ) =>
+        Effect.tryPromise({
+          try: async () => (await inspectHtmlArtifact(input)).result,
+          catch: (cause) =>
+            new HtmlArtifactPreviewError({
+              message: "Failed to inspect the HTML artifact.",
+              cause,
+            }),
+        });
+
+      const prepare: HtmlArtifactPreviewShape["prepare"] = (
+        input: ProjectPrepareHtmlArtifactPreviewInput,
+      ) =>
+        Effect.tryPromise({
+          try: async () => {
+            const inspected = await inspectHtmlArtifact(input);
+            if (
+              !inspected.absolutePath ||
+              !inspected.baseDirectory ||
+              !inspected.siteRoot ||
+              (inspected.result.mode !== "static-document" &&
+                inspected.result.mode !== "interactive-bundle")
+            ) {
+              return inspected.result;
+            }
+            const canonicalSiteRoot = await fs.realpath(inspected.siteRoot);
+            const filesByRoute = await buildGrantedFileRoutes({
+              entryPath: inspected.absolutePath,
+              siteRoot: canonicalSiteRoot,
+              resourcePaths: inspected.allowedResourcePaths,
+            });
+            const releaseGrantReservation = reserveGrantCapacity();
+            let dedicatedServer: http.Server | undefined;
+            try {
+              const id = crypto.randomUUID();
+              dedicatedServer = useDedicatedServers ? createServer(id) : undefined;
+              const grantListenerPort = dedicatedServer
+                ? await listenOnLoopback(dedicatedServer)
+                : listenerPort;
+              grants.set(id, {
+                id,
+                entryPath: inspected.absolutePath,
+                siteRoot: canonicalSiteRoot,
+                filesByRoute,
+                listenerPort: grantListenerPort,
+                thumbnail: input.thumbnail === true,
+                ...(dedicatedServer ? { dedicatedServer } : {}),
+              });
+              releaseGrantReservation();
+              return {
+                ...inspected.result,
+                allowedExternalUrls: inspected.allowedExternalUrls,
+                previewUrl: dedicatedServer
+                  ? `http://127.0.0.1:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`
+                  : `http://g-${id}${PREVIEW_HOST_SUFFIX}:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`,
+              };
+            } catch (cause) {
+              releaseGrantReservation();
+              if (dedicatedServer) await closeServer(dedicatedServer);
+              throw cause;
+            }
+          },
+          catch: (cause) =>
+            new HtmlArtifactPreviewError({
+              message: "Failed to prepare the HTML artifact preview.",
+              cause,
+            }),
+        });
+
+      const revoke: HtmlArtifactPreviewShape["revoke"] = (
+        input: ProjectRevokeHtmlArtifactPreviewInput,
+      ) =>
+        Effect.promise(async () => {
+          try {
+            const previewUrl = new URL(input.previewUrl);
+            const grantId =
+              grantIdFromHost(previewUrl.host) ??
+              (previewUrl.hostname === "127.0.0.1"
+                ? ([...grants.values()].find(
+                    (grant) =>
+                      grant.dedicatedServer && String(grant.listenerPort) === previewUrl.port,
+                  )?.id ?? null)
+                : null);
+            const grant = grantId ? grants.get(grantId) : undefined;
+            if (!grant || String(grant.listenerPort) !== previewUrl.port) {
+              return { revoked: false };
+            }
+            grants.delete(grant.id);
+            if (grant.dedicatedServer) {
+              await closeServer(grant.dedicatedServer);
+            }
+            return { revoked: true };
+          } catch {
             return { revoked: false };
           }
-          grants.delete(grant.id);
-          if (grant.dedicatedServer) {
-            await closeServer(grant.dedicatedServer);
-          }
-          return { revoked: true };
-        } catch {
-          return { revoked: false };
-        }
-      });
+        });
 
-    return HtmlArtifactPreview.of({ inspect, prepare, revoke });
-  }),
-);
+      return HtmlArtifactPreview.of({ inspect, prepare, revoke });
+    }),
+  );
+}
+
+export const HtmlArtifactPreviewLive = makeHtmlArtifactPreviewLayer();

@@ -701,6 +701,7 @@ export function BrowserPanel({
         setWorkspaceReady(true);
         return;
       }
+      syncHtmlPreviewGrants(state.tabs);
       upsertThreadState(state);
       setWorkspaceReady(true);
     });
@@ -709,7 +710,7 @@ export function BrowserPanel({
       cancelled = true;
       void api.browser.hide({ threadId });
     };
-  }, [api, isLiveRuntime, runBrowserAction, threadId, upsertThreadState]);
+  }, [api, isLiveRuntime, runBrowserAction, syncHtmlPreviewGrants, threadId, upsertThreadState]);
 
   useEffect(() => {
     const activeTabId = activeTab?.id ?? null;

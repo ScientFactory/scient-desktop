@@ -204,4 +204,46 @@ describe("BrowserPanel interactions", () => {
       expect(onClosePanel).toHaveBeenCalledOnce();
     });
   });
+
+  it("reconciles a local HTML grant returned by initial hydration before close", async () => {
+    const previewUrl = "http://g-12345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const openState = browserState("tab-1");
+    openState.version = 20;
+    openState.tabs = [
+      {
+        ...openState.tabs[0]!,
+        kind: "local-html",
+        url: previewUrl,
+        displayUrl: "/tmp/report.html",
+      },
+    ];
+    const closedState: ThreadBrowserState = {
+      ...openState,
+      version: openState.version + 1,
+      open: false,
+      activeTabId: null,
+      tabs: [],
+    };
+    const revokeHtmlArtifactPreview = vi.fn(async () => ({ revoked: true }));
+    nativeApiTestState.api = {
+      browser: {
+        open: vi.fn(async () => openState),
+        hide: vi.fn(async () => undefined),
+        setPanelBounds: vi.fn(async () => undefined),
+        closeTab: vi.fn(async () => closedState),
+        onState: vi.fn(() => () => undefined),
+        onCopyLink: vi.fn(() => () => undefined),
+      },
+      projects: { revokeHtmlArtifactPreview },
+    } as unknown as NativeApi;
+    useBrowserStateStore.getState().removeThreadState(THREAD_ID);
+
+    await renderLivePanel(() => undefined);
+    const closeButton = await page.getByRole("button", { name: "Close Browser" }).element();
+    (closeButton as HTMLButtonElement).click();
+
+    await vi.waitFor(() => {
+      expect(revokeHtmlArtifactPreview).toHaveBeenCalledWith({ previewUrl });
+    });
+  });
 });

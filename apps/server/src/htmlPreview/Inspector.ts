@@ -24,6 +24,7 @@ const RESOURCE_GRAPH_MAX_FILES = 250;
 const RESOURCE_GRAPH_PARSE_MAX_BYTES = 1_000_000;
 const DEV_SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".jsx"]);
 const BROWSER_SCRIPT_EXTENSIONS = new Set([".js", ".mjs"]);
+const ACTIVE_DOCUMENT_EXTENSIONS = new Set([".html", ".htm", ".xhtml", ".svg"]);
 type DocumentNode = DefaultTreeAdapterMap["document"];
 type Node = DefaultTreeAdapterMap["node"];
 type Element = DefaultTreeAdapterMap["element"];
@@ -248,6 +249,38 @@ function htmlResourceReferences(source: string): {
   return { baseHref, resources };
 }
 
+function markupHasExecutableContent(source: string): boolean {
+  const document = parse(source) as DocumentNode;
+  let executable = false;
+  visit(document, (element) => {
+    if (executable) return;
+    const tagName = element.tagName.toLowerCase();
+    if (
+      tagName === "script" &&
+      (attributeOf(element, "src") !== null || textContentOf(element).trim().length > 0)
+    ) {
+      executable = true;
+      return;
+    }
+    if (
+      element.attrs.some(
+        (attribute) =>
+          (attribute.name.toLowerCase().startsWith("on") && attribute.value.trim().length > 0) ||
+          (/^(?:href|src|action)$/i.test(attribute.name) &&
+            attribute.value.trim().toLowerCase().startsWith("javascript:")),
+      )
+    ) {
+      executable = true;
+      return;
+    }
+    const srcdoc = attributeOf(element, "srcdoc");
+    if (srcdoc && /<script\b|\bon\w+\s*=|javascript:/i.test(srcdoc)) {
+      executable = true;
+    }
+  });
+  return executable;
+}
+
 function resolveHtmlDocumentResourcePath(input: {
   value: string;
   documentPath: string;
@@ -276,7 +309,11 @@ async function collectAllowedResourcePaths(
   entryPath: string,
   entryBaseHref: string | null,
   resourceBoundary: string,
-): Promise<{ readonly paths: readonly string[]; readonly externalUrls: readonly string[] }> {
+): Promise<{
+  readonly paths: readonly string[];
+  readonly externalUrls: readonly string[];
+  readonly hasExecutableDocument: boolean;
+}> {
   const pending = resources
     .map((resource) =>
       resolveHtmlDocumentResourcePath({
@@ -289,6 +326,7 @@ async function collectAllowedResourcePaths(
     .filter((resource): resource is string => resource !== null);
   const allowed = new Set<string>();
   const externalUrls = new Set<string>();
+  let hasExecutableDocument = false;
   const addExternalUrl = (url: string) => {
     if (externalUrls.size < RESOURCE_GRAPH_MAX_FILES) externalUrls.add(url);
   };
@@ -309,13 +347,13 @@ async function collectAllowedResourcePaths(
       (extension !== ".css" &&
         extension !== ".js" &&
         extension !== ".mjs" &&
-        extension !== ".html" &&
-        extension !== ".htm")
+        !ACTIVE_DOCUMENT_EXTENSIONS.has(extension))
     ) {
       continue;
     }
     const contents = await fs.readFile(canonical, "utf8");
-    if (extension === ".html" || extension === ".htm") {
+    if (ACTIVE_DOCUMENT_EXTENSIONS.has(extension)) {
+      hasExecutableDocument ||= markupHasExecutableContent(contents);
       const linkedDocument = htmlResourceReferences(contents);
       for (const dependency of linkedDocument.resources) {
         const externalUrl = normalizedExternalResourceUrl(dependency, linkedDocument.baseHref);
@@ -384,7 +422,11 @@ async function collectAllowedResourcePaths(
     }
   }
 
-  return { paths: [...allowed], externalUrls: [...externalUrls] };
+  return {
+    paths: [...allowed],
+    externalUrls: [...externalUrls],
+    hasExecutableDocument,
+  };
 }
 
 function commonSiteRoot(
@@ -594,6 +636,15 @@ export async function inspectHtmlArtifact(
     }
   }
 
+  const collectedResources = await collectAllowedResourcePaths(
+    localResources.map((resource) => resource.value),
+    absolutePath,
+    documentBaseHref,
+    resourceBoundary,
+  );
+  const allowedResourcePaths = collectedResources.paths;
+  for (const externalUrl of collectedResources.externalUrls) addExternalResource(externalUrl);
+
   const runTarget =
     hasDevSource && isPathInside(absolutePath, canonicalWorkspaceRoot)
       ? await nearestRunTarget(absolutePath, canonicalWorkspaceRoot)
@@ -601,7 +652,11 @@ export async function inspectHtmlArtifact(
   const mode =
     hasDevSource && runTarget
       ? "dev-server-entrypoint"
-      : hasDevSource || hasInlineScript || hasBrowserScript || hasUnsupportedExecutable
+      : hasDevSource ||
+          hasInlineScript ||
+          hasBrowserScript ||
+          hasUnsupportedExecutable ||
+          collectedResources.hasExecutableDocument
         ? "interactive-bundle"
         : "static-document";
   const reason =
@@ -616,15 +671,6 @@ export async function inspectHtmlArtifact(
         "External network resources are blocked for interactive local HTML; bundle them into the same site directory instead.",
     });
   }
-
-  const collectedResources = await collectAllowedResourcePaths(
-    localResources.map((resource) => resource.value),
-    absolutePath,
-    documentBaseHref,
-    resourceBoundary,
-  );
-  const allowedResourcePaths = collectedResources.paths;
-  for (const externalUrl of collectedResources.externalUrls) addExternalResource(externalUrl);
 
   return {
     result: {

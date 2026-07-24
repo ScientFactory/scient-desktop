@@ -107,6 +107,52 @@ describe("inspectHtmlArtifact", () => {
     );
   });
 
+  it("elevates a static entry when a granted child document is executable", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(
+      path.join(workspace, "runner.html"),
+      '<script>document.body.dataset.ready = "yes"</script><img src="https://cdn.example/bit-one.png">',
+    );
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      '<iframe src="runner.html"></iframe><img src="https://cdn.example/bit-zero.png">',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+    expect(inspected.allowedResourcePaths).toContain(
+      await fs.realpath(path.join(workspace, "runner.html")),
+    );
+    expect(new Set(inspected.allowedExternalUrls)).toEqual(
+      new Set(["https://cdn.example/bit-zero.png", "https://cdn.example/bit-one.png"]),
+    );
+    expect(inspected.result.warnings).toContainEqual({
+      code: "external-resource-blocked",
+      message:
+        "External network resources are blocked for interactive local HTML; bundle them into the same site directory instead.",
+    });
+  });
+
+  it("treats an active SVG subdocument as executable content", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(
+      path.join(workspace, "active.svg"),
+      '<svg xmlns="http://www.w3.org/2000/svg"><script>document.documentElement.dataset.ready = "yes"</script></svg>',
+    );
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      '<object data="active.svg" type="image/svg+xml"></object>',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+    expect(inspected.allowedResourcePaths).toContain(
+      await fs.realpath(path.join(workspace, "active.svg")),
+    );
+  });
+
   it("honors document base URLs, root-relative assets, inline modules, and quoted CSS spaces", async () => {
     const workspace = await makeWorkspace();
     await fs.mkdir(path.join(workspace, "assets"));

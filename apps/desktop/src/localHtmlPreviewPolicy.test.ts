@@ -39,6 +39,13 @@ describe("localHtmlPreviewPolicy", () => {
   it("denies undeclared or data-bearing public egress", () => {
     expect(
       localHtmlPreviewRequestAllowed({
+        url: "https://cdn.example/bit-one.png",
+        allowedOrigin: ORIGIN,
+        resourceType: "image",
+      }),
+    ).toBe(false);
+    expect(
+      localHtmlPreviewRequestAllowed({
         url: "https://cdn.example/app.js?secret=1",
         allowedOrigin: ORIGIN,
         allowedExternalUrls: ["https://cdn.example/app.js"],
