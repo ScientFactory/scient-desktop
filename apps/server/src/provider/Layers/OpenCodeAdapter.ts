@@ -2103,14 +2103,21 @@ const abortOpenCodeSessionBounded = Effect.fn("abortOpenCodeSessionBounded")(fun
 const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
   context: OpenCodeSessionContext,
 ) {
+  const observedAttempt = context.retirementAttempt;
+  if (observedAttempt !== undefined) {
+    return yield* Deferred.await(observedAttempt);
+  }
   if (yield* Ref.get(context.stopped)) {
     return;
   }
 
   const proposedAttempt = yield* Deferred.make<void, OpenCodeRuntimeError>();
-  const inFlightAttempt = context.retirementAttempt;
-  if (inFlightAttempt !== undefined) {
-    return yield* Deferred.await(inFlightAttempt);
+  const racedAttempt = context.retirementAttempt;
+  if (racedAttempt !== undefined) {
+    return yield* Deferred.await(racedAttempt);
+  }
+  if (yield* Ref.get(context.stopped)) {
+    return;
   }
   context.retirementAttempt = proposedAttempt;
 
@@ -2346,25 +2353,57 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
       const retireOpenCodeContext = Effect.fn("retireOpenCodeContext")(function* (
         context: OpenCodeSessionContext,
       ) {
-        const generation = context.activeTurnGeneration;
-        if (generation !== undefined) {
-          generation.state = "cancelling";
-          generation.interactionOwned = false;
-          generation.sessionNextOwned = false;
-          generation.sessionNextProgressObserved = false;
-          yield* cancelPendingInteractionsForGeneration(context, generation);
-        }
-        const stopExit = yield* Effect.exit(stopOpenCodeContext(context));
-        if (Exit.isFailure(stopExit)) {
-          context.quarantinedAfterAbortFailure = true;
-          const cause = Cause.squash(stopExit.cause);
-          updateProviderSession(context, {
-            status: "error",
-            lastError: `Provider cancellation could not be confirmed: ${openCodeRuntimeErrorDetail(cause)}`,
-          });
-          return yield* Effect.failCause(stopExit.cause);
-        }
+        return yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            const generation = context.activeTurnGeneration;
+            if (generation !== undefined) {
+              generation.state = "cancelling";
+              generation.interactionOwned = false;
+              generation.sessionNextOwned = false;
+              generation.sessionNextProgressObserved = false;
+              yield* cancelPendingInteractionsForGeneration(context, generation);
+            }
+            const stopExit = yield* Effect.exit(stopOpenCodeContext(context));
+            if (Exit.isFailure(stopExit)) {
+              context.quarantinedAfterAbortFailure = true;
+              const cause = Cause.squash(stopExit.cause);
+              updateProviderSession(context, {
+                status: "error",
+                lastError: `Provider cancellation could not be confirmed: ${openCodeRuntimeErrorDetail(cause)}`,
+              });
+              return yield* Effect.failCause(stopExit.cause);
+            }
+          }),
+        );
       });
+
+      const retireOpenCodeContextForReplacement = Effect.fn("retireOpenCodeContextForReplacement")(
+        function* (context: OpenCodeSessionContext) {
+          return yield* Effect.uninterruptible(
+            Effect.gen(function* () {
+              if (context.replacementClaimed) {
+                return yield* new OpenCodeRuntimeError({
+                  operation: "session.replace",
+                  detail: `${adapterConfig.displayName} session replacement is already in progress.`,
+                });
+              }
+              context.replacementClaimed = true;
+              const retireExit = yield* Effect.exit(retireOpenCodeContext(context));
+              if (Exit.isFailure(retireExit)) {
+                context.replacementClaimed = false;
+                return yield* Effect.failCause(retireExit.cause);
+              }
+              if (sessions.get(context.session.threadId) !== context) {
+                return yield* new OpenCodeRuntimeError({
+                  operation: "session.replace",
+                  detail: `${adapterConfig.displayName} session changed during replacement; retry against the current session.`,
+                });
+              }
+              sessions.delete(context.session.threadId);
+            }),
+          );
+        },
+      );
 
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
@@ -2372,14 +2411,16 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           yield* Effect.forEach(
             contexts,
             (context) =>
-              retireOpenCodeContext(context).pipe(
-                Effect.catchCause(() => forceDisposeOpenCodeContextLocally(context)),
-                Effect.tap(() =>
-                  Effect.sync(() => {
-                    if (sessions.get(context.session.threadId) === context) {
-                      sessions.delete(context.session.threadId);
-                    }
-                  }),
+              Effect.uninterruptible(
+                retireOpenCodeContext(context).pipe(
+                  Effect.catchCause(() => forceDisposeOpenCodeContextLocally(context)),
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      if (sessions.get(context.session.threadId) === context) {
+                        sessions.delete(context.session.threadId);
+                      }
+                    }),
+                  ),
                 ),
               ),
             { concurrency: "unbounded", discard: true },
@@ -2447,46 +2488,72 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
         context: OpenCodeSessionContext,
         message: string,
       ) {
-        const proposedAttempt = yield* Deferred.make<void, OpenCodeRuntimeError>();
-        if ((yield* Ref.get(context.stopped)) || context.retirementAttempt !== undefined) {
-          return;
-        }
-        context.retirementAttempt = proposedAttempt;
-        yield* Ref.set(context.stopped, true);
-        const generation = context.activeTurnGeneration;
-        const turnId = generation?.turnId;
-        if (generation !== undefined) {
-          generation.state = "cancelling";
-          generation.sessionNextOwned = false;
-          yield* cancelPendingInteractionsForGeneration(context, generation);
-        }
-        if (sessions.get(context.session.threadId) === context) {
-          sessions.delete(context.session.threadId);
-        }
-        yield* Effect.gen(function* () {
-          yield* emit({
-            ...buildEventBase({ threadId: context.session.threadId, turnId }),
-            type: "runtime.error",
-            payload: {
-              message,
-              class: "transport_error",
-            },
-          }).pipe(Effect.ignore);
-          yield* emit({
-            ...buildEventBase({ threadId: context.session.threadId, turnId }),
-            type: "session.exited",
-            payload: {
-              reason: message,
-              recoverable: false,
-              exitKind: "error",
-            },
-          }).pipe(Effect.ignore);
-          yield* abortOpenCodeSessionBounded(context, completionSnapshotTimeoutMs).pipe(
-            Effect.ignore({ log: true }),
-          );
-          yield* Scope.close(context.sessionScope, Exit.void);
-        }).pipe(Effect.ensuring(Effect.sync(() => unregisterOpenCodeContext(context))));
-        yield* Deferred.succeed(proposedAttempt, undefined);
+        return yield* Effect.uninterruptible(
+          Effect.gen(function* () {
+            const proposedAttempt = yield* Deferred.make<void, OpenCodeRuntimeError>();
+            if ((yield* Ref.get(context.stopped)) || context.retirementAttempt !== undefined) {
+              return;
+            }
+            context.retirementAttempt = proposedAttempt;
+            const generation = context.activeTurnGeneration;
+            const turnId = generation?.turnId;
+            if (generation !== undefined) {
+              generation.state = "cancelling";
+              generation.interactionOwned = false;
+              generation.sessionNextOwned = false;
+              generation.sessionNextProgressObserved = false;
+              yield* cancelPendingInteractionsForGeneration(context, generation);
+            }
+
+            const abortExit = yield* Effect.exit(
+              abortOpenCodeSessionBounded(context, completionSnapshotTimeoutMs),
+            );
+            if (Exit.isFailure(abortExit)) {
+              context.retirementAttempt = undefined;
+              context.quarantinedAfterAbortFailure = true;
+              const cause = Cause.squash(abortExit.cause);
+              const detail = `Provider cancellation could not be confirmed after ${message}: ${openCodeRuntimeErrorDetail(cause)}`;
+              updateProviderSession(context, { status: "error", lastError: detail });
+              yield* emit({
+                ...buildEventBase({ threadId: context.session.threadId, turnId }),
+                type: "runtime.error",
+                payload: { message: detail, class: "transport_error" },
+              }).pipe(Effect.ignore);
+              const runtimeError = OpenCodeRuntimeError.is(cause)
+                ? cause
+                : new OpenCodeRuntimeError({
+                    operation: "session.abort",
+                    detail: openCodeRuntimeErrorDetail(cause),
+                    cause,
+                  });
+              yield* Deferred.fail(proposedAttempt, runtimeError);
+              return;
+            }
+
+            yield* Ref.set(context.stopped, true);
+            if (sessions.get(context.session.threadId) === context) {
+              sessions.delete(context.session.threadId);
+            }
+            yield* emit({
+              ...buildEventBase({ threadId: context.session.threadId, turnId }),
+              type: "runtime.error",
+              payload: { message, class: "transport_error" },
+            }).pipe(Effect.ignore);
+            yield* emit({
+              ...buildEventBase({ threadId: context.session.threadId, turnId }),
+              type: "session.exited",
+              payload: {
+                reason: message,
+                recoverable: false,
+                exitKind: "error",
+              },
+            }).pipe(Effect.ignore);
+            yield* Scope.close(context.sessionScope, Exit.void).pipe(
+              Effect.ensuring(Effect.sync(() => unregisterOpenCodeContext(context))),
+            );
+            yield* Deferred.succeed(proposedAttempt, undefined);
+          }),
+        );
       });
 
       const emitAssistantTextDelta = Effect.fn("emitAssistantTextDelta")(function* (
@@ -4866,31 +4933,9 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
               : undefined;
           const existing = sessions.get(input.threadId);
           if (existing) {
-            if (existing.replacementClaimed) {
-              return yield* toAdapterProcessError(
-                input.threadId,
-                new OpenCodeRuntimeError({
-                  operation: "session.replace",
-                  detail: `${adapterConfig.displayName} session replacement is already in progress.`,
-                }),
-              );
-            }
-            existing.replacementClaimed = true;
-            const retireExit = yield* Effect.exit(retireOpenCodeContext(existing));
-            if (Exit.isFailure(retireExit)) {
-              existing.replacementClaimed = false;
-              return yield* toAdapterProcessError(input.threadId, Cause.squash(retireExit.cause));
-            }
-            if (sessions.get(input.threadId) !== existing) {
-              return yield* toAdapterProcessError(
-                input.threadId,
-                new OpenCodeRuntimeError({
-                  operation: "session.replace",
-                  detail: `${adapterConfig.displayName} session changed during replacement; retry against the current session.`,
-                }),
-              );
-            }
-            sessions.delete(input.threadId);
+            yield* retireOpenCodeContextForReplacement(existing).pipe(
+              Effect.mapError((cause) => toAdapterProcessError(input.threadId, cause)),
+            );
           }
 
           const resumedSessionId = extractResumeSessionId(input.resumeCursor);
@@ -5629,20 +5674,24 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
       const stopSession: OpenCodeAdapterShape["stopSession"] = Effect.fn("stopSession")(
         function* (threadId) {
           const context = ensureAdapterSessionContext(threadId);
-          yield* retireOpenCodeContext(context).pipe(Effect.mapError(toAdapterRequestError));
-          if (sessions.get(threadId) !== context) {
-            return;
-          }
-          sessions.delete(threadId);
-          yield* emit({
-            ...buildEventBase({ threadId }),
-            type: "session.exited",
-            payload: {
-              reason: "Session stopped.",
-              recoverable: false,
-              exitKind: "graceful",
-            },
-          });
+          return yield* Effect.uninterruptible(
+            Effect.gen(function* () {
+              yield* retireOpenCodeContext(context).pipe(Effect.mapError(toAdapterRequestError));
+              if (sessions.get(threadId) !== context) {
+                return;
+              }
+              sessions.delete(threadId);
+              yield* emit({
+                ...buildEventBase({ threadId }),
+                type: "session.exited",
+                payload: {
+                  reason: "Session stopped.",
+                  recoverable: false,
+                  exitKind: "graceful",
+                },
+              });
+            }),
+          );
         },
       );
 
@@ -6135,15 +6184,17 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           yield* Effect.forEach(
             contexts,
             (context) =>
-              retireOpenCodeContext(context).pipe(
-                Effect.tap(() =>
-                  Effect.sync(() => {
-                    if (sessions.get(context.session.threadId) === context) {
-                      sessions.delete(context.session.threadId);
-                    }
-                  }),
+              Effect.uninterruptible(
+                retireOpenCodeContext(context).pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      if (sessions.get(context.session.threadId) === context) {
+                        sessions.delete(context.session.threadId);
+                      }
+                    }),
+                  ),
+                  Effect.mapError(toAdapterRequestError),
                 ),
-                Effect.mapError(toAdapterRequestError),
               ),
             { concurrency: "unbounded", discard: true },
           );

@@ -10868,9 +10868,9 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
         const second = yield* adapter
           .startSession({ provider: "opencode", threadId, runtimeMode: "full-access" })
           .pipe(Effect.exit, Effect.forkChild);
-        yield* Effect.sleep(1);
+        const secondExit = yield* Fiber.join(second);
         releaseAbort?.();
-        const [firstExit, secondExit] = yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
+        const firstExit = yield* Fiber.join(first);
         const sessions = yield* adapter.listSessions();
         return {
           oldSessionAbortCallsBeforeFinalization: runtime.abortCalls.filter(
@@ -10965,6 +10965,156 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
     ]);
     expect(events.some((event) => event.type === "runtime.error")).toBe(false);
   });
+
+  it("retains an external session when unexpected-exit cancellation fails and allows stop retry", async () => {
+    let rejectSubscription: ((cause: Error) => void) | undefined;
+    const failedStream = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: () =>
+            new Promise<IteratorResult<never>>((_resolve, reject) => {
+              rejectSubscription = reject;
+            }),
+        };
+      },
+    };
+    let abortCount = 0;
+    const runtime = createMockOpenCodeRuntime({
+      events: failedStream,
+      abort: async () => {
+        abortCount += 1;
+        if (abortCount === 1) {
+          throw new Error("unexpected-exit abort rejected");
+        }
+        return { data: null };
+      },
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const observed: Array<{ readonly type: string }> = [];
+        const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+          Effect.sync(() => observed.push(event)),
+        ).pipe(Effect.forkChild);
+        const threadId = asThreadId("thread-unexpected-exit-abort-retry");
+        yield* adapter.startSession({
+          provider: "opencode",
+          threadId,
+          runtimeMode: "full-access",
+          providerOptions: { opencode: { serverUrl: "http://127.0.0.1:4099" } },
+        });
+        yield* adapter.sendTurn({
+          threadId,
+          input: "keep authority",
+          attachments: [],
+          modelSelection: { provider: "opencode", model: "openai/gpt-5.4" },
+        });
+        rejectSubscription?.(new Error("external event stream failed"));
+        yield* Effect.sleep(20);
+        const [retained] = yield* adapter.listSessions();
+        const retainedBeforeRetry = yield* adapter.hasSession(threadId);
+        const terminalEventsBeforeRetry = observed.filter(
+          (event) => event.type === "session.exited",
+        ).length;
+        yield* adapter.stopSession(threadId);
+        const retainedAfterRetry = yield* adapter.hasSession(threadId);
+        yield* Fiber.interrupt(eventsFiber);
+        return {
+          retained,
+          retainedAfterRetry,
+          retainedBeforeRetry,
+          terminalEventsBeforeRetry,
+        };
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(result.retainedBeforeRetry).toBe(true);
+    expect(result.retained).toMatchObject({
+      status: "error",
+      lastError: expect.stringContaining("could not be confirmed"),
+    });
+    expect(result.terminalEventsBeforeRetry).toBe(0);
+    expect(result.retainedAfterRetry).toBe(false);
+    expect(abortCount).toBe(2);
+  });
+
+  for (const operation of ["stop", "replace"] as const) {
+    it(`finishes ${operation} retirement coherently when its caller is interrupted`, async () => {
+      let releaseAbort: (() => void) | undefined;
+      let notifyAbortStarted: (() => void) | undefined;
+      const abortStarted = new Promise<void>((resolve) => {
+        notifyAbortStarted = resolve;
+      });
+      let abortCount = 0;
+      const runtime = createMockOpenCodeRuntime({
+        sessionIds: ["opencode-session-old", "opencode-session-retry"],
+        abort: async () => {
+          abortCount += 1;
+          if (abortCount === 1) {
+            notifyAbortStarted?.();
+            await new Promise<void>((resolve) => {
+              releaseAbort = resolve;
+            });
+          }
+          return { data: null };
+        },
+      });
+
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const adapter = yield* OpenCodeAdapter;
+          const threadId = asThreadId(`thread-interrupted-${operation}-retirement`);
+          yield* adapter.startSession({
+            provider: "opencode",
+            threadId,
+            runtimeMode: "full-access",
+          });
+          const lifecycleFiber = yield* (
+            operation === "stop"
+              ? adapter.stopSession(threadId)
+              : adapter.startSession({
+                  provider: "opencode",
+                  threadId,
+                  runtimeMode: "full-access",
+                })
+          ).pipe(Effect.forkChild);
+          yield* Effect.promise(() => abortStarted);
+          const interruptFiber = yield* Fiber.interrupt(lifecycleFiber).pipe(Effect.forkChild);
+          yield* Effect.sleep(1);
+          releaseAbort?.();
+          yield* Fiber.join(interruptFiber);
+          const retry = yield* adapter.startSession({
+            provider: "opencode",
+            threadId,
+            runtimeMode: "full-access",
+          });
+          return { retry, sessions: yield* adapter.listSessions() };
+        }).pipe(
+          Effect.provide(
+            makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+        ),
+      );
+
+      expect(result.sessions).toHaveLength(1);
+      expect(result.retry.threadId).toBe(asThreadId(`thread-interrupted-${operation}-retirement`));
+    });
+  }
 
   it("forcibly closes local adapter resources when final abort is rejected", async () => {
     const runtime = createMockOpenCodeRuntime({
