@@ -25,6 +25,26 @@ const RESOURCE_GRAPH_PARSE_MAX_BYTES = 1_000_000;
 const DEV_SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".jsx"]);
 const BROWSER_SCRIPT_EXTENSIONS = new Set([".js", ".mjs"]);
 const ACTIVE_DOCUMENT_EXTENSIONS = new Set([".html", ".htm", ".xhtml", ".svg"]);
+const SVG_HREF_RESOURCE_ELEMENTS = new Set(["feimage", "image", "mpath", "use"]);
+const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
+const JAVASCRIPT_MIME_TYPES = new Set([
+  "application/ecmascript",
+  "application/javascript",
+  "application/x-ecmascript",
+  "application/x-javascript",
+  "text/ecmascript",
+  "text/javascript",
+  "text/javascript1.0",
+  "text/javascript1.1",
+  "text/javascript1.2",
+  "text/javascript1.3",
+  "text/javascript1.4",
+  "text/javascript1.5",
+  "text/jscript",
+  "text/livescript",
+  "text/x-ecmascript",
+  "text/x-javascript",
+]);
 const EXECUTABLE_URL_ATTRIBUTES = new Set([
   "action",
   "data",
@@ -212,6 +232,19 @@ function normalizedExternalResourceUrl(value: string, baseHref?: string | null):
   }
 }
 
+function scriptElementIsExecutable(element: Element): boolean {
+  const rawType = attributeOf(element, "type")?.trim().toLowerCase();
+  if (!rawType || rawType === "module") return true;
+  const typeEssence = rawType.split(";", 1)[0]?.trim() ?? "";
+  return JAVASCRIPT_MIME_TYPES.has(typeEssence);
+}
+
+function scriptSourcePath(element: Element): string | null {
+  const sourcePath = attributeOf(element, "src");
+  if (sourcePath !== null || element.namespaceURI !== SVG_NAMESPACE) return sourcePath;
+  return attributeOf(element, "href") ?? attributeOf(element, "xlink:href");
+}
+
 function resourceReferencesForElement(element: Element): readonly string[] {
   const tagName = element.tagName.toLowerCase();
   const resources: string[] = [];
@@ -220,8 +253,20 @@ function resourceReferencesForElement(element: Element): readonly string[] {
     if (value) resources.push(value);
   };
 
-  if (tagName === "link" || tagName === "a" || tagName === "area") add("href");
-  else if (tagName === "form") add("action");
+  if (tagName === "script") {
+    if (scriptElementIsExecutable(element)) {
+      const sourcePath = scriptSourcePath(element);
+      if (sourcePath) resources.push(sourcePath);
+    }
+  } else if (
+    tagName === "link" ||
+    tagName === "a" ||
+    tagName === "area" ||
+    SVG_HREF_RESOURCE_ELEMENTS.has(tagName)
+  ) {
+    add("href");
+    add("xlink:href");
+  } else if (tagName === "form") add("action");
   else if (tagName === "object") add("data");
   else add("src");
   if (tagName === "video") add("poster");
@@ -274,7 +319,8 @@ function markupHasExecutableContent(source: string, srcdocDepth = 0): boolean {
     const tagName = element.tagName.toLowerCase();
     if (
       tagName === "script" &&
-      (attributeOf(element, "src") !== null || textContentOf(element).trim().length > 0)
+      scriptElementIsExecutable(element) &&
+      (scriptSourcePath(element) !== null || textContentOf(element).trim().length > 0)
     ) {
       executable = true;
       return;
@@ -330,6 +376,7 @@ async function collectAllowedResourcePaths(
   readonly externalUrls: readonly string[];
   readonly hasExecutableDocument: boolean;
   readonly hasTruncatedActiveDocument: boolean;
+  readonly hasTruncatedDependency: boolean;
 }> {
   const pending = resources
     .map((resource) =>
@@ -345,6 +392,7 @@ async function collectAllowedResourcePaths(
   const externalUrls = new Set<string>();
   let hasExecutableDocument = false;
   let hasTruncatedActiveDocument = false;
+  let hasTruncatedDependency = false;
   const addExternalUrl = (url: string) => {
     if (externalUrls.size < RESOURCE_GRAPH_MAX_FILES) externalUrls.add(url);
   };
@@ -361,11 +409,13 @@ async function collectAllowedResourcePaths(
 
     const extension = path.extname(canonical).toLowerCase();
     const isActiveDocument = ACTIVE_DOCUMENT_EXTENSIONS.has(extension);
-    if (
-      (!isActiveDocument && stat.size > RESOURCE_GRAPH_PARSE_MAX_BYTES) ||
-      (extension !== ".css" && extension !== ".js" && extension !== ".mjs" && !isActiveDocument)
-    ) {
+    const isInspectableDependency =
+      extension === ".css" || extension === ".js" || extension === ".mjs";
+    if (!isActiveDocument && !isInspectableDependency) {
       continue;
+    }
+    if (!isActiveDocument && stat.size > RESOURCE_GRAPH_PARSE_MAX_BYTES) {
+      hasTruncatedDependency = true;
     }
     const contents =
       stat.size > RESOURCE_GRAPH_PARSE_MAX_BYTES
@@ -429,21 +479,26 @@ async function collectAllowedResourcePaths(
     }
 
     await initializeModuleLexer;
-    const [imports] = parseModuleImports(contents);
-    for (const moduleImport of imports) {
-      const dependency = moduleImport.n;
-      if (!dependency || (!dependency.startsWith(".") && !dependency.startsWith("/"))) {
-        const externalUrl = dependency ? normalizedExternalResourceUrl(dependency) : null;
-        if (externalUrl) addExternalUrl(externalUrl);
-        continue;
+    try {
+      const [imports] = parseModuleImports(contents);
+      for (const moduleImport of imports) {
+        const dependency = moduleImport.n;
+        if (!dependency || (!dependency.startsWith(".") && !dependency.startsWith("/"))) {
+          const externalUrl = dependency ? normalizedExternalResourceUrl(dependency) : null;
+          if (externalUrl) addExternalUrl(externalUrl);
+          continue;
+        }
+        const resolved = dependency
+          ? resolveLocalResourcePath(
+              dependency,
+              dependency.startsWith("/") ? resourceBoundary : dependencyDirectory,
+            )
+          : null;
+        if (resolved) pending.push(resolved);
       }
-      const resolved = dependency
-        ? resolveLocalResourcePath(
-            dependency,
-            dependency.startsWith("/") ? resourceBoundary : dependencyDirectory,
-          )
-        : null;
-      if (resolved) pending.push(resolved);
+    } catch {
+      // A bounded prefix can end in the middle of a token. Literal-reference
+      // discovery above still preserves dependencies found before the cutoff.
     }
   }
 
@@ -452,6 +507,7 @@ async function collectAllowedResourcePaths(
     externalUrls: [...externalUrls],
     hasExecutableDocument,
     hasTruncatedActiveDocument,
+    hasTruncatedDependency,
   };
 }
 
@@ -575,7 +631,8 @@ export async function inspectHtmlArtifact(
     }
 
     if (tagName === "script") {
-      const sourcePath = attributeOf(element, "src");
+      if (!scriptElementIsExecutable(element)) return;
+      const sourcePath = scriptSourcePath(element);
       if (!sourcePath) {
         const inlineScript = textContentOf(element);
         hasInlineScript ||= inlineScript.trim().length > 0;
@@ -674,6 +731,13 @@ export async function inspectHtmlArtifact(
       code: "inspection-truncated",
       message:
         "Only the beginning of a linked active document was inspected; it will open in interactive mode and its discovered assets remain available.",
+    });
+  }
+  if (collectedResources.hasTruncatedDependency) {
+    addWarning({
+      code: "inspection-truncated",
+      message:
+        "Only the beginning of a large linked stylesheet or script was inspected; references after the inspected prefix may be unavailable.",
     });
   }
 

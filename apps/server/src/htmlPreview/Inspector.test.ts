@@ -61,6 +61,23 @@ describe("inspectHtmlArtifact", () => {
     expect(inspected.result.warnings).toEqual([]);
   });
 
+  it("keeps JSON-LD data blocks static and allows their declared presentation assets", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      [
+        '<script type="application/ld+json">{"@context":"https://schema.org"}</script>',
+        '<script href="ignored-outside-svg.js"></script>',
+        '<img src="https://cdn.example/photo.png">',
+      ].join(""),
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(inspected.result).toEqual({ mode: "static-document", warnings: [] });
+    expect(inspected.allowedExternalUrls).toEqual(["https://cdn.example/photo.png"]);
+  });
+
   it("collects literal fetch/worker assets, inline CSS, and linked HTML transitively", async () => {
     const workspace = await makeWorkspace();
     await fs.writeFile(path.join(workspace, "data.json"), '{"ok":true}');
@@ -151,6 +168,79 @@ describe("inspectHtmlArtifact", () => {
     expect(inspected.allowedResourcePaths).toContain(
       await fs.realpath(path.join(workspace, "active.svg")),
     );
+  });
+
+  it("discovers executable SVG script href resources and blocks interactive networking", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(
+      path.join(workspace, "app.js"),
+      "document.documentElement.dataset.ready = 'yes';",
+    );
+    await fs.writeFile(
+      path.join(workspace, "active.svg"),
+      [
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">',
+        '<script xlink:href="app.js"></script>',
+        '<image href="https://cdn.example/denied.png"/>',
+        "</svg>",
+      ].join(""),
+    );
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      '<object data="active.svg" type="image/svg+xml"></object>',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+    expect(new Set(inspected.allowedResourcePaths)).toEqual(
+      new Set(
+        await Promise.all(
+          ["active.svg", "app.js"].map((file) => fs.realpath(path.join(workspace, file))),
+        ),
+      ),
+    );
+    expect(inspected.result.warnings).toContainEqual({
+      code: "external-resource-blocked",
+      message:
+        "External network resources are blocked for interactive local HTML; bundle them into the same site directory instead.",
+    });
+  });
+
+  it("inspects dependency prefixes for large linked JavaScript and CSS", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(path.join(workspace, "chunk.js"), "export const ready = true;");
+    await fs.writeFile(path.join(workspace, "nested.css"), "body { color: purple; }");
+    await fs.writeFile(path.join(workspace, "hero.png"), "png");
+    await fs.writeFile(
+      path.join(workspace, "app.js"),
+      'import "./chunk.js";'.padEnd(1_000_001, " "),
+    );
+    await fs.writeFile(
+      path.join(workspace, "theme.css"),
+      '@import "nested.css"; body { background: url("hero.png") }'.padEnd(1_000_001, " "),
+    );
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      '<link rel="stylesheet" href="theme.css"><script type="module" src="app.js"></script>',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(new Set(inspected.allowedResourcePaths)).toEqual(
+      new Set(
+        await Promise.all(
+          ["theme.css", "nested.css", "hero.png", "app.js", "chunk.js"].map((file) =>
+            fs.realpath(path.join(workspace, file)),
+          ),
+        ),
+      ),
+    );
+    expect(inspected.result.warnings).toContainEqual({
+      code: "inspection-truncated",
+      message:
+        "Only the beginning of a large linked stylesheet or script was inspected; references after the inspected prefix may be unavailable.",
+    });
   });
 
   it("fails closed when executable entry content may be beyond the inspection prefix", async () => {
