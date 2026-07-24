@@ -72,4 +72,49 @@ describe("RightDock", () => {
       await screen.unmount();
     }
   });
+
+  it("does not offer an already-open singleton panel as a new panel", async () => {
+    const onAddPane = vi.fn();
+    const screen = await render(
+      <RightDock
+        state={{
+          open: true,
+          activePaneId: "browser-1",
+          panes: [
+            {
+              id: "browser-1",
+              kind: "browser",
+              threadId: null,
+              diffTurnId: null,
+              diffFilePath: null,
+              filePath: null,
+              pullRequestProjectId: null,
+              pullRequestRepository: null,
+              pullRequestNumber: null,
+              pullRequestInitialTab: null,
+            },
+          ],
+        }}
+        minWidth={320}
+        defaultWidth="480px"
+        shouldAcceptWidth={() => true}
+        addMenuKinds={["browser", "sidechat"]}
+        onSelectPane={vi.fn()}
+        onClosePane={vi.fn()}
+        onCollapse={vi.fn()}
+        onOpenChange={vi.fn()}
+        onAddPane={onAddPane}
+        renderPane={() => <div>Browser content</div>}
+      />,
+    );
+
+    try {
+      const addButton = page.getByRole("button", { name: "Add panel" });
+      ((await addButton.element()) as HTMLButtonElement).click();
+      await expect.element(page.getByRole("menuitem", { name: "Side" })).toBeVisible();
+      expect(page.getByRole("menuitem", { name: "Browser" }).query()).toBeNull();
+    } finally {
+      await screen.unmount();
+    }
+  });
 });
