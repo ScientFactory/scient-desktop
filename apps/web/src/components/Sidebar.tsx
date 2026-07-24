@@ -203,7 +203,10 @@ import { SidebarRowHoverActions } from "./SidebarRowHoverActions";
 import { SidebarSectionToolbar } from "./SidebarSectionToolbar";
 import { SidebarGlyph, sidebarGlyphClass, SIDEBAR_TRAILING_ICON_CLASS } from "./sidebarGlyphs";
 import { ThreadPinToggleButton } from "./ThreadPinToggleButton";
-import { ThreadRunningSpinner } from "./ThreadRunningSpinner";
+import {
+  SidebarStatusTrailingGlyph,
+  SidebarThreadTrailingIndicators,
+} from "./SidebarThreadTrailingIndicators";
 import { RenameDialog } from "./RenameDialog";
 import { RenameThreadDialog } from "./RenameThreadDialog";
 import { ScientProjectInitializationDialog } from "./ScientProjectInitializationDialog";
@@ -228,7 +231,7 @@ import {
 import { projectScriptRuntimeEnv } from "../projectScripts";
 import { transientAlertManager } from "../notifications/transientAlert";
 import { showUndoSnackbar } from "./ui/undoSnackbar";
-import { ActivityCenter } from "../notifications/ActivityCenter";
+import { SidebarFooterControls } from "./SidebarFooterControls";
 import { activityManager, type PublishActivityInput } from "../notifications/activityStore";
 import {
   normalizeSidebarProjectThreadListCwd,
@@ -277,7 +280,6 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarHeader,
   SidebarMenu,
@@ -324,7 +326,6 @@ import {
   resolveThreadRowClassName,
   resolveThreadRowTrailingReserveClass,
   resolveThreadStatusPill,
-  type ThreadStatusPill,
   type SidebarDerivedProjectData,
   type SidebarActionBadge,
   type SidebarView,
@@ -678,28 +679,6 @@ function WorktreeBadgeGlyph({ className }: { className?: string }) {
   return <WorktreeIcon aria-hidden="true" className={sidebarGlyphClass("meta", className)} />;
 }
 
-// Trailing row status: spinner while working, check when completed, otherwise a
-// colored status dot. Thread rows and project headers use the same glyph so a
-// collapsed project still advertises active child chats.
-function SidebarStatusTrailingGlyph({ status }: { status: ThreadStatusPill }) {
-  if (status.label === "Completed") {
-    // Match the worktree/other trailing chips' optical size (15px) so the green
-    // check reads as part of the same right-side icon cluster.
-    return (
-      <CheckCircle2Icon
-        aria-hidden="true"
-        className={cn(SIDEBAR_TRAILING_ICON_CLASS, status.colorClass)}
-      />
-    );
-  }
-  if (status.pulse) {
-    return <ThreadRunningSpinner />;
-  }
-  return (
-    <span aria-hidden="true" className={cn("size-1.5 shrink-0 rounded-full", status.dotClass)} />
-  );
-}
-
 /** Pulsing green dot shown before a project name while a dev run is live. */
 function ProjectRunIndicatorDot({ className }: { className?: string }) {
   return (
@@ -719,27 +698,6 @@ const THREAD_ROW_META_CHIP_HOVER_FADE_CLASS_NAME = cn(
   "flex shrink-0 items-center",
   sidebarHoverRevealHideClassName("thread-row"),
 );
-
-/** Fixed-width status column; fades on hover so pin/archive can overlay this slot. */
-function threadRowTimestampSlotClassName(
-  isSubagentThread: boolean,
-  toneClassName?: string,
-): string {
-  return cn(
-    // No right margin: the timestamp moved to the hover card, so this column now
-    // only carries the status glyph (check/spinner/dot). It must sit flush at the
-    // row's right padding like the meta chips (worktree, fork) — a leftover `mr-1`
-    // pushed the completed check ~4px past them and broke the trailing-cluster line.
-    "flex shrink-0 items-center justify-end leading-none tabular-nums",
-    sidebarHoverRevealHideClassName("thread-row"),
-    isSubagentThread
-      ? "w-[1.2rem] text-[10px]"
-      : // Nudge the timestamp a hair above the meta scale while still tracking the user's
-        // typography setting (the CSS var is always set; the 11px is just an SSR fallback).
-        "w-[1.625rem] text-[length:calc(var(--app-font-size-ui-meta,11px)+0.5px)]",
-    toneClassName ?? (isSubagentThread ? "text-muted-foreground/26" : "text-muted-foreground/38"),
-  );
-}
 
 function resolveWorktreeBadgeLabel(
   thread: Pick<Thread, "envMode" | "worktreePath">,
@@ -5322,26 +5280,13 @@ export default function Sidebar() {
             <SidebarMetaChipStack chips={input.rightMetaChips} />
           </div>
         ) : null}
-        {input.threadJumpLabel ? (
-          <KbdGroup className={THREAD_ROW_META_CHIP_HOVER_FADE_CLASS_NAME}>
-            {input.threadJumpLabelParts.map((part) => (
-              <Kbd key={part}>{part}</Kbd>
-            ))}
-          </KbdGroup>
-        ) : null}
-        {!input.threadJumpLabel && input.threadStatus ? (
-          // The relative time now lives in the row hover card, so the trailing
-          // slot only carries the live status/loader glyph; when idle it
-          // collapses and the hover action icons sit flush at the end.
-          <span
-            className={threadRowTimestampSlotClassName(
-              input.isSubagentThread,
-              input.timestampToneClassName,
-            )}
-          >
-            <SidebarStatusTrailingGlyph status={input.threadStatus} />
-          </span>
-        ) : null}
+        <SidebarThreadTrailingIndicators
+          isSubagentThread={input.isSubagentThread}
+          threadJumpLabel={input.threadJumpLabel}
+          threadJumpLabelParts={input.threadJumpLabelParts}
+          threadStatus={input.threadStatus}
+          statusToneClassName={input.timestampToneClassName}
+        />
         {input.hoverActions}
       </div>
     );
@@ -5523,7 +5468,8 @@ export default function Sidebar() {
               leadingPrStatus && "pl-8",
               resolveThreadRowTrailingReserveClass({
                 metaChipCount: rightMetaChips.length,
-                hasTrailingGlyph: hasTrailingStatusGlyph,
+                jumpHintParts: threadJumpLabel ? threadJumpLabelParts : EMPTY_SHORTCUT_PARTS,
+                hasStatus: Boolean(threadStatus),
               }),
               isActive
                 ? SIDEBAR_ROW_ACTIVE_CLASS_NAME
@@ -5735,12 +5681,11 @@ export default function Sidebar() {
                     isSelected,
                   }),
                   leadingPrStatus ? "pl-8" : topLevel && !isSubagentThread ? "pl-2" : null,
-                  isSubagentThread
-                    ? "pr-7.5"
-                    : resolveThreadRowTrailingReserveClass({
-                        metaChipCount: showCompactMeta ? rightMetaChips.length : 0,
-                        hasTrailingGlyph: Boolean(threadStatus) || Boolean(threadJumpLabel),
-                      }),
+                  resolveThreadRowTrailingReserveClass({
+                    metaChipCount: showCompactMeta ? rightMetaChips.length : 0,
+                    jumpHintParts: threadJumpLabel ? threadJumpLabelParts : EMPTY_SHORTCUT_PARTS,
+                    hasStatus: Boolean(threadStatus),
+                  }),
                 )}
                 draggable
                 onDragStart={(event) => {
@@ -7453,72 +7398,69 @@ export default function Sidebar() {
         ) : null}
       </SidebarContent>
 
-      <SidebarFooter className="gap-2 p-2 font-system-ui">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <div className="flex flex-col gap-1">
-              {DebugFeatureFlagsMenu && showDebugFeatureFlagsMenu && !isOnSettings ? (
-                <Suspense fallback={null}>
-                  <DebugFeatureFlagsMenu />
-                </Suspense>
-              ) : null}
-              <ActivityCenter />
-              <div className="flex items-center gap-2">
-                {!isOnSettings && (
-                  <SidebarMenuButton
-                    size="sm"
-                    className={cn(
-                      SIDEBAR_HEADER_ROW_CLASS_NAME,
-                      SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME,
-                      SIDEBAR_ROW_HOVER_CLASS_NAME,
-                      "flex-1",
-                    )}
-                    onClick={() => void navigate({ to: "/settings" })}
-                  >
-                    <SidebarLeadingIcon size="sm" tone={SIDEBAR_ROW_LABEL_TEXT_CLASS_NAME}>
-                      <SidebarGlyph icon={SettingsIcon} variant="leading" />
-                    </SidebarLeadingIcon>
-                    <span>Settings</span>
-                  </SidebarMenuButton>
+      <SidebarFooterControls
+        beforeReleaseNote={
+          DebugFeatureFlagsMenu && showDebugFeatureFlagsMenu && !isOnSettings ? (
+            <Suspense fallback={null}>
+              <DebugFeatureFlagsMenu />
+            </Suspense>
+          ) : null
+        }
+        settingsAndUpdate={
+          <div className="flex items-center gap-2">
+            {!isOnSettings && (
+              <SidebarMenuButton
+                size="sm"
+                className={cn(
+                  SIDEBAR_HEADER_ROW_CLASS_NAME,
+                  SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME,
+                  SIDEBAR_ROW_HOVER_CLASS_NAME,
+                  "flex-1",
                 )}
-                {showDesktopUpdateButton ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <button
-                          type="button"
-                          aria-label={desktopUpdateTooltip}
-                          aria-disabled={desktopUpdateButtonDisabled || undefined}
-                          disabled={desktopUpdateButtonDisabled}
-                          className={desktopUpdateRowButtonClasses}
-                          onClick={handleDesktopUpdateButtonClick}
-                        >
-                          <span className="flex min-w-0 flex-1 items-center justify-between gap-1.5 leading-tight">
-                            <span className="min-w-0 truncate text-center">
-                              {desktopUpdateButtonPresentation.label}
-                            </span>
-                            {desktopUpdateButtonPresentation.secondaryLabel ? (
-                              <span className="min-w-0 truncate text-center text-[length:var(--app-font-size-ui-xs,10px)] text-white/80">
-                                {desktopUpdateButtonPresentation.secondaryLabel}
-                              </span>
-                            ) : null}
+                onClick={() => void navigate({ to: "/settings" })}
+              >
+                <SidebarLeadingIcon size="sm" tone={SIDEBAR_ROW_LABEL_TEXT_CLASS_NAME}>
+                  <SidebarGlyph icon={SettingsIcon} variant="leading" />
+                </SidebarLeadingIcon>
+                <span>Settings</span>
+              </SidebarMenuButton>
+            )}
+            {showDesktopUpdateButton ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label={desktopUpdateTooltip}
+                      aria-disabled={desktopUpdateButtonDisabled || undefined}
+                      disabled={desktopUpdateButtonDisabled}
+                      className={desktopUpdateRowButtonClasses}
+                      onClick={handleDesktopUpdateButtonClick}
+                    >
+                      <span className="flex min-w-0 flex-1 items-center justify-between gap-1.5 leading-tight">
+                        <span className="min-w-0 truncate text-center">
+                          {desktopUpdateButtonPresentation.label}
+                        </span>
+                        {desktopUpdateButtonPresentation.secondaryLabel ? (
+                          <span className="min-w-0 truncate text-center text-[length:var(--app-font-size-ui-xs,10px)] text-white/80">
+                            {desktopUpdateButtonPresentation.secondaryLabel}
                           </span>
-                          {desktopUpdateDownloadPercent !== null ? (
-                            <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-white/95">
-                              {desktopUpdateDownloadPercent}%
-                            </span>
-                          ) : null}
-                        </button>
-                      }
-                    />
-                    <TooltipPopup side="top">{desktopUpdateTooltip}</TooltipPopup>
-                  </Tooltip>
-                ) : null}
-              </div>
-            </div>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
+                        ) : null}
+                      </span>
+                      {desktopUpdateDownloadPercent !== null ? (
+                        <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-white/95">
+                          {desktopUpdateDownloadPercent}%
+                        </span>
+                      ) : null}
+                    </button>
+                  }
+                />
+                <TooltipPopup side="top">{desktopUpdateTooltip}</TooltipPopup>
+              </Tooltip>
+            ) : null}
+          </div>
+        }
+      />
 
       {projectContextMenuState && projectContextMenuProject && projectContextMenuAnchor ? (
         <Menu

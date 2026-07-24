@@ -1,6 +1,6 @@
 import { type AutomationDefinition, type AutomationRun } from "@synara/contracts";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 
 import { getProviderStartOptions, useAppSettings } from "~/appSettings";
 import {
@@ -10,6 +10,7 @@ import {
 } from "~/components/chat/chatHeaderControls";
 import { CHAT_BACKGROUND_CLASS_NAME } from "~/components/chat/composerPickerStyles";
 import { SidebarHeaderNavigationControls } from "~/components/SidebarHeaderNavigationControls";
+import { AutomationListRow } from "~/components/AutomationListRow";
 import { Button } from "~/components/ui/button";
 import { RouteInsetSurface } from "~/components/RouteInsetSurface";
 import {
@@ -17,7 +18,6 @@ import {
   type AutomationDraftWarning,
   type AutomationDraftWarningId,
 } from "~/lib/automationDraft";
-import { automationLifecycleState } from "~/lib/automationStatus";
 import {
   useDesktopTopBarTrafficLightGutterClassName,
   useDesktopTopBarWindowControlsGutterClassName,
@@ -31,19 +31,16 @@ import {
   AutomationDialog,
   acknowledgedRiskIdsForFormWarnings,
   allVisibleTriageRuns,
+  automationRowMeta,
   automationStatusDotClass,
   buildAutomationFormWarnings,
   createInputFromForm,
-  formatCadence,
   formatRelativeTime,
   formFromDefinition,
   isFormSubmittable,
-  isRowInteractiveEventTarget,
-  isTriageRun,
   providerOptionsForAutomationEdit,
   projectModelSelection,
   runResultSummary,
-  runStatusLabel,
   RunStatusIndicator,
   updateInputFromForm,
   unresolvedTriageRuns,
@@ -54,112 +51,6 @@ import { resolveThreadPickerTitle } from "./-chatThreadRoute.logic";
 export const Route = createFileRoute("/_chat/automations/")({
   component: AutomationsRouteView,
 });
-
-type LiveAutomationRun = AutomationRun & {
-  readonly status: "pending" | "claimed" | "running" | "waiting-for-approval";
-};
-
-function isLiveRun(run: AutomationRun | null): run is LiveAutomationRun {
-  return (
-    run?.status === "pending" ||
-    run?.status === "claimed" ||
-    run?.status === "running" ||
-    run?.status === "waiting-for-approval"
-  );
-}
-
-function triageRunLabel(run: AutomationRun): string {
-  if (run.status === "succeeded" && run.result?.unread) return "New result";
-  return runStatusLabel(run.status);
-}
-
-/**
- * Minimal list row shared by the automation sections and the triage list: a leading
- * status glyph, a title, a muted detail that fills the row, and optional right-aligned
- * meta plus a trailing affordance.
- */
-function AutomationListRow({
-  onClick,
-  leading,
-  title,
-  detail,
-  meta,
-  trailing,
-  onDelete,
-  deleteDisabled = false,
-  error,
-}: {
-  readonly onClick: () => void;
-  readonly leading: ReactNode;
-  readonly title: string;
-  readonly detail: string;
-  readonly meta?: ReactNode;
-  readonly trailing?: ReactNode;
-  readonly onDelete?: () => void;
-  readonly deleteDisabled?: boolean;
-  readonly error?: string | undefined;
-}) {
-  return (
-    // A div with role="button" (not a real <button>) so inline controls like the hover delete
-    // can be nested buttons; the keydown guard lets those controls handle their own events
-    // without also firing the row's navigation.
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onClick}
-      onKeyDown={(event) => {
-        if (isRowInteractiveEventTarget(event.target, event.currentTarget)) return;
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onClick();
-        }
-      }}
-      className="group flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-[var(--color-background-elevated-secondary)]"
-    >
-      {leading}
-      <span className="min-w-0 max-w-[45%] truncate text-[0.8125rem] text-foreground">{title}</span>
-      <span
-        className={cn(
-          "min-w-0 flex-1 truncate text-xs",
-          error ? "text-destructive" : "text-muted-foreground",
-        )}
-        title={error}
-      >
-        {error ?? detail}
-      </span>
-      {meta == null ? null : (
-        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{meta}</span>
-      )}
-      {onDelete ? (
-        <button
-          type="button"
-          aria-label="Delete automation"
-          title="Delete"
-          disabled={deleteDisabled}
-          onClick={(event) => {
-            event.stopPropagation();
-            if (deleteDisabled) return;
-            onDelete();
-          }}
-          className="shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 disabled:pointer-events-none disabled:opacity-30 group-hover:opacity-100"
-        >
-          <CentralIcon name="trash-can-simple" className="size-3.5" />
-        </button>
-      ) : null}
-      {trailing}
-    </div>
-  );
-}
-
-/** Right-aligned meta for an automation row: live status, triage outcome, cadence, or "Paused". */
-function rowMeta(definition: AutomationDefinition, latestRun: AutomationRun | null): string {
-  if (isLiveRun(latestRun)) return runStatusLabel(latestRun.status);
-  if (latestRun && isTriageRun(latestRun)) return triageRunLabel(latestRun);
-  if (!definition.enabled) {
-    return automationLifecycleState(definition) === "done" ? "Done" : "Paused";
-  }
-  return formatCadence(definition.schedule);
-}
 
 function AutomationsRouteView() {
   const navigate = useNavigate();
@@ -335,7 +226,7 @@ function AutomationsRouteView() {
         }
         title={definition.name}
         detail={subtitle(definition)}
-        meta={rowMeta(definition, latestRun)}
+        meta={automationRowMeta(definition, latestRun)}
         onDelete={() => void deleteDefinition(definition)}
         deleteDisabled={deleteMutation.isPending}
         error={

@@ -57,6 +57,19 @@ export async function copyTextToClipboard(value: string): Promise<void> {
     return;
   }
 
+  let nativeClipboardError: unknown = null;
+  const nativeWriteText = window.desktopBridge?.clipboard?.writeText;
+  if (nativeWriteText) {
+    try {
+      if (await nativeWriteText(value)) {
+        return;
+      }
+      nativeClipboardError = new Error("Native clipboard rejected the text.");
+    } catch (error) {
+      nativeClipboardError = error;
+    }
+  }
+
   if (navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(value);
@@ -65,7 +78,7 @@ export async function copyTextToClipboard(value: string): Promise<void> {
       if (fallbackCopyTextToClipboard(value)) {
         return;
       }
-      throw error;
+      throw nativeClipboardError ?? error;
     }
   }
 
@@ -73,6 +86,9 @@ export async function copyTextToClipboard(value: string): Promise<void> {
     return;
   }
 
+  if (nativeClipboardError instanceof Error) {
+    throw nativeClipboardError;
+  }
   throw new Error("Clipboard API unavailable.");
 }
 

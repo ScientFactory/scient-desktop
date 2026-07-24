@@ -239,6 +239,7 @@ export function ActivityCenter() {
       <PopoverTrigger
         render={
           <SidebarMenuButton
+            data-activity-center-trigger
             aria-label={`Activity, ${summary}`}
             aria-expanded={open}
             size="sm"

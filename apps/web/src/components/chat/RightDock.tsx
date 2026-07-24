@@ -17,7 +17,7 @@ import type {
   RightDockPaneKind,
   RightDockThreadState,
 } from "~/rightDockStore.logic";
-import { resolveActivePane } from "~/rightDockStore.logic";
+import { filterAddableRightDockPaneKinds, resolveActivePane } from "~/rightDockStore.logic";
 import { Button } from "../ui/button";
 import { IconButton } from "../ui/icon-button";
 import { Menu, MenuItem, MenuTrigger } from "../ui/menu";
@@ -120,6 +120,7 @@ function useKeepMountedPaneIds(
 
 export function RightDock(props: RightDockProps) {
   const activePane = resolveActivePane(props.state);
+  const addablePaneKinds = filterAddableRightDockPaneKinds(props.state, props.addMenuKinds);
   const onSelectPane = props.onSelectPane;
   const activePaneRuntimeMode = props.activePaneRuntimeMode ?? "live";
   // The dock is the right-most surface when open, so its header sits under the
@@ -230,7 +231,7 @@ export function RightDock(props: RightDockProps) {
                 />
               ))}
             </div>
-            {props.addMenuKinds.length > 0 ? (
+            {addablePaneKinds.length > 0 ? (
               <Menu modal={false}>
                 <MenuTrigger
                   render={
@@ -246,7 +247,7 @@ export function RightDock(props: RightDockProps) {
                   <PlusIcon className="size-3.5" />
                 </MenuTrigger>
                 <ComposerPickerMenuPopup align="end" side="bottom" className="w-44 min-w-44">
-                  {props.addMenuKinds.map((kind) => {
+                  {addablePaneKinds.map((kind) => {
                     const { Icon, label } = getRightDockPaneMeta(kind);
                     return (
                       <MenuItem key={kind} onClick={() => props.onAddPane(kind)}>

@@ -5,7 +5,7 @@ import path from "node:path";
 import { SCRATCH_WORKSPACES_DIRNAME } from "@synara/shared/threadWorkspace";
 import { afterEach, describe, it } from "vitest";
 
-import { resolveAllowedLocalPreviewFile } from "./localImageFiles.ts";
+import { createLocalPreviewGrant, resolveAllowedLocalPreviewFile } from "./localImageFiles.ts";
 
 const tempDirs: string[] = [];
 
@@ -22,6 +22,18 @@ afterEach(() => {
 });
 
 describe("resolveAllowedLocalPreviewFile", () => {
+  it("renews an active file grant without changing its media URL token", async () => {
+    const workspace = makeTempDir("synara-stable-media-grant-");
+    const mediaPath = path.join(workspace, "long-recording.mp3");
+    writeFileSync(mediaPath, Buffer.from("audio"));
+
+    const first = await createLocalPreviewGrant({ requestedPath: mediaPath });
+    const renewed = await createLocalPreviewGrant({ requestedPath: mediaPath });
+
+    assert.equal(renewed.grant, first.grant);
+    assert.ok(Date.parse(renewed.expiresAt) >= Date.parse(first.expiresAt));
+  });
+
   it("allows images inside the current workspace", async () => {
     const workspace = makeTempDir("synara-image-workspace-");
     writeFileSync(path.join(workspace, ".git"), "gitdir: .git");
@@ -120,6 +132,28 @@ describe("resolveAllowedLocalPreviewFile", () => {
     assert.equal(result?.path, realpathSync(pdfPath));
     assert.equal(result?.fileName, "spec.pdf");
     assert.equal(result?.sizeBytes, 8);
+  });
+
+  it("allows browser-native audio and video inside the current workspace", async () => {
+    const workspace = makeTempDir("synara-media-workspace-");
+    writeFileSync(path.join(workspace, ".git"), "gitdir: .git");
+    const audioPath = path.join(workspace, "recordings", "interview.mp3");
+    const videoPath = path.join(workspace, "recordings", "demo.webm");
+    mkdirSync(path.dirname(audioPath), { recursive: true });
+    writeFileSync(audioPath, Buffer.from("audio"));
+    writeFileSync(videoPath, Buffer.from("video"));
+
+    const audio = await resolveAllowedLocalPreviewFile({
+      requestedPath: audioPath,
+      cwd: workspace,
+    });
+    const video = await resolveAllowedLocalPreviewFile({
+      requestedPath: videoPath,
+      cwd: workspace,
+    });
+
+    assert.equal(audio?.path, realpathSync(audioPath));
+    assert.equal(video?.path, realpathSync(videoPath));
   });
 
   it("allows PDFs inside a per-thread scratch workspace without a cwd", async () => {
