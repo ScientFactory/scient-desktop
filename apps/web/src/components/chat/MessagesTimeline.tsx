@@ -77,6 +77,7 @@ import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImage
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ToolCallDetailsContent, ToolCallDetailsDialog } from "./ToolCallDetailsDialog";
 import { DiffStatLabel } from "./DiffStatLabel";
+import { resolveChangedFilesExpanded } from "./changedFilesPresentation";
 import { fileDiffStatsByPath, resolveFileDiffStatByChangedPath } from "~/lib/diffRendering";
 import { ReviewChangesButton } from "./ReviewChangesButton";
 import { FileEntryIcon } from "./FileEntryIcon";
@@ -630,6 +631,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+  const currentChangedFilesTurnId = useMemo(() => {
+    // Only the latest settled answer can own a current change. A newer user
+    // message, a live turn, or a newer answer without changes makes every
+    // existing changed-files card historical and therefore compact by default.
+    if (activeTurnInProgress) return null;
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index]!;
+      if (row.kind !== "message") continue;
+      if (row.message.role !== "assistant") return null;
+      if (!row.showAssistantCopyButton) continue;
+      const summary = row.assistantTurnDiffSummary;
+      return summary && summary.files.length > 0 ? summary.turnId : null;
+    }
+    return null;
+  }, [activeTurnInProgress, rows]);
   const assistantDirectionHintByMessageId = useStableAssistantDirectionHints(rows);
   const settledTurnCollapseTransitions = useSettledTurnCollapseTransitions(rows);
   const enteringMessageRowIds = useMessageSendEnterAnimations(rows, enteringUserMessageIds);
@@ -639,6 +655,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       assistantDirectionHintByMessageId,
       enteringMessageRowIds,
       expandedCollapsedWork,
+      currentChangedFilesTurnId,
       expandedFileChangesByTurnId,
       expandedFileListByTurnId,
       expandedUserMessagesById,
@@ -654,6 +671,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       assistantDirectionHintByMessageId,
       enteringMessageRowIds,
       expandedCollapsedWork,
+      currentChangedFilesTurnId,
       expandedFileChangesByTurnId,
       expandedFileListByTurnId,
       expandedUserMessagesById,
@@ -913,10 +931,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       window.cancelAnimationFrame(frameId);
     };
   }, [emitTrailHighlightsForViewport, onTrailHighlightsChange, resolvedListRef, rows.length]);
-  const toggleFileChangesExpanded = useCallback((turnId: TurnId) => {
+  const toggleFileChangesExpanded = useCallback((turnId: TurnId, expanded: boolean) => {
     setExpandedFileChangesByTurnId((current) => ({
       ...current,
-      [turnId]: !(current[turnId] ?? true),
+      [turnId]: !expanded,
     }));
   }, []);
   const toggleFileListExpanded = useCallback((turnId: TurnId) => {
@@ -1631,8 +1649,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   if (!turnSummary || row.assistantTurnInProgress) return null;
                   const checkpointFiles = turnSummary.files;
                   if (checkpointFiles.length === 0) return null;
-                  const fileChangesExpanded =
-                    expandedFileChangesByTurnId[turnSummary.turnId] ?? true;
+                  const fileChangesExpanded = resolveChangedFilesExpanded({
+                    files: checkpointFiles,
+                    isCurrentChange: currentChangedFilesTurnId === turnSummary.turnId,
+                    userOverride: expandedFileChangesByTurnId[turnSummary.turnId],
+                  });
                   const fileListExpanded = expandedFileListByTurnId[turnSummary.turnId] ?? false;
                   const checkpointTurnCount = turnSummary.checkpointTurnCount;
                   const checkpointTurnCounts =
@@ -1699,7 +1720,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     </button>
                   );
                   return (
-                    <div className="mt-1 mb-4 overflow-hidden rounded-[0.65rem] border border-[color:var(--color-border-light)] dark:border-[color:color-mix(in_srgb,var(--color-border-light)_55%,transparent)]">
+                    <div
+                      className="mt-1 mb-4 overflow-hidden rounded-[0.65rem] border border-[color:var(--color-border-light)] dark:border-[color:color-mix(in_srgb,var(--color-border-light)_55%,transparent)]"
+                      data-changed-files-state={fileChangesExpanded ? "expanded" : "collapsed"}
+                      data-changed-files-turn-id={turnSummary.turnId}
+                    >
                       <div
                         className={cn(
                           "flex items-center justify-between gap-3 bg-[color:color-mix(in_srgb,var(--app-user-message-background)_40%,transparent)] px-3 py-1.5",
@@ -1760,7 +1785,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                               if (!fileChangesExpanded && isTailContentRow) {
                                 scrollTailExpansionToEnd();
                               }
-                              toggleFileChangesExpanded(turnSummary.turnId);
+                              toggleFileChangesExpanded(turnSummary.turnId, fileChangesExpanded);
                             }}
                             data-scroll-anchor-ignore={isTailContentRow ? true : undefined}
                           >
