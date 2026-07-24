@@ -2101,26 +2101,14 @@ function SingleChatSurface(props: {
         return;
       }
 
-      await handleNewThread(
-        projectId,
-        {
-          envMode: appSettings.defaultThreadEnvMode,
-        },
-        {
-          search: (previous) => ({
-            ...stripEditorViewSearchParams(stripDiffSearchParams(previous)),
-            view: "editor",
-          }),
-        },
-      );
+      await handleNewThread(projectId, undefined, {
+        search: (previous) => ({
+          ...stripEditorViewSearchParams(stripDiffSearchParams(previous)),
+          view: "editor",
+        }),
+      });
     },
-    [
-      appSettings.defaultThreadEnvMode,
-      appSettings.sidebarThreadSortOrder,
-      handleNewThread,
-      navigate,
-      threadSummaries,
-    ],
+    [appSettings.sidebarThreadSortOrder, handleNewThread, navigate, threadSummaries],
   );
   const handleSelectEditorProject = useCallback(
     (projectId: ProjectId) => {

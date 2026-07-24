@@ -187,6 +187,7 @@ describe("studioProjects", () => {
             branch: null,
             worktreePath: null,
             envMode: "local",
+            workspaceOrigin: "intentional",
           },
         },
       }),
@@ -214,6 +215,7 @@ describe("studioProjects", () => {
             branch: null,
             worktreePath: null,
             envMode: "local",
+            workspaceOrigin: "intentional",
             promotedTo: "thread-real" as ThreadId,
           },
           [terminalDraftThreadId]: {
@@ -225,6 +227,7 @@ describe("studioProjects", () => {
             branch: null,
             worktreePath: null,
             envMode: "local",
+            workspaceOrigin: "intentional",
           },
         },
       }),

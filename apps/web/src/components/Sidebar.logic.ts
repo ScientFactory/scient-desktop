@@ -4,6 +4,7 @@
 
 import {
   MAX_PINNED_PROJECTS,
+  type GitBranch,
   type KeybindingCommand,
   type ProjectId,
   type PullRequestReviewRequestCountResult,
@@ -13,6 +14,7 @@ import { pluralize } from "@synara/shared/text";
 import { resolveThreadEnvironmentMode } from "@synara/shared/threadEnvironment";
 import { isWorkspaceRootWithin, workspaceRootsEqual } from "@synara/shared/threadWorkspace";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "../appSettings";
+import type { NewThreadWorkspaceIntent } from "../lib/threadBootstrap";
 import { resolveRestorableThreadRoute, type LastThreadRoute } from "../chatRouteRestore";
 import type { ChatMessage, Project, SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
@@ -47,6 +49,86 @@ export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 export const DEBUG_FEATURE_FLAGS_MENU_STORAGE_KEY = "scient:show-debug-feature-flags-menu";
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+export interface NewThreadInWorkspaceAction {
+  readonly id: "new-thread-in-workspace";
+  readonly label: string;
+  readonly workspace: Extract<
+    NewThreadWorkspaceIntent,
+    { readonly kind: "existing-local" | "existing-worktree" }
+  >;
+}
+
+export function resolveNewThreadInWorkspaceAction(input: {
+  readonly branch: string | null;
+  readonly envMode?: "local" | "worktree" | undefined;
+  readonly worktreePath: string | null;
+}): NewThreadInWorkspaceAction | null {
+  const branch = input.branch?.trim() ?? "";
+  if (!branch) return null;
+  const worktreePath = input.worktreePath?.trim() ?? "";
+  if (worktreePath) {
+    return {
+      id: "new-thread-in-workspace",
+      label: `New thread in worktree (${branch})`,
+      workspace: { kind: "existing-worktree", branch, worktreePath },
+    };
+  }
+  if (input.envMode === "worktree") return null;
+  return {
+    id: "new-thread-in-workspace",
+    label: `New thread on branch (${branch})`,
+    workspace: { kind: "existing-local", branch },
+  };
+}
+
+export type NewThreadInWorkspaceValidation =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly description: string };
+
+export function validateNewThreadInWorkspaceAction(input: {
+  readonly action: NewThreadInWorkspaceAction;
+  readonly branches: readonly GitBranch[];
+  readonly isRepo: boolean;
+  readonly projectCwd: string;
+}): NewThreadInWorkspaceValidation {
+  if (!input.isRepo) {
+    return {
+      ok: false,
+      description: "This project folder is no longer a Git repository.",
+    };
+  }
+  const branch = input.branches.find(
+    (candidate) => candidate.name === input.action.workspace.branch && candidate.isRemote !== true,
+  );
+  if (!branch) {
+    return {
+      ok: false,
+      description: `Branch ${input.action.workspace.branch} no longer exists locally.`,
+    };
+  }
+  if (input.action.workspace.kind === "existing-worktree") {
+    if (
+      !branch.worktreePath ||
+      !workspaceRootsEqual(branch.worktreePath, input.action.workspace.worktreePath)
+    ) {
+      return {
+        ok: false,
+        description: `The worktree for ${input.action.workspace.branch} was removed or moved.`,
+      };
+    }
+    return { ok: true };
+  }
+  if (
+    !branch.current ||
+    (branch.worktreePath !== null && !workspaceRootsEqual(branch.worktreePath, input.projectCwd))
+  ) {
+    return {
+      ok: false,
+      description: `Branch ${input.action.workspace.branch} is no longer checked out in the project folder.`,
+    };
+  }
+  return { ok: true };
+}
 export type SidebarView = "threads" | "studio" | "workspace";
 export type SidebarActionBadge = {
   readonly text: string;

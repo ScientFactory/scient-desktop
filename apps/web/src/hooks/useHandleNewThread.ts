@@ -10,7 +10,7 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import {
-  buildDraftThreadContextPatch,
+  buildDraftThreadWorkspacePatch,
   createActiveDraftThreadSnapshot,
   createActiveThreadSnapshot,
   createFreshDraftThreadSeed,
@@ -144,16 +144,15 @@ export function useHandleNewThread() {
       const resolveCreationState = (
         targetThreadId: ThreadId,
         draftThread: DraftThreadState | null,
-        creationOptions: NewThreadOptions | undefined,
       ) =>
         resolveTerminalThreadCreationState({
           activeDraftThread: activeDraftThreadSnapshot,
           activeThread: activeThreadSnapshot,
+          defaultEnvMode: settings.defaultThreadEnvMode,
           defaultProvider: options?.provider ?? settings.defaultProvider,
           draftComposerState:
             useComposerDraftStore.getState().draftsByThreadId[targetThreadId] ?? null,
           draftThread,
-          options: creationOptions,
           projectDefaultModelSelection,
           projectId,
         });
@@ -194,12 +193,13 @@ export function useHandleNewThread() {
           const preservedComposerDraft =
             useComposerDraftStore.getState().draftsByThreadId[bootstrapPlan.threadId] ?? null;
           let resolvedStoredDraftThread: DraftThreadState | null = bootstrapPlan.draftThread;
-          const shouldPreserveStoredTerminalContext =
-            entryPoint === "terminal" && bootstrapPlan.draftThread.entryPoint === "terminal";
-          const draftContextPatch = shouldPreserveStoredTerminalContext
-            ? null
-            : buildDraftThreadContextPatch(entryPoint, options);
-          const creationOptions = shouldPreserveStoredTerminalContext ? undefined : options;
+          const draftContextPatch = buildDraftThreadWorkspacePatch({
+            defaultEnvMode: settings.defaultThreadEnvMode,
+            draftThread: bootstrapPlan.draftThread,
+            entryPoint,
+            options,
+            reuseKind: "stored",
+          });
           if (draftContextPatch) {
             setDraftThreadContext(bootstrapPlan.threadId, draftContextPatch);
             resolvedStoredDraftThread = getDraftThread(bootstrapPlan.threadId);
@@ -212,11 +212,7 @@ export function useHandleNewThread() {
             if (entryPoint === "terminal") {
               await createTerminalThread(
                 bootstrapPlan.threadId,
-                resolveCreationState(
-                  bootstrapPlan.threadId,
-                  resolvedStoredDraftThread,
-                  creationOptions,
-                ),
+                resolveCreationState(bootstrapPlan.threadId, resolvedStoredDraftThread),
               );
             }
             return bootstrapPlan.threadId;
@@ -230,11 +226,7 @@ export function useHandleNewThread() {
           if (entryPoint === "terminal") {
             await createTerminalThread(
               bootstrapPlan.threadId,
-              resolveCreationState(
-                bootstrapPlan.threadId,
-                resolvedStoredDraftThread,
-                creationOptions,
-              ),
+              resolveCreationState(bootstrapPlan.threadId, resolvedStoredDraftThread),
             );
           }
           return bootstrapPlan.threadId;
@@ -249,7 +241,13 @@ export function useHandleNewThread() {
           const preservedComposerDraft =
             useComposerDraftStore.getState().draftsByThreadId[bootstrapPlan.threadId] ?? null;
           let resolvedActiveDraftThread: DraftThreadState | null = bootstrapPlan.draftThread;
-          const draftContextPatch = buildDraftThreadContextPatch(entryPoint, options);
+          const draftContextPatch = buildDraftThreadWorkspacePatch({
+            defaultEnvMode: settings.defaultThreadEnvMode,
+            draftThread: bootstrapPlan.draftThread,
+            entryPoint,
+            options,
+            reuseKind: "route",
+          });
           if (draftContextPatch) {
             setDraftThreadContext(bootstrapPlan.threadId, draftContextPatch);
             resolvedActiveDraftThread = getDraftThread(bootstrapPlan.threadId);
@@ -261,7 +259,7 @@ export function useHandleNewThread() {
           if (entryPoint === "terminal") {
             await createTerminalThread(
               bootstrapPlan.threadId,
-              resolveCreationState(bootstrapPlan.threadId, resolvedActiveDraftThread, options),
+              resolveCreationState(bootstrapPlan.threadId, resolvedActiveDraftThread),
             );
           }
           return bootstrapPlan.threadId;
@@ -274,7 +272,12 @@ export function useHandleNewThread() {
           markTemporaryThread(threadId);
         }
         const createdAt = new Date().toISOString();
-        const draftSeed = createFreshDraftThreadSeed({ createdAt, entryPoint, options });
+        const draftSeed = createFreshDraftThreadSeed({
+          createdAt,
+          defaultEnvMode: settings.defaultThreadEnvMode,
+          entryPoint,
+          options,
+        });
         const committed = await stageDraftNavigation({
           // Keep the previous routed draft alive while the destination loads. Replacing the
           // project's primary slot earlier makes the route guard redirect the old URL to Home.
@@ -317,7 +320,7 @@ export function useHandleNewThread() {
         if (entryPoint === "terminal") {
           await createTerminalThread(
             threadId,
-            resolveCreationState(threadId, getDraftThread(threadId), options),
+            resolveCreationState(threadId, getDraftThread(threadId)),
           );
         }
         return threadId;
@@ -335,6 +338,7 @@ export function useHandleNewThread() {
       markTemporaryThread,
       router,
       settings.defaultProvider,
+      settings.defaultThreadEnvMode,
     ],
   );
 

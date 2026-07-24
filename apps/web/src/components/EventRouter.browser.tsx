@@ -1056,6 +1056,7 @@ describe("EventRouter scoped orchestration sync", () => {
           branch: null,
           worktreePath: null,
           envMode: "local",
+          workspaceOrigin: "default",
           isTemporary: false,
         },
       },

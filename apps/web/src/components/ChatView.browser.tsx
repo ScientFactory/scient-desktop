@@ -3,6 +3,7 @@ import "../index.css";
 
 import {
   AutomationId,
+  DEFAULT_SERVER_SETTINGS,
   type AutomationCreateInput,
   type AutomationDefinition,
   EventId,
@@ -2929,6 +2930,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           branch: "feature/draft-automation",
           worktreePath: "/repo/worktrees/draft-automation",
           envMode: "worktree",
+          workspaceOrigin: "intentional",
         },
       },
       projectDraftThreadIdByProjectId: {
@@ -3034,6 +3036,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           branch: null,
           worktreePath: null,
           envMode: "local",
+          workspaceOrigin: "default",
         },
       },
       projectDraftThreadIdByProjectId: {
@@ -3121,6 +3124,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           branch: null,
           worktreePath: null,
           envMode: "local",
+          workspaceOrigin: "default",
         },
       },
       projectDraftThreadIdByProjectId: {
@@ -3203,6 +3207,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           branch: null,
           worktreePath: null,
           envMode: "local",
+          workspaceOrigin: "default",
         },
       },
       projectDraftThreadIdByProjectId: {
@@ -3281,6 +3286,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           branch: "feature/draft",
           worktreePath: "/repo/worktrees/feature-draft",
           envMode: "worktree",
+          workspaceOrigin: "intentional",
         },
       },
       projectDraftThreadIdByProjectId: {
@@ -4526,6 +4532,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           branch: null,
           worktreePath: null,
           envMode: "local",
+          workspaceOrigin: "intentional",
         },
       },
       projectDraftThreadIdByProjectId: {
@@ -4674,6 +4681,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           branch: null,
           worktreePath: null,
           envMode: "local",
+          workspaceOrigin: "intentional",
         },
       },
       projectDraftThreadIdByProjectId: {
@@ -5431,12 +5439,21 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("creates a new thread from the global chat.new shortcut", async () => {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-chat-shortcut-test" as MessageId,
+      targetText: "chat shortcut test",
+    });
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
-      snapshot: createSnapshotForTargetUser({
-        targetMessageId: "msg-user-chat-shortcut-test" as MessageId,
-        targetText: "chat shortcut test",
-      }),
+      snapshot: {
+        ...baseSnapshot,
+        threads: baseSnapshot.threads.map((thread) => ({
+          ...thread,
+          envMode: "worktree" as const,
+          branch: "feature/viewed-worktree",
+          worktreePath: "/repo/worktrees/viewed-worktree",
+        })),
+      },
       configureFixture: (nextFixture) => {
         nextFixture.serverConfig = {
           ...nextFixture.serverConfig,
@@ -5467,23 +5484,208 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const composerEditor = await waitForComposerEditor();
       composerEditor.focus();
       await waitForLayout();
-      await triggerChatNewShortcutUntilPath(
+      const newThreadPath = await triggerChatNewShortcutUntilPath(
         mounted.router,
         (path) => UUID_ROUTE_RE.test(path),
         "Route should have changed to a new draft thread UUID from the shortcut.",
       );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        branch: null,
+        worktreePath: null,
+        envMode: "local",
+        workspaceOrigin: "default",
+      });
     } finally {
       await mounted.cleanup();
     }
   });
 
-  it("promotes terminal-first shortcut threads so they render as terminal rows", async () => {
+  it("uses the configured New worktree default for provider-specific shortcuts", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
-        targetMessageId: "msg-user-terminal-shortcut-test" as MessageId,
-        targetText: "terminal shortcut test",
+        targetMessageId: "msg-user-provider-shortcut-worktree-default" as MessageId,
+        targetText: "provider shortcut worktree default",
       }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "chat.newCodex",
+              shortcut: {
+                key: "c",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        server: {
+          ...api.server,
+          getSettings: async () => ({
+            ...DEFAULT_SERVER_SETTINGS,
+            defaultThreadEnvMode: "worktree",
+          }),
+        },
+      }),
+    });
+
+    try {
+      await waitForNewThreadShortcutLabel();
+      await waitForServerConfigToApply();
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      await waitForLayout();
+      const newThreadPath = await triggerThreadShortcutUntilPath(
+        mounted.router,
+        () => dispatchThreadShortcut("c"),
+        (path) => UUID_ROUTE_RE.test(path),
+        "Provider shortcut should open a fresh draft thread.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        branch: "main",
+        worktreePath: null,
+        envMode: "worktree",
+        workspaceOrigin: "default",
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("starts one fresh thread in the exact worktree from repeated context-menu actions", async () => {
+    const contextMenuShow = vi.fn(
+      async (_items: Parameters<NativeApi["contextMenu"]["show"]>[0]) => "new-thread-in-workspace",
+    );
+    const exactWorktreeBranchResult: Awaited<ReturnType<NativeApi["git"]["listBranches"]>> = {
+      isRepo: true,
+      hasOriginRemote: true,
+      branches: [
+        {
+          name: "feature/exact-worktree",
+          current: false,
+          isDefault: false,
+          worktreePath: "/repo/worktrees/exact-worktree",
+        },
+      ],
+    };
+    const branchLookupDeferred = (() => {
+      let resolve!: (value: Awaited<ReturnType<NativeApi["git"]["listBranches"]>>) => void;
+      const promise = new Promise<Awaited<ReturnType<NativeApi["git"]["listBranches"]>>>(
+        (nextResolve) => {
+          resolve = nextResolve;
+        },
+      );
+      return { promise, resolve };
+    })();
+    const branchLookup = vi.fn(async () => exactWorktreeBranchResult);
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-context-worktree-test" as MessageId,
+      targetText: "context worktree test",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...baseSnapshot,
+        threads: baseSnapshot.threads.map((thread) => ({
+          ...thread,
+          envMode: "worktree" as const,
+          branch: "feature/exact-worktree",
+          worktreePath: "/repo/worktrees/exact-worktree",
+        })),
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        contextMenu: {
+          ...api.contextMenu,
+          show: contextMenuShow as NativeApi["contextMenu"]["show"],
+        },
+        git: {
+          ...api.git,
+          listBranches: branchLookup,
+        },
+      }),
+    });
+
+    try {
+      await vi.waitFor(() => expect(branchLookup).toHaveBeenCalled());
+      branchLookup.mockClear();
+      branchLookup.mockImplementation(() => branchLookupDeferred.promise);
+      const threadRow = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-thread-entry-point]")).find(
+            (row) => row.textContent?.includes(THREAD_TITLE),
+          ) ?? null,
+        "Unable to find the current thread row.",
+      );
+      const openContextMenu = () =>
+        threadRow.dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            clientX: 24,
+            clientY: 24,
+          }),
+        );
+
+      openContextMenu();
+      await vi.waitFor(() => expect(branchLookup).toHaveBeenCalledTimes(1));
+      openContextMenu();
+      await vi.waitFor(() => expect(contextMenuShow).toHaveBeenCalledTimes(2));
+      expect(contextMenuShow.mock.calls[0]?.[0]?.[0]).toMatchObject({
+        id: "new-thread-in-workspace",
+        label: "New thread in worktree (feature/exact-worktree)",
+      });
+
+      branchLookupDeferred.resolve(exactWorktreeBranchResult);
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "The explicit worktree action should open a fresh draft.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+      expect(branchLookup).toHaveBeenCalledTimes(1);
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        branch: "feature/exact-worktree",
+        worktreePath: "/repo/worktrees/exact-worktree",
+        envMode: "worktree",
+        workspaceOrigin: "intentional",
+      });
+    } finally {
+      branchLookupDeferred.resolve(exactWorktreeBranchResult);
+      await mounted.cleanup();
+    }
+  });
+
+  it("promotes terminal-first shortcut threads so they render as terminal rows", async () => {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-terminal-shortcut-test" as MessageId,
+      targetText: "terminal shortcut test",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...baseSnapshot,
+        threads: baseSnapshot.threads.map((thread) => ({
+          ...thread,
+          envMode: "worktree" as const,
+          branch: "feature/viewed-terminal-worktree",
+          worktreePath: "/repo/worktrees/viewed-terminal-worktree",
+        })),
+      },
       configureFixture: (nextFixture) => {
         nextFixture.serverConfig = {
           ...nextFixture.serverConfig,
@@ -5537,6 +5739,21 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 20_000, interval: 16 },
       );
+      const terminalCreateRequest = wsRequests.find(
+        (request) =>
+          request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+          typeof request.command === "object" &&
+          request.command !== null &&
+          "type" in request.command &&
+          "threadId" in request.command &&
+          request.command.type === "thread.create" &&
+          request.command.threadId === newThreadId,
+      );
+      expect(terminalCreateRequest?.command).toMatchObject({
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+      });
 
       // The shortcut persists terminal-first presentation separately from the
       // server thread row. Observe that state before simulating promotion so
@@ -5611,6 +5828,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           branch: "feature/terminal-title",
           worktreePath: "/repo/project/.worktrees/terminal-title",
           envMode: "worktree",
+          workspaceOrigin: "intentional",
         },
       },
       projectDraftThreadIdByProjectId: {

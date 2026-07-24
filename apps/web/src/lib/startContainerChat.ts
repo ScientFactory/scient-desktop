@@ -54,7 +54,7 @@ export async function startContainerChat(input: {
       return { ok: false, error: input.errorLabel };
     }
     const threadOptions: NewThreadOptions | undefined =
-      input.fresh === true ? { fresh: true, envMode: "local", worktreePath: null } : undefined;
+      input.fresh === true ? { fresh: true, workspace: { kind: "local-container" } } : undefined;
     const threadId = await input.handleNewThread(projectId, threadOptions);
     return { ok: true, threadId };
   } catch (error) {
