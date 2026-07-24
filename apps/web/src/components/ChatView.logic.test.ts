@@ -32,6 +32,7 @@ import {
   resolveEnvironmentPanelPreferenceAfterFirstSend,
   resolveEnvironmentPanelPreferenceUpdate,
   resolveEnvironmentPanelVisible,
+  resolveGitRepoUiState,
   resolveProjectScriptTerminalTarget,
   resolveQueuedSteerGateTransition,
   resolveComposerRuntimeMode,
@@ -44,6 +45,7 @@ import {
   shouldEnableComposerPastedTextCollapse,
   shouldHandlePromptHistoryNavigationKey,
   shouldRenderProviderHealthBanner,
+  shouldShowGitActions,
   shouldRenderComposerFooter,
   shouldRouteComposerSendToPendingInput,
   shouldShowComposerModelBootstrapSkeleton,
@@ -952,6 +954,60 @@ describe("environment panel visibility", () => {
       resolveEnvironmentPanelVisible({
         environmentEnabled: true,
         environmentPanelOpen: false,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("Studio Git UI", () => {
+  it("waits for positive repository detection in Studio", () => {
+    expect(resolveGitRepoUiState({ isStudioContainer: true, queriedIsRepo: undefined })).toBe(
+      false,
+    );
+    expect(resolveGitRepoUiState({ isStudioContainer: true, queriedIsRepo: false })).toBe(false);
+    expect(resolveGitRepoUiState({ isStudioContainer: true, queriedIsRepo: true })).toBe(true);
+  });
+
+  it("keeps normal project Git UI stable while discovery is pending", () => {
+    expect(resolveGitRepoUiState({ isStudioContainer: false, queriedIsRepo: undefined })).toBe(
+      true,
+    );
+  });
+
+  it("never offers Git actions for a non-repository Studio folder", () => {
+    expect(
+      shouldShowGitActions({
+        isStudioContainer: true,
+        isContainerLandingProject: false,
+        hasResolvedWorktreePath: true,
+        isGitRepo: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowGitActions({
+        isStudioContainer: true,
+        isContainerLandingProject: false,
+        hasResolvedWorktreePath: true,
+        isGitRepo: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("preserves existing non-Studio action visibility", () => {
+    expect(
+      shouldShowGitActions({
+        isStudioContainer: false,
+        isContainerLandingProject: false,
+        hasResolvedWorktreePath: false,
+        isGitRepo: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowGitActions({
+        isStudioContainer: false,
+        isContainerLandingProject: true,
+        hasResolvedWorktreePath: false,
+        isGitRepo: true,
       }),
     ).toBe(false);
   });

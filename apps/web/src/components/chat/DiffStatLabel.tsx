@@ -9,10 +9,19 @@ export const DiffStatLabel = memo(function DiffStatLabel(props: {
   deletions: number;
 }) {
   const { additions, deletions } = props;
+  const accessibleLabel = `${additions} ${additions === 1 ? "addition" : "additions"}, ${deletions} ${deletions === 1 ? "deletion" : "deletions"}`;
   return (
-    <span className="inline-flex items-baseline gap-1.5 tabular-nums">
-      <span className="text-[var(--color-decoration-added)]">+{additions}</span>
-      <span className="text-[var(--color-decoration-deleted)]">-{deletions}</span>
+    <span
+      role="group"
+      aria-label={accessibleLabel}
+      className="inline-flex items-baseline gap-1.5 tabular-nums"
+    >
+      <span aria-hidden="true" className="text-[var(--color-decoration-added)]">
+        +{additions}
+      </span>
+      <span aria-hidden="true" className="text-[var(--color-decoration-deleted)]">
+        -{deletions}
+      </span>
     </span>
   );
 });

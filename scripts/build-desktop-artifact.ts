@@ -22,6 +22,7 @@ import {
   validateDesktopNativeBuildHost,
 } from "./lib/desktop-platform-build-config.ts";
 import { isolateDesktopSigningEnvironment } from "./lib/desktop-signing-environment.ts";
+import { resolvePinnedElectronBuilder } from "./lib/electron-builder-authority.ts";
 import { SCIENT_PRODUCTION_BUNDLE_ID } from "@synara/shared/desktopIdentity";
 import { parseBooleanEnvValue } from "./lib/env-bool.ts";
 import { verifySingleMacDmgSignature } from "./lib/mac-artifact-signature.ts";
@@ -44,7 +45,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
-
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
@@ -1103,7 +1103,15 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* Effect.log(
     `[desktop-artifact] Building ${options.platform}/${options.target} (arch=${options.arch}, version=${appVersion})...`,
   );
-  const electronBuilderCli = path.join(repoRoot, "node_modules", "electron-builder", "cli.js");
+  const electronBuilderCli = yield* Effect.try({
+    try: () => resolvePinnedElectronBuilder(repoRoot).cliPath,
+    catch: (cause) =>
+      new BuildScriptError({
+        message:
+          "Pinned electron-builder CLI could not be resolved within repository dependency authority.",
+        cause,
+      }),
+  });
   if (!(yield* fs.exists(electronBuilderCli))) {
     return yield* new BuildScriptError({
       message: `Pinned electron-builder CLI was not found at ${electronBuilderCli}`,
