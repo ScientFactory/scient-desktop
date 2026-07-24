@@ -169,7 +169,6 @@ describe("ProviderConnectionDialog", () => {
       await screen.unmount();
       queryClient.clear();
       restoreNativeApi();
-      restoreNativeApi();
     }
   });
 
@@ -1500,6 +1499,7 @@ describe("ProviderConnectionDialog", () => {
     } finally {
       await screen.unmount();
       queryClient.clear();
+      restoreNativeApi();
     }
   });
 
