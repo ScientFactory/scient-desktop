@@ -335,7 +335,7 @@ async function connectToPackagedRenderer(debuggingPort, processOutput) {
 
 async function addProjectByTypedPath(page, workspacePath) {
   await page.keyboard.press("Control+Shift+O");
-  const folderDialog = page.getByRole("dialog");
+  const folderDialog = page.getByRole("dialog", { name: "Add project" });
   const localFolderSource = folderDialog.getByText("Local folder", { exact: true });
   await localFolderSource.waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
   await localFolderSource.click({ timeout: ACTION_TIMEOUT_MS });
@@ -363,6 +363,11 @@ async function addProjectByTypedPath(page, workspacePath) {
   });
   await emptyProjectChoice.waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
   await emptyProjectChoice.click({ timeout: ACTION_TIMEOUT_MS });
+  await folderDialog.waitFor({ state: "hidden", timeout: ACTION_TIMEOUT_MS });
+  await page
+    .getByText(basename(workspacePath), { exact: true })
+    .first()
+    .waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
 }
 
 async function waitForPersistedProject(databasePath, workspacePath) {
