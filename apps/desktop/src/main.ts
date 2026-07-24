@@ -106,6 +106,7 @@ import {
   hasDownloadProgressAdvanced,
   isExpectedStalledDownloadCancellationError,
   isUpdateVersionNewer,
+  resolveLinuxPackageType,
   shouldBroadcastDownloadProgress,
   shouldCheckForUpdatesOnForeground,
 } from "./updateState";
@@ -933,16 +934,17 @@ function parseAppUpdateYml(): Record<string, string> | null {
 
 function readLinuxPackageType(): string | null {
   if (process.platform !== "linux" || !app.isPackaged) return null;
-  if (process.env.APPIMAGE) return "AppImage";
+  let resourcePackageType: string | null = null;
   try {
-    const packageType = FS.readFileSync(
+    resourcePackageType = FS.readFileSync(
       Path.join(process.resourcesPath, "package-type"),
       "utf8",
     ).trim();
-    return packageType || null;
-  } catch {
-    return null;
-  }
+  } catch {}
+  return resolveLinuxPackageType({
+    resourcePackageType,
+    appImage: process.env.APPIMAGE,
+  });
 }
 
 function normalizeCommitHash(value: unknown): string | null {

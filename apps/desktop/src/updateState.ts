@@ -5,6 +5,15 @@ export type DownloadProgressSample = {
   readonly transferred?: number | null;
 };
 
+export function resolveLinuxPackageType(args: {
+  readonly resourcePackageType: string | null;
+  readonly appImage?: string | undefined;
+}): string | null {
+  const packagedType = args.resourcePackageType?.trim();
+  if (packagedType) return packagedType;
+  return args.appImage ? "AppImage" : null;
+}
+
 export function getDownloadStallTimeoutMessage(timeoutMs: number): string {
   const timeoutSeconds = Math.max(1, Math.round(timeoutMs / 1000));
   return `Download stalled after ${timeoutSeconds} seconds without progress. Try again.`;
