@@ -2,11 +2,11 @@
 // tears down the detached process group and temporary state on completion or interruption.
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
-import { resolveElectronLaunchCommand } from "./electron-launcher.mjs";
+import { resolveElectronPackagePath, resolveLinuxSandboxArgs } from "./electron-launcher.mjs";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(scriptDir, "..");
@@ -22,7 +22,10 @@ const preloadOutputPath = join(tempDir, "browser-overlay-lifecycle.preload.cjs")
 const rendererOutputPath = join(tempDir, "browser-overlay-lifecycle.renderer.js");
 const fixturePath = join(tempDir, "browser-overlay-lifecycle.html");
 const macTestBundleId = `com.scientfactory.scient.browser-overlay-test.${process.pid}`;
-const macSavedStatePath = join(tmpdir(), `${macTestBundleId}.savedState`);
+const macSavedStatePaths = [
+  join(tmpdir(), `${macTestBundleId}.savedState`),
+  join(homedir(), "Library", "Saved Application State", `${macTestBundleId}.savedState`),
+];
 
 function createMacTestElectronExecutable(originalExecutablePath) {
   const originalAppPath = dirname(dirname(dirname(originalExecutablePath)));
@@ -98,19 +101,18 @@ writeFileSync(
   "utf8",
 );
 
-const electronCommand = resolveElectronLaunchCommand(
-  [
-    "--disable-gpu",
-    electronOutputPath,
-    ...(process.platform === "darwin" ? ["-ApplePersistenceIgnoreState", "YES"] : []),
-  ],
-  { development: false },
-);
+const electronPackagePath = resolveElectronPackagePath();
 const electronExecutablePath =
   process.platform === "darwin"
-    ? createMacTestElectronExecutable(electronCommand.electronPath)
-    : electronCommand.electronPath;
-const child = spawn(electronExecutablePath, electronCommand.args, {
+    ? createMacTestElectronExecutable(electronPackagePath)
+    : electronPackagePath;
+const electronArgs = [
+  ...resolveLinuxSandboxArgs(electronPackagePath, { development: false }),
+  "--disable-gpu",
+  electronOutputPath,
+  ...(process.platform === "darwin" ? ["-ApplePersistenceIgnoreState", "YES"] : []),
+];
+const child = spawn(electronExecutablePath, electronArgs, {
   cwd: workspaceRoot,
   detached: process.platform !== "win32",
   env: {
@@ -154,7 +156,9 @@ function finish(code) {
   clearTimeout(timeout);
   rmSync(tempDir, { recursive: true, force: true });
   if (process.platform === "darwin") {
-    rmSync(macSavedStatePath, { recursive: true, force: true });
+    for (const savedStatePath of macSavedStatePaths) {
+      rmSync(savedStatePath, { recursive: true, force: true });
+    }
   }
   process.exit(code);
 }
