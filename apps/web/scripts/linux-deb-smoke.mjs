@@ -339,7 +339,7 @@ async function addProjectByTypedPath(page, workspacePath) {
   const localFolderSource = folderDialog.getByText("Local folder", { exact: true });
   await localFolderSource.waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
   await localFolderSource.click({ timeout: ACTION_TIMEOUT_MS });
-  const pathInput = folderDialog.getByPlaceholder("Enter project path (e.g. ~/projects/my-app)");
+  const pathInput = folderDialog.getByPlaceholder("Type or browse a folder path");
   await pathInput.waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
   await pathInput.fill(workspacePath);
   await folderDialog
