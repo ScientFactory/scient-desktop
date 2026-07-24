@@ -30,8 +30,6 @@ export interface WorkspaceFileOpener {
    * external editor when no in-app viewer can resolve the path.
    */
   openFile: (path: string) => boolean;
-  /** Opens the rendered HTML site in the user's external browser. */
-  openHtmlInExternalBrowser?: (path: string) => boolean;
   /** Resolves the local HTML site's preview URL for thumbnail rendering. */
   getHtmlPreviewUrl?: (path: string) => Promise<string | null>;
   /** Optional hover warm-up for the file contents + syntax highlighter. */

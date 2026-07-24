@@ -34,6 +34,7 @@ export interface InspectedHtmlArtifact {
   readonly baseDirectory: string | null;
   readonly siteRoot: string | null;
   readonly allowedResourcePaths: readonly string[];
+  readonly allowedExternalUrls: readonly string[];
 }
 
 function isPathInside(candidate: string, root: string): boolean {
@@ -146,23 +147,60 @@ function unsupported(reason: string): InspectedHtmlArtifact {
     baseDirectory: null,
     siteRoot: null,
     allowedResourcePaths: [],
+    allowedExternalUrls: [],
   };
 }
 
-const CSS_RESOURCE_PATTERN = /(?:url\(\s*|@import\s+(?:url\(\s*)?)["']?([^"')\s]+)["']?\s*\)?/gi;
+const CSS_URL_PATTERN = /url\(\s*(?:(["'])(.*?)\1|([^"')]*?))\s*\)/gi;
+const CSS_IMPORT_STRING_PATTERN = /@import\s+(["'])(.*?)\1/gi;
 const JAVASCRIPT_RESOURCE_PATTERN =
   /(?:\bfetch|new\s+(?:Shared)?Worker|navigator\.serviceWorker\.register|importScripts|new\s+URL)\s*\(\s*(["'])([^"']+)\1/g;
+const JAVASCRIPT_NAVIGATION_PATTERN =
+  /(?:(?:window\.)?open|location\.(?:assign|replace))\s*\(\s*(["'])([^"']+)\1|(?:window\.)?location(?:\.href)?\s*=\s*(["'])([^"']+)\3/g;
+const JAVASCRIPT_ATTRIBUTE_RESOURCE_PATTERN =
+  /(?:\.\s*(?:src|href|action|poster)\s*=|\.setAttribute\s*\(\s*["'](?:src|href|action|poster)["']\s*,)\s*(["'])([^"']+)\1/g;
 
 function cssResourceReferences(source: string): readonly string[] {
-  return [...source.matchAll(CSS_RESOURCE_PATTERN)].flatMap((match) =>
-    match[1] ? [match[1]] : [],
-  );
+  return [
+    ...[...source.matchAll(CSS_URL_PATTERN)].flatMap((match) => {
+      const resource = (match[2] ?? match[3])?.trim();
+      return resource ? [resource] : [];
+    }),
+    ...[...source.matchAll(CSS_IMPORT_STRING_PATTERN)].flatMap((match) => {
+      const resource = match[2]?.trim();
+      return resource ? [resource] : [];
+    }),
+  ];
 }
 
 function javascriptResourceReferences(source: string): readonly string[] {
-  return [...source.matchAll(JAVASCRIPT_RESOURCE_PATTERN)].flatMap((match) =>
-    match[2] ? [match[2]] : [],
-  );
+  return [
+    ...[...source.matchAll(JAVASCRIPT_RESOURCE_PATTERN)].flatMap((match) =>
+      match[2] ? [match[2]] : [],
+    ),
+    ...[...source.matchAll(JAVASCRIPT_NAVIGATION_PATTERN)].flatMap((match) => {
+      const resource = match[2] ?? match[4];
+      return resource ? [resource] : [];
+    }),
+    ...[...source.matchAll(JAVASCRIPT_ATTRIBUTE_RESOURCE_PATTERN)].flatMap((match) =>
+      match[2] ? [match[2]] : [],
+    ),
+  ];
+}
+
+function normalizedExternalResourceUrl(value: string, baseHref?: string | null): string | null {
+  try {
+    const base = baseHref
+      ? new URL(baseHref, "http://preview.invalid/")
+      : new URL("http://preview.invalid/");
+    const resolved = new URL(value, base);
+    if (resolved.protocol !== "http:" && resolved.protocol !== "https:") return null;
+    if (resolved.hostname === "preview.invalid") return null;
+    resolved.hash = "";
+    return resolved.toString();
+  } catch {
+    return null;
+  }
 }
 
 function resourceReferencesForElement(element: Element): readonly string[] {
@@ -193,24 +231,67 @@ function resourceReferencesForElement(element: Element): readonly string[] {
   return resources;
 }
 
-function htmlResourceReferences(source: string): readonly string[] {
+function htmlResourceReferences(source: string): {
+  readonly baseHref: string | null;
+  readonly resources: readonly string[];
+} {
   const document = parse(source) as DocumentNode;
   const resources: string[] = [];
+  let baseHref: string | null = null;
   visit(document, (element) => {
+    if (element.tagName.toLowerCase() === "base" && baseHref === null) {
+      baseHref = attributeOf(element, "href");
+      return;
+    }
     resources.push(...resourceReferencesForElement(element));
   });
-  return resources;
+  return { baseHref, resources };
+}
+
+function resolveHtmlDocumentResourcePath(input: {
+  value: string;
+  documentPath: string;
+  siteRoot: string;
+  baseHref: string | null;
+}): string | null {
+  let referenceDirectory = path.dirname(input.documentPath);
+  if (input.baseHref) {
+    if (isExternalResource(input.baseHref)) return null;
+    const basePath = resolveLocalResourcePath(
+      input.baseHref,
+      input.baseHref.trim().startsWith("/") ? input.siteRoot : referenceDirectory,
+    );
+    if (!basePath) return null;
+    const baseWithoutQuery = input.baseHref.trim().split(/[?#]/, 1)[0] ?? "";
+    referenceDirectory = baseWithoutQuery.endsWith("/") ? basePath : path.dirname(basePath);
+  }
+  return resolveLocalResourcePath(
+    input.value,
+    input.value.trim().startsWith("/") ? input.siteRoot : referenceDirectory,
+  );
 }
 
 async function collectAllowedResourcePaths(
   resources: readonly string[],
-  baseDirectory: string,
+  entryPath: string,
+  entryBaseHref: string | null,
   resourceBoundary: string,
-): Promise<readonly string[]> {
+): Promise<{ readonly paths: readonly string[]; readonly externalUrls: readonly string[] }> {
   const pending = resources
-    .map((resource) => resolveLocalResourcePath(resource, baseDirectory))
+    .map((resource) =>
+      resolveHtmlDocumentResourcePath({
+        value: resource,
+        documentPath: entryPath,
+        siteRoot: resourceBoundary,
+        baseHref: entryBaseHref,
+      }),
+    )
     .filter((resource): resource is string => resource !== null);
   const allowed = new Set<string>();
+  const externalUrls = new Set<string>();
+  const addExternalUrl = (url: string) => {
+    if (externalUrls.size < RESOURCE_GRAPH_MAX_FILES) externalUrls.add(url);
+  };
 
   while (pending.length > 0 && allowed.size < RESOURCE_GRAPH_MAX_FILES) {
     const candidate = pending.shift();
@@ -234,23 +315,36 @@ async function collectAllowedResourcePaths(
       continue;
     }
     const contents = await fs.readFile(canonical, "utf8");
-    const dependencyDirectory = path.dirname(canonical);
     if (extension === ".html" || extension === ".htm") {
-      for (const dependency of htmlResourceReferences(contents)) {
-        const resolved = resolveLocalResourcePath(
-          dependency,
-          dependency.startsWith("/") ? baseDirectory : dependencyDirectory,
-        );
+      const linkedDocument = htmlResourceReferences(contents);
+      for (const dependency of linkedDocument.resources) {
+        const externalUrl = normalizedExternalResourceUrl(dependency, linkedDocument.baseHref);
+        if (externalUrl) {
+          addExternalUrl(externalUrl);
+          continue;
+        }
+        const resolved = resolveHtmlDocumentResourcePath({
+          value: dependency,
+          documentPath: canonical,
+          siteRoot: resourceBoundary,
+          baseHref: linkedDocument.baseHref,
+        });
         if (resolved) pending.push(resolved);
       }
       continue;
     }
+    const dependencyDirectory = path.dirname(canonical);
     if (extension === ".css") {
       for (const dependency of cssResourceReferences(contents)) {
+        const externalUrl = normalizedExternalResourceUrl(dependency);
+        if (externalUrl) {
+          addExternalUrl(externalUrl);
+          continue;
+        }
         const resolved = dependency
           ? resolveLocalResourcePath(
               dependency,
-              dependency.startsWith("/") ? baseDirectory : dependencyDirectory,
+              dependency.startsWith("/") ? resourceBoundary : dependencyDirectory,
             )
           : null;
         if (resolved) pending.push(resolved);
@@ -259,9 +353,14 @@ async function collectAllowedResourcePaths(
     }
 
     for (const dependency of javascriptResourceReferences(contents)) {
+      const externalUrl = normalizedExternalResourceUrl(dependency);
+      if (externalUrl) {
+        addExternalUrl(externalUrl);
+        continue;
+      }
       const resolved = resolveLocalResourcePath(
         dependency,
-        dependency.startsWith("/") ? baseDirectory : dependencyDirectory,
+        dependency.startsWith("/") ? resourceBoundary : dependencyDirectory,
       );
       if (resolved) pending.push(resolved);
     }
@@ -271,19 +370,21 @@ async function collectAllowedResourcePaths(
     for (const moduleImport of imports) {
       const dependency = moduleImport.n;
       if (!dependency || (!dependency.startsWith(".") && !dependency.startsWith("/"))) {
+        const externalUrl = dependency ? normalizedExternalResourceUrl(dependency) : null;
+        if (externalUrl) addExternalUrl(externalUrl);
         continue;
       }
       const resolved = dependency
         ? resolveLocalResourcePath(
             dependency,
-            dependency.startsWith("/") ? baseDirectory : dependencyDirectory,
+            dependency.startsWith("/") ? resourceBoundary : dependencyDirectory,
           )
         : null;
       if (resolved) pending.push(resolved);
     }
   }
 
-  return [...allowed];
+  return { paths: [...allowed], externalUrls: [...externalUrls] };
 }
 
 function commonSiteRoot(
@@ -345,12 +446,10 @@ export async function inspectHtmlArtifact(
   const source = await readInspectionPrefix(absolutePath);
   const document = parse(source) as DocumentNode;
   const baseDirectory = path.dirname(absolutePath);
-  // Opening a workspace file carries the workspace as its resource authority.
-  // An absolute file outside that workspace carries only its own directory;
-  // markup cannot enlarge that authority by naming ../../ files.
-  const resourceBoundary = isPathInside(absolutePath, canonicalWorkspaceRoot)
-    ? canonicalWorkspaceRoot
-    : baseDirectory;
+  // Opening one HTML document authorizes only its containing site directory.
+  // Parent traversal requires a separate, explicit site-root choice; markup is
+  // never allowed to nominate arbitrary files elsewhere in the workspace.
+  const resourceBoundary = baseDirectory;
   const warnings: ProjectHtmlArtifactWarning[] = [];
   if (stat.size > HTML_INSPECTION_MAX_BYTES) {
     warnings.push({
@@ -360,6 +459,10 @@ export async function inspectHtmlArtifact(
     });
   }
   const localResources: Array<{ value: string; executable: boolean }> = [];
+  const externalResources = new Set<string>();
+  const addExternalResource = (url: string) => {
+    if (externalResources.size < RESOURCE_GRAPH_MAX_FILES) externalResources.add(url);
+  };
   let title: string | undefined;
   let hasInlineScript = false;
   let hasBrowserScript = false;
@@ -367,6 +470,8 @@ export async function inspectHtmlArtifact(
     source,
   );
   let hasUnsupportedExecutable = false;
+  const documentBaseHref = htmlResourceReferences(source).baseHref;
+  const inlineModuleSources: string[] = [];
 
   const addWarning = (warning: ProjectHtmlArtifactWarning) => {
     if (
@@ -379,6 +484,23 @@ export async function inspectHtmlArtifact(
 
   visit(document, (element) => {
     const tagName = element.tagName.toLowerCase();
+    if (
+      element.attrs.some(
+        (attribute) =>
+          (attribute.name.toLowerCase().startsWith("on") && attribute.value.trim().length > 0) ||
+          (/^(?:href|src|action)$/i.test(attribute.name) &&
+            attribute.value.trim().toLowerCase().startsWith("javascript:")),
+      )
+    ) {
+      hasInlineScript = true;
+    }
+    const srcdoc = attributeOf(element, "srcdoc");
+    if (srcdoc && /<script\b|\bon\w+\s*=|javascript:/i.test(srcdoc)) {
+      hasInlineScript = true;
+    }
+    if (tagName === "base") {
+      return;
+    }
     if (tagName === "title" && !title) {
       const candidate = textContentOf(element).replace(/\s+/g, " ").trim();
       if (candidate) title = candidate.slice(0, 500);
@@ -389,15 +511,23 @@ export async function inspectHtmlArtifact(
       const sourcePath = attributeOf(element, "src");
       if (!sourcePath) {
         const inlineScript = textContentOf(element);
-        hasInlineScript = inlineScript.trim().length > 0;
+        hasInlineScript ||= inlineScript.trim().length > 0;
+        if (attributeOf(element, "type")?.trim().toLowerCase() === "module") {
+          inlineModuleSources.push(inlineScript);
+        }
         for (const resource of javascriptResourceReferences(inlineScript)) {
-          if (!isExternalResource(resource)) {
+          const externalUrl = normalizedExternalResourceUrl(resource);
+          if (externalUrl) {
+            addExternalResource(externalUrl);
+          } else if (!isExternalResource(resource)) {
             localResources.push({ value: resource, executable: false });
           }
         }
         return;
       }
       if (isExternalResource(sourcePath)) {
+        const externalUrl = normalizedExternalResourceUrl(sourcePath);
+        if (externalUrl) addExternalResource(externalUrl);
         hasBrowserScript = true;
         return;
       }
@@ -418,14 +548,35 @@ export async function inspectHtmlArtifact(
     }
 
     for (const resource of resourceReferencesForElement(element)) {
-      if (!isExternalResource(resource)) {
+      const externalUrl = normalizedExternalResourceUrl(resource, documentBaseHref);
+      if (externalUrl) {
+        addExternalResource(externalUrl);
+      } else if (!isExternalResource(resource)) {
         localResources.push({ value: resource, executable: false });
       }
     }
   });
 
+  if (inlineModuleSources.length > 0) {
+    await initializeModuleLexer;
+    for (const inlineModule of inlineModuleSources) {
+      const [imports] = parseModuleImports(inlineModule);
+      for (const moduleImport of imports) {
+        const dependency = moduleImport.n;
+        if (dependency && (dependency.startsWith(".") || dependency.startsWith("/"))) {
+          localResources.push({ value: dependency, executable: true });
+        }
+      }
+    }
+  }
+
   for (const resource of localResources) {
-    const resolved = resolveLocalResourcePath(resource.value, baseDirectory);
+    const resolved = resolveHtmlDocumentResourcePath({
+      value: resource.value,
+      documentPath: absolutePath,
+      siteRoot: resourceBoundary,
+      baseHref: documentBaseHref,
+    });
     if (!resolved) continue;
     const canonical = await fs.realpath(resolved).catch(() => null);
     if (!canonical) {
@@ -458,11 +609,22 @@ export async function inspectHtmlArtifact(
       ? "This HTML file references source modules and must run through its development server."
       : undefined;
 
-  const allowedResourcePaths = await collectAllowedResourcePaths(
+  if (mode === "interactive-bundle" && externalResources.size > 0) {
+    addWarning({
+      code: "external-resource-blocked",
+      message:
+        "External network resources are blocked for interactive local HTML; bundle them into the same site directory instead.",
+    });
+  }
+
+  const collectedResources = await collectAllowedResourcePaths(
     localResources.map((resource) => resource.value),
-    baseDirectory,
+    absolutePath,
+    documentBaseHref,
     resourceBoundary,
   );
+  const allowedResourcePaths = collectedResources.paths;
+  for (const externalUrl of collectedResources.externalUrls) addExternalResource(externalUrl);
 
   return {
     result: {
@@ -476,5 +638,6 @@ export async function inspectHtmlArtifact(
     baseDirectory,
     siteRoot: commonSiteRoot(absolutePath, allowedResourcePaths, resourceBoundary),
     allowedResourcePaths,
+    allowedExternalUrls: [...externalResources],
   };
 }

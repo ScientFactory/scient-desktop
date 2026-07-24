@@ -3,7 +3,9 @@
 // Layer: Server HTML-preview live implementation
 
 import crypto from "node:crypto";
+import { constants as fsConstants, type Stats } from "node:fs";
 import fs from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 
@@ -29,9 +31,16 @@ interface PreviewGrant {
   readonly id: string;
   readonly entryPath: string;
   readonly siteRoot: string;
-  readonly filesByRoute: ReadonlyMap<string, string>;
+  readonly filesByRoute: ReadonlyMap<string, GrantedFile>;
   readonly listenerPort: number;
+  readonly thumbnail: boolean;
   readonly dedicatedServer?: http.Server;
+}
+
+interface GrantedFile {
+  readonly path: string;
+  readonly device: number;
+  readonly inode: number;
 }
 
 function isPathInside(candidate: string, root: string): boolean {
@@ -109,7 +118,7 @@ function decodeRequestedAssetPath(rawUrl: string | undefined): string | null {
   } catch {
     return null;
   }
-  if (decoded.includes("\0") || decoded.includes("\\") || decoded.includes("%")) return null;
+  if (decoded.includes("\0") || decoded.includes("\\")) return null;
   const relativePath = decoded.replace(/^\/+/, "");
   if (relativePath.length > 8_192) return null;
   const segments = relativePath.split("/");
@@ -122,27 +131,44 @@ function decodeRequestedAssetPath(rawUrl: string | undefined): string | null {
 async function resolveGrantedFile(
   grant: PreviewGrant,
   rawUrl: string | undefined,
-): Promise<string | null> {
+): Promise<{
+  readonly file: FileHandle;
+  readonly path: string;
+  readonly stat: Stats;
+} | null> {
   const relativePath = decodeRequestedAssetPath(rawUrl);
   if (relativePath === null) return null;
-  const grantedFile = grant.filesByRoute.get(relativePath);
-  if (!grantedFile) return null;
+  const granted = grant.filesByRoute.get(relativePath);
+  if (!granted) return null;
 
   // Re-resolve on every request so replacing a granted path with a symlink cannot
   // retarget an already-issued capability. The route map is the authority; the
   // directory containing the HTML is never an implicit file-server root.
-  const canonicalFile = await fs.realpath(grantedFile).catch(() => null);
-  if (canonicalFile !== grantedFile) return null;
-  const stat = await fs.stat(canonicalFile).catch(() => null);
-  return stat?.isFile() ? canonicalFile : null;
+  const canonicalFile = await fs.realpath(granted.path).catch(() => null);
+  if (canonicalFile !== granted.path) return null;
+  const noFollow = process.platform === "win32" ? 0 : fsConstants.O_NOFOLLOW;
+  const file = await fs.open(granted.path, fsConstants.O_RDONLY | noFollow).catch(() => null);
+  if (!file) return null;
+  const stat = await file.stat().catch(() => null);
+  if (!stat?.isFile() || stat.dev !== granted.device || stat.ino !== granted.inode) {
+    await file.close().catch(() => undefined);
+    return null;
+  }
+  return { file, path: granted.path, stat: stat as Stats };
 }
 
-function browserHeaders(): Record<string, string> {
+function browserHeaders(grant: PreviewGrant): Record<string, string> {
   return {
     "Cache-Control": "no-store",
     "Accept-Ranges": "bytes",
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
+    ...(grant.thumbnail
+      ? {
+          "Content-Security-Policy":
+            "default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'none'; connect-src 'none'; frame-src 'none'; media-src 'none'; object-src 'none'; form-action 'none'; base-uri 'none'",
+        }
+      : {}),
   };
 }
 
@@ -187,31 +213,33 @@ function grantedRouteFor(filePath: string, siteRoot: string): string | null {
   return relativePath.split(path.sep).join("/");
 }
 
-function buildGrantedFileRoutes(input: {
+async function buildGrantedFileRoutes(input: {
   entryPath: string;
   siteRoot: string;
   resourcePaths: readonly string[];
-}): ReadonlyMap<string, string> {
-  const routes = new Map<string, string>();
-  const addRoute = (route: string, filePath: string) => {
+}): Promise<ReadonlyMap<string, GrantedFile>> {
+  const routes = new Map<string, GrantedFile>();
+  const addRoute = async (route: string, filePath: string) => {
     if (route.split("/").some((segment) => segment.startsWith("."))) return;
-    routes.set(route, filePath);
+    const stat = await fs.stat(filePath).catch(() => null);
+    if (!stat?.isFile()) return;
+    routes.set(route, { path: filePath, device: stat.dev, inode: stat.ino });
   };
 
   for (const filePath of [input.entryPath, ...input.resourcePaths]) {
     const route = grantedRouteFor(filePath, input.siteRoot);
     if (route === null) continue;
-    addRoute(route, filePath);
+    await addRoute(route, filePath);
     if (path.basename(filePath).toLowerCase() === "index.html") {
       const directoryRoute = route.slice(0, -"index.html".length).replace(/\/$/, "");
-      addRoute(directoryRoute, filePath);
-      addRoute(directoryRoute.length > 0 ? `${directoryRoute}/` : "", filePath);
+      await addRoute(directoryRoute, filePath);
+      await addRoute(directoryRoute.length > 0 ? `${directoryRoute}/` : "", filePath);
     }
   }
 
   // The capability URL itself always opens the selected entry document. Keep
   // its canonical route too so relative navigation/back-forward remain stable.
-  addRoute("", input.entryPath);
+  await addRoute("", input.entryPath);
   return routes;
 }
 
@@ -248,21 +276,9 @@ export const HtmlArtifactPreviewLive = Layer.effect(
     const grants = new Map<string, PreviewGrant>();
     let listenerPort = 0;
 
-    const removeGrant = (id: string): boolean => {
-      const grant = grants.get(id);
-      if (!grant) return false;
-      grants.delete(id);
-      if (grant.dedicatedServer) {
-        void closeServer(grant.dedicatedServer);
-      }
-      return true;
-    };
-
     const reserveGrantCapacity = (): void => {
-      while (grants.size >= PREVIEW_MAX_ACTIVE_GRANTS) {
-        const oldestId = grants.keys().next().value as string | undefined;
-        if (!oldestId) break;
-        removeGrant(oldestId);
+      if (grants.size >= PREVIEW_MAX_ACTIVE_GRANTS) {
+        throw new Error("Too many HTML previews are open. Close a preview and try again.");
       }
     };
 
@@ -283,43 +299,50 @@ export const HtmlArtifactPreviewLive = Layer.effect(
             writeNotFound(response);
             return;
           }
-          const filePath = await resolveGrantedFile(grant, request.url);
-          if (!filePath) {
+          const resolvedFile = await resolveGrantedFile(grant, request.url);
+          if (!resolvedFile) {
             writeNotFound(response);
             return;
           }
-          const stat = await fs.stat(filePath).catch(() => null);
-          if (!stat?.isFile()) {
-            writeNotFound(response);
-            return;
-          }
+          const { file, path: filePath, stat } = resolvedFile;
           const contentType = contentTypeFor(filePath);
           const range = parseSingleByteRange(request.headers.range, stat.size);
           if (range === "invalid") {
             response.writeHead(416, {
-              ...browserHeaders(),
+              ...browserHeaders(grant),
               "Content-Range": `bytes */${stat.size}`,
             });
             response.end();
+            await file.close().catch(() => undefined);
             return;
           }
           const responseSize = range ? range.end - range.start + 1 : stat.size;
           response.writeHead(range ? 206 : 200, {
-            ...browserHeaders(),
+            ...browserHeaders(grant),
             "Content-Length": String(responseSize),
             "Content-Type": contentType,
             ...(range ? { "Content-Range": `bytes ${range.start}-${range.end}/${stat.size}` } : {}),
           });
           if (request.method === "HEAD") {
             response.end();
+            await file.close().catch(() => undefined);
             return;
           }
-          const file = await fs.open(filePath, "r");
           const stream = file.createReadStream(
-            range ? { start: range.start, end: range.end } : undefined,
+            range ? { start: range.start, end: range.end, autoClose: false } : { autoClose: false },
           );
-          stream.on("error", () => response.destroy());
-          stream.on("close", () => void file.close().catch(() => undefined));
+          let fileClosed = false;
+          const closeFile = () => {
+            if (fileClosed) return;
+            fileClosed = true;
+            void file.close().catch(() => undefined);
+          };
+          stream.on("error", () => {
+            closeFile();
+            response.destroy();
+          });
+          stream.on("end", closeFile);
+          response.on("close", closeFile);
           stream.pipe(response);
         })().catch(() => {
           if (!response.headersSent) writeNotFound(response);
@@ -373,7 +396,7 @@ export const HtmlArtifactPreviewLive = Layer.effect(
             return inspected.result;
           }
           const canonicalSiteRoot = await fs.realpath(inspected.siteRoot);
-          const filesByRoute = buildGrantedFileRoutes({
+          const filesByRoute = await buildGrantedFileRoutes({
             entryPath: inspected.absolutePath,
             siteRoot: canonicalSiteRoot,
             resourcePaths: inspected.allowedResourcePaths,
@@ -390,10 +413,12 @@ export const HtmlArtifactPreviewLive = Layer.effect(
             siteRoot: canonicalSiteRoot,
             filesByRoute,
             listenerPort: grantListenerPort,
+            thumbnail: input.thumbnail === true,
             ...(dedicatedServer ? { dedicatedServer } : {}),
           });
           return {
             ...inspected.result,
+            allowedExternalUrls: inspected.allowedExternalUrls,
             previewUrl: dedicatedServer
               ? `http://127.0.0.1:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`
               : `http://g-${id}${PREVIEW_HOST_SUFFIX}:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`,

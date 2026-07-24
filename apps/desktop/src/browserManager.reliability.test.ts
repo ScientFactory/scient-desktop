@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const electron = vi.hoisted(() => {
   const createdWebContents: Array<{
+    id: number;
     loadURL: ReturnType<typeof vi.fn>;
     handlers: Map<string, Array<(...args: any[]) => void>>;
     windowOpenHandler: ((details: any) => { action: string }) | null;
@@ -20,9 +21,11 @@ const electron = vi.hoisted(() => {
       on: ReturnType<typeof vi.fn>;
       clearStorageData: ReturnType<typeof vi.fn>;
       clearCache: ReturnType<typeof vi.fn>;
+      resolveHost: ReturnType<typeof vi.fn>;
       webRequest: {
         onBeforeSendHeaders: ReturnType<typeof vi.fn>;
         onBeforeRequest: ReturnType<typeof vi.fn>;
+        onCompleted: ReturnType<typeof vi.fn>;
       };
     }
   >();
@@ -84,9 +87,21 @@ const electron = vi.hoisted(() => {
       on: vi.fn(),
       clearStorageData: vi.fn(async () => undefined),
       clearCache: vi.fn(async () => undefined),
+      resolveHost: vi.fn(async (hostname: string) => ({
+        endpoints: [
+          {
+            address:
+              hostname === "private.example" || hostname.endsWith(".nip.io")
+                ? "127.0.0.1"
+                : "93.184.216.34",
+            family: "ipv4",
+          },
+        ],
+      })),
       webRequest: {
         onBeforeSendHeaders: vi.fn(),
         onBeforeRequest: vi.fn(),
+        onCompleted: vi.fn(),
       },
     };
     sessions.set(partition, existing);
@@ -231,6 +246,11 @@ describe("DesktopBrowserManager reliability", () => {
       threadId: THREAD_ID,
       initialUrl: previewUrl,
       kind: "local-html",
+      allowedExternalUrls: [
+        "https://cdn.example/app.js",
+        "https://private.example/declared.js",
+        "https://127.0.0.1.nip.io/asset.js",
+      ],
     });
     const tabId = opened.activeTabId;
     expect(tabId).toBeTruthy();
@@ -243,17 +263,53 @@ describe("DesktopBrowserManager reliability", () => {
     const beforeRequest = previewSession?.webRequest.onBeforeRequest.mock.calls[0]?.[0];
     expect(beforeRequest).toBeTypeOf("function");
     const exactOriginResult = vi.fn();
-    beforeRequest({ url: `${previewUrl}app.js` }, exactOriginResult);
+    beforeRequest(
+      { url: `${previewUrl}app.js`, method: "GET", resourceType: "script" },
+      exactOriginResult,
+    );
     expect(exactOriginResult).toHaveBeenCalledWith({ cancel: false });
     const publicResult = vi.fn();
-    beforeRequest({ url: "https://cdn.example/app.js" }, publicResult);
-    expect(publicResult).toHaveBeenCalledWith({ cancel: false });
+    beforeRequest(
+      { url: "https://cdn.example/app.js", method: "GET", resourceType: "script" },
+      publicResult,
+    );
+    await vi.waitFor(() => expect(publicResult).toHaveBeenCalledWith({ cancel: false }));
+    const dnsPrivateResult = vi.fn();
+    beforeRequest(
+      { url: "https://private.example/declared.js", method: "GET", resourceType: "script" },
+      dnsPrivateResult,
+    );
+    await vi.waitFor(() => expect(dnsPrivateResult).toHaveBeenCalledWith({ cancel: true }));
+    const rebindingResult = vi.fn();
+    beforeRequest(
+      { url: "https://127.0.0.1.nip.io/asset.js", method: "GET", resourceType: "script" },
+      rebindingResult,
+    );
+    await vi.waitFor(() => expect(rebindingResult).toHaveBeenCalledWith({ cancel: true }));
     const privateResult = vi.fn();
-    beforeRequest({ url: "http://127.0.0.1:8080/private" }, privateResult);
+    beforeRequest(
+      { url: "http://127.0.0.1:8080/private", method: "GET", resourceType: "xhr" },
+      privateResult,
+    );
     expect(privateResult).toHaveBeenCalledWith({ cancel: true });
     const fileResult = vi.fn();
-    beforeRequest({ url: "file:///etc/passwd" }, fileResult);
+    beforeRequest({ url: "file:///etc/passwd", method: "GET", resourceType: "other" }, fileResult);
     expect(fileResult).toHaveBeenCalledWith({ cancel: true });
+
+    const internals = manager as unknown as {
+      ensureLiveRuntime: (threadId: ThreadId, tabId: string) => unknown;
+    };
+    internals.ensureLiveRuntime(THREAD_ID, tabId ?? "");
+    const contents = electron.createdWebContents.at(-1);
+    const completed = previewSession?.webRequest.onCompleted.mock.calls[0]?.[0];
+    expect(completed).toBeTypeOf("function");
+    completed({
+      resourceType: "mainFrame",
+      statusCode: 404,
+      webContentsId: contents?.id,
+      url: `${previewUrl}missing.html`,
+    });
+    expect(manager.getState({ threadId: THREAD_ID }).lastError).toContain("HTTP 404");
 
     manager.close({ threadId: THREAD_ID });
     await vi.waitFor(() => {
@@ -263,7 +319,7 @@ describe("DesktopBrowserManager reliability", () => {
     manager.dispose();
   });
 
-  it("keeps same-origin local navigation and separates public links into web tabs", async () => {
+  it("keeps same-origin local navigation and denies cross-origin navigation", () => {
     const manager = new DesktopBrowserManager();
     const previewUrl = "http://g-12345678-1234-4123-8123-123456789abc.preview.localhost:43123/";
     const opened = manager.open({
@@ -307,11 +363,7 @@ describe("DesktopBrowserManager reliability", () => {
     };
     navigate(publicEvent);
     expect(publicEvent.preventDefault).toHaveBeenCalledOnce();
-    await vi.waitFor(() => {
-      expect(manager.getState({ threadId: THREAD_ID }).tabs).toContainEqual(
-        expect.objectContaining({ kind: "web", url: publicEvent.url }),
-      );
-    });
+    expect(manager.getState({ threadId: THREAD_ID }).tabs).toHaveLength(1);
     manager.dispose();
   });
 });

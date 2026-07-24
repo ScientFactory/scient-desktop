@@ -120,7 +120,7 @@ export function LocalImageErrorCard(props: {
   downloadError?: string | null | undefined;
 }) {
   return (
-    <span className={cn("local-image-error", props.className)}>
+    <span className={cn("local-image-error", props.className)} role="alert">
       <span className="local-image-error__icon" aria-hidden="true">
         <TriangleAlertIcon className="size-4" />
       </span>
@@ -131,7 +131,6 @@ export function LocalImageErrorCard(props: {
             "local-image-error__subtitle",
             props.downloadError ? "text-destructive" : undefined,
           )}
-          role={props.downloadError ? "alert" : undefined}
         >
           {props.downloadError ?? "The file may have moved or be unavailable."}
         </span>

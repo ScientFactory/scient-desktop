@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  isPrivateOrNonPublicIpAddress,
   isLocalOrPrivateNetworkUrl,
   localHtmlPreviewNavigationDisposition,
   localHtmlPreviewRequestAllowed,
@@ -9,16 +10,49 @@ import {
 const ORIGIN = "http://g-123.preview.localhost:5000";
 
 describe("localHtmlPreviewPolicy", () => {
-  it("allows the exact preview origin and public web dependencies", () => {
-    for (const url of [
-      `${ORIGIN}/app.js`,
-      "https://cdn.example/app.js",
-      "wss://events.example/socket",
-      "data:text/plain,ok",
-      "blob:http://g-123.preview.localhost:5000/id",
-    ]) {
-      expect(localHtmlPreviewRequestAllowed({ url, allowedOrigin: ORIGIN })).toBe(true);
-    }
+  it("allows the exact preview origin and exact declared public assets", () => {
+    expect(localHtmlPreviewRequestAllowed({ url: `${ORIGIN}/app.js`, allowedOrigin: ORIGIN })).toBe(
+      true,
+    );
+    expect(
+      localHtmlPreviewRequestAllowed({
+        url: "https://cdn.example/app.js",
+        allowedOrigin: ORIGIN,
+        allowedExternalUrls: ["https://cdn.example/app.js"],
+        resourceType: "script",
+      }),
+    ).toBe(true);
+    expect(
+      localHtmlPreviewRequestAllowed({
+        url: "data:text/plain,ok",
+        allowedOrigin: ORIGIN,
+      }),
+    ).toBe(true);
+    expect(
+      localHtmlPreviewRequestAllowed({
+        url: "blob:http://g-123.preview.localhost:5000/id",
+        allowedOrigin: ORIGIN,
+      }),
+    ).toBe(true);
+  });
+
+  it("denies undeclared or data-bearing public egress", () => {
+    expect(
+      localHtmlPreviewRequestAllowed({
+        url: "https://cdn.example/app.js?secret=1",
+        allowedOrigin: ORIGIN,
+        allowedExternalUrls: ["https://cdn.example/app.js"],
+        resourceType: "image",
+      }),
+    ).toBe(false);
+    expect(
+      localHtmlPreviewRequestAllowed({
+        url: "https://api.example/data",
+        allowedOrigin: ORIGIN,
+        allowedExternalUrls: ["https://api.example/data"],
+        resourceType: "xhr",
+      }),
+    ).toBe(false);
   });
 
   it("denies local services, private networks, privileged schemes, and malformed URLs", () => {
@@ -31,6 +65,8 @@ describe("localHtmlPreviewPolicy", () => {
       "http://192.168.1.2/private",
       "http://169.254.169.254/latest/meta-data",
       "http://[::1]/private",
+      "http://[::ffff:7f00:1]/private",
+      "http://localhost.localdomain/private",
       "file:///Users/example/.ssh/id_rsa",
       "scient://settings",
       "not a url",
@@ -39,7 +75,7 @@ describe("localHtmlPreviewPolicy", () => {
     }
   });
 
-  it("keeps preview navigation local and moves public destinations to a normal web tab", () => {
+  it("keeps preview navigation local and denies cross-origin egress", () => {
     expect(
       localHtmlPreviewNavigationDisposition({
         url: `${ORIGIN}/linked.html`,
@@ -53,7 +89,7 @@ describe("localHtmlPreviewPolicy", () => {
         allowedOrigin: ORIGIN,
         isMainFrame: true,
       }),
-    ).toBe("open-web");
+    ).toBe("deny");
     expect(
       localHtmlPreviewNavigationDisposition({
         url: "http://127.0.0.1:3000/",
@@ -74,5 +110,9 @@ describe("localHtmlPreviewPolicy", () => {
     expect(isLocalOrPrivateNetworkUrl("http://127.1/")).toBe(true);
     expect(isLocalOrPrivateNetworkUrl("http://[fd00::1]/")).toBe(true);
     expect(isLocalOrPrivateNetworkUrl("https://example.com/")).toBe(false);
+    expect(isLocalOrPrivateNetworkUrl("https://fda.gov/")).toBe(false);
+    expect(isLocalOrPrivateNetworkUrl("https://fcc.gov/")).toBe(false);
+    expect(isPrivateOrNonPublicIpAddress("::ffff:7f00:1")).toBe(true);
+    expect(isPrivateOrNonPublicIpAddress("2001:4860:4860::8888")).toBe(false);
   });
 });

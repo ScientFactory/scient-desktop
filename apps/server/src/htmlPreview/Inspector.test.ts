@@ -65,6 +65,8 @@ describe("inspectHtmlArtifact", () => {
     const workspace = await makeWorkspace();
     await fs.writeFile(path.join(workspace, "data.json"), '{"ok":true}');
     await fs.writeFile(path.join(workspace, "worker.js"), "postMessage('ready');");
+    await fs.writeFile(path.join(workspace, "dynamic.png"), "png");
+    await fs.writeFile(path.join(workspace, "dynamic.html"), "<p>Dynamic</p>");
     await fs.writeFile(path.join(workspace, "background.svg"), "<svg></svg>");
     await fs.writeFile(
       path.join(workspace, "app.js"),
@@ -81,6 +83,7 @@ describe("inspectHtmlArtifact", () => {
         '<style>body { background-image: url("background.svg") }</style>',
         '<a href="linked.html">Linked</a>',
         '<script type="module" src="app.js"></script>',
+        '<script>image.src = "dynamic.png"; location.assign("dynamic.html")</script>',
       ].join(""),
     );
 
@@ -89,12 +92,77 @@ describe("inspectHtmlArtifact", () => {
     expect(new Set(inspected.allowedResourcePaths)).toEqual(
       new Set(
         await Promise.all(
-          ["app.js", "data.json", "worker.js", "background.svg", "linked.html", "linked.css"].map(
-            (file) => fs.realpath(path.join(workspace, file)),
+          [
+            "app.js",
+            "data.json",
+            "worker.js",
+            "background.svg",
+            "linked.html",
+            "linked.css",
+            "dynamic.png",
+            "dynamic.html",
+          ].map((file) => fs.realpath(path.join(workspace, file))),
+        ),
+      ),
+    );
+  });
+
+  it("honors document base URLs, root-relative assets, inline modules, and quoted CSS spaces", async () => {
+    const workspace = await makeWorkspace();
+    await fs.mkdir(path.join(workspace, "assets"));
+    await fs.writeFile(path.join(workspace, "logo.svg"), "<svg></svg>");
+    await fs.writeFile(path.join(workspace, "assets", "hero image.png"), "png");
+    await fs.writeFile(
+      path.join(workspace, "assets", "theme.css"),
+      'body { background-image: url("hero image.png") }',
+    );
+    await fs.writeFile(path.join(workspace, "assets", "chunk.js"), "export const ready = true;");
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      [
+        '<base href="assets/">',
+        '<link rel="stylesheet" href="theme.css">',
+        '<img src="/logo.svg">',
+        '<img src="https://cdn.example/declared.png">',
+        '<script type="module">import "./chunk.js";</script>',
+      ].join(""),
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(new Set(inspected.allowedResourcePaths)).toEqual(
+      new Set(
+        await Promise.all(
+          ["assets/theme.css", "assets/hero image.png", "assets/chunk.js", "logo.svg"].map((file) =>
+            fs.realpath(path.join(workspace, file)),
           ),
         ),
       ),
     );
+    expect(inspected.allowedExternalUrls).toEqual(["https://cdn.example/declared.png"]);
+    expect(inspected.result.warnings).toContainEqual({
+      code: "external-resource-blocked",
+      message:
+        "External network resources are blocked for interactive local HTML; bundle them into the same site directory instead.",
+    });
+  });
+
+  it("does not allow a nested workspace document to nominate a parent secret", async () => {
+    const workspace = await makeWorkspace();
+    await fs.mkdir(path.join(workspace, "site"));
+    await fs.writeFile(path.join(workspace, "credentials.json"), '{"secret":true}');
+    await fs.writeFile(
+      path.join(workspace, "site", "index.html"),
+      '<script>fetch("../credentials.json")</script>',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "site/index.html" });
+
+    expect(inspected.allowedResourcePaths).toEqual([]);
+    expect(inspected.result.warnings).toContainEqual({
+      code: "local-resource-denied",
+      message: "Local preview resource is outside the opened file's authority: ../credentials.json",
+    });
   });
 
   it("routes Vite TSX source entrypoints to the nearest package run target", async () => {
@@ -141,7 +209,7 @@ describe("inspectHtmlArtifact", () => {
     expect(inspected.result.runTarget).toBeUndefined();
   });
 
-  it("recognizes external resources without reporting them as blocked", async () => {
+  it("reports external resources that safe interactive mode will block", async () => {
     const workspace = await makeWorkspace();
     await fs.writeFile(
       path.join(workspace, "index.html"),
@@ -151,7 +219,14 @@ describe("inspectHtmlArtifact", () => {
     const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
 
     expect(inspected.result.mode).toBe("interactive-bundle");
-    expect(inspected.result.warnings).toEqual([]);
+    expect(inspected.result.warnings).toEqual([
+      {
+        code: "external-resource-blocked",
+        message:
+          "External network resources are blocked for interactive local HTML; bundle them into the same site directory instead.",
+      },
+    ]);
+    expect(inspected.allowedExternalUrls).toEqual(["https://cdn.example/app.js"]);
   });
 
   it("inspects absolute files outside the workspace", async () => {

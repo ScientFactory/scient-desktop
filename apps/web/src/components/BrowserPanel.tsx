@@ -1606,15 +1606,27 @@ export function BrowserPanel({
             </MenuItem>
             <MenuItem
               className={BROWSER_ACTION_MENU_ITEM_CLASS_NAME}
-              disabled={!activeTab}
+              disabled={
+                !activeTab ||
+                activeTab.kind === "artifact" ||
+                (activeTab.kind === "local-html" && !activeTab.displayUrl)
+              }
               onClick={() => {
                 if (!ensureLiveRuntime()) return;
                 if (!api || !activeTab) return;
-                void api.shell.openExternal(activeTab.url);
+                if (activeTab.kind === "local-html" && activeTab.displayUrl) {
+                  void api.shell.openInEditor(activeTab.displayUrl, "system-default");
+                  return;
+                }
+                if (activeTab.kind !== "artifact") void api.shell.openExternal(activeTab.url);
               }}
             >
               <BrowserActionMenuIcon icon={ExternalLinkIcon} />
-              <span>Open externally</span>
+              <span>
+                {activeTab?.kind === "local-html"
+                  ? "Open original in default app"
+                  : "Open externally"}
+              </span>
             </MenuItem>
             <MenuSeparator />
             <MenuItem className={BROWSER_ACTION_MENU_ITEM_CLASS_NAME} onClick={onClosePanel}>

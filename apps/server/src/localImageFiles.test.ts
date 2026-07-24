@@ -5,7 +5,7 @@ import path from "node:path";
 import { SCRATCH_WORKSPACES_DIRNAME } from "@synara/shared/threadWorkspace";
 import { afterEach, describe, it } from "vitest";
 
-import { resolveAllowedLocalPreviewFile } from "./localImageFiles.ts";
+import { createLocalPreviewGrant, resolveAllowedLocalPreviewFile } from "./localImageFiles.ts";
 
 const tempDirs: string[] = [];
 
@@ -22,6 +22,18 @@ afterEach(() => {
 });
 
 describe("resolveAllowedLocalPreviewFile", () => {
+  it("renews an active file grant without changing its media URL token", async () => {
+    const workspace = makeTempDir("synara-stable-media-grant-");
+    const mediaPath = path.join(workspace, "long-recording.mp3");
+    writeFileSync(mediaPath, Buffer.from("audio"));
+
+    const first = await createLocalPreviewGrant({ requestedPath: mediaPath });
+    const renewed = await createLocalPreviewGrant({ requestedPath: mediaPath });
+
+    assert.equal(renewed.grant, first.grant);
+    assert.ok(Date.parse(renewed.expiresAt) >= Date.parse(first.expiresAt));
+  });
+
   it("allows images inside the current workspace", async () => {
     const workspace = makeTempDir("synara-image-workspace-");
     writeFileSync(path.join(workspace, ".git"), "gitdir: .git");

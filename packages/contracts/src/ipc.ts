@@ -313,6 +313,7 @@ export interface BrowserTabState {
   faviconUrl: string | null;
   lastCommittedUrl: string | null;
   lastError: string | null;
+  allowedExternalUrls?: readonly string[];
 }
 
 export interface ThreadBrowserState {
@@ -329,6 +330,8 @@ export interface BrowserOpenInput {
   initialUrl?: string;
   kind?: BrowserTabKind;
   displayUrl?: string;
+  /** Exact public subresource URLs declared by a capability-backed local HTML document. */
+  allowedExternalUrls?: readonly string[];
 }
 
 export interface BrowserThreadInput {
@@ -352,6 +355,7 @@ export interface BrowserNewTabInput {
   kind?: BrowserTabKind;
   displayUrl?: string;
   activate?: boolean;
+  allowedExternalUrls?: readonly string[];
 }
 
 export interface BrowserPanelBounds {

@@ -218,13 +218,19 @@ export const ProjectInspectHtmlArtifactResult = Schema.Struct({
 });
 export type ProjectInspectHtmlArtifactResult = typeof ProjectInspectHtmlArtifactResult.Type;
 
-export const ProjectPrepareHtmlArtifactPreviewInput = ProjectInspectHtmlArtifactInput;
+export const ProjectPrepareHtmlArtifactPreviewInput = Schema.Struct({
+  ...ProjectInspectHtmlArtifactInput.fields,
+  thumbnail: Schema.optional(Schema.Boolean),
+});
 export type ProjectPrepareHtmlArtifactPreviewInput =
   typeof ProjectPrepareHtmlArtifactPreviewInput.Type;
 
 export const ProjectPrepareHtmlArtifactPreviewResult = Schema.Struct({
   ...ProjectInspectHtmlArtifactResult.fields,
   previewUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
+  allowedExternalUrls: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
+  ),
   expiresAt: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProjectPrepareHtmlArtifactPreviewResult =

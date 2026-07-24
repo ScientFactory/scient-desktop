@@ -1803,13 +1803,20 @@ function SingleChatSurface(props: {
       const prepared = await api.projects.prepareHtmlArtifactPreview({
         cwd: htmlCwd,
         path: absolutePath,
+        thumbnail: true,
       });
-      return prepared.mode === "static-document" ? (prepared.previewUrl ?? null) : null;
+      if (prepared.mode === "static-document") return prepared.previewUrl ?? null;
+      if (prepared.previewUrl) {
+        await api.projects
+          .revokeHtmlArtifactPreview({ previewUrl: prepared.previewUrl })
+          .catch(() => undefined);
+      }
+      return null;
     },
     [queryClient, workspaceRoot],
   );
   const openHtmlPreview = useCallback(
-    (path: string, destination: "internal" | "external"): boolean => {
+    (path: string): boolean => {
       const targetPath = resolveDockFileOpenTarget(path, workspaceRoot);
       if (!targetPath || !isSupportedLocalHtmlPath(targetPath)) {
         return false;
@@ -1830,50 +1837,61 @@ function SingleChatSurface(props: {
         if (!absolutePath || !htmlCwd) {
           throw new Error("This HTML file path could not be resolved.");
         }
-        const prepared = await api.projects.prepareHtmlArtifactPreview({
-          cwd: htmlCwd,
-          path: absolutePath,
-        });
-        let url = prepared.previewUrl ?? null;
-        let browserKind: "local-html" | "local-app" = "local-html";
-
-        if (prepared.mode === "dev-server-entrypoint") {
-          if (!prepared.runTarget || !props.projectId || !activeProject) {
-            throw new Error(prepared.reason ?? "No development command was found for this app.");
-          }
-          const confirmed = await api.dialogs.confirm(
-            `This HTML entrypoint needs its development server. Run this command?\n\n${prepared.runTarget.command}\n\nWorking directory: ${prepared.runTarget.cwd}`,
-          );
-          if (!confirmed) {
-            return;
-          }
-          const { server } = await api.projects.runDevServer({
-            projectId: props.projectId,
-            command: prepared.runTarget.command,
-            cwd: prepared.runTarget.cwd,
-            env: {
-              SYNARA_PROJECT_ROOT: activeProject.cwd,
-              ...(workspaceRoot && workspaceRoot !== activeProject.cwd
-                ? { SYNARA_WORKTREE_PATH: workspaceRoot }
-                : {}),
-            },
+        let previewUrlToRevoke: string | null = null;
+        try {
+          const prepared = await api.projects.prepareHtmlArtifactPreview({
+            cwd: htmlCwd,
+            path: absolutePath,
           });
-          if (server.status !== "running" || !server.url) {
-            throw new Error(server.error ?? "The development server did not become ready.");
-          }
-          url = server.url;
-          browserKind = "local-app";
-        }
+          let url = prepared.previewUrl ?? null;
+          previewUrlToRevoke = url;
+          let browserKind: "local-html" | "local-app" = "local-html";
 
-        if (prepared.mode === "unsupported") {
-          throw new Error(prepared.reason ?? "This HTML file cannot be previewed safely.");
-        }
-        if (!url) {
-          throw new Error("This HTML file is not available for preview.");
-        }
-        if (destination === "external") {
-          await api.shell.openExternal(url);
-        } else {
+          if (prepared.mode === "dev-server-entrypoint") {
+            if (!prepared.runTarget || !props.projectId || !activeProject) {
+              throw new Error(prepared.reason ?? "No development command was found for this app.");
+            }
+            const confirmed = await api.dialogs.confirm(
+              `This HTML entrypoint needs its development server. Run this command?\n\n${prepared.runTarget.command}\n\nWorking directory: ${prepared.runTarget.cwd}`,
+            );
+            if (!confirmed) {
+              return;
+            }
+            const { server } = await api.projects.runDevServer({
+              projectId: props.projectId,
+              command: prepared.runTarget.command,
+              cwd: prepared.runTarget.cwd,
+              env: {
+                SYNARA_PROJECT_ROOT: activeProject.cwd,
+                ...(workspaceRoot && workspaceRoot !== activeProject.cwd
+                  ? { SYNARA_WORKTREE_PATH: workspaceRoot }
+                  : {}),
+              },
+            });
+            if (server.status !== "running" || !server.url) {
+              throw new Error(server.error ?? "The development server did not become ready.");
+            }
+            url = server.url;
+            previewUrlToRevoke = null;
+            browserKind = "local-app";
+          }
+
+          if (prepared.mode === "unsupported") {
+            throw new Error(prepared.reason ?? "This HTML file cannot be previewed safely.");
+          }
+          if (!url) {
+            throw new Error("This HTML file is not available for preview.");
+          }
+          if (prepared.warnings.length > 0) {
+            transientAlertManager.add({
+              type: "warning",
+              title: "HTML preview opened with limits",
+              description: prepared.warnings
+                .slice(0, 3)
+                .map((warning) => warning.message)
+                .join(" "),
+            });
+          }
           requestImmediateDockHydration("browser");
           openPane(props.threadId, { kind: "browser" });
           await api.browser.open({
@@ -1881,7 +1899,19 @@ function SingleChatSurface(props: {
             initialUrl: url,
             kind: browserKind,
             displayUrl: absolutePath,
+            ...(browserKind === "local-html" &&
+            prepared.mode === "static-document" &&
+            prepared.allowedExternalUrls
+              ? { allowedExternalUrls: prepared.allowedExternalUrls }
+              : {}),
           });
+          previewUrlToRevoke = null;
+        } finally {
+          if (previewUrlToRevoke) {
+            await api.projects
+              .revokeHtmlArtifactPreview({ previewUrl: previewUrlToRevoke })
+              .catch(() => undefined);
+          }
         }
       })().catch((error: unknown) => {
         transientAlertManager.add({
@@ -1915,13 +1945,12 @@ function SingleChatSurface(props: {
           return false;
         }
         if (localFileViewerKindForPath(targetPath) === "html") {
-          return openHtmlPreview(path, "internal");
+          return openHtmlPreview(path);
         }
         requestImmediateDockHydration("file");
         openPane(props.threadId, { kind: "file", filePath: targetPath });
         return true;
       },
-      openHtmlInExternalBrowser: (path) => openHtmlPreview(path, "external"),
       getHtmlPreviewUrl,
       prefetchFile: prefetchOpenerFile,
     }),
@@ -1945,7 +1974,7 @@ function SingleChatSurface(props: {
           return false;
         }
         if (localFileViewerKindForPath(targetPath) === "html") {
-          return openHtmlPreview(path, "internal");
+          return openHtmlPreview(path);
         }
         handleSelectEditorFile(targetPath);
         return true;
@@ -2232,7 +2261,7 @@ function SingleChatSurface(props: {
   const handleOpenDockFile = useCallback(
     (path: string) => {
       if (localFileViewerKindForPath(path) === "html") {
-        openHtmlPreview(path, "internal");
+        openHtmlPreview(path);
         return;
       }
       requestImmediateDockHydration("file");

@@ -13,14 +13,7 @@ import { memo, useEffect, useId, useMemo, useState } from "react";
 
 import { resolveAvailableEditorOptions } from "~/editorMetadata";
 import { extractMessageArtifacts, type MessageArtifactReference } from "~/lib/messageArtifacts";
-import {
-  AppsIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
-  ExternalLinkIcon,
-  EyeIcon,
-  FolderIcon,
-} from "~/lib/icons";
+import { AppsIcon, ChevronDownIcon, ChevronUpIcon, EyeIcon, FolderIcon } from "~/lib/icons";
 import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
 import { projectInspectHtmlArtifactQueryOptions } from "~/lib/projectReactQuery";
 import { cn } from "~/lib/utils";
@@ -59,7 +52,7 @@ function artifactSubtitle(
   }
 }
 
-function HtmlArtifactThumbnail(props: {
+export function HtmlArtifactThumbnail(props: {
   path: string;
   label: string;
   getPreviewUrl: ((path: string) => Promise<string | null>) | undefined;
@@ -70,16 +63,27 @@ function HtmlArtifactThumbnail(props: {
 
   useEffect(() => {
     let cancelled = false;
+    let ownedPreviewUrl: string | null = null;
+    const revoke = (url: string) => {
+      void readNativeApi()?.projects.revokeHtmlArtifactPreview({ previewUrl: url });
+    };
     setPreviewUrl(null);
     setLoaded(false);
     if (!getPreviewUrl) return;
     void getPreviewUrl(path)
       .then((url) => {
-        if (!cancelled) setPreviewUrl(url);
+        if (!url) return;
+        if (cancelled) {
+          revoke(url);
+          return;
+        }
+        ownedPreviewUrl = url;
+        setPreviewUrl(url);
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
+      if (ownedPreviewUrl) revoke(ownedPreviewUrl);
     };
   }, [getPreviewUrl, path]);
 
@@ -236,25 +240,10 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
               <EyeIcon aria-hidden="true" className="size-4 text-muted-foreground" />
               Scient preview
             </MenuItem>
-            {props.artifact.kind === "html" ? (
-              <MenuItem
-                disabled={!opener?.openHtmlInExternalBrowser}
-                onClick={() => {
-                  setOpenError(null);
-                  if (!opener?.openHtmlInExternalBrowser?.(props.artifact.path)) {
-                    reportOpenError(new Error("The browser could not open this preview."));
-                  }
-                }}
-              >
-                <ExternalLinkIcon aria-hidden="true" className="size-4 text-muted-foreground" />
-                Default browser
-              </MenuItem>
-            ) : (
-              <MenuItem disabled={!absolutePath} onClick={() => openInEditor("system-default")}>
-                <AppsIcon aria-hidden="true" className="size-4 text-muted-foreground" />
-                Default app
-              </MenuItem>
-            )}
+            <MenuItem disabled={!absolutePath} onClick={() => openInEditor("system-default")}>
+              <AppsIcon aria-hidden="true" className="size-4 text-muted-foreground" />
+              Default app
+            </MenuItem>
             {editorOptions.length > 0 ? <MenuSeparator /> : null}
             {editorOptions.map(({ value, label, Icon }) => (
               <MenuItem key={value} disabled={!absolutePath} onClick={() => openInEditor(value)}>

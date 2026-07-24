@@ -122,7 +122,23 @@ describe("HtmlArtifactPreviewLive", () => {
     });
   });
 
-  it("preserves the entry path when local resources live in a parent directory", async () => {
+  it("gives inert thumbnails a no-network, no-script content policy", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(path.join(workspace, "index.html"), "<h1>Thumbnail</h1>");
+
+    await withPreviewService(async (service) => {
+      const prepared = await Effect.runPromise(
+        service.prepare({ cwd: workspace, path: "index.html", thumbnail: true }),
+      );
+      const document = await requestPreview(prepared.previewUrl!);
+      expect(document.status).toBe(200);
+      expect(document.headers["content-security-policy"]).toContain("script-src 'none'");
+      expect(document.headers["content-security-policy"]).toContain("connect-src 'none'");
+      expect(document.headers["content-security-policy"]).toContain("form-action 'none'");
+    });
+  });
+
+  it("does not widen a document capability to parent-directory resources", async () => {
     const workspace = await makeWorkspace();
     await fs.mkdir(path.join(workspace, "reports"));
     await fs.mkdir(path.join(workspace, "assets"));
@@ -137,7 +153,12 @@ describe("HtmlArtifactPreviewLive", () => {
       const prepared = await Effect.runPromise(
         service.prepare({ cwd: workspace, path: "reports/report.html" }),
       );
-      expect(new URL(prepared.previewUrl!).pathname).toBe("/reports/report.html");
+      expect(new URL(prepared.previewUrl!).pathname).toBe("/");
+      expect(prepared.warnings).toContainEqual({
+        code: "local-resource-denied",
+        message:
+          "Local preview resource is outside the opened file's authority: ../assets/theme.css",
+      });
       await expect(requestPreview(prepared.previewUrl!)).resolves.toMatchObject({
         status: 200,
         body: expect.stringContaining("Parent asset"),
@@ -145,8 +166,7 @@ describe("HtmlArtifactPreviewLive", () => {
       await expect(
         requestPreview(prepared.previewUrl!, "/assets/theme.css"),
       ).resolves.toMatchObject({
-        status: 200,
-        body: expect.stringContaining("color: green"),
+        status: 404,
       });
       await expect(requestPreview(prepared.previewUrl!, "/private.txt")).resolves.toMatchObject({
         status: 404,
@@ -182,6 +202,25 @@ describe("HtmlArtifactPreviewLive", () => {
       });
       await expect(requestPreview(prepared.previewUrl!, "/secret.js")).resolves.toMatchObject({
         status: 404,
+      });
+    });
+  });
+
+  it("serves exact granted filenames containing percent signs", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(path.join(workspace, "100%.css"), "body { color: purple; }");
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      '<link rel="stylesheet" href="100%25.css"><p>Percent</p>',
+    );
+
+    await withPreviewService(async (service) => {
+      const prepared = await Effect.runPromise(
+        service.prepare({ cwd: workspace, path: "index.html" }),
+      );
+      await expect(requestPreview(prepared.previewUrl!, "/100%25.css")).resolves.toMatchObject({
+        status: 200,
+        body: expect.stringContaining("purple"),
       });
     });
   });
@@ -344,19 +383,22 @@ describe("HtmlArtifactPreviewLive", () => {
     });
   });
 
-  it("bounds abandoned grants and evicts the oldest capability", async () => {
+  it("refuses excess grants without evicting an active capability", async () => {
     const workspace = await makeWorkspace();
     await fs.writeFile(path.join(workspace, "index.html"), "<p>Bounded</p>");
 
     await withPreviewService(async (service) => {
       const urls: string[] = [];
-      for (let index = 0; index < 513; index += 1) {
+      for (let index = 0; index < 512; index += 1) {
         const prepared = await Effect.runPromise(
           service.prepare({ cwd: workspace, path: "index.html" }),
         );
         urls.push(prepared.previewUrl!);
       }
-      await expect(requestPreview(urls[0]!)).resolves.toMatchObject({ status: 404 });
+      await expect(
+        Effect.runPromise(service.prepare({ cwd: workspace, path: "index.html" })),
+      ).rejects.toThrow("Failed to prepare the HTML artifact preview");
+      await expect(requestPreview(urls[0]!)).resolves.toMatchObject({ status: 200 });
       await expect(requestPreview(urls.at(-1)!)).resolves.toMatchObject({ status: 200 });
     });
   });

@@ -1,13 +1,14 @@
 import "../../index.css";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { NativeApi } from "@synara/contracts";
 import { page } from "vitest/browser";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
 import { serverQueryKeys } from "~/lib/serverReactQuery";
 
-import { AssistantArtifactShelf } from "./AssistantArtifactShelf";
+import { AssistantArtifactShelf, HtmlArtifactThumbnail } from "./AssistantArtifactShelf";
 
 function createQueryClient() {
   const queryClient = new QueryClient({
@@ -18,6 +19,31 @@ function createQueryClient() {
 }
 
 describe("AssistantArtifactShelf", () => {
+  it("revokes an owned HTML thumbnail capability on unmount", async () => {
+    const previousApi = window.nativeApi;
+    const revokeHtmlArtifactPreview = vi.fn(async () => ({ revoked: true }));
+    window.nativeApi = {
+      projects: { revokeHtmlArtifactPreview },
+    } as unknown as NativeApi;
+    const getPreviewUrl = vi.fn(async () => "http://g-thumbnail.preview.localhost:43123/");
+    const screen = await render(
+      <HtmlArtifactThumbnail path="report.html" label="Report" getPreviewUrl={getPreviewUrl} />,
+    );
+
+    try {
+      await vi.waitFor(() => expect(getPreviewUrl).toHaveBeenCalledOnce());
+    } finally {
+      await screen.unmount();
+      await vi.waitFor(() =>
+        expect(revokeHtmlArtifactPreview).toHaveBeenCalledWith({
+          previewUrl: "http://g-thumbnail.preview.localhost:43123/",
+        }),
+      );
+      if (previousApi) window.nativeApi = previousApi;
+      else delete window.nativeApi;
+    }
+  });
+
   it("reveals and collapses files after two complete rows and a partial teaser", async () => {
     const screen = await render(
       <QueryClientProvider client={createQueryClient()}>

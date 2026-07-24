@@ -39,7 +39,7 @@ export function LocalMediaPreview(props: {
 
   if (status === "error") {
     return (
-      <div className="flex min-h-full items-center justify-center p-6">
+      <div className="flex min-h-full items-center justify-center p-6" role="alert">
         <div className="max-w-sm rounded-xl border border-border/70 bg-[var(--color-background-elevated-secondary)] p-5 text-center shadow-sm">
           <TriangleAlertIcon className="mx-auto size-6 text-muted-foreground" aria-hidden="true" />
           <h2 className="mt-3 text-sm font-medium text-foreground">

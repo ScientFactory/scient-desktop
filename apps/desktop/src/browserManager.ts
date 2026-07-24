@@ -24,6 +24,7 @@ import { loadBrowserRuntimeUrl } from "./browserRuntimeLoad";
 import {
   localHtmlPreviewNavigationDisposition,
   localHtmlPreviewRequestAllowed,
+  localHtmlPreviewResolvedAddressesAllowed,
 } from "./localHtmlPreviewPolicy";
 import type {
   BrowserAttachWebviewInput,
@@ -124,6 +125,22 @@ function safeUrlOrigin(value: string | null | undefined): string | null {
   }
 }
 
+function normalizedLocalHtmlExternalUrls(values: readonly string[] | undefined): string[] {
+  const normalized = new Set<string>();
+  for (const value of values?.slice(0, 250) ?? []) {
+    if (value.length > 8_192) continue;
+    try {
+      const url = new URL(value);
+      if (url.protocol !== "http:" && url.protocol !== "https:") continue;
+      url.hash = "";
+      normalized.add(url.toString());
+    } catch {
+      // Ignore malformed renderer input at the desktop trust boundary.
+    }
+  }
+  return [...normalized];
+}
+
 interface BrowserPerformanceSnapshot {
   counters: {
     setPanelBoundsCalls: number;
@@ -156,6 +173,7 @@ function createBrowserTab(
   url = ABOUT_BLANK_URL,
   kind: BrowserTabKind = "web",
   displayUrl?: string,
+  allowedExternalUrls?: readonly string[],
 ): BrowserTabState {
   return {
     id: Crypto.randomUUID(),
@@ -170,6 +188,9 @@ function createBrowserTab(
     faviconUrl: null,
     lastCommittedUrl: null,
     lastError: null,
+    ...(kind === "local-html" && allowedExternalUrls
+      ? { allowedExternalUrls: normalizedLocalHtmlExternalUrls(allowedExternalUrls) }
+      : {}),
   };
 }
 
@@ -391,7 +412,11 @@ export class DesktopBrowserManager {
 
   private ensurePreviewSessionConfigured(
     partition: string,
-    preview?: { kind: "artifact" | "local-html"; origin: string },
+    preview?: {
+      kind: "artifact" | "local-html";
+      origin: string;
+      allowedExternalUrls?: readonly string[];
+    },
   ): void {
     if (this.previewSessionsConfigured.has(partition)) {
       return;
@@ -404,21 +429,61 @@ export class DesktopBrowserManager {
     });
     if (preview) {
       partitionSession.webRequest.onBeforeRequest((details, callback) => {
-        const allowed =
-          preview.kind === "artifact"
-            ? artifactPreviewRequestAllowed({
-                url: details.url,
-                allowedOrigin: preview.origin,
-                resourceType: details.resourceType,
-              })
-            : localHtmlPreviewRequestAllowed({
-                url: details.url,
-                allowedOrigin: preview.origin,
-              });
-        callback({
-          cancel: !allowed,
+        if (preview.kind === "artifact") {
+          callback({
+            cancel: !artifactPreviewRequestAllowed({
+              url: details.url,
+              allowedOrigin: preview.origin,
+              resourceType: details.resourceType,
+            }),
+          });
+          return;
+        }
+        const allowed = localHtmlPreviewRequestAllowed({
+          url: details.url,
+          allowedOrigin: preview.origin,
+          ...(preview.allowedExternalUrls
+            ? { allowedExternalUrls: preview.allowedExternalUrls }
+            : {}),
+          method: details.method,
+          resourceType: details.resourceType,
         });
+        if (!allowed) {
+          callback({ cancel: true });
+          return;
+        }
+        const requestUrl = new URL(details.url);
+        if (
+          requestUrl.origin === preview.origin ||
+          requestUrl.protocol === "data:" ||
+          requestUrl.protocol === "blob:"
+        ) {
+          callback({ cancel: false });
+          return;
+        }
+        void partitionSession
+          .resolveHost(requestUrl.hostname.replace(/^\[|\]$/g, ""))
+          .then((resolved) => {
+            callback({
+              cancel: !localHtmlPreviewResolvedAddressesAllowed(
+                resolved.endpoints.map((endpoint) => endpoint.address),
+              ),
+            });
+          })
+          .catch(() => callback({ cancel: true }));
       });
+      if (preview.kind === "local-html") {
+        partitionSession.webRequest.onCompleted((details) => {
+          const webContentsId = details.webContentsId ?? details.webContents?.id;
+          if (
+            details.resourceType === "mainFrame" &&
+            details.statusCode >= 400 &&
+            webContentsId !== undefined
+          ) {
+            this.markLocalHtmlHttpError(webContentsId, details.url, details.statusCode);
+          }
+        });
+      }
       partitionSession.on("will-download", (event) => {
         event.preventDefault();
       });
@@ -436,7 +501,13 @@ export class DesktopBrowserManager {
     this.ensurePreviewSessionConfigured(
       partition,
       previewOrigin && (tab.kind === "artifact" || tab.kind === "local-html")
-        ? { kind: tab.kind, origin: previewOrigin }
+        ? {
+            kind: tab.kind,
+            origin: previewOrigin,
+            ...(tab.kind === "local-html" && tab.allowedExternalUrls
+              ? { allowedExternalUrls: tab.allowedExternalUrls }
+              : {}),
+          }
         : undefined,
     );
   }
@@ -707,6 +778,7 @@ export class DesktopBrowserManager {
       input.initialUrl,
       requestedKind,
       input.displayUrl,
+      input.allowedExternalUrls,
     );
     const didChange = !state.open;
     state.open = true;
@@ -716,18 +788,23 @@ export class DesktopBrowserManager {
       nextInitialUrl &&
       activeTab &&
       (activeTab.kind !== requestedKind ||
-        (requestedKind === "artifact" && activeTab.url !== nextInitialUrl))
+        ((requestedKind === "artifact" || requestedKind === "local-html") &&
+          activeTab.url !== nextInitialUrl))
     ) {
       return this.newTab({
         threadId: input.threadId,
         url: nextInitialUrl,
         kind: requestedKind,
         ...(input.displayUrl ? { displayUrl: input.displayUrl } : {}),
+        ...(input.allowedExternalUrls ? { allowedExternalUrls: input.allowedExternalUrls } : {}),
         activate: true,
       });
     }
     if (nextInitialUrl && activeTab && activeTab.url !== nextInitialUrl) {
       activeTab.displayUrl = input.displayUrl?.trim() || null;
+      if (requestedKind === "local-html") {
+        activeTab.allowedExternalUrls = normalizedLocalHtmlExternalUrls(input.allowedExternalUrls);
+      }
       return this.navigate({
         threadId: input.threadId,
         tabId: activeTab.id,
@@ -1026,6 +1103,7 @@ export class DesktopBrowserManager {
       normalizeUrlInput(input.url),
       input.kind ?? "web",
       input.displayUrl,
+      input.allowedExternalUrls,
     );
     this.configureTabSession(input.threadId, tab);
     state.tabs = [...state.tabs, tab];
@@ -1737,7 +1815,7 @@ export class DesktopBrowserManager {
       this.newTab({
         threadId,
         url,
-        kind: localHtmlDisposition === "open-web" ? "web" : tabKind,
+        kind: tabKind,
         activate: true,
       });
       const bounds = this.getVisibleBoundsForThread(threadId);
@@ -1778,11 +1856,6 @@ export class DesktopBrowserManager {
         });
         if (disposition === "allow") return;
         event.preventDefault();
-        if (disposition === "open-web") {
-          queueMicrotask(() => {
-            this.newTab({ threadId, url: event.url, kind: "web", activate: true });
-          });
-        }
       };
       webContents.on("will-frame-navigate", separateLocalHtmlNavigation);
       runtime.listenerDisposers.push(() => {
@@ -2135,6 +2208,27 @@ export class DesktopBrowserManager {
     return null;
   }
 
+  private markLocalHtmlHttpError(webContentsId: number, url: string, statusCode: number): void {
+    for (const [threadId, state] of this.states) {
+      const tab = state.tabs.find((candidate) => {
+        if (candidate.kind !== "local-html") return false;
+        return (
+          this.runtimes.get(buildRuntimeKey(threadId, candidate.id))?.webContents.id ===
+          webContentsId
+        );
+      });
+      if (!tab) continue;
+      tab.url = url || tab.url;
+      tab.title = defaultTitleForUrl(tab.url);
+      tab.isLoading = false;
+      tab.lastError = `This local HTML page could not be loaded (HTTP ${statusCode}).`;
+      syncThreadLastError(state);
+      this.markThreadStateChanged(threadId);
+      this.emitState(threadId);
+      return;
+    }
+  }
+
   private getOrCreateState(threadId: ThreadId): ThreadBrowserState {
     const existing = this.states.get(threadId);
     if (existing) {
@@ -2216,11 +2310,17 @@ export class DesktopBrowserManager {
     initialUrl?: string,
     kind: BrowserTabKind = "web",
     displayUrl?: string,
+    allowedExternalUrls?: readonly string[],
   ): ThreadBrowserState {
     this.ensureSessionConfigured();
     const state = this.getOrCreateState(threadId);
     if (state.tabs.length === 0) {
-      const initialTab = createBrowserTab(normalizeUrlInput(initialUrl), kind, displayUrl);
+      const initialTab = createBrowserTab(
+        normalizeUrlInput(initialUrl),
+        kind,
+        displayUrl,
+        allowedExternalUrls,
+      );
       this.configureTabSession(threadId, initialTab);
       state.tabs = [initialTab];
       state.activeTabId = initialTab.id;
