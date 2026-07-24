@@ -476,6 +476,84 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("shows Codex web-search queries in canonical tool details", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-web-search-complete"),
+        kind: "notification",
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("web-search-1"),
+        payload: {
+          item: {
+            type: "webSearch",
+            id: "web-search-1",
+            action: {
+              queries: ["latest OpenAI API documentation"],
+              url: "https://platform.openai.com/docs",
+            },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "item.completed") {
+        return;
+      }
+      assert.equal(firstEvent.value.payload.itemType, "web_search");
+      assert.equal(firstEvent.value.payload.title, "Web search");
+      assert.equal(firstEvent.value.payload.detail, "latest OpenAI API documentation");
+    }),
+  );
+
+  it.effect(
+    "ignores malformed Codex web-search detail fields without breaking event ingestion",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* CodexAdapter;
+        const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+        lifecycleManager.emit("event", {
+          id: asEventId("evt-web-search-malformed"),
+          kind: "notification",
+          provider: "codex",
+          createdAt: new Date().toISOString(),
+          method: "item/completed",
+          threadId: asThreadId("thread-1"),
+          turnId: asTurnId("turn-1"),
+          itemId: asItemId("web-search-malformed"),
+          payload: {
+            item: {
+              type: "webSearch",
+              id: "web-search-malformed",
+              query: { text: "must not be coerced" },
+              action: {
+                query: 42,
+                queries: [{ text: "must not be coerced" }, null, "safe query"],
+                pattern: false,
+                url: { href: "https://example.test" },
+              },
+            },
+          },
+        } satisfies ProviderEvent);
+
+        const firstEvent = yield* Fiber.join(firstEventFiber);
+        assert.equal(firstEvent._tag, "Some");
+        if (firstEvent._tag !== "Some" || firstEvent.value.type !== "item.completed") {
+          return;
+        }
+        assert.equal(firstEvent.value.payload.itemType, "web_search");
+        assert.equal(firstEvent.value.payload.detail, "safe query");
+      }),
+  );
+
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
