@@ -4,6 +4,20 @@
 
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
 
+// Xterm selections can include visual cell padding at the end of each line.
+// Keep meaningful leading/internal whitespace and the original line endings,
+// while matching the terminal runtime's established keyboard-copy behavior.
+export function normalizeTerminalClipboardText(selection: string): string {
+  return selection.replace(/[^\S\r\n]+(?=\r?$)/gm, "");
+}
+
+export function terminalSelectionCopyFailureMessage(error: unknown): string {
+  const recovery =
+    "Unable to copy terminal selection. Check clipboard access or use Cmd/Ctrl+C, then retry.";
+  const reason = error instanceof Error ? error.message.trim() : "";
+  return reason.length > 0 ? `${recovery} (${reason})` : recovery;
+}
+
 export function resolveTerminalSelectionActionPosition(options: {
   bounds: { left: number; top: number; width: number; height: number };
   selectionRect: { right: number; bottom: number } | null;
@@ -48,4 +62,56 @@ export function shouldHandleTerminalSelectionMouseUp(
   button: number,
 ): boolean {
   return selectionGestureActive && button === 0;
+}
+
+export async function runTerminalSelectionMenuAction<TAction extends string>(input: {
+  showMenu: () => Promise<TAction | null>;
+  releaseMenu: () => void;
+  isCurrent: () => boolean;
+  execute: (action: TAction) => Promise<void>;
+}): Promise<void> {
+  let action: TAction | null;
+  try {
+    action = await input.showMenu();
+  } finally {
+    // The native menu is no longer open once its promise settles. Release this
+    // single-flight guard before clipboard work, which may remain pending.
+    input.releaseMenu();
+  }
+  if (action === null || !input.isCurrent()) return;
+  await input.execute(action);
+}
+
+export async function executeTerminalSelectionAction<T>(input: {
+  action: "add-to-chat" | "copy";
+  clipboardText: string;
+  selection: T;
+  copyText: (text: string) => Promise<void>;
+  addToChat: (selection: T) => void;
+  clearSelection: () => void;
+  focusTerminal: () => void;
+  reportCopyError: (error: unknown) => void;
+  isCurrent: () => boolean;
+}): Promise<void> {
+  if (!input.isCurrent()) return;
+  if (input.action === "add-to-chat") {
+    input.addToChat(input.selection);
+    input.clearSelection();
+    input.focusTerminal();
+    return;
+  }
+
+  try {
+    const normalizedText = normalizeTerminalClipboardText(input.clipboardText);
+    if (normalizedText.trim().length === 0) {
+      throw new Error("The selection contains no copyable text.");
+    }
+    await input.copyText(normalizedText);
+  } catch (error) {
+    if (!input.isCurrent()) return;
+    input.reportCopyError(error);
+  }
+  if (input.isCurrent()) {
+    input.focusTerminal();
+  }
 }
