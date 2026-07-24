@@ -115,6 +115,7 @@ function createMockOpenCodeRuntime(options?: {
   readonly events?: AsyncIterable<unknown>;
   readonly prompt?: (input: Record<string, unknown>) => Promise<unknown>;
   readonly promptAsync?: (input: Record<string, unknown>) => Promise<unknown>;
+  readonly create?: (input: Record<string, unknown>, callIndex: number) => Promise<unknown>;
   readonly update?: (input: Record<string, unknown>) => Promise<unknown>;
   readonly commandList?: () => Promise<{
     data?: ReadonlyArray<{ name: string; description?: string }>;
@@ -169,6 +170,11 @@ function createMockOpenCodeRuntime(options?: {
     session: {
       create: async (input: Record<string, unknown>) => {
         createCalls.push(input);
+        if (options?.create) {
+          const result = await options.create(input, sessionCreateCallCount);
+          sessionCreateCallCount += 1;
+          return result;
+        }
         const id = options?.sessionIds?.[sessionCreateCallCount] ?? "opencode-session-1";
         sessionCreateCallCount += 1;
         return { data: { id } };
@@ -10827,5 +10833,217 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
       expect.arrayContaining([{ sessionID: "opencode-session-1", limit: 256 }]),
     );
     expect(runtime.messageCalls.slice(1).every((call) => call?.limit === 256)).toBe(true);
+  });
+
+  it("single-flights concurrent replacements of the same provider context", async () => {
+    let releaseAbort: (() => void) | undefined;
+    let notifyAbortStarted: (() => void) | undefined;
+    const abortStarted = new Promise<void>((resolve) => {
+      notifyAbortStarted = resolve;
+    });
+    let abortInvocationCount = 0;
+    const runtime = createMockOpenCodeRuntime({
+      sessionIds: ["opencode-session-old", "opencode-session-successor"],
+      abort: async () => {
+        abortInvocationCount += 1;
+        if (abortInvocationCount === 1) {
+          notifyAbortStarted?.();
+          await new Promise<void>((resolve) => {
+            releaseAbort = resolve;
+          });
+        }
+        return { data: null };
+      },
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-concurrent-replacements");
+        yield* adapter.startSession({ provider: "opencode", threadId, runtimeMode: "full-access" });
+        const first = yield* adapter
+          .startSession({ provider: "opencode", threadId, runtimeMode: "full-access" })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Effect.promise(() => abortStarted);
+        const second = yield* adapter
+          .startSession({ provider: "opencode", threadId, runtimeMode: "full-access" })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Effect.sleep(1);
+        releaseAbort?.();
+        const [firstExit, secondExit] = yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
+        const sessions = yield* adapter.listSessions();
+        return {
+          oldSessionAbortCallsBeforeFinalization: runtime.abortCalls.filter(
+            (call) => call.sessionID === "opencode-session-old",
+          ).length,
+          firstExit,
+          secondExit,
+          sessions,
+        };
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(result.oldSessionAbortCallsBeforeFinalization).toBe(1);
+    expect([result.firstExit, result.secondExit].filter(Exit.isSuccess)).toHaveLength(1);
+    expect(result.sessions).toHaveLength(1);
+    expect(result.sessions[0]?.resumeCursor).toMatchObject({
+      openCodeSessionId: "opencode-session-successor",
+    });
+  });
+
+  it("does not emit an unexpected exit while a requested stop owns retirement", async () => {
+    let rejectSubscription: ((cause: Error) => void) | undefined;
+    const failedStream = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: () =>
+            new Promise<IteratorResult<never>>((_resolve, reject) => {
+              rejectSubscription = reject;
+            }),
+        };
+      },
+    };
+    let releaseAbort: (() => void) | undefined;
+    let notifyAbortStarted: (() => void) | undefined;
+    const abortStarted = new Promise<void>((resolve) => {
+      notifyAbortStarted = resolve;
+    });
+    const runtime = createMockOpenCodeRuntime({
+      events: failedStream,
+      abort: async () => {
+        notifyAbortStarted?.();
+        await new Promise<void>((resolve) => {
+          releaseAbort = resolve;
+        });
+        return { data: null };
+      },
+    });
+
+    const events = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const observed: Array<{ readonly type: string; readonly payload: unknown }> = [];
+        const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+          Effect.sync(() => observed.push(event)),
+        ).pipe(Effect.forkChild);
+        const threadId = asThreadId("thread-stop-vs-unexpected-exit");
+        yield* adapter.startSession({ provider: "opencode", threadId, runtimeMode: "full-access" });
+        const stopFiber = yield* adapter.stopSession(threadId).pipe(Effect.forkChild);
+        yield* Effect.promise(() => abortStarted);
+        rejectSubscription?.(new Error("subscription failed during stop"));
+        yield* Effect.sleep(5);
+        releaseAbort?.();
+        yield* Fiber.join(stopFiber);
+        yield* Effect.sleep(10);
+        yield* Fiber.interrupt(eventsFiber);
+        return observed;
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(events.filter((event) => event.type === "session.exited")).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({ exitKind: "graceful" }),
+      }),
+    ]);
+    expect(events.some((event) => event.type === "runtime.error")).toBe(false);
+  });
+
+  it("forcibly closes local adapter resources when final abort is rejected", async () => {
+    const runtime = createMockOpenCodeRuntime({
+      abort: async () => Promise.reject(new Error("final abort rejected")),
+    });
+
+    await expect(
+      Promise.race([
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const adapter = yield* OpenCodeAdapter;
+            yield* adapter.startSession({
+              provider: "opencode",
+              threadId: asThreadId("thread-finalizer-abort-rejected"),
+              runtimeMode: "full-access",
+            });
+          }).pipe(
+            Effect.provide(
+              makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+                Layer.provideMerge(
+                  ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+                ),
+                Layer.provideMerge(NodeServices.layer),
+              ),
+            ),
+          ),
+        ),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("adapter finalizer did not terminate")), 250),
+        ),
+      ]),
+    ).resolves.toBeUndefined();
+    expect(runtime.abortCalls).toHaveLength(1);
+  });
+
+  it("reports failure when a concurrent-start loser cannot abort its provider session", async () => {
+    let createCount = 0;
+    let releaseCreates: (() => void) | undefined;
+    const createsReleased = new Promise<void>((resolve) => {
+      releaseCreates = resolve;
+    });
+    const runtime = createMockOpenCodeRuntime({
+      create: async () => {
+        const index = createCount++;
+        if (createCount === 2) {
+          releaseCreates?.();
+        }
+        await createsReleased;
+        return { data: { id: `opencode-session-${index + 1}` } };
+      },
+      abort: async () => Promise.reject(new Error("loser abort rejected")),
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-concurrent-start-loser-abort");
+        const first = yield* adapter
+          .startSession({ provider: "opencode", threadId, runtimeMode: "full-access" })
+          .pipe(Effect.exit, Effect.forkChild);
+        const second = yield* adapter
+          .startSession({ provider: "opencode", threadId, runtimeMode: "full-access" })
+          .pipe(Effect.exit, Effect.forkChild);
+        const exits = yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
+        return { exits, sessions: yield* adapter.listSessions() };
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(result.exits.filter(Exit.isSuccess)).toHaveLength(1);
+    expect(result.exits.filter(Exit.isFailure)).toHaveLength(1);
+    expect(result.sessions).toHaveLength(1);
   });
 });

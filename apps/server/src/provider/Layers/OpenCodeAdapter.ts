@@ -226,6 +226,8 @@ interface OpenCodeSessionContext {
   activeVariant: string | undefined;
   readonly stopped: Ref.Ref<boolean>;
   readonly sessionScope: Scope.Closeable;
+  retirementAttempt: Deferred.Deferred<void, OpenCodeRuntimeError> | undefined;
+  replacementClaimed: boolean;
 }
 
 const openCodeContextsByServerIdentity = new Map<string, Set<OpenCodeSessionContext>>();
@@ -2105,15 +2107,51 @@ const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
     return;
   }
 
+  const proposedAttempt = yield* Deferred.make<void, OpenCodeRuntimeError>();
+  const inFlightAttempt = context.retirementAttempt;
+  if (inFlightAttempt !== undefined) {
+    return yield* Deferred.await(inFlightAttempt);
+  }
+  context.retirementAttempt = proposedAttempt;
+
   // Do not discard observation or report a graceful stop until the provider has
   // confirmed cancellation. External/shared servers can otherwise keep running
   // full-access work after Scient has forgotten the session.
-  yield* abortOpenCodeSessionBounded(context);
-  yield* Ref.set(context.stopped, true);
-  yield* Scope.close(context.sessionScope, Exit.void).pipe(
-    Effect.ensuring(Effect.sync(() => unregisterOpenCodeContext(context))),
+  const stopExit = yield* Effect.exit(
+    Effect.uninterruptible(
+      Effect.gen(function* () {
+        yield* abortOpenCodeSessionBounded(context);
+        yield* Ref.set(context.stopped, true);
+        yield* Scope.close(context.sessionScope, Exit.void).pipe(
+          Effect.ensuring(Effect.sync(() => unregisterOpenCodeContext(context))),
+        );
+      }),
+    ),
   );
+  if (Exit.isFailure(stopExit)) {
+    context.retirementAttempt = undefined;
+    const cause = Cause.squash(stopExit.cause);
+    const runtimeError = OpenCodeRuntimeError.is(cause)
+      ? cause
+      : new OpenCodeRuntimeError({
+          operation: "session.stop",
+          detail: openCodeRuntimeErrorDetail(cause),
+          cause,
+        });
+    yield* Deferred.fail(proposedAttempt, runtimeError);
+    return yield* runtimeError;
+  }
+  yield* Deferred.succeed(proposedAttempt, undefined);
 });
+
+const forceDisposeOpenCodeContextLocally = Effect.fn("forceDisposeOpenCodeContextLocally")(
+  function* (context: OpenCodeSessionContext) {
+    yield* Ref.set(context.stopped, true);
+    yield* Scope.close(context.sessionScope, Exit.void).pipe(
+      Effect.ensuring(Effect.sync(() => unregisterOpenCodeContext(context))),
+    );
+  },
+);
 
 export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
   const adapterConfig = options?.adapterConfig ?? OPENCODE_ADAPTER_CONFIG;
@@ -2335,12 +2373,14 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
             contexts,
             (context) =>
               retireOpenCodeContext(context).pipe(
+                Effect.catchCause(() => forceDisposeOpenCodeContextLocally(context)),
                 Effect.tap(() =>
                   Effect.sync(() => {
-                    sessions.delete(context.session.threadId);
+                    if (sessions.get(context.session.threadId) === context) {
+                      sessions.delete(context.session.threadId);
+                    }
                   }),
                 ),
-                Effect.ignoreCause,
               ),
             { concurrency: "unbounded", discard: true },
           );
@@ -2407,9 +2447,12 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
         context: OpenCodeSessionContext,
         message: string,
       ) {
-        if (yield* Ref.getAndSet(context.stopped, true)) {
+        const proposedAttempt = yield* Deferred.make<void, OpenCodeRuntimeError>();
+        if ((yield* Ref.get(context.stopped)) || context.retirementAttempt !== undefined) {
           return;
         }
+        context.retirementAttempt = proposedAttempt;
+        yield* Ref.set(context.stopped, true);
         const generation = context.activeTurnGeneration;
         const turnId = generation?.turnId;
         if (generation !== undefined) {
@@ -2417,7 +2460,9 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           generation.sessionNextOwned = false;
           yield* cancelPendingInteractionsForGeneration(context, generation);
         }
-        sessions.delete(context.session.threadId);
+        if (sessions.get(context.session.threadId) === context) {
+          sessions.delete(context.session.threadId);
+        }
         yield* Effect.gen(function* () {
           yield* emit({
             ...buildEventBase({ threadId: context.session.threadId, turnId }),
@@ -2441,6 +2486,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           );
           yield* Scope.close(context.sessionScope, Exit.void);
         }).pipe(Effect.ensuring(Effect.sync(() => unregisterOpenCodeContext(context))));
+        yield* Deferred.succeed(proposedAttempt, undefined);
       });
 
       const emitAssistantTextDelta = Effect.fn("emitAssistantTextDelta")(function* (
@@ -4820,9 +4866,30 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
               : undefined;
           const existing = sessions.get(input.threadId);
           if (existing) {
-            yield* retireOpenCodeContext(existing).pipe(
-              Effect.mapError((cause) => toAdapterProcessError(input.threadId, cause)),
-            );
+            if (existing.replacementClaimed) {
+              return yield* toAdapterProcessError(
+                input.threadId,
+                new OpenCodeRuntimeError({
+                  operation: "session.replace",
+                  detail: `${adapterConfig.displayName} session replacement is already in progress.`,
+                }),
+              );
+            }
+            existing.replacementClaimed = true;
+            const retireExit = yield* Effect.exit(retireOpenCodeContext(existing));
+            if (Exit.isFailure(retireExit)) {
+              existing.replacementClaimed = false;
+              return yield* toAdapterProcessError(input.threadId, Cause.squash(retireExit.cause));
+            }
+            if (sessions.get(input.threadId) !== existing) {
+              return yield* toAdapterProcessError(
+                input.threadId,
+                new OpenCodeRuntimeError({
+                  operation: "session.replace",
+                  detail: `${adapterConfig.displayName} session changed during replacement; retry against the current session.`,
+                }),
+              );
+            }
             sessions.delete(input.threadId);
           }
 
@@ -4923,12 +4990,17 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
 
           const raceWinner = sessions.get(input.threadId);
           if (raceWinner) {
-            yield* abortOpenCodeClientSessionBounded(
-              started.client,
-              started.openCodeSessionId,
-              completionSnapshotTimeoutMs,
-            ).pipe(Effect.ignore);
+            const abortExit = yield* Effect.exit(
+              abortOpenCodeClientSessionBounded(
+                started.client,
+                started.openCodeSessionId,
+                completionSnapshotTimeoutMs,
+              ),
+            );
             yield* Scope.close(started.sessionScope, Exit.void).pipe(Effect.ignore);
+            if (Exit.isFailure(abortExit)) {
+              return yield* toAdapterProcessError(input.threadId, Cause.squash(abortExit.cause));
+            }
             return raceWinner.session;
           }
 
@@ -5003,6 +5075,8 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
             activeVariant: undefined,
             stopped: yield* Ref.make(false),
             sessionScope: started.sessionScope,
+            retirementAttempt: undefined,
+            replacementClaimed: false,
           };
           sessions.set(input.threadId, context);
           registerOpenCodeContext(context);
@@ -5556,6 +5630,9 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
         function* (threadId) {
           const context = ensureAdapterSessionContext(threadId);
           yield* retireOpenCodeContext(context).pipe(Effect.mapError(toAdapterRequestError));
+          if (sessions.get(threadId) !== context) {
+            return;
+          }
           sessions.delete(threadId);
           yield* emit({
             ...buildEventBase({ threadId }),
@@ -6061,7 +6138,9 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
               retireOpenCodeContext(context).pipe(
                 Effect.tap(() =>
                   Effect.sync(() => {
-                    sessions.delete(context.session.threadId);
+                    if (sessions.get(context.session.threadId) === context) {
+                      sessions.delete(context.session.threadId);
+                    }
                   }),
                 ),
                 Effect.mapError(toAdapterRequestError),
