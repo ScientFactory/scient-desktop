@@ -1,17 +1,35 @@
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
   isSafeBundledReleaseNoteRasterAsset,
   parseReleaseNoteCatalog,
+  verifyBundledReleaseNoteAssetTree,
   verifyReleaseNoteForVersion,
   type ReleaseNoteEntry,
 } from "./verify-release-notes";
 
 const temporaryDirectories: string[] = [];
+
+const { PNG } = createRequire(import.meta.url)("pngjs") as {
+  readonly PNG: {
+    readonly sync: {
+      write(image: {
+        readonly width: number;
+        readonly height: number;
+        readonly data: Buffer;
+      }): Buffer;
+    };
+  };
+};
+
+const makeValidPng = () =>
+  PNG.sync.write({ width: 1, height: 1, data: Buffer.from([46, 125, 246, 255]) });
 
 afterEach(() => {
   for (const path of temporaryDirectories.splice(0)) {
@@ -123,7 +141,7 @@ describe("verifyReleaseNoteForVersion", () => {
         assetExists: () => exists,
       }).errors.join("\n");
 
-    expect(verify("/release-notes/1.2.3/hero.webp", true)).toBe("");
+    expect(verify("/release-notes/1.2.3/hero.png", true)).toBe("");
     for (const unsafe of [
       "https://example.invalid/pixel.png",
       "http://example.invalid/pixel.png",
@@ -133,13 +151,16 @@ describe("verifyReleaseNoteForVersion", () => {
       "blob:scient",
       "/release-notes/../secret.png",
       "/release-notes/hero.svg",
+      "/release-notes/hero.jpg",
+      "/release-notes/hero.webp",
+      "/release-notes/hero.avif",
       "/release-notes/hero.png?cache=1",
       "/release-notes/hero.png#fragment",
     ]) {
-      expect(verify(unsafe)).toContain("must be a bundled raster asset");
+      expect(verify(unsafe)).toContain("must be a bundled PNG asset");
     }
     expect(verify("/release-notes/missing.png")).toContain(
-      "must resolve to a regular, non-symlinked raster file",
+      "must resolve to a regular, non-symlinked PNG file",
     );
 
     const blankImageErrors = verifyReleaseNoteForVersion("1.2.3", [
@@ -160,22 +181,30 @@ describe("verifyReleaseNoteForVersion", () => {
     temporaryDirectories.push(publicRoot);
     const releaseNotesRoot = join(publicRoot, "release-notes");
     mkdirSync(join(releaseNotesRoot, "1.2.3"), { recursive: true });
-    const png = Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2dQAAAABJRU5ErkJggg==",
-      "base64",
-    );
+    const png = makeValidPng();
     writeFileSync(join(releaseNotesRoot, "1.2.3", "hero.png"), png);
     writeFileSync(
       join(releaseNotesRoot, "truncated.png"),
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     );
     writeFileSync(join(releaseNotesRoot, "fake.png"), "not an image");
+    const forged = Buffer.from(png);
+    const forgedByteIndex = forged.length - 13;
+    forged.writeUInt8(forged.readUInt8(forgedByteIndex) ^ 0xff, forgedByteIndex);
+    writeFileSync(join(releaseNotesRoot, "forged.png"), forged);
+    writeFileSync(join(releaseNotesRoot, "cut-off.png"), png.subarray(0, png.length - 8));
     mkdirSync(join(releaseNotesRoot, "directory.png"));
 
     expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/1.2.3/hero.png", publicRoot)).toBe(
       true,
     );
     expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/fake.png", publicRoot)).toBe(false);
+    expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/forged.png", publicRoot)).toBe(
+      false,
+    );
+    expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/cut-off.png", publicRoot)).toBe(
+      false,
+    );
     expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/truncated.png", publicRoot)).toBe(
       false,
     );
@@ -184,6 +213,27 @@ describe("verifyReleaseNoteForVersion", () => {
     );
     expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/missing.png", publicRoot)).toBe(
       false,
+    );
+  });
+
+  it("scans every release-note asset, including unreferenced leaves", () => {
+    const publicRoot = mkdtempSync(join(tmpdir(), "scient-release-notes-tree-"));
+    temporaryDirectories.push(publicRoot);
+    const releaseNotesRoot = join(publicRoot, "release-notes");
+    mkdirSync(join(releaseNotesRoot, "1.2.3"), { recursive: true });
+    const png = makeValidPng();
+    writeFileSync(join(releaseNotesRoot, "1.2.3", "hero.png"), png);
+    expect(verifyBundledReleaseNoteAssetTree(publicRoot)).toEqual([]);
+
+    writeFileSync(join(releaseNotesRoot, "unreferenced.html"), "<script>unsafe()</script>");
+    writeFileSync(join(releaseNotesRoot, "unreferenced.png"), "not actually a PNG");
+    const expectedErrors = [
+      "/release-notes/unreferenced.html must be a PNG file; other public-tree leaves are not allowed.",
+      "/release-notes/unreferenced.png must be a decodable PNG within the release-note asset tree.",
+    ];
+    expect(verifyBundledReleaseNoteAssetTree(publicRoot)).toEqual(expectedErrors);
+    expect(verifyReleaseNoteForVersion("1.2.3", [entry()], { publicRoot }).errors).toEqual(
+      expectedErrors,
     );
   });
 
@@ -196,14 +246,15 @@ describe("verifyReleaseNoteForVersion", () => {
       mkdirSync(releaseNotesRoot, { recursive: true });
       const validTarget = join(releaseNotesRoot, "target.png");
       const outsideTarget = join(publicRoot, "outside.png");
-      const png = Buffer.from(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2dQAAAABJRU5ErkJggg==",
-        "base64",
-      );
+      const outsideDirectory = join(publicRoot, "outside-directory");
+      const png = makeValidPng();
       writeFileSync(validTarget, png);
       writeFileSync(outsideTarget, png);
+      mkdirSync(outsideDirectory);
+      writeFileSync(join(outsideDirectory, "escaped.html"), "not public release-note content");
       symlinkSync(validTarget, join(releaseNotesRoot, "inside-link.png"));
       symlinkSync(outsideTarget, join(releaseNotesRoot, "outside-link.png"));
+      symlinkSync(outsideDirectory, join(releaseNotesRoot, "escaped-directory"), "dir");
 
       expect(
         isSafeBundledReleaseNoteRasterAsset("/release-notes/inside-link.png", publicRoot),
@@ -211,8 +262,26 @@ describe("verifyReleaseNoteForVersion", () => {
       expect(
         isSafeBundledReleaseNoteRasterAsset("/release-notes/outside-link.png", publicRoot),
       ).toBe(false);
+      expect(verifyBundledReleaseNoteAssetTree(publicRoot)).toEqual([
+        "/release-notes/escaped-directory must not be a symlink.",
+        "/release-notes/inside-link.png must not be a symlink.",
+        "/release-notes/outside-link.png must not be a symlink.",
+      ]);
     },
   );
+
+  it.runIf(process.platform !== "win32")("rejects unreferenced non-regular leaves", () => {
+    const publicRoot = mkdtempSync(join(tmpdir(), "scient-release-notes-special-"));
+    temporaryDirectories.push(publicRoot);
+    const releaseNotesRoot = join(publicRoot, "release-notes");
+    mkdirSync(releaseNotesRoot, { recursive: true });
+    const fifoPath = join(releaseNotesRoot, "unreferenced.png");
+    const result = spawnSync("mkfifo", [fifoPath], { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+    expect(verifyBundledReleaseNoteAssetTree(publicRoot)).toEqual([
+      "/release-notes/unreferenced.png must be a regular file or directory.",
+    ]);
+  });
 
   it("decodes catalog field shapes before semantic validation", () => {
     expect(parseReleaseNoteCatalog([entry()])).toEqual([entry()]);

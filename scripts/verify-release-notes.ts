@@ -3,7 +3,8 @@
 
 import { fileURLToPath } from "node:url";
 import { extname, isAbsolute, relative, resolve, sep } from "node:path";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { createRequire } from "node:module";
+import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 
 export interface ReleaseNoteFeature {
   readonly id: string;
@@ -33,11 +34,29 @@ export interface ReleaseNoteVerification {
 
 export interface ReleaseNoteVerificationOptions {
   readonly assetExists?: (publicPath: string) => boolean;
+  readonly publicRoot?: string;
 }
 
 const RELEASE_NOTE_ASSET_PATTERN =
-  /^\/release-notes\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.(?:avif|jpe?g|png|webp)$/i;
+  /^\/release-notes\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.png$/i;
 const WEB_PUBLIC_ROOT = fileURLToPath(new URL("../apps/web/public/", import.meta.url));
+const MAX_RELEASE_NOTE_PNG_BYTES = 10 * 1024 * 1024;
+const MAX_RELEASE_NOTE_PNG_DIMENSION = 8_192;
+const MAX_RELEASE_NOTE_PNG_PIXELS = 16_000_000;
+
+interface DecodedPng {
+  readonly width: number;
+  readonly height: number;
+  readonly data: Buffer;
+}
+
+const { PNG } = createRequire(import.meta.url)("pngjs") as {
+  readonly PNG: {
+    readonly sync: {
+      read(contents: Buffer, options?: { readonly checkCRC?: boolean }): DecodedPng;
+    };
+  };
+};
 
 export function normalizeReleaseVersion(rawVersion: string): string {
   const version = rawVersion.trim().replace(/^v/, "");
@@ -54,6 +73,7 @@ export function verifyReleaseNoteForVersion(
 ): ReleaseNoteVerification {
   let version = rawVersion.trim().replace(/^v/, "");
   const errors: string[] = [];
+  errors.push(...verifyBundledReleaseNoteAssetTree(options.publicRoot ?? WEB_PUBLIC_ROOT));
   try {
     version = normalizeReleaseVersion(rawVersion);
   } catch (error) {
@@ -154,11 +174,11 @@ function validateImage(
   }
   if (!RELEASE_NOTE_ASSET_PATTERN.test(image)) {
     errors.push(
-      `${label} ${kind} must be a bundled raster asset under /release-notes/ with no URL, query, hash, or traversal.`,
+      `${label} ${kind} must be a bundled PNG asset under /release-notes/ with no URL, query, hash, or traversal.`,
     );
   } else if (!(assetExists ?? bundledReleaseNoteAssetExists)(image)) {
     errors.push(
-      `${label} ${kind} must resolve to a regular, non-symlinked raster file in apps/web/public${image}.`,
+      `${label} ${kind} must resolve to a regular, non-symlinked PNG file in apps/web/public${image}.`,
     );
   }
 }
@@ -172,6 +192,7 @@ export function isSafeBundledReleaseNoteRasterAsset(
   publicRoot: string,
 ): boolean {
   try {
+    if (!RELEASE_NOTE_ASSET_PATTERN.test(publicPath)) return false;
     const canonicalPublicRoot = realpathSync(publicRoot);
     const releaseNotesRoot = resolve(canonicalPublicRoot, "release-notes");
     const releaseNotesRootStat = lstatSync(releaseNotesRoot);
@@ -197,13 +218,67 @@ export function isSafeBundledReleaseNoteRasterAsset(
       return false;
     }
 
-    return hasExpectedRasterSignature(
-      readFileSync(canonicalCandidatePath),
-      extname(canonicalCandidatePath).toLowerCase(),
-    );
+    return isDecodableReleaseNotePng(readFileSync(canonicalCandidatePath));
   } catch {
     return false;
   }
+}
+
+export function verifyBundledReleaseNoteAssetTree(publicRoot: string): readonly string[] {
+  const releaseNotesRoot = resolve(publicRoot, "release-notes");
+  const errors: string[] = [];
+
+  let rootStat;
+  try {
+    rootStat = lstatSync(releaseNotesRoot);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return errors;
+    return [`Unable to inspect the release-note asset tree: ${formatError(error)}`];
+  }
+
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    return ["apps/web/public/release-notes must be a real directory, not a symlink or file."];
+  }
+
+  const inspectDirectory = (directory: string, pathSegments: readonly string[]) => {
+    let names: string[];
+    try {
+      names = readdirSync(directory).sort((left, right) => left.localeCompare(right));
+    } catch (error) {
+      errors.push(
+        `Unable to inspect /release-notes/${pathSegments.join("/")}: ${formatError(error)}`,
+      );
+      return;
+    }
+
+    for (const name of names) {
+      const candidatePath = resolve(directory, name);
+      const candidateSegments = [...pathSegments, name];
+      const publicPath = `/release-notes/${candidateSegments.join("/")}`;
+      let candidateStat;
+      try {
+        candidateStat = lstatSync(candidatePath);
+      } catch (error) {
+        errors.push(`Unable to inspect ${publicPath}: ${formatError(error)}`);
+        continue;
+      }
+
+      if (candidateStat.isSymbolicLink()) {
+        errors.push(`${publicPath} must not be a symlink.`);
+      } else if (candidateStat.isDirectory()) {
+        inspectDirectory(candidatePath, candidateSegments);
+      } else if (!candidateStat.isFile()) {
+        errors.push(`${publicPath} must be a regular file or directory.`);
+      } else if (extname(name).toLowerCase() !== ".png") {
+        errors.push(`${publicPath} must be a PNG file; other public-tree leaves are not allowed.`);
+      } else if (!isSafeBundledReleaseNoteRasterAsset(publicPath, publicRoot)) {
+        errors.push(`${publicPath} must be a decodable PNG within the release-note asset tree.`);
+      }
+    }
+  };
+
+  inspectDirectory(releaseNotesRoot, []);
+  return errors;
 }
 
 function isContainedRelativePath(pathValue: string): boolean {
@@ -215,53 +290,43 @@ function isContainedRelativePath(pathValue: string): boolean {
   );
 }
 
-function hasExpectedRasterSignature(contents: Buffer, extension: string): boolean {
-  if (extension === ".png") {
-    return (
-      contents.length >= 45 &&
-      contents
-        .subarray(0, 8)
-        .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) &&
-      contents.toString("ascii", 12, 16) === "IHDR" &&
-      contents.readUInt32BE(16) > 0 &&
-      contents.readUInt32BE(20) > 0 &&
-      contents.readUInt32BE(contents.length - 12) === 0 &&
-      contents.toString("ascii", contents.length - 8, contents.length - 4) === "IEND"
-    );
-  }
-  if (extension === ".jpg" || extension === ".jpeg") {
-    return (
-      contents.length >= 4 &&
-      contents[0] === 0xff &&
-      contents[1] === 0xd8 &&
-      contents[2] === 0xff &&
-      contents[contents.length - 2] === 0xff &&
-      contents[contents.length - 1] === 0xd9
-    );
-  }
-  if (extension === ".webp") {
-    const chunkType = contents.toString("ascii", 12, 16);
-    return (
-      contents.length >= 16 &&
-      contents.toString("ascii", 0, 4) === "RIFF" &&
-      contents.toString("ascii", 8, 12) === "WEBP" &&
-      contents.readUInt32LE(4) + 8 <= contents.length &&
-      (chunkType === "VP8 " || chunkType === "VP8L" || chunkType === "VP8X")
-    );
-  }
+function isDecodableReleaseNotePng(contents: Buffer): boolean {
+  if (contents.length < 33 || contents.length > MAX_RELEASE_NOTE_PNG_BYTES) return false;
   if (
-    extension === ".avif" &&
-    contents.length >= 16 &&
-    contents.toString("ascii", 4, 8) === "ftyp"
+    !contents
+      .subarray(0, 8)
+      .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) ||
+    contents.toString("ascii", 12, 16) !== "IHDR"
   ) {
-    const boxSize = contents.readUInt32BE(0);
-    if (boxSize < 16 || boxSize > contents.length) return false;
-    for (let offset = 8; offset + 4 <= boxSize; offset += 4) {
-      const brand = contents.toString("ascii", offset, offset + 4);
-      if (brand === "avif" || brand === "avis") return true;
-    }
+    return false;
   }
-  return false;
+
+  const declaredWidth = contents.readUInt32BE(16);
+  const declaredHeight = contents.readUInt32BE(20);
+  if (
+    declaredWidth === 0 ||
+    declaredHeight === 0 ||
+    declaredWidth > MAX_RELEASE_NOTE_PNG_DIMENSION ||
+    declaredHeight > MAX_RELEASE_NOTE_PNG_DIMENSION ||
+    declaredWidth * declaredHeight > MAX_RELEASE_NOTE_PNG_PIXELS
+  ) {
+    return false;
+  }
+
+  try {
+    const decoded = PNG.sync.read(contents, { checkCRC: true });
+    return (
+      decoded.width === declaredWidth &&
+      decoded.height === declaredHeight &&
+      decoded.data.length === declaredWidth * declaredHeight * 4
+    );
+  } catch {
+    return false;
+  }
+}
+
+function formatError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function main(args: readonly string[]) {

@@ -79,6 +79,14 @@ jobs:
         with:
           node-version-file: package.json
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
       - id: release_mode
         name: Resolve publication mode
         shell: bash
@@ -179,14 +187,6 @@ jobs:
               exit 1
             fi
           done
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version-file: package.json
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
 
       - name: Verify Scient identity
         run: bun run brand:check
