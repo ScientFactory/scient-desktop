@@ -158,6 +158,30 @@ export function resolveNewThreadWorkspace(
   }
 }
 
+// Terminal-first threads are promoted and opened immediately, before the agent lifecycle can
+// materialize a brand-new worktree. A project-default worktree without a concrete path must
+// therefore become an honest local terminal instead of claiming isolation while running at root.
+export function resolveNewThreadWorkspaceForEntryPoint(input: {
+  readonly defaultEnvMode: DraftThreadEnvMode;
+  readonly entryPoint: ThreadPrimarySurface;
+  readonly intent: NewThreadWorkspaceIntent;
+}): ResolvedNewThreadWorkspace {
+  const workspace = resolveNewThreadWorkspace(input.intent, input.defaultEnvMode);
+  if (
+    input.entryPoint !== "terminal" ||
+    workspace.envMode !== "worktree" ||
+    Boolean(workspace.worktreePath?.trim())
+  ) {
+    return workspace;
+  }
+  return {
+    branch: null,
+    worktreePath: null,
+    envMode: "local",
+    workspaceOrigin: workspace.workspaceOrigin,
+  };
+}
+
 interface ActiveThreadSnapshot {
   projectId: ProjectId;
   modelSelection: ModelSelection;
@@ -296,10 +320,11 @@ export function createFreshDraftThreadSeed(input: {
   entryPoint: ThreadPrimarySurface;
   options?: NewThreadOptions | undefined;
 }): Omit<DraftThreadState, "projectId" | "interactionMode"> {
-  const workspace = resolveNewThreadWorkspace(
-    input.options?.workspace ?? { kind: "project-default" },
-    input.defaultEnvMode,
-  );
+  const workspace = resolveNewThreadWorkspaceForEntryPoint({
+    defaultEnvMode: input.defaultEnvMode,
+    entryPoint: input.entryPoint,
+    intent: input.options?.workspace ?? { kind: "project-default" },
+  });
   return {
     createdAt: input.createdAt,
     ...workspace,
@@ -338,10 +363,11 @@ export function buildDraftThreadWorkspacePatch(input: {
     return null;
   }
   return {
-    ...resolveNewThreadWorkspace(
-      input.options?.workspace ?? { kind: "project-default" },
-      input.defaultEnvMode,
-    ),
+    ...resolveNewThreadWorkspaceForEntryPoint({
+      defaultEnvMode: input.defaultEnvMode,
+      entryPoint: input.entryPoint,
+      intent: input.options?.workspace ?? { kind: "project-default" },
+    }),
     entryPoint: input.entryPoint,
   };
 }
@@ -370,6 +396,9 @@ export function shouldReuseActiveDraftThread(input: {
 export function resolveTerminalThreadCreationState(
   input: ResolveTerminalThreadCreationStateInput,
 ): TerminalThreadCreationState {
+  const draftEnvMode = input.draftThread?.envMode ?? input.defaultEnvMode;
+  const draftWorktreePath = input.draftThread?.worktreePath ?? null;
+  const hasConcreteWorktree = draftEnvMode === "worktree" && Boolean(draftWorktreePath?.trim());
   return {
     modelSelection: resolvePreferredComposerModelSelection({
       draft: input.draftComposerState,
@@ -400,8 +429,11 @@ export function resolveTerminalThreadCreationState(
         ? (input.activeDraftThread.lastKnownPr ?? null)
         : null) ??
       null,
-    envMode: input.draftThread?.envMode ?? input.defaultEnvMode,
-    branch: input.draftThread?.branch ?? null,
-    worktreePath: input.draftThread?.worktreePath ?? null,
+    envMode: draftEnvMode === "worktree" && !hasConcreteWorktree ? "local" : draftEnvMode,
+    branch:
+      draftEnvMode === "worktree" && !hasConcreteWorktree
+        ? null
+        : (input.draftThread?.branch ?? null),
+    worktreePath: hasConcreteWorktree ? draftWorktreePath : null,
   };
 }

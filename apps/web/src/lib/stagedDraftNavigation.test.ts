@@ -4,6 +4,8 @@ import {
   draftNavigationSlotKey,
   runDraftNavigationOnce,
   stageDraftNavigation,
+  supersedeDraftNavigation,
+  waitForDraftNavigationIdle,
 } from "./stagedDraftNavigation";
 
 describe("stagedDraftNavigation", () => {
@@ -237,6 +239,27 @@ describe("stagedDraftNavigation", () => {
     await expect(first).resolves.toBe("superseded");
     await expect(second).resolves.toBe("latest");
     expect(secondWasCurrent).toBe(true);
+  });
+
+  it("revokes an awaited owner when an existing-route navigation takes control", async () => {
+    let releasePreparation!: () => void;
+    let wasCurrentAfterRelease = true;
+    const slotKey = draftNavigationSlotKey();
+    const pending = runDraftNavigationOnce(slotKey, "exact-worktree", async (ownership) => {
+      await new Promise<void>((resolve) => {
+        releasePreparation = resolve;
+      });
+      wasCurrentAfterRelease = ownership.isCurrent();
+      return ownership.isCurrent() ? "stale-navigation" : "superseded";
+    });
+    await Promise.resolve();
+
+    supersedeDraftNavigation(slotKey);
+    releasePreparation();
+
+    await expect(pending).resolves.toBe("superseded");
+    expect(wasCurrentAfterRelease).toBe(false);
+    await expect(waitForDraftNavigationIdle(slotKey)).resolves.toBeUndefined();
   });
 
   it("supersedes delayed work across projects and chat or terminal entry points", async () => {

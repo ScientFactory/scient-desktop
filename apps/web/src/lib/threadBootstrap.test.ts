@@ -8,6 +8,7 @@ import {
   createFreshDraftThreadSeed,
   newThreadNavigationRequestKey,
   resolveNewThreadWorkspace,
+  resolveNewThreadWorkspaceForEntryPoint,
   resolveTerminalThreadCreationState,
   resolveThreadBootstrapPlan,
   shouldReuseActiveDraftThread,
@@ -222,6 +223,48 @@ describe("threadBootstrap", () => {
       worktreePath: null,
       envMode: "local",
       workspaceOrigin: "intentional",
+    });
+  });
+
+  it("uses an honest local workspace for immediate terminals without a materialized worktree", () => {
+    expect(
+      resolveNewThreadWorkspaceForEntryPoint({
+        defaultEnvMode: "worktree",
+        entryPoint: "terminal",
+        intent: { kind: "project-default" },
+      }),
+    ).toEqual({
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+      workspaceOrigin: "default",
+    });
+    expect(
+      resolveNewThreadWorkspaceForEntryPoint({
+        defaultEnvMode: "local",
+        entryPoint: "terminal",
+        intent: { kind: "existing-worktree", branch: "stale", worktreePath: "" },
+      }),
+    ).toEqual({
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+      workspaceOrigin: "intentional",
+    });
+    expect(
+      resolveNewThreadWorkspaceForEntryPoint({
+        defaultEnvMode: "local",
+        entryPoint: "terminal",
+        intent: {
+          kind: "existing-worktree",
+          branch: "feature/exact",
+          worktreePath: "/repo/.worktrees/exact",
+        },
+      }),
+    ).toMatchObject({
+      branch: "feature/exact",
+      worktreePath: "/repo/.worktrees/exact",
+      envMode: "worktree",
     });
   });
 
@@ -482,6 +525,28 @@ describe("threadBootstrap", () => {
       envMode: "local",
       worktreePath: null,
       branch: null,
+    });
+  });
+
+  it("fails terminal promotion safely to local when worktree metadata has no concrete path", () => {
+    expect(
+      resolveTerminalThreadCreationState({
+        activeDraftThread: null,
+        activeThread: null,
+        defaultEnvMode: "worktree",
+        draftComposerState: makeComposerDraftState(),
+        draftThread: makeDraftThread({
+          branch: "stale-branch",
+          envMode: "worktree",
+          worktreePath: null,
+        }),
+        projectDefaultModelSelection: modelSelection("codex", "gpt-5.4"),
+        projectId: PROJECT_ID,
+      }),
+    ).toMatchObject({
+      envMode: "local",
+      branch: null,
+      worktreePath: null,
     });
   });
 });

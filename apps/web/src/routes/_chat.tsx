@@ -390,6 +390,7 @@ function ChatRouteGlobalShortcuts() {
         event.stopPropagation();
         void handleNewThread(target.projectId, {
           provider,
+          prepareNavigationKey: `provider-shortcut:${provider}`,
           prepareNavigation: async (ownership) => {
             const providerAvailability = await resolveProviderSendAvailabilityWithRefresh({
               provider,

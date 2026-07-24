@@ -32,6 +32,20 @@ export function waitForDraftNavigationIdle(slotKey: string): Promise<void> {
 }
 
 /**
+ * Transfers visible-route ownership to a navigation that is not creating a new thread. Pending
+ * preparations may finish their read-only work, but they can no longer stage or commit a route.
+ */
+export function supersedeDraftNavigation(slotKey: string): void {
+  const state = draftNavigationStateBySlot.get(slotKey);
+  if (!state) {
+    return;
+  }
+  state.latestOwner = Symbol("external-navigation");
+  state.latestOperation = null;
+  state.latestRequestKey = null;
+}
+
+/**
  * Coalesces adjacent identical requests while starting distinct requests independently. A distinct
  * later request becomes the owner immediately, allowing it to make progress without waiting for a
  * stale preparation and allowing awaited older work to stop before a route or draft-mapping commit.

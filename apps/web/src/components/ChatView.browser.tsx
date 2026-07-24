@@ -5656,7 +5656,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
       useComposerDraftStore.getState().setPrompt(reusableDraftThreadId, "later draft prompt");
 
       await dispatchThreadShortcut("c");
-      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalled());
+      await dispatchThreadShortcut("c");
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledOnce());
 
       await page.getByTestId("new-thread-button").click();
       useComposerDraftStore.getState().addFiles(reusableDraftThreadId, [
@@ -5813,6 +5814,122 @@ describe("ChatView timeline estimator parity (full app)", () => {
       defaultNavigationBlocker.resolve();
       branchLookupDeferred.resolve(exactWorktreeBranchResult);
       await defaultNavigationOperation;
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps a newer existing-thread click ahead of delayed exact-workspace validation", async () => {
+    const otherThreadId = ThreadId.makeUnsafe("thread-existing-navigation-wins");
+    const contextMenuShow = vi.fn(
+      async (_items: Parameters<NativeApi["contextMenu"]["show"]>[0]) => "new-thread-in-workspace",
+    );
+    const exactWorktreeBranchResult: Awaited<ReturnType<NativeApi["git"]["listBranches"]>> = {
+      isRepo: true,
+      hasOriginRemote: true,
+      branches: [
+        {
+          name: "feature/delayed-exact",
+          current: false,
+          isDefault: false,
+          worktreePath: "/repo/worktrees/delayed-exact",
+        },
+      ],
+    };
+    let resolveValidation!: (value: Awaited<ReturnType<NativeApi["git"]["listBranches"]>>) => void;
+    const delayedValidation = new Promise<Awaited<ReturnType<NativeApi["git"]["listBranches"]>>>(
+      (resolve) => {
+        resolveValidation = resolve;
+      },
+    );
+    const branchLookup = vi.fn<NativeApi["git"]["listBranches"]>(() => delayedValidation);
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-existing-navigation-wins" as MessageId,
+      targetText: "existing navigation wins",
+    });
+    const sourceThread = baseSnapshot.threads[0]!;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...baseSnapshot,
+        threads: [
+          {
+            ...sourceThread,
+            envMode: "worktree",
+            branch: "feature/delayed-exact",
+            worktreePath: "/repo/worktrees/delayed-exact",
+          },
+          {
+            ...sourceThread,
+            id: otherThreadId,
+            title: "Existing destination thread",
+            messages: [],
+            envMode: "local",
+            branch: "main",
+            worktreePath: null,
+          },
+        ],
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        contextMenu: {
+          ...api.contextMenu,
+          show: contextMenuShow as NativeApi["contextMenu"]["show"],
+        },
+        git: {
+          ...api.git,
+          listBranches: branchLookup,
+        },
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForComposerEditor();
+      useStore.getState().setProjectExpanded(PROJECT_ID, true);
+      await waitForLayout();
+      const sourceRow = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-thread-entry-point]")).find(
+            (row) => row.textContent?.includes(THREAD_TITLE),
+          ) ?? null,
+        "Unable to find the source thread row.",
+      );
+      const destinationRow = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-thread-entry-point]")).find(
+            (row) => row.textContent?.includes("Existing destination thread"),
+          ) ?? null,
+        "Unable to find the destination thread row.",
+      );
+
+      sourceRow.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 24,
+          clientY: 24,
+        }),
+      );
+      await vi.waitFor(() => expect(branchLookup).toHaveBeenCalledOnce());
+
+      destinationRow.click();
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${otherThreadId}`,
+        "The newer existing-thread click should take control of the route.",
+      );
+      resolveValidation(exactWorktreeBranchResult);
+      await waitForDraftNavigationIdle(draftNavigationSlotKey());
+
+      expect(mounted.router.state.location.pathname).toBe(`/${otherThreadId}`);
+      expect(
+        Object.values(useComposerDraftStore.getState().draftThreadsByThreadId).some(
+          (draft) => draft.worktreePath === "/repo/worktrees/delayed-exact",
+        ),
+      ).toBe(false);
+    } finally {
+      resolveValidation(exactWorktreeBranchResult);
+      await waitForDraftNavigationIdle(draftNavigationSlotKey());
       await mounted.cleanup();
     }
   });
@@ -6509,6 +6626,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
           ],
         };
       },
+      configureNativeApi: (api) => ({
+        ...api,
+        server: {
+          ...api.server,
+          getSettings: async () => ({
+            ...DEFAULT_SERVER_SETTINGS,
+            defaultThreadEnvMode: "worktree",
+          }),
+        },
+      }),
     });
 
     try {
@@ -6571,6 +6698,22 @@ describe("ChatView timeline estimator parity (full app)", () => {
       useStore.getState().syncServerReadModel(addThreadToSnapshot(fixture.snapshot, newThreadId));
       useStore.getState().setProjectExpanded(PROJECT_ID, true);
       useComposerDraftStore.getState().clearDraftThread(newThreadId);
+
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests.find(
+              (request) =>
+                request._tag === WS_METHODS.terminalOpen && request.threadId === newThreadId,
+            ),
+          ).toMatchObject({
+            _tag: WS_METHODS.terminalOpen,
+            threadId: newThreadId,
+            cwd: "/repo/project",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
 
       await vi.waitFor(
         () => {

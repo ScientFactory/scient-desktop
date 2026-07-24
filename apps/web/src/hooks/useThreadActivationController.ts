@@ -9,6 +9,7 @@ import type { LastThreadRoute } from "../chatRouteRestore";
 import { type PaneId, type SplitView, type SplitViewId } from "../splitViewStore";
 import { selectThreadTerminalState } from "../terminalStateStore";
 import type { SidebarThreadSummary } from "../types";
+import { draftNavigationSlotKey, supersedeDraftNavigation } from "../lib/stagedDraftNavigation";
 import {
   resolvePreferredSplitForCommand,
   resolveThreadCommandActivation,
@@ -76,9 +77,15 @@ export function activateThreadFromSidebarIntent(
     threadId,
   });
   const targetThread = sidebarThreadSummaryById[threadId];
+  if (!targetThread) {
+    return;
+  }
+  // Selecting an existing thread is a route intent on the same visible surface as New Thread.
+  // Revoke any delayed preparation before deciding whether this activation changes the route.
+  supersedeDraftNavigation(draftNavigationSlotKey());
   const activation = resolveThreadCommandActivation({
     threadId,
-    threadExists: targetThread !== undefined,
+    threadExists: true,
     activeSidebarThreadId: routeThreadId,
     preferredSplitViewId: preferredSplit?.splitViewId ?? null,
     splitPaneId: preferredSplit?.paneId ?? null,

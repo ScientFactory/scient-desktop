@@ -3,6 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import { ProjectId, ThreadId } from "@synara/contracts";
 import type { SplitView } from "../splitViewStore";
 import {
+  draftNavigationSlotKey,
+  runDraftNavigationOnce,
+  waitForDraftNavigationIdle,
+} from "../lib/stagedDraftNavigation";
+import {
   activateThreadFromSidebarIntent,
   type ThreadActivationControllerInput,
 } from "./useThreadActivationController";
@@ -112,6 +117,32 @@ function getFirstNavigateArgs(input: { navigate: ReturnType<typeof vi.fn> }) {
 }
 
 describe("activateThreadFromSidebarIntent", () => {
+  it("supersedes a pending new-thread preparation before activating an existing thread", async () => {
+    let releasePreparation!: () => void;
+    let pendingOwnerWasCurrent = true;
+    const pending = runDraftNavigationOnce(
+      draftNavigationSlotKey(),
+      "delayed-exact-workspace",
+      async (ownership) => {
+        await new Promise<void>((resolve) => {
+          releasePreparation = resolve;
+        });
+        pendingOwnerWasCurrent = ownership.isCurrent();
+        return ownership.isCurrent();
+      },
+    );
+    await Promise.resolve();
+    const input = makeControllerInput();
+
+    activateThreadFromSidebarIntent(input, THREAD_B);
+    releasePreparation();
+
+    await expect(pending).resolves.toBe(false);
+    expect(pendingOwnerWasCurrent).toBe(false);
+    expect(input.openChatThreadPage).toHaveBeenCalledWith(THREAD_B);
+    await waitForDraftNavigationIdle(draftNavigationSlotKey());
+  });
+
   it("focuses a target pane in the active split", () => {
     const activeSplitView = makeSplitViewFixture({
       id: "split-active",
