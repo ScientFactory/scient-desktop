@@ -674,6 +674,67 @@ describe("BrowserPanel interactions", () => {
     });
   });
 
+  it("transiently occludes a native local HTML view while an app menu is open", async () => {
+    const previewUrl = "http://g-12345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const openState = browserState("tab-1");
+    openState.tabs = [
+      {
+        ...openState.tabs[0]!,
+        kind: "local-html",
+        url: previewUrl,
+        displayUrl: "/tmp/report.html",
+      },
+    ];
+    const api = liveBrowserApi({ openState });
+    nativeApiTestState.api = api;
+    useBrowserStateStore.getState().removeThreadState(THREAD_ID);
+
+    await renderLivePanel(vi.fn());
+    await vi.waitFor(() => {
+      expect(document.querySelector("webview")).toBeNull();
+      expect(api.browser.setPanelBounds).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: THREAD_ID,
+          surface: "native",
+          occluded: false,
+          bounds: expect.objectContaining({ width: expect.any(Number) }),
+        }),
+      );
+    });
+
+    (
+      (await page.getByRole("button", { name: "Browser actions" }).element()) as HTMLButtonElement
+    ).click();
+    await expect.element(page.getByRole("menuitem", { name: "New tab" })).toBeVisible();
+    await vi.waitFor(() => {
+      expect(api.browser.setPanelBounds).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: THREAD_ID,
+          surface: "native",
+          occluded: true,
+          bounds: expect.objectContaining({ width: expect.any(Number) }),
+        }),
+      );
+      expect(vi.mocked(api.browser.setPanelBounds).mock.calls).not.toContainEqual([
+        { threadId: THREAD_ID, bounds: null, surface: "native", occluded: true },
+      ]);
+    });
+
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() => {
+      expect(page.getByRole("menuitem", { name: "New tab" }).query()).toBeNull();
+      const latestNativeCall = vi
+        .mocked(api.browser.setPanelBounds)
+        .mock.calls.findLast(([input]) => input.surface === "native")?.[0];
+      expect(latestNativeCall).toMatchObject({
+        threadId: THREAD_ID,
+        surface: "native",
+        occluded: false,
+        bounds: { width: expect.any(Number) },
+      });
+    });
+  });
+
   it("reserves null bounds for the local home that genuinely hides the page surface", async () => {
     const openState = browserState("tab-1");
     openState.version = 50;

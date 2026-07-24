@@ -15,6 +15,10 @@ const electron = vi.hoisted(() => {
     windowOpenHandler: ((details: any) => { action: string }) | null;
   }> = [];
   const createdWebContentsViewPreferences: Array<Record<string, unknown>> = [];
+  const createdViews: Array<{
+    setBounds: ReturnType<typeof vi.fn>;
+    setVisible: ReturnType<typeof vi.fn>;
+  }> = [];
   const sessions = new Map<
     string,
     {
@@ -118,6 +122,7 @@ const electron = vi.hoisted(() => {
   return {
     createdWebContents,
     createdWebContentsViewPreferences,
+    createdViews,
     sessions,
     createWebContents,
     setProxyImplementation: (implementation: () => Promise<void>) => {
@@ -156,9 +161,11 @@ vi.mock("electron", () => ({
     readonly webContents = electron.createWebContents();
     readonly setBounds = vi.fn();
     readonly setBackgroundColor = vi.fn();
+    readonly setVisible = vi.fn();
 
     constructor(options: { webPreferences?: Record<string, unknown> }) {
       electron.createdWebContentsViewPreferences.push(options.webPreferences ?? {});
+      electron.createdViews.push(this);
     }
   },
 }));
@@ -174,6 +181,7 @@ describe("DesktopBrowserManager reliability", () => {
     vi.clearAllMocks();
     electron.createdWebContents.splice(0);
     electron.createdWebContentsViewPreferences.splice(0);
+    electron.createdViews.splice(0);
     electron.sessions.clear();
     electron.setProxyImplementation(async () => undefined);
   });
@@ -289,6 +297,53 @@ describe("DesktopBrowserManager reliability", () => {
       expect(electron.createdWebContents[0]?.loadURL).toHaveBeenCalledWith("https://example.com/");
     });
     expect(manager.getState({ threadId: THREAD_ID }).lastError).toBeNull();
+    manager.dispose();
+  });
+
+  it("hides and restores a native local HTML view without suspending or resurrecting it", () => {
+    const manager = new DesktopBrowserManager();
+    const contentView = {
+      addChildView: vi.fn(),
+      removeChildView: vi.fn(),
+    };
+    manager.setWindow({ contentView } as never);
+    const previewUrl = "http://g-12345678-1234-4123-8123-123456789abc.preview.localhost:43123/";
+    manager.open({
+      threadId: THREAD_ID,
+      initialUrl: previewUrl,
+      kind: "local-html",
+    });
+    const bounds = { x: 10, y: 20, width: 640, height: 480 };
+
+    manager.setPanelBounds({ threadId: THREAD_ID, bounds, surface: "native", occluded: false });
+    const view = electron.createdViews.at(-1);
+    expect(view).toBeDefined();
+    if (!view) throw new Error("Expected a native local HTML view.");
+    expect(view.setBounds).toHaveBeenLastCalledWith(bounds);
+
+    manager.setPanelBounds({ threadId: THREAD_ID, bounds, surface: "native", occluded: true });
+    expect(view.setVisible).toHaveBeenLastCalledWith(false);
+    expect(view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 });
+    const internals = manager as unknown as {
+      activeThreadId: ThreadId | null;
+      suspendTimers: Map<ThreadId, unknown>;
+    };
+    expect(internals.activeThreadId).toBe(THREAD_ID);
+    expect(internals.suspendTimers.has(THREAD_ID)).toBe(false);
+
+    manager.setPanelBounds({ threadId: THREAD_ID, bounds, surface: "native", occluded: false });
+    expect(view.setVisible).toHaveBeenLastCalledWith(true);
+    expect(view.setBounds).toHaveBeenLastCalledWith(bounds);
+
+    manager.setPanelBounds({ threadId: THREAD_ID, bounds, surface: "native", occluded: true });
+    const visibleCallsBeforeClose = view.setVisible.mock.calls.filter(
+      ([visible]) => visible,
+    ).length;
+    manager.close({ threadId: THREAD_ID });
+    manager.setPanelBounds({ threadId: THREAD_ID, bounds, surface: "native", occluded: false });
+    expect(view.setVisible.mock.calls.filter(([visible]) => visible)).toHaveLength(
+      visibleCallsBeforeClose,
+    );
     manager.dispose();
   });
 

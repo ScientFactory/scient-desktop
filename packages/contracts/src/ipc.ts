@@ -369,6 +369,7 @@ export interface BrowserSetPanelBoundsInput {
   threadId: ThreadId;
   bounds: BrowserPanelBounds | null;
   surface?: "native" | "renderer";
+  occluded?: boolean;
 }
 
 export interface BrowserAttachWebviewInput extends BrowserTabInput {

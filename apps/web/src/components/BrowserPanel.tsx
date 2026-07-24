@@ -767,12 +767,10 @@ export function BrowserPanel({
         obscuredByOverlay,
         paneIsActuallyHidden,
       });
-      // App-owned menus, dialogs, and other transient overlays only occlude the renderer
-      // surface. Sending null bounds here tells main that the pane itself is hidden, which
-      // starts the 30-second runtime suspension timer and can destroy the adopted webview
-      // while its DOM node remains mounted. Keep the last native geometry/lifecycle active;
-      // a close mutation or resize will send the current real bounds when the overlay leaves.
-      if (boundsSyncMode === "suppress") {
+      // Renderer-owned webviews can be hidden locally while bounds updates are suppressed.
+      // Main-owned local HTML views instead receive an explicit transient occlusion signal;
+      // sending null bounds would incorrectly start the pane's suspension lifecycle.
+      if (boundsSyncMode === "suppress" && surface === "renderer") {
         lastMeasuredBoundsKeyRef.current = "renderer:overlay-occluded";
         perfCountersRef.current.syncSkips += 1;
         return;
@@ -786,8 +784,9 @@ export function BrowserPanel({
               width: rect.width,
               height: rect.height,
             };
+      const nativeOccluded = surface === "native" && obscuredByOverlay;
       const nextKey = bounds
-        ? `${surface}:${Math.round(bounds.x)}:${Math.round(bounds.y)}:${Math.round(bounds.width)}:${Math.round(bounds.height)}`
+        ? `${surface}:${nativeOccluded ? "occluded" : "visible"}:${Math.round(bounds.x)}:${Math.round(bounds.y)}:${Math.round(bounds.width)}:${Math.round(bounds.height)}`
         : `${surface}:hidden`;
       lastMeasuredBoundsKeyRef.current = nextKey;
       if (lastSentBoundsRef.current === nextKey) {
@@ -797,7 +796,12 @@ export function BrowserPanel({
       lastSentBoundsRef.current = nextKey;
       perfCountersRef.current.syncSends += 1;
       void api.browser
-        .setPanelBounds({ threadId, bounds, surface })
+        .setPanelBounds({
+          threadId,
+          bounds,
+          surface,
+          ...(surface === "native" ? { occluded: nativeOccluded } : {}),
+        })
         .catch(ignoreBrowserBoundsSyncError);
     };
 

@@ -321,6 +321,7 @@ export class DesktopBrowserManager {
   private readonly previewSessionsConfigured = new Set<string>();
   private readonly previewSessionReady = new Map<string, Promise<Error | null>>();
   private readonly previewSessionRetries = new Set<string>();
+  private readonly occludedThreads = new Set<ThreadId>();
   private readonly tabSuspendTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly suspendTimers = new Map<ThreadId, ReturnType<typeof setTimeout>>();
   private runtimeSyncFlushScheduled = false;
@@ -763,6 +764,7 @@ export class DesktopBrowserManager {
     this.previewSessionsConfigured.clear();
     this.previewSessionReady.clear();
     this.previewSessionRetries.clear();
+    this.occludedThreads.clear();
     this.listeners.clear();
     this.copyLinkListeners.clear();
     this.states.clear();
@@ -870,6 +872,7 @@ export class DesktopBrowserManager {
 
   close(input: BrowserThreadInput): ThreadBrowserState {
     this.clearSuspendTimer(input.threadId);
+    this.occludedThreads.delete(input.threadId);
 
     if (this.activeThreadId === input.threadId) {
       this.detachAttachedRuntime();
@@ -898,6 +901,7 @@ export class DesktopBrowserManager {
   }
 
   hide(input: BrowserThreadInput): void {
+    this.occludedThreads.delete(input.threadId);
     const state = this.states.get(input.threadId);
     if (this.activeThreadId === input.threadId) {
       this.detachAttachedRuntime();
@@ -923,9 +927,11 @@ export class DesktopBrowserManager {
     const activeTabId = this.getActiveTab(state)?.id ?? null;
     const activeRuntimeKey = activeTabId ? buildRuntimeKey(input.threadId, activeTabId) : null;
     const activeRuntime = activeRuntimeKey ? this.runtimes.get(activeRuntimeKey) : null;
+    const wasOccluded = this.occludedThreads.has(input.threadId);
     this.setActiveBounds(input.threadId, nextBounds);
 
     if (!state.open || nextBounds === null) {
+      this.occludedThreads.delete(input.threadId);
       if (this.activeThreadId === input.threadId) {
         this.detachAttachedRuntime();
         this.activeThreadId = null;
@@ -933,6 +939,20 @@ export class DesktopBrowserManager {
       }
       return;
     }
+
+    if (input.surface === "native" && input.occluded === true) {
+      this.occludedThreads.add(input.threadId);
+      if (
+        this.activeThreadId === input.threadId &&
+        this.attachedRuntimeKey === activeRuntimeKey &&
+        activeRuntime?.ownsWebContents
+      ) {
+        this.setRuntimeViewHidden(activeRuntime, true);
+        this.attachedBoundsSignature = null;
+      }
+      return;
+    }
+    this.occludedThreads.delete(input.threadId);
 
     if (
       input.surface === "native" &&
@@ -961,7 +981,8 @@ export class DesktopBrowserManager {
     if (
       this.activeThreadId === input.threadId &&
       this.attachedRuntimeKey === activeRuntimeKey &&
-      this.attachedBoundsSignature === nextBoundsSignature
+      this.attachedBoundsSignature === nextBoundsSignature &&
+      !wasOccluded
     ) {
       this.perfCounters.setPanelBoundsNoopSkips += 1;
       return;
@@ -1693,6 +1714,18 @@ export class DesktopBrowserManager {
     if (!runtime.view) {
       this.attachedRuntimeKey = runtime.key;
       this.attachedBoundsSignature = nextBoundsSignature;
+      this.updatePopupWindowsForThread(runtime.threadId);
+      return;
+    }
+    if (this.occludedThreads.has(runtime.threadId)) {
+      if (this.attachedRuntimeKey && this.attachedRuntimeKey !== runtime.key) {
+        this.detachAttachedRuntime();
+      }
+      this.bringRuntimeViewToFront(runtime);
+      runtime.view.setBounds(bounds);
+      this.setRuntimeViewHidden(runtime, true);
+      this.attachedRuntimeKey = runtime.key;
+      this.attachedBoundsSignature = null;
       this.updatePopupWindowsForThread(runtime.threadId);
       return;
     }
