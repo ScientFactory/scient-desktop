@@ -90,6 +90,10 @@ import {
 import { RightDock } from "../components/chat/RightDock";
 import { RightDockEmptyState } from "../components/chat/RightDockEmptyState";
 import {
+  restoreRightDockFocusAfterBrowserClose,
+  restoreSplitChatFocusAfterBrowserClose,
+} from "../components/chat/browserPanelFocus";
+import {
   CHAT_SURFACE_HEADER_ROW_CLASS_NAME,
   DOCK_HEADER_ICON_BUTTON_CLASS,
 } from "../components/chat/chatHeaderControls";
@@ -296,7 +300,7 @@ function SplitPaneEmbeddedPanel(props: {
   panelOpen: boolean;
   panel: ChatRightPanel | null | undefined;
   threadId: ThreadIdType | null;
-  onClosePanel: () => void;
+  onClosePanel: (options?: { restoreFocus?: boolean }) => void;
   panelState: Pick<SplitViewPanePanelState, "panel" | "diffTurnId" | "diffFilePath">;
   isFocused: boolean;
   onUpdatePanelState: (
@@ -413,7 +417,7 @@ function SplitPaneEmbeddedPanel(props: {
         <LazyDiffPanel
           mode="sidebar"
           threadId={props.threadId}
-          onClosePanel={props.onClosePanel}
+          onClosePanel={() => props.onClosePanel()}
           panelState={props.panelState}
           liveRefreshEnabled={props.isFocused}
           onUpdatePanelState={props.onUpdatePanelState}
@@ -831,6 +835,7 @@ function SplitPaneSurface(props: {
     side: SplitDropSide;
   }) => void;
 }) {
+  const surfaceRef = useRef<HTMLDivElement>(null);
   const paneScopeId = splitViewPaneScopeId(props.splitView.id, props.paneId);
   const panelOpen = props.panelState.panel !== null;
   const shouldRenderPanelContent = panelOpen || props.panelState.hasOpenedPanel;
@@ -849,6 +854,10 @@ function SplitPaneSurface(props: {
 
   return (
     <div
+      ref={surfaceRef}
+      data-split-chat-pane
+      tabIndex={-1}
+      aria-label="Chat split pane"
       className={cn(
         "group relative flex min-h-0 min-w-0 flex-1 [contain:layout_style_paint]",
         CHAT_BACKGROUND_CLASS_NAME,
@@ -905,7 +914,16 @@ function SplitPaneSurface(props: {
         panelOpen={panelOpen && shouldRenderPanelContent}
         panel={props.panelState.panel}
         threadId={props.threadId}
-        onClosePanel={props.onClosePanel}
+        onClosePanel={(options) => {
+          props.onClosePanel();
+          if (options?.restoreFocus) {
+            window.requestAnimationFrame(() => {
+              if (surfaceRef.current) {
+                restoreSplitChatFocusAfterBrowserClose(surfaceRef.current);
+              }
+            });
+          }
+        }}
         panelState={props.panelState}
         isFocused={props.isFocused}
         onUpdatePanelState={props.onUpdatePanelState}
@@ -2259,11 +2277,7 @@ function SingleChatSurface(props: {
                   closePane(props.threadId, pane.id);
                   if (options?.restoreFocus) {
                     window.requestAnimationFrame(() => {
-                      document
-                        .querySelector<HTMLButtonElement>(
-                          '[data-right-dock-content] [data-right-dock-empty-state] button:not([aria-disabled="true"])',
-                        )
-                        ?.focus();
+                      restoreRightDockFocusAfterBrowserClose(document);
                     });
                   }
                 }}
