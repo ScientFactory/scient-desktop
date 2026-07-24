@@ -1,1 +1,29 @@
-[]
+[
+  {
+    "version": "0.5.13",
+    "date": "2026-07-25",
+    "headline": "A calmer, safer way to work in every project",
+    "features": [
+      {
+        "id": "workspace-intent",
+        "title": "New threads stay in the right project",
+        "description": "Start a conversation in the project's default workspace, or choose a specific branch or worktree when you want to continue focused work."
+      },
+      {
+        "id": "folder-drop",
+        "title": "Add projects with a simple drop",
+        "description": "Drop a folder into the project picker to add it safely, with clear feedback when the drop is outside the picker."
+      },
+      {
+        "id": "open-code-reliability",
+        "title": "More reliable provider sessions",
+        "description": "OpenCode and Kilo sessions recover more predictably when a turn finishes, a server exits, or a connection needs attention."
+      },
+      {
+        "id": "local-file-viewer",
+        "title": "Open local files with confidence",
+        "description": "Preview supported local files in a protected viewer while keeping existing Markdown previews and project boundaries intact."
+      }
+    ]
+  }
+]
