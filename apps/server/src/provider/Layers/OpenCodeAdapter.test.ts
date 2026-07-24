@@ -1,7 +1,7 @@
 import { ApprovalRequestId, ThreadId } from "@synara/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { Agent, Model, OpencodeClient, Part, Provider } from "@opencode-ai/sdk/v2";
-import { Effect, Exit, Fiber, Layer, Stream } from "effect";
+import { Deferred, Effect, Exit, Fiber, Layer, Stream } from "effect";
 import { describe, it, expect } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
@@ -10,6 +10,7 @@ import {
   OpenCodeRuntimeError,
   type OpenCodeInventory,
   type OpenCodeRuntimeShape,
+  type OpenCodeServerConnection,
 } from "../opencodeRuntime.ts";
 import { OpenCodeAdapter, type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import { KiloAdapter, type KiloAdapterShape } from "../Services/KiloAdapter.ts";
@@ -145,6 +146,7 @@ function createMockOpenCodeRuntime(options?: {
   ) => Promise<unknown>;
   readonly session?: Record<string, unknown>;
   readonly sessionIds?: ReadonlyArray<string>;
+  readonly connection?: OpenCodeServerConnection;
 }) {
   const abortCalls: Array<{ sessionID: string }> = [];
   const abortRequestSignals: Array<AbortSignal | undefined> = [];
@@ -290,11 +292,13 @@ function createMockOpenCodeRuntime(options?: {
         if (options?.connectError) {
           return yield* options.connectError;
         }
-        return {
-          url: input.serverUrl ?? "http://127.0.0.1:4099",
-          exitCode: null,
-          external: Boolean(input.serverUrl),
-        };
+        return (
+          options?.connection ?? {
+            url: input.serverUrl ?? "http://127.0.0.1:4099",
+            exitCode: null,
+            external: Boolean(input.serverUrl),
+          }
+        );
       }),
     runOpenCodeCommand: () => unexpectedOperation("runOpenCodeCommand"),
     createOpenCodeSdkClient,
@@ -11046,6 +11050,66 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
     expect(result.terminalEventsBeforeRetry).toBe(0);
     expect(result.retainedAfterRetry).toBe(false);
     expect(abortCount).toBe(2);
+  });
+
+  it("finalizes a managed session after confirmed local process exit without requiring abort", async () => {
+    let resolveExit: ((code: number) => void) | undefined;
+    const exitCode = new Promise<number>((resolve) => {
+      resolveExit = resolve;
+    });
+    let abortCount = 0;
+    const runtime = createMockOpenCodeRuntime({
+      connection: {
+        url: "http://127.0.0.1:4099",
+        external: false,
+        exitCode: Effect.promise(() => exitCode),
+      },
+      abort: async () => {
+        abortCount += 1;
+        throw new Error("server is already unavailable");
+      },
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const observed: Array<{ readonly type: string; readonly payload: unknown }> = [];
+        const terminalObserved = yield* Deferred.make<void>();
+        const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+          Effect.sync(() => {
+            observed.push(event);
+            if (event.type === "session.exited") {
+              Effect.runSync(Deferred.succeed(terminalObserved, undefined).pipe(Effect.ignore));
+            }
+          }),
+        ).pipe(Effect.forkChild);
+        const threadId = asThreadId("thread-managed-server-exit");
+        yield* adapter.startSession({ provider: "opencode", threadId, runtimeMode: "full-access" });
+        resolveExit?.(17);
+        yield* Deferred.await(terminalObserved);
+        const retained = yield* adapter.hasSession(threadId);
+        yield* Fiber.interrupt(eventsFiber);
+        return { observed, retained };
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(result.retained).toBe(false);
+    expect(abortCount).toBe(0);
+    expect(result.observed.filter((event) => event.type === "runtime.error")).toHaveLength(1);
+    expect(result.observed.filter((event) => event.type === "session.exited")).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({ exitKind: "error", recoverable: false }),
+      }),
+    ]);
   });
 
   for (const operation of ["stop", "replace"] as const) {

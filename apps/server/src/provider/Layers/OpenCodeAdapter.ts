@@ -2487,14 +2487,29 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
       const emitUnexpectedExit = Effect.fn("emitUnexpectedExit")(function* (
         context: OpenCodeSessionContext,
         message: string,
+        providerTerminationConfirmed = false,
       ) {
         return yield* Effect.uninterruptible(
           Effect.gen(function* () {
-            const proposedAttempt = yield* Deferred.make<void, OpenCodeRuntimeError>();
-            if ((yield* Ref.get(context.stopped)) || context.retirementAttempt !== undefined) {
-              return;
+            let proposedAttempt: Deferred.Deferred<void, OpenCodeRuntimeError>;
+            while (true) {
+              if (yield* Ref.get(context.stopped)) {
+                return;
+              }
+              const observedAttempt = context.retirementAttempt;
+              if (observedAttempt !== undefined) {
+                if (!providerTerminationConfirmed) {
+                  return;
+                }
+                yield* Effect.exit(Deferred.await(observedAttempt));
+                continue;
+              }
+              proposedAttempt = yield* Deferred.make<void, OpenCodeRuntimeError>();
+              if (context.retirementAttempt === undefined) {
+                context.retirementAttempt = proposedAttempt;
+                break;
+              }
             }
-            context.retirementAttempt = proposedAttempt;
             const generation = context.activeTurnGeneration;
             const turnId = generation?.turnId;
             if (generation !== undefined) {
@@ -2505,9 +2520,11 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
               yield* cancelPendingInteractionsForGeneration(context, generation);
             }
 
-            const abortExit = yield* Effect.exit(
-              abortOpenCodeSessionBounded(context, completionSnapshotTimeoutMs),
-            );
+            const abortExit = providerTerminationConfirmed
+              ? Exit.succeed<void>(undefined)
+              : yield* Effect.exit(
+                  abortOpenCodeSessionBounded(context, completionSnapshotTimeoutMs),
+                );
             if (Exit.isFailure(abortExit)) {
               context.retirementAttempt = undefined;
               context.quarantinedAfterAbortFailure = true;
@@ -4899,6 +4916,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
                 yield* emitUnexpectedExit(
                   context,
                   `${adapterConfig.displayName} server exited unexpectedly (${code}).`,
+                  true,
                 );
               }),
             ),
