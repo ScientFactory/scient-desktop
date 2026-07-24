@@ -300,6 +300,9 @@ describe("MessagesTimeline changed-files disclosure", () => {
       await expect.poll(() => card?.dataset.changedFilesState).toBe("expanded");
       expect(document.activeElement).toBe(headerToggle);
       expect(card?.querySelector('[data-changed-files-preview="true"]')).toBeNull();
+      expect(card?.textContent).toContain("README.md");
+      expect(card?.textContent).toContain("Show less");
+      expect(card?.querySelector('button[aria-expanded="false"]')).toBeNull();
 
       headerToggle?.click();
       await expect.poll(() => card?.dataset.changedFilesState).toBe("collapsed");
@@ -358,6 +361,16 @@ describe("MessagesTimeline changed-files disclosure", () => {
       showAll?.click();
       await expect.poll(() => card?.dataset.changedFilesState).toBe("expanded");
       await new Promise<void>((resolve) => window.setTimeout(resolve, 320));
+
+      const finalFileRow = Array.from(
+        card?.querySelectorAll<HTMLButtonElement>("button") ?? [],
+      ).find((button) => button.textContent?.includes("changed-10.tsx"));
+      const overflowToggle = Array.from(
+        card?.querySelectorAll<HTMLButtonElement>('button[aria-expanded="true"]') ?? [],
+      ).find((button) => button.textContent?.includes("Show less"));
+      expect(finalFileRow).not.toBeUndefined();
+      expect(finalFileRow?.closest("[aria-hidden='true'][inert]")).toBeNull();
+      expect(overflowToggle).not.toBeUndefined();
 
       const expandedHeight = card?.getBoundingClientRect().height ?? 0;
       expect(expandedHeight).toBeGreaterThan(previewHeight + 40);

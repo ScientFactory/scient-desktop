@@ -939,6 +939,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       [turnId]: expanded,
     }));
   }, []);
+  const setFileListExpanded = useCallback((turnId: TurnId, expanded: boolean) => {
+    setExpandedFileListByTurnId((current) => ({
+      ...current,
+      [turnId]: expanded,
+    }));
+  }, []);
   const toggleFileListExpanded = useCallback((turnId: TurnId) => {
     setExpandedFileListByTurnId((current) => ({
       ...current,
@@ -1825,6 +1831,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                             if (isTailContentRow) {
                               scrollTailExpansionToEnd();
                             }
+                            setFileListExpanded(turnSummary.turnId, true);
                             setFileChangesExpanded(turnSummary.turnId, true);
                           }}
                         />
