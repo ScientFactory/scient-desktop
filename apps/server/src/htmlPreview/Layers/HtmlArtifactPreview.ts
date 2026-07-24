@@ -162,6 +162,7 @@ function browserHeaders(grant: PreviewGrant): Record<string, string> {
     "Cache-Control": "no-store",
     "Accept-Ranges": "bytes",
     "Referrer-Policy": "no-referrer",
+    "X-DNS-Prefetch-Control": "off",
     "X-Content-Type-Options": "nosniff",
     ...(grant.thumbnail
       ? {

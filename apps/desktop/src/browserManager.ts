@@ -317,6 +317,7 @@ export class DesktopBrowserManager {
   private spoofedUserAgent: string | null = null;
   private sessionConfigured = false;
   private readonly previewSessionsConfigured = new Set<string>();
+  private readonly previewSessionReady = new Map<string, Promise<Error | null>>();
   private readonly tabSuspendTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly suspendTimers = new Map<ThreadId, ReturnType<typeof setTimeout>>();
   private runtimeSyncFlushScheduled = false;
@@ -488,6 +489,23 @@ export class DesktopBrowserManager {
         event.preventDefault();
       });
     }
+    const sessionReady: Promise<Error | null> =
+      preview?.kind === "local-html" && preview.allowedExternalUrls === undefined
+        ? partitionSession
+            .setProxy({
+              mode: "fixed_servers",
+              proxyRules: "http=127.0.0.1:1;https=127.0.0.1:1;socks=127.0.0.1:1",
+              proxyBypassRules: `<-loopback>;${new URL(preview.origin).host}`,
+            })
+            .then(
+              () => null,
+              (cause: unknown) =>
+                cause instanceof Error
+                  ? cause
+                  : new Error("Failed to establish the local HTML network boundary."),
+            )
+        : Promise.resolve(null);
+    this.previewSessionReady.set(partition, sessionReady);
     this.previewSessionsConfigured.add(partition);
   }
 
@@ -519,6 +537,7 @@ export class DesktopBrowserManager {
     const partition = browserSessionPartition(tab.kind, threadId, tab.id);
     const previewSession = session.fromPartition(partition);
     this.previewSessionsConfigured.delete(partition);
+    this.previewSessionReady.delete(partition);
     void Promise.all([previewSession.clearStorageData(), previewSession.clearCache()]).catch(
       () => undefined,
     );
@@ -727,6 +746,8 @@ export class DesktopBrowserManager {
     this.closeAllPopupWindows();
     this.pendingRuntimeSyncs.clear();
     this.runtimeLastActiveAtByKey.clear();
+    this.previewSessionsConfigured.clear();
+    this.previewSessionReady.clear();
     this.listeners.clear();
     this.copyLinkListeners.clear();
     this.states.clear();
@@ -1769,6 +1790,12 @@ export class DesktopBrowserManager {
     // Belt-and-suspenders alongside the session-level UA: also covers an adopted renderer
     // <webview> for any navigation after it attaches.
     webContents.setUserAgent(this.resolveSpoofedUserAgent());
+    if (tabKind === "local-html") {
+      // Local HTML capabilities must not gain a UDP/STUN side channel around
+      // the HTTP(S) request policy. The awaited deny proxy is the primary
+      // boundary for interactive previews; this UDP policy is defense in depth.
+      webContents.setWebRTCIPHandlingPolicy("disable_non_proxied_udp");
+    }
 
     webContents.setWindowOpenHandler((details) => {
       const { url } = details;
@@ -2044,6 +2071,12 @@ export class DesktopBrowserManager {
 
     try {
       const runtime = options.runtime ?? this.ensureLiveRuntime(threadId, tabId);
+      if (tab.kind !== "web") {
+        const partition = browserSessionPartition(tab.kind, threadId, tab.id);
+        const previewSessionError = await (this.previewSessionReady.get(partition) ??
+          Promise.resolve(null));
+        if (previewSessionError) throw previewSessionError;
+      }
       const outcome = await loadBrowserRuntimeUrl({
         webContents: runtime.webContents,
         nextUrl,

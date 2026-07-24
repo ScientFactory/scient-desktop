@@ -9,9 +9,11 @@ const electron = vi.hoisted(() => {
   const createdWebContents: Array<{
     id: number;
     loadURL: ReturnType<typeof vi.fn>;
+    setWebRTCIPHandlingPolicy: ReturnType<typeof vi.fn>;
     handlers: Map<string, Array<(...args: any[]) => void>>;
     windowOpenHandler: ((details: any) => { action: string }) | null;
   }> = [];
+  const createdWebContentsViewPreferences: Array<Record<string, unknown>> = [];
   const sessions = new Map<
     string,
     {
@@ -21,6 +23,7 @@ const electron = vi.hoisted(() => {
       on: ReturnType<typeof vi.fn>;
       clearStorageData: ReturnType<typeof vi.fn>;
       clearCache: ReturnType<typeof vi.fn>;
+      setProxy: ReturnType<typeof vi.fn>;
       resolveHost: ReturnType<typeof vi.fn>;
       webRequest: {
         onBeforeSendHeaders: ReturnType<typeof vi.fn>;
@@ -30,6 +33,7 @@ const electron = vi.hoisted(() => {
     }
   >();
   let nextWebContentsId = 1;
+  let setProxyImplementation = async (): Promise<void> => undefined;
 
   function createWebContents() {
     let currentUrl = "about:blank";
@@ -53,6 +57,7 @@ const electron = vi.hoisted(() => {
         currentUrl = url;
       }),
       setUserAgent: vi.fn(),
+      setWebRTCIPHandlingPolicy: vi.fn(),
       handlers,
       windowOpenHandler: null as ((details: any) => { action: string }) | null,
       setWindowOpenHandler: vi.fn((handler: (details: any) => { action: string }) => {
@@ -87,6 +92,7 @@ const electron = vi.hoisted(() => {
       on: vi.fn(),
       clearStorageData: vi.fn(async () => undefined),
       clearCache: vi.fn(async () => undefined),
+      setProxy: vi.fn(() => setProxyImplementation()),
       resolveHost: vi.fn(async (hostname: string) => ({
         endpoints: [
           {
@@ -110,8 +116,12 @@ const electron = vi.hoisted(() => {
 
   return {
     createdWebContents,
+    createdWebContentsViewPreferences,
     sessions,
     createWebContents,
+    setProxyImplementation: (implementation: () => Promise<void>) => {
+      setProxyImplementation = implementation;
+    },
     sessionFor,
   };
 });
@@ -145,6 +155,10 @@ vi.mock("electron", () => ({
     readonly webContents = electron.createWebContents();
     readonly setBounds = vi.fn();
     readonly setBackgroundColor = vi.fn();
+
+    constructor(options: { webPreferences?: Record<string, unknown> }) {
+      electron.createdWebContentsViewPreferences.push(options.webPreferences ?? {});
+    }
   },
 }));
 
@@ -158,7 +172,9 @@ describe("DesktopBrowserManager reliability", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     electron.createdWebContents.splice(0);
+    electron.createdWebContentsViewPreferences.splice(0);
     electron.sessions.clear();
+    electron.setProxyImplementation(async () => undefined);
   });
 
   it("closes the browser session when its final tab closes", () => {
@@ -301,6 +317,12 @@ describe("DesktopBrowserManager reliability", () => {
     };
     internals.ensureLiveRuntime(THREAD_ID, tabId ?? "");
     const contents = electron.createdWebContents.at(-1);
+    expect(electron.createdWebContentsViewPreferences.at(-1)).toMatchObject({
+      nodeIntegration: false,
+      sandbox: true,
+    });
+    expect(contents?.setWebRTCIPHandlingPolicy).toHaveBeenCalledWith("disable_non_proxied_udp");
+    expect(previewSession?.setProxy).not.toHaveBeenCalled();
     const completed = previewSession?.webRequest.onCompleted.mock.calls[0]?.[0];
     expect(completed).toBeTypeOf("function");
     completed({
@@ -329,6 +351,13 @@ describe("DesktopBrowserManager reliability", () => {
     });
     const tabId = opened.activeTabId;
     expect(tabId).toBeTruthy();
+    const partition = `scient-local-html-preview-${THREAD_ID}-${tabId}`;
+    expect(electron.sessions.get(partition)?.setProxy).toHaveBeenCalledWith({
+      mode: "fixed_servers",
+      proxyRules: "http=127.0.0.1:1;https=127.0.0.1:1;socks=127.0.0.1:1",
+      proxyBypassRules:
+        "<-loopback>;g-12345678-1234-4123-8123-123456789abc.preview.localhost:43123",
+    });
 
     const internals = manager as unknown as {
       ensureLiveRuntime: (threadId: ThreadId, tabId: string) => unknown;
@@ -364,6 +393,35 @@ describe("DesktopBrowserManager reliability", () => {
     navigate(publicEvent);
     expect(publicEvent.preventDefault).toHaveBeenCalledOnce();
     expect(manager.getState({ threadId: THREAD_ID }).tabs).toHaveLength(1);
+    manager.dispose();
+  });
+
+  it("waits for the interactive preview network boundary before loading", async () => {
+    let releaseProxy: () => void = () => undefined;
+    const proxyReady = new Promise<void>((resolve) => {
+      releaseProxy = resolve;
+    });
+    electron.setProxyImplementation(() => proxyReady);
+    const manager = new DesktopBrowserManager();
+    const previewUrl = "http://g-12345678-1234-4123-8123-123456789abc.preview.localhost:43123/";
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: previewUrl,
+      kind: "local-html",
+    });
+    const tabId = opened.activeTabId;
+    expect(tabId).toBeTruthy();
+
+    const internals = manager as unknown as {
+      loadTab: (threadId: ThreadId, tabId: string, options: { force: boolean }) => Promise<void>;
+    };
+    const load = internals.loadTab(THREAD_ID, tabId ?? "", { force: true });
+    await Promise.resolve();
+    expect(electron.createdWebContents.at(-1)?.loadURL).not.toHaveBeenCalled();
+
+    releaseProxy();
+    await load;
+    expect(electron.createdWebContents.at(-1)?.loadURL).toHaveBeenCalledWith(previewUrl);
     manager.dispose();
   });
 });

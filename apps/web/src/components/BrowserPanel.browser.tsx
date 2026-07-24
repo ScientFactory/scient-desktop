@@ -225,11 +225,12 @@ describe("BrowserPanel interactions", () => {
       tabs: [],
     };
     const revokeHtmlArtifactPreview = vi.fn(async () => ({ revoked: true }));
+    const setPanelBounds = vi.fn(async () => undefined);
     nativeApiTestState.api = {
       browser: {
         open: vi.fn(async () => openState),
         hide: vi.fn(async () => undefined),
-        setPanelBounds: vi.fn(async () => undefined),
+        setPanelBounds,
         closeTab: vi.fn(async () => closedState),
         onState: vi.fn(() => () => undefined),
         onCopyLink: vi.fn(() => () => undefined),
@@ -239,6 +240,12 @@ describe("BrowserPanel interactions", () => {
     useBrowserStateStore.getState().removeThreadState(THREAD_ID);
 
     await renderLivePanel(() => undefined);
+    await vi.waitFor(() => {
+      expect(setPanelBounds).toHaveBeenCalledWith(
+        expect.objectContaining({ threadId: THREAD_ID, surface: "native" }),
+      );
+      expect(document.querySelector("webview")).toBeNull();
+    });
     const closeButton = await page.getByRole("button", { name: "Close Browser" }).element();
     (closeButton as HTMLButtonElement).click();
 

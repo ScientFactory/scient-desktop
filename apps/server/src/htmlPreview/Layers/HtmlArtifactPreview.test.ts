@@ -108,6 +108,7 @@ describe("HtmlArtifactPreviewLive", () => {
       expect(document.status).toBe(200);
       expect(document.body).toContain("<h1>Report</h1>");
       expect(document.headers["content-security-policy"]).toBeUndefined();
+      expect(document.headers["x-dns-prefetch-control"]).toBe("off");
 
       const stylesheet = await requestPreview(prepared.previewUrl!, "/report.css");
       expect(stylesheet.status).toBe(200);
@@ -197,6 +198,7 @@ describe("HtmlArtifactPreviewLive", () => {
       expect(prepared.mode).toBe("interactive-bundle");
       const document = await requestPreview(prepared.previewUrl!);
       expect(document.headers["content-security-policy"]).toBeUndefined();
+      expect(document.headers["x-dns-prefetch-control"]).toBe("off");
       await expect(requestPreview(prepared.previewUrl!, "/app.js")).resolves.toMatchObject({
         status: 200,
       });

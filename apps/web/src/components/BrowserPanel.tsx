@@ -749,6 +749,14 @@ export function BrowserPanel({
       return;
     }
 
+    // Capability-backed local HTML always uses a main-process-owned view. Its
+    // network policy must be established before the first authored script can
+    // run; a renderer-created <webview> begins loading before adoption.
+    if (activeTab.kind === "local-html") {
+      detachRendererBrowserWebview();
+      return;
+    }
+
     const host = browserViewportRef.current;
     if (!host) {
       return;
@@ -884,6 +892,7 @@ export function BrowserPanel({
     if (!element) {
       return;
     }
+    const surface = activeTab?.kind === "local-html" ? "native" : "renderer";
 
     const syncBounds = () => {
       perfCountersRef.current.syncAttempts += 1;
@@ -908,8 +917,8 @@ export function BrowserPanel({
             };
           })();
       const nextKey = bounds
-        ? `renderer:${Math.round(bounds.x)}:${Math.round(bounds.y)}:${Math.round(bounds.width)}:${Math.round(bounds.height)}`
-        : "renderer:hidden";
+        ? `${surface}:${Math.round(bounds.x)}:${Math.round(bounds.y)}:${Math.round(bounds.width)}:${Math.round(bounds.height)}`
+        : `${surface}:hidden`;
       lastMeasuredBoundsKeyRef.current = nextKey;
       if (lastSentBoundsRef.current === nextKey) {
         perfCountersRef.current.syncSkips += 1;
@@ -918,7 +927,7 @@ export function BrowserPanel({
       lastSentBoundsRef.current = nextKey;
       perfCountersRef.current.syncSends += 1;
       void api.browser
-        .setPanelBounds({ threadId, bounds, surface: "renderer" })
+        .setPanelBounds({ threadId, bounds, surface })
         .catch(ignoreBrowserBoundsSyncError);
     };
 
@@ -1025,7 +1034,7 @@ export function BrowserPanel({
       burstFramesRemainingRef.current = 0;
       burstStableFramesRef.current = 0;
     };
-  }, [api, isLiveRuntime, showLocalServersHome, threadId]);
+  }, [activeTab?.kind, api, isLiveRuntime, showLocalServersHome, threadId]);
 
   const onSubmitAddress = useCallback(() => {
     if (!ensureLiveRuntime()) {
