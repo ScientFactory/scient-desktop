@@ -98,7 +98,7 @@ const PLATFORM_CONFIG: Record<typeof BuildPlatform.Type, PlatformConfig> = {
   },
   linux: {
     cliFlag: "--linux",
-    defaultTarget: "AppImage",
+    defaultTarget: "deb",
     archChoices: ["x64", "arm64"],
   },
   win: {
@@ -221,6 +221,7 @@ interface StagePackageJson {
   readonly private: true;
   readonly description: string;
   readonly author: string;
+  readonly homepage: string;
   readonly main: string;
   readonly build: Record<string, unknown>;
   readonly dependencies: Record<string, unknown>;
@@ -1045,6 +1046,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     private: true,
     description: "Scient desktop build",
     author: "Yaacov Corcos",
+    homepage: "https://github.com/ScientFactory/scient-desktop",
     main: "apps/desktop/dist-electron/main.js",
     build: platformBuildConfig,
     dependencies: {

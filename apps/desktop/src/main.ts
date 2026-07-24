@@ -54,6 +54,7 @@ import {
   SCIENT_DESKTOP_UPDATE_CHANNEL,
   SCIENT_DESKTOP_UPDATES_ENABLED,
   scientBundleId,
+  scientDesktopUpdateChannel,
 } from "@synara/shared/desktopIdentity";
 import { NetService } from "@synara/shared/Net";
 import { RotatingFileSink } from "@synara/shared/logging";
@@ -930,6 +931,20 @@ function parseAppUpdateYml(): Record<string, string> | null {
   }
 }
 
+function readLinuxPackageType(): string | null {
+  if (process.platform !== "linux" || !app.isPackaged) return null;
+  if (process.env.APPIMAGE) return "AppImage";
+  try {
+    const packageType = FS.readFileSync(
+      Path.join(process.resourcesPath, "package-type"),
+      "utf8",
+    ).trim();
+    return packageType || null;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeCommitHash(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -1371,6 +1386,7 @@ function resolveAutoUpdateDisabledReason(): string | null {
     isPackaged: app.isPackaged,
     platform: process.platform,
     appImage: process.env.APPIMAGE,
+    linuxPackageType: readLinuxPackageType() ?? undefined,
     disabledByEnv: process.env.SYNARA_DISABLE_AUTO_UPDATE === "1",
     hasUpdateFeedConfig: hasConfiguredUpdateFeed(),
   });
@@ -2603,7 +2619,7 @@ function configureAutoUpdater(): void {
   // Stable production builds use the dedicated Scient-owned update channel.
   // resolveAutoUpdateDisabledReason still keeps development, unpackaged, and
   // unsupported runtime environments away from the public feed.
-  autoUpdater.channel = SCIENT_DESKTOP_UPDATE_CHANNEL;
+  autoUpdater.channel = scientDesktopUpdateChannel(process.platform, readLinuxPackageType());
   autoUpdater.allowPrerelease = DESKTOP_UPDATE_ALLOW_PRERELEASE;
   autoUpdater.allowDowngrade = false;
   // Match electron-updater's native GitHub provider path; the packaged
@@ -3502,9 +3518,19 @@ function createWindow(): BrowserWindow {
     window.setTitle(APP_DISPLAY_NAME);
   });
   window.webContents.on("did-finish-load", () => {
+    writeDesktopLogHeader("renderer main frame loaded");
     window.setTitle(APP_DISPLAY_NAME);
     emitUpdateState();
   });
+  window.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
+      if (!isMainFrame) return;
+      writeDesktopLogHeader(
+        `renderer main frame load failed code=${errorCode} url=${validatedUrl} message=${errorDescription}`,
+      );
+    },
+  );
   window.once("ready-to-show", () => {
     // Preserve the original first-launch behavior, then respect the state saved
     // by subsequent closes. Normal bounds are restored before maximizing so the

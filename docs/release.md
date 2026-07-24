@@ -13,12 +13,13 @@ This document covers build-only native validation, promotion through the protect
 - Builds four artifacts in parallel:
   - macOS `arm64` DMG
   - macOS `x64` DMG
-  - Linux `x64` AppImage
+  - Linux `x64` Debian package
   - Windows `x64` NSIS installer
 - Publishes one versioned GitHub Release with all produced files.
   - Versions with a suffix after `X.Y.Z` (for example `1.2.3-alpha.1`) are published as GitHub prereleases.
   - Stable 0.5.x releases are GitHub Latest; the 0.4.x compatibility release remains historical.
-- Publishes default `latest*.yml` metadata plus byte-identical `scient*.yml` aliases on every stable release.
+- Publishes the macOS and Windows `latest` metadata plus dedicated `scient`
+  aliases, and publishes Debian updates only as `scient-deb-linux.yml`.
 - Keeps the historical 0.4.x compatibility release unchanged; current stable payloads stay on their own GitHub Latest release.
 - Publishes prerelease installers only on their versioned GitHub prerelease; prereleases never replace the stable `scient` update manifests.
 - Publishes the CLI package (`apps/server`, npm package `@scientfactory/cli`, executable `scient`) with OIDC trusted publishing when `SCIENT_PUBLISH_CLI=1`.
@@ -28,11 +29,20 @@ This document covers build-only native validation, promotion through the protect
 ## Desktop auto-update notes
 
 - Runtime updater: `electron-updater` in `apps/desktop/src/main.ts`.
-- Client update checks are enabled in packaged production builds by `SCIENT_DESKTOP_UPDATES_ENABLED = true`. Development builds, unpackaged builds, builds without `app-update.yml`, Linux builds not running as an AppImage, and installations with `SYNARA_DISABLE_AUTO_UPDATE=1` remain disabled.
-- Linux AppImage launch is fail-closed: release packaging removes electron-builder's
-  automatic `--no-sandbox` fallback. A host must provide working unprivileged user
-  namespaces or a correctly configured Chromium sandbox helper; Scient never trades
-  sandboxing for startup compatibility.
+- Client update checks are enabled in packaged production builds by
+  `SCIENT_DESKTOP_UPDATES_ENABLED = true`. Development builds, unpackaged
+  builds, builds without `app-update.yml`, unsupported Linux package types, and
+  installations with `SYNARA_DISABLE_AUTO_UPDATE=1` remain disabled.
+- The supported Ubuntu route is the installed Debian package. Its package
+  scripts install electron-builder's AppArmor user-namespace profile and manage
+  the Chromium sandbox helper. Acceptance launches the installed executable as
+  a normal user and rejects the real process if any `--no-sandbox` argument is
+  present.
+- The AppImage compatibility build remains fail-closed and is checked in CI for
+  sandbox-bypass injection, but it is not published as the supported Ubuntu
+  download. Stock Ubuntu 24.04 can deny the randomized AppImage mount path the
+  user namespace needed by Chromium; Scient does not answer that denial by
+  disabling the sandbox.
 - `v0.5.6` was published with client update checks disabled. Existing `v0.5.6`
   installations therefore require one manual installation of the first
   updater-enabled release; the application cannot remotely enable code that is
@@ -43,20 +53,29 @@ This document covers build-only native validation, promotion through the protect
   - The desktop UI shows a rocket update button while preparing and switches to an install action once the update is ready.
 - Provider: GitHub Releases (`provider: github`) configured at build time.
 - Repository visibility: public. The authenticated private-repository provider does not honor custom channel filenames.
-- Runtime channel: `scient`. Stable releases publish both `latest` and `scient` metadata; the configured 0.4.x compatibility release remains available for historical migration.
+- Runtime channels: macOS and Windows use `scient`; installed Debian packages
+  use `scient-deb`. The format-specific Linux channel prevents an older
+  AppImage updater from downloading a `.deb` and attempting a cross-format
+  replacement.
 - Repository slug source:
   - `SCIENT_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`) is required when releases are enabled.
   - The workflow requires it to equal the current GitHub repository and requires that repository to be public.
 - Required Scient release assets for updater:
-  - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)
-  - `scient-mac.yml`, `scient.yml`, and `scient-linux.yml` metadata
-  - every stable release includes both `scient-mac.yml`, `scient.yml`, `scient-linux.yml` and `latest-mac.yml`, `latest.yml`, `latest-linux.yml`
+  - platform installers (`.exe`, `.dmg`, `.deb`, plus macOS `.zip` for Squirrel.Mac update payloads)
+  - `scient-mac.yml`, `scient.yml`, and `scient-deb-linux.yml` metadata
+  - stable releases intentionally omit `latest-linux.yml` and
+    `scient-linux.yml`; those names belong to legacy AppImage updaters
   - `*.blockmap` files, except the macOS update `.zip.blockmap` removed after zip repack
 - Enforced upgrade path:
-  - Stable clean Scient releases are created with `make_latest=true` and carry both six-manifest filenames in the versioned release.
+  - Stable clean Scient releases are created with `make_latest=true` and carry
+    the two default macOS/Windows manifests plus the three dedicated
+    platform-channel manifests in the versioned release.
   - The historical 0.4.x compatibility release remains available for predecessor migration and is never overwritten by a 0.5.x release.
   - Clean releases do not mirror payloads onto the historical compatibility release, so the 0.4.x line remains immutable.
-  - Clean-release publication fails closed if either the default Latest manifests or the dedicated `scient` aliases are missing.
+  - Clean-release publication fails closed if the macOS/Windows Latest
+    manifests or any dedicated platform alias is missing.
+  - Existing AppImage users require a one-time manual installation of the
+    Debian package. There is deliberately no automatic cross-format updater.
 - Production desktop builds omit web/server/desktop source maps by default to keep update payloads small. Set the inherited `SYNARA_WEB_SOURCEMAP=1` or `SYNARA_SERVER_SOURCEMAP=1`, or the Scient-owned `SCIENT_DESKTOP_SOURCEMAP=1`, only for a diagnostic release that needs them.
 - macOS metadata note:
   - The build initially emits `latest-mac.yml` for both Intel and Apple Silicon.
@@ -106,6 +125,10 @@ Checklist:
 - Set `SCIENT_DESKTOP_RELEASES_ENABLED=true` only after `SCIENT_DESKTOP_UPDATE_REPOSITORY=ScientFactory/scient-desktop` is configured and the release candidate is ready for native CI validation.
 - The desktop updater expects the pinned compatibility release in this repository to include the generated updater metadata files, not just the installers.
 - The published release title should read `Scient vX.Y.Z`.
+- Before publishing the first Debian-based Linux release, deploy the coordinated
+  website change that selects `Scient-*-amd64.deb`, labels it as a Debian
+  package, and gives package-manager installation instructions. The current
+  AppImage download selector must not remain the public default.
 - By default, the first-party desktop release path does not require CLI publish or post-release version-bump automation.
 - Optional jobs stay disabled unless repository variables enable them:
   - `SCIENT_PUBLISH_CLI=1`
@@ -151,7 +174,8 @@ The override applies only to Windows:
   notarization, a stapled ticket, and final artifact verification. There is no
   unsigned public macOS lane because ad-hoc releases do not retain a stable
   privacy identity across updates.
-- Linux keeps the existing AppImage behavior and is unaffected by the override.
+- Linux keeps the required sandboxed Debian-package behavior and is unaffected
+  by the override.
 
 Never enable unsigned publication while a platform has a partial signing-secret
 configuration. Remove incomplete secrets or finish the signing setup first.

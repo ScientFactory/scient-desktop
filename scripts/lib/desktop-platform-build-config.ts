@@ -27,6 +27,7 @@ export interface DesktopPlatformBuildConfig {
   readonly afterSign?: string;
   readonly afterPack?: string;
   readonly asarUnpack?: ReadonlyArray<string>;
+  readonly deb?: Record<string, unknown>;
   readonly extraFiles?: ReadonlyArray<Record<string, string>>;
   readonly extraResources?: ReadonlyArray<Record<string, string>>;
   readonly files?: ReadonlyArray<string>;
@@ -141,6 +142,15 @@ export function createDesktopPlatformBuildConfig(
   if (input.platform === "linux") {
     return {
       ...nativePackaging,
+      ...(input.target.toLowerCase() === "deb"
+        ? {
+            deb: {
+              packageName: "scient",
+              maintainer: "ScientFactory",
+              vendor: "ScientFactory",
+            },
+          }
+        : {}),
       linux: {
         target: [input.target],
         executableName: "scient",

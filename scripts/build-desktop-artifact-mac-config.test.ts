@@ -160,6 +160,32 @@ describe("createDesktopPlatformBuildConfig", () => {
     });
   });
 
+  it("gives the supported Debian package a stable system identity", () => {
+    const config = createDesktopPlatformBuildConfig({
+      platform: "linux",
+      target: "deb",
+    });
+
+    assert.deepStrictEqual(config.deb, {
+      packageName: "scient",
+      maintainer: "ScientFactory",
+      vendor: "ScientFactory",
+    });
+    assert.deepStrictEqual(config.linux, {
+      target: ["deb"],
+      executableName: "scient",
+      executableArgs: [],
+      syncDesktopName: true,
+      icon: "icon.png",
+      category: "Development",
+      desktop: {
+        entry: {
+          StartupWMClass: "scient",
+        },
+      },
+    });
+  });
+
   it("keeps Windows signing optional", () => {
     const config = createDesktopPlatformBuildConfig({
       platform: "win",

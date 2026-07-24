@@ -18,6 +18,7 @@
     "test:browser:stable:remaining": "vitest run --config vitest.browser.stable.config.ts --exclude src/components/KeybindingsToast.browser.tsx --exclude src/components/ChatView.browser.tsx --exclude src/components/EventRouter.browser.tsx",
     "test:browser:geometry": "vitest run --config vitest.browser.geometry.config.ts",
     "test:browser:install": "playwright install --with-deps chromium",
+    "test:linux-deb": "node scripts/linux-deb-smoke.mjs",
     "measure:lcp": "node scripts/measure-lcp.mjs"
   },
   "dependencies": {
