@@ -64,6 +64,7 @@ import {
   normalizeBrowserAddressInput,
   resolveBrowserChromeStatus,
   resolveBrowserAddressSync,
+  shouldCloseBrowserPanelAfterTabClose,
   type BrowserAddressSuggestion,
   type BrowserCopyFeedback,
 } from "./BrowserPanel.logic";
@@ -1347,7 +1348,7 @@ export function BrowserPanel({
           return;
         }
         upsertThreadState(state);
-        if (!state.open && state.tabs.length === 0) {
+        if (shouldCloseBrowserPanelAfterTabClose(state)) {
           onClosePanel();
         }
       });
@@ -1691,7 +1692,9 @@ export function BrowserPanel({
                     }}
                   >
                     <XIcon className="size-3" />
-                    <span className="sr-only">Close tab</span>
+                    <span className="sr-only">
+                      {threadBrowserState?.tabs.length === 1 ? "Close Browser" : "Close tab"}
+                    </span>
                   </Button>
                 </div>
               );

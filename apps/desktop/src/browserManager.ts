@@ -20,6 +20,7 @@ import {
   artifactPreviewNavigationAllowed,
   artifactPreviewRequestAllowed,
 } from "./artifactPreviewPolicy";
+import { loadBrowserRuntimeUrl } from "./browserRuntimeLoad";
 import type {
   BrowserAttachWebviewInput,
   BrowserCaptureScreenshotResult,
@@ -220,13 +221,6 @@ function normalizeBounds(bounds: BrowserPanelBounds | null): BrowserPanelBounds 
     width,
     height,
   };
-}
-
-function isAbortedNavigationError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  return /ERR_ABORTED|\(-3\)/i.test(error.message);
 }
 
 function mapBrowserLoadError(errorCode: number): string {
@@ -932,23 +926,21 @@ export class DesktopBrowserManager {
     syncThreadLastError(state);
     this.markThreadStateChanged(input.threadId);
 
-    const runtime = this.runtimes.get(buildRuntimeKey(input.threadId, tab.id));
-    if (runtime) {
+    const runtimeKey = buildRuntimeKey(input.threadId, tab.id);
+    const shouldLoadRuntime =
+      this.runtimes.has(runtimeKey) || this.activeThreadId === input.threadId;
+    if (shouldLoadRuntime) {
+      if (this.activeThreadId === input.threadId) {
+        this.clearSuspendTimer(input.threadId);
+      }
+      // Re-resolve through ensureLiveRuntime so a destroyed-but-still-tracked WebContents is
+      // replaced before navigation instead of being handed to the async loader.
+      const runtime = this.ensureLiveRuntime(input.threadId, tab.id);
       const bounds = this.getVisibleBoundsForThread(input.threadId);
       if (state.activeTabId === tab.id && bounds) {
         this.attachRuntime(runtime, bounds);
       }
       void this.loadTab(input.threadId, tab.id, { force: true, runtime });
-    } else if (this.activeThreadId === input.threadId) {
-      // Load the target tab directly so we don't clobber its pending URL with a
-      // thread-wide runtime sync from the old live page state.
-      const nextRuntime = this.ensureLiveRuntime(input.threadId, tab.id);
-      this.clearSuspendTimer(input.threadId);
-      const bounds = this.getVisibleBoundsForThread(input.threadId);
-      if (state.activeTabId === tab.id && bounds) {
-        this.attachRuntime(nextRuntime, bounds);
-      }
-      void this.loadTab(input.threadId, tab.id, { force: true, runtime: nextRuntime });
     }
 
     this.emitState(input.threadId);
@@ -1021,25 +1013,18 @@ export class DesktopBrowserManager {
       return this.snapshotThreadState(input.threadId, state);
     }
 
+    if (nextTabs.length === 0) {
+      // The tab close button is also the natural close affordance for a one-tab browser.
+      // Tear down the browser session so the renderer can close this dock pane and reveal
+      // the surface chooser instead of immediately manufacturing another blank tab.
+      return this.close({ threadId: input.threadId });
+    }
+
     this.closePopupWindowsForTab(input.threadId, input.tabId);
     this.destroyRuntime(input.threadId, input.tabId);
     state.tabs = nextTabs;
     if (closedTab) {
       this.clearArtifactSession(input.threadId, closedTab);
-    }
-
-    if (nextTabs.length === 0) {
-      // Closing the last tab keeps the browser open on a fresh blank tab (the same state
-      // as a brand-new browser session) so the user can type a new URL in the search box,
-      // instead of tearing the whole panel down.
-      const replacementTab = createBrowserTab();
-      state.tabs = [replacementTab];
-      state.activeTabId = replacementTab.id;
-      state.lastError = null;
-
-      this.markThreadStateChanged(input.threadId);
-      this.emitState(input.threadId);
-      return this.snapshotThreadState(input.threadId, state);
     }
 
     if (!state.activeTabId || state.activeTabId === input.tabId) {
@@ -1869,38 +1854,61 @@ export class DesktopBrowserManager {
       return;
     }
 
-    const runtime = options.runtime ?? this.ensureLiveRuntime(threadId, tabId);
-    const webContents = runtime.webContents;
     const nextUrl = normalizeUrlInput(
       options.force === true ? tab.url : (tab.lastCommittedUrl ?? tab.url),
     );
-    const currentUrl = webContents.getURL();
-    const shouldLoad = options.force === true || currentUrl !== nextUrl || currentUrl.length === 0;
-
-    if (!shouldLoad) {
-      this.queueRuntimeStateSync(threadId, tabId);
-      return;
-    }
-
-    tab.url = nextUrl;
-    tab.status = "live";
-    tab.isLoading = true;
-    tab.lastError = null;
-    syncThreadLastError(state);
-    this.markThreadStateChanged(threadId);
-    this.emitState(threadId);
 
     try {
-      await webContents.loadURL(nextUrl);
-      this.queueRuntimeStateSync(threadId, tabId);
-    } catch (error) {
-      if (isAbortedNavigationError(error)) {
+      const runtime = options.runtime ?? this.ensureLiveRuntime(threadId, tabId);
+      const outcome = await loadBrowserRuntimeUrl({
+        webContents: runtime.webContents,
+        nextUrl,
+        force: options.force === true,
+        isCurrent: () => this.runtimes.get(runtime.key) === runtime,
+        onLoadStart: () => {
+          tab.url = nextUrl;
+          tab.status = "live";
+          tab.isLoading = true;
+          tab.lastError = null;
+          syncThreadLastError(state);
+          this.markThreadStateChanged(threadId);
+          this.emitState(threadId);
+        },
+      });
+
+      if (outcome === "loaded" || outcome === "unchanged" || outcome === "aborted") {
         this.queueRuntimeStateSync(threadId, tabId);
+        return;
+      }
+
+      if (outcome === "stale") {
+        // If this exact runtime died without its normal render-process-gone cleanup firing,
+        // remove it so the next visible activation creates a healthy replacement.
+        if (this.runtimes.get(runtime.key) === runtime && runtime.webContents.isDestroyed()) {
+          this.destroyRuntime(threadId, tabId);
+          const didChange = suspendTabState(tab) || syncThreadLastError(state);
+          if (didChange) {
+            this.markThreadStateChanged(threadId);
+            this.emitState(threadId);
+          }
+        }
         return;
       }
 
       tab.isLoading = false;
       tab.lastError = "Couldn't open this page.";
+      syncThreadLastError(state);
+      this.markThreadStateChanged(threadId);
+      this.emitState(threadId);
+    } catch {
+      // Runtime construction and bookkeeping errors must be surfaced as browser state, never as
+      // unhandled promises from the fire-and-forget navigation paths above.
+      const currentTab = this.getTab(state, tabId);
+      if (!currentTab) {
+        return;
+      }
+      currentTab.isLoading = false;
+      currentTab.lastError = "Couldn't open this page.";
       syncThreadLastError(state);
       this.markThreadStateChanged(threadId);
       this.emitState(threadId);
