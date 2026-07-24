@@ -11,15 +11,34 @@ import { resolveElectronPackagePath, resolveLinuxSandboxArgs } from "./electron-
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(scriptDir, "..");
 const workspaceRoot = resolve(desktopDir, "../..");
-const tempDir = mkdtempSync(join(tmpdir(), "scient-browser-overlay-lifecycle-"));
+let tempDir = null;
 let child = null;
 
 function cleanupTempDir() {
-  rmSync(tempDir, { recursive: true, force: true });
+  if (!tempDir) return;
+  const path = tempDir;
+  rmSync(path, { recursive: true, force: true });
+  tempDir = null;
 }
 
+let handleInterrupt = (signal, code) => {
+  process.stderr.write(`Electron browser overlay lifecycle test interrupted by ${signal}.\n`);
+  cleanupTempDir();
+  process.exit(code);
+};
+process.once("SIGINT", () => handleInterrupt("SIGINT", 130));
+process.once("SIGTERM", () => handleInterrupt("SIGTERM", 143));
+
+tempDir = mkdtempSync(join(tmpdir(), "scient-browser-overlay-lifecycle-"));
 // Register cleanup before any other setup can fail after creating the directory.
 process.once("exit", cleanupTempDir);
+
+const setupSignalProbePath = process.env.SCIENT_BROWSER_OVERLAY_TEST_SETUP_SIGNAL_PROBE?.trim();
+if (setupSignalProbePath) {
+  writeFileSync(setupSignalProbePath, tempDir, "utf8");
+  await new Promise((resolveProbe) => setTimeout(resolveProbe, 30_000));
+  throw new Error("Setup signal probe was not interrupted.");
+}
 
 const profileDir = join(tempDir, "profile");
 mkdirSync(join(profileDir, "session-data"), { recursive: true });
@@ -57,9 +76,7 @@ function interruptSetup(signal, code) {
   process.exit(code);
 }
 
-let handleInterrupt = interruptSetup;
-process.once("SIGINT", () => handleInterrupt("SIGINT", 130));
-process.once("SIGTERM", () => handleInterrupt("SIGTERM", 143));
+handleInterrupt = interruptSetup;
 
 function createMacTestElectronExecutable(originalExecutablePath) {
   const originalAppPath = dirname(dirname(dirname(originalExecutablePath)));
