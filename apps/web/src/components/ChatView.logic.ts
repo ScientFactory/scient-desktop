@@ -451,6 +451,27 @@ export function resolveEnvironmentPanelVisible(input: {
   return input.environmentEnabled && input.environmentPanelOpen;
 }
 
+// Normal project toolbars stay stable while repository discovery is pending. Studio folders are
+// casual context, so they opt into Git UI only after a positive repository result.
+export function resolveGitRepoUiState(input: {
+  isStudioContainer: boolean;
+  queriedIsRepo: boolean | undefined;
+}): boolean {
+  return input.queriedIsRepo ?? !input.isStudioContainer;
+}
+
+export function shouldShowGitActions(input: {
+  isStudioContainer: boolean;
+  isContainerLandingProject: boolean;
+  hasResolvedWorktreePath: boolean;
+  isGitRepo: boolean;
+}): boolean {
+  if (input.isStudioContainer) {
+    return input.hasResolvedWorktreePath && input.isGitRepo;
+  }
+  return !input.isContainerLandingProject || input.hasResolvedWorktreePath;
+}
+
 // The composer live strip prefers the turn's computed diff (the
 // `thread.turn-diff-completed` event) so it can show real per-file +/- stats.
 // Before that lands, it falls back to mid-turn file-edit work-log activity so
