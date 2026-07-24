@@ -61,6 +61,18 @@ export function isSingletonPaneKind(kind: RightDockPaneKind): boolean {
   return SINGLETON_PANE_KINDS.has(kind);
 }
 
+// The header menu means "add", not "switch". Hide singleton kinds that already have a
+// pane while keeping true multi-instance kinds available for another instance.
+export function filterAddableRightDockPaneKinds(
+  state: RightDockThreadState,
+  kinds: readonly RightDockPaneKind[],
+): RightDockPaneKind[] {
+  const openSingletonKinds = new Set(
+    state.panes.filter((pane) => isSingletonPaneKind(pane.kind)).map((pane) => pane.kind),
+  );
+  return kinds.filter((kind) => !isSingletonPaneKind(kind) || !openSingletonKinds.has(kind));
+}
+
 export function createDefaultRightDockState(): RightDockThreadState {
   return {
     open: false,

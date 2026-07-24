@@ -5,6 +5,7 @@ import {
   SINGLETON_PANE_KINDS,
   closePaneInState,
   createDefaultRightDockState,
+  filterAddableRightDockPaneKinds,
   isRightDockPaneKind,
   openPaneInState,
   sanitizeRightDockStateByThreadId,
@@ -94,6 +95,34 @@ describe("RIGHT_DOCK_PANE_KINDS (single source of truth)", () => {
     for (const kind of RIGHT_DOCK_PANE_KINDS) {
       expect(SINGLETON_PANE_KINDS.has(kind)).toBe(kind !== "sidechat" && kind !== "file");
     }
+  });
+});
+
+describe("filterAddableRightDockPaneKinds", () => {
+  it("removes existing singleton panels from the Add panel menu", () => {
+    const state = openPaneInState(
+      openPaneInState(createDefaultRightDockState(), {
+        paneId: "browser-1",
+        kind: "browser",
+      }),
+      { paneId: "terminal-1", kind: "terminal" },
+    );
+
+    expect(
+      filterAddableRightDockPaneKinds(state, ["browser", "diff", "terminal", "sidechat"]),
+    ).toEqual(["diff", "sidechat"]);
+  });
+
+  it("keeps multi-instance panel kinds available", () => {
+    const state = openPaneInState(createDefaultRightDockState(), {
+      paneId: "side-1",
+      kind: "sidechat",
+    });
+
+    expect(filterAddableRightDockPaneKinds(state, ["sidechat", "file"])).toEqual([
+      "sidechat",
+      "file",
+    ]);
   });
 });
 

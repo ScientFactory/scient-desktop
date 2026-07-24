@@ -5,7 +5,8 @@ import "../index.css";
 
 import type { NativeApi, ThreadBrowserState, ThreadId } from "@synara/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { page } from "vitest/browser";
+import { useState } from "react";
+import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
@@ -90,14 +91,63 @@ function renderLivePanel(onClosePanel: () => void) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
+      <div className="h-[640px] w-[720px]">
+        <BrowserPanel
+          mode="inline"
+          threadId={THREAD_ID}
+          runtimeMode="live"
+          onClosePanel={onClosePanel}
+        />
+      </div>
+    </QueryClientProvider>,
+  );
+}
+
+function PreviewToLivePanel() {
+  const [runtimeMode, setRuntimeMode] = useState<"live" | "preview">("preview");
+  return (
+    <div className="h-[640px] w-[720px]">
       <BrowserPanel
         mode="inline"
         threadId={THREAD_ID}
-        runtimeMode="live"
-        onClosePanel={onClosePanel}
+        runtimeMode={runtimeMode}
+        onRequestLive={() => setRuntimeMode("live")}
+        onClosePanel={() => undefined}
       />
+    </div>
+  );
+}
+
+function renderPreviewToLivePanel() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <PreviewToLivePanel />
     </QueryClientProvider>,
   );
+}
+
+function liveBrowserApi(options?: {
+  openState?: ThreadBrowserState;
+  newTabState?: ThreadBrowserState;
+}) {
+  const openState = options?.openState ?? browserState("tab-1");
+  return {
+    browser: {
+      open: vi.fn(async () => openState),
+      hide: vi.fn(async () => undefined),
+      setPanelBounds: vi.fn(async () => undefined),
+      attachWebview: vi.fn(async () => openState),
+      detachWebview: vi.fn(async () => undefined),
+      newTab: vi.fn(async () => options?.newTabState ?? openState),
+      closeTab: vi.fn(async () => openState),
+      onState: vi.fn(() => () => undefined),
+      onCopyLink: vi.fn(() => () => undefined),
+    },
+    projects: {
+      revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: false })),
+    },
+  } as unknown as NativeApi;
 }
 
 describe("BrowserPanel interactions", () => {
@@ -185,6 +235,113 @@ describe("BrowserPanel interactions", () => {
     await vi.waitFor(() => {
       expect(closeTab).toHaveBeenCalledWith({ threadId: THREAD_ID, tabId: "tab-1" });
       expect(onClosePanel).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("creates and activates a second tab from the visible tab-strip button", async () => {
+    const openState = browserState("tab-1");
+    openState.version = 20;
+    openState.tabs = [openState.tabs[0]!];
+    const secondTabState: ThreadBrowserState = {
+      ...openState,
+      version: openState.version + 1,
+      activeTabId: "tab-2",
+      tabs: [
+        openState.tabs[0]!,
+        {
+          ...browserState("tab-2").tabs[1]!,
+          url: "about:blank",
+          title: "New tab",
+          lastCommittedUrl: "about:blank",
+        },
+      ],
+    };
+    const api = liveBrowserApi({ openState, newTabState: secondTabState });
+    nativeApiTestState.api = api;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+
+    await renderLivePanel(vi.fn());
+    const newTabButton = page.getByRole("button", { name: "New browser tab" });
+    await expect.element(newTabButton).toBeVisible();
+    const newTabElement = (await newTabButton.element()) as HTMLButtonElement;
+    newTabElement.click();
+    newTabElement.click();
+
+    await vi.waitFor(() => {
+      expect(api.browser.newTab).toHaveBeenCalledWith({
+        threadId: THREAD_ID,
+        activate: true,
+      });
+      expect(api.browser.newTab).toHaveBeenCalledTimes(1);
+      expect(useBrowserStateStore.getState().threadStatesByThreadId[THREAD_ID]?.activeTabId).toBe(
+        "tab-2",
+      );
+    });
+    await expect.element(page.getByText("New tab", { exact: true })).toBeVisible();
+    expect(page.getByRole("button", { name: "Close tab" }).elements()).toHaveLength(2);
+  });
+
+  it("preserves a new-tab click while a sleeping browser pane wakes", async () => {
+    const openState = browserState("tab-1");
+    openState.version = 30;
+    openState.tabs = [openState.tabs[0]!];
+    const secondTabState: ThreadBrowserState = {
+      ...openState,
+      version: openState.version + 1,
+      activeTabId: "tab-2",
+      tabs: [openState.tabs[0]!, browserState("tab-2").tabs[1]!],
+    };
+    const api = liveBrowserApi({ openState, newTabState: secondTabState });
+    nativeApiTestState.api = api;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+
+    await renderPreviewToLivePanel();
+    const newTabButton = page.getByRole("button", { name: "New browser tab" });
+    ((await newTabButton.element()) as HTMLButtonElement).click();
+
+    await vi.waitFor(() => {
+      expect(api.browser.open).toHaveBeenCalledOnce();
+      expect(api.browser.newTab).toHaveBeenCalledOnce();
+      expect(useBrowserStateStore.getState().threadStatesByThreadId[THREAD_ID]?.activeTabId).toBe(
+        "tab-2",
+      );
+    });
+  });
+
+  it("hides the native browser surface while an intersecting app menu is open", async () => {
+    const openState = browserState("tab-1");
+    const api = liveBrowserApi({ openState });
+    nativeApiTestState.api = api;
+
+    await renderLivePanel(vi.fn());
+    await vi.waitFor(() => expect(api.browser.open).toHaveBeenCalledOnce());
+    await vi.waitFor(() => {
+      const webview = document.querySelector<HTMLElement>("webview");
+      expect(webview).not.toBeNull();
+      expect(webview?.style.visibility).not.toBe("hidden");
+    });
+
+    (
+      (await page.getByRole("button", { name: "Browser actions" }).element()) as HTMLButtonElement
+    ).click();
+    await expect.element(page.getByRole("menuitem", { name: "New tab" })).toBeVisible();
+    await vi.waitFor(() => {
+      const webview = document.querySelector<HTMLElement>("webview");
+      expect(webview?.style.visibility).toBe("hidden");
+      expect(webview?.style.pointerEvents).toBe("none");
+      expect(api.browser.setPanelBounds).toHaveBeenCalledWith({
+        threadId: THREAD_ID,
+        bounds: null,
+        surface: "renderer",
+      });
+    });
+
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() => {
+      expect(page.getByRole("menuitem", { name: "New tab" }).query()).toBeNull();
+      const webview = document.querySelector<HTMLElement>("webview");
+      expect(webview?.style.visibility).toBe("visible");
+      expect(webview?.style.pointerEvents).toBe("auto");
     });
   });
 });

@@ -68,6 +68,13 @@ import {
   type BrowserAddressSuggestion,
   type BrowserCopyFeedback,
 } from "./BrowserPanel.logic";
+import {
+  type BrowserWebviewElement,
+  hasNativeBrowserObscuringOverlay,
+  isNativeBrowserTransitionSignalTarget,
+  nativeBrowserOverlayMutationsRequireSync,
+  setBrowserWebviewOverlayOcclusion,
+} from "./BrowserPanel.overlay";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { LocalServerIdentity } from "./LocalServerIdentity";
 import { Button } from "./ui/button";
@@ -99,20 +106,6 @@ const BROWSER_ACTION_MENU_ITEM_CLASS_NAME =
   "text-[var(--color-text-foreground)] data-highlighted:text-[var(--color-text-foreground)]";
 const BROWSER_ACTION_MENU_ICON_CLASS_NAME =
   "inline-flex size-3.5 shrink-0 items-center justify-center text-[var(--color-text-foreground-secondary)] [&>svg]:size-3.5 [&>[data-slot=central-icon]]:size-3.5";
-const NATIVE_BROWSER_OBSCURING_OVERLAY_SELECTOR = [
-  "[data-slot='dialog-backdrop']",
-  "[data-slot='dialog-popup']",
-  "[data-slot='dialog-viewport']",
-  "[data-slot='alert-dialog-backdrop']",
-  "[data-slot='alert-dialog-popup']",
-  "[data-slot='alert-dialog-viewport']",
-  "[data-slot='command-dialog-backdrop']",
-  "[data-slot='command-dialog-popup']",
-  "[data-slot='command-dialog-viewport']",
-  "[data-slot='toast-popup']",
-  "[role='dialog'][aria-modal='true']",
-].join(", ");
-
 function BrowserActionMenuIcon({ icon: Icon }: { icon: LucideIcon }) {
   return (
     <span className={BROWSER_ACTION_MENU_ICON_CLASS_NAME}>
@@ -120,19 +113,6 @@ function BrowserActionMenuIcon({ icon: Icon }: { icon: LucideIcon }) {
     </span>
   );
 }
-
-// The browser itself lives inside a sheet, and toast portals/positioners are just
-// layout containers. Treating either as blockers hides the WebContentsView.
-const NATIVE_BROWSER_NON_OBSCURING_OVERLAY_SELECTOR = [
-  "[data-panel-resize-overlay='true']",
-  "[data-slot='sheet-backdrop']",
-  "[data-slot='sheet-popup']",
-  "[data-slot='toast-portal']",
-  "[data-slot='toast-portal-anchored']",
-  "[data-slot='toast-viewport']",
-  "[data-slot='toast-viewport-anchored']",
-  "[data-slot='toast-positioner']",
-].join(", ");
 
 interface BrowserViewportPerfCounters {
   syncAttempts: number;
@@ -145,10 +125,6 @@ interface BrowserViewportPerfCounters {
   burstFrames: number;
   transitionSignals: number;
   ignoredTransitionSignals: number;
-}
-
-interface BrowserWebviewElement extends HTMLElement {
-  getWebContentsId?: () => number;
 }
 
 const VIEWPORT_TRANSITION_PROPERTIES = new Set([
@@ -199,129 +175,6 @@ function ignoreBrowserBoundsSyncError(): void {
 
 function ignoreBrowserWebviewDetachError(): void {
   // Renderer webview detach is best-effort cleanup; a stale/destroyed guest is already gone.
-}
-
-function setBrowserWebviewOverlayOcclusion(
-  webview: BrowserWebviewElement | null,
-  occluded: boolean,
-): void {
-  if (!webview) {
-    return;
-  }
-  webview.style.visibility = occluded ? "hidden" : "visible";
-  webview.style.pointerEvents = occluded ? "none" : "auto";
-}
-
-function isVisibleOverlayElement(element: HTMLElement): boolean {
-  const styles = window.getComputedStyle(element);
-  if (styles.display === "none" || styles.visibility === "hidden" || styles.opacity === "0") {
-    return false;
-  }
-  return element.getClientRects().length > 0;
-}
-
-function isNativeBrowserNonObscuringOverlayElement(element: HTMLElement): boolean {
-  return (
-    element.closest("[data-slot='toast-popup']") === null &&
-    element.closest(NATIVE_BROWSER_NON_OBSCURING_OVERLAY_SELECTOR) !== null
-  );
-}
-
-const NATIVE_BROWSER_OVERLAY_SAMPLE_POINTS = [
-  [0.5, 0.5],
-  [0.2, 0.2],
-  [0.8, 0.2],
-  [0.2, 0.8],
-  [0.8, 0.8],
-] as const;
-
-function rectsIntersect(a: DOMRect, b: DOMRect): boolean {
-  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-}
-
-function candidateObscuresNativeBrowser(candidate: HTMLElement, element: HTMLElement): boolean {
-  if (candidate === element || candidate.contains(element) || element.contains(candidate)) {
-    return false;
-  }
-  if (!isVisibleOverlayElement(candidate)) {
-    return false;
-  }
-
-  const elementRect = element.getBoundingClientRect();
-  const candidateRects = candidate.getClientRects();
-  for (const candidateRect of candidateRects) {
-    if (rectsIntersect(elementRect, candidateRect)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function hasTopLayerDomObstruction(element: HTMLElement): boolean {
-  const rect = element.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) {
-    return false;
-  }
-
-  for (const [xRatio, yRatio] of NATIVE_BROWSER_OVERLAY_SAMPLE_POINTS) {
-    const x = rect.left + rect.width * xRatio;
-    const y = rect.top + rect.height * yRatio;
-    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) {
-      continue;
-    }
-
-    const hitElements = document.elementsFromPoint(x, y);
-    for (const hitElement of hitElements) {
-      if (!(hitElement instanceof HTMLElement)) {
-        continue;
-      }
-      if (hitElement === element || element.contains(hitElement) || hitElement.contains(element)) {
-        continue;
-      }
-      if (isNativeBrowserNonObscuringOverlayElement(hitElement)) {
-        continue;
-      }
-      if (!isVisibleOverlayElement(hitElement)) {
-        continue;
-      }
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function hasNativeBrowserObscuringOverlay(element: HTMLElement): boolean {
-  const candidates = document.querySelectorAll<HTMLElement>(
-    NATIVE_BROWSER_OBSCURING_OVERLAY_SELECTOR,
-  );
-  for (const candidate of candidates) {
-    if (candidateObscuresNativeBrowser(candidate, element)) {
-      return true;
-    }
-  }
-
-  return hasTopLayerDomObstruction(element);
-}
-
-function isNativeBrowserTransitionSignalTarget(
-  target: EventTarget | null,
-  viewportElement: HTMLElement,
-): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-
-  if (viewportElement.contains(target) || target.contains(viewportElement)) {
-    return true;
-  }
-
-  return (
-    target.closest(NATIVE_BROWSER_OBSCURING_OVERLAY_SELECTOR) !== null ||
-    target.closest("[data-slot='sidebar-container']") !== null ||
-    target.closest("[data-slot='sheet-popup']") !== null
-  );
 }
 
 function isBrowserPerfLoggingEnabled(): boolean {
@@ -529,6 +382,8 @@ export function BrowserPanel({
   const addressDraftsByTabIdRef = useRef(new Map<string, string>());
   const lastSyncedAddressByTabIdRef = useRef(new Map<string, string>());
   const previousActiveTabIdRef = useRef<string | null>(null);
+  const pendingCreateTabRef = useRef(false);
+  const createTabInFlightRef = useRef(false);
   const artifactPreviewUrlsRef = useRef(
     new Set(
       threadBrowserState?.tabs.filter((tab) => tab.kind === "artifact").map((tab) => tab.url) ?? [],
@@ -558,6 +413,7 @@ export function BrowserPanel({
   const [isAddressFocused, setIsAddressFocused] = useState(false);
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [isCreatingTab, setIsCreatingTab] = useState(false);
   const runtimeReady = isLiveRuntime ? workspaceReady : true;
   const activeTab =
     threadBrowserState?.tabs.find((tab) => tab.id === threadBrowserState.activeTabId) ??
@@ -986,6 +842,24 @@ export function BrowserPanel({
       scheduleSyncBounds();
     });
     observer.observe(element);
+    const overlayObserver = new MutationObserver((mutations) => {
+      if (nativeBrowserOverlayMutationsRequireSync(mutations)) {
+        scheduleSyncBounds();
+      }
+    });
+    overlayObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: [
+        "data-open",
+        "data-closed",
+        "data-starting-style",
+        "data-ending-style",
+        "hidden",
+        "style",
+      ],
+      childList: true,
+      subtree: true,
+    });
     window.addEventListener("resize", scheduleSyncBounds);
     window.addEventListener(PANEL_RESIZE_OVERLAY_SYNC_EVENT, scheduleSyncBounds);
     document.addEventListener("transitionrun", handleTransitionBounds, true);
@@ -995,6 +869,7 @@ export function BrowserPanel({
     return () => {
       setBrowserWebviewOverlayOcclusion(browserWebviewRef.current, false);
       observer.disconnect();
+      overlayObserver.disconnect();
       window.removeEventListener("resize", scheduleSyncBounds);
       window.removeEventListener(PANEL_RESIZE_OVERLAY_SYNC_EVENT, scheduleSyncBounds);
       document.removeEventListener("transitionrun", handleTransitionBounds, true);
@@ -1123,23 +998,53 @@ export function BrowserPanel({
     [api, ensureLiveRuntime, runBrowserAction, threadId, upsertThreadState],
   );
 
-  const onCreateTab = useCallback(() => {
-    if (!ensureLiveRuntime()) {
-      return;
-    }
+  const performCreateTab = useCallback(() => {
     if (!api) {
+      return false;
+    }
+    if (createTabInFlightRef.current) {
+      return false;
+    }
+    createTabInFlightRef.current = true;
+    setIsCreatingTab(true);
+    void runBrowserAction(() => api.browser.newTab({ threadId, activate: true }))
+      .then((state) => {
+        if (state) {
+          upsertThreadState(state);
+        }
+        window.requestAnimationFrame(() => {
+          addressInputRef.current?.focus();
+          addressInputRef.current?.select();
+        });
+      })
+      .finally(() => {
+        createTabInFlightRef.current = false;
+        setIsCreatingTab(false);
+      });
+    return true;
+  }, [api, runBrowserAction, threadId, upsertThreadState]);
+
+  const onCreateTab = useCallback(() => {
+    if (!isLiveRuntime || !workspaceReady) {
+      if (!pendingCreateTabRef.current) {
+        pendingCreateTabRef.current = true;
+        if (!isLiveRuntime) {
+          requestLiveRuntime();
+        }
+      }
       return;
     }
-    void runBrowserAction(() => api.browser.newTab({ threadId, activate: true })).then((state) => {
-      if (state) {
-        upsertThreadState(state);
-      }
-      window.requestAnimationFrame(() => {
-        addressInputRef.current?.focus();
-        addressInputRef.current?.select();
-      });
-    });
-  }, [api, ensureLiveRuntime, runBrowserAction, threadId, upsertThreadState]);
+    performCreateTab();
+  }, [isLiveRuntime, performCreateTab, requestLiveRuntime, workspaceReady]);
+
+  useEffect(() => {
+    if (!isLiveRuntime || !workspaceReady || !pendingCreateTabRef.current) {
+      return;
+    }
+    if (performCreateTab()) {
+      pendingCreateTabRef.current = false;
+    }
+  }, [isLiveRuntime, performCreateTab, workspaceReady]);
 
   const onCaptureScreenshot = useCallback(() => {
     if (!ensureLiveRuntime()) {
@@ -1484,7 +1389,10 @@ export function BrowserPanel({
           />
         </form>
         {showBrowserAddressSuggestions ? (
-          <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 overflow-hidden rounded-lg border border-border bg-popover shadow-lg [-webkit-app-region:no-drag]">
+          <div
+            className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 overflow-hidden rounded-lg border border-border bg-popover shadow-lg [-webkit-app-region:no-drag]"
+            data-native-browser-overlay="true"
+          >
             <div className="max-h-64 overflow-auto p-1">
               {browserAddressSuggestions.map((suggestion) => (
                 <button
@@ -1586,7 +1494,11 @@ export function BrowserPanel({
             side="bottom"
             className={BROWSER_ACTION_MENU_PANEL_CLASS_NAME}
           >
-            <MenuItem className={BROWSER_ACTION_MENU_ITEM_CLASS_NAME} onClick={onCreateTab}>
+            <MenuItem
+              className={BROWSER_ACTION_MENU_ITEM_CLASS_NAME}
+              disabled={isCreatingTab}
+              onClick={onCreateTab}
+            >
               <BrowserActionMenuIcon icon={PlusIcon} />
               <span>New tab</span>
             </MenuItem>
@@ -1700,6 +1612,18 @@ export function BrowserPanel({
               );
             })}
           </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-7 shrink-0"
+            disabled={isCreatingTab}
+            aria-label="New browser tab"
+            title="New browser tab"
+            onClick={onCreateTab}
+          >
+            <PlusIcon className="size-3.5" />
+          </Button>
           {browserChromeStatus ? (
             <div
               className={cn(
