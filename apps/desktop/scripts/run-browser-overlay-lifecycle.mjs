@@ -27,13 +27,25 @@ const macSavedStatePaths = [
   join(homedir(), "Library", "Saved Application State", `${macTestBundleId}.savedState`),
 ];
 
+function cleanupTemporaryState() {
+  rmSync(tempDir, { recursive: true, force: true });
+  if (process.platform === "darwin") {
+    for (const savedStatePath of macSavedStatePaths) {
+      rmSync(savedStatePath, { recursive: true, force: true });
+    }
+  }
+}
+
+// Keep setup failures hermetic too: package resolution, sandbox validation, fixture
+// generation, and process spawning can all fail before the child handlers are installed.
+process.once("exit", cleanupTemporaryState);
+
 function createMacTestElectronExecutable(originalExecutablePath) {
   const originalAppPath = dirname(dirname(dirname(originalExecutablePath)));
   const testAppPath = join(tempDir, "ScientBrowserOverlayTest.app");
   const testContentsPath = join(testAppPath, "Contents");
   const clone = spawnSync("cp", ["-cR", originalAppPath, testAppPath], { encoding: "utf8" });
   if (clone.status !== 0) {
-    rmSync(tempDir, { recursive: true, force: true });
     throw new Error(
       `Could not clone the Electron test app: ${clone.stderr || clone.stdout || "unknown error"}`,
     );
@@ -46,7 +58,6 @@ function createMacTestElectronExecutable(originalExecutablePath) {
     `$1${macTestBundleId}$2`,
   );
   if (info === originalInfo) {
-    rmSync(tempDir, { recursive: true, force: true });
     throw new Error("Could not isolate the Electron test app bundle identifier.");
   }
   writeFileSync(join(testContentsPath, "Info.plist"), info, "utf8");
@@ -78,7 +89,6 @@ for (const build of builds) {
     { cwd: workspaceRoot, encoding: "utf8" },
   );
   if (result.status !== 0) {
-    rmSync(tempDir, { recursive: true, force: true });
     process.stderr.write(result.stdout ?? "");
     process.stderr.write(result.stderr ?? "");
     process.exit(result.status ?? 1);
@@ -138,15 +148,28 @@ child.stderr.on("data", (chunk) => {
 });
 
 function killChildTree() {
-  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return;
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return true;
   if (process.platform === "win32") {
-    spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
-    return;
+    const result = spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+      encoding: "utf8",
+    });
+    if (result.status !== 0) {
+      process.stderr.write(
+        `Could not terminate Electron process tree: ${result.stderr || result.stdout || "taskkill failed"}\n`,
+      );
+      return false;
+    }
+    return true;
   }
   try {
     process.kill(-child.pid, "SIGKILL");
+    return true;
   } catch {
-    child.kill("SIGKILL");
+    const killed = child.kill("SIGKILL");
+    if (!killed) {
+      process.stderr.write("Could not terminate Electron process tree.\n");
+    }
+    return killed;
   }
 }
 
@@ -154,12 +177,7 @@ function finish(code) {
   if (finished) return;
   finished = true;
   clearTimeout(timeout);
-  rmSync(tempDir, { recursive: true, force: true });
-  if (process.platform === "darwin") {
-    for (const savedStatePath of macSavedStatePaths) {
-      rmSync(savedStatePath, { recursive: true, force: true });
-    }
-  }
+  cleanupTemporaryState();
   process.exit(code);
 }
 
@@ -186,6 +204,7 @@ const timeout = setTimeout(() => {
   requestedExitCode = 1;
   process.stderr.write("Electron browser overlay lifecycle test timed out.\n");
   killChildTree();
+  setTimeout(() => finish(1), 2_000).unref();
 }, PROCESS_TIMEOUT_MS);
 
 child.on("error", (error) => {
