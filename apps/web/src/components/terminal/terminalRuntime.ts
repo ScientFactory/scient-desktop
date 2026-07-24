@@ -60,6 +60,7 @@ import {
 } from "./terminalRuntimeTypes";
 import { waitForTerminalFontReady } from "./terminalFontSettle";
 import { observeTerminalWriteParsed } from "./terminalPerformance";
+import { normalizeTerminalClipboardText } from "./terminalSelectionActions";
 
 const ENABLE_TERMINAL_WEBGL = true;
 const VISUAL_RESIZE_MIN_INTERVAL_MS = 64;
@@ -927,16 +928,16 @@ export function createRuntimeEntry(config: TerminalRuntimeConfig): TerminalRunti
   const handleCopy = (event: ClipboardEvent) => {
     const selection = terminal.getSelection();
     if (!selection) return;
-    const trimmed = selection.replace(/[^\S\n]+$/gm, "");
-    if (trimmed === selection) return;
+    const normalizedSelection = normalizeTerminalClipboardText(selection);
+    if (normalizedSelection === selection) return;
 
     if (event.clipboardData) {
       event.preventDefault();
-      event.clipboardData.setData("text/plain", trimmed);
+      event.clipboardData.setData("text/plain", normalizedSelection);
       return;
     }
 
-    void navigator.clipboard?.writeText(trimmed).catch(() => undefined);
+    void navigator.clipboard?.writeText(normalizedSelection).catch(() => undefined);
   };
   wrapper.addEventListener("copy", handleCopy);
   entry.persistentDisposables.push(() => {

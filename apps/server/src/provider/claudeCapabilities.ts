@@ -8,6 +8,8 @@ import {
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 
+import { buildIsolatedClaudeDiscoveryOptions } from "./claudeDiscoveryIsolation.ts";
+
 export interface ClaudeAccountCapabilities {
   readonly email?: string;
   readonly organization?: string;
@@ -114,16 +116,14 @@ export async function probeClaudeAccountCapabilities(
   try {
     runtime = createQuery({
       prompt: neverSendingPrompt(abortController.signal),
-      options: {
+      options: buildIsolatedClaudeDiscoveryOptions({
         pathToClaudeCodeExecutable: input.executable,
         env: input.env,
-        persistSession: false,
-        settingSources: ["user", "project", "local"],
         allowedTools: [],
         abortController,
         stderr: () => {},
         ...(input.cwd ? { cwd: input.cwd } : {}),
-      },
+      }),
     });
 
     const timeout = new Promise<undefined>((resolve) => {
