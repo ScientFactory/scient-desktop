@@ -302,6 +302,20 @@ export function describeProviderConnection(
   }
 
   if (!status.available) {
+    if (
+      (installation?.status === "failed" || installation?.status === "cancelled") &&
+      status.runtime?.source === "missing" &&
+      status.runtime.canInstall
+    ) {
+      return {
+        title,
+        description: installation.message,
+        primaryAction: "install",
+        primaryLabel: "Try installation again",
+        busy: false,
+        canCancel: false,
+      };
+    }
     if (status.installationState?.status === "installed" && providerConnectionMethod(provider)) {
       return {
         title,

@@ -12,7 +12,7 @@ import {
   type ServerProviderRuntimeSource,
 } from "@synara/contracts";
 import { compareSemverVersions } from "@synara/shared/providerVersions";
-import { mergePathEntries, readWindowsPersistentEnvironment } from "@synara/shared/shell";
+import { mergePathEntries, readWindowsPersistentEnvironmentAsync } from "@synara/shared/shell";
 import { Effect, Layer, PubSub, Schema, Stream } from "effect";
 
 import { ServerConfig } from "../../config";
@@ -108,7 +108,43 @@ interface PreparedInstall {
 interface ActiveOperation {
   readonly operationId: string;
   readonly operation: RuntimeOperation;
-  readonly controller: AbortController;
+  readonly gate: ProviderRuntimeOperationGate;
+  completion: Promise<void>;
+}
+
+export interface ProviderRuntimeOperationGate {
+  readonly signal: AbortSignal;
+  readonly cancel: () => boolean;
+  readonly beginCommit: () => boolean;
+}
+
+export function makeProviderRuntimeOperationGate(): ProviderRuntimeOperationGate {
+  const controller = new AbortController();
+  let phase: "running" | "cancelled" | "committing" = "running";
+  return {
+    signal: controller.signal,
+    cancel: () => {
+      if (phase !== "running") return false;
+      phase = "cancelled";
+      controller.abort();
+      return true;
+    },
+    beginCommit: () => {
+      if (phase !== "running" || controller.signal.aborted) return false;
+      phase = "committing";
+      return true;
+    },
+  };
+}
+
+export async function cancelAndAwaitProviderRuntimeOperations(
+  operations: ReadonlyArray<{
+    readonly gate: ProviderRuntimeOperationGate;
+    readonly completion: Promise<void>;
+  }>,
+): Promise<void> {
+  for (const operation of operations) operation.gate.cancel();
+  await Promise.allSettled(operations.map((operation) => operation.completion));
 }
 
 function installationError(input: {
@@ -433,9 +469,10 @@ export const ProviderRuntimeManagerLive = Layer.effect(
           // A prior remove only deactivates the runtime immediately so an already-running
           // provider process is never invalidated. The next app start is the safe GC point.
           yield* Effect.promise(() =>
-            FS.rm(providerRoot(config.stateDir, provider), { recursive: true, force: true }).catch(
-              () => undefined,
-            ),
+            FS.rm(providerRoot(config.stateDir, provider), {
+              recursive: true,
+              force: true,
+            }).catch(() => undefined),
           );
         } else {
           yield* Effect.logWarning(
@@ -454,7 +491,7 @@ export const ProviderRuntimeManagerLive = Layer.effect(
         return windowsEnvironmentCache;
       }
       try {
-        windowsEnvironmentCache = readWindowsPersistentEnvironment();
+        windowsEnvironmentCache = await readWindowsPersistentEnvironmentAsync();
         windowsEnvironmentReadAt = Date.now();
       } catch {
         windowsEnvironmentCache = {};
@@ -598,7 +635,7 @@ export const ProviderRuntimeManagerLive = Layer.effect(
       readonly run: (context: {
         readonly operationId: string;
         readonly startedAt: string;
-        readonly controller: AbortController;
+        readonly gate: ProviderRuntimeOperationGate;
       }) => Promise<void>;
     }): Effect.Effect<void, ServerProviderInstallationError> =>
       Effect.gen(function* () {
@@ -611,8 +648,14 @@ export const ProviderRuntimeManagerLive = Layer.effect(
         }
         const operationId = input.operationId ?? randomUUID();
         const startedAt = new Date().toISOString();
-        const controller = new AbortController();
-        active.set(input.provider, { operationId, operation: input.operation, controller });
+        const gate = makeProviderRuntimeOperationGate();
+        const activeOperation: ActiveOperation = {
+          operationId,
+          operation: input.operation,
+          gate,
+          completion: Promise.resolve(),
+        };
+        active.set(input.provider, activeOperation);
         setInstallationState(input.provider, {
           operationId,
           operation: input.operation,
@@ -631,10 +674,10 @@ export const ProviderRuntimeManagerLive = Layer.effect(
                   : "Removing the Scient-managed provider runtime.",
         });
 
-        void input
-          .run({ operationId, startedAt, controller })
+        const completion = Promise.resolve()
+          .then(() => input.run({ operationId, startedAt, gate }))
           .catch((cause) => {
-            const cancelled = controller.signal.aborted;
+            const cancelled = gate.signal.aborted;
             const previousState = installationStates.get(input.provider);
             const failedFromStatus = previousState?.status;
             const failedAt =
@@ -675,6 +718,7 @@ export const ProviderRuntimeManagerLive = Layer.effect(
             if (active.get(input.provider)?.operationId === operationId)
               active.delete(input.provider);
           });
+        activeOperation.completion = completion;
       });
 
     const runInstall = async (input: {
@@ -683,9 +727,9 @@ export const ProviderRuntimeManagerLive = Layer.effect(
       readonly operationId: string;
       readonly operation: "install" | "repair";
       readonly startedAt: string;
-      readonly controller: AbortController;
+      readonly gate: ProviderRuntimeOperationGate;
     }): Promise<void> => {
-      const { provider, artifact, operationId, operation, startedAt, controller } = input;
+      const { provider, artifact, operationId, operation, startedAt, gate } = input;
       const root = providerRoot(config.stateDir, provider);
       const downloads = Path.join(root, "downloads");
       await FS.mkdir(downloads, { recursive: true });
@@ -722,7 +766,7 @@ export const ProviderRuntimeManagerLive = Layer.effect(
           url: artifact.url,
           destination: archivePath,
           allowedHosts: artifact.allowedHosts,
-          signal: controller.signal,
+          signal: gate.signal,
           ...(artifact.size ? { expectedSize: artifact.size } : {}),
           onProgress: (bytesDownloaded, totalBytes) =>
             setInstallationState(provider, {
@@ -749,8 +793,7 @@ export const ProviderRuntimeManagerLive = Layer.effect(
           algorithm: artifact.digestAlgorithm,
           expectedDigest: artifact.digest,
         });
-        if (controller.signal.aborted)
-          throw new DOMException("Installation cancelled.", "AbortError");
+        if (gate.signal.aborted) throw new DOMException("Installation cancelled.", "AbortError");
 
         setInstallationState(provider, {
           operationId,
@@ -765,7 +808,7 @@ export const ProviderRuntimeManagerLive = Layer.effect(
           destination: stagedRelease,
           format: artifact.archiveFormat,
           executablePath: artifact.executablePath,
-          signal: controller.signal,
+          signal: gate.signal,
         });
         const recipe = getProviderRuntimeRecipe(provider);
         const managedExecutableRelativePath = Path.join(
@@ -793,7 +836,7 @@ export const ProviderRuntimeManagerLive = Layer.effect(
         await smokeTestExecutable({
           executable,
           args: artifact.smokeArgs,
-          signal: controller.signal,
+          signal: gate.signal,
         });
 
         const current = records.get(provider) ?? null;
@@ -834,10 +877,12 @@ export const ProviderRuntimeManagerLive = Layer.effect(
           catalogRevision: artifact.catalogRevision,
           installedAt: new Date().toISOString(),
         };
+        if (gate.signal.aborted) throw new DOMException("Installation cancelled.", "AbortError");
         await writeFileStringAtomically({
           filePath: releaseRecordPath(config.stateDir, provider, releaseId),
           contents: `${JSON.stringify({ ...record, previousReleaseId: null }, null, 2)}\n`,
         }).pipe(Effect.runPromise);
+        if (!gate.beginCommit()) throw new DOMException("Installation cancelled.", "AbortError");
         await writeCurrentRecord(config.stateDir, provider, record);
         records.set(provider, record);
         verifiedManagedReleases.add(`${provider}:${record.releaseId}`);
@@ -933,14 +978,14 @@ export const ProviderRuntimeManagerLive = Layer.effect(
           provider: input.provider,
           operation: "install",
           operationId: input.planToken,
-          run: ({ operationId, startedAt, controller }) =>
+          run: ({ operationId, startedAt, gate }) =>
             runInstall({
               provider: input.provider,
               artifact: plan.artifact,
               operationId,
               operation: "install",
               startedAt,
-              controller,
+              gate,
             }),
         });
       });
@@ -955,7 +1000,13 @@ export const ProviderRuntimeManagerLive = Layer.effect(
             message: "This provider runtime operation is no longer running.",
           });
         }
-        operation.controller.abort();
+        if (!operation.gate.cancel()) {
+          return yield* installationError({
+            provider: input.provider,
+            reason: "operation_not_found",
+            message: "This provider runtime operation is already finishing.",
+          });
+        }
       });
 
     const repair: ProviderRuntimeManagerShape["repair"] = (input) =>
@@ -999,14 +1050,14 @@ export const ProviderRuntimeManagerLive = Layer.effect(
         yield* startOperation({
           provider: input.provider,
           operation: "repair",
-          run: ({ operationId, startedAt, controller }) =>
+          run: ({ operationId, startedAt, gate }) =>
             runInstall({
               provider: input.provider,
               artifact,
               operationId,
               operation: "repair",
               startedAt,
-              controller,
+              gate,
             }),
         });
       });
@@ -1024,7 +1075,7 @@ export const ProviderRuntimeManagerLive = Layer.effect(
         yield* startOperation({
           provider: input.provider,
           operation: "rollback",
-          run: async ({ operationId, startedAt, controller }) => {
+          run: async ({ operationId, startedAt, gate }) => {
             const previousMetadata = await readReleaseRecord(
               config.stateDir,
               input.provider,
@@ -1039,7 +1090,7 @@ export const ProviderRuntimeManagerLive = Layer.effect(
             await smokeTestExecutable({
               executable: previousExecutable,
               args: previousMetadata.smokeArgs,
-              signal: controller.signal,
+              signal: gate.signal,
             });
             const previousRecord: ProviderRuntimeCurrentRecord = {
               ...previousMetadata,
@@ -1048,6 +1099,7 @@ export const ProviderRuntimeManagerLive = Layer.effect(
               executableDigest: await hashExecutable(previousExecutable),
               installedAt: new Date().toISOString(),
             };
+            if (!gate.beginCommit()) throw new DOMException("Rollback cancelled.", "AbortError");
             await writeCurrentRecord(config.stateDir, input.provider, previousRecord);
             records.set(input.provider, previousRecord);
             verifiedManagedReleases.add(`${input.provider}:${previousRecord.releaseId}`);
@@ -1076,7 +1128,8 @@ export const ProviderRuntimeManagerLive = Layer.effect(
         yield* startOperation({
           provider: input.provider,
           operation: "remove",
-          run: async ({ operationId, startedAt }) => {
+          run: async ({ operationId, startedAt, gate }) => {
+            if (!gate.beginCommit()) throw new DOMException("Removal cancelled.", "AbortError");
             await removeCurrentRecord(config.stateDir, input.provider);
             records.delete(input.provider);
             for (const key of verifiedManagedReleases) {
@@ -1187,7 +1240,8 @@ export const ProviderRuntimeManagerLive = Layer.effect(
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         disposed = true;
-        for (const operation of active.values()) operation.controller.abort();
+        const activeOperations = [...active.values()];
+        yield* Effect.promise(() => cancelAndAwaitProviderRuntimeOperations(activeOperations));
         active.clear();
         const currentPath = process.env.PATH ?? "";
         const delimiter = process.platform === "win32" ? ";" : ":";

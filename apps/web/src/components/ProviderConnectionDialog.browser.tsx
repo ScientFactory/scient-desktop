@@ -1382,6 +1382,53 @@ describe("ProviderConnectionDialog", () => {
     }
   });
 
+  it("shows a persisted installation failure after restart and keeps retry available", async () => {
+    const failureMessage =
+      "Installation failed while downloading the provider: the connection was reset.";
+    const antigravity = {
+      provider: "antigravity",
+      status: "error",
+      available: false,
+      authStatus: "unknown",
+      checkedAt,
+      runtime: {
+        source: "missing",
+        managedVersion: null,
+        canInstall: true,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: "No usable provider runtime was found.",
+      },
+      installationState: {
+        operationId: "install-antigravity-failed",
+        operation: "install",
+        status: "failed",
+        startedAt: checkedAt,
+        finishedAt: "2026-07-19T12:01:00.000Z",
+        message: failureMessage,
+      },
+    } satisfies ServerProviderStatus;
+    const queryClient = createQueryClient(antigravity);
+    useProviderConnectionDialogStore.getState().openDialog("antigravity", "settings");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await expect.element(page.getByText(failureMessage)).toBeVisible();
+      await expect
+        .element(page.getByRole("button", { name: "Try installation again" }))
+        .toBeVisible();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+    }
+  });
+
   it("keeps managed installation available after a complete provider refresh", async () => {
     const antigravity = {
       provider: "antigravity",

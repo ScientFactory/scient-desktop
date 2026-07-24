@@ -5,14 +5,27 @@ import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, Layer } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const shellMocks = vi.hoisted(() => ({
+  readWindowsPersistentEnvironmentAsync: vi.fn(
+    async (): Promise<Partial<Record<string, string>>> => ({ ...process.env }),
+  ),
+}));
+
+vi.mock("@synara/shared/shell", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@synara/shared/shell")>()),
+  readWindowsPersistentEnvironmentAsync: shellMocks.readWindowsPersistentEnvironmentAsync,
+}));
 
 import { ServerConfig } from "../../config";
 import { ProviderRuntimeManager } from "../Services/ProviderRuntimeManager";
 import type { ProviderRuntimeCurrentRecord } from "../providerRuntimeTypes";
 import {
+  cancelAndAwaitProviderRuntimeOperations,
   canActivateManagedRuntimeVersion,
   findExecutableOnPath,
+  makeProviderRuntimeOperationGate,
   ProviderRuntimeManagerLive,
   windowsKnownProviderExecutableCandidates,
 } from "./ProviderRuntimeManager";
@@ -50,6 +63,37 @@ function getProviderSnapshot(baseDir: string, provider: "codex" | "antigravity")
 }
 
 describe("ProviderRuntimeManager managed integrity", () => {
+  it("makes cancellation and activation mutually exclusive", () => {
+    const cancelled = makeProviderRuntimeOperationGate();
+    expect(cancelled.cancel()).toBe(true);
+    expect(cancelled.signal.aborted).toBe(true);
+    expect(cancelled.beginCommit()).toBe(false);
+
+    const committing = makeProviderRuntimeOperationGate();
+    expect(committing.beginCommit()).toBe(true);
+    expect(committing.cancel()).toBe(false);
+    expect(committing.signal.aborted).toBe(false);
+  });
+
+  it("waits for active runtime operations to finish during shutdown", async () => {
+    const gate = makeProviderRuntimeOperationGate();
+    let finishOperation: (() => void) | undefined;
+    let operationFinished = false;
+    const completion = new Promise<void>((resolve) => {
+      finishOperation = () => {
+        operationFinished = true;
+        resolve();
+      };
+    });
+
+    const shutdown = cancelAndAwaitProviderRuntimeOperations([{ gate, completion }]);
+    expect(gate.signal.aborted).toBe(true);
+    expect(operationFinished).toBe(false);
+    finishOperation?.();
+    await shutdown;
+    expect(operationFinished).toBe(true);
+  });
+
   it("allows install or repair at the current version but never downgrades", () => {
     expect(
       canActivateManagedRuntimeVersion({ currentVersion: null, candidateVersion: "1.1.5" }),
@@ -159,6 +203,60 @@ describe("ProviderRuntimeManager managed integrity", () => {
         expect(discovered).not.toBeNull();
         expect(readFileSync(discovered!, "utf8")).toBe("test");
       } finally {
+        rmSync(baseDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.runIf(process.platform === "win32")(
+    "refreshes the manager's persisted Windows PATH after an external provider install",
+    async () => {
+      const baseDir = mkdtempSync(path.join(os.tmpdir(), "scient-windows-manager-path-"));
+      const previousPath = process.env.PATH;
+      const emptyPath = path.join(baseDir, "empty");
+      let persistedPath = emptyPath;
+      let now = 1_000_000;
+      const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+      shellMocks.readWindowsPersistentEnvironmentAsync.mockClear();
+      shellMocks.readWindowsPersistentEnvironmentAsync.mockImplementation(async () => ({
+        PATH: persistedPath,
+      }));
+      try {
+        mkdirSync(emptyPath);
+        writeFileSync(path.join(baseDir, "codex.exe"), "test");
+        process.env.PATH = emptyPath;
+        const configLayer = ServerConfig.layerTest(baseDir, baseDir).pipe(
+          Layer.provide(NodeServices.layer),
+        );
+        const runtimeLayer = ProviderRuntimeManagerLive.pipe(Layer.provide(configLayer));
+        const layer = Layer.mergeAll(configLayer, runtimeLayer).pipe(
+          Layer.provide(NodeServices.layer),
+        );
+
+        const result = await Effect.runPromise(
+          Effect.gen(function* () {
+            const manager = yield* ProviderRuntimeManager;
+            const beforeInstall = yield* manager.resolve("codex");
+            persistedPath = baseDir;
+            now += 5_001;
+            const afterInstall = yield* manager.resolve("codex");
+            return { beforeInstall, afterInstall };
+          }).pipe(Effect.provide(layer), Effect.scoped),
+        );
+
+        expect(result.beforeInstall.source).toBe("missing");
+        expect(result.afterInstall).toMatchObject({
+          source: "system",
+          executable: path.join(baseDir, "codex.exe"),
+        });
+        expect(shellMocks.readWindowsPersistentEnvironmentAsync).toHaveBeenCalledTimes(2);
+      } finally {
+        nowSpy.mockRestore();
+        shellMocks.readWindowsPersistentEnvironmentAsync.mockImplementation(
+          async (): Promise<Partial<Record<string, string>>> => ({ ...process.env }),
+        );
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
         rmSync(baseDir, { recursive: true, force: true });
       }
     },

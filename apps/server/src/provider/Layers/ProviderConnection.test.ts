@@ -156,7 +156,9 @@ function makeConnectionTestLayer(input?: {
   readonly listModelsHanging?: boolean;
   readonly initiallyAuthenticated?: boolean;
   readonly requiresProviderAccount?: boolean | null;
-  readonly installationState?: ServerProviderInstallationState;
+  readonly installationState?:
+    | ServerProviderInstallationState
+    | (() => ServerProviderInstallationState | null);
   readonly onListModels?: (input: {
     readonly provider: ProviderKind;
     readonly binaryPath?: string;
@@ -341,7 +343,10 @@ function makeConnectionTestLayer(input?: {
         previousReleaseAvailable: false,
         bundled: false,
         canInstall: false,
-        installationState: input?.installationState ?? null,
+        installationState:
+          typeof input?.installationState === "function"
+            ? input.installationState()
+            : (input?.installationState ?? null),
       }),
     resolve: (provider, configured) =>
       Effect.succeed({
@@ -592,6 +597,81 @@ describe("Antigravity OAuth authorization URL parsing", () => {
 });
 
 describe("ProviderConnectionLive", () => {
+  it("waits for the exact installation operation before starting sign-in", async () => {
+    const onSpawn = vi.fn();
+    let installationState: ServerProviderInstallationState = {
+      operationId: "trusted-plan-transition",
+      operation: "install",
+      status: "downloading",
+      startedAt: "2026-07-23T10:00:00.000Z",
+      finishedAt: null,
+      message: "Downloading Codex.",
+    };
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      installationState: () => installationState,
+      onSpawn,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.startAfterInstallation({
+          provider: "codex",
+          method: "codex_browser",
+          installationOperationId: "trusted-plan-transition",
+        });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(onSpawn).not.toHaveBeenCalled();
+        installationState = {
+          ...installationState,
+          status: "installed",
+          finishedAt: "2026-07-23T10:00:02.000Z",
+          message: "Codex is installed and verified.",
+        };
+        const connected = fixture.waitForConnectionState((state) => state?.status === "connected");
+        yield* Effect.promise(() => connected);
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "codex", args: ["login"] }),
+    );
+  });
+
+  it.each(["failed", "cancelled"] as const)(
+    "does not start sign-in after the exact installation operation is %s",
+    async (status) => {
+      const onSpawn = vi.fn();
+      const fixture = makeConnectionTestLayer({
+        provider: "codex",
+        installationState: {
+          operationId: `trusted-plan-${status}`,
+          operation: "install",
+          status,
+          startedAt: "2026-07-23T10:00:00.000Z",
+          finishedAt: "2026-07-23T10:00:02.000Z",
+          message: `Installation ${status}.`,
+        },
+        onSpawn,
+      });
+
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const connection = yield* ProviderConnection;
+          yield* connection.startAfterInstallation({
+            provider: "codex",
+            method: "codex_browser",
+            installationOperationId: `trusted-plan-${status}`,
+          });
+          yield* Effect.sleep(Duration.millis(40));
+        }).pipe(Effect.provide(fixture.layer)),
+      );
+
+      expect(onSpawn).not.toHaveBeenCalled();
+    },
+  );
+
   it("starts sign-in only after the exact requested installation succeeds", async () => {
     const onSpawn = vi.fn();
     const installationState = {

@@ -9,6 +9,7 @@ import {
   readPathFromLaunchctl,
   readPathFromLoginShell,
   readWindowsPersistentEnvironment,
+  readWindowsPersistentEnvironmentAsync,
   resolveLoginShell,
 } from "./shell";
 
@@ -260,5 +261,25 @@ describe("readWindowsPersistentEnvironment", () => {
     const execFile = vi.fn(() => "not json");
 
     expect(readWindowsPersistentEnvironment(execFile)).toEqual({});
+  });
+});
+
+describe("readWindowsPersistentEnvironmentAsync", () => {
+  it("reads and merges the registry dump without a synchronous child process", async () => {
+    const run = vi.fn(async () => ({
+      stdout: JSON.stringify({
+        machine: { Path: "C:\\Windows\\system32" },
+        user: { Path: "C:\\Users\\ramar\\.local\\bin" },
+      }),
+    }));
+
+    await expect(readWindowsPersistentEnvironmentAsync(run)).resolves.toMatchObject({
+      PATH: "C:\\Windows\\system32;C:\\Users\\ramar\\.local\\bin",
+    });
+    expect(run).toHaveBeenCalledWith(
+      expect.stringMatching(/powershell\.exe$/iu),
+      ["-NoProfile", "-NonInteractive", "-Command", expect.any(String)],
+      { encoding: "utf8", timeout: 5000, windowsHide: true },
+    );
   });
 });
