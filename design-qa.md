@@ -48,8 +48,8 @@ The new row was compared in both resting and drag-over states. The implementatio
 - A live local folder was added through the complete dialog-to-project-initialization journey.
 - Clone failures remove only the newly reserved destination and do not create or delete unrelated parent folders.
 - The final browser state has no current application errors; historical connection warnings occurred only while the isolated development server was intentionally stopped.
-- A folder can be dragged over any part of the open Local folder dialog. A valid single-folder drag receives native copy feedback and changes the row copy to “Release to add this folder.”
-- The dropped folder is resolved to its exact native absolute path and enters the same existing submission path as browse/manual selection.
+- The browser harness proves that any part of the open Local folder dialog captures a compatible single-folder drag, sets copy feedback, and changes the row copy to “Release to add this folder.”
+- When Electron supplies that compatible payload, the handler resolves the item through the native bridge and routes its absolute path through the same existing submission path as browse/manual selection.
 - File drops, multiple-item drops, unreadable native paths, and terminal-whitespace paths fail closed with focused guidance.
 - A synchronous single-flight guard prevents rapid duplicate drops or a simultaneous picker action from submitting the same project twice.
 - The row remains visible after scrolling the directory list to the bottom, and its polite status announcement is outside the listbox.
@@ -74,7 +74,7 @@ The new row was compared in both resting and drag-over states. The implementatio
 - Brand and identity check passed.
 - Production web build, desktop bundle, server bundle, and CLI bundle passed (5/5 tasks).
 - Release smoke passed, including a native `node-pty` spawn.
-- The folder-plus tile opened Finder at the current folder from the exact isolated build, matching the footer action.
+- The folder-plus tile opened the native macOS directory picker from the exact isolated build and used the same picker/submission action as the footer control.
 - Real Finder-to-Electron drag remains a manual acceptance gate: automated cross-window pointer
   drags did not produce renderer drag events, so this record does not claim native drop proof.
 - Sanitized evidence scan found no local user names, private paths, or embedded image text.
