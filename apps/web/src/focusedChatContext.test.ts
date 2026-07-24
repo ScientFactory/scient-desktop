@@ -68,6 +68,7 @@ function makeDraftThread(overrides: Partial<DraftThreadState> = {}): DraftThread
     branch: null,
     worktreePath: null,
     envMode: "local",
+    workspaceOrigin: "default",
     ...overrides,
   };
 }

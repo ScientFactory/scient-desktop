@@ -3,27 +3,77 @@
 //          after their destination route actually commits.
 // Layer: Web navigation orchestration
 
-const inFlightDraftNavigationBySlot = new Map<string, Promise<unknown>>();
+interface DraftNavigationSlotState {
+  tail: Promise<void>;
+  latestOperation: Promise<unknown> | null;
+  latestRequestKey: string | null;
+}
+
+const draftNavigationStateBySlot = new Map<string, DraftNavigationSlotState>();
 
 export function draftNavigationSlotKey(projectId: string, entryPoint: string): string {
   return `${projectId}\u0000${entryPoint}`;
 }
 
-/** Coalesces repeated clicks/shortcuts that target the same project + entry-point slot. */
-export function runDraftNavigationOnce<T>(slotKey: string, run: () => Promise<T>): Promise<T> {
-  const existing = inFlightDraftNavigationBySlot.get(slotKey) as Promise<T> | undefined;
-  if (existing) {
-    return existing;
+/**
+ * Coalesces identical requests for one project slot while serializing requests whose workspace,
+ * provider, or navigation intent differs. This prevents a later exact-workspace action from
+ * silently joining an earlier project-default navigation (and vice versa).
+ */
+export function runDraftNavigationOnce<T>(
+  slotKey: string,
+  requestKey: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  let state = draftNavigationStateBySlot.get(slotKey);
+  if (!state) {
+    state = {
+      tail: Promise.resolve(),
+      latestOperation: null,
+      latestRequestKey: null,
+    };
+    draftNavigationStateBySlot.set(slotKey, state);
   }
 
-  const operation = Promise.resolve().then(run);
-  inFlightDraftNavigationBySlot.set(slotKey, operation);
-  const clearOperation = () => {
-    if (inFlightDraftNavigationBySlot.get(slotKey) === operation) {
-      inFlightDraftNavigationBySlot.delete(slotKey);
+  if (state.latestRequestKey === requestKey && state.latestOperation) {
+    return state.latestOperation as Promise<T>;
+  }
+
+  const execution = state.tail.then(run, run);
+  let operation!: Promise<T>;
+  const clearLatestRequest = () => {
+    if (state.latestOperation === operation) {
+      state.latestOperation = null;
+      state.latestRequestKey = null;
     }
   };
-  void operation.then(clearOperation, clearOperation);
+  operation = execution.then(
+    (value) => {
+      clearLatestRequest();
+      return value;
+    },
+    (error: unknown) => {
+      clearLatestRequest();
+      throw error;
+    },
+  );
+  state.latestOperation = operation;
+  state.latestRequestKey = requestKey;
+
+  const tail = operation.then(
+    () => undefined,
+    () => undefined,
+  );
+  state.tail = tail;
+  void tail.then(() => {
+    if (
+      draftNavigationStateBySlot.get(slotKey) === state &&
+      state.tail === tail &&
+      state.latestOperation === null
+    ) {
+      draftNavigationStateBySlot.delete(slotKey);
+    }
+  });
   return operation;
 }
 

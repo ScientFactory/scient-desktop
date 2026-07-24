@@ -10,10 +10,11 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import {
-  buildDraftThreadContextPatch,
+  buildDraftThreadWorkspacePatch,
   createActiveDraftThreadSnapshot,
   createActiveThreadSnapshot,
   createFreshDraftThreadSeed,
+  newThreadNavigationRequestKey,
   resolveTerminalThreadCreationState,
   resolveThreadBootstrapPlan,
   type NewThreadOptions,
@@ -144,16 +145,15 @@ export function useHandleNewThread() {
       const resolveCreationState = (
         targetThreadId: ThreadId,
         draftThread: DraftThreadState | null,
-        creationOptions: NewThreadOptions | undefined,
       ) =>
         resolveTerminalThreadCreationState({
           activeDraftThread: activeDraftThreadSnapshot,
           activeThread: activeThreadSnapshot,
+          defaultEnvMode: settings.defaultThreadEnvMode,
           defaultProvider: options?.provider ?? settings.defaultProvider,
           draftComposerState:
             useComposerDraftStore.getState().draftsByThreadId[targetThreadId] ?? null,
           draftThread,
-          options: creationOptions,
           projectDefaultModelSelection,
           projectId,
         });
@@ -194,12 +194,13 @@ export function useHandleNewThread() {
           const preservedComposerDraft =
             useComposerDraftStore.getState().draftsByThreadId[bootstrapPlan.threadId] ?? null;
           let resolvedStoredDraftThread: DraftThreadState | null = bootstrapPlan.draftThread;
-          const shouldPreserveStoredTerminalContext =
-            entryPoint === "terminal" && bootstrapPlan.draftThread.entryPoint === "terminal";
-          const draftContextPatch = shouldPreserveStoredTerminalContext
-            ? null
-            : buildDraftThreadContextPatch(entryPoint, options);
-          const creationOptions = shouldPreserveStoredTerminalContext ? undefined : options;
+          const draftContextPatch = buildDraftThreadWorkspacePatch({
+            defaultEnvMode: settings.defaultThreadEnvMode,
+            draftThread: bootstrapPlan.draftThread,
+            entryPoint,
+            options,
+            reuseKind: "stored",
+          });
           if (draftContextPatch) {
             setDraftThreadContext(bootstrapPlan.threadId, draftContextPatch);
             resolvedStoredDraftThread = getDraftThread(bootstrapPlan.threadId);
@@ -212,11 +213,7 @@ export function useHandleNewThread() {
             if (entryPoint === "terminal") {
               await createTerminalThread(
                 bootstrapPlan.threadId,
-                resolveCreationState(
-                  bootstrapPlan.threadId,
-                  resolvedStoredDraftThread,
-                  creationOptions,
-                ),
+                resolveCreationState(bootstrapPlan.threadId, resolvedStoredDraftThread),
               );
             }
             return bootstrapPlan.threadId;
@@ -230,11 +227,7 @@ export function useHandleNewThread() {
           if (entryPoint === "terminal") {
             await createTerminalThread(
               bootstrapPlan.threadId,
-              resolveCreationState(
-                bootstrapPlan.threadId,
-                resolvedStoredDraftThread,
-                creationOptions,
-              ),
+              resolveCreationState(bootstrapPlan.threadId, resolvedStoredDraftThread),
             );
           }
           return bootstrapPlan.threadId;
@@ -249,7 +242,13 @@ export function useHandleNewThread() {
           const preservedComposerDraft =
             useComposerDraftStore.getState().draftsByThreadId[bootstrapPlan.threadId] ?? null;
           let resolvedActiveDraftThread: DraftThreadState | null = bootstrapPlan.draftThread;
-          const draftContextPatch = buildDraftThreadContextPatch(entryPoint, options);
+          const draftContextPatch = buildDraftThreadWorkspacePatch({
+            defaultEnvMode: settings.defaultThreadEnvMode,
+            draftThread: bootstrapPlan.draftThread,
+            entryPoint,
+            options,
+            reuseKind: "route",
+          });
           if (draftContextPatch) {
             setDraftThreadContext(bootstrapPlan.threadId, draftContextPatch);
             resolvedActiveDraftThread = getDraftThread(bootstrapPlan.threadId);
@@ -261,67 +260,80 @@ export function useHandleNewThread() {
           if (entryPoint === "terminal") {
             await createTerminalThread(
               bootstrapPlan.threadId,
-              resolveCreationState(bootstrapPlan.threadId, resolvedActiveDraftThread, options),
+              resolveCreationState(bootstrapPlan.threadId, resolvedActiveDraftThread),
             );
           }
           return bootstrapPlan.threadId;
         })();
       }
 
-      return runDraftNavigationOnce(draftNavigationSlotKey(projectId, entryPoint), async () => {
-        const threadId = newThreadId();
-        if (wantsTemporaryThread) {
-          markTemporaryThread(threadId);
-        }
-        const createdAt = new Date().toISOString();
-        const draftSeed = createFreshDraftThreadSeed({ createdAt, entryPoint, options });
-        const committed = await stageDraftNavigation({
-          // Keep the previous routed draft alive while the destination loads. Replacing the
-          // project's primary slot earlier makes the route guard redirect the old URL to Home.
-          stage: () => {
-            registerDraftThread(threadId, { projectId, ...draftSeed });
-            markNewThreadLanding(threadId);
-            activateThreadEntryPoint(threadId);
-            applyStickyState(threadId);
-            applyProviderOverride(threadId);
-          },
-          // Mark the draft-landing navigation as a transition so the new route
-          // subtree renders interruptibly and the browser can paint the composer
-          // skeleton immediately instead of freezing on the synchronous commit.
-          navigate: () =>
-            new Promise<void>((resolve, reject) => {
-              startTransition(() => {
-                navigate({
-                  to: "/$threadId",
-                  params: { threadId },
-                  ...(navigation?.search ? { search: navigation.search } : {}),
-                }).then(resolve, reject);
-              });
-            }),
-          // TanStack resolves an older navigate() promise when a newer navigation supersedes it.
-          // Verify the committed route before deleting the previous project draft.
-          isDestinationActive: () => router.state.location.pathname === `/${threadId}`,
-          finalize: () => setProjectDraftThreadId(projectId, threadId, draftSeed),
-          rollback: () => {
-            clearNewThreadLanding(threadId);
-            clearDraftThread(threadId);
-            clearTerminalState(threadId);
-            if (wantsTemporaryThread) {
-              clearTemporaryThread(threadId);
-            }
-          },
-        });
-        if (!committed) {
-          return null;
-        }
-        if (entryPoint === "terminal") {
-          await createTerminalThread(
-            threadId,
-            resolveCreationState(threadId, getDraftThread(threadId), options),
-          );
-        }
-        return threadId;
-      });
+      return runDraftNavigationOnce(
+        draftNavigationSlotKey(projectId, entryPoint),
+        newThreadNavigationRequestKey({
+          hasCustomSearch: navigation?.search !== undefined,
+          options,
+        }),
+        async () => {
+          await options?.prepareFreshCreate?.();
+          const threadId = newThreadId();
+          if (wantsTemporaryThread) {
+            markTemporaryThread(threadId);
+          }
+          const createdAt = new Date().toISOString();
+          const draftSeed = createFreshDraftThreadSeed({
+            createdAt,
+            defaultEnvMode: settings.defaultThreadEnvMode,
+            entryPoint,
+            options,
+          });
+          const committed = await stageDraftNavigation({
+            // Keep the previous routed draft alive while the destination loads. Replacing the
+            // project's primary slot earlier makes the route guard redirect the old URL to Home.
+            stage: () => {
+              registerDraftThread(threadId, { projectId, ...draftSeed });
+              markNewThreadLanding(threadId);
+              activateThreadEntryPoint(threadId);
+              applyStickyState(threadId);
+              applyProviderOverride(threadId);
+            },
+            // Mark the draft-landing navigation as a transition so the new route
+            // subtree renders interruptibly and the browser can paint the composer
+            // skeleton immediately instead of freezing on the synchronous commit.
+            navigate: () =>
+              new Promise<void>((resolve, reject) => {
+                startTransition(() => {
+                  navigate({
+                    to: "/$threadId",
+                    params: { threadId },
+                    ...(navigation?.search ? { search: navigation.search } : {}),
+                  }).then(resolve, reject);
+                });
+              }),
+            // TanStack resolves an older navigate() promise when a newer navigation supersedes it.
+            // Verify the committed route before deleting the previous project draft.
+            isDestinationActive: () => router.state.location.pathname === `/${threadId}`,
+            finalize: () => setProjectDraftThreadId(projectId, threadId, draftSeed),
+            rollback: () => {
+              clearNewThreadLanding(threadId);
+              clearDraftThread(threadId);
+              clearTerminalState(threadId);
+              if (wantsTemporaryThread) {
+                clearTemporaryThread(threadId);
+              }
+            },
+          });
+          if (!committed) {
+            return null;
+          }
+          if (entryPoint === "terminal") {
+            await createTerminalThread(
+              threadId,
+              resolveCreationState(threadId, getDraftThread(threadId)),
+            );
+          }
+          return threadId;
+        },
+      );
     },
     [
       activeDraftThread,
@@ -335,6 +347,7 @@ export function useHandleNewThread() {
       markTemporaryThread,
       router,
       settings.defaultProvider,
+      settings.defaultThreadEnvMode,
     ],
   );
 

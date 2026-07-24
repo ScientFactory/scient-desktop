@@ -312,6 +312,7 @@ import {
   isLatestPinnedThreadMutation,
   pruneProjectThreadListPagingForCollapsedProjects,
   recoverExistingAddProjectTarget,
+  resolveNewThreadInWorkspaceAction,
   resolvePullRequestReviewBadge,
   resolveSidebarThreadListPaging,
   DEBUG_FEATURE_FLAGS_MENU_STORAGE_KEY,
@@ -324,6 +325,7 @@ import {
   resolveThreadRowClassName,
   resolveThreadRowTrailingReserveClass,
   resolveThreadStatusPill,
+  validateNewThreadInWorkspaceAction,
   type ThreadStatusPill,
   type SidebarDerivedProjectData,
   type SidebarActionBadge,
@@ -1707,6 +1709,7 @@ export default function Sidebar() {
   );
   const [projectRunDialogCommandDraft, setProjectRunDialogCommandDraft] = useState("");
   const isAddingProjectRef = useRef(false);
+  const newThreadInWorkspaceInFlightThreadIdsRef = useRef(new Set<ThreadId>());
   const [projectInitializationPreview, setProjectInitializationPreview] =
     useState<ScientProjectInitializationPreviewResult | null>(null);
   const [projectInitializationError, setProjectInitializationError] = useState<string | null>(null);
@@ -2283,17 +2286,10 @@ export default function Sidebar() {
         return true;
       }
 
-      void handleNewThread(projectId, {
-        envMode: appSettings.defaultThreadEnvMode,
-      }).catch(() => undefined);
+      void handleNewThread(projectId).catch(() => undefined);
       return true;
     },
-    [
-      appSettings.defaultThreadEnvMode,
-      appSettings.sidebarThreadSortOrder,
-      handleNewThread,
-      navigate,
-    ],
+    [appSettings.sidebarThreadSortOrder, handleNewThread, navigate],
   );
 
   const openExistingProjectFromSnapshot = useCallback(
@@ -2326,18 +2322,10 @@ export default function Sidebar() {
       }
 
       setProjectExpanded(projectId, true);
-      void handleNewThread(projectId, {
-        envMode: appSettings.defaultThreadEnvMode,
-      }).catch(() => undefined);
+      void handleNewThread(projectId).catch(() => undefined);
       return true;
     },
-    [
-      appSettings.defaultThreadEnvMode,
-      appSettings.sidebarThreadSortOrder,
-      handleNewThread,
-      navigate,
-      setProjectExpanded,
-    ],
+    [appSettings.sidebarThreadSortOrder, handleNewThread, navigate, setProjectExpanded],
   );
 
   // Poll the server read model briefly after project.create so we only recover from fresh state.
@@ -2425,18 +2413,9 @@ export default function Sidebar() {
         return;
       }
 
-      void handleNewThread(typedProjectId, {
-        envMode: resolveSidebarNewThreadEnvMode({
-          defaultEnvMode: appSettings.defaultThreadEnvMode,
-        }),
-      });
+      void handleNewThread(typedProjectId);
     },
-    [
-      appSettings.defaultThreadEnvMode,
-      focusMostRecentThreadForProject,
-      handleNewThread,
-      sidebarThreads,
-    ],
+    [focusMostRecentThreadForProject, handleNewThread, sidebarThreads],
   );
 
   const navigateToWorkspace = useCallback(
@@ -2867,9 +2846,7 @@ export default function Sidebar() {
         // snapshot is just slow to catch up, continue with the local new-thread flow
         // instead of surfacing a false-negative sidebar sync error.
         setProjectExpanded(creationResult.projectId, true);
-        void handleNewThread(creationResult.projectId, {
-          envMode: appSettings.defaultThreadEnvMode,
-        }).catch(() => undefined);
+        void handleNewThread(creationResult.projectId).catch(() => undefined);
         return true;
       } catch (error) {
         const description =
@@ -2880,7 +2857,6 @@ export default function Sidebar() {
       }
     },
     [
-      appSettings.defaultThreadEnvMode,
       handleNewThread,
       projects,
       recoverExistingProjectFromServer,
@@ -2967,17 +2943,12 @@ export default function Sidebar() {
   const handlePrimaryNewThread = useCallback(() => {
     if (currentProjectShortcutTargetId) {
       prefetchModelsForProjectNewThread(currentProjectShortcutTargetId, { includeDroid: true });
-      void handleNewThread(currentProjectShortcutTargetId, {
-        envMode: resolveSidebarNewThreadEnvMode({
-          defaultEnvMode: appSettings.defaultThreadEnvMode,
-        }),
-      });
+      void handleNewThread(currentProjectShortcutTargetId);
       return;
     }
 
     handleStartAddProject();
   }, [
-    appSettings.defaultThreadEnvMode,
     currentProjectShortcutTargetId,
     handleNewThread,
     handleStartAddProject,
@@ -3814,9 +3785,26 @@ export default function Sidebar() {
         envMode: thread.envMode,
         worktreePath: thread.worktreePath,
       });
+      const newThreadInWorkspaceAction = resolveNewThreadInWorkspaceAction({
+        branch: thread.branch,
+        envMode: thread.envMode,
+        worktreePath: thread.worktreePath,
+      });
       const clicked = await api.contextMenu.show(
         [
-          { id: "rename", label: "Rename thread" },
+          ...(newThreadInWorkspaceAction
+            ? [
+                {
+                  id: newThreadInWorkspaceAction.id,
+                  label: newThreadInWorkspaceAction.label,
+                },
+              ]
+            : []),
+          {
+            id: "rename",
+            label: "Rename thread",
+            ...(newThreadInWorkspaceAction ? { separatorBefore: true } : {}),
+          },
           { id: "toggle-pin", label: pinActionLabel("thread", isPinned) },
           ...(threadStatus?.dismissible
             ? [{ id: "clear-notification", label: "Clear notification" }]
@@ -3834,6 +3822,66 @@ export default function Sidebar() {
         ],
         position,
       );
+
+      if (clicked === "new-thread-in-workspace") {
+        if (
+          !newThreadInWorkspaceAction ||
+          newThreadInWorkspaceInFlightThreadIdsRef.current.has(threadId)
+        ) {
+          return;
+        }
+        const projectCwd = projectCwdById.get(thread.projectId) ?? null;
+        if (!projectCwd) {
+          showSidebarTransientError({
+            title: "Unable to start thread",
+            description: "The project folder is no longer available.",
+          });
+          return;
+        }
+        newThreadInWorkspaceInFlightThreadIdsRef.current.add(threadId);
+        let workspaceValidationFailure: string | null = null;
+        try {
+          const createdThreadId = await handleNewThread(thread.projectId, {
+            fresh: true,
+            prepareFreshCreate: async () => {
+              const currentProjectCwd =
+                useStore.getState().projects.find((project) => project.id === thread.projectId)
+                  ?.cwd ?? null;
+              if (!currentProjectCwd || currentProjectCwd !== projectCwd) {
+                workspaceValidationFailure = "The project folder changed before the thread opened.";
+                throw new Error(workspaceValidationFailure);
+              }
+              const branchResult = await api.git.listBranches({ cwd: currentProjectCwd });
+              const validation = validateNewThreadInWorkspaceAction({
+                action: newThreadInWorkspaceAction,
+                branches: branchResult.branches,
+                isRepo: branchResult.isRepo,
+                projectCwd: currentProjectCwd,
+              });
+              if (!validation.ok) {
+                workspaceValidationFailure = validation.description;
+                throw new Error(validation.description);
+              }
+            },
+            workspace: newThreadInWorkspaceAction.workspace,
+          });
+          if (!createdThreadId) {
+            showSidebarTransientError({
+              title: "Unable to start thread",
+              description: "The new thread could not be opened. Try again.",
+            });
+          }
+        } catch (error) {
+          showSidebarTransientError({
+            title: workspaceValidationFailure ? "Workspace changed" : "Unable to start thread",
+            description:
+              error instanceof Error ? error.message : "The workspace could not be verified.",
+          });
+        } finally {
+          newThreadInWorkspaceInFlightThreadIdsRef.current.delete(threadId);
+        }
+        return;
+      }
 
       if (clicked === "rename") {
         openRenameThreadDialog(threadId);
@@ -3977,6 +4025,7 @@ export default function Sidebar() {
       clearDismissedThreadStatus,
       clearThreadNotification,
       handoffThread,
+      handleNewThread,
       markThreadUnread,
       navigate,
       openRenameThreadDialog,
@@ -6123,12 +6172,7 @@ export default function Sidebar() {
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  void handleNewThread(project.id, {
-                    envMode: resolveSidebarNewThreadEnvMode({
-                      defaultEnvMode: appSettings.defaultThreadEnvMode,
-                    }),
-                    entryPoint: "terminal",
-                  });
+                  void handleNewThread(project.id, { entryPoint: "terminal" });
                 }}
               />
               <SidebarIconButton
@@ -6149,11 +6193,7 @@ export default function Sidebar() {
                   event.preventDefault();
                   event.stopPropagation();
                   prefetchModelsForProjectNewThread(project.id, { includeDroid: true });
-                  void handleNewThread(project.id, {
-                    envMode: resolveSidebarNewThreadEnvMode({
-                      defaultEnvMode: appSettings.defaultThreadEnvMode,
-                    }),
-                  });
+                  void handleNewThread(project.id);
                 }}
               />
             </SidebarSectionToolbar>

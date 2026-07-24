@@ -203,10 +203,21 @@ export function PullRequestDetailPanel({
     try {
       const mode = settings.defaultThreadEnvMode;
       const prepared = await prepareThreadMutation.mutateAsync({ reference: detail.url, mode });
+      const workspace = (() => {
+        if (mode === "worktree") {
+          if (!prepared.worktreePath) {
+            throw new Error("The pull request worktree was not created.");
+          }
+          return {
+            kind: "existing-worktree" as const,
+            branch: prepared.branch,
+            worktreePath: prepared.worktreePath,
+          };
+        }
+        return { kind: "existing-local" as const, branch: prepared.branch };
+      })();
       const threadId = await handleNewThread(detail.projectId, {
-        branch: prepared.branch,
-        worktreePath: prepared.worktreePath,
-        envMode: mode,
+        workspace,
         // This action is an explicit handoff from the PR browser. Reusing the project's
         // existing draft can leave the user on the PR route and insert the prompt into a
         // hidden composer, making the button appear inert.
