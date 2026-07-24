@@ -98,7 +98,10 @@ export function RecentViewSwitcher(props: {
       : 0;
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-[90] flex items-start justify-center pt-[14vh]">
+    <div
+      className="pointer-events-none fixed inset-0 z-[90] flex items-start justify-center pt-[14vh]"
+      data-native-browser-overlay="true"
+    >
       <div
         role="listbox"
         aria-label="Recent views"

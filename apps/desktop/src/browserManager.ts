@@ -1007,6 +1007,7 @@ export class DesktopBrowserManager {
 
   closeTab(input: BrowserTabInput): ThreadBrowserState {
     const state = this.ensureWorkspace(input.threadId);
+    const closedTabIndex = state.tabs.findIndex((tab) => tab.id === input.tabId);
     const closedTab = state.tabs.find((tab) => tab.id === input.tabId);
     const nextTabs = state.tabs.filter((tab) => tab.id !== input.tabId);
     if (nextTabs.length === state.tabs.length) {
@@ -1028,7 +1029,7 @@ export class DesktopBrowserManager {
     }
 
     if (!state.activeTabId || state.activeTabId === input.tabId) {
-      state.activeTabId = nextTabs[Math.max(0, nextTabs.length - 1)]?.id ?? null;
+      state.activeTabId = nextTabs[Math.min(closedTabIndex, nextTabs.length - 1)]?.id ?? null;
     }
 
     const bounds = this.getVisibleBoundsForThread(input.threadId);
