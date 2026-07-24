@@ -354,11 +354,11 @@ export function automationRowMeta(
   ) {
     return runStatusLabel(latestRun.status);
   }
-  if (latestRun?.status === "failed") return "Last run failed";
-  if (latestRun?.status === "cancelled") return "Last run cancelled";
-  if (latestRun?.status === "interrupted") return "Last run interrupted";
-  if (latestRun?.status === "succeeded" && isUnresolvedTriageResult(latestRun.result)) {
-    return "New result";
+  if (latestRun && isTriageRun(latestRun)) {
+    if (latestRun.status === "failed") return "Last run failed";
+    if (latestRun.status === "cancelled") return "Last run cancelled";
+    if (latestRun.status === "interrupted") return "Last run interrupted";
+    if (latestRun.status === "succeeded") return "New result";
   }
   if (!definition.enabled) {
     return automationLifecycleState(definition) === "done" ? "Done" : "Paused";

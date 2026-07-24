@@ -220,6 +220,18 @@ describe("automation shared route helpers", () => {
         archivedAt: "2026-06-19T10:05:00.000Z",
       },
     });
+    const archivedFailedRun = runWith({
+      status: "failed",
+      result: {
+        ...baseRun.result!,
+        unread: true,
+        archivedAt: "2026-06-19T10:05:00.000Z",
+      },
+    });
+    const resolvedFailedRun = runWith({
+      status: "failed",
+      result: { ...baseRun.result!, unread: false },
+    });
 
     expect(automationRowMeta(paused, runWith({ result: null, status: "running" }))).toBe("Running");
     expect(automationRowMeta(paused, null)).toBe("Paused");
@@ -227,6 +239,12 @@ describe("automation shared route helpers", () => {
     expect(automationRowMeta(baseDefinition, archivedUnreadRun)).toBe(
       formatCadence(baseDefinition.schedule),
     );
+    expect(automationRowMeta(baseDefinition, archivedFailedRun)).toBe(
+      formatCadence(baseDefinition.schedule),
+    );
+    expect(automationRowMeta(paused, resolvedFailedRun)).toBe("Paused");
+    expect(automationStatusDotClass(baseDefinition, archivedFailedRun)).toBe("text-emerald-500");
+    expect(automationStatusDotClass(paused, resolvedFailedRun)).toBe("text-muted-foreground/40");
   });
 
   it("keeps automation status color precedence aligned with row text", () => {
