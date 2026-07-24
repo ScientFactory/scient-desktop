@@ -14,6 +14,9 @@ const workspaceRoot = resolve(desktopDir, "../..");
 const tempDir = mkdtempSync(join(tmpdir(), "scient-browser-overlay-lifecycle-"));
 const profileDir = join(tempDir, "profile");
 mkdirSync(join(profileDir, "session-data"), { recursive: true });
+// Allow both bounded 10s fixture startup waits, the required >30s overlay hold,
+// Electron launch/load time, and cleanup without making a cold run race its watchdog.
+const PROCESS_TIMEOUT_MS = 90_000;
 const electronOutputPath = join(tempDir, "browser-overlay-lifecycle.cjs");
 const preloadOutputPath = join(tempDir, "browser-overlay-lifecycle.preload.cjs");
 const rendererOutputPath = join(tempDir, "browser-overlay-lifecycle.renderer.js");
@@ -67,9 +70,14 @@ writeFileSync(
   "utf8",
 );
 
-const electronCommand = resolveElectronLaunchCommand(["--disable-gpu", electronOutputPath], {
-  development: false,
-});
+const electronCommand = resolveElectronLaunchCommand(
+  [
+    "--disable-gpu",
+    electronOutputPath,
+    ...(process.platform === "darwin" ? ["-ApplePersistenceIgnoreState", "YES"] : []),
+  ],
+  { development: false },
+);
 const child = spawn(electronCommand.electronPath, electronCommand.args, {
   cwd: workspaceRoot,
   detached: process.platform !== "win32",
@@ -139,7 +147,7 @@ const timeout = setTimeout(() => {
   requestedExitCode = 1;
   process.stderr.write("Electron browser overlay lifecycle test timed out.\n");
   killChildTree();
-}, 50_000);
+}, PROCESS_TIMEOUT_MS);
 
 child.on("error", (error) => {
   process.stderr.write(`${error.stack ?? error.message}\n`);
