@@ -242,10 +242,10 @@ async function dispatchKanbanDraftThreadOnce(
       const creationState = resolveTerminalThreadCreationState({
         activeDraftThread: null,
         activeThread: null,
+        defaultEnvMode: draftThread?.envMode ?? "local",
         defaultProvider: input.defaultProvider,
         draftComposerState,
         draftThread,
-        options: undefined,
         projectDefaultModelSelection: project?.defaultModelSelection ?? null,
         projectId,
       });

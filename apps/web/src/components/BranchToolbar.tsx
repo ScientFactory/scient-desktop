@@ -261,7 +261,7 @@ export default function BranchToolbar({
   });
 
   const setThreadWorkspace = useCallback(
-    (patch: ThreadWorkspacePatch) => {
+    (patch: ThreadWorkspacePatch, options?: { preserveDraftWorkspaceOrigin?: boolean }) => {
       if (!activeThreadId) return;
       const branch = patch.branch !== undefined ? patch.branch : activeThreadBranch;
       const worktreePath =
@@ -328,6 +328,9 @@ export default function BranchToolbar({
         branch,
         worktreePath,
         envMode: nextDraftEnvMode,
+        ...(options?.preserveDraftWorkspaceOrigin && draftThread
+          ? { workspaceOrigin: draftThread.workspaceOrigin }
+          : {}),
       });
     },
     [
@@ -335,6 +338,7 @@ export default function BranchToolbar({
       activeThreadBranch,
       serverThread?.session,
       activeWorktreePath,
+      draftThread,
       hasServerThread,
       setThreadWorkspaceAction,
       serverThread?.associatedWorktreePath,

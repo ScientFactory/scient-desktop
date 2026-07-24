@@ -22,6 +22,7 @@ export function useHandleNewChat() {
       return startContainerChat({
         ensureProjectId: () => ensureHomeChatProject({ homeDir, chatWorkspaceRoot }),
         handleNewThread,
+        navigationTargetKey: "home-chat",
         fresh: options?.fresh,
         errorLabel: "Unable to prepare a new chat.",
       });

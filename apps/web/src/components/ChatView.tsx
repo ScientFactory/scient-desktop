@@ -9791,7 +9791,7 @@ export default function ChatView({
         });
         return;
       }
-      await handleNewThread(activeProject.id, { entryPoint: "chat" });
+      await handleNewThread(activeProject.id);
     },
     handleInteractionModeChange,
     openForkTargetPicker: () => {

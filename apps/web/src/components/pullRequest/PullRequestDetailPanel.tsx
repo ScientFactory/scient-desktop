@@ -202,17 +202,43 @@ export function PullRequestDetailPanel({
     setOperationError(null);
     try {
       const mode = settings.defaultThreadEnvMode;
-      const prepared = await prepareThreadMutation.mutateAsync({ reference: detail.url, mode });
       const threadId = await handleNewThread(detail.projectId, {
-        branch: prepared.branch,
-        worktreePath: prepared.worktreePath,
-        envMode: mode,
         // This action is an explicit handoff from the PR browser. Reusing the project's
         // existing draft can leave the user on the PR route and insert the prompt into a
         // hidden composer, making the button appear inert.
         fresh: true,
+        // Native PR preparation can checkout the root repository and has no cancellation API.
+        // A later navigation may supersede this request, but must not become active until that
+        // explicit Git mutation settles and can no longer change the workspace underneath it.
+        prepareNavigationBlocksFollowing: true,
+        prepareNavigation: async (ownership) => {
+          const prepared = await prepareThreadMutation.mutateAsync({
+            reference: detail.url,
+            mode,
+          });
+          if (!ownership.isCurrent()) {
+            return false;
+          }
+          if (mode === "worktree") {
+            if (!prepared.worktreePath) {
+              throw new Error("The pull request worktree was not created.");
+            }
+            return {
+              workspace: {
+                kind: "existing-worktree" as const,
+                branch: prepared.branch,
+                worktreePath: prepared.worktreePath,
+              },
+            };
+          }
+          return {
+            workspace: { kind: "existing-local" as const, branch: prepared.branch },
+          };
+        },
       });
-      if (!threadId) throw new Error("Could not create a draft thread for this pull request.");
+      if (!threadId) {
+        return;
+      }
       appendComposerPromptText(threadId, prompt);
     } catch (error) {
       setOperationError(
