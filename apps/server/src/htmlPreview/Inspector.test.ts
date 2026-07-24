@@ -153,6 +153,98 @@ describe("inspectHtmlArtifact", () => {
     );
   });
 
+  it("fails closed when executable entry content may be beyond the inspection prefix", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(path.join(workspace, "local.png"), "png");
+    const inspectedPrefix = '<img src="local.png"><img src="https://cdn.example/bit-zero.png">';
+    await fs.writeFile(
+      path.join(workspace, "large.html"),
+      `${inspectedPrefix.padEnd(1_000_001, " ")}<script>window.afterPrefix = true</script>`,
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "large.html" });
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+    expect(inspected.allowedResourcePaths).toContain(
+      await fs.realpath(path.join(workspace, "local.png")),
+    );
+    expect(inspected.result.warnings).toContainEqual({
+      code: "inspection-truncated",
+      message:
+        "Only the beginning of this large HTML file was inspected; the full file will still open.",
+    });
+  });
+
+  it("fails closed but preserves prefix assets for a truncated active child", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(path.join(workspace, "child.css"), "body { color: teal; }");
+    const inspectedPrefix =
+      '<link rel="stylesheet" href="child.css"><img src="https://cdn.example/bit-one.png">';
+    await fs.writeFile(
+      path.join(workspace, "child.html"),
+      `${inspectedPrefix.padEnd(1_000_001, " ")}<script>window.afterPrefix = true</script>`,
+    );
+    await fs.writeFile(path.join(workspace, "index.html"), '<iframe src="child.html"></iframe>');
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+    expect(new Set(inspected.allowedResourcePaths)).toEqual(
+      new Set(
+        await Promise.all(
+          ["child.html", "child.css"].map((file) => fs.realpath(path.join(workspace, file))),
+        ),
+      ),
+    );
+    expect(inspected.result.warnings).toContainEqual({
+      code: "inspection-truncated",
+      message:
+        "Only the beginning of a linked active document was inspected; it will open in interactive mode and its discovered assets remain available.",
+    });
+  });
+
+  it("recognizes entity-decoded whitespace inside an entry javascript URL", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      '<a href="java&#x09;script:document.body.dataset.ready=true">Run</a><img src="https://cdn.example/declared.png">',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+    expect(inspected.result.warnings).toContainEqual({
+      code: "external-resource-blocked",
+      message:
+        "External network resources are blocked for interactive local HTML; bundle them into the same site directory instead.",
+    });
+  });
+
+  it("recognizes entity-decoded whitespace inside a child javascript URL", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(
+      path.join(workspace, "child.html"),
+      '<form><button formaction="java&#x0a;script:document.body.dataset.ready=true">Run</button></form>',
+    );
+    await fs.writeFile(path.join(workspace, "index.html"), '<object data="child.html"></object>');
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+  });
+
+  it("recursively classifies executable srcdoc markup", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      '<iframe srcdoc="&lt;a href=&quot;java&amp;#x0d;script:document.body.dataset.ready=true&quot;&gt;Run&lt;/a&gt;"></iframe>',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+  });
+
   it("honors document base URLs, root-relative assets, inline modules, and quoted CSS spaces", async () => {
     const workspace = await makeWorkspace();
     await fs.mkdir(path.join(workspace, "assets"));

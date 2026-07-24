@@ -25,6 +25,14 @@ const RESOURCE_GRAPH_PARSE_MAX_BYTES = 1_000_000;
 const DEV_SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".jsx"]);
 const BROWSER_SCRIPT_EXTENSIONS = new Set([".js", ".mjs"]);
 const ACTIVE_DOCUMENT_EXTENSIONS = new Set([".html", ".htm", ".xhtml", ".svg"]);
+const EXECUTABLE_URL_ATTRIBUTES = new Set([
+  "action",
+  "data",
+  "formaction",
+  "href",
+  "src",
+  "xlink:href",
+]);
 type DocumentNode = DefaultTreeAdapterMap["document"];
 type Node = DefaultTreeAdapterMap["node"];
 type Element = DefaultTreeAdapterMap["element"];
@@ -249,7 +257,16 @@ function htmlResourceReferences(source: string): {
   return { baseHref, resources };
 }
 
-function markupHasExecutableContent(source: string): boolean {
+function isExecutableUrlAttribute(name: string, value: string): boolean {
+  if (!EXECUTABLE_URL_ATTRIBUTES.has(name.toLowerCase())) return false;
+  try {
+    return new URL(value, "http://preview.invalid/").protocol === "javascript:";
+  } catch {
+    return true;
+  }
+}
+
+function markupHasExecutableContent(source: string, srcdocDepth = 0): boolean {
   const document = parse(source) as DocumentNode;
   let executable = false;
   visit(document, (element) => {
@@ -266,15 +283,14 @@ function markupHasExecutableContent(source: string): boolean {
       element.attrs.some(
         (attribute) =>
           (attribute.name.toLowerCase().startsWith("on") && attribute.value.trim().length > 0) ||
-          (/^(?:href|src|action)$/i.test(attribute.name) &&
-            attribute.value.trim().toLowerCase().startsWith("javascript:")),
+          isExecutableUrlAttribute(attribute.name, attribute.value),
       )
     ) {
       executable = true;
       return;
     }
     const srcdoc = attributeOf(element, "srcdoc");
-    if (srcdoc && /<script\b|\bon\w+\s*=|javascript:/i.test(srcdoc)) {
+    if (srcdoc && (srcdocDepth >= 8 || markupHasExecutableContent(srcdoc, srcdocDepth + 1))) {
       executable = true;
     }
   });
@@ -313,6 +329,7 @@ async function collectAllowedResourcePaths(
   readonly paths: readonly string[];
   readonly externalUrls: readonly string[];
   readonly hasExecutableDocument: boolean;
+  readonly hasTruncatedActiveDocument: boolean;
 }> {
   const pending = resources
     .map((resource) =>
@@ -327,6 +344,7 @@ async function collectAllowedResourcePaths(
   const allowed = new Set<string>();
   const externalUrls = new Set<string>();
   let hasExecutableDocument = false;
+  let hasTruncatedActiveDocument = false;
   const addExternalUrl = (url: string) => {
     if (externalUrls.size < RESOURCE_GRAPH_MAX_FILES) externalUrls.add(url);
   };
@@ -342,17 +360,24 @@ async function collectAllowedResourcePaths(
     allowed.add(canonical);
 
     const extension = path.extname(canonical).toLowerCase();
+    const isActiveDocument = ACTIVE_DOCUMENT_EXTENSIONS.has(extension);
     if (
-      stat.size > RESOURCE_GRAPH_PARSE_MAX_BYTES ||
-      (extension !== ".css" &&
-        extension !== ".js" &&
-        extension !== ".mjs" &&
-        !ACTIVE_DOCUMENT_EXTENSIONS.has(extension))
+      (!isActiveDocument && stat.size > RESOURCE_GRAPH_PARSE_MAX_BYTES) ||
+      (extension !== ".css" && extension !== ".js" && extension !== ".mjs" && !isActiveDocument)
     ) {
       continue;
     }
-    const contents = await fs.readFile(canonical, "utf8");
-    if (ACTIVE_DOCUMENT_EXTENSIONS.has(extension)) {
+    const contents =
+      stat.size > RESOURCE_GRAPH_PARSE_MAX_BYTES
+        ? await readInspectionPrefix(canonical)
+        : await fs.readFile(canonical, "utf8");
+    if (isActiveDocument) {
+      if (stat.size > RESOURCE_GRAPH_PARSE_MAX_BYTES) {
+        // The complete served document was not classified, so it must never
+        // inherit static-mode network access even when its inspected prefix is inert.
+        hasExecutableDocument = true;
+        hasTruncatedActiveDocument = true;
+      }
       hasExecutableDocument ||= markupHasExecutableContent(contents);
       const linkedDocument = htmlResourceReferences(contents);
       for (const dependency of linkedDocument.resources) {
@@ -426,6 +451,7 @@ async function collectAllowedResourcePaths(
     paths: [...allowed],
     externalUrls: [...externalUrls],
     hasExecutableDocument,
+    hasTruncatedActiveDocument,
   };
 }
 
@@ -530,14 +556,13 @@ export async function inspectHtmlArtifact(
       element.attrs.some(
         (attribute) =>
           (attribute.name.toLowerCase().startsWith("on") && attribute.value.trim().length > 0) ||
-          (/^(?:href|src|action)$/i.test(attribute.name) &&
-            attribute.value.trim().toLowerCase().startsWith("javascript:")),
+          isExecutableUrlAttribute(attribute.name, attribute.value),
       )
     ) {
       hasInlineScript = true;
     }
     const srcdoc = attributeOf(element, "srcdoc");
-    if (srcdoc && /<script\b|\bon\w+\s*=|javascript:/i.test(srcdoc)) {
+    if (srcdoc && markupHasExecutableContent(srcdoc)) {
       hasInlineScript = true;
     }
     if (tagName === "base") {
@@ -644,6 +669,13 @@ export async function inspectHtmlArtifact(
   );
   const allowedResourcePaths = collectedResources.paths;
   for (const externalUrl of collectedResources.externalUrls) addExternalResource(externalUrl);
+  if (collectedResources.hasTruncatedActiveDocument) {
+    addWarning({
+      code: "inspection-truncated",
+      message:
+        "Only the beginning of a linked active document was inspected; it will open in interactive mode and its discovered assets remain available.",
+    });
+  }
 
   const runTarget =
     hasDevSource && isPathInside(absolutePath, canonicalWorkspaceRoot)
@@ -656,7 +688,8 @@ export async function inspectHtmlArtifact(
           hasInlineScript ||
           hasBrowserScript ||
           hasUnsupportedExecutable ||
-          collectedResources.hasExecutableDocument
+          collectedResources.hasExecutableDocument ||
+          stat.size > HTML_INSPECTION_MAX_BYTES
         ? "interactive-bundle"
         : "static-document";
   const reason =
