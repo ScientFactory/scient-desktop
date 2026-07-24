@@ -3,7 +3,13 @@ import { getRecommendedDefaultModelSelection } from "@synara/shared/model";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { startTransition, useCallback } from "react";
 import { useAppSettings } from "../appSettings";
-import { clearNewThreadLanding, markNewThreadLanding } from "../lib/newThreadLanding";
+import {
+  clearNewThreadDraftStaged,
+  clearNewThreadLanding,
+  isNewThreadDraftStaged,
+  markNewThreadDraftStaged,
+  markNewThreadLanding,
+} from "../lib/newThreadLanding";
 import {
   type ComposerThreadDraftState,
   type DraftThreadState,
@@ -169,9 +175,10 @@ export function useHandleNewThread() {
           focusedThreadId === routeThreadId ? currentRouteThreadId : focusedThreadId;
         const shouldForceFreshThread = effectiveOptions?.fresh === true;
         const storedDraftThreadCandidate = getDraftThreadByProjectId(projectId, entryPoint);
-        const latestActiveDraftThreadCandidate: DraftThreadState | null = currentFocusedThreadId
-          ? getDraftThread(currentFocusedThreadId)
-          : null;
+        const latestActiveDraftThreadCandidate: DraftThreadState | null =
+          currentFocusedThreadId && !isNewThreadDraftStaged(currentFocusedThreadId)
+            ? getDraftThread(currentFocusedThreadId)
+            : null;
         const storedDraftThread =
           !shouldForceFreshThread &&
           !wantsTemporaryThread &&
@@ -289,6 +296,7 @@ export function useHandleNewThread() {
           // Keep the previous routed draft alive while the destination loads. Replacing the
           // project's primary slot earlier makes the route guard redirect the old URL to Home.
           stage: () => {
+            markNewThreadDraftStaged(threadId);
             registerDraftThread(threadId, { projectId, ...draftSeed });
             markNewThreadLanding(threadId);
             activateThreadEntryPoint(threadId);
@@ -311,8 +319,12 @@ export function useHandleNewThread() {
           // TanStack resolves an older navigate() promise when a newer navigation supersedes it.
           // Verify the committed route before deleting the previous project draft.
           isDestinationActive: () => router.state.location.pathname === `/${threadId}`,
-          finalize: () => setProjectDraftThreadId(projectId, threadId, draftSeed),
+          finalize: () => {
+            setProjectDraftThreadId(projectId, threadId, draftSeed);
+            clearNewThreadDraftStaged(threadId);
+          },
           rollback: () => {
+            clearNewThreadDraftStaged(threadId);
             clearNewThreadLanding(threadId);
             clearDraftThread(threadId);
             clearTerminalState(threadId);
@@ -344,6 +356,9 @@ export function useHandleNewThread() {
           options,
         }),
         runOwnedNavigation,
+        {
+          blocksFollowingOperations: options?.prepareNavigationBlocksFollowing === true,
+        },
       );
     },
     [

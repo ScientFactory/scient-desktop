@@ -177,6 +177,40 @@ describe("stagedDraftNavigation", () => {
     expect(defaultRun).toHaveBeenCalledOnce();
   });
 
+  it("keeps later navigation behind an explicit blocking preparation", async () => {
+    let releasePreparation!: () => void;
+    const firstOwnership: Array<{ readonly isCurrent: () => boolean }> = [];
+    const laterRun = vi.fn(async (ownership: { readonly isCurrent: () => boolean }) =>
+      ownership.isCurrent() ? "latest" : "superseded",
+    );
+    const slotKey = draftNavigationSlotKey();
+
+    const preparation = runDraftNavigationOnce(
+      slotKey,
+      "mutating-pr-preparation",
+      async (ownership) => {
+        firstOwnership.push(ownership);
+        await new Promise<void>((resolve) => {
+          releasePreparation = resolve;
+        });
+        return ownership.isCurrent() ? "stale-commit" : "superseded";
+      },
+      { blocksFollowingOperations: true },
+    );
+    await Promise.resolve();
+    expect(firstOwnership[0]?.isCurrent()).toBe(true);
+
+    const later = runDraftNavigationOnce(slotKey, "project-default", laterRun);
+    await Promise.resolve();
+    expect(firstOwnership[0]?.isCurrent()).toBe(false);
+    expect(laterRun).not.toHaveBeenCalled();
+
+    releasePreparation();
+    await expect(preparation).resolves.toBe("superseded");
+    await expect(later).resolves.toBe("latest");
+    expect(laterRun).toHaveBeenCalledOnce();
+  });
+
   it("supersedes an awaited owner as soon as a distinct later intent arrives", async () => {
     let releaseFirst!: () => void;
     const firstOwnership: Array<{ readonly isCurrent: () => boolean }> = [];

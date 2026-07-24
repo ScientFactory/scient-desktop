@@ -1709,7 +1709,6 @@ export default function Sidebar() {
   );
   const [projectRunDialogCommandDraft, setProjectRunDialogCommandDraft] = useState("");
   const isAddingProjectRef = useRef(false);
-  const newThreadInWorkspaceInFlightThreadIdsRef = useRef(new Set<ThreadId>());
   const [projectInitializationPreview, setProjectInitializationPreview] =
     useState<ScientProjectInitializationPreviewResult | null>(null);
   const [projectInitializationError, setProjectInitializationError] = useState<string | null>(null);
@@ -3824,10 +3823,7 @@ export default function Sidebar() {
       );
 
       if (clicked === "new-thread-in-workspace") {
-        if (
-          !newThreadInWorkspaceAction ||
-          newThreadInWorkspaceInFlightThreadIdsRef.current.has(threadId)
-        ) {
+        if (!newThreadInWorkspaceAction) {
           return;
         }
         const projectCwd = projectCwdById.get(thread.projectId) ?? null;
@@ -3838,13 +3834,13 @@ export default function Sidebar() {
           });
           return;
         }
-        newThreadInWorkspaceInFlightThreadIdsRef.current.add(threadId);
         let workspaceValidationFailure: string | null = null;
         try {
           // A null result means a newer New Thread intent superseded this one;
           // the newer owner is responsible for the visible destination.
           await handleNewThread(thread.projectId, {
             fresh: true,
+            prepareNavigationKey: `sidebar-exact-workspace:${projectCwd}`,
             prepareNavigation: async () => {
               const currentProjectCwd =
                 useStore.getState().projects.find((project) => project.id === thread.projectId)
@@ -3873,8 +3869,6 @@ export default function Sidebar() {
             description:
               error instanceof Error ? error.message : "The workspace could not be verified.",
           });
-        } finally {
-          newThreadInWorkspaceInFlightThreadIdsRef.current.delete(threadId);
         }
         return;
       }

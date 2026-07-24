@@ -207,6 +207,10 @@ export function PullRequestDetailPanel({
         // existing draft can leave the user on the PR route and insert the prompt into a
         // hidden composer, making the button appear inert.
         fresh: true,
+        // Native PR preparation can checkout the root repository and has no cancellation API.
+        // A later navigation may supersede this request, but must not become active until that
+        // explicit Git mutation settles and can no longer change the workspace underneath it.
+        prepareNavigationBlocksFollowing: true,
         prepareNavigation: async (ownership) => {
           const prepared = await prepareThreadMutation.mutateAsync({
             reference: detail.url,

@@ -155,6 +155,23 @@ describe("threadBootstrap", () => {
         options: { prepareNavigation: SECOND_NAVIGATION_PREPARATION },
       }),
     );
+    expect(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        options: {
+          prepareNavigation: FIRST_NAVIGATION_PREPARATION,
+          prepareNavigationKey: "sidebar-exact-workspace",
+        },
+      }),
+    ).toBe(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        options: {
+          prepareNavigation: SECOND_NAVIGATION_PREPARATION,
+          prepareNavigationKey: "sidebar-exact-workspace",
+        },
+      }),
+    );
   });
 
   it("keeps project and entry-point targets distinct on the global navigation surface", () => {

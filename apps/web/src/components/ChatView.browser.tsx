@@ -5817,6 +5817,130 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("lets a renewed exact-workspace action win after an intervening default action", async () => {
+    const reusableDraftThreadId = ThreadId.makeUnsafe("thread-exact-default-exact-race");
+    const contextMenuShow = vi.fn(
+      async (_items: Parameters<NativeApi["contextMenu"]["show"]>[0]) => "new-thread-in-workspace",
+    );
+    const exactWorktreeBranchResult: Awaited<ReturnType<NativeApi["git"]["listBranches"]>> = {
+      isRepo: true,
+      hasOriginRemote: true,
+      branches: [
+        {
+          name: "feature/exact-default-exact",
+          current: false,
+          isDefault: false,
+          worktreePath: "/repo/worktrees/exact-default-exact",
+        },
+      ],
+    };
+    let resolveFirstValidation!: (
+      value: Awaited<ReturnType<NativeApi["git"]["listBranches"]>>,
+    ) => void;
+    const firstValidation = new Promise<Awaited<ReturnType<NativeApi["git"]["listBranches"]>>>(
+      (resolve) => {
+        resolveFirstValidation = resolve;
+      },
+    );
+    const branchLookup = vi.fn<NativeApi["git"]["listBranches"]>(
+      async () => exactWorktreeBranchResult,
+    );
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-exact-default-exact-race" as MessageId,
+      targetText: "exact default exact race",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...baseSnapshot,
+        threads: baseSnapshot.threads.map((thread) => ({
+          ...thread,
+          envMode: "worktree" as const,
+          branch: "feature/exact-default-exact",
+          worktreePath: "/repo/worktrees/exact-default-exact",
+        })),
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        contextMenu: {
+          ...api.contextMenu,
+          show: contextMenuShow as NativeApi["contextMenu"]["show"],
+        },
+        git: {
+          ...api.git,
+          listBranches: branchLookup,
+        },
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForComposerEditor();
+      useStore.getState().setProjectExpanded(PROJECT_ID, true);
+      await waitForLayout();
+      const threadRow = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-thread-entry-point]")).find(
+            (row) => row.textContent?.includes(THREAD_TITLE),
+          ) ?? null,
+        "Unable to find the current thread row.",
+      );
+      const openContextMenu = () =>
+        threadRow.dispatchEvent(
+          new MouseEvent("contextmenu", {
+            bubbles: true,
+            cancelable: true,
+            clientX: 24,
+            clientY: 24,
+          }),
+        );
+      useComposerDraftStore.getState().setProjectDraftThreadId(PROJECT_ID, reusableDraftThreadId, {
+        entryPoint: "chat",
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        workspaceOrigin: "default",
+      });
+      branchLookup.mockClear();
+      branchLookup.mockImplementationOnce(() => firstValidation);
+      branchLookup.mockImplementation(async () => exactWorktreeBranchResult);
+
+      openContextMenu();
+      await vi.waitFor(() => expect(branchLookup).toHaveBeenCalledTimes(1));
+
+      await page.getByTestId("new-thread-button").click();
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${reusableDraftThreadId}`,
+        "The intervening ordinary action should reuse the default draft.",
+      );
+
+      openContextMenu();
+      await vi.waitFor(() => expect(contextMenuShow).toHaveBeenCalledTimes(2));
+      await vi.waitFor(() => expect(branchLookup).toHaveBeenCalledTimes(2));
+      const renewedExactPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "The renewed exact-workspace action should become the latest route.",
+      );
+      const renewedExactThreadId = renewedExactPath.slice(1) as ThreadId;
+      expect(useComposerDraftStore.getState().getDraftThread(renewedExactThreadId)).toMatchObject({
+        branch: "feature/exact-default-exact",
+        worktreePath: "/repo/worktrees/exact-default-exact",
+        envMode: "worktree",
+        workspaceOrigin: "intentional",
+      });
+
+      resolveFirstValidation(exactWorktreeBranchResult);
+      await waitForDraftNavigationIdle(draftNavigationSlotKey());
+      expect(mounted.router.state.location.pathname).toBe(`/${renewedExactThreadId}`);
+    } finally {
+      resolveFirstValidation(exactWorktreeBranchResult);
+      await waitForDraftNavigationIdle(draftNavigationSlotKey());
+      await mounted.cleanup();
+    }
+  });
+
   it("preserves a reused draft when it supersedes a waiting exact-workspace request", async () => {
     const reusableDraftThreadId = ThreadId.makeUnsafe("thread-reused-draft-race");
     const contextMenuShow = vi.fn(
@@ -5948,6 +6072,143 @@ describe("ChatView timeline estimator parity (full app)", () => {
     } finally {
       resolveExactValidation(exactWorktreeBranchResult);
       await waitForDraftNavigationIdle(draftNavigationSlotKey());
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not adopt a staged route draft before its older navigation settles", async () => {
+    const reusableDraftThreadId = ThreadId.makeUnsafe("thread-staged-route-reuse-race");
+    const contextMenuShow = vi.fn(
+      async (_items: Parameters<NativeApi["contextMenu"]["show"]>[0]) => "new-thread-in-workspace",
+    );
+    const exactWorktreeBranchResult: Awaited<ReturnType<NativeApi["git"]["listBranches"]>> = {
+      isRepo: true,
+      hasOriginRemote: true,
+      branches: [
+        {
+          name: "feature/staged-route-race",
+          current: false,
+          isDefault: false,
+          worktreePath: "/repo/worktrees/staged-route-race",
+        },
+      ],
+    };
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-staged-route-reuse-race" as MessageId,
+      targetText: "staged route reuse race",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...baseSnapshot,
+        threads: baseSnapshot.threads.map((thread) => ({
+          ...thread,
+          envMode: "worktree" as const,
+          branch: "feature/staged-route-race",
+          worktreePath: "/repo/worktrees/staged-route-race",
+        })),
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        contextMenu: {
+          ...api.contextMenu,
+          show: contextMenuShow as NativeApi["contextMenu"]["show"],
+        },
+        git: {
+          ...api.git,
+          listBranches: vi.fn(async () => exactWorktreeBranchResult),
+        },
+      }),
+    });
+    let releaseFirstNavigation!: () => void;
+    const firstNavigationBlocker = new Promise<void>((resolve) => {
+      releaseFirstNavigation = resolve;
+    });
+    const originalNavigate = mounted.router.navigate.bind(mounted.router);
+    let navigationCount = 0;
+    const navigateSpy = vi.spyOn(mounted.router, "navigate").mockImplementation((options) => {
+      navigationCount += 1;
+      const navigation = originalNavigate(options);
+      return navigationCount === 1 ? navigation.then(() => firstNavigationBlocker) : navigation;
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForComposerEditor();
+      useStore.getState().setProjectExpanded(PROJECT_ID, true);
+      await waitForLayout();
+      const threadRow = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-thread-entry-point]")).find(
+            (row) => row.textContent?.includes(THREAD_TITLE),
+          ) ?? null,
+        "Unable to find the current thread row.",
+      );
+      useComposerDraftStore.getState().setProjectDraftThreadId(PROJECT_ID, reusableDraftThreadId, {
+        entryPoint: "chat",
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        workspaceOrigin: "default",
+      });
+      useComposerDraftStore.getState().setPrompt(reusableDraftThreadId, "keep staged-race prompt");
+      useComposerDraftStore.getState().addFiles(reusableDraftThreadId, [
+        {
+          type: "file",
+          id: "staged-route-race-notes",
+          name: "staged-route-race.txt",
+          mimeType: "text/plain",
+          sizeBytes: 5,
+          file: new File(["notes"], "staged-route-race.txt", { type: "text/plain" }),
+        },
+      ]);
+
+      threadRow.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 24,
+          clientY: 24,
+        }),
+      );
+      await vi.waitFor(() => expect(contextMenuShow).toHaveBeenCalledOnce());
+      const stagedThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "The older exact-workspace draft should become visible before navigation settles.",
+      );
+      const stagedThreadId = stagedThreadPath.slice(1) as ThreadId;
+      expect(stagedThreadId).not.toBe(reusableDraftThreadId);
+
+      await page.getByTestId("new-thread-button").click();
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${reusableDraftThreadId}`,
+        "The later ordinary action should reuse the durable mapped draft.",
+      );
+      releaseFirstNavigation();
+      await waitForDraftNavigationIdle(draftNavigationSlotKey());
+
+      expect(
+        useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID, "chat")?.threadId,
+      ).toBe(reusableDraftThreadId);
+      expect(
+        useComposerDraftStore.getState().draftsByThreadId[reusableDraftThreadId],
+      ).toMatchObject({
+        prompt: "keep staged-race prompt",
+        files: [
+          expect.objectContaining({
+            id: "staged-route-race-notes",
+            name: "staged-route-race.txt",
+          }),
+        ],
+      });
+      expect(useComposerDraftStore.getState().getDraftThread(stagedThreadId)).toBeNull();
+      expect(mounted.router.state.location.pathname).toBe(`/${reusableDraftThreadId}`);
+    } finally {
+      releaseFirstNavigation();
+      await waitForDraftNavigationIdle(draftNavigationSlotKey());
+      navigateSpy.mockRestore();
       await mounted.cleanup();
     }
   });

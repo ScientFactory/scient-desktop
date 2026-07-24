@@ -37,6 +37,16 @@ export interface NewThreadOptions {
   prepareNavigation?: (
     ownership: NewThreadNavigationOwnership,
   ) => Promise<NewThreadPreparationResult>;
+  /**
+   * Stable identity for preparations whose callback is recreated by the UI. Adjacent identical
+   * actions coalesce, while the same action after a distinct intent starts a new operation.
+   */
+  prepareNavigationKey?: string;
+  /**
+   * Prevents a later route from becoming active while this preparation performs an explicit
+   * non-cancellable side effect, such as checking out a pull-request branch.
+   */
+  prepareNavigationBlocksFollowing?: boolean;
 }
 
 export interface NewThreadNavigationOwnership {
@@ -102,8 +112,13 @@ export function newThreadNavigationRequestKey(input: {
     input.options?.provider ?? "",
     input.options?.temporary === true ? "temporary" : "durable",
     input.options?.fresh === true ? "fresh" : "reuse-eligible",
+    input.options?.prepareNavigationBlocksFollowing === true
+      ? "blocking-preparation"
+      : "concurrent-preparation",
     `search:${navigationCallbackKey(input.customSearch)}`,
-    `prepare:${navigationCallbackKey(input.options?.prepareNavigation)}`,
+    `prepare:${
+      input.options?.prepareNavigationKey ?? navigationCallbackKey(input.options?.prepareNavigation)
+    }`,
   ].join("\u0000");
 }
 

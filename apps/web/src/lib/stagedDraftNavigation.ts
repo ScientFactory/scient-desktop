@@ -4,6 +4,7 @@
 // Layer: Web navigation orchestration
 
 interface DraftNavigationSlotState {
+  blockingBarrier: Promise<void> | null;
   tail: Promise<void>;
   latestOperation: Promise<unknown> | null;
   latestRequestKey: string | null;
@@ -39,10 +40,12 @@ export function runDraftNavigationOnce<T>(
   slotKey: string,
   requestKey: string,
   run: (ownership: DraftNavigationOwnership) => Promise<T>,
+  options?: { readonly blocksFollowingOperations?: boolean },
 ): Promise<T> {
   let state = draftNavigationStateBySlot.get(slotKey);
   if (!state) {
     state = {
+      blockingBarrier: null,
       tail: Promise.resolve(),
       latestOperation: null,
       latestRequestKey: null,
@@ -60,7 +63,10 @@ export function runDraftNavigationOnce<T>(
     isCurrent: () => state.latestOwner === owner,
   };
   state.latestOwner = owner;
-  const execution = Promise.resolve().then(() => run(ownership));
+  const priorBlockingBarrier = state.blockingBarrier;
+  const execution = priorBlockingBarrier
+    ? priorBlockingBarrier.then(() => run(ownership))
+    : Promise.resolve().then(() => run(ownership));
   let operation!: Promise<T>;
   const clearLatestRequest = () => {
     if (state.latestOperation === operation) {
@@ -81,6 +87,18 @@ export function runDraftNavigationOnce<T>(
   );
   state.latestOperation = operation;
   state.latestRequestKey = requestKey;
+  if (options?.blocksFollowingOperations === true) {
+    const blockingBarrier = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    state.blockingBarrier = blockingBarrier;
+    void blockingBarrier.then(() => {
+      if (state.blockingBarrier === blockingBarrier) {
+        state.blockingBarrier = null;
+      }
+    });
+  }
 
   const previousTail = state.tail;
   const tail = Promise.all([previousTail, operation]).then(
