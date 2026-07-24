@@ -18,6 +18,7 @@ import {
 export type ProviderModelPrefetchSettings = Pick<
   AppSettings,
   | "defaultProvider"
+  | "claudeBinaryPath"
   | "cursorBinaryPath"
   | "cursorApiEndpoint"
   | "antigravityBinaryPath"
@@ -70,7 +71,10 @@ export function providerModelsPrefetchQueryOptions(input: {
 
   switch (provider) {
     case "claudeAgent":
-      return providerModelsQueryOptions({ provider: "claudeAgent" });
+      return providerModelsQueryOptions({
+        provider: "claudeAgent",
+        binaryPath: settings.claudeBinaryPath || null,
+      });
     case "codex":
       return providerModelsQueryOptions({ provider: "codex" });
     case "cursor":
@@ -128,7 +132,10 @@ function providerAgentsPrefetchQueryOptions(input: {
 
   switch (provider) {
     case "claudeAgent":
-      return providerAgentsQueryOptions({ provider: "claudeAgent" });
+      return providerAgentsQueryOptions({
+        provider: "claudeAgent",
+        binaryPath: settings.claudeBinaryPath || null,
+      });
     case "codex":
       return providerAgentsQueryOptions({ provider: "codex" });
     case "kilo":

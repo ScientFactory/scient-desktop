@@ -9,6 +9,7 @@ import { useProviderConnectionDialogStore } from "../../providerConnectionDialog
 
 const MODEL_OPTIONS_BY_PROVIDER = {
   claudeAgent: [
+    { slug: "claude-opus-5", name: "Claude Opus 5" },
     { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
     { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
     { slug: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
@@ -262,6 +263,23 @@ describe("ProviderModelPicker", () => {
         "claudeAgent",
         "claude-sonnet-4-6",
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows and selects the supported Claude Opus 5 row", async () => {
+    const mounted = await mountPicker({
+      provider: "claudeAgent",
+      model: "claude-opus-4-6",
+      lockedProvider: "claudeAgent",
+    });
+
+    try {
+      await page.getByRole("button").click();
+      await page.getByRole("menuitemradio", { name: "Claude Opus 5" }).click();
+
+      expect(mounted.onProviderModelChange).toHaveBeenCalledWith("claudeAgent", "claude-opus-5");
     } finally {
       await mounted.cleanup();
     }

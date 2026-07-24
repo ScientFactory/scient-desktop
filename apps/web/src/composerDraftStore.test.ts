@@ -2690,6 +2690,37 @@ describe("composerDraftStore modelSelection", () => {
     });
   });
 
+  it.each(["opus", "claude-opus-5"])(
+    "does not restore unavailable persisted Claude model %s after runtime gating",
+    (model) => {
+      const state = deriveEffectiveComposerModelState({
+        draft: { modelSelectionByProvider: {}, activeProvider: "claudeAgent" },
+        selectedProvider: "claudeAgent",
+        threadModelSelection: modelSelection("claudeAgent", model),
+        projectModelSelection: null,
+        customModelsByProvider: {
+          codex: [],
+          claudeAgent: [],
+          cursor: [],
+          antigravity: [],
+          grok: [],
+          droid: [],
+          kilo: [],
+          opencode: [],
+          pi: [],
+        },
+        availableModelOptionsByProvider: {
+          claudeAgent: [
+            { slug: "claude-opus-4-8", name: "Claude Opus 4.8" },
+            { slug: "claude-sonnet-5", name: "Claude Sonnet 5" },
+          ],
+        },
+      });
+
+      expect(state.selectedModel).toBe("claude-opus-4-8");
+    },
+  );
+
   it("selects Droid Auto without adding a reasoning override", () => {
     const state = deriveEffectiveComposerModelState({
       draft: { modelSelectionByProvider: {}, activeProvider: "droid" },

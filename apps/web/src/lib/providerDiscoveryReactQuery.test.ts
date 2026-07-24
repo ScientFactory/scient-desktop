@@ -27,6 +27,13 @@ function mockListModels(listModels: ReturnType<typeof vi.fn>) {
   return listModels;
 }
 
+function mockListAgents(listAgents: ReturnType<typeof vi.fn>) {
+  vi.spyOn(nativeApi, "ensureNativeApi").mockReturnValue({
+    provider: { listAgents },
+  } as unknown as NativeApi);
+  return listAgents;
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -66,6 +73,24 @@ describe("isInitialModelDiscoveryPending", () => {
 });
 
 describe("providerModelsQueryOptions", () => {
+  it("scopes Claude discovery and its cache identity to the configured executable", async () => {
+    const listModels = mockListModels(vi.fn().mockResolvedValue({ models: [] }));
+    const configuredOptions = providerModelsQueryOptions({
+      provider: "claudeAgent",
+      binaryPath: "/opt/claude-custom",
+    });
+    const pathOptions = providerModelsQueryOptions({ provider: "claudeAgent" });
+
+    expect(configuredOptions.queryKey).not.toEqual(pathOptions.queryKey);
+
+    const queryClient = new QueryClient();
+    await queryClient.fetchQuery(configuredOptions);
+    expect(listModels).toHaveBeenCalledWith({
+      provider: "claudeAgent",
+      binaryPath: "/opt/claude-custom",
+    });
+  });
+
   it("fails fast for Cursor so a missing CLI settles instead of spinning (#103)", async () => {
     const listModels = mockListModels(
       vi.fn().mockRejectedValue(new Error("Cursor CLI is not installed or not on PATH")),
@@ -159,5 +184,25 @@ describe("providerModelsQueryOptions", () => {
 
     const queryClient = new QueryClient();
     await expect(queryClient.fetchQuery(options)).resolves.toEqual(catalog);
+  });
+});
+
+describe("providerAgentsQueryOptions", () => {
+  it("scopes Claude subagents and their cache identity to the configured executable", async () => {
+    const listAgents = mockListAgents(vi.fn().mockResolvedValue({ agents: [] }));
+    const configuredOptions = providerAgentsQueryOptions({
+      provider: "claudeAgent",
+      binaryPath: "/opt/claude-custom",
+    });
+    const pathOptions = providerAgentsQueryOptions({ provider: "claudeAgent" });
+
+    expect(configuredOptions.queryKey).not.toEqual(pathOptions.queryKey);
+
+    const queryClient = new QueryClient();
+    await queryClient.fetchQuery(configuredOptions);
+    expect(listAgents).toHaveBeenCalledWith({
+      provider: "claudeAgent",
+      binaryPath: "/opt/claude-custom",
+    });
   });
 });

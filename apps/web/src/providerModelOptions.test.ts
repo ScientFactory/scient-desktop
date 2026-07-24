@@ -157,6 +157,7 @@ describe("mergeDynamicModelOptions", () => {
     expect(
       mergeDynamicModelOptions({
         provider: "claudeAgent",
+        providerVersion: "2.1.219",
         staticOptions: [],
         dynamicModels: [
           {
@@ -191,6 +192,80 @@ describe("mergeDynamicModelOptions", () => {
         resolvedModel: "claude-opus-4-8[1m]",
         supportedReasoningEfforts: [{ value: "low" }, { value: "high" }],
       },
+    ]);
+  });
+
+  it("uses Claude SDK resolution before a moving provider alias", () => {
+    expect(
+      mergeDynamicModelOptions({
+        provider: "claudeAgent",
+        providerVersion: "2.1.219",
+        staticOptions: [],
+        dynamicModels: [
+          {
+            slug: "opus[1m]",
+            name: "Opus",
+            resolvedModel: "claude-opus-5[1m]",
+          },
+          {
+            slug: "opus",
+            name: "Opus fallback",
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        slug: "claude-opus-5",
+        name: "Opus",
+        resolvedModel: "claude-opus-5[1m]",
+      },
+    ]);
+  });
+
+  it.each([undefined, "2.1.218"])(
+    "hides Opus 5 when Claude Code %s cannot support it",
+    (providerVersion) => {
+      expect(
+        mergeDynamicModelOptions({
+          provider: "claudeAgent",
+          providerVersion,
+          staticOptions: [
+            { slug: "claude-opus-5", name: "Claude Opus 5" },
+            { slug: "claude-opus-4-8", name: "Claude Opus 4.8" },
+          ],
+          dynamicModels: [
+            {
+              slug: "opus[1m]",
+              name: "Opus",
+              resolvedModel: "claude-opus-4-8[1m]",
+            },
+          ],
+        }),
+      ).toEqual([
+        {
+          slug: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          resolvedModel: "claude-opus-4-8[1m]",
+        },
+      ]);
+    },
+  );
+
+  it("includes the Opus 5 fallback at the minimum Claude Code version", () => {
+    expect(
+      mergeDynamicModelOptions({
+        provider: "claudeAgent",
+        providerVersion: "2.1.219",
+        staticOptions: [{ slug: "claude-opus-5", name: "Claude Opus 5" }],
+        dynamicModels: [{ slug: "sonnet", name: "Sonnet", resolvedModel: "claude-sonnet-5" }],
+      }),
+    ).toEqual([
+      {
+        slug: "claude-sonnet-5",
+        name: "Claude Sonnet 5",
+        resolvedModel: "claude-sonnet-5",
+      },
+      { slug: "claude-opus-5", name: "Claude Opus 5" },
     ]);
   });
 });

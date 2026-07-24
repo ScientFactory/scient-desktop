@@ -57,7 +57,13 @@ export function resolveRuntimeModelDescriptor(input: {
   }
 
   return runtimeModels.find((candidate) => {
-    const normalizedCandidate = normalizeModelSlug(candidate.slug, provider) ?? candidate.slug;
+    const resolvedCandidateSlug =
+      provider === "claudeAgent" ? trimOrNull(candidate.resolvedModel) : null;
+    const candidateSlug = resolvedCandidateSlug ?? candidate.slug;
+    const candidateSlugWithoutContext =
+      provider === "claudeAgent" ? candidateSlug.replace(/\[[^\]]+\]$/u, "") : candidateSlug;
+    const normalizedCandidate =
+      normalizeModelSlug(candidateSlugWithoutContext, provider) ?? candidateSlugWithoutContext;
     if (normalizedCandidate === normalizedModel) {
       return true;
     }
@@ -78,7 +84,10 @@ export function getRuntimeAwareModelCapabilities(input: {
   const staticCapabilities = getModelCapabilities(input.provider, input.model);
   // Runtime discovery is authoritative when available; the static table is only a startup fallback.
   const supportsFastMode =
-    (input.provider === "codex" || input.provider === "cursor") && input.runtimeModel
+    (input.provider === "claudeAgent" ||
+      input.provider === "codex" ||
+      input.provider === "cursor") &&
+    input.runtimeModel
       ? input.runtimeModel.supportsFastMode === true
       : staticCapabilities.supportsFastMode;
   const supportsThinkingToggle =
@@ -94,7 +103,8 @@ export function getRuntimeAwareModelCapabilities(input: {
   const runtimeEfforts = input.runtimeModel?.supportedReasoningEfforts;
   // Providers with dynamic catalogs, including Droid, expose model-specific effort ladders here.
   if (
-    (input.provider !== "codex" &&
+    (input.provider !== "claudeAgent" &&
+      input.provider !== "codex" &&
       input.provider !== "cursor" &&
       input.provider !== "antigravity" &&
       input.provider !== "grok" &&
@@ -131,6 +141,21 @@ export function getRuntimeAwareModelCapabilities(input: {
     };
   });
 
+  // Claude discovery owns the API-effort rows, but it cannot describe Scient's
+  // provider-setting or prompt-prefix controls. Preserve those static controls
+  // alongside the live API ladder without duplicating a value should discovery
+  // eventually learn about it.
+  const runtimeOptionValues = new Set(runtimeOptions.map((option) => option.value));
+  const staticClaudeControls =
+    input.provider === "claudeAgent"
+      ? staticCapabilities.reasoningEffortLevels.filter(
+          (option) =>
+            (option.controlSource === "provider-setting" ||
+              option.controlSource === "prompt-prefix") &&
+            !runtimeOptionValues.has(option.value),
+        )
+      : [];
+
   if (input.provider === "kilo" || input.provider === "opencode") {
     return {
       ...staticCapabilities,
@@ -147,6 +172,6 @@ export function getRuntimeAwareModelCapabilities(input: {
     supportsFastMode,
     supportsThinkingToggle,
     contextWindowOptions,
-    reasoningEffortLevels: runtimeOptions,
+    reasoningEffortLevels: [...runtimeOptions, ...staticClaudeControls],
   };
 }

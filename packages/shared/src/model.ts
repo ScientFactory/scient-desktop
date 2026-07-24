@@ -25,6 +25,7 @@ import {
   type ProviderWithDefaultModel,
   CodexReasoningEffort,
 } from "@synara/contracts";
+import { isClaudeOpus5RuntimeSupported } from "./providerVersions";
 
 const MODEL_SLUG_SET_BY_PROVIDER: Record<ProviderKind, ReadonlySet<ModelSlug>> = {
   claudeAgent: new Set(MODEL_OPTIONS_BY_PROVIDER.claudeAgent.map((option) => option.slug)),
@@ -707,8 +708,9 @@ export function normalizeCodexModelOptions(
 export function normalizeClaudeModelOptions(
   model: string | null | undefined,
   modelOptions: ClaudeModelOptions | null | undefined,
+  runtimeCapabilities?: ModelCapabilities | undefined,
 ): ClaudeModelOptions | undefined {
-  const caps = getModelCapabilities("claudeAgent", model);
+  const caps = runtimeCapabilities ?? getModelCapabilities("claudeAgent", model);
   const defaultReasoningEffort = getDefaultEffort(caps);
   const defaultAutoCompactWindow = getDefaultAutoCompactWindow(caps);
   const resolvedEffort = trimOrNull(modelOptions?.effort);
@@ -738,6 +740,25 @@ export function normalizeClaudeModelOptions(
     ...(autoCompactWindow ? { autoCompactWindow } : {}),
   };
   return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
+}
+
+export function normalizeClaudeModelSelectionForRuntime(
+  modelSelection: Extract<ModelSelection, { provider: "claudeAgent" }>,
+  providerVersion: string | null | undefined,
+): Extract<ModelSelection, { provider: "claudeAgent" }> {
+  const contextWindowSuffix = modelSelection.model.trim().match(/\[[^\]]+\]$/u)?.[0] ?? "";
+  const normalizedModel =
+    normalizeModelSlug(modelSelection.model, "claudeAgent") ?? getDefaultModel("claudeAgent");
+  const runtimeModel =
+    normalizedModel === "claude-opus-5" && !isClaudeOpus5RuntimeSupported(providerVersion)
+      ? "claude-opus-4-8"
+      : normalizedModel;
+  const model = `${runtimeModel}${contextWindowSuffix}`;
+  return {
+    provider: "claudeAgent",
+    model,
+    ...(modelSelection.options ? { options: modelSelection.options } : {}),
+  };
 }
 
 export function resolveApiModelId(modelSelection: ModelSelection): string {

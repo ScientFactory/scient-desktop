@@ -226,6 +226,26 @@ describe("TraitsPicker (Claude)", () => {
     });
   });
 
+  it("shows the Opus 5 reasoning, speed, and auto-compact controls", async () => {
+    await using _ = await mountClaudePicker({
+      model: "claude-opus-5",
+    });
+
+    await page.getByRole("button").click();
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("Extra High");
+      expect(text).toContain("Max");
+      expect(text).toContain("Ultracode");
+      expect(text).not.toContain("Ultrathink");
+      expect(text).toContain("Speed");
+      expect(text).toContain("Fast");
+      expect(text).toContain("Auto-compact");
+      expect(text).toContain("1M");
+    });
+  });
+
   it("shows a th  inking on/off dropdown for Haiku", async () => {
     await using _ = await mountClaudePicker({
       model: "claude-haiku-4-5",

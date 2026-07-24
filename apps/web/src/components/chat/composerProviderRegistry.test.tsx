@@ -450,6 +450,33 @@ describe("getComposerProviderState", () => {
     });
   });
 
+  it("drops stored Claude controls that runtime discovery proves unsupported", () => {
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-opus-4-8",
+      runtimeModel: {
+        slug: "opus[1m]",
+        name: "Opus",
+        resolvedModel: "claude-opus-4-8[1m]",
+        supportedReasoningEfforts: [{ value: "low" }, { value: "high" }],
+        supportsFastMode: false,
+      },
+      prompt: "",
+      modelOptions: {
+        claudeAgent: {
+          effort: "xhigh",
+          fastMode: true,
+        },
+      },
+    });
+
+    expect(state).toEqual({
+      provider: "claudeAgent",
+      promptEffort: "high",
+      modelOptionsForDispatch: undefined,
+    });
+  });
+
   it("tracks Claude ultrathink from the prompt without changing dispatch effort", () => {
     const state = getComposerProviderState({
       provider: "claudeAgent",

@@ -573,6 +573,7 @@ import {
 import {
   buildModelSelection,
   buildNextProviderOptions,
+  filterProviderModelOptionsForRuntime,
   mergeDynamicModelOptions,
   type ProviderModelOption,
 } from "../providerModelOptions";
@@ -2125,6 +2126,9 @@ export default function ChatView({
   const featureFlags = useFeatureFlags();
   const showDebugTaskBanner = import.meta.env.DEV && featureFlags["show-debug-task-banner"];
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const claudeProviderVersion =
+    serverConfigQuery.data?.providers.find((provider) => provider.provider === "claudeAgent")
+      ?.version ?? null;
   const composerModelHintByProvider = useMemo<Record<ProviderKind, string | null>>(() => {
     const threadModelSelection = activeThread?.modelSelection ?? null;
     const projectModelSelection = activeProject?.defaultModelSelection ?? null;
@@ -2157,7 +2161,10 @@ export default function ChatView({
     serverCwd: serverConfigQuery.data?.cwd ?? null,
   });
   const claudeDynamicModelsQuery = useQuery(
-    providerModelsQueryOptions({ provider: "claudeAgent" }),
+    providerModelsQueryOptions({
+      provider: "claudeAgent",
+      binaryPath: settings.claudeBinaryPath || null,
+    }),
   );
   const codexDynamicModelsQuery = useQuery(providerModelsQueryOptions({ provider: "codex" }));
   const openCodeModelDiscoveryEnabled =
@@ -2248,7 +2255,10 @@ export default function ChatView({
     }),
   );
   const claudeDynamicAgentsQuery = useQuery(
-    providerAgentsQueryOptions({ provider: "claudeAgent" }),
+    providerAgentsQueryOptions({
+      provider: "claudeAgent",
+      binaryPath: settings.claudeBinaryPath || null,
+    }),
   );
   const codexDynamicAgentsQuery = useQuery(providerAgentsQueryOptions({ provider: "codex" }));
   const openCodeDynamicAgentsQuery = useQuery(
@@ -2338,17 +2348,24 @@ export default function ChatView({
     ],
   );
   const modelOptionsByProvider = useMemo(() => {
-    const staticOptions: Record<ProviderKind, ReturnType<typeof getAppModelOptions>> = {
+    const staticOptions: Record<
+      ProviderKind,
+      ReadonlyArray<ProviderModelOption & { isCustom?: boolean }>
+    > = {
       codex: getAppModelOptions(
         "codex",
         customModelsByProvider.codex,
         composerModelHintByProvider.codex,
       ),
-      claudeAgent: getAppModelOptions(
-        "claudeAgent",
-        customModelsByProvider.claudeAgent,
-        composerModelHintByProvider.claudeAgent,
-      ),
+      claudeAgent: filterProviderModelOptionsForRuntime({
+        provider: "claudeAgent",
+        providerVersion: claudeProviderVersion,
+        options: getAppModelOptions(
+          "claudeAgent",
+          customModelsByProvider.claudeAgent,
+          composerModelHintByProvider.claudeAgent,
+        ),
+      }),
       cursor: getAppModelOptions(
         "cursor",
         customModelsByProvider.cursor,
@@ -2416,6 +2433,7 @@ export default function ChatView({
       if (dynamicModels && dynamicModels.length > 0) {
         result[provider] = mergeDynamicModelOptions({
           provider,
+          ...(provider === "claudeAgent" ? { providerVersion: claudeProviderVersion } : {}),
           staticOptions: staticOptions[provider],
           dynamicModels,
         });
@@ -2425,6 +2443,7 @@ export default function ChatView({
     return result;
   }, [
     claudeDynamicModelsQuery.data,
+    claudeProviderVersion,
     composerModelHintByProvider,
     codexDynamicModelsQuery.data,
     cursorDynamicModelsQuery.data,

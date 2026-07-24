@@ -177,6 +177,7 @@ function makeHarness(config?: {
   readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
   readonly cwd?: string;
   readonly baseDir?: string;
+  readonly claudeVersion?: string | null;
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -199,6 +200,11 @@ function makeHarness(config?: {
     ...(config?.nativeEventLogPath
       ? {
           nativeEventLogPath: config.nativeEventLogPath,
+        }
+      : {}),
+    ...(config && Object.hasOwn(config, "claudeVersion")
+      ? {
+          resolveClaudeVersion: () => Effect.succeed(config.claudeVersion ?? null),
         }
       : {}),
   };
@@ -308,6 +314,11 @@ function effortLevelFromOptions(
 ): "low" | "medium" | "high" | "xhigh" | undefined {
   const settings = options?.settings;
   return settings && typeof settings === "object" ? settings.effortLevel : undefined;
+}
+
+function fastModeFromOptions(options: ClaudeQueryOptions | undefined): boolean | undefined {
+  const settings = options?.settings;
+  return settings && typeof settings === "object" ? settings.fastMode : undefined;
 }
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-claude-1");
@@ -444,6 +455,102 @@ describe("ClaudeAdapterLive", () => {
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("scopes pre-session agent discovery and caching to the Claude executable", () => {
+    const queries: FakeClaudeQuery[] = [];
+    const discoveryContexts: Array<{
+      executable: string | undefined;
+      cwd: string | undefined;
+    }> = [];
+    const layer = makeClaudeAdapterLive({
+      createQuery: (input) => {
+        const query = new FakeClaudeQuery();
+        const executable = input.options.pathToClaudeCodeExecutable;
+        const cwd = input.options.cwd;
+        discoveryContexts.push({ executable, cwd });
+        Object.assign(query, {
+          supportedAgents: async () => [
+            {
+              name:
+                executable === "/managed/claude-a" && cwd === "/tmp/project"
+                  ? "agent-a"
+                  : executable === "/managed/claude-b"
+                    ? "agent-b"
+                    : "agent-other-cwd",
+              description: `from ${executable} in ${cwd}`,
+              model: "inherit",
+            },
+          ],
+        });
+        queries.push(query);
+        return query;
+      },
+    }).pipe(
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-agent-discovery", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listAgents) {
+        return assert.fail("Claude adapter should support agent discovery.");
+      }
+
+      const first = yield* adapter.listAgents({
+        provider: "claudeAgent",
+        cwd: "/tmp/project",
+        binaryPath: "/managed/claude-a",
+      });
+      const second = yield* adapter.listAgents({
+        provider: "claudeAgent",
+        cwd: "/tmp/project",
+        binaryPath: "/managed/claude-b",
+      });
+      const otherCwd = yield* adapter.listAgents({
+        provider: "claudeAgent",
+        cwd: "/tmp/other-project",
+        binaryPath: "/managed/claude-a",
+      });
+      const firstCached = yield* adapter.listAgents({
+        provider: "claudeAgent",
+        cwd: "/tmp/project",
+        binaryPath: "/managed/claude-a",
+      });
+
+      assert.deepEqual(discoveryContexts, [
+        { executable: "/managed/claude-a", cwd: "/tmp/project" },
+        { executable: "/managed/claude-b", cwd: "/tmp/project" },
+        { executable: "/managed/claude-a", cwd: "/tmp/other-project" },
+      ]);
+      assert.deepEqual(
+        first.agents.map((agent) => agent.name),
+        ["agent-a"],
+      );
+      assert.deepEqual(
+        second.agents.map((agent) => agent.name),
+        ["agent-b"],
+      );
+      assert.deepEqual(
+        otherCwd.agents.map((agent) => agent.name),
+        ["agent-other-cwd"],
+      );
+      assert.equal(first.cached, false);
+      assert.equal(second.cached, false);
+      assert.equal(otherCwd.cached, false);
+      assert.equal(firstCached.cached, true);
+      assert.deepEqual(
+        firstCached.agents.map((agent) => agent.name),
+        ["agent-a"],
+      );
+      assert.deepEqual(
+        queries.map((query) => query.closeCalls),
+        [1, 1, 1],
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
     );
   });
 
@@ -715,6 +822,83 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(autoCompactWindowFromOptions(createInput?.options), 1_000_000);
       assert.equal(createInput?.options.effort, undefined);
       assert.equal(effortLevelFromOptions(createInput?.options), "xhigh");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("starts an Opus alias with its native context suffix and supported options", () => {
+    const harness = makeHarness({ claudeVersion: "2.1.219" });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "opus[1m]",
+          options: {
+            effort: "xhigh",
+            autoCompactWindow: "1m",
+            fastMode: true,
+          },
+        },
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.model, "claude-opus-5[1m]");
+      assert.equal(autoCompactWindowFromOptions(createInput?.options), 1_000_000);
+      assert.equal(effortLevelFromOptions(createInput?.options), "xhigh");
+      assert.equal(fastModeFromOptions(createInput?.options), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("falls back persisted Opus aliases when the Claude runtime is too old", () => {
+    const harness = makeHarness({ claudeVersion: "2.1.218" });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "opus[1m]",
+          options: { effort: "ultracode", fastMode: true },
+        },
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.model, "claude-opus-4-8[1m]");
+      assert.equal(session.model, "claude-opus-4-8[1m]");
+      assert.equal(effortLevelFromOptions(createInput?.options), "xhigh");
+      assert.equal(fastModeFromOptions(createInput?.options), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("fails closed to Opus 4.8 when the Claude runtime version is unknown", () => {
+    const harness = makeHarness({ claudeVersion: null });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-5",
+        },
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(harness.getLastCreateQueryInput()?.options.model, "claude-opus-4-8");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -4281,6 +4465,33 @@ describe("ClaudeAdapterLive", () => {
       });
 
       assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-6"]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("preserves an Opus alias context suffix when changing models live", () => {
+    const harness = makeHarness({ claudeVersion: "2.1.219" });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "opus[1m]",
+        },
+        attachments: [],
+      });
+
+      assert.deepEqual(harness.query.setModelCalls, ["claude-opus-5[1m]"]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
