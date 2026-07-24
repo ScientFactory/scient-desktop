@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 
 import {
+  SCIENT_DESKTOP_DEB_UPDATE_CHANNEL,
   SCIENT_DESKTOP_UPDATES_ENABLED,
   SCIENT_DESKTOP_UPDATE_CHANNEL,
   SCIENT_PRODUCTION_BUNDLE_ID,
@@ -37,6 +38,10 @@ import {
   readReleaseUpdatePolicyConfig,
   resolveReleaseUpdatePolicy,
 } from "./lib/release-update-policy.ts";
+import {
+  assertPackagedLaunchCommandSafety,
+  createLinuxPackagedLaunchCommand,
+} from "./verify-packaged-desktop-startup.ts";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -159,6 +164,17 @@ function assertScopedSigningEnvironment(
   }
 }
 
+function assertOrdered(haystack: string, needles: ReadonlyArray<string>, message: string): void {
+  let previousIndex = -1;
+  for (const needle of needles) {
+    const index = haystack.indexOf(needle, previousIndex + 1);
+    if (index < 0 || index <= previousIndex) {
+      throw new Error(message);
+    }
+    previousIndex = index;
+  }
+}
+
 function verifyCanonicalIdentity(): void {
   const serverPackage = JSON.parse(
     readFileSync(resolve(repoRoot, "apps/server/package.json"), "utf8"),
@@ -180,16 +196,25 @@ function verifyCanonicalIdentity(): void {
   if (SCIENT_DESKTOP_UPDATE_CHANNEL !== "scient") {
     throw new Error(`Unexpected desktop update channel: ${SCIENT_DESKTOP_UPDATE_CHANNEL}.`);
   }
+  if (SCIENT_DESKTOP_DEB_UPDATE_CHANNEL !== "scient-deb") {
+    throw new Error(
+      `Unexpected Debian desktop update channel: ${SCIENT_DESKTOP_DEB_UPDATE_CHANNEL}.`,
+    );
+  }
   if (!SCIENT_DESKTOP_UPDATES_ENABLED) {
     throw new Error("Expected packaged Scient clients to use the approved update channel.");
   }
 
-  const linux = createDesktopPlatformBuildConfig({ platform: "linux", target: "AppImage" }).linux;
+  const linuxConfig = createDesktopPlatformBuildConfig({ platform: "linux", target: "deb" });
+  const linux = linuxConfig.linux;
   if (!linux || linux.executableName !== "scient") {
     throw new Error("Expected Linux desktop releases to install the scient executable.");
   }
   if (!Array.isArray(linux.executableArgs) || linux.executableArgs.length !== 0) {
     throw new Error("Expected Linux desktop entries to preserve Electron's sandbox.");
+  }
+  if (linuxConfig.deb?.packageName !== "scient" || linuxConfig.deb.maintainer !== "ScientFactory") {
+    throw new Error("Expected Debian releases to use the canonical Scient package identity.");
   }
   const requireFromElectronBuilder = createRequire(
     realpathSync(resolve(repoRoot, "node_modules/electron-builder/package.json")),
@@ -228,6 +253,10 @@ function verifyReleaseWorkflowSafety(): void {
     resolve(repoRoot, ".github/workflows/release.yml"),
     "utf8",
   ).replaceAll("\r\n", "\n");
+  const ciWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/ci.yml"), "utf8").replaceAll(
+    "\r\n",
+    "\n",
+  );
   const releaseBuildScript = readFileSync(
     resolve(repoRoot, "scripts/build-release-desktop-artifact.sh"),
     "utf8",
@@ -463,18 +492,38 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     workflow,
-    '"Scient-${RELEASE_VERSION}-x86_64.AppImage"',
-    "Expected the public contract to validate the Linux AppImage filename.",
+    "Verify current Linux packaging lane",
+    "Expected the Debian release workflow to reject historical compatibility-lane publication.",
   );
   assertContains(
     workflow,
-    "Verify Linux AppImage sandbox policy",
-    "Expected the release workflow to inspect the packaged Linux launcher.",
+    'if [[ "$RELEASE_LANE" != "clean" ]]',
+    "Expected current Linux publication to fail closed outside the clean Debian lane.",
   );
   assertContains(
     workflow,
+    '"Scient-${RELEASE_VERSION}-amd64.deb"',
+    "Expected the public contract to validate the Linux Debian filename.",
+  );
+  assertContains(
+    workflow,
+    '"${UPDATE_CHANNEL}-deb-linux.yml"',
+    "Expected Debian updates to use a format-specific channel.",
+  );
+  assertNotContains(
+    workflow,
+    '"${UPDATE_CHANNEL}-linux.yml"',
+    "Debian releases must not overwrite the legacy AppImage update channel.",
+  );
+  assertContains(
+    ciWorkflow,
+    "Verify AppImage never injects a sandbox bypass",
+    "Expected CI to retain an honest fail-closed AppImage packaging check.",
+  );
+  assertContains(
+    ciWorkflow,
     "grep -F -- '--no-sandbox' \"$launcher\"",
-    "Expected the release workflow to reject AppImages that disable Electron's sandbox.",
+    "Expected CI to reject AppImages that disable Electron's sandbox.",
   );
   assertContains(
     workflow,
@@ -485,6 +534,128 @@ function verifyReleaseWorkflowSafety(): void {
     workflow,
     'node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"\n          bun install --lockfile-only --ignore-scripts',
     "Expected artifact builds to refresh lockfile metadata after aligning workspace versions.",
+  );
+  assertContains(
+    workflow,
+    "if: ${{ matrix.platform != 'linux' }}",
+    "Expected non-Linux native builders to use the cross-platform startup smoke.",
+  );
+  assertContains(
+    workflow,
+    "node scripts/verify-packaged-desktop-startup.ts \\" +
+      "\n            --assets-dir release-publish",
+    "Expected packaged startup verification to read from the exact release-publish payload.",
+  );
+  assertContains(
+    workflow,
+    "if: ${{ matrix.platform == 'linux' }}\n        shell: bash\n        env:\n          DEBIAN_FRONTEND: noninteractive",
+    "Expected Linux-only packaged smoke dependencies.",
+  );
+  assertContains(
+    workflow,
+    "./apps/web/node_modules/.bin/playwright install-deps chromium",
+    "Expected the Linux release runner to install browser-system dependencies.",
+  );
+  assertContains(
+    workflow,
+    "SCIENT_LINUX_ARTIFACT_DIR: release-publish\n          SCIENT_LINUX_SMOKE_ARTIFACT_DIR: test-results/linux-release-deb",
+    "Expected the deep Linux lifecycle smoke to exercise the exact collected Debian package.",
+  );
+  assertContains(
+    workflow,
+    "run: node apps/web/scripts/linux-deb-smoke.mjs",
+    "Expected Linux release builds to run the installed Debian lifecycle test.",
+  );
+  assertOrdered(
+    workflow,
+    [
+      "- name: Collect release assets",
+      "- name: Smoke exact packaged desktop startup",
+      "- name: Exercise exact packaged Linux lifecycle",
+      "- name: Upload build artifacts",
+    ],
+    "Expected exact-artifact startup and Linux lifecycle verification before artifact upload.",
+  );
+
+  const packagedStartupVerifier = readFileSync(
+    resolve(repoRoot, "scripts/verify-packaged-desktop-startup.ts"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  assertContains(
+    packagedStartupVerifier,
+    "SCIENT_HOME: scientHome",
+    "Expected packaged startup verification to use isolated Scient state.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    "PACKAGED_SMOKE_INHERITED_ENVIRONMENT_ALLOWLIST",
+    "Expected packaged startup verification to inherit only explicitly allowed native host variables.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    "Scient\\.exe",
+    "Expected packaged Windows verification to require Scient.exe.",
+  );
+  assertNotContains(
+    packagedStartupVerifier,
+    "Synara\\.exe",
+    "Packaged startup verification must not retain the Synara executable identity.",
+  );
+
+  const packagedLinuxLaunch = createLinuxPackagedLaunchCommand("/opt/Scient/scient", "/opt/Scient");
+  assertPackagedLaunchCommandSafety(packagedLinuxLaunch);
+  if (packagedLinuxLaunch.args.some((argument) => argument.startsWith("--no-sandbox"))) {
+    throw new Error("Exact packaged Linux verification must not disable Electron's sandbox.");
+  }
+  assertContains(
+    packagedStartupVerifier,
+    "assertPackagedLaunchCommandSafety(launch);",
+    "Expected every packaged platform command to fail closed if sandbox bypass is introduced.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    'log.includes("renderer main frame loaded")',
+    "Expected cross-platform packaged startup proof to require successful renderer loading.",
+  );
+
+  const packagedLinuxLifecycleSmoke = readFileSync(
+    resolve(repoRoot, "apps/web/scripts/linux-deb-smoke.mjs"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  assertContains(
+    packagedLinuxLifecycleSmoke,
+    "  chmod,\n",
+    "Expected deep packaged Linux verification to import the chmod operation used for isolated runtime and workspace permissions.",
+  );
+  assertContains(
+    packagedLinuxLifecycleSmoke,
+    "...sanitizePackagedDesktopInheritedEnvironment(process.env)",
+    "Expected deep packaged Linux verification to use the same inherited-environment allowlist.",
+  );
+  assertNotContains(
+    packagedLinuxLifecycleSmoke,
+    "...process.env",
+    "Deep packaged Linux verification must not inherit credentials or developer runtime overrides.",
+  );
+  assertContains(
+    packagedLinuxLifecycleSmoke,
+    "assertSandboxedPackagedArguments(electronProcess.commandLine);",
+    "Expected packaged Linux acceptance to validate the actual mounted Electron process arguments.",
+  );
+
+  const desktopMain = readFileSync(
+    resolve(repoRoot, "apps/desktop/src/main.ts"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  assertContains(
+    desktopMain,
+    'writeDesktopLogHeader("renderer main frame loaded")',
+    "Expected the desktop process to record successful renderer main-frame loading.",
+  );
+  assertContains(
+    desktopMain,
+    '"did-fail-load"',
+    "Expected renderer main-frame load failures to be recorded for packaged diagnostics.",
   );
 }
 

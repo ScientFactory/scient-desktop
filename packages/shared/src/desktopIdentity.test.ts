@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   SCIENT_APP_NAME,
   SCIENT_DESKTOP_ENTRY_URL,
+  SCIENT_DESKTOP_DEB_UPDATE_CHANNEL,
   SCIENT_DESKTOP_ORIGIN,
   SCIENT_DESKTOP_UPDATE_CHANNEL,
   SCIENT_DESKTOP_UPDATES_ENABLED,
   SCIENT_DEVELOPMENT_BUNDLE_ID,
   SCIENT_PRODUCTION_BUNDLE_ID,
   scientBundleId,
+  scientDesktopUpdateChannel,
 } from "./desktopIdentity";
 
 describe("desktopIdentity", () => {
@@ -27,6 +29,10 @@ describe("desktopIdentity", () => {
 
   it("enables the approved Scient-owned release channel", () => {
     expect(SCIENT_DESKTOP_UPDATE_CHANNEL).toBe("scient");
+    expect(SCIENT_DESKTOP_DEB_UPDATE_CHANNEL).toBe("scient-deb");
     expect(SCIENT_DESKTOP_UPDATES_ENABLED).toBe(true);
+    expect(scientDesktopUpdateChannel("linux", "deb")).toBe("scient-deb");
+    expect(scientDesktopUpdateChannel("linux", "AppImage")).toBe("scient");
+    expect(scientDesktopUpdateChannel("darwin", null)).toBe("scient");
   });
 });
