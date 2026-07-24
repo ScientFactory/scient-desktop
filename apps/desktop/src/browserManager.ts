@@ -189,7 +189,9 @@ function createBrowserTab(
     lastCommittedUrl: null,
     lastError: null,
     ...(kind === "local-html" && allowedExternalUrls
-      ? { allowedExternalUrls: normalizedLocalHtmlExternalUrls(allowedExternalUrls) }
+      ? {
+          allowedExternalUrls: normalizedLocalHtmlExternalUrls(allowedExternalUrls),
+        }
       : {}),
   };
 }
@@ -489,24 +491,34 @@ export class DesktopBrowserManager {
         event.preventDefault();
       });
     }
-    const sessionReady: Promise<Error | null> =
-      preview?.kind === "local-html" && preview.allowedExternalUrls === undefined
-        ? partitionSession
-            .setProxy({
-              mode: "fixed_servers",
-              proxyRules: "http=127.0.0.1:1;https=127.0.0.1:1;socks=127.0.0.1:1",
-              proxyBypassRules: `<-loopback>;${new URL(preview.origin).host}`,
-            })
-            .then(
-              () => null,
-              (cause: unknown) =>
-                cause instanceof Error
-                  ? cause
-                  : new Error("Failed to establish the local HTML network boundary."),
-            )
-        : Promise.resolve(null);
-    this.previewSessionReady.set(partition, sessionReady);
+    if (preview?.kind === "local-html" && preview.allowedExternalUrls === undefined) {
+      this.configureInteractiveLocalHtmlProxy(partition, preview.origin);
+    } else {
+      this.previewSessionReady.set(partition, Promise.resolve(null));
+    }
     this.previewSessionsConfigured.add(partition);
+  }
+
+  private configureInteractiveLocalHtmlProxy(
+    partition: string,
+    previewOrigin: string,
+  ): Promise<Error | null> {
+    const readiness = session
+      .fromPartition(partition)
+      .setProxy({
+        mode: "fixed_servers",
+        proxyRules: "http=127.0.0.1:1;https=127.0.0.1:1;socks=127.0.0.1:1",
+        proxyBypassRules: `<-loopback>;${new URL(previewOrigin).host}`,
+      })
+      .then(
+        () => null,
+        (cause: unknown) =>
+          cause instanceof Error
+            ? cause
+            : new Error("Failed to establish the local HTML network boundary."),
+      );
+    this.previewSessionReady.set(partition, readiness);
+    return readiness;
   }
 
   private configureTabSession(threadId: ThreadId, tab: BrowserTabState): void {
@@ -1093,7 +1105,18 @@ export class DesktopBrowserManager {
     const state = this.ensureWorkspace(input.threadId);
     const tab = this.resolveTab(state, input.tabId);
     const runtime = this.runtimes.get(buildRuntimeKey(input.threadId, tab.id));
-    if (runtime) {
+    if (runtime && tab.kind === "local-html") {
+      if (tab.allowedExternalUrls === undefined) {
+        const previewOrigin = safeUrlOrigin(tab.url);
+        if (previewOrigin) {
+          this.configureInteractiveLocalHtmlProxy(
+            browserSessionPartition(tab.kind, input.threadId, tab.id),
+            previewOrigin,
+          );
+        }
+      }
+      void this.loadTab(input.threadId, tab.id, { force: true, runtime });
+    } else if (runtime) {
       runtime.webContents.reload();
     } else if (this.activeThreadId === input.threadId) {
       this.resumeThread(input.threadId);

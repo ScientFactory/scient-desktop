@@ -9,6 +9,7 @@ const electron = vi.hoisted(() => {
   const createdWebContents: Array<{
     id: number;
     loadURL: ReturnType<typeof vi.fn>;
+    reload: ReturnType<typeof vi.fn>;
     setWebRTCIPHandlingPolicy: ReturnType<typeof vi.fn>;
     handlers: Map<string, Array<(...args: any[]) => void>>;
     windowOpenHandler: ((details: any) => { action: string }) | null;
@@ -183,7 +184,10 @@ describe("DesktopBrowserManager reliability", () => {
     const tabId = opened.activeTabId;
 
     expect(tabId).toBeTruthy();
-    const closed = manager.closeTab({ threadId: THREAD_ID, tabId: tabId ?? "" });
+    const closed = manager.closeTab({
+      threadId: THREAD_ID,
+      tabId: tabId ?? "",
+    });
 
     expect(closed.open).toBe(false);
     expect(closed.tabs).toEqual([]);
@@ -200,7 +204,10 @@ describe("DesktopBrowserManager reliability", () => {
       url: "https://example.com/",
     });
 
-    const next = manager.closeTab({ threadId: THREAD_ID, tabId: firstTabId ?? "" });
+    const next = manager.closeTab({
+      threadId: THREAD_ID,
+      tabId: firstTabId ?? "",
+    });
 
     expect(next.open).toBe(true);
     expect(next.tabs).toHaveLength(1);
@@ -286,25 +293,41 @@ describe("DesktopBrowserManager reliability", () => {
     expect(exactOriginResult).toHaveBeenCalledWith({ cancel: false });
     const publicResult = vi.fn();
     beforeRequest(
-      { url: "https://cdn.example/app.js", method: "GET", resourceType: "script" },
+      {
+        url: "https://cdn.example/app.js",
+        method: "GET",
+        resourceType: "script",
+      },
       publicResult,
     );
     await vi.waitFor(() => expect(publicResult).toHaveBeenCalledWith({ cancel: false }));
     const dnsPrivateResult = vi.fn();
     beforeRequest(
-      { url: "https://private.example/declared.js", method: "GET", resourceType: "script" },
+      {
+        url: "https://private.example/declared.js",
+        method: "GET",
+        resourceType: "script",
+      },
       dnsPrivateResult,
     );
     await vi.waitFor(() => expect(dnsPrivateResult).toHaveBeenCalledWith({ cancel: true }));
     const rebindingResult = vi.fn();
     beforeRequest(
-      { url: "https://127.0.0.1.nip.io/asset.js", method: "GET", resourceType: "script" },
+      {
+        url: "https://127.0.0.1.nip.io/asset.js",
+        method: "GET",
+        resourceType: "script",
+      },
       rebindingResult,
     );
     await vi.waitFor(() => expect(rebindingResult).toHaveBeenCalledWith({ cancel: true }));
     const privateResult = vi.fn();
     beforeRequest(
-      { url: "http://127.0.0.1:8080/private", method: "GET", resourceType: "xhr" },
+      {
+        url: "http://127.0.0.1:8080/private",
+        method: "GET",
+        resourceType: "xhr",
+      },
       privateResult,
     );
     expect(privateResult).toHaveBeenCalledWith({ cancel: true });
@@ -422,6 +445,40 @@ describe("DesktopBrowserManager reliability", () => {
     releaseProxy();
     await load;
     expect(electron.createdWebContents.at(-1)?.loadURL).toHaveBeenCalledWith(previewUrl);
+    manager.dispose();
+  });
+
+  it("retries interactive preview network setup before reloading the original URL", async () => {
+    let proxyAttempts = 0;
+    electron.setProxyImplementation(async () => {
+      proxyAttempts += 1;
+      if (proxyAttempts === 1) {
+        throw new Error("proxy setup failed");
+      }
+    });
+    const manager = new DesktopBrowserManager();
+    const previewUrl = "http://g-12345678-1234-4123-8123-123456789abc.preview.localhost:43123/";
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: previewUrl,
+      kind: "local-html",
+    });
+    const tabId = opened.activeTabId;
+    expect(tabId).toBeTruthy();
+
+    const internals = manager as unknown as {
+      loadTab: (threadId: ThreadId, tabId: string, options: { force: boolean }) => Promise<void>;
+    };
+    await internals.loadTab(THREAD_ID, tabId ?? "", { force: true });
+    const contents = electron.createdWebContents.at(-1);
+    expect(contents?.loadURL).not.toHaveBeenCalled();
+    expect(manager.getState({ threadId: THREAD_ID }).lastError).toBe("Couldn't open this page.");
+
+    manager.reload({ threadId: THREAD_ID, tabId: tabId ?? "" });
+    await vi.waitFor(() => expect(proxyAttempts).toBe(2));
+    await vi.waitFor(() => expect(contents?.loadURL).toHaveBeenCalledWith(previewUrl));
+    expect(manager.getState({ threadId: THREAD_ID }).lastError).toBeNull();
+    expect(contents?.reload).not.toHaveBeenCalled();
     manager.dispose();
   });
 });
