@@ -94,6 +94,7 @@ export type ServerProviderRuntimeState = typeof ServerProviderRuntimeState.Type;
 
 export const ServerProviderConnectionMethod = Schema.Literals([
   "codex_browser",
+  "codex_device_code",
   "claude_account",
   "claude_sso",
   "claude_console",
@@ -122,6 +123,9 @@ export const ServerProviderConnectionState = Schema.Struct({
   finishedAt: Schema.NullOr(IsoDateTime),
   message: TrimmedNonEmptyString,
   authorizationUrl: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
+  userCode: Schema.optionalKey(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(64), Schema.isPattern(/^[A-Za-z0-9-]+$/)),
+  ),
 });
 export type ServerProviderConnectionState = typeof ServerProviderConnectionState.Type;
 
@@ -550,6 +554,7 @@ export type ServerProviderUpdateResult = typeof ServerProviderUpdateResult.Type;
 export const ServerProviderInstallInput = Schema.Struct({
   provider: ProviderKind,
   planToken: TrimmedNonEmptyString,
+  connectionMethod: Schema.optional(ServerProviderConnectionMethod),
 });
 export type ServerProviderInstallInput = typeof ServerProviderInstallInput.Type;
 

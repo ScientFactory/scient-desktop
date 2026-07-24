@@ -278,15 +278,21 @@ export function describeProviderConnection(
           canCancel: false,
         };
       case "failed":
-      case "cancelled":
+      case "cancelled": {
+        const canRetrySignIn =
+          providerConnectionMethod(provider) !== null &&
+          (status?.available === true ||
+            installation?.status === "installed" ||
+            status?.runtime?.source === "managed");
         return {
           title,
           description: operation.message,
-          primaryAction: status?.available ? "sign_in" : "open_install_guide",
-          primaryLabel: status?.available ? "Try again" : "Open installation guide",
+          primaryAction: canRetrySignIn ? "sign_in" : "open_install_guide",
+          primaryLabel: canRetrySignIn ? "Try again" : "Open installation guide",
           busy: false,
           canCancel: false,
         };
+      }
     }
   }
 
@@ -302,6 +308,20 @@ export function describeProviderConnection(
   }
 
   if (!status.available) {
+    if (
+      (installation?.status === "failed" || installation?.status === "cancelled") &&
+      status.runtime?.source === "missing" &&
+      status.runtime.canInstall
+    ) {
+      return {
+        title,
+        description: installation.message,
+        primaryAction: "install",
+        primaryLabel: "Try installation again",
+        busy: false,
+        canCancel: false,
+      };
+    }
     if (status.installationState?.status === "installed" && providerConnectionMethod(provider)) {
       return {
         title,

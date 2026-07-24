@@ -176,6 +176,9 @@ jobs:
       - name: Test Effect Windows process spawn
         run: bun run --cwd apps/server test src/windowsProcessEffect.test.ts
 
+      - name: Test Windows provider runtime discovery
+        run: bun run --cwd apps/server test src/provider/Layers/ProviderRuntimeManager.test.ts
+
       - name: Test Windows private state initialization
         run: |
           bun run --cwd apps/server test src/serverPrivateDirectories.test.ts

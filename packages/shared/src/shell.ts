@@ -3,7 +3,8 @@
 // Exports: shell candidate resolution plus PATH/environment capture utilities.
 
 import * as OS from "node:os";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
 
 const PATH_CAPTURE_START = "__SYNARA_PATH_START__";
 const PATH_CAPTURE_END = "__SYNARA_PATH_END__";
@@ -14,6 +15,14 @@ type ExecFileSyncLike = (
   args: ReadonlyArray<string>,
   options: { encoding: "utf8"; timeout: number },
 ) => string;
+
+type ExecFileAsyncLike = (
+  file: string,
+  args: ReadonlyArray<string>,
+  options: { encoding: "utf8"; timeout: number; windowsHide: true },
+) => Promise<{ stdout: string }>;
+
+const execFileAsync = promisify(execFile) as ExecFileAsyncLike;
 
 function trimNonEmpty(value: string | null | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -260,6 +269,20 @@ export type WindowsEnvironmentReader = (
   execFile?: ExecFileSyncLike,
 ) => Partial<Record<string, string>>;
 
+function parseWindowsPersistentEnvironment(output: string): Partial<Record<string, string>> {
+  let parsed: {
+    machine?: Partial<Record<string, string>>;
+    user?: Partial<Record<string, string>>;
+  };
+  try {
+    parsed = JSON.parse(output.trim());
+  } catch {
+    return {};
+  }
+
+  return mergeWindowsScopes(parsed.machine ?? {}, parsed.user ?? {});
+}
+
 // NOTE: keep this on Windows PowerShell 5.1 (`powershell.exe`), not `pwsh`. WinPS 5.1's
 // `ConvertTo-Json` escapes non-ASCII as `\uXXXX`, so the stdout stays pure ASCII and
 // survives the OEM-codepage console encoding. `pwsh` emits raw UTF-8 and would corrupt
@@ -288,15 +311,16 @@ export const readWindowsPersistentEnvironment: WindowsEnvironmentReader = (
     { encoding: "utf8", timeout: 5000 },
   );
 
-  let parsed: {
-    machine?: Partial<Record<string, string>>;
-    user?: Partial<Record<string, string>>;
-  };
-  try {
-    parsed = JSON.parse(output.trim());
-  } catch {
-    return {};
-  }
-
-  return mergeWindowsScopes(parsed.machine ?? {}, parsed.user ?? {});
+  return parseWindowsPersistentEnvironment(output);
 };
+
+export async function readWindowsPersistentEnvironmentAsync(
+  run: ExecFileAsyncLike = execFileAsync,
+): Promise<Partial<Record<string, string>>> {
+  const { stdout } = await run(
+    resolveWindowsPowerShellPath(),
+    ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_ENVIRONMENT_SCRIPT],
+    { encoding: "utf8", timeout: 5000, windowsHide: true },
+  );
+  return parseWindowsPersistentEnvironment(stdout);
+}

@@ -8,6 +8,8 @@
  * @module ProviderConnection
  */
 import type {
+  ProviderKind,
+  ServerProviderConnectionMethod,
   ServerProviderConnectionCancelInput,
   ServerProviderConnectionError,
   ServerProviderConnectionResult,
@@ -27,6 +29,11 @@ export interface ProviderConnectionShape {
   readonly submitAuthorizationCode: (
     input: ServerProviderConnectionSubmitAuthorizationCodeInput,
   ) => Effect.Effect<ServerProviderConnectionResult, ServerProviderConnectionError>;
+  readonly startAfterInstallation: (input: {
+    readonly provider: ProviderKind;
+    readonly method: ServerProviderConnectionMethod;
+    readonly installationOperationId: string;
+  }) => Effect.Effect<void>;
 }
 
 export class ProviderConnection extends ServiceMap.Service<

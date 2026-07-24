@@ -1,6 +1,7 @@
 import type {
   ProviderKind,
   ServerProviderConnectionState,
+  ServerProviderInstallationState,
   ServerProviderRuntimeSource,
   ServerProviderStatus,
 } from "@synara/contracts";
@@ -33,6 +34,8 @@ import {
   expectedMethodForProvider,
   makeProviderConnectionLive,
   parseAntigravityOAuthAuthorizationUrl,
+  parseCodexDeviceAuthorization,
+  parseCodexOAuthAuthorizationUrl,
   parseGrokOAuthAuthorizationUrl,
   providerConnectionCommandArgs,
 } from "./ProviderConnection";
@@ -153,6 +156,9 @@ function makeConnectionTestLayer(input?: {
   readonly listModelsHanging?: boolean;
   readonly initiallyAuthenticated?: boolean;
   readonly requiresProviderAccount?: boolean | null;
+  readonly installationState?:
+    | ServerProviderInstallationState
+    | (() => ServerProviderInstallationState | null);
   readonly onListModels?: (input: {
     readonly provider: ProviderKind;
     readonly binaryPath?: string;
@@ -337,7 +343,10 @@ function makeConnectionTestLayer(input?: {
         previousReleaseAvailable: false,
         bundled: false,
         canInstall: false,
-        installationState: null,
+        installationState:
+          typeof input?.installationState === "function"
+            ? input.installationState()
+            : (input?.installationState ?? null),
       }),
     resolve: (provider, configured) =>
       Effect.succeed({
@@ -417,6 +426,10 @@ describe("provider connection command allowlist", () => {
   it("uses Codex browser login with fixed argv", () => {
     expect(expectedMethodForProvider("codex")).toBe("codex_browser");
     expect(providerConnectionCommandArgs("codex", "codex_browser")).toEqual(["login"]);
+    expect(providerConnectionCommandArgs("codex", "codex_device_code")).toEqual([
+      "login",
+      "--device-auth",
+    ]);
   });
 
   it("uses normal Claude account login by default and keeps explicit alternatives", () => {
@@ -466,6 +479,49 @@ describe("provider connection command allowlist", () => {
     expect(providerConnectionCommandArgs("claudeAgent", "claude_subscription")).toBeNull();
     expect(providerConnectionCommandArgs("cursor", "codex_browser")).toBeNull();
     expect(expectedMethodForProvider("opencode")).toBeNull();
+  });
+});
+
+describe("Codex authorization output parsing", () => {
+  const authorizationUrl =
+    "https://auth.openai.com/oauth/authorize?response_type=code&client_id=test-client&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
+
+  it("accepts only an official PKCE browser authorization URL", () => {
+    expect(parseCodexOAuthAuthorizationUrl(`Open this URL:\n${authorizationUrl}\n`)).toBe(
+      authorizationUrl,
+    );
+    expect(
+      parseCodexOAuthAuthorizationUrl(
+        authorizationUrl.replace("auth.openai.com", "auth.openai.com.example.com"),
+      ),
+    ).toBeNull();
+    expect(
+      parseCodexOAuthAuthorizationUrl(authorizationUrl.replace("code_challenge", "ignored")),
+    ).toBeNull();
+    expect(
+      parseCodexOAuthAuthorizationUrl(
+        authorizationUrl.replace(
+          "http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback",
+          "https%3A%2F%2Fexample.com%2Fcallback",
+        ),
+      ),
+    ).toBeNull();
+  });
+
+  it("extracts the official device page and bounded one-time code", () => {
+    expect(
+      parseCodexDeviceAuthorization(
+        "1. Open this link\n\u001B[34mhttps://auth.openai.com/codex/device\u001B[0m\n2. Enter this one-time code\n\u001B[34mABCD-EFGH\u001B[0m\n",
+      ),
+    ).toEqual({
+      authorizationUrl: "https://auth.openai.com/codex/device",
+      userCode: "ABCD-EFGH",
+    });
+    expect(
+      parseCodexDeviceAuthorization(
+        "https://auth.openai.com.example.com/codex/device\nnot-a-device-code",
+      ),
+    ).toEqual({});
   });
 });
 
@@ -541,6 +597,151 @@ describe("Antigravity OAuth authorization URL parsing", () => {
 });
 
 describe("ProviderConnectionLive", () => {
+  it("waits for the exact installation operation before starting sign-in", async () => {
+    const onSpawn = vi.fn();
+    let installationState: ServerProviderInstallationState = {
+      operationId: "trusted-plan-transition",
+      operation: "install",
+      status: "downloading",
+      startedAt: "2026-07-23T10:00:00.000Z",
+      finishedAt: null,
+      message: "Downloading Codex.",
+    };
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      installationState: () => installationState,
+      onSpawn,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.startAfterInstallation({
+          provider: "codex",
+          method: "codex_browser",
+          installationOperationId: "trusted-plan-transition",
+        });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(onSpawn).not.toHaveBeenCalled();
+        installationState = {
+          ...installationState,
+          status: "installed",
+          finishedAt: "2026-07-23T10:00:02.000Z",
+          message: "Codex is installed and verified.",
+        };
+        const connected = fixture.waitForConnectionState((state) => state?.status === "connected");
+        yield* Effect.promise(() => connected);
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "codex", args: ["login"] }),
+    );
+  });
+
+  it.each(["failed", "cancelled"] as const)(
+    "does not start sign-in after the exact installation operation is %s",
+    async (status) => {
+      const onSpawn = vi.fn();
+      const fixture = makeConnectionTestLayer({
+        provider: "codex",
+        installationState: {
+          operationId: `trusted-plan-${status}`,
+          operation: "install",
+          status,
+          startedAt: "2026-07-23T10:00:00.000Z",
+          finishedAt: "2026-07-23T10:00:02.000Z",
+          message: `Installation ${status}.`,
+        },
+        onSpawn,
+      });
+
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          const connection = yield* ProviderConnection;
+          yield* connection.startAfterInstallation({
+            provider: "codex",
+            method: "codex_browser",
+            installationOperationId: `trusted-plan-${status}`,
+          });
+          yield* Effect.sleep(Duration.millis(40));
+        }).pipe(Effect.provide(fixture.layer)),
+      );
+
+      expect(onSpawn).not.toHaveBeenCalled();
+    },
+  );
+
+  it("starts sign-in only after the exact requested installation succeeds", async () => {
+    const onSpawn = vi.fn();
+    const installationState = {
+      operationId: "trusted-plan-1",
+      operation: "install",
+      status: "installed",
+      startedAt: "2026-07-23T10:00:00.000Z",
+      finishedAt: "2026-07-23T10:00:02.000Z",
+      message: "Codex is installed and verified.",
+    } satisfies ServerProviderInstallationState;
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      installationState,
+      onSpawn,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.startAfterInstallation({
+          provider: "codex",
+          method: "codex_browser",
+          installationOperationId: "different-plan",
+        });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(onSpawn).not.toHaveBeenCalled();
+        yield* connection.startAfterInstallation({
+          provider: "codex",
+          method: "codex_browser",
+          installationOperationId: "trusted-plan-1",
+        });
+        const connected = fixture.waitForConnectionState((state) => state?.status === "connected");
+        yield* Effect.promise(() => connected);
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ command: "codex", args: ["login"] }),
+    );
+  });
+
+  it("publishes Codex's official device page and one-time code", async () => {
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      hanging: true,
+      processStdout:
+        "1. Open this link\nhttps://auth.openai.com/codex/device\n2. Enter this one-time code\nABCD-EFGH\n",
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const codePublished = fixture.waitForConnectionState(
+          (state) => state?.userCode === "ABCD-EFGH",
+        );
+        const started = yield* connection.start({
+          provider: "codex",
+          method: "codex_device_code",
+        });
+        const operationId = started.providers[0]?.connectionState?.operationId;
+        yield* Effect.promise(() => codePublished);
+        expect(fixture.getConnectionState()).toMatchObject({
+          authorizationUrl: "https://auth.openai.com/codex/device",
+          userCode: "ABCD-EFGH",
+        });
+        yield* connection.cancel({ provider: "codex", operationId: operationId! });
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
   it("runs managed Antigravity's browser-auth bootstrap and verifies models", async () => {
     const onSpawn = vi.fn();
     const onAuthenticationKill = vi.fn();
