@@ -919,7 +919,7 @@ function SplitPaneSurface(props: {
           if (options?.restoreFocus) {
             window.requestAnimationFrame(() => {
               if (surfaceRef.current) {
-                restoreSplitChatFocusAfterBrowserClose(surfaceRef.current);
+                restoreSplitChatFocusAfterBrowserClose(surfaceRef.current, props.onFocus);
               }
             });
           }

@@ -22,7 +22,11 @@ export function restoreRightDockFocusAfterBrowserClose(document: Document): bool
   );
 }
 
-export function restoreSplitChatFocusAfterBrowserClose(pane: HTMLElement): boolean {
+export function restoreSplitChatFocusAfterBrowserClose(
+  pane: HTMLElement,
+  activatePane: () => void,
+): boolean {
+  activatePane();
   return focusTarget(
     pane.querySelector<HTMLElement>(
       '[data-chat-composer-form="true"] [data-testid="composer-editor"][contenteditable="true"]',
