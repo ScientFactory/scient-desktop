@@ -4,7 +4,7 @@
 // Depends on: live waveform samples and caller-owned record/cancel/send actions.
 
 import { memo, useEffect, useRef, useState } from "react";
-import { FiArrowUp, FiX } from "react-icons/fi";
+import { FiArrowUp } from "react-icons/fi";
 import { IoStopSharp } from "react-icons/io5";
 
 import { CentralIcon } from "~/lib/central-icons";
