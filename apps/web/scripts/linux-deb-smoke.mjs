@@ -346,8 +346,8 @@ async function addProjectByTypedPath(page, workspacePath) {
     .getByText(basename(workspacePath), { exact: true })
     .first()
     .waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
-  const addButton = folderDialog.getByRole("button", { name: /^Add\b/u });
-  await addButton.waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
+  const openButton = folderDialog.getByRole("button", { name: "Open Enter", exact: true });
+  await openButton.waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
   if (
     await folderDialog
       .getByText(/SocketOpenError/)
@@ -357,7 +357,7 @@ async function addProjectByTypedPath(page, workspacePath) {
   ) {
     throw new Error("Folder browsing failed with SocketOpenError.");
   }
-  await addButton.click({ timeout: ACTION_TIMEOUT_MS });
+  await openButton.click({ timeout: ACTION_TIMEOUT_MS });
   const emptyProjectChoice = page.getByRole("button", {
     name: /Open an empty project/,
   });
