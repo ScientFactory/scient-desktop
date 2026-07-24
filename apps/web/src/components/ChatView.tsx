@@ -3405,6 +3405,10 @@ export default function ChatView({
   const isMentionTrigger = composerTriggerKind === "mention";
   const platform = typeof navigator === "undefined" ? "" : navigator.platform;
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitBranchSourceCwd));
+  const isGitRepo = resolveGitRepoUiState({
+    isStudioContainer,
+    queriedIsRepo: branchesQuery.data?.isRepo,
+  });
   const localFolderBrowseRootPath = getLocalFolderBrowseRootPath(
     serverConfigQuery.data?.homeDir ?? null,
     isMacPlatform(platform),
@@ -3553,7 +3557,7 @@ export default function ChatView({
       ? stripComposerTriggerText(prompt, composerTrigger)
       : prompt;
   const canOfferReviewCommand =
-    (branchesQuery.data?.isRepo ?? true) &&
+    isGitRepo &&
     canOfferReviewSlashCommand({
       prompt: composerPromptWithoutActiveSlashTrigger,
       imageCount: composerImages.length,
@@ -3861,10 +3865,6 @@ export default function ChatView({
       worktreePath: activeThreadWorktreePath,
     });
   }, [activeProjectCwd, activeThreadWorktreePath]);
-  const isGitRepo = resolveGitRepoUiState({
-    isStudioContainer,
-    queriedIsRepo: branchesQuery.data?.isRepo,
-  });
   const showGitActions = shouldShowGitActions({
     isStudioContainer,
     isContainerLandingProject,
