@@ -132,10 +132,11 @@ The release owner prepares and approves the entry before promotion:
 4. Keep the language warm, concise, and nontechnical. Do not mention commits,
    pull requests, frameworks, internal components, protocols, migrations, or
    implementation details.
-5. Add only Scient-owned PNG artwork under `apps/web/public/release-notes/`.
-   The release gate decodes every PNG in that tree, including unreferenced files,
-   and rejects symlinks, special files, and non-PNG leaves before Vite can stage
-   them. Use an exact `/release-notes/...` bundled path. Feature images need
+5. Add only Scient-owned, non-interlaced PNG artwork under
+   `apps/web/public/release-notes/`. The release gate decodes every PNG in that
+   tree, including unreferenced files, and rejects interlaced images, oversized
+   dimensions or files, symlinks, special files, and non-PNG leaves before Vite
+   can stage them. Use an exact `/release-notes/...` bundled path. Feature images need
    useful alt text; the compact card hero is decorative. Verify artwork at
    normal, minimum, mobile, and short-height layouts.
 6. Have the product owner approve the claims, order, and wording. This human

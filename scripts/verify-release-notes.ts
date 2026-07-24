@@ -73,7 +73,11 @@ export function verifyReleaseNoteForVersion(
 ): ReleaseNoteVerification {
   let version = rawVersion.trim().replace(/^v/, "");
   const errors: string[] = [];
-  errors.push(...verifyBundledReleaseNoteAssetTree(options.publicRoot ?? WEB_PUBLIC_ROOT));
+  const publicRoot = options.publicRoot ?? WEB_PUBLIC_ROOT;
+  const assetExists =
+    options.assetExists ??
+    ((publicPath: string) => isSafeBundledReleaseNoteRasterAsset(publicPath, publicRoot));
+  errors.push(...verifyBundledReleaseNoteAssetTree(publicRoot));
   try {
     version = normalizeReleaseVersion(rawVersion);
   } catch (error) {
@@ -106,7 +110,7 @@ export function verifyReleaseNoteForVersion(
           : `${label} must contain between 3 and 5 user-facing highlights.`,
       );
     }
-    validateImage(label, "hero", entry.heroImage, errors, options.assetExists);
+    validateImage(label, "hero", entry.heroImage, errors, assetExists);
 
     const featureIds = new Set<string>();
     for (const [featureIndex, feature] of entry.features.entries()) {
@@ -127,7 +131,7 @@ export function verifyReleaseNoteForVersion(
         feature.image,
         feature.imageAlt,
         errors,
-        options.assetExists,
+        assetExists,
       );
     }
   }
@@ -176,15 +180,11 @@ function validateImage(
     errors.push(
       `${label} ${kind} must be a bundled PNG asset under /release-notes/ with no URL, query, hash, or traversal.`,
     );
-  } else if (!(assetExists ?? bundledReleaseNoteAssetExists)(image)) {
+  } else if (!assetExists?.(image)) {
     errors.push(
       `${label} ${kind} must resolve to a regular, non-symlinked PNG file in apps/web/public${image}.`,
     );
   }
-}
-
-function bundledReleaseNoteAssetExists(publicPath: string): boolean {
-  return isSafeBundledReleaseNoteRasterAsset(publicPath, WEB_PUBLIC_ROOT);
 }
 
 export function isSafeBundledReleaseNoteRasterAsset(
@@ -211,7 +211,7 @@ export function isSafeBundledReleaseNoteRasterAsset(
     }
 
     const candidateStat = lstatSync(candidatePath);
-    if (!candidateStat.isFile()) return false;
+    if (!candidateStat.isFile() || candidateStat.size > MAX_RELEASE_NOTE_PNG_BYTES) return false;
     const canonicalCandidatePath = realpathSync(candidatePath);
     const canonicalRelativePath = relative(realpathSync(releaseNotesRoot), canonicalCandidatePath);
     if (!isContainedRelativePath(canonicalRelativePath)) {
@@ -296,7 +296,9 @@ function isDecodableReleaseNotePng(contents: Buffer): boolean {
     !contents
       .subarray(0, 8)
       .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) ||
-    contents.toString("ascii", 12, 16) !== "IHDR"
+    contents.readUInt32BE(8) !== 13 ||
+    contents.toString("ascii", 12, 16) !== "IHDR" ||
+    contents[28] !== 0
   ) {
     return false;
   }

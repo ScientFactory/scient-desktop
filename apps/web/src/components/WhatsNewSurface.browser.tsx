@@ -31,6 +31,16 @@ const RELEASE: WhatsNewEntry = {
       title: "Find your work faster",
       description: "Scient now keeps the things you need easier to reach.",
     },
+    {
+      id: "calmer-updates",
+      title: "Understand each update",
+      description: "See a short, friendly summary of what became better for you.",
+    },
+    {
+      id: "quieter-notices",
+      title: "Stay in control",
+      description: "The note appears once and waits for you to choose when to read it.",
+    },
   ],
 };
 
@@ -204,10 +214,10 @@ describe("Scient release-note surface", () => {
     }
   });
 
-  it("does not consume the card inside the real closed mobile sidebar", async () => {
+  it("opens and dismisses the note coherently inside the real mobile sidebar", async () => {
     seedUpgrade();
-    await page.viewport(390, 700);
-    await renderIntegratedSidebar(true);
+    await page.viewport(390, 844);
+    const screen = await renderIntegratedSidebar(true);
     await new Promise((resolve) => setTimeout(resolve, 80));
     expect(localStorage.getItem(STORAGE_KEY)).not.toContain("lastPresentedVersion");
 
@@ -217,6 +227,37 @@ describe("Scient release-note surface", () => {
     await expect
       .poll(() => localStorage.getItem(STORAGE_KEY))
       .toContain('"lastPresentedVersion":"1.2.3"');
+
+    await page.getByRole("button", { name: /Read what improved in Scient v1.2.3/ }).click();
+    const dialog = page.getByRole("dialog", { name: /new in Scient/ });
+    await expect.element(dialog).toBeVisible();
+    expect(document.activeElement?.textContent).toContain("new in Scient");
+    const dialogPopup = document.querySelector<HTMLElement>("[data-slot=dialog-popup]")!;
+    await expect
+      .poll(() => dialogPopup.getBoundingClientRect().bottom)
+      .toBeLessThanOrEqual(innerHeight);
+    const dialogRect = dialogPopup.getBoundingClientRect();
+    expect(
+      dialogPopup.contains(
+        document.elementFromPoint(dialogRect.left + dialogRect.width / 2, dialogRect.top + 24),
+      ),
+    ).toBe(true);
+
+    await userEvent.keyboard("{Escape}");
+    await expect.element(dialog).not.toBeInTheDocument();
+    expect(document.activeElement?.textContent).toContain("Activity");
+
+    await screen.unmount();
+    localStorage.clear();
+    seedUpgrade();
+    await renderIntegratedSidebar(true);
+    await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+    await page.getByRole("button", { name: /Read what improved in Scient v1.2.3/ }).click();
+    await page.getByRole("button", { name: "Done" }).click();
+    await expect
+      .element(page.getByRole("dialog", { name: /new in Scient/ }))
+      .not.toBeInTheDocument();
+    expect(document.activeElement?.textContent).toContain("Activity");
   });
 
   it("keeps the card inline in the real 208px sidebar footer [geometry:linux]", async () => {
@@ -244,5 +285,33 @@ describe("Scient release-note surface", () => {
     expect(cardRect.left).toBeGreaterThanOrEqual(footerRect.left);
     expect(cardRect.right).toBeLessThanOrEqual(footerRect.right);
     expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(innerWidth);
+  });
+
+  it("keeps a standard release dialog usable in a short-height viewport [geometry:linux]", async () => {
+    seedUpgrade();
+    await page.viewport(900, 360);
+    await renderIntegratedSidebar(false);
+    await page.getByRole("button", { name: /Read what improved in Scient v1.2.3/ }).click();
+
+    const dialog = page.getByRole("dialog", { name: /new in Scient/ });
+    await expect.element(dialog).toBeVisible();
+    const popup = document.querySelector<HTMLElement>("[data-slot=dialog-popup]")!;
+    const header = popup.querySelector<HTMLElement>("[data-slot=dialog-header]")!;
+    const footer = popup.querySelector<HTMLElement>("[data-slot=dialog-footer]")!;
+    const viewport = popup.querySelector<HTMLElement>("[data-slot=scroll-area-viewport]")!;
+    const [popupRect, headerRect, footerRect] = [
+      popup.getBoundingClientRect(),
+      header.getBoundingClientRect(),
+      footer.getBoundingClientRect(),
+    ];
+
+    expect(popupRect.top).toBeGreaterThanOrEqual(0);
+    expect(popupRect.bottom).toBeLessThanOrEqual(innerHeight);
+    expect(headerRect.top).toBeGreaterThanOrEqual(popupRect.top);
+    expect(footerRect.bottom).toBeLessThanOrEqual(popupRect.bottom);
+    expect(viewport.scrollHeight).toBeGreaterThan(viewport.clientHeight);
+    viewport.scrollTop = viewport.scrollHeight;
+    await expect.poll(() => viewport.scrollTop).toBeGreaterThan(0);
+    await expect.element(page.getByRole("button", { name: "Done" })).toBeVisible();
   });
 });

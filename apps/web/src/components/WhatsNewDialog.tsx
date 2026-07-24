@@ -87,7 +87,7 @@ export default function WhatsNewDialog({
   return (
     <Dialog handle={dialogHandle} open={open} onOpenChange={onOpenChange}>
       <DialogPopup
-        className="max-w-lg gap-0 p-0"
+        className="max-w-lg gap-0 p-0 max-sm:max-h-[calc(100dvh-3rem)]"
         surface="solid"
         initialFocus={titleRef}
         finalFocus={() =>

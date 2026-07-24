@@ -258,9 +258,24 @@ function verifyReleaseWorkflowSafety(): void {
   const releaseMetaIndex = preflightSteps.findIndex(
     (step) => step.name === "Resolve release policy",
   );
+  const publicationSourceIndex = preflightSteps.findIndex(
+    (step) => step.name === "Verify publication source",
+  );
+  const installDependenciesIndex = preflightSteps.findIndex(
+    (step) => step.name === "Install dependencies",
+  );
   const releaseNoteIndex = preflightSteps.findIndex(
     (step) => step.name === "Verify release-note catalog structure",
   );
+  if (
+    publicationSourceIndex < 0 ||
+    installDependenciesIndex <= publicationSourceIndex ||
+    installDependenciesIndex >= releaseMetaIndex
+  ) {
+    throw new Error(
+      "Expected release dependencies to install only after publication-source verification and before release policy resolution.",
+    );
+  }
   if (releaseMetaIndex < 0 || releaseNoteIndex !== releaseMetaIndex + 1) {
     throw new Error(
       "Expected the structural release-note gate immediately after release policy resolution.",

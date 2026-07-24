@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -193,6 +193,12 @@ describe("verifyReleaseNoteForVersion", () => {
     forged.writeUInt8(forged.readUInt8(forgedByteIndex) ^ 0xff, forgedByteIndex);
     writeFileSync(join(releaseNotesRoot, "forged.png"), forged);
     writeFileSync(join(releaseNotesRoot, "cut-off.png"), png.subarray(0, png.length - 8));
+    const interlaced = Buffer.from(png);
+    interlaced[28] = 1;
+    writeFileSync(join(releaseNotesRoot, "interlaced.png"), interlaced);
+    const oversizedPath = join(releaseNotesRoot, "oversized.png");
+    writeFileSync(oversizedPath, png);
+    truncateSync(oversizedPath, 10 * 1024 * 1024 + 1);
     mkdirSync(join(releaseNotesRoot, "directory.png"));
 
     expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/1.2.3/hero.png", publicRoot)).toBe(
@@ -208,12 +214,34 @@ describe("verifyReleaseNoteForVersion", () => {
     expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/truncated.png", publicRoot)).toBe(
       false,
     );
+    expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/interlaced.png", publicRoot)).toBe(
+      false,
+    );
+    expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/oversized.png", publicRoot)).toBe(
+      false,
+    );
     expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/directory.png", publicRoot)).toBe(
       false,
     );
     expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/missing.png", publicRoot)).toBe(
       false,
     );
+  });
+
+  it("uses a custom public root for referenced artwork as well as full-tree scanning", () => {
+    const publicRoot = mkdtempSync(join(tmpdir(), "scient-release-notes-reference-"));
+    temporaryDirectories.push(publicRoot);
+    const releaseNotesRoot = join(publicRoot, "release-notes", "1.2.3");
+    mkdirSync(releaseNotesRoot, { recursive: true });
+    writeFileSync(join(releaseNotesRoot, "hero.png"), makeValidPng());
+
+    expect(
+      verifyReleaseNoteForVersion(
+        "1.2.3",
+        [entry({ heroImage: "/release-notes/1.2.3/hero.png" })],
+        { publicRoot },
+      ).errors,
+    ).toEqual([]);
   });
 
   it("scans every release-note asset, including unreferenced leaves", () => {

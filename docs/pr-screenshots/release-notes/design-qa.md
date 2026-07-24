@@ -38,12 +38,28 @@ card, Activity, Settings hierarchy.
 
 ![Release-note card in the mobile sidebar](mobile-sidebar.jpg)
 
+Action: activate the card from inside the Sheet. Observed after the transition
+settled: the release dialog was the topmost modal; focus moved to its heading;
+all three standard-release highlights were readable; and the header and actions
+remained inside the viewport. Automated acceptance separately closes this nested
+path with both Escape and **Done**, verifies that only the topmost dialog closes,
+and confirms coherent focus recovery to Activity.
+
+![Full release-note dialog opened from the mobile sidebar](mobile-dialog.png)
+
 ## 5. Short-height layout
 
 Viewport: 900 x 360. The card, Activity state, and Settings remained visible and
 usable together without footer scrolling or overlap.
 
 ![Release-note card in a short-height desktop layout](short-height.jpg)
+
+Action: activate the card. Observed: the full three-highlight note stayed within
+the viewport; its header and footer remained fixed and reachable while the
+middle content panel supplied the bounded scrolling region. The geometry suite
+asserts the popup bounds, header/footer containment, and actual panel scrolling.
+
+![Full release-note dialog in a short-height viewport](short-height-dialog.png)
 
 ## 6. Reduced motion
 
@@ -65,7 +81,9 @@ unreferenced non-PNG/undecodable files, file and directory symlinks, and a FIFO.
 ## Evidence limits
 
 These captures prove the release-note components, placement, responsive reflow,
-focus result, and visible states in the browser implementation. They are not a
+nested-dialog layering, focus result, and visible states in the browser
+implementation. Browser console warning/error logs were empty during the added
+mobile and short-height dialog captures. They are not a
 packaged-updater acceptance test and do not claim that a real release note ships:
 the production catalog remains intentionally empty until a release owner approves
 the exact release entry.
