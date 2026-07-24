@@ -15,8 +15,12 @@ import {
   isLocalAbsolutePath,
   isWorkspaceRelativePathSafe,
   joinWorkspaceRelativePath,
+  parentDirectoryOfLocalPath,
 } from "@synara/shared/path";
-import { isSupportedLocalHtmlPath } from "@synara/shared/localPreviewFiles";
+import {
+  isSupportedLocalHtmlPath,
+  localFileViewerKindForPath,
+} from "@synara/shared/localPreviewFiles";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
@@ -1798,11 +1802,12 @@ function SingleChatSurface(props: {
       if (!absolutePath) {
         return null;
       }
-      if (!workspaceRoot) {
+      const htmlCwd = workspaceRoot ?? parentDirectoryOfLocalPath(absolutePath);
+      if (!htmlCwd) {
         return null;
       }
       const inspection = await queryClient.fetchQuery(
-        projectInspectHtmlArtifactQueryOptions({ cwd: workspaceRoot, path: absolutePath }),
+        projectInspectHtmlArtifactQueryOptions({ cwd: htmlCwd, path: absolutePath }),
       );
       // Thumbnails are deliberately inert. Never execute an interactive bundle
       // merely because its card scrolled into view.
@@ -1814,15 +1819,22 @@ function SingleChatSurface(props: {
         return null;
       }
       const prepared = await api.projects.prepareHtmlArtifactPreview({
-        cwd: workspaceRoot,
+        cwd: htmlCwd,
         path: absolutePath,
+        thumbnail: true,
       });
-      return prepared.mode === "static-document" ? (prepared.previewUrl ?? null) : null;
+      if (prepared.mode === "static-document") return prepared.previewUrl ?? null;
+      if (prepared.previewUrl) {
+        await api.projects
+          .revokeHtmlArtifactPreview({ previewUrl: prepared.previewUrl })
+          .catch(() => undefined);
+      }
+      return null;
     },
     [queryClient, workspaceRoot],
   );
   const openHtmlPreview = useCallback(
-    (path: string, destination: "internal" | "external"): boolean => {
+    (path: string): boolean => {
       const targetPath = resolveDockFileOpenTarget(path, workspaceRoot);
       if (!targetPath || !isSupportedLocalHtmlPath(targetPath)) {
         return false;
@@ -1837,58 +1849,67 @@ function SingleChatSurface(props: {
           : workspaceRoot
             ? joinWorkspaceRelativePath(workspaceRoot, targetPath)
             : null;
-        if (!absolutePath || !workspaceRoot) {
-          throw new Error("This HTML file is outside the active workspace.");
+        const htmlCwd = absolutePath
+          ? (workspaceRoot ?? parentDirectoryOfLocalPath(absolutePath))
+          : null;
+        if (!absolutePath || !htmlCwd) {
+          throw new Error("This HTML file path could not be resolved.");
         }
-        const prepared = await api.projects.prepareHtmlArtifactPreview({
-          cwd: workspaceRoot,
-          path: absolutePath,
-        });
-        let url = prepared.previewUrl ?? null;
-        let browserKind: "artifact" | "local-app" = "artifact";
-
-        if (prepared.mode === "dev-server-entrypoint") {
-          if (!prepared.runTarget || !props.projectId || !activeProject) {
-            throw new Error(prepared.reason ?? "No development command was found for this app.");
-          }
-          const confirmed = await api.dialogs.confirm(
-            `This HTML entrypoint needs its development server. Run this command?\n\n${prepared.runTarget.command}\n\nWorking directory: ${prepared.runTarget.cwd}`,
-          );
-          if (!confirmed) {
-            return;
-          }
-          const { server } = await api.projects.runDevServer({
-            projectId: props.projectId,
-            command: prepared.runTarget.command,
-            cwd: prepared.runTarget.cwd,
-            env: {
-              SYNARA_PROJECT_ROOT: activeProject.cwd,
-              ...(workspaceRoot !== activeProject.cwd
-                ? { SYNARA_WORKTREE_PATH: workspaceRoot }
-                : {}),
-            },
+        let previewUrlToRevoke: string | null = null;
+        try {
+          const prepared = await api.projects.prepareHtmlArtifactPreview({
+            cwd: htmlCwd,
+            path: absolutePath,
           });
-          if (server.status !== "running" || !server.url) {
-            throw new Error(server.error ?? "The development server did not become ready.");
-          }
-          url = server.url;
-          browserKind = "local-app";
-        }
+          let url = prepared.previewUrl ?? null;
+          previewUrlToRevoke = url;
+          let browserKind: "local-html" | "local-app" = "local-html";
 
-        if (prepared.mode === "unsupported") {
-          throw new Error(prepared.reason ?? "This HTML file cannot be previewed safely.");
-        }
-        if (!url) {
-          throw new Error("This HTML file is not available for preview.");
-        }
-        if (destination === "external") {
-          if (prepared.mode === "interactive-bundle") {
-            throw new Error(
-              "Interactive artifact previews are available only inside Scient's isolated browser.",
+          if (prepared.mode === "dev-server-entrypoint") {
+            if (!prepared.runTarget || !props.projectId || !activeProject) {
+              throw new Error(prepared.reason ?? "No development command was found for this app.");
+            }
+            const confirmed = await api.dialogs.confirm(
+              `This HTML entrypoint needs its development server. Run this command?\n\n${prepared.runTarget.command}\n\nWorking directory: ${prepared.runTarget.cwd}`,
             );
+            if (!confirmed) {
+              return;
+            }
+            const { server } = await api.projects.runDevServer({
+              projectId: props.projectId,
+              command: prepared.runTarget.command,
+              cwd: prepared.runTarget.cwd,
+              env: {
+                SYNARA_PROJECT_ROOT: activeProject.cwd,
+                ...(workspaceRoot && workspaceRoot !== activeProject.cwd
+                  ? { SYNARA_WORKTREE_PATH: workspaceRoot }
+                  : {}),
+              },
+            });
+            if (server.status !== "running" || !server.url) {
+              throw new Error(server.error ?? "The development server did not become ready.");
+            }
+            url = server.url;
+            previewUrlToRevoke = null;
+            browserKind = "local-app";
           }
-          await api.shell.openExternal(url);
-        } else {
+
+          if (prepared.mode === "unsupported") {
+            throw new Error(prepared.reason ?? "This HTML file cannot be previewed safely.");
+          }
+          if (!url) {
+            throw new Error("This HTML file is not available for preview.");
+          }
+          if (prepared.warnings.length > 0) {
+            transientAlertManager.add({
+              type: "warning",
+              title: "HTML preview opened with limits",
+              description: prepared.warnings
+                .slice(0, 3)
+                .map((warning) => warning.message)
+                .join(" "),
+            });
+          }
           requestImmediateDockHydration("browser");
           openPane(props.threadId, { kind: "browser" });
           await api.browser.open({
@@ -1896,7 +1917,19 @@ function SingleChatSurface(props: {
             initialUrl: url,
             kind: browserKind,
             displayUrl: absolutePath,
+            ...(browserKind === "local-html" &&
+            prepared.mode === "static-document" &&
+            prepared.allowedExternalUrls
+              ? { allowedExternalUrls: prepared.allowedExternalUrls }
+              : {}),
           });
+          previewUrlToRevoke = null;
+        } finally {
+          if (previewUrlToRevoke) {
+            await api.projects
+              .revokeHtmlArtifactPreview({ previewUrl: previewUrlToRevoke })
+              .catch(() => undefined);
+          }
         }
       })().catch((error: unknown) => {
         transientAlertManager.add({
@@ -1918,8 +1951,7 @@ function SingleChatSurface(props: {
     ],
   );
   // Chat surface: file references open in the right-dock file pane. References
-  // outside the workspace report unhandled so chips fall back to the external
-  // editor.
+  // outside the workspace use absolute-path preview grants when available.
   const dockFileOpener = useMemo<WorkspaceFileOpener>(
     () => ({
       openFile: (path) => {
@@ -1930,14 +1962,13 @@ function SingleChatSurface(props: {
         if (!targetPath) {
           return false;
         }
-        if (isSupportedLocalHtmlPath(targetPath)) {
-          return openHtmlPreview(path, "internal");
+        if (localFileViewerKindForPath(targetPath) === "html") {
+          return openHtmlPreview(path);
         }
         requestImmediateDockHydration("file");
         openPane(props.threadId, { kind: "file", filePath: targetPath });
         return true;
       },
-      openHtmlInExternalBrowser: (path) => openHtmlPreview(path, "external"),
       getHtmlPreviewUrl,
       prefetchFile: prefetchOpenerFile,
     }),
@@ -1956,19 +1987,19 @@ function SingleChatSurface(props: {
   const editorFileOpener = useMemo<WorkspaceFileOpener>(
     () => ({
       openFile: (path) => {
-        if (!workspaceRoot) {
+        const targetPath = resolveDockFileOpenTarget(path, workspaceRoot);
+        if (!targetPath) {
           return false;
         }
-        const relativePath = resolveWorkspaceFileOpenTarget(path, workspaceRoot);
-        if (!relativePath) {
-          return false;
+        if (localFileViewerKindForPath(targetPath) === "html") {
+          return openHtmlPreview(path);
         }
-        handleSelectEditorFile(relativePath);
+        handleSelectEditorFile(targetPath);
         return true;
       },
       prefetchFile: prefetchOpenerFile,
     }),
-    [handleSelectEditorFile, prefetchOpenerFile, workspaceRoot],
+    [handleSelectEditorFile, openHtmlPreview, prefetchOpenerFile, workspaceRoot],
   );
 
   const handleSplitSurface = useCallback(() => {
@@ -2247,10 +2278,14 @@ function SingleChatSurface(props: {
 
   const handleOpenDockFile = useCallback(
     (path: string) => {
+      if (localFileViewerKindForPath(path) === "html") {
+        openHtmlPreview(path);
+        return;
+      }
       requestImmediateDockHydration("file");
       openPane(props.threadId, { kind: "file", filePath: path });
     },
-    [openPane, props.threadId, requestImmediateDockHydration],
+    [openHtmlPreview, openPane, props.threadId, requestImmediateDockHydration],
   );
 
   const handleToggleDockFileExplorer = useCallback(() => {
@@ -2427,11 +2462,12 @@ function SingleChatSurface(props: {
   // so neither the ancestor prefetch nor the preview ever queries them.
   const rawEditorFilePath = props.search.editorFilePath ?? null;
   const selectedEditorFilePath =
-    rawEditorFilePath !== null && isWorkspaceRelativePathSafe(rawEditorFilePath)
+    rawEditorFilePath !== null &&
+    (isWorkspaceRelativePathSafe(rawEditorFilePath) || isLocalAbsolutePath(rawEditorFilePath))
       ? rawEditorFilePath
       : null;
   useEffect(() => {
-    if (!selectedEditorFilePath) {
+    if (!selectedEditorFilePath || isLocalAbsolutePath(selectedEditorFilePath)) {
       return;
     }
 
@@ -2499,7 +2535,7 @@ function SingleChatSurface(props: {
               selectedDiffFilePath={editorDiffPanelState.diffFilePath ?? null}
               diffOptionsControl={editorDiffOptionsControl}
               onSelectDiffFile={handleSelectEditorDiffFile}
-              onSelectFile={handleSelectEditorFile}
+              onSelectFile={editorFileOpener.openFile}
               onToggleDirectory={handleToggleEditorDirectory}
               onCenterModeChange={setEditorCenterMode}
               onExitEditorView={handleCloseEditorView}
