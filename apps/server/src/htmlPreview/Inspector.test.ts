@@ -91,7 +91,21 @@ describe("inspectHtmlArtifact", () => {
     });
   });
 
-  it("reports blocked external resources without granting them network access", async () => {
+  it("still opens source-module HTML when no development command can be found", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(path.join(workspace, "main.tsx"), "export {};");
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      '<main id="root"></main><script type="module" src="main.tsx"></script>',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+    expect(inspected.result.runTarget).toBeUndefined();
+  });
+
+  it("recognizes external resources without reporting them as blocked", async () => {
     const workspace = await makeWorkspace();
     await fs.writeFile(
       path.join(workspace, "index.html"),
@@ -101,15 +115,10 @@ describe("inspectHtmlArtifact", () => {
     const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
 
     expect(inspected.result.mode).toBe("interactive-bundle");
-    expect(inspected.result.warnings).toEqual([
-      {
-        code: "external-resource-blocked",
-        message: "External script blocked in preview: https://cdn.example/app.js",
-      },
-    ]);
+    expect(inspected.result.warnings).toEqual([]);
   });
 
-  it("fails closed for files outside the workspace", async () => {
+  it("inspects absolute files outside the workspace", async () => {
     const workspace = await makeWorkspace();
     const outside = await makeWorkspace();
     const outsideFile = path.join(outside, "outside.html");
@@ -117,7 +126,7 @@ describe("inspectHtmlArtifact", () => {
 
     const inspected = await inspectHtmlArtifact({ cwd: workspace, path: outsideFile });
 
-    expect(inspected.result.mode).toBe("unsupported");
-    expect(inspected.absolutePath).toBeNull();
+    expect(inspected.result.mode).toBe("static-document");
+    expect(inspected.absolutePath).toBe(await fs.realpath(outsideFile));
   });
 });

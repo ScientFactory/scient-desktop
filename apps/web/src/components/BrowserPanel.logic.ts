@@ -63,6 +63,54 @@ export interface BrowserCopyFeedback {
   message: string;
 }
 
+type HtmlPreviewGrantTab = Pick<BrowserTabState, "id" | "kind" | "url">;
+
+export interface HtmlPreviewGrantReconciliation {
+  active: Map<string, string>;
+  revoked: string[];
+}
+
+// A local preview grant belongs to the tab that opened it, not to the tab's current URL.
+// Keep the original grant while that tab navigates within the site, onto the web, or back
+// through history, and revoke it only after the owning preview tab disappears.
+export function reconcileHtmlPreviewGrants(
+  previous: ReadonlyMap<string, string>,
+  tabs: readonly HtmlPreviewGrantTab[],
+): HtmlPreviewGrantReconciliation {
+  const active = new Map<string, string>();
+
+  for (const tab of tabs) {
+    if (tab.kind !== "artifact" && tab.kind !== "local-html") {
+      continue;
+    }
+    active.set(tab.id, previous.get(tab.id) ?? tab.url);
+  }
+
+  const activeGrantOrigins = new Set(
+    [...active.values()].map((previewUrl) => {
+      try {
+        return new URL(previewUrl).origin;
+      } catch {
+        return previewUrl;
+      }
+    }),
+  );
+  const revoked: string[] = [];
+  for (const [tabId, previewUrl] of previous) {
+    let grantOrigin = previewUrl;
+    try {
+      grantOrigin = new URL(previewUrl).origin;
+    } catch {
+      // Keep malformed values isolated by their exact string.
+    }
+    if (!active.has(tabId) && !activeGrantOrigins.has(grantOrigin)) {
+      revoked.push(previewUrl);
+    }
+  }
+
+  return { active, revoked };
+}
+
 export function browserCopyFeedbackMatches(
   feedback: BrowserCopyFeedback | null,
   scope: { tabId: string; url: string } | null,

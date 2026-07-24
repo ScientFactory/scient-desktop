@@ -24,28 +24,6 @@ const RESOURCE_GRAPH_MAX_FILES = 250;
 const RESOURCE_GRAPH_PARSE_MAX_BYTES = 1_000_000;
 const DEV_SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".jsx"]);
 const BROWSER_SCRIPT_EXTENSIONS = new Set([".js", ".mjs"]);
-const ALLOWED_LOCAL_RESOURCE_EXTENSIONS = new Set([
-  ".avif",
-  ".bmp",
-  ".css",
-  ".gif",
-  ".heic",
-  ".heif",
-  ".ico",
-  ".jpeg",
-  ".jpg",
-  ".js",
-  ".mjs",
-  ".otf",
-  ".png",
-  ".svg",
-  ".tiff",
-  ".ttf",
-  ".webp",
-  ".woff",
-  ".woff2",
-]);
-
 type DocumentNode = DefaultTreeAdapterMap["document"];
 type Node = DefaultTreeAdapterMap["node"];
 type Element = DefaultTreeAdapterMap["element"];
@@ -54,6 +32,7 @@ export interface InspectedHtmlArtifact {
   readonly result: ProjectInspectHtmlArtifactResult;
   readonly absolutePath: string | null;
   readonly baseDirectory: string | null;
+  readonly siteRoot: string | null;
   readonly allowedResourcePaths: readonly string[];
 }
 
@@ -172,6 +151,7 @@ function unsupported(reason: string): InspectedHtmlArtifact {
     result: { mode: "unsupported", reason, warnings: [] },
     absolutePath: null,
     baseDirectory: null,
+    siteRoot: null,
     allowedResourcePaths: [],
   };
 }
@@ -181,6 +161,7 @@ const CSS_RESOURCE_PATTERN = /(?:url\(\s*|@import\s+(?:url\(\s*)?)["']?([^"')\s]
 async function collectAllowedResourcePaths(
   resources: readonly string[],
   baseDirectory: string,
+  resourceBoundary: string,
 ): Promise<readonly string[]> {
   const pending = resources
     .map((resource) => resolveLocalResourcePath(resource, baseDirectory))
@@ -191,7 +172,8 @@ async function collectAllowedResourcePaths(
     const candidate = pending.shift();
     if (!candidate) continue;
     const canonical = await fs.realpath(candidate).catch(() => null);
-    if (!canonical || !isPathInside(canonical, baseDirectory) || allowed.has(canonical)) continue;
+    if (!canonical || !isPathInside(canonical, resourceBoundary) || allowed.has(canonical))
+      continue;
     const stat = await fs.stat(canonical).catch(() => null);
     if (!stat?.isFile()) continue;
     allowed.add(canonical);
@@ -239,6 +221,33 @@ async function collectAllowedResourcePaths(
   return [...allowed];
 }
 
+function commonSiteRoot(
+  entryPath: string,
+  resourcePaths: readonly string[],
+  resourceBoundary: string,
+): string {
+  let common = path.dirname(entryPath);
+  for (const resourcePath of resourcePaths) {
+    while (!isPathInside(resourcePath, common) && common !== resourceBoundary) {
+      const parent = path.dirname(common);
+      if (parent === common || !isPathInside(parent, resourceBoundary)) break;
+      common = parent;
+    }
+  }
+  return isPathInside(common, resourceBoundary) ? common : resourceBoundary;
+}
+
+async function readInspectionPrefix(filePath: string): Promise<string> {
+  const handle = await fs.open(filePath, "r");
+  try {
+    const buffer = Buffer.allocUnsafe(HTML_INSPECTION_MAX_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, bytesRead).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function inspectHtmlArtifact(
   input: ProjectInspectHtmlArtifactInput,
 ): Promise<InspectedHtmlArtifact> {
@@ -251,8 +260,14 @@ export async function inspectHtmlArtifact(
     ? path.resolve(input.path)
     : path.resolve(canonicalWorkspaceRoot, input.path);
   const absolutePath = await fs.realpath(requestedPath).catch(() => null);
-  if (!absolutePath || !isPathInside(absolutePath, canonicalWorkspaceRoot)) {
-    return unsupported("The HTML file is outside the active workspace or no longer exists.");
+  if (!absolutePath) {
+    return unsupported("The HTML file no longer exists.");
+  }
+  // Relative references remain workspace-contained. Absolute file links are
+  // intentionally allowed: chat transcripts and tool output frequently point
+  // at deliverables in Downloads, temporary workspaces, or another checkout.
+  if (!path.isAbsolute(input.path) && !isPathInside(absolutePath, canonicalWorkspaceRoot)) {
+    return unsupported("The relative HTML path resolves outside the active workspace.");
   }
   if (!isSupportedLocalHtmlPath(absolutePath)) {
     return unsupported("Only HTML files can be inspected for browser preview.");
@@ -262,14 +277,17 @@ export async function inspectHtmlArtifact(
   if (!stat?.isFile()) {
     return unsupported("The HTML artifact is not a file.");
   }
-  if (stat.size > HTML_INSPECTION_MAX_BYTES) {
-    return unsupported("The HTML artifact is too large to inspect safely.");
-  }
-
-  const source = await fs.readFile(absolutePath, "utf8");
+  const source = await readInspectionPrefix(absolutePath);
   const document = parse(source) as DocumentNode;
   const baseDirectory = path.dirname(absolutePath);
   const warnings: ProjectHtmlArtifactWarning[] = [];
+  if (stat.size > HTML_INSPECTION_MAX_BYTES) {
+    warnings.push({
+      code: "inspection-truncated",
+      message:
+        "Only the beginning of this large HTML file was inspected; the full file will still open.",
+    });
+  }
   const localResources: Array<{ value: string; executable: boolean }> = [];
   let title: string | undefined;
   let hasInlineScript = false;
@@ -304,10 +322,6 @@ export async function inspectHtmlArtifact(
       }
       if (isExternalResource(sourcePath)) {
         hasBrowserScript = true;
-        addWarning({
-          code: "external-resource-blocked",
-          message: `External script blocked in preview: ${sourcePath.slice(0, 300)}`,
-        });
         return;
       }
       const extension = lowerCaseExtensionOf(sourcePath.split(/[?#]/, 1)[0] ?? "");
@@ -330,30 +344,12 @@ export async function inspectHtmlArtifact(
       tagName === "link" ? attributeOf(element, "href") : attributeOf(element, "src");
     if (!resourceAttribute) return;
     if (isExternalResource(resourceAttribute)) {
-      addWarning({
-        code: "external-resource-blocked",
-        message: `External resource blocked in preview: ${resourceAttribute.slice(0, 300)}`,
-      });
       return;
     }
     localResources.push({ value: resourceAttribute, executable: false });
   });
 
   for (const resource of localResources) {
-    const cleanValue = resource.value.split(/[?#]/, 1)[0] ?? "";
-    const extension = lowerCaseExtensionOf(cleanValue);
-    if (
-      extension &&
-      !DEV_SOURCE_EXTENSIONS.has(extension) &&
-      !ALLOWED_LOCAL_RESOURCE_EXTENSIONS.has(extension)
-    ) {
-      addWarning({
-        code: "unsupported-local-resource",
-        message: `Unsupported local preview resource: ${resource.value.slice(0, 300)}`,
-      });
-      if (resource.executable) hasUnsupportedExecutable = true;
-      continue;
-    }
     if (!(await resourceExists(resource.value, baseDirectory))) {
       addWarning({
         code: "missing-local-resource",
@@ -362,24 +358,33 @@ export async function inspectHtmlArtifact(
     }
   }
 
-  const runTarget = hasDevSource
-    ? await nearestRunTarget(absolutePath, canonicalWorkspaceRoot)
-    : undefined;
-  const mode = hasDevSource
-    ? "dev-server-entrypoint"
-    : hasUnsupportedExecutable
-      ? "unsupported"
-      : hasInlineScript || hasBrowserScript
+  const runTarget =
+    hasDevSource && isPathInside(absolutePath, canonicalWorkspaceRoot)
+      ? await nearestRunTarget(absolutePath, canonicalWorkspaceRoot)
+      : undefined;
+  const mode =
+    hasDevSource && runTarget
+      ? "dev-server-entrypoint"
+      : hasDevSource || hasInlineScript || hasBrowserScript || hasUnsupportedExecutable
         ? "interactive-bundle"
         : "static-document";
   const reason =
     mode === "dev-server-entrypoint"
-      ? runTarget
-        ? "This HTML file references source modules and must run through its development server."
-        : "This HTML file references source modules, but no dev or start script was found."
-      : mode === "unsupported"
-        ? "The HTML file references an executable resource type that the safe preview cannot run."
-        : undefined;
+      ? "This HTML file references source modules and must run through its development server."
+      : undefined;
+
+  // A workspace-relative document stays rooted in its project. An explicitly
+  // absolute document may itself be nested below a site root and legitimately
+  // reference `../assets/...`; infer that common root from the resources the
+  // document actually names instead of assuming its immediate directory.
+  const resourceBoundary = isPathInside(absolutePath, canonicalWorkspaceRoot)
+    ? canonicalWorkspaceRoot
+    : path.parse(absolutePath).root;
+  const allowedResourcePaths = await collectAllowedResourcePaths(
+    localResources.map((resource) => resource.value),
+    baseDirectory,
+    resourceBoundary,
+  );
 
   return {
     result: {
@@ -391,9 +396,7 @@ export async function inspectHtmlArtifact(
     },
     absolutePath,
     baseDirectory,
-    allowedResourcePaths: await collectAllowedResourcePaths(
-      localResources.map((resource) => resource.value),
-      baseDirectory,
-    ),
+    siteRoot: commonSiteRoot(absolutePath, allowedResourcePaths, resourceBoundary),
+    allowedResourcePaths,
   };
 }

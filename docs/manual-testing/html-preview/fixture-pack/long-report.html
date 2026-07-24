@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Long report fixture</title>
+    <style>
+      body {
+        max-width: 780px;
+        margin: 40px auto;
+        padding: 0 20px;
+        font:
+          16px/1.65 Georgia,
+          serif;
+        color: #243447;
+      }
+      h1,
+      h2 {
+        font-family: system-ui, sans-serif;
+        color: #155eef;
+      }
+      pre {
+        padding: 16px;
+        overflow: auto;
+        background: #172b4d;
+        color: #eef5ff;
+        border-radius: 8px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      td,
+      th {
+        padding: 8px;
+        border: 1px solid #ccd6e0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Long report fixture</h1>
+    <p>Use this page to check scrolling, long tables, and code blocks.</p>
+    <h2>Summary</h2>
+    <p>
+      This deliberately has enough content to require a scrollable preview. Each section should stay
+      readable and the page should not be clipped.
+    </p>
+    <h2>Data</h2>
+    <table>
+      <tr>
+        <th>Week</th>
+        <th>Value</th>
+      </tr>
+      <tr>
+        <td>1</td>
+        <td>14</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>22</td>
+      </tr>
+      <tr>
+        <td>3</td>
+        <td>19</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>31</td>
+      </tr>
+    </table>
+    <h2>Example code</h2>
+    <pre>const preview = { mode: 'static', status: 'expected to scroll' };</pre>
+    <h2>Discussion</h2>
+    <p>
+      Scroll through this paragraph. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed
+      posuere, metus in convallis sollicitudin, ante massa finibus turpis, in semper nisl ante sit
+      amet eros.
+    </p>
+    <p>
+      More long-form content: a preview should preserve readable margins, text contrast, table
+      width, and code-block overflow.
+    </p>
+    <h2>Conclusion</h2>
+    <p>You reached the end of the page.</p>
+  </body>
+</html>

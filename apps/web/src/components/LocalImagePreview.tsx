@@ -17,7 +17,14 @@ import {
 } from "react";
 
 import { downloadUrlAsBlob } from "~/lib/browserDownload";
-import { DownloadIcon, Loader2Icon, TriangleAlertIcon } from "~/lib/icons";
+import {
+  DownloadIcon,
+  Loader2Icon,
+  Maximize2,
+  MinusIcon,
+  PlusIcon,
+  TriangleAlertIcon,
+} from "~/lib/icons";
 import { buildLocalImageUrl, localImageFileName } from "~/lib/localImageUrls";
 import { cn } from "~/lib/utils";
 
@@ -150,6 +157,8 @@ export function LocalImagePreview(props: {
   alt: string;
   className?: string;
   imageClassName?: string;
+  /** Enables fit, actual-size, and zoom controls in the dedicated viewer. */
+  interactive?: boolean;
 }) {
   const { downloadUrl, downloadName, status, imgProps } = useLocalImagePreview({
     src: props.src,
@@ -157,7 +166,15 @@ export function LocalImagePreview(props: {
     previewGrant: props.previewGrant,
   });
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  useEffect(() => setDownloadError(null), [downloadUrl]);
+  const [fit, setFit] = useState(true);
+  const [zoom, setZoom] = useState(1);
+  const [naturalSize, setNaturalSize] = useState<{ width: number; height: number } | null>(null);
+  useEffect(() => {
+    setDownloadError(null);
+    setFit(true);
+    setZoom(1);
+    setNaturalSize(null);
+  }, [downloadUrl]);
   const handleDownloadClick = useLocalImageDownloadClick({
     downloadUrl,
     downloadName,
@@ -186,9 +203,85 @@ export function LocalImagePreview(props: {
       ) : null}
       <img
         {...imgProps}
+        onLoad={(event) => {
+          setNaturalSize({
+            width: event.currentTarget.naturalWidth,
+            height: event.currentTarget.naturalHeight,
+          });
+          imgProps.onLoad?.(event);
+        }}
         alt={props.alt}
         className={cn("local-image-preview__img", props.imageClassName)}
+        style={
+          props.interactive && !fit && naturalSize
+            ? {
+                width: `${Math.max(1, Math.round(naturalSize.width * zoom))}px`,
+                height: `${Math.max(1, Math.round(naturalSize.height * zoom))}px`,
+                maxWidth: "none",
+                maxHeight: "none",
+              }
+            : undefined
+        }
       />
+      {props.interactive && status === "ready" ? (
+        <div className="absolute left-3 top-3 z-10 flex h-8 items-center gap-0.5 rounded-lg border border-border/70 bg-background/90 p-0.5 text-foreground shadow-sm backdrop-blur">
+          <button
+            type="button"
+            className="flex size-7 items-center justify-center rounded-md hover:bg-[var(--color-background-button-secondary-hover)] disabled:opacity-40"
+            title="Zoom out"
+            aria-label="Zoom out"
+            disabled={fit || zoom <= 0.25}
+            onClick={() => setZoom((value) => Math.max(0.25, value - 0.25))}
+          >
+            <MinusIcon className="size-3.5" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="min-w-12 rounded-md px-1.5 text-[11px] hover:bg-[var(--color-background-button-secondary-hover)]"
+            title={fit ? "Show at actual size" : "Fit image to viewer"}
+            onClick={() => {
+              setFit((value) => !value);
+              setZoom(1);
+            }}
+          >
+            {fit ? "Fit" : `${Math.round(zoom * 100)}%`}
+          </button>
+          <button
+            type="button"
+            className="flex size-7 items-center justify-center rounded-md hover:bg-[var(--color-background-button-secondary-hover)] disabled:opacity-40"
+            title="Zoom in"
+            aria-label="Zoom in"
+            disabled={!fit && zoom >= 4}
+            onClick={() => {
+              if (fit) {
+                setFit(false);
+                setZoom(1);
+              } else {
+                setZoom((value) => Math.min(4, value + 0.25));
+              }
+            }}
+          >
+            <PlusIcon className="size-3.5" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            className="flex size-7 items-center justify-center rounded-md hover:bg-[var(--color-background-button-secondary-hover)]"
+            title={fit ? "Actual size" : "Fit to viewer"}
+            aria-label={fit ? "Actual size" : "Fit to viewer"}
+            onClick={() => {
+              setFit((value) => !value);
+              setZoom(1);
+            }}
+          >
+            <Maximize2 className="size-3.5" aria-hidden="true" />
+          </button>
+        </div>
+      ) : null}
+      {props.interactive && status === "ready" && naturalSize ? (
+        <span className="absolute bottom-3 left-3 rounded-md border border-border/60 bg-background/85 px-2 py-1 text-[10px] text-muted-foreground shadow-sm backdrop-blur">
+          {naturalSize.width} × {naturalSize.height}
+        </span>
+      ) : null}
       <a
         href={downloadUrl}
         download={downloadName}

@@ -262,6 +262,33 @@ describe("localImageEffectRouteLayer", () => {
     });
   });
 
+  it("streams media byte ranges for Chromium playback and seeking", async () => {
+    const workspace = makeTempDir("synara-effect-media-workspace-");
+    writeFileSync(path.join(workspace, ".git"), "gitdir: .git");
+    const mediaPath = path.join(workspace, "demo.mp4");
+    writeFileSync(mediaPath, Buffer.from("0123456789"));
+    const config = makeServerConfig({ cwd: workspace });
+
+    await withEffectServer(config, localImageEffectRouteLayer, async (origin) => {
+      const params = new URLSearchParams({ path: mediaPath, cwd: workspace });
+      const response = await fetch(`${origin}/api/local-image?${params}`, {
+        headers: { Range: "bytes=2-5" },
+      });
+
+      expect(response.status).toBe(206);
+      expect(response.headers.get("accept-ranges")).toBe("bytes");
+      expect(response.headers.get("content-range")).toBe("bytes 2-5/10");
+      expect(response.headers.get("content-length")).toBe("4");
+      expect(await response.text()).toBe("2345");
+
+      const invalid = await fetch(`${origin}/api/local-image?${params}`, {
+        headers: { Range: "bytes=99-100" },
+      });
+      expect(invalid.status).toBe(416);
+      expect(invalid.headers.get("content-range")).toBe("bytes */10");
+    });
+  });
+
   it("does not expose local preview bytes to untrusted web origins through CORS", async () => {
     const workspace = makeTempDir("synara-effect-pdf-untrusted-origin-");
     writeFileSync(path.join(workspace, ".git"), "gitdir: .git");

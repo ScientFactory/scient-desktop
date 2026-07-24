@@ -93,9 +93,9 @@
   </head>
   <body>
     <main>
-      <div class="eyebrow">Scient · isolated execution test</div>
+      <div class="eyebrow">Scient · local HTML browser test</div>
       <h1>Interactive preview passed</h1>
-      <p>The counter below is driven by inline JavaScript inside the isolated artifact session.</p>
+      <p>The counter below is driven by inline JavaScript inside the local HTML browser.</p>
       <div id="counter" class="counter" aria-live="polite">0</div>
       <button id="reset" type="button">Reset counter</button>
       <div id="status" class="status">JavaScript initialized inside the preview origin.</div>
@@ -118,7 +118,7 @@
       reset.addEventListener("click", () => {
         value = 0;
         render();
-        status.textContent = "Reset worked. The isolated page remains interactive.";
+        status.textContent = "Reset worked. The local page remains interactive.";
       });
 
       window.addEventListener("pagehide", () => window.clearInterval(timer), { once: true });

@@ -122,6 +122,28 @@ describe("resolveAllowedLocalPreviewFile", () => {
     assert.equal(result?.sizeBytes, 8);
   });
 
+  it("allows browser-native audio and video inside the current workspace", async () => {
+    const workspace = makeTempDir("synara-media-workspace-");
+    writeFileSync(path.join(workspace, ".git"), "gitdir: .git");
+    const audioPath = path.join(workspace, "recordings", "interview.mp3");
+    const videoPath = path.join(workspace, "recordings", "demo.webm");
+    mkdirSync(path.dirname(audioPath), { recursive: true });
+    writeFileSync(audioPath, Buffer.from("audio"));
+    writeFileSync(videoPath, Buffer.from("video"));
+
+    const audio = await resolveAllowedLocalPreviewFile({
+      requestedPath: audioPath,
+      cwd: workspace,
+    });
+    const video = await resolveAllowedLocalPreviewFile({
+      requestedPath: videoPath,
+      cwd: workspace,
+    });
+
+    assert.equal(audio?.path, realpathSync(audioPath));
+    assert.equal(video?.path, realpathSync(videoPath));
+  });
+
   it("allows PDFs inside a per-thread scratch workspace without a cwd", async () => {
     // Sessions that start before a project workspace exists run in
     // <tmpdir>/<scratch-workspaces-dir>/<threadId>; files agents create there

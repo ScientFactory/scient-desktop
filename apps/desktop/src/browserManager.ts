@@ -58,6 +58,19 @@ const BROWSER_INACTIVE_TAB_SUSPEND_DELAY_PRESSURED_MS = 400;
 const BROWSER_MAX_WARM_INACTIVE_RUNTIMES_PER_THREAD = 1;
 const BROWSER_THREAD_SUSPEND_DELAY_MS = 30_000;
 const BROWSER_ERROR_ABORTED = -3;
+const LOCAL_HTML_DEFAULT_CANVAS_SCRIPT = `(() => {
+  const isTransparent = (value) =>
+    value === "transparent" || value === "rgba(0, 0, 0, 0)";
+  const root = document.documentElement;
+  const body = document.body;
+  if (!root || !body) return;
+  if (
+    isTransparent(getComputedStyle(root).backgroundColor) &&
+    isTransparent(getComputedStyle(body).backgroundColor)
+  ) {
+    root.style.backgroundColor = "#ffffff";
+  }
+})()`;
 
 type BrowserStateListener = (state: ThreadBrowserState) => void;
 type BrowserCopyLinkListener = (event: BrowserCopyLinkEvent) => void;
@@ -1634,6 +1647,10 @@ export class DesktopBrowserManager {
         sandbox: true,
       },
     });
+    // Avoid a black native surface while a local page is still loading. Once
+    // loaded, a transparent document gets the same white default canvas users
+    // expect from a normal browser; authored page backgrounds remain intact.
+    view.setBackgroundColor("#ffffff");
     const runtime: LiveTabRuntime = {
       key: buildRuntimeKey(threadId, tabId),
       threadId,
@@ -1774,6 +1791,18 @@ export class DesktopBrowserManager {
     });
 
     const didStartLoading = () => {
+      const state = this.states.get(threadId);
+      const tab = state ? this.getTab(state, tabId) : null;
+      if (state && tab) {
+        const didChange = !tab.isLoading || tab.lastError !== null;
+        tab.isLoading = true;
+        tab.lastError = null;
+        syncThreadLastError(state);
+        if (didChange) {
+          this.markThreadStateChanged(threadId);
+          this.emitState(threadId);
+        }
+      }
       this.queueRuntimeStateSync(threadId, tabId);
     };
     webContents.on("did-start-loading", didStartLoading);
@@ -1787,6 +1816,21 @@ export class DesktopBrowserManager {
     webContents.on("did-stop-loading", didStopLoading);
     runtime.listenerDisposers.push(() => {
       webContents.removeListener("did-stop-loading", didStopLoading);
+    });
+
+    const didFinishLoad = () => {
+      const state = this.states.get(threadId);
+      const tab = state ? this.getTab(state, tabId) : null;
+      if (tab?.kind === "local-html") {
+        void webContents
+          .executeJavaScript(LOCAL_HTML_DEFAULT_CANVAS_SCRIPT, true)
+          .catch(() => undefined);
+      }
+      this.queueRuntimeStateSync(threadId, tabId);
+    };
+    webContents.on("did-finish-load", didFinishLoad);
+    runtime.listenerDisposers.push(() => {
+      webContents.removeListener("did-finish-load", didFinishLoad);
     });
 
     const didNavigate = () => {
@@ -2149,7 +2193,7 @@ export class DesktopBrowserManager {
   ): string | null {
     const state = this.states.get(threadId);
     const tab = state ? this.getTab(state, tabId) : null;
-    if (tab?.kind === "artifact") {
+    if (tab?.kind === "artifact" || tab?.kind === "local-html") {
       return null;
     }
     const liveUrl =
@@ -2280,10 +2324,9 @@ function syncTabStateFromRuntime(
         tab.faviconUrl = value;
       }) || didChange;
   }
-  if (tab.lastError && !tab.isLoading) {
-    tab.lastError = null;
-    didChange = true;
-  }
+  // Keep a terminal load failure visible after Electron emits
+  // `did-stop-loading`. A later navigation's `did-start-loading` handler owns
+  // clearing the error, so retry and successful navigation still recover.
   didChange = syncThreadLastError(state) || didChange;
   return didChange;
 }

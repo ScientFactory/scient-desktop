@@ -28,13 +28,13 @@ import { BrowserPanel } from "./BrowserPanel";
 
 const THREAD_ID = "thread-browser-copy" as ThreadId;
 
-function browserState(activeTabId: string): ThreadBrowserState {
+function browserState(activeTabId: string, lastError: string | null = null): ThreadBrowserState {
   return {
     threadId: THREAD_ID,
     version: activeTabId === "tab-1" ? 1 : 2,
     open: true,
     activeTabId,
-    lastError: null,
+    lastError,
     tabs: [
       {
         id: "tab-1",
@@ -48,7 +48,7 @@ function browserState(activeTabId: string): ThreadBrowserState {
         canGoForward: false,
         faviconUrl: null,
         lastCommittedUrl: "https://scientfactory.com/",
-        lastError: null,
+        lastError: activeTabId === "tab-1" ? lastError : null,
       },
       {
         id: "tab-2",
@@ -129,5 +129,22 @@ describe("BrowserPanel copy feedback", () => {
 
     await expect.element(page.getByRole("button", { name: "Copy link" })).toBeVisible();
     expect(page.getByText("Link copied").query()).toBeNull();
+  });
+
+  it("shows a full recoverable error instead of an empty dark viewport", async () => {
+    useBrowserStateStore.getState().removeThreadState(THREAD_ID);
+    useBrowserStateStore
+      .getState()
+      .upsertThreadState(browserState("tab-1", "The local page is unavailable."));
+
+    await renderPanel();
+
+    await expect
+      .element(page.getByRole("alert"))
+      .toHaveTextContent("This page could not be opened");
+    await expect
+      .element(page.getByRole("alert"))
+      .toHaveTextContent("The local page is unavailable.");
+    await expect.element(page.getByRole("button", { name: "Retry" })).toBeVisible();
   });
 });

@@ -5,15 +5,12 @@
 // Layer: Web chat presentation component
 // Exports: WorkspaceFilePreview, isMarkdownPreviewablePath
 
-import {
-  isSupportedLocalImagePath,
-  isSupportedLocalPdfPath,
-  lowerCaseExtensionOf,
-} from "@synara/shared/localPreviewFiles";
+import { localFileViewerKindForPath } from "@synara/shared/localPreviewFiles";
 import {
   isLocalAbsolutePath,
   isWorkspaceRelativePathSafe,
   joinWorkspaceRelativePath,
+  parentDirectoryOfLocalPath,
 } from "@synara/shared/path";
 import { isScratchWorkspacePath } from "@synara/shared/threadWorkspace";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -63,14 +60,16 @@ import { WorkspaceFilePreviewHeader } from "./chat/WorkspaceFilePreviewHeader";
 import { TranscriptSelectionAction } from "./chat/TranscriptSelectionAction";
 import { useCodeSelectionAction } from "./chat/useCodeSelectionAction";
 import { LocalImagePreview } from "./LocalImagePreview";
+import { LocalMediaPreview } from "./LocalMediaPreview";
 import { PdfFilePreview } from "./PdfFilePreview";
 import { Skeleton } from "./ui/skeleton";
 
-const MARKDOWN_PREVIEW_EXTENSIONS = new Set([".markdown", ".md", ".mdx"]);
-
 export function isMarkdownPreviewablePath(filePath: string): boolean {
-  const extension = lowerCaseExtensionOf(filePath);
-  return extension !== null && MARKDOWN_PREVIEW_EXTENSIONS.has(extension);
+  return localFileViewerKindForPath(filePath) === "markdown";
+}
+
+function isBinaryReadError(error: unknown): boolean {
+  return error instanceof Error && error.message.toLowerCase().includes("appears to be binary");
 }
 
 function parentDirectoryFromPath(path: string): string | null {
@@ -85,7 +84,7 @@ function parentDirectoryFromPath(path: string): string | null {
 function markdownPreviewCwd(workspaceRoot: string | null, filePath: string): string | undefined {
   const parentDirectory = parentDirectoryFromPath(filePath);
   if (isLocalAbsolutePath(filePath)) {
-    return parentDirectory ?? undefined;
+    return parentDirectoryOfLocalPath(filePath) ?? undefined;
   }
   if (!workspaceRoot) {
     return undefined;
@@ -300,8 +299,8 @@ function FilePreviewLoadingState() {
 export interface WorkspaceFilePreviewProps {
   workspaceRoot: string | null;
   /**
-   * Workspace-relative path of the previewed file. Binary previews (images,
-   * PDFs) may instead be absolute paths outside the workspace — e.g. a
+   * Workspace-relative path of the previewed file. Streamed previews (images,
+   * PDFs, audio, and video) may instead be absolute paths outside the workspace — e.g. a
    * session's scratch directory — served by the local-image route, which never
    * touch the workspace-relative file-read RPC.
    */
@@ -324,20 +323,31 @@ export function WorkspaceFilePreview(props: WorkspaceFilePreviewProps) {
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const contentsRef = useRef<HTMLDivElement>(null);
   const taskWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const latestTaskWriteVersionRef = useRef({ next: 0, byFile: new Map<string, number>() });
+  const latestTaskWriteVersionRef = useRef({
+    next: 0,
+    byFile: new Map<string, number>(),
+  });
   const { filePath, onAskWhyInChat, onCommentInChat, onReferenceInChat, workspaceRoot } = props;
   const queryClient = useQueryClient();
   const markdownPreviewDefault = props.markdownPreviewDefault ?? false;
-  const fileIsImage = filePath !== null && isSupportedLocalImagePath(filePath);
-  const fileIsPdf = filePath !== null && isSupportedLocalPdfPath(filePath);
+  const viewerKind = filePath === null ? null : localFileViewerKindForPath(filePath);
+  const fileIsSvg = viewerKind === "svg";
+  const fileIsImage = viewerKind === "image" || fileIsSvg;
+  const fileIsPdf = viewerKind === "pdf";
+  const fileIsAudio = viewerKind === "audio";
+  const fileIsVideo = viewerKind === "video";
+  const fileIsMedia = fileIsAudio || fileIsVideo;
   const fileIsLocalAbsolute = filePath !== null && isLocalAbsolutePath(filePath);
   const fileIsWorkspaceRelative = filePath !== null && isWorkspaceRelativePathSafe(filePath);
   const fileIsScratchBinaryPreview =
-    filePath !== null && (fileIsImage || fileIsPdf) && isScratchWorkspacePath(filePath);
+    filePath !== null &&
+    (fileIsImage || fileIsPdf || fileIsMedia) &&
+    isScratchWorkspacePath(filePath);
   const fileNeedsLocalPreviewGrant =
     filePath !== null && fileIsLocalAbsolute && !fileIsScratchBinaryPreview;
-  const fileIsMarkdown = filePath !== null && isMarkdownPreviewablePath(filePath);
+  const fileIsMarkdown = viewerKind === "markdown";
   const [markdownPreviewEnabled, setMarkdownPreviewEnabled] = useState(markdownPreviewDefault);
+  const [svgSourceEnabled, setSvgSourceEnabled] = useState(false);
   const localPreviewGrantQuery = useQuery(
     projectLocalPreviewGrantQueryOptions({
       path: filePath,
@@ -353,17 +363,21 @@ export function WorkspaceFilePreview(props: WorkspaceFilePreviewProps) {
       cwd: props.workspaceRoot,
       relativePath: filePath,
       previewGrant: localPreviewGrant,
-      // Images and PDFs are binary: they stream through the local-image HTTP
+      // Images, PDFs, and browser-native media are binary: they stream through the local-image HTTP
       // route instead of the text file-read RPC.
       enabled:
         filePath !== null &&
-        !fileIsImage &&
+        (!fileIsImage || (fileIsSvg && svgSourceEnabled)) &&
         !fileIsPdf &&
+        !fileIsMedia &&
         (props.workspaceRoot !== null || localPreviewGrant !== null),
     }),
   );
+  const fileUsesSystemDefaultFallback =
+    fileIsImage || fileIsPdf || fileIsMedia || isBinaryReadError(fileQuery.error);
   useEffect(() => {
     setMarkdownPreviewEnabled(markdownPreviewDefault);
+    setSvgSourceEnabled(false);
   }, [filePath, markdownPreviewDefault]);
 
   const fileContents = fileQuery.data?.contents ?? "";
@@ -446,7 +460,10 @@ export function WorkspaceFilePreview(props: WorkspaceFilePreviewProps) {
       if (!workspaceRoot || !filePath) {
         return;
       }
-      const options = projectReadFileQueryOptions({ cwd: workspaceRoot, relativePath: filePath });
+      const options = projectReadFileQueryOptions({
+        cwd: workspaceRoot,
+        relativePath: filePath,
+      });
       const current = queryClient.getQueryData(options.queryKey);
       if (!current || current.truncated) {
         return;
@@ -461,7 +478,10 @@ export function WorkspaceFilePreview(props: WorkspaceFilePreviewProps) {
       if (!api) {
         return;
       }
-      queryClient.setQueryData(options.queryKey, { ...current, contents: nextContents });
+      queryClient.setQueryData(options.queryKey, {
+        ...current,
+        contents: nextContents,
+      });
       // The read RPC may have resolved a bare/partial reference (e.g. a clicked
       // `notes.md`) to its real nested path. Write back to that resolved path,
       // not the opened reference, so the toggle lands on the file we read from
@@ -564,11 +584,15 @@ export function WorkspaceFilePreview(props: WorkspaceFilePreviewProps) {
         isMarkdown={fileIsMarkdown}
         markdownPreviewEnabled={showMarkdownPreview}
         onMarkdownPreviewChange={handleMarkdownPreviewChange}
+        isSvg={fileIsSvg}
+        svgSourceEnabled={svgSourceEnabled}
+        onSvgSourceChange={setSvgSourceEnabled}
+        defaultOpenEditor={fileUsesSystemDefaultFallback ? "system-default" : undefined}
         onReferenceInChat={onReferenceInChat}
         onAskWhyInChat={onAskWhyInChat}
         truncated={fileQuery.data?.truncated ?? false}
       />
-      {fileIsImage ? (
+      {fileIsImage && !svgSourceEnabled ? (
         <div
           className="editor-file-viewer min-h-0 flex-1 overflow-auto"
           onContextMenu={handleContentsContextMenu}
@@ -580,15 +604,35 @@ export function WorkspaceFilePreview(props: WorkspaceFilePreviewProps) {
             alt={basenameOfPath(filePath)}
             className="min-h-full"
             imageClassName="max-h-[calc(100vh-13rem)]"
+            interactive
+          />
+        </div>
+      ) : fileIsMedia ? (
+        <div className="editor-file-viewer min-h-0 flex-1 overflow-auto">
+          <LocalMediaPreview
+            src={filePath}
+            cwd={props.workspaceRoot}
+            previewGrant={localPreviewGrant}
+            kind={fileIsVideo ? "video" : "audio"}
           />
         </div>
       ) : fileQuery.isLoading ? (
         <FilePreviewLoadingState />
       ) : fileQuery.error ? (
         <PanelStateMessage density="compact" fill="flex" className="items-start justify-start p-3">
-          <p className="text-left text-[11px] text-destructive/85">
-            {fileQuery.error instanceof Error ? fileQuery.error.message : "Could not read file."}
-          </p>
+          {isBinaryReadError(fileQuery.error) ? (
+            <div className="max-w-sm text-left">
+              <p className="text-sm font-medium text-foreground">No in-app preview is available</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                Scient recognized this as a binary file. Use the Open menu above to view it in its
+                default application, or reveal it in the file browser.
+              </p>
+            </div>
+          ) : (
+            <p className="text-left text-[11px] text-destructive/85">
+              {fileQuery.error instanceof Error ? fileQuery.error.message : "Could not read file."}
+            </p>
+          )}
         </PanelStateMessage>
       ) : (
         <div
@@ -654,7 +698,10 @@ export function WorkspaceFilePreview(props: WorkspaceFilePreviewProps) {
             <>
               <div
                 className="editor-file-viewer__comment-line-highlight"
-                style={{ top: activeCommentLine.top, height: activeCommentLine.height }}
+                style={{
+                  top: activeCommentLine.top,
+                  height: activeCommentLine.height,
+                }}
                 aria-hidden="true"
               />
               <FileLineCommentBox

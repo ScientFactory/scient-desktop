@@ -1,5 +1,5 @@
 // FILE: localImageFiles.ts
-// Purpose: Resolves local preview-file (image/PDF) requests without exposing arbitrary files.
+// Purpose: Resolves streamed local preview-file (image/PDF/media) requests.
 // Layer: Server HTTP utility
 // Exports: local image route constants and allowlisted path resolver
 // Depends on: fs realpath/stat, Codex generated image roots, safe preview extensions
