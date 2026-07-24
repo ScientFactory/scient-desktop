@@ -61,4 +61,24 @@ describe("AutomationListRow", () => {
     expect(metaBox.right).toBeLessThanOrEqual(rowBox.right + 0.5);
     await expect.element(meta).toBeVisible();
   });
+
+  it.each([
+    "Running",
+    "Waiting for approval",
+    "Last run failed",
+    "New result",
+    "Paused",
+    "Every 1h",
+  ])("keeps the representative %s state visible and announced", async (meta) => {
+    await renderRow(meta);
+
+    await expect.element(page.getByText(meta, { exact: true })).toBeVisible();
+    await expect
+      .element(
+        page.getByRole("button", {
+          name: new RegExp(`Nightly upstream review Scient desktop ${meta}`, "i"),
+        }),
+      )
+      .toBeVisible();
+  });
 });

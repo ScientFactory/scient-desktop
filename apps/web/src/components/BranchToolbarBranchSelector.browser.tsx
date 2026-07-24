@@ -124,6 +124,92 @@ describe("BranchToolbarBranchSelector branch-name copy actions", () => {
 
       await expect.poll(() => writeText.mock.calls).toEqual([["feature/copy-listed-branch"]]);
       expect(showContextMenu).toHaveBeenCalledOnce();
+      expect(showContextMenu).toHaveBeenCalledWith(
+        [{ id: "copy-branch-name", label: "Copy branch name" }],
+        { x: 12, y: 18 },
+      );
+      expect(checkout).not.toHaveBeenCalled();
+      expect(createBranch).not.toHaveBeenCalled();
+      expect(onSetThreadWorkspace).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, "nativeApi", {
+        configurable: true,
+        value: previousNativeApi,
+      });
+    }
+  });
+
+  it("leaves the clipboard and workspace untouched when the native context menu is cancelled", async () => {
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    const previousNativeApi = window.nativeApi;
+    const baseApi = readNativeApi();
+    if (!baseApi) throw new Error("Expected browser native API fixture.");
+    const showContextMenu = vi.fn().mockResolvedValue(null);
+    const checkout = vi.fn();
+    const createBranch = vi.fn();
+    Object.defineProperty(window, "nativeApi", {
+      configurable: true,
+      value: {
+        ...baseApi,
+        contextMenu: { ...baseApi.contextMenu, show: showContextMenu },
+        git: { ...baseApi.git, checkout, createBranch },
+      },
+    });
+
+    try {
+      const { onSetThreadWorkspace } = await renderSelector();
+      await page.getByText("main", { exact: true }).click();
+      page
+        .getByRole("option", { name: /feature\/copy-listed-branch/i })
+        .element()
+        .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 7, clientY: 9 }));
+
+      await expect.poll(() => showContextMenu.mock.calls.length).toBe(1);
+      expect(writeText).not.toHaveBeenCalled();
+      expect(checkout).not.toHaveBeenCalled();
+      expect(createBranch).not.toHaveBeenCalled();
+      expect(onSetThreadWorkspace).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, "nativeApi", {
+        configurable: true,
+        value: previousNativeApi,
+      });
+    }
+  });
+
+  it("reports a native context-menu failure without copying or mutating Git", async () => {
+    const writeText = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    const addAlert = vi.spyOn(transientAlertManager, "add");
+    const previousNativeApi = window.nativeApi;
+    const baseApi = readNativeApi();
+    if (!baseApi) throw new Error("Expected browser native API fixture.");
+    const showContextMenu = vi.fn().mockRejectedValue(new Error("Native menu unavailable"));
+    const checkout = vi.fn();
+    const createBranch = vi.fn();
+    Object.defineProperty(window, "nativeApi", {
+      configurable: true,
+      value: {
+        ...baseApi,
+        contextMenu: { ...baseApi.contextMenu, show: showContextMenu },
+        git: { ...baseApi.git, checkout, createBranch },
+      },
+    });
+
+    try {
+      const { onSetThreadWorkspace } = await renderSelector();
+      await page.getByText("main", { exact: true }).click();
+      page
+        .getByRole("option", { name: /feature\/copy-listed-branch/i })
+        .element()
+        .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 4, clientY: 6 }));
+
+      await expect.poll(() => addAlert.mock.calls.length).toBe(1);
+      expect(addAlert).toHaveBeenCalledWith({
+        type: "error",
+        title: "Could not open branch actions",
+        description: "Native menu unavailable",
+      });
+      expect(writeText).not.toHaveBeenCalled();
       expect(checkout).not.toHaveBeenCalled();
       expect(createBranch).not.toHaveBeenCalled();
       expect(onSetThreadWorkspace).not.toHaveBeenCalled();

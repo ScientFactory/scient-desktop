@@ -491,6 +491,7 @@ export interface DesktopBridge {
     openLogsDirectory: () => Promise<void>;
   };
   clipboard?: {
+    writeText: (text: string) => Promise<boolean>;
     writeImagePngDataUrl: (dataUrl: string) => Promise<boolean>;
   };
   windowControls?: {
