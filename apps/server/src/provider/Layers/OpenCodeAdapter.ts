@@ -138,7 +138,15 @@ interface OpenCodeTurnGeneration {
   cancellationFinalizerStarted: boolean;
   sessionNextOwned: boolean;
   sessionNextProgressObserved: boolean;
+  sessionNextTimestampFloor: number | undefined;
+  sessionNextLatestAcceptedTimestamp: number | undefined;
   lastOwnedProgressAtMs: number;
+}
+
+interface OpenCodeInteractionReplyState {
+  readonly generationId: number;
+  acknowledged: boolean;
+  cancelled: boolean;
 }
 
 interface OpenCodeSessionContext {
@@ -149,11 +157,13 @@ interface OpenCodeSessionContext {
   readonly openCodeSessionId: string;
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingPermissionGenerationById: Map<string, number>;
+  readonly permissionReplyStateById: Map<string, OpenCodeInteractionReplyState>;
   /** Permission request ids auto-approved server-side in full-access mode (never surfaced to the UI). */
   readonly autoApprovedPermissionIds: Set<string>;
   readonly autoApprovedPermissionGenerationById: Map<string, number>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly pendingQuestionGenerationById: Map<string, number>;
+  readonly questionReplyStateById: Map<string, OpenCodeInteractionReplyState>;
   readonly pendingTextDeltasByPartId: Map<string, string>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
   readonly messageSnapshotKeyById: Map<string, string>;
@@ -178,6 +188,7 @@ interface OpenCodeSessionContext {
   activeTurnCompletionActivitySerial: number;
   activeTurnSawToolCallFinish: boolean;
   activeTurnSawFinalAssistant: boolean;
+  latestObservedSessionNextTimestamp: number | undefined;
   activeTurnFinalAssistantMessageId: string | undefined;
   activeTurnPromptMessageId: string | undefined;
   /** Session-lifetime ownership fence; one id per retained turn, freed with the session context. */
@@ -853,6 +864,17 @@ function establishOpenCodeTurnEventBoundary(
     generation.turnId !== turnId
   ) {
     return;
+  }
+  if (!generation.sessionNextOwned) {
+    const observedTimestamp = context.latestObservedSessionNextTimestamp;
+    if (
+      observedTimestamp !== undefined &&
+      (generation.sessionNextTimestampFloor === undefined ||
+        observedTimestamp > generation.sessionNextTimestampFloor)
+    ) {
+      generation.sessionNextTimestampFloor = observedTimestamp;
+      generation.sessionNextLatestAcceptedTimestamp = observedTimestamp;
+    }
   }
   generation.sessionNextOwned = true;
   context.activeTurnAcceptsSessionNextEvents = true;
@@ -2172,6 +2194,10 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           if (generationId !== generation.id) {
             continue;
           }
+          const replyState = context.permissionReplyStateById.get(requestId);
+          if (replyState?.generationId === generation.id) {
+            replyState.cancelled = true;
+          }
           const request = context.pendingPermissions.get(requestId);
           context.pendingPermissionGenerationById.delete(requestId);
           context.pendingPermissions.delete(requestId);
@@ -2191,6 +2217,10 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
         for (const [requestId, generationId] of context.pendingQuestionGenerationById) {
           if (generationId !== generation.id) {
             continue;
+          }
+          const replyState = context.questionReplyStateById.get(requestId);
+          if (replyState?.generationId === generation.id) {
+            replyState.cancelled = true;
           }
           context.pendingQuestionGenerationById.delete(requestId);
           context.pendingQuestions.delete(requestId);
@@ -3262,6 +3292,22 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           }
         }
 
+        const sessionNextTimestamp = event.type.startsWith("session.next.")
+          ? asFiniteNonNegativeNumber(
+              (event.properties as unknown as { readonly timestamp?: unknown }).timestamp,
+            )
+          : undefined;
+        if (
+          sessionNextTimestamp !== undefined &&
+          (context.latestObservedSessionNextTimestamp === undefined ||
+            sessionNextTimestamp > context.latestObservedSessionNextTimestamp)
+        ) {
+          // Keep a session-level watermark even while the generation lane is closed.
+          // When exact prompt/assistant ownership opens the lane, every earlier next event
+          // is therefore below that generation's floor and cannot be replayed into it.
+          context.latestObservedSessionNextTimestamp = sessionNextTimestamp;
+        }
+
         const generation = context.activeTurnGeneration;
         const turnId = generation?.turnId;
         if (
@@ -3290,6 +3336,24 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
             context.requiresStrictOwnershipUntilBoundary)
         ) {
           return;
+        }
+        if (turnId && generation && event.type.startsWith("session.next.")) {
+          const timestampFloor = generation.sessionNextTimestampFloor;
+          const latestAcceptedTimestamp = generation.sessionNextLatestAcceptedTimestamp;
+          if (
+            sessionNextTimestamp === undefined ||
+            (timestampFloor !== undefined && sessionNextTimestamp <= timestampFloor) ||
+            (latestAcceptedTimestamp !== undefined &&
+              sessionNextTimestamp < latestAcceptedTimestamp)
+          ) {
+            return;
+          }
+          if (
+            latestAcceptedTimestamp === undefined ||
+            sessionNextTimestamp > latestAcceptedTimestamp
+          ) {
+            generation.sessionNextLatestAcceptedTimestamp = sessionNextTimestamp;
+          }
         }
         if (
           turnId &&
@@ -3602,6 +3666,10 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
             ) {
               break;
             }
+            const replyState = context.permissionReplyStateById.get(event.properties.requestID);
+            if (replyState?.generationId === generation.id && !replyState.cancelled) {
+              replyState.acknowledged = true;
+            }
             context.pendingPermissions.delete(event.properties.requestID);
             context.pendingPermissionGenerationById.delete(event.properties.requestID);
             markOpenCodeTurnOwnedProgress(context, generation);
@@ -3654,6 +3722,10 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
             ) {
               break;
             }
+            const replyState = context.questionReplyStateById.get(event.properties.requestID);
+            if (replyState?.generationId === generation.id && !replyState.cancelled) {
+              replyState.acknowledged = true;
+            }
             const request = context.pendingQuestions.get(event.properties.requestID);
             context.pendingQuestions.delete(event.properties.requestID);
             context.pendingQuestionGenerationById.delete(event.properties.requestID);
@@ -3684,6 +3756,10 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
                 generation.id
             ) {
               break;
+            }
+            const replyState = context.questionReplyStateById.get(event.properties.requestID);
+            if (replyState?.generationId === generation.id) {
+              replyState.cancelled = true;
             }
             context.pendingQuestions.delete(event.properties.requestID);
             context.pendingQuestionGenerationById.delete(event.properties.requestID);
@@ -4695,10 +4771,12 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
             openCodeSessionId: started.openCodeSessionId,
             pendingPermissions: new Map(),
             pendingPermissionGenerationById: new Map(),
+            permissionReplyStateById: new Map(),
             autoApprovedPermissionIds: new Set(),
             autoApprovedPermissionGenerationById: new Map(),
             pendingQuestions: new Map(),
             pendingQuestionGenerationById: new Map(),
+            questionReplyStateById: new Map(),
             pendingTextDeltasByPartId: new Map(),
             partById: new Map(),
             partSnapshotKeyById: new Map(),
@@ -4723,6 +4801,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
             activeTurnCompletionActivitySerial: 0,
             activeTurnSawToolCallFinish: false,
             activeTurnSawFinalAssistant: false,
+            latestObservedSessionNextTimestamp: undefined,
             activeTurnFinalAssistantMessageId: undefined,
             activeTurnPromptMessageId: undefined,
             submittedPromptMessageIds: new Set(),
@@ -4846,6 +4925,8 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           cancellationFinalizerStarted: false,
           sessionNextOwned: false,
           sessionNextProgressObserved: false,
+          sessionNextTimestampFloor: context.latestObservedSessionNextTimestamp,
+          sessionNextLatestAcceptedTimestamp: context.latestObservedSessionNextTimestamp,
           lastOwnedProgressAtMs: Date.now(),
         };
         context.activeTurnGeneration = generation;
@@ -5058,7 +5139,8 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
         if (
           !isOpenCodeTurnGenerationActive(context, generation) ||
           !context.pendingPermissions.has(requestId) ||
-          context.pendingPermissionGenerationById.get(requestId) !== generation.id
+          context.pendingPermissionGenerationById.get(requestId) !== generation.id ||
+          context.permissionReplyStateById.has(requestId)
         ) {
           return yield* new ProviderAdapterRequestError({
             provider,
@@ -5068,7 +5150,13 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
         }
 
         const reply = toOpenCodePermissionReply(decision);
-        const result = yield* runBoundedOpenCodeSdk("permission.reply", (signal) =>
+        const replyState: OpenCodeInteractionReplyState = {
+          generationId: generation.id,
+          acknowledged: false,
+          cancelled: false,
+        };
+        context.permissionReplyStateById.set(requestId, replyState);
+        const outcome = yield* runBoundedOpenCodeSdk("permission.reply", (signal) =>
           context.client.permission.reply(
             {
               requestID: requestId,
@@ -5076,8 +5164,27 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
             },
             { signal },
           ),
-        ).pipe(Effect.mapError(toAdapterRequestError));
-        if (result._tag === "None") {
+        ).pipe(
+          Effect.mapError(toAdapterRequestError),
+          Effect.map((result) => ({ _tag: "success" as const, result })),
+          Effect.catch((error) => Effect.succeed({ _tag: "failure" as const, error })),
+        );
+        const clearReplyState = () => {
+          if (context.permissionReplyStateById.get(requestId) === replyState) {
+            context.permissionReplyStateById.delete(requestId);
+          }
+        };
+        if (replyState.acknowledged && !replyState.cancelled) {
+          // The exact-generation SSE acknowledgement is authoritative even when it wins
+          // the race with the HTTP response. Its handler already emitted the resolution.
+          clearReplyState();
+          return;
+        }
+        if (outcome._tag === "failure") {
+          clearReplyState();
+          return yield* outcome.error;
+        }
+        if (outcome.result._tag === "None") {
           const detail = `${adapterConfig.displayName} timed out while replying to permission ${requestId}.`;
           yield* failOpenCodeTurnWithAbort(context, {
             generation,
@@ -5085,6 +5192,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
             raw: { source: `scient.${provider}.permission-reply-timeout`, requestId },
             errorClass: "transport_error",
           });
+          clearReplyState();
           return yield* new ProviderAdapterRequestError({
             provider,
             method: "permission.reply",
@@ -5092,9 +5200,11 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           });
         }
         if (
+          replyState.cancelled ||
           !isOpenCodeTurnGenerationActive(context, generation) ||
           context.pendingPermissionGenerationById.get(requestId) !== generation.id
         ) {
+          clearReplyState();
           return yield* new ProviderAdapterRequestError({
             provider,
             method: "permission.reply",
@@ -5104,6 +5214,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
         const request = context.pendingPermissions.get(requestId);
         context.pendingPermissions.delete(requestId);
         context.pendingPermissionGenerationById.delete(requestId);
+        clearReplyState();
         markOpenCodeTurnOwnedProgress(context, generation);
         yield* emit({
           ...buildEventBase({
@@ -5129,7 +5240,8 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
         if (
           !isOpenCodeTurnGenerationActive(context, generation) ||
           !request ||
-          context.pendingQuestionGenerationById.get(requestId) !== generation.id
+          context.pendingQuestionGenerationById.get(requestId) !== generation.id ||
+          context.questionReplyStateById.has(requestId)
         ) {
           return yield* new ProviderAdapterRequestError({
             provider,
@@ -5139,7 +5251,13 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
         }
 
         const providerAnswers = toOpenCodeQuestionAnswers(request, answers);
-        const result = yield* runBoundedOpenCodeSdk("question.reply", (signal) =>
+        const replyState: OpenCodeInteractionReplyState = {
+          generationId: generation.id,
+          acknowledged: false,
+          cancelled: false,
+        };
+        context.questionReplyStateById.set(requestId, replyState);
+        const outcome = yield* runBoundedOpenCodeSdk("question.reply", (signal) =>
           context.client.question.reply(
             {
               requestID: requestId,
@@ -5147,8 +5265,25 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
             },
             { signal },
           ),
-        ).pipe(Effect.mapError(toAdapterRequestError));
-        if (result._tag === "None") {
+        ).pipe(
+          Effect.mapError(toAdapterRequestError),
+          Effect.map((result) => ({ _tag: "success" as const, result })),
+          Effect.catch((error) => Effect.succeed({ _tag: "failure" as const, error })),
+        );
+        const clearReplyState = () => {
+          if (context.questionReplyStateById.get(requestId) === replyState) {
+            context.questionReplyStateById.delete(requestId);
+          }
+        };
+        if (replyState.acknowledged && !replyState.cancelled) {
+          clearReplyState();
+          return;
+        }
+        if (outcome._tag === "failure") {
+          clearReplyState();
+          return yield* outcome.error;
+        }
+        if (outcome.result._tag === "None") {
           const detail = `${adapterConfig.displayName} timed out while replying to question ${requestId}.`;
           yield* failOpenCodeTurnWithAbort(context, {
             generation,
@@ -5156,6 +5291,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
             raw: { source: `scient.${provider}.question-reply-timeout`, requestId },
             errorClass: "transport_error",
           });
+          clearReplyState();
           return yield* new ProviderAdapterRequestError({
             provider,
             method: "question.reply",
@@ -5163,9 +5299,11 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           });
         }
         if (
+          replyState.cancelled ||
           !isOpenCodeTurnGenerationActive(context, generation) ||
           context.pendingQuestionGenerationById.get(requestId) !== generation.id
         ) {
+          clearReplyState();
           return yield* new ProviderAdapterRequestError({
             provider,
             method: "question.reply",
@@ -5174,6 +5312,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
         }
         context.pendingQuestions.delete(requestId);
         context.pendingQuestionGenerationById.delete(requestId);
+        clearReplyState();
         markOpenCodeTurnOwnedProgress(context, generation);
         yield* emit({
           ...buildEventBase({

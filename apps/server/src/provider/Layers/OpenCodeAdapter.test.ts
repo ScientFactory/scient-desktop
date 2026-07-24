@@ -7216,6 +7216,158 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
   }
 
   for (const interaction of ["permission", "question"] as const) {
+    it(`accepts one ${interaction} resolution when its provider echo beats the reply response`, async () => {
+      const eventQueue = createSubscribedEventQueue();
+      const requestId = `${interaction}-early-echo`;
+      const replyWithEarlyEcho = async () => {
+        eventQueue.push(
+          interaction === "permission"
+            ? {
+                type: "permission.replied",
+                properties: {
+                  sessionID: "opencode-session-1",
+                  requestID: requestId,
+                  reply: "once",
+                },
+              }
+            : {
+                type: "question.replied",
+                properties: {
+                  sessionID: "opencode-session-1",
+                  requestID: requestId,
+                  answers: [["Yes"]],
+                },
+              },
+        );
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return { data: null };
+      };
+      const runtime = createMockOpenCodeRuntime(
+        interaction === "permission"
+          ? { permissionReply: replyWithEarlyEcho }
+          : { questionReply: replyWithEarlyEcho },
+      );
+      bindSubscribedEventQueue(runtime, eventQueue);
+
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const adapter = yield* OpenCodeAdapter;
+          const observedEvents: Array<{
+            readonly type: string;
+            readonly requestId: string | undefined;
+          }> = [];
+          const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+            Effect.sync(() => {
+              observedEvents.push({ type: event.type, requestId: event.requestId });
+            }),
+          ).pipe(Effect.forkChild);
+          const threadId = asThreadId(`thread-${interaction}-early-echo`);
+          yield* adapter.startSession({
+            provider: "opencode",
+            threadId,
+            runtimeMode: "approval-required",
+          });
+          const turn = yield* adapter.sendTurn({
+            threadId,
+            input: `resolve ${interaction}`,
+            attachments: [],
+            modelSelection: { provider: "opencode", model: "openai/gpt-5.4" },
+          });
+          pushActivePromptEcho(eventQueue, runtime);
+          pushActiveAssistantOwnership(eventQueue, runtime, `msg-${interaction}-early-echo`);
+          eventQueue.push(
+            interaction === "permission"
+              ? {
+                  type: "permission.asked",
+                  properties: {
+                    id: requestId,
+                    sessionID: "opencode-session-1",
+                    permission: "bash",
+                    patterns: ["pwd"],
+                    metadata: {},
+                    always: [],
+                  },
+                }
+              : {
+                  type: "question.asked",
+                  properties: {
+                    id: requestId,
+                    sessionID: "opencode-session-1",
+                    questions: [
+                      {
+                        question: "Continue?",
+                        header: "Confirm",
+                        options: [{ label: "Yes", description: "" }],
+                        multiple: false,
+                        custom: false,
+                      },
+                    ],
+                  },
+                },
+          );
+          yield* Effect.sleep(10);
+          const replyExit = yield* Effect.exit(
+            interaction === "permission"
+              ? adapter.respondToRequest(
+                  threadId,
+                  ApprovalRequestId.makeUnsafe(requestId),
+                  "accept",
+                )
+              : adapter.respondToUserInput(threadId, ApprovalRequestId.makeUnsafe(requestId), {}),
+          );
+          eventQueue.push({
+            type: "session.next.text.ended",
+            properties: {
+              timestamp: 10,
+              sessionID: "opencode-session-1",
+              text: `${interaction} completed`,
+            },
+          });
+          eventQueue.push({
+            type: "session.next.step.ended",
+            properties: {
+              timestamp: 11,
+              sessionID: "opencode-session-1",
+              finish: "stop",
+              cost: 0,
+              tokens: {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+            },
+          });
+          yield* Effect.sleep(30);
+          const [settled] = yield* adapter.listSessions();
+          yield* Fiber.interrupt(eventsFiber);
+          eventQueue.close();
+          return { observedEvents, replyExit, settled, turn };
+        }).pipe(
+          Effect.provide(
+            makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+        ),
+      );
+
+      expect(Exit.isSuccess(result.replyExit)).toBe(true);
+      expect(result.settled?.status).toBe("ready");
+      const resolutionType =
+        interaction === "permission" ? "request.resolved" : "user-input.resolved";
+      expect(
+        result.observedEvents.filter(
+          (event) => event.type === resolutionType && event.requestId === requestId,
+        ),
+      ).toHaveLength(1);
+    });
+  }
+
+  for (const interaction of ["permission", "question"] as const) {
     it(`bounds a hung ${interaction} reply and quarantines its late echo from the successor`, async () => {
       const eventQueue = createSubscribedEventQueue();
       let replySignalAborted = false;
@@ -8188,13 +8340,19 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
   });
 
   for (const provider of ["opencode", "kilo"] as const) {
-    it(`does not attribute duplicated, re-identified, or id-less prior terminal events to a new ${provider} turn`, async () => {
+    it(`does not attribute duplicated, re-identified, or id-less prior next events to a new ${provider} turn`, async () => {
       const eventQueue = createSubscribedEventQueue();
       const runtime = createMockOpenCodeRuntime();
       bindSubscribedEventQueue(runtime, eventQueue);
 
       const exercise = (adapter: OpenCodeAdapterShape | KiloAdapterShape) =>
         Effect.gen(function* () {
+          const observedEvents: Array<unknown> = [];
+          const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+            Effect.sync(() => {
+              observedEvents.push(event);
+            }),
+          ).pipe(Effect.forkChild);
           const threadId = asThreadId(`thread-next-generation-boundary-${provider}`);
           yield* adapter.startSession({ provider, threadId, runtimeMode: "full-access" });
           yield* adapter.sendTurn({
@@ -8251,6 +8409,23 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
           const [afterBoundaryBeforeCurrent] = yield* adapter.listSessions();
           pushActiveAssistantOwnership(eventQueue, runtime, `msg-second-owner-${provider}`);
           eventQueue.push({
+            id: `evt-reidentified-stale-text-after-ownership-${provider}`,
+            type: "session.next.text.ended",
+            properties: {
+              timestamp: 1,
+              sessionID: "opencode-session-1",
+              text: "stale response must remain quarantined",
+            },
+          });
+          eventQueue.push({
+            type: "session.next.text.ended",
+            properties: {
+              timestamp: 1,
+              sessionID: "opencode-session-1",
+              text: "stale id-less response must remain quarantined",
+            },
+          });
+          eventQueue.push({
             ...completedStep,
             id: `evt-reidentified-stale-after-ownership-${provider}`,
           });
@@ -8272,12 +8447,14 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
           });
           yield* Effect.sleep(20);
           const [afterBoundary] = yield* adapter.listSessions();
+          yield* Fiber.interrupt(eventsFiber);
           eventQueue.close();
           return {
             afterBoundary,
             afterBoundaryBeforeCurrent,
             afterOwnershipBeforeCurrent,
             beforeBoundary,
+            observedEvents,
             secondTurn,
           };
         });
@@ -8329,6 +8506,8 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
         status: "running",
         activeTurnId: result.secondTurn.turnId,
       });
+      expect(JSON.stringify(result.observedEvents)).not.toContain("stale response");
+      expect(JSON.stringify(result.observedEvents)).not.toContain("stale id-less response");
       expect(result.afterBoundary?.status).toBe("ready");
     });
   }
