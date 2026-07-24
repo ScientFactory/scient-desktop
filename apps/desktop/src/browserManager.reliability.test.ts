@@ -215,6 +215,36 @@ describe("DesktopBrowserManager reliability", () => {
     manager.dispose();
   });
 
+  it("selects the adjacent tab when the active tab closes", () => {
+    const manager = new DesktopBrowserManager();
+    const opened = manager.open({ threadId: THREAD_ID });
+    const firstTabId = opened.activeTabId;
+    const withSecondTab = manager.newTab({
+      threadId: THREAD_ID,
+      url: "https://second.example/",
+    });
+    const secondTabId = withSecondTab.activeTabId;
+    const withThirdTab = manager.newTab({
+      threadId: THREAD_ID,
+      url: "https://third.example/",
+    });
+
+    manager.selectTab({ threadId: THREAD_ID, tabId: firstTabId ?? "" });
+    const afterClosingFirst = manager.closeTab({
+      threadId: THREAD_ID,
+      tabId: firstTabId ?? "",
+    });
+    expect(afterClosingFirst.activeTabId).toBe(secondTabId);
+
+    manager.selectTab({ threadId: THREAD_ID, tabId: secondTabId ?? "" });
+    const afterClosingSecond = manager.closeTab({
+      threadId: THREAD_ID,
+      tabId: secondTabId ?? "",
+    });
+    expect(afterClosingSecond.activeTabId).toBe(withThirdTab.activeTabId);
+    manager.dispose();
+  });
+
   it("replaces a destroyed tracked runtime before navigating", async () => {
     const manager = new DesktopBrowserManager();
     const opened = manager.open({ threadId: THREAD_ID });

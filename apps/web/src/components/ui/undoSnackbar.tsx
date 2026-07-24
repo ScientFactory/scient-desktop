@@ -58,7 +58,11 @@ function UndoSnackbarSurface({ toast }: { toast: ToastObject<UndoSnackbarData> }
   };
 
   return (
-    <Toast.Content className="pointer-events-auto flex min-h-10 items-center gap-2 px-3 py-2 text-[length:var(--app-font-size-ui,12px)] text-popover-foreground">
+    <Toast.Content
+      className="pointer-events-auto flex min-h-10 items-center gap-2 px-3 py-2 text-[length:var(--app-font-size-ui,12px)] text-popover-foreground"
+      data-native-browser-overlay="true"
+      data-slot="toast-popup"
+    >
       <ArchiveIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 flex-1">
         <Toast.Title className="block truncate font-normal" />
