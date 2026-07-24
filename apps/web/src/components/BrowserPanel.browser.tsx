@@ -31,6 +31,7 @@ vi.mock("~/nativeApi", async (importOriginal) => ({
 import { useBrowserStateStore } from "../browserStateStore";
 import { BrowserPanel } from "./BrowserPanel";
 import { RecentViewSwitcher } from "./RecentViewSwitcher";
+import { showUndoSnackbar, UndoSnackbarProvider } from "./ui/undoSnackbar";
 
 const THREAD_ID = "thread-browser-copy" as ThreadId;
 
@@ -88,11 +89,14 @@ function renderPanel() {
   );
 }
 
-function renderLivePanel(onClosePanel: () => void, options?: { showRecentViews?: boolean }) {
+function renderLivePanel(
+  onClosePanel: (options?: { restoreFocus?: boolean }) => void,
+  options?: { showRecentViews?: boolean; withUndoSnackbar?: boolean },
+) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const content = (
     <QueryClientProvider client={queryClient}>
-      <div className="h-[640px] w-[720px]">
+      <div className="w-[720px]" style={{ height: options?.withUndoSnackbar ? "100vh" : "640px" }}>
         <BrowserPanel
           mode="inline"
           threadId={THREAD_ID}
@@ -119,7 +123,10 @@ function renderLivePanel(onClosePanel: () => void, options?: { showRecentViews?:
           />
         ) : null}
       </div>
-    </QueryClientProvider>,
+    </QueryClientProvider>
+  );
+  return render(
+    options?.withUndoSnackbar ? <UndoSnackbarProvider>{content}</UndoSnackbarProvider> : content,
   );
 }
 
@@ -181,7 +188,9 @@ describe("BrowserPanel interactions", () => {
     nativeApiTestState.api = undefined;
     useBrowserStateStore.getState().removeThreadState(THREAD_ID);
     vi.restoreAllMocks();
-    document.body.innerHTML = "";
+    document
+      .querySelectorAll("[data-browser-panel-test-fallback]")
+      .forEach((element) => element.remove());
   });
 
   it("surfaces clipboard rejection locally", async () => {
@@ -394,6 +403,106 @@ describe("BrowserPanel interactions", () => {
       expect(vi.mocked(api.browser.setPanelBounds).mock.calls).not.toContainEqual([
         { threadId: THREAD_ID, bounds: null, surface: "renderer" },
       ]);
+    });
+  });
+
+  it("occludes the native surface when the global Undo snackbar mounts", async () => {
+    const openState = browserState("tab-1");
+    const api = liveBrowserApi({ openState });
+    nativeApiTestState.api = api;
+
+    await renderLivePanel(vi.fn(), { withUndoSnackbar: true });
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLElement>("webview")?.style.visibility).toBe("visible");
+    });
+
+    showUndoSnackbar({ title: "Thread archived", onUndo: async () => true });
+    await expect.element(page.getByRole("button", { name: "Undo" })).toBeVisible();
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLElement>("webview")?.style.visibility).toBe("hidden");
+      expect(vi.mocked(api.browser.setPanelBounds).mock.calls).not.toContainEqual([
+        { threadId: THREAD_ID, bounds: null, surface: "renderer" },
+      ]);
+    });
+    ((await page.getByRole("button", { name: "Dismiss" }).element()) as HTMLButtonElement).click();
+    await vi.waitFor(() => {
+      expect(page.getByRole("button", { name: "Undo" }).query()).toBeNull();
+      expect(document.querySelector<HTMLElement>("webview")?.style.visibility).toBe("visible");
+    });
+  });
+
+  it("moves focus to the adjacent tab when deleting the first of three tabs", async () => {
+    const openState = browserState("tab-1");
+    openState.tabs = [
+      ...openState.tabs,
+      {
+        ...openState.tabs[1]!,
+        id: "tab-3",
+        url: "https://third.example/",
+        title: "Third",
+        lastCommittedUrl: "https://third.example/",
+      },
+    ];
+    const closeTabState: ThreadBrowserState = {
+      ...openState,
+      version: openState.version + 1,
+      activeTabId: "tab-2",
+      tabs: openState.tabs.slice(1),
+    };
+    const api = liveBrowserApi({ openState, closeTabState });
+    nativeApiTestState.api = api;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+
+    await renderLivePanel(vi.fn());
+    const firstTab = (await page
+      .getByRole("tab", { name: "ScientFactory" })
+      .element()) as HTMLButtonElement;
+    const secondTab = (await page
+      .getByRole("tab", { name: "Example" })
+      .element()) as HTMLButtonElement;
+    firstTab.focus();
+    await userEvent.keyboard("{Delete}");
+
+    await vi.waitFor(() => {
+      expect(api.browser.closeTab).toHaveBeenCalledWith({
+        threadId: THREAD_ID,
+        tabId: "tab-1",
+      });
+      expect(document.activeElement).toBe(secondTab);
+    });
+  });
+
+  it("requests a parent focus fallback when keyboard deletion closes the final tab", async () => {
+    const openState = browserState("tab-1");
+    openState.tabs = [openState.tabs[0]!];
+    const closedState: ThreadBrowserState = {
+      ...openState,
+      version: openState.version + 1,
+      open: false,
+      activeTabId: null,
+      tabs: [],
+    };
+    const api = liveBrowserApi({ openState, closeTabState: closedState });
+    nativeApiTestState.api = api;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+    const fallback = document.createElement("button");
+    fallback.textContent = "Open Browser";
+    fallback.dataset.browserPanelTestFallback = "true";
+    document.body.append(fallback);
+    const onClosePanel = vi.fn((options?: { restoreFocus?: boolean }) => {
+      if (options?.restoreFocus) fallback.focus();
+    });
+
+    await renderLivePanel(onClosePanel);
+    const tab = (await page
+      .getByRole("tab", { name: "ScientFactory" })
+      .element()) as HTMLButtonElement;
+    tab.focus();
+    await userEvent.keyboard("{Delete}");
+
+    await vi.waitFor(() => {
+      expect(onClosePanel).toHaveBeenCalledWith({ restoreFocus: true });
+      expect(document.activeElement).toBe(fallback);
     });
   });
 

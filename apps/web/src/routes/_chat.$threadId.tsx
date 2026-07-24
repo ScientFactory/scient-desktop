@@ -2255,7 +2255,18 @@ function SingleChatSurface(props: {
               <BrowserPanel
                 mode="sidebar"
                 threadId={props.threadId}
-                onClosePanel={() => closePane(props.threadId, pane.id)}
+                onClosePanel={(options) => {
+                  closePane(props.threadId, pane.id);
+                  if (options?.restoreFocus) {
+                    window.requestAnimationFrame(() => {
+                      document
+                        .querySelector<HTMLButtonElement>(
+                          '[data-right-dock-content] [data-right-dock-empty-state] button:not([aria-disabled="true"])',
+                        )
+                        ?.focus();
+                    });
+                  }
+                }}
                 runtimeMode={context.runtimeMode}
                 onRequestLive={requestActiveDockPaneLive}
               />

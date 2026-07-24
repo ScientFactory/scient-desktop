@@ -1,7 +1,7 @@
 // Bundles a hermetic Electron fixture, launches it with an isolated profile, and always
 // tears down the detached process group and temporary state on completion or interruption.
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
@@ -13,6 +13,7 @@ const desktopDir = resolve(scriptDir, "..");
 const workspaceRoot = resolve(desktopDir, "../..");
 const tempDir = mkdtempSync(join(tmpdir(), "scient-browser-overlay-lifecycle-"));
 const profileDir = join(tempDir, "profile");
+mkdirSync(join(profileDir, "session-data"), { recursive: true });
 const electronOutputPath = join(tempDir, "browser-overlay-lifecycle.cjs");
 const preloadOutputPath = join(tempDir, "browser-overlay-lifecycle.preload.cjs");
 const rendererOutputPath = join(tempDir, "browser-overlay-lifecycle.renderer.js");

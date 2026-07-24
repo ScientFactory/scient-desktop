@@ -87,7 +87,7 @@ import { Skeleton } from "./ui/skeleton";
 interface BrowserPanelProps {
   mode: DiffPanelMode;
   threadId: ThreadId;
-  onClosePanel: () => void;
+  onClosePanel: (options?: { restoreFocus?: boolean }) => void;
   runtimeMode?: DockPaneRuntimeMode;
   onRequestLive?: () => void;
 }
@@ -1291,7 +1291,7 @@ export function BrowserPanel({
           }
         }
         if (shouldCloseBrowserPanelAfterTabClose(state)) {
-          onClosePanel();
+          onClosePanel({ restoreFocus: options?.restoreTabFocus === true });
         }
       });
     },
@@ -1561,7 +1561,10 @@ export function BrowserPanel({
               <span>Open externally</span>
             </MenuItem>
             <MenuSeparator />
-            <MenuItem className={BROWSER_ACTION_MENU_ITEM_CLASS_NAME} onClick={onClosePanel}>
+            <MenuItem
+              className={BROWSER_ACTION_MENU_ITEM_CLASS_NAME}
+              onClick={() => onClosePanel()}
+            >
               <BrowserActionMenuIcon icon={XIcon} />
               <span>Close browser panel</span>
             </MenuItem>
