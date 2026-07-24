@@ -3,7 +3,7 @@
 
 import "../index.css";
 
-import type { ThreadBrowserState, ThreadId } from "@synara/contracts";
+import type { NativeApi, ThreadBrowserState, ThreadId } from "@synara/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { page } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,9 +18,13 @@ vi.mock("~/lib/serverReactQuery", async (importOriginal) => ({
   }),
 }));
 
+const nativeApiTestState = vi.hoisted(() => ({
+  api: undefined as NativeApi | undefined,
+}));
+
 vi.mock("~/nativeApi", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/nativeApi")>()),
-  readNativeApi: () => undefined,
+  readNativeApi: () => nativeApiTestState.api,
 }));
 
 import { useBrowserStateStore } from "../browserStateStore";
@@ -82,12 +86,27 @@ function renderPanel() {
   );
 }
 
-describe("BrowserPanel copy feedback", () => {
+function renderLivePanel(onClosePanel: () => void) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <BrowserPanel
+        mode="inline"
+        threadId={THREAD_ID}
+        runtimeMode="live"
+        onClosePanel={onClosePanel}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+describe("BrowserPanel interactions", () => {
   beforeEach(() => {
     useBrowserStateStore.getState().upsertThreadState(browserState("tab-1"));
   });
 
   afterEach(() => {
+    nativeApiTestState.api = undefined;
     useBrowserStateStore.getState().removeThreadState(THREAD_ID);
     vi.restoreAllMocks();
     document.body.innerHTML = "";
@@ -129,5 +148,43 @@ describe("BrowserPanel copy feedback", () => {
 
     await expect.element(page.getByRole("button", { name: "Copy link" })).toBeVisible();
     expect(page.getByText("Link copied").query()).toBeNull();
+  });
+
+  it("closes the browser pane when its final tab closes", async () => {
+    const openState = browserState("tab-1");
+    openState.version = 10;
+    openState.tabs = [openState.tabs[0]!];
+    const closedState: ThreadBrowserState = {
+      ...openState,
+      version: openState.version + 1,
+      open: false,
+      activeTabId: null,
+      tabs: [],
+    };
+    const closeTab = vi.fn(async () => closedState);
+    nativeApiTestState.api = {
+      browser: {
+        open: vi.fn(async () => openState),
+        hide: vi.fn(async () => undefined),
+        setPanelBounds: vi.fn(async () => undefined),
+        closeTab,
+        onState: vi.fn(() => () => undefined),
+        onCopyLink: vi.fn(() => () => undefined),
+      },
+      projects: {
+        revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: false })),
+      },
+    } as unknown as NativeApi;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+    const onClosePanel = vi.fn();
+
+    await renderLivePanel(onClosePanel);
+    const closeButton = await page.getByRole("button", { name: "Close Browser" }).element();
+    (closeButton as HTMLButtonElement).click();
+
+    await vi.waitFor(() => {
+      expect(closeTab).toHaveBeenCalledWith({ threadId: THREAD_ID, tabId: "tab-1" });
+      expect(onClosePanel).toHaveBeenCalledOnce();
+    });
   });
 });
