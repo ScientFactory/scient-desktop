@@ -663,6 +663,7 @@ async function runScenario(executablePath, scenario) {
   let output = "";
   let scenarioError;
   let finalScreenshot;
+  const expectedPersistedWorkspaces = [];
   const cleanupErrors = [];
   const cleanupDiagnostics = {
     scenarioName: scenario.name,
@@ -764,7 +765,7 @@ async function runScenario(executablePath, scenario) {
     );
 
     await addProjectByTypedPath(page, firstWorkspace);
-    await waitForPersistedProject(databasePath, firstWorkspace);
+    expectedPersistedWorkspaces.push(firstWorkspace);
     await assertPrivateScientDirectories(scientHome);
     await assertDirectoryMode(firstWorkspace, 0o775);
 
@@ -783,7 +784,7 @@ async function runScenario(executablePath, scenario) {
       );
 
       await addProjectByTypedPath(page, secondWorkspace);
-      await waitForPersistedProject(databasePath, secondWorkspace);
+      expectedPersistedWorkspaces.push(secondWorkspace);
       await assertDirectoryMode(secondWorkspace, 0o775);
       await assertPackagedBackendProcess(recoveredRuntime.pid);
       process.kill(recoveredRuntime.pid, 0);
@@ -798,8 +799,6 @@ async function runScenario(executablePath, scenario) {
         throw new Error(`Expected one controlled backend restart, observed ${restartCount}.`);
       }
     }
-
-    console.log(`Packaged Linux scenario passed: ${scenario.name}`);
   } catch (error) {
     scenarioError = new Error(
       `${scenario.name} failed: ${error instanceof Error ? error.stack || error.message : String(error)}\nPackaged process output:\n${output}`,
@@ -821,6 +820,13 @@ async function runScenario(executablePath, scenario) {
         backendProcessGroupId,
         cleanupDiagnostics,
       ).catch((error) => cleanupErrors.push(error));
+    }
+    if (!scenarioError && cleanupErrors.length === 0) {
+      for (const workspacePath of expectedPersistedWorkspaces) {
+        await waitForPersistedProject(databasePath, workspacePath).catch((error) =>
+          cleanupErrors.push(error),
+        );
+      }
     }
     cleanupDiagnostics.errors = cleanupErrors.map(serializeError);
     let diagnosticsPreserved = false;
@@ -866,6 +872,7 @@ async function runScenario(executablePath, scenario) {
       ? errors[0]
       : new AggregateError(errors, `${scenario.name} failed and cleanup was incomplete.`);
   }
+  console.log(`Packaged Linux scenario passed: ${scenario.name}`);
 }
 
 async function main() {
