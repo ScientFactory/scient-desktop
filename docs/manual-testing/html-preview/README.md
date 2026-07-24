@@ -1,20 +1,19 @@
 # HTML preview manual smoke test
 
-These fixtures provide an obvious pass/fail check for the isolated HTML preview implementation.
+These fixtures provide an obvious pass/fail check for the full local HTML browser.
 They contain no external network resources and are safe to inspect directly.
 
 ## Local desktop development
 
-Turbo only forwards explicitly allowlisted environment variables. Start the normal desktop
-development stack with the rollout switch set before the Bun command:
+Start the normal desktop development stack:
 
 ```sh
-SCIENT_EXECUTABLE_HTML_PREVIEW=1 bun run dev:desktop
+bun run dev:desktop
 ```
 
-Then preview `interactive-preview.html`. The counter must increment, reset must work, and external
-network access must remain unavailable. The `scripts/dev-runner.test.ts` regression test verifies
-that Turbo forwards this rollout switch.
+Then preview `interactive-preview.html`. The counter must increment and reset must work. Local
+scripts, modules, workers, fetches, styles, images, and linked pages should load from the fixture
+directory without a feature flag.
 
 ## Windows
 
@@ -25,16 +24,8 @@ that Turbo forwards this rollout switch.
 4. Select **Preview** for `static-preview.html`.
 5. Confirm that the page says **Static preview passed** and that the four checks are green.
 
-To test the isolated JavaScript path, start the test build from PowerShell with the rollout switch
-enabled:
-
-```powershell
-$env:SCIENT_EXECUTABLE_HTML_PREVIEW = "1"
-& "$env:LOCALAPPDATA\Programs\Scient\Scient.exe"
-```
-
-Then preview `interactive-preview.html`. The counter must increment, reset must work, and external
-network access must remain unavailable.
+Then preview `interactive-preview.html`. The counter must increment and reset must work, and the
+local module, fetch, worker, and linked-page checks must all report success.
 
 The Windows installer may be unsigned when it is produced by a build-only workflow. Windows
 SmartScreen can therefore require an explicit **More info** then **Run anyway** confirmation. Do

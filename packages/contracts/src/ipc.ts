@@ -298,7 +298,7 @@ export interface DesktopUpdateActionResult {
   state: DesktopUpdateState;
 }
 
-export type BrowserTabKind = "web" | "artifact" | "local-app";
+export type BrowserTabKind = "web" | "artifact" | "local-app" | "local-html";
 
 export interface BrowserTabState {
   id: string;
@@ -313,6 +313,7 @@ export interface BrowserTabState {
   faviconUrl: string | null;
   lastCommittedUrl: string | null;
   lastError: string | null;
+  allowedExternalUrls?: readonly string[];
 }
 
 export interface ThreadBrowserState {
@@ -329,6 +330,8 @@ export interface BrowserOpenInput {
   initialUrl?: string;
   kind?: BrowserTabKind;
   displayUrl?: string;
+  /** Exact public subresource URLs declared by a capability-backed local HTML document. */
+  allowedExternalUrls?: readonly string[];
 }
 
 export interface BrowserThreadInput {
@@ -352,6 +355,7 @@ export interface BrowserNewTabInput {
   kind?: BrowserTabKind;
   displayUrl?: string;
   activate?: boolean;
+  allowedExternalUrls?: readonly string[];
 }
 
 export interface BrowserPanelBounds {
@@ -365,6 +369,7 @@ export interface BrowserSetPanelBoundsInput {
   threadId: ThreadId;
   bounds: BrowserPanelBounds | null;
   surface?: "native" | "renderer";
+  occluded?: boolean;
 }
 
 export interface BrowserAttachWebviewInput extends BrowserTabInput {
