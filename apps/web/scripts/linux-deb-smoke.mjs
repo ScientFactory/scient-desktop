@@ -336,6 +336,9 @@ async function connectToPackagedRenderer(debuggingPort, processOutput) {
 async function addProjectByTypedPath(page, workspacePath) {
   await page.keyboard.press("Control+Shift+O");
   const folderDialog = page.getByRole("dialog");
+  const localFolderSource = folderDialog.getByText("Local folder", { exact: true });
+  await localFolderSource.waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
+  await localFolderSource.click({ timeout: ACTION_TIMEOUT_MS });
   const pathInput = folderDialog.getByPlaceholder("Enter project path (e.g. ~/projects/my-app)");
   await pathInput.waitFor({ state: "visible", timeout: ACTION_TIMEOUT_MS });
   await pathInput.fill(workspacePath);
