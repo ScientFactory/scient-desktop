@@ -12,6 +12,14 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(scriptDir, "..");
 const workspaceRoot = resolve(desktopDir, "../..");
 const tempDir = mkdtempSync(join(tmpdir(), "scient-browser-overlay-lifecycle-"));
+
+function cleanupTempDir() {
+  rmSync(tempDir, { recursive: true, force: true });
+}
+
+// Register cleanup before any other setup can fail after creating the directory.
+process.once("exit", cleanupTempDir);
+
 const profileDir = join(tempDir, "profile");
 mkdirSync(join(profileDir, "session-data"), { recursive: true });
 // Allow both bounded 10s fixture startup waits, the required >30s overlay hold,
@@ -28,7 +36,7 @@ const macSavedStatePaths = [
 ];
 
 function cleanupTemporaryState() {
-  rmSync(tempDir, { recursive: true, force: true });
+  cleanupTempDir();
   if (process.platform === "darwin") {
     for (const savedStatePath of macSavedStatePaths) {
       rmSync(savedStatePath, { recursive: true, force: true });
@@ -38,6 +46,7 @@ function cleanupTemporaryState() {
 
 // Keep setup failures hermetic too: package resolution, sandbox validation, fixture
 // generation, and process spawning can all fail before the child handlers are installed.
+process.removeListener("exit", cleanupTempDir);
 process.once("exit", cleanupTemporaryState);
 
 function createMacTestElectronExecutable(originalExecutablePath) {
