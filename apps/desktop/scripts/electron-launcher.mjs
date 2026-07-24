@@ -137,9 +137,13 @@ function buildMacLauncher(electronBinaryPath) {
   return targetBinaryPath;
 }
 
-export function resolveElectronPath() {
+export function resolveElectronPackagePath() {
   const require = createRequire(import.meta.url);
-  const electronBinaryPath = require("electron");
+  return require("electron");
+}
+
+export function resolveElectronPath() {
+  const electronBinaryPath = resolveElectronPackagePath();
 
   if (process.platform !== "darwin") {
     return electronBinaryPath;

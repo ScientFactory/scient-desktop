@@ -6,7 +6,7 @@
 // Note: raw <button>s for autocomplete-suggestion rows and tab-title activate
 // regions are intentional — list-row and tab semantics, not shadcn Buttons.
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -68,6 +68,14 @@ import {
   type BrowserAddressSuggestion,
   type BrowserCopyFeedback,
 } from "./BrowserPanel.logic";
+import {
+  type BrowserWebviewElement,
+  hasNativeBrowserObscuringOverlay,
+  isNativeBrowserTransitionSignalTarget,
+  nativeBrowserOverlayMutationsRequireSync,
+  resolveNativeBrowserBoundsSyncMode,
+  setBrowserWebviewOverlayOcclusion,
+} from "./BrowserPanel.overlay";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { LocalServerIdentity } from "./LocalServerIdentity";
 import { Button } from "./ui/button";
@@ -79,7 +87,7 @@ import { Skeleton } from "./ui/skeleton";
 interface BrowserPanelProps {
   mode: DiffPanelMode;
   threadId: ThreadId;
-  onClosePanel: () => void;
+  onClosePanel: (options?: { restoreFocus?: boolean }) => void;
   runtimeMode?: DockPaneRuntimeMode;
   onRequestLive?: () => void;
 }
@@ -99,20 +107,6 @@ const BROWSER_ACTION_MENU_ITEM_CLASS_NAME =
   "text-[var(--color-text-foreground)] data-highlighted:text-[var(--color-text-foreground)]";
 const BROWSER_ACTION_MENU_ICON_CLASS_NAME =
   "inline-flex size-3.5 shrink-0 items-center justify-center text-[var(--color-text-foreground-secondary)] [&>svg]:size-3.5 [&>[data-slot=central-icon]]:size-3.5";
-const NATIVE_BROWSER_OBSCURING_OVERLAY_SELECTOR = [
-  "[data-slot='dialog-backdrop']",
-  "[data-slot='dialog-popup']",
-  "[data-slot='dialog-viewport']",
-  "[data-slot='alert-dialog-backdrop']",
-  "[data-slot='alert-dialog-popup']",
-  "[data-slot='alert-dialog-viewport']",
-  "[data-slot='command-dialog-backdrop']",
-  "[data-slot='command-dialog-popup']",
-  "[data-slot='command-dialog-viewport']",
-  "[data-slot='toast-popup']",
-  "[role='dialog'][aria-modal='true']",
-].join(", ");
-
 function BrowserActionMenuIcon({ icon: Icon }: { icon: LucideIcon }) {
   return (
     <span className={BROWSER_ACTION_MENU_ICON_CLASS_NAME}>
@@ -120,19 +114,6 @@ function BrowserActionMenuIcon({ icon: Icon }: { icon: LucideIcon }) {
     </span>
   );
 }
-
-// The browser itself lives inside a sheet, and toast portals/positioners are just
-// layout containers. Treating either as blockers hides the WebContentsView.
-const NATIVE_BROWSER_NON_OBSCURING_OVERLAY_SELECTOR = [
-  "[data-panel-resize-overlay='true']",
-  "[data-slot='sheet-backdrop']",
-  "[data-slot='sheet-popup']",
-  "[data-slot='toast-portal']",
-  "[data-slot='toast-portal-anchored']",
-  "[data-slot='toast-viewport']",
-  "[data-slot='toast-viewport-anchored']",
-  "[data-slot='toast-positioner']",
-].join(", ");
 
 interface BrowserViewportPerfCounters {
   syncAttempts: number;
@@ -145,10 +126,6 @@ interface BrowserViewportPerfCounters {
   burstFrames: number;
   transitionSignals: number;
   ignoredTransitionSignals: number;
-}
-
-interface BrowserWebviewElement extends HTMLElement {
-  getWebContentsId?: () => number;
 }
 
 const VIEWPORT_TRANSITION_PROPERTIES = new Set([
@@ -199,129 +176,6 @@ function ignoreBrowserBoundsSyncError(): void {
 
 function ignoreBrowserWebviewDetachError(): void {
   // Renderer webview detach is best-effort cleanup; a stale/destroyed guest is already gone.
-}
-
-function setBrowserWebviewOverlayOcclusion(
-  webview: BrowserWebviewElement | null,
-  occluded: boolean,
-): void {
-  if (!webview) {
-    return;
-  }
-  webview.style.visibility = occluded ? "hidden" : "visible";
-  webview.style.pointerEvents = occluded ? "none" : "auto";
-}
-
-function isVisibleOverlayElement(element: HTMLElement): boolean {
-  const styles = window.getComputedStyle(element);
-  if (styles.display === "none" || styles.visibility === "hidden" || styles.opacity === "0") {
-    return false;
-  }
-  return element.getClientRects().length > 0;
-}
-
-function isNativeBrowserNonObscuringOverlayElement(element: HTMLElement): boolean {
-  return (
-    element.closest("[data-slot='toast-popup']") === null &&
-    element.closest(NATIVE_BROWSER_NON_OBSCURING_OVERLAY_SELECTOR) !== null
-  );
-}
-
-const NATIVE_BROWSER_OVERLAY_SAMPLE_POINTS = [
-  [0.5, 0.5],
-  [0.2, 0.2],
-  [0.8, 0.2],
-  [0.2, 0.8],
-  [0.8, 0.8],
-] as const;
-
-function rectsIntersect(a: DOMRect, b: DOMRect): boolean {
-  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-}
-
-function candidateObscuresNativeBrowser(candidate: HTMLElement, element: HTMLElement): boolean {
-  if (candidate === element || candidate.contains(element) || element.contains(candidate)) {
-    return false;
-  }
-  if (!isVisibleOverlayElement(candidate)) {
-    return false;
-  }
-
-  const elementRect = element.getBoundingClientRect();
-  const candidateRects = candidate.getClientRects();
-  for (const candidateRect of candidateRects) {
-    if (rectsIntersect(elementRect, candidateRect)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function hasTopLayerDomObstruction(element: HTMLElement): boolean {
-  const rect = element.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) {
-    return false;
-  }
-
-  for (const [xRatio, yRatio] of NATIVE_BROWSER_OVERLAY_SAMPLE_POINTS) {
-    const x = rect.left + rect.width * xRatio;
-    const y = rect.top + rect.height * yRatio;
-    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) {
-      continue;
-    }
-
-    const hitElements = document.elementsFromPoint(x, y);
-    for (const hitElement of hitElements) {
-      if (!(hitElement instanceof HTMLElement)) {
-        continue;
-      }
-      if (hitElement === element || element.contains(hitElement) || hitElement.contains(element)) {
-        continue;
-      }
-      if (isNativeBrowserNonObscuringOverlayElement(hitElement)) {
-        continue;
-      }
-      if (!isVisibleOverlayElement(hitElement)) {
-        continue;
-      }
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function hasNativeBrowserObscuringOverlay(element: HTMLElement): boolean {
-  const candidates = document.querySelectorAll<HTMLElement>(
-    NATIVE_BROWSER_OBSCURING_OVERLAY_SELECTOR,
-  );
-  for (const candidate of candidates) {
-    if (candidateObscuresNativeBrowser(candidate, element)) {
-      return true;
-    }
-  }
-
-  return hasTopLayerDomObstruction(element);
-}
-
-function isNativeBrowserTransitionSignalTarget(
-  target: EventTarget | null,
-  viewportElement: HTMLElement,
-): boolean {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-
-  if (viewportElement.contains(target) || target.contains(viewportElement)) {
-    return true;
-  }
-
-  return (
-    target.closest(NATIVE_BROWSER_OBSCURING_OVERLAY_SELECTOR) !== null ||
-    target.closest("[data-slot='sidebar-container']") !== null ||
-    target.closest("[data-slot='sheet-popup']") !== null
-  );
 }
 
 function isBrowserPerfLoggingEnabled(): boolean {
@@ -529,6 +383,8 @@ export function BrowserPanel({
   const addressDraftsByTabIdRef = useRef(new Map<string, string>());
   const lastSyncedAddressByTabIdRef = useRef(new Map<string, string>());
   const previousActiveTabIdRef = useRef<string | null>(null);
+  const pendingCreateTabRef = useRef(false);
+  const createTabInFlightRef = useRef(false);
   const artifactPreviewUrlsRef = useRef(
     new Set(
       threadBrowserState?.tabs.filter((tab) => tab.kind === "artifact").map((tab) => tab.url) ?? [],
@@ -536,7 +392,6 @@ export function BrowserPanel({
   );
   const lastSentBoundsRef = useRef<string | null>(null);
   const lastMeasuredBoundsKeyRef = useRef<string | null>(null);
-  const lastOverlayObscuredRef = useRef(false);
   const isAddressEditingRef = useRef(false);
   const resizeFrameRef = useRef<number | null>(null);
   const boundsBurstFrameRef = useRef<number | null>(null);
@@ -558,11 +413,16 @@ export function BrowserPanel({
   const [isAddressFocused, setIsAddressFocused] = useState(false);
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [isCreatingTab, setIsCreatingTab] = useState(false);
+  const browserTabsId = useId();
   const runtimeReady = isLiveRuntime ? workspaceReady : true;
   const activeTab =
     threadBrowserState?.tabs.find((tab) => tab.id === threadBrowserState.activeTabId) ??
     threadBrowserState?.tabs[0] ??
     null;
+  const activeTabIndex = activeTab
+    ? (threadBrowserState?.tabs.findIndex((tab) => tab.id === activeTab.id) ?? -1)
+    : -1;
   const activeCopyScope = activeTab
     ? {
         tabId: activeTab.id,
@@ -876,23 +736,34 @@ export function BrowserPanel({
       // While the local-servers home is up, force the browser surface hidden instead of
       // trusting the obscuring-overlay heuristic. The native/inline webview otherwise paints
       // about:blank white over our dark DOM home — the "always white" empty state.
-      const obscuredByOverlay = showLocalServersHome || hasNativeBrowserObscuringOverlay(element);
-      lastOverlayObscuredRef.current = obscuredByOverlay;
-      setBrowserWebviewOverlayOcclusion(browserWebviewRef.current, obscuredByOverlay);
+      const obscuredByOverlay = hasNativeBrowserObscuringOverlay(element);
+      const webviewOccluded = showLocalServersHome || obscuredByOverlay;
+      setBrowserWebviewOverlayOcclusion(browserWebviewRef.current, webviewOccluded);
       const rect = element.getBoundingClientRect();
-      const bounds = obscuredByOverlay
-        ? null
-        : (() => {
-            if (rect.width <= 0 || rect.height <= 0) {
-              return null;
-            }
-            return {
+      const paneIsActuallyHidden = showLocalServersHome || rect.width <= 0 || rect.height <= 0;
+      const boundsSyncMode = resolveNativeBrowserBoundsSyncMode({
+        obscuredByOverlay,
+        paneIsActuallyHidden,
+      });
+      // App-owned menus, dialogs, and other transient overlays only occlude the renderer
+      // surface. Sending null bounds here tells main that the pane itself is hidden, which
+      // starts the 30-second runtime suspension timer and can destroy the adopted webview
+      // while its DOM node remains mounted. Keep the last native geometry/lifecycle active;
+      // a close mutation or resize will send the current real bounds when the overlay leaves.
+      if (boundsSyncMode === "suppress") {
+        lastMeasuredBoundsKeyRef.current = "renderer:overlay-occluded";
+        perfCountersRef.current.syncSkips += 1;
+        return;
+      }
+      const bounds =
+        boundsSyncMode === "hide"
+          ? null
+          : {
               x: rect.left,
               y: rect.top,
               width: rect.width,
               height: rect.height,
             };
-          })();
       const nextKey = bounds
         ? `renderer:${Math.round(bounds.x)}:${Math.round(bounds.y)}:${Math.round(bounds.width)}:${Math.round(bounds.height)}`
         : "renderer:hidden";
@@ -986,6 +857,24 @@ export function BrowserPanel({
       scheduleSyncBounds();
     });
     observer.observe(element);
+    const overlayObserver = new MutationObserver((mutations) => {
+      if (nativeBrowserOverlayMutationsRequireSync(mutations)) {
+        scheduleSyncBounds();
+      }
+    });
+    overlayObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: [
+        "data-open",
+        "data-closed",
+        "data-starting-style",
+        "data-ending-style",
+        "hidden",
+        "style",
+      ],
+      childList: true,
+      subtree: true,
+    });
     window.addEventListener("resize", scheduleSyncBounds);
     window.addEventListener(PANEL_RESIZE_OVERLAY_SYNC_EVENT, scheduleSyncBounds);
     document.addEventListener("transitionrun", handleTransitionBounds, true);
@@ -995,6 +884,7 @@ export function BrowserPanel({
     return () => {
       setBrowserWebviewOverlayOcclusion(browserWebviewRef.current, false);
       observer.disconnect();
+      overlayObserver.disconnect();
       window.removeEventListener("resize", scheduleSyncBounds);
       window.removeEventListener(PANEL_RESIZE_OVERLAY_SYNC_EVENT, scheduleSyncBounds);
       document.removeEventListener("transitionrun", handleTransitionBounds, true);
@@ -1092,6 +982,20 @@ export function BrowserPanel({
     [activeTab, api, ensureLiveRuntime, runBrowserAction, threadId, upsertThreadState],
   );
 
+  const onSelectTab = useCallback(
+    (tabId: string) => {
+      if (!ensureLiveRuntime() || !api) {
+        return;
+      }
+      void runBrowserAction(() => api.browser.selectTab({ threadId, tabId })).then((state) => {
+        if (state) {
+          upsertThreadState(state);
+        }
+      });
+    },
+    [api, ensureLiveRuntime, runBrowserAction, threadId, upsertThreadState],
+  );
+
   const onOpenLocalServer = useCallback(
     (url: string, tabId: string | null) => {
       if (!api) {
@@ -1123,23 +1027,53 @@ export function BrowserPanel({
     [api, ensureLiveRuntime, runBrowserAction, threadId, upsertThreadState],
   );
 
-  const onCreateTab = useCallback(() => {
-    if (!ensureLiveRuntime()) {
-      return;
-    }
+  const performCreateTab = useCallback(() => {
     if (!api) {
+      return false;
+    }
+    if (createTabInFlightRef.current) {
+      return false;
+    }
+    createTabInFlightRef.current = true;
+    setIsCreatingTab(true);
+    void runBrowserAction(() => api.browser.newTab({ threadId, activate: true }))
+      .then((state) => {
+        if (state) {
+          upsertThreadState(state);
+        }
+        window.requestAnimationFrame(() => {
+          addressInputRef.current?.focus();
+          addressInputRef.current?.select();
+        });
+      })
+      .finally(() => {
+        createTabInFlightRef.current = false;
+        setIsCreatingTab(false);
+      });
+    return true;
+  }, [api, runBrowserAction, threadId, upsertThreadState]);
+
+  const onCreateTab = useCallback(() => {
+    if (!isLiveRuntime || !workspaceReady) {
+      if (!pendingCreateTabRef.current) {
+        pendingCreateTabRef.current = true;
+        if (!isLiveRuntime) {
+          requestLiveRuntime();
+        }
+      }
       return;
     }
-    void runBrowserAction(() => api.browser.newTab({ threadId, activate: true })).then((state) => {
-      if (state) {
-        upsertThreadState(state);
-      }
-      window.requestAnimationFrame(() => {
-        addressInputRef.current?.focus();
-        addressInputRef.current?.select();
-      });
-    });
-  }, [api, ensureLiveRuntime, runBrowserAction, threadId, upsertThreadState]);
+    performCreateTab();
+  }, [isLiveRuntime, performCreateTab, requestLiveRuntime, workspaceReady]);
+
+  useEffect(() => {
+    if (!isLiveRuntime || !workspaceReady || !pendingCreateTabRef.current) {
+      return;
+    }
+    if (performCreateTab()) {
+      pendingCreateTabRef.current = false;
+    }
+  }, [isLiveRuntime, performCreateTab, workspaceReady]);
 
   const onCaptureScreenshot = useCallback(() => {
     if (!ensureLiveRuntime()) {
@@ -1328,13 +1262,14 @@ export function BrowserPanel({
   }, [copyFeedback]);
 
   const onCloseTab = useCallback(
-    (tabId: string) => {
+    (tabId: string, options?: { restoreTabFocus?: boolean }) => {
       if (!ensureLiveRuntime()) {
         return;
       }
       if (!api) {
         return;
       }
+      const focusOrigin = document.activeElement;
       const closingTab = threadBrowserState?.tabs.find((tab) => tab.id === tabId);
       void runBrowserAction(async () => {
         if (closingTab?.kind === "artifact") {
@@ -1348,13 +1283,28 @@ export function BrowserPanel({
           return;
         }
         upsertThreadState(state);
+        const activeElement = document.activeElement;
+        const shouldRestoreTabFocus =
+          options?.restoreTabFocus === true &&
+          (activeElement === focusOrigin ||
+            activeElement === document.body ||
+            activeElement === null);
+        if (shouldRestoreTabFocus && state.activeTabId) {
+          const nextActiveIndex = state.tabs.findIndex((tab) => tab.id === state.activeTabId);
+          if (nextActiveIndex >= 0) {
+            window.requestAnimationFrame(() => {
+              document.getElementById(`${browserTabsId}-tab-${nextActiveIndex}`)?.focus();
+            });
+          }
+        }
         if (shouldCloseBrowserPanelAfterTabClose(state)) {
-          onClosePanel();
+          onClosePanel({ restoreFocus: shouldRestoreTabFocus });
         }
       });
     },
     [
       api,
+      browserTabsId,
       ensureLiveRuntime,
       onClosePanel,
       runBrowserAction,
@@ -1484,7 +1434,10 @@ export function BrowserPanel({
           />
         </form>
         {showBrowserAddressSuggestions ? (
-          <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 overflow-hidden rounded-lg border border-border bg-popover shadow-lg [-webkit-app-region:no-drag]">
+          <div
+            className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 overflow-hidden rounded-lg border border-border bg-popover shadow-lg [-webkit-app-region:no-drag]"
+            data-native-browser-overlay="true"
+          >
             <div className="max-h-64 overflow-auto p-1">
               {browserAddressSuggestions.map((suggestion) => (
                 <button
@@ -1586,7 +1539,11 @@ export function BrowserPanel({
             side="bottom"
             className={BROWSER_ACTION_MENU_PANEL_CLASS_NAME}
           >
-            <MenuItem className={BROWSER_ACTION_MENU_ITEM_CLASS_NAME} onClick={onCreateTab}>
+            <MenuItem
+              className={BROWSER_ACTION_MENU_ITEM_CLASS_NAME}
+              disabled={isCreatingTab}
+              onClick={onCreateTab}
+            >
               <BrowserActionMenuIcon icon={PlusIcon} />
               <span>New tab</span>
             </MenuItem>
@@ -1611,7 +1568,10 @@ export function BrowserPanel({
               <span>Open externally</span>
             </MenuItem>
             <MenuSeparator />
-            <MenuItem className={BROWSER_ACTION_MENU_ITEM_CLASS_NAME} onClick={onClosePanel}>
+            <MenuItem
+              className={BROWSER_ACTION_MENU_ITEM_CLASS_NAME}
+              onClick={() => onClosePanel({ restoreFocus: true })}
+            >
               <BrowserActionMenuIcon icon={XIcon} />
               <span>Close browser panel</span>
             </MenuItem>
@@ -1641,10 +1601,15 @@ export function BrowserPanel({
             isElectron && mode !== "sheet" && "drag-region",
           )}
         >
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
-            {threadBrowserState?.tabs.map((tab) => {
+          <div
+            className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto"
+            role="tablist"
+            aria-label="Browser tabs"
+          >
+            {threadBrowserState?.tabs.map((tab, tabIndex) => {
               const isActive = tab.id === activeTab?.id;
               const tabIsBlank = isBlankBrowserTabUrl(tab);
+              const tabButtonId = `${browserTabsId}-tab-${tabIndex}`;
               return (
                 <div
                   key={tab.id}
@@ -1667,16 +1632,36 @@ export function BrowserPanel({
                   <button
                     type="button"
                     className="min-w-0 flex-1 truncate text-left"
-                    onClick={() => {
-                      if (!ensureLiveRuntime()) return;
-                      if (!api) return;
-                      void runBrowserAction(() =>
-                        api.browser.selectTab({ threadId, tabId: tab.id }),
-                      ).then((state) => {
-                        if (state) {
-                          upsertThreadState(state);
-                        }
-                      });
+                    id={tabButtonId}
+                    role="tab"
+                    aria-controls={`${browserTabsId}-tabpanel`}
+                    aria-selected={isActive}
+                    tabIndex={isActive ? 0 : -1}
+                    onClick={() => onSelectTab(tab.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Delete") {
+                        event.preventDefault();
+                        onCloseTab(tab.id, { restoreTabFocus: true });
+                        return;
+                      }
+                      const tabs = threadBrowserState?.tabs ?? [];
+                      if (tabs.length === 0) return;
+                      let nextIndex: number | null = null;
+                      if (event.key === "ArrowRight") {
+                        nextIndex = (tabIndex + 1) % tabs.length;
+                      } else if (event.key === "ArrowLeft") {
+                        nextIndex = (tabIndex - 1 + tabs.length) % tabs.length;
+                      } else if (event.key === "Home") {
+                        nextIndex = 0;
+                      } else if (event.key === "End") {
+                        nextIndex = tabs.length - 1;
+                      }
+                      if (nextIndex === null || nextIndex === tabIndex) return;
+                      event.preventDefault();
+                      const nextTab = tabs[nextIndex];
+                      if (!nextTab) return;
+                      document.getElementById(`${browserTabsId}-tab-${nextIndex}`)?.focus();
+                      onSelectTab(nextTab.id);
                     }}
                   >
                     {tab.title || "Untitled"}
@@ -1686,20 +1671,35 @@ export function BrowserPanel({
                     variant="ghost"
                     size="icon-sm"
                     className={closeButtonClassName(isActive)}
+                    tabIndex={-1}
                     onClick={(event) => {
                       event.stopPropagation();
-                      onCloseTab(tab.id);
+                      onCloseTab(tab.id, { restoreTabFocus: true });
                     }}
                   >
                     <XIcon className="size-3" />
                     <span className="sr-only">
-                      {threadBrowserState?.tabs.length === 1 ? "Close Browser" : "Close tab"}
+                      {threadBrowserState?.tabs.length === 1
+                        ? "Close Browser"
+                        : `Close tab: ${tab.title || "Untitled"}`}
                     </span>
                   </Button>
                 </div>
               );
             })}
           </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="size-7 shrink-0"
+            disabled={isCreatingTab}
+            aria-label="New browser tab"
+            title="New browser tab"
+            onClick={onCreateTab}
+          >
+            <PlusIcon className="size-3.5" />
+          </Button>
           {browserChromeStatus ? (
             <div
               className={cn(
@@ -1714,7 +1714,14 @@ export function BrowserPanel({
             </div>
           ) : null}
         </div>
-        <div className="relative min-h-0 flex-1 bg-transparent">
+        <div
+          id={`${browserTabsId}-tabpanel`}
+          className="relative min-h-0 flex-1 bg-transparent"
+          role="tabpanel"
+          aria-labelledby={
+            activeTabIndex >= 0 ? `${browserTabsId}-tab-${activeTabIndex}` : undefined
+          }
+        >
           {!isLiveRuntime ? (
             <BrowserRuntimePreview
               title={activeTab?.title || "Browser is sleeping"}
