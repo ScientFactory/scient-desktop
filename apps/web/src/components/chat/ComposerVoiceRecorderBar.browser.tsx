@@ -36,6 +36,12 @@ describe("ComposerVoiceRecorderBar", () => {
 
   it("offers separate cancel, stop-and-insert, and send actions while recording", async () => {
     const mounted = await mountRecorder(null);
+    const cancelButton = document.querySelector<HTMLButtonElement>(
+      '[aria-label="Cancel voice recording"]',
+    );
+
+    expect(cancelButton?.querySelector('[data-slot="central-icon"]')).not.toBeNull();
+    expect(cancelButton?.className).not.toContain("bg-zinc-200/80");
 
     await page.getByRole("button", { name: "Cancel voice recording" }).click();
     await page.getByRole("button", { name: "Stop and insert voice note" }).click();

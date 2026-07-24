@@ -21,6 +21,7 @@ describe("ComposerVoiceRecorderBar", () => {
     const markup = renderRecorder(null);
 
     expect(markup).toContain('aria-label="Cancel voice recording"');
+    expect(markup).toContain("/central-icons-reversed/trash-can-simple.svg");
     expect(markup).toContain('aria-label="Stop and insert voice note"');
     expect(markup).toContain('aria-label="Send voice note"');
     expect(markup).not.toContain("animate-spin");

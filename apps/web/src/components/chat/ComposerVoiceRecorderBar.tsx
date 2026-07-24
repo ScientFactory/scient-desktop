@@ -4,9 +4,10 @@
 // Depends on: live waveform samples and caller-owned record/cancel/send actions.
 
 import { memo, useEffect, useRef, useState } from "react";
-import { FiArrowUp, FiX } from "react-icons/fi";
+import { FiArrowUp } from "react-icons/fi";
 import { IoStopSharp } from "react-icons/io5";
 
+import { CentralIcon } from "~/lib/central-icons";
 import { Loader2Icon } from "~/lib/icons";
 import { cn } from "~/lib/utils";
 import type { ComposerVoiceCompletionIntent } from "./composerVoiceState";
@@ -101,12 +102,12 @@ export const ComposerVoiceRecorderBar = memo(function ComposerVoiceRecorderBar(
 
       <button
         type="button"
-        className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-zinc-200/80 text-zinc-700 transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10 dark:text-zinc-100 dark:hover:bg-white/15 sm:h-7 sm:w-7"
+        className="flex h-[26px] w-[26px] shrink-0 items-center justify-center text-zinc-700 transition-colors hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-50 dark:text-zinc-100 dark:hover:text-white sm:h-7 sm:w-7"
         aria-label={cancelLabel}
         title={cancelLabel}
         onClick={props.onCancel}
       >
-        <FiX aria-hidden="true" className="size-[13px]" strokeWidth={2.25} />
+        <CentralIcon name="trash-can-simple" className="size-[15px]" />
       </button>
 
       <button
