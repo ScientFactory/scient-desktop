@@ -9,12 +9,21 @@ const NATIVE_BROWSER_OBSCURING_OVERLAY_SELECTOR = [
   "[data-slot='menu-positioner']",
   "[data-slot='menu-popup']",
   "[data-slot='menu-sub-content']",
+  "[data-slot='autocomplete-positioner']",
+  "[data-slot='autocomplete-popup']",
   "[data-slot='select-positioner']",
   "[data-slot='select-popup']",
   "[data-slot='combobox-positioner']",
   "[data-slot='combobox-popup']",
   "[data-slot='popover-positioner']",
   "[data-slot='popover-popup']",
+  "[data-slot='preview-card-positioner']",
+  "[data-slot='preview-card-popup']",
+  "[data-slot='tooltip-positioner']",
+  "[data-slot='tooltip-popup']",
+  "[data-slot='sheet-backdrop']",
+  "[data-slot='sheet-viewport']",
+  "[data-slot='sheet-popup']",
   "[data-slot='dialog-backdrop']",
   "[data-slot='dialog-popup']",
   "[data-slot='dialog-viewport']",
@@ -28,12 +37,10 @@ const NATIVE_BROWSER_OBSCURING_OVERLAY_SELECTOR = [
   "[role='dialog'][aria-modal='true']",
 ].join(", ");
 
-// The browser itself lives inside a sheet, and toast portals/positioners are just
-// layout containers. Treating either as blockers hides the native surface unnecessarily.
+// Toast portals/positioners are layout containers. The actual toast popup remains a
+// blocker, but treating its portal as one would hide the browser across the whole app.
 const NATIVE_BROWSER_NON_OBSCURING_OVERLAY_SELECTOR = [
   "[data-panel-resize-overlay='true']",
-  "[data-slot='sheet-backdrop']",
-  "[data-slot='sheet-popup']",
   "[data-slot='toast-portal']",
   "[data-slot='toast-portal-anchored']",
   "[data-slot='toast-viewport']",

@@ -140,6 +140,7 @@ function liveBrowserApi(options?: {
       attachWebview: vi.fn(async () => openState),
       detachWebview: vi.fn(async () => undefined),
       newTab: vi.fn(async () => options?.newTabState ?? openState),
+      selectTab: vi.fn(async ({ tabId }) => browserState(tabId)),
       closeTab: vi.fn(async () => openState),
       onState: vi.fn(() => () => undefined),
       onCopyLink: vi.fn(() => () => undefined),
@@ -278,7 +279,7 @@ describe("BrowserPanel interactions", () => {
       );
     });
     await expect.element(page.getByText("New tab", { exact: true })).toBeVisible();
-    expect(page.getByRole("button", { name: "Close tab" }).elements()).toHaveLength(2);
+    expect(page.getByRole("button", { name: /^Close tab:/ }).elements()).toHaveLength(2);
   });
 
   it("preserves a new-tab click while a sleeping browser pane wakes", async () => {
@@ -308,6 +309,47 @@ describe("BrowserPanel interactions", () => {
     });
   });
 
+  it("exposes roving tab semantics and activates adjacent tabs from the keyboard", async () => {
+    const openState = browserState("tab-1");
+    const api = liveBrowserApi({ openState });
+    nativeApiTestState.api = api;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+
+    await renderLivePanel(vi.fn());
+    const tablist = page.getByRole("tablist", { name: "Browser tabs" });
+    await expect.element(tablist).toBeVisible();
+    const firstTab = page.getByRole("tab", { name: "ScientFactory" });
+    const secondTab = page.getByRole("tab", { name: "Example" });
+    await expect.element(firstTab).toHaveAttribute("aria-selected", "true");
+    await expect.element(firstTab).toHaveAttribute("tabindex", "0");
+    await expect.element(secondTab).toHaveAttribute("aria-selected", "false");
+    await expect.element(secondTab).toHaveAttribute("tabindex", "-1");
+
+    const secondTabElement = (await secondTab.element()) as HTMLButtonElement;
+    ((await firstTab.element()) as HTMLButtonElement).focus();
+    await userEvent.keyboard("{ArrowRight}");
+
+    await vi.waitFor(() => {
+      expect(api.browser.selectTab).toHaveBeenCalledWith({
+        threadId: THREAD_ID,
+        tabId: "tab-2",
+      });
+      expect(document.activeElement).toBe(secondTabElement);
+    });
+    await expect.element(secondTab).toHaveAttribute("aria-selected", "true");
+    await expect
+      .element(page.getByRole("tabpanel"))
+      .toHaveAttribute("aria-labelledby", secondTabElement.id);
+
+    await userEvent.keyboard("{Delete}");
+    await vi.waitFor(() => {
+      expect(api.browser.closeTab).toHaveBeenCalledWith({
+        threadId: THREAD_ID,
+        tabId: "tab-2",
+      });
+    });
+  });
+
   it("hides the native browser surface while an intersecting app menu is open", async () => {
     const openState = browserState("tab-1");
     const api = liveBrowserApi({ openState });
@@ -321,6 +363,7 @@ describe("BrowserPanel interactions", () => {
       expect(webview?.style.visibility).not.toBe("hidden");
     });
 
+    const initialBoundsCalls = vi.mocked(api.browser.setPanelBounds).mock.calls.length;
     (
       (await page.getByRole("button", { name: "Browser actions" }).element()) as HTMLButtonElement
     ).click();
@@ -329,12 +372,15 @@ describe("BrowserPanel interactions", () => {
       const webview = document.querySelector<HTMLElement>("webview");
       expect(webview?.style.visibility).toBe("hidden");
       expect(webview?.style.pointerEvents).toBe("none");
-      expect(api.browser.setPanelBounds).toHaveBeenCalledWith({
-        threadId: THREAD_ID,
-        bounds: null,
-        surface: "renderer",
-      });
+      expect(vi.mocked(api.browser.setPanelBounds).mock.calls.length).toBe(initialBoundsCalls);
+      expect(vi.mocked(api.browser.setPanelBounds).mock.calls).not.toContainEqual([
+        { threadId: THREAD_ID, bounds: null, surface: "renderer" },
+      ]);
     });
+
+    const browserViewport = document.querySelector<HTMLElement>("webview")?.parentElement;
+    expect(browserViewport).not.toBeNull();
+    Object.assign(browserViewport!.style, { width: "500px", right: "auto" });
 
     await userEvent.keyboard("{Escape}");
     await vi.waitFor(() => {
@@ -342,6 +388,34 @@ describe("BrowserPanel interactions", () => {
       const webview = document.querySelector<HTMLElement>("webview");
       expect(webview?.style.visibility).toBe("visible");
       expect(webview?.style.pointerEvents).toBe("auto");
+      const latestBoundsCall = vi.mocked(api.browser.setPanelBounds).mock.calls.at(-1)?.[0];
+      expect(latestBoundsCall?.bounds).toMatchObject({ width: 500 });
+    });
+  });
+
+  it("reserves null bounds for the local home that genuinely hides the page surface", async () => {
+    const openState = browserState("tab-1");
+    openState.version = 50;
+    openState.tabs = [
+      {
+        ...openState.tabs[0]!,
+        url: "about:blank",
+        lastCommittedUrl: "about:blank",
+        title: "New tab",
+      },
+    ];
+    const api = liveBrowserApi({ openState });
+    nativeApiTestState.api = api;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+
+    await renderLivePanel(vi.fn());
+
+    await vi.waitFor(() => {
+      expect(api.browser.setPanelBounds).toHaveBeenCalledWith({
+        threadId: THREAD_ID,
+        bounds: null,
+        surface: "renderer",
+      });
     });
   });
 });

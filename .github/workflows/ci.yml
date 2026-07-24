@@ -87,6 +87,13 @@ jobs:
           cd apps/web
           ./node_modules/.bin/playwright install --with-deps chromium
 
+      - name: Electron browser overlay lifecycle
+        timeout-minutes: 2
+        run: |
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+          xvfb-run -a bun run test:desktop-browser-overlay-lifecycle
+
       # Blocking product-behavior coverage. Linux-only pixel/font/layout
       # comparisons run separately below while their rendering is quarantined.
       - name: Browser test (stable)

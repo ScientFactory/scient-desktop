@@ -6,7 +6,7 @@
 // Note: raw <button>s for autocomplete-suggestion rows and tab-title activate
 // regions are intentional — list-row and tab semantics, not shadcn Buttons.
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -391,7 +391,6 @@ export function BrowserPanel({
   );
   const lastSentBoundsRef = useRef<string | null>(null);
   const lastMeasuredBoundsKeyRef = useRef<string | null>(null);
-  const lastOverlayObscuredRef = useRef(false);
   const isAddressEditingRef = useRef(false);
   const resizeFrameRef = useRef<number | null>(null);
   const boundsBurstFrameRef = useRef<number | null>(null);
@@ -414,11 +413,15 @@ export function BrowserPanel({
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [isCreatingTab, setIsCreatingTab] = useState(false);
+  const browserTabsId = useId();
   const runtimeReady = isLiveRuntime ? workspaceReady : true;
   const activeTab =
     threadBrowserState?.tabs.find((tab) => tab.id === threadBrowserState.activeTabId) ??
     threadBrowserState?.tabs[0] ??
     null;
+  const activeTabIndex = activeTab
+    ? (threadBrowserState?.tabs.findIndex((tab) => tab.id === activeTab.id) ?? -1)
+    : -1;
   const activeCopyScope = activeTab
     ? {
         tabId: activeTab.id,
@@ -732,23 +735,29 @@ export function BrowserPanel({
       // While the local-servers home is up, force the browser surface hidden instead of
       // trusting the obscuring-overlay heuristic. The native/inline webview otherwise paints
       // about:blank white over our dark DOM home — the "always white" empty state.
-      const obscuredByOverlay = showLocalServersHome || hasNativeBrowserObscuringOverlay(element);
-      lastOverlayObscuredRef.current = obscuredByOverlay;
-      setBrowserWebviewOverlayOcclusion(browserWebviewRef.current, obscuredByOverlay);
+      const obscuredByOverlay = hasNativeBrowserObscuringOverlay(element);
+      const webviewOccluded = showLocalServersHome || obscuredByOverlay;
+      setBrowserWebviewOverlayOcclusion(browserWebviewRef.current, webviewOccluded);
       const rect = element.getBoundingClientRect();
-      const bounds = obscuredByOverlay
+      const paneIsActuallyHidden = showLocalServersHome || rect.width <= 0 || rect.height <= 0;
+      // App-owned menus, dialogs, and other transient overlays only occlude the renderer
+      // surface. Sending null bounds here tells main that the pane itself is hidden, which
+      // starts the 30-second runtime suspension timer and can destroy the adopted webview
+      // while its DOM node remains mounted. Keep the last native geometry/lifecycle active;
+      // a close mutation or resize will send the current real bounds when the overlay leaves.
+      if (obscuredByOverlay && !paneIsActuallyHidden) {
+        lastMeasuredBoundsKeyRef.current = "renderer:overlay-occluded";
+        perfCountersRef.current.syncSkips += 1;
+        return;
+      }
+      const bounds = paneIsActuallyHidden
         ? null
-        : (() => {
-            if (rect.width <= 0 || rect.height <= 0) {
-              return null;
-            }
-            return {
-              x: rect.left,
-              y: rect.top,
-              width: rect.width,
-              height: rect.height,
-            };
-          })();
+        : {
+            x: rect.left,
+            y: rect.top,
+            width: rect.width,
+            height: rect.height,
+          };
       const nextKey = bounds
         ? `renderer:${Math.round(bounds.x)}:${Math.round(bounds.y)}:${Math.round(bounds.width)}:${Math.round(bounds.height)}`
         : "renderer:hidden";
@@ -965,6 +974,20 @@ export function BrowserPanel({
       });
     },
     [activeTab, api, ensureLiveRuntime, runBrowserAction, threadId, upsertThreadState],
+  );
+
+  const onSelectTab = useCallback(
+    (tabId: string) => {
+      if (!ensureLiveRuntime() || !api) {
+        return;
+      }
+      void runBrowserAction(() => api.browser.selectTab({ threadId, tabId })).then((state) => {
+        if (state) {
+          upsertThreadState(state);
+        }
+      });
+    },
+    [api, ensureLiveRuntime, runBrowserAction, threadId, upsertThreadState],
   );
 
   const onOpenLocalServer = useCallback(
@@ -1553,10 +1576,15 @@ export function BrowserPanel({
             isElectron && mode !== "sheet" && "drag-region",
           )}
         >
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
-            {threadBrowserState?.tabs.map((tab) => {
+          <div
+            className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto"
+            role="tablist"
+            aria-label="Browser tabs"
+          >
+            {threadBrowserState?.tabs.map((tab, tabIndex) => {
               const isActive = tab.id === activeTab?.id;
               const tabIsBlank = isBlankBrowserTabUrl(tab);
+              const tabButtonId = `${browserTabsId}-tab-${tabIndex}`;
               return (
                 <div
                   key={tab.id}
@@ -1579,16 +1607,36 @@ export function BrowserPanel({
                   <button
                     type="button"
                     className="min-w-0 flex-1 truncate text-left"
-                    onClick={() => {
-                      if (!ensureLiveRuntime()) return;
-                      if (!api) return;
-                      void runBrowserAction(() =>
-                        api.browser.selectTab({ threadId, tabId: tab.id }),
-                      ).then((state) => {
-                        if (state) {
-                          upsertThreadState(state);
-                        }
-                      });
+                    id={tabButtonId}
+                    role="tab"
+                    aria-controls={`${browserTabsId}-tabpanel`}
+                    aria-selected={isActive}
+                    tabIndex={isActive ? 0 : -1}
+                    onClick={() => onSelectTab(tab.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Delete") {
+                        event.preventDefault();
+                        onCloseTab(tab.id);
+                        return;
+                      }
+                      const tabs = threadBrowserState?.tabs ?? [];
+                      if (tabs.length === 0) return;
+                      let nextIndex: number | null = null;
+                      if (event.key === "ArrowRight") {
+                        nextIndex = (tabIndex + 1) % tabs.length;
+                      } else if (event.key === "ArrowLeft") {
+                        nextIndex = (tabIndex - 1 + tabs.length) % tabs.length;
+                      } else if (event.key === "Home") {
+                        nextIndex = 0;
+                      } else if (event.key === "End") {
+                        nextIndex = tabs.length - 1;
+                      }
+                      if (nextIndex === null || nextIndex === tabIndex) return;
+                      event.preventDefault();
+                      const nextTab = tabs[nextIndex];
+                      if (!nextTab) return;
+                      document.getElementById(`${browserTabsId}-tab-${nextIndex}`)?.focus();
+                      onSelectTab(nextTab.id);
                     }}
                   >
                     {tab.title || "Untitled"}
@@ -1605,7 +1653,9 @@ export function BrowserPanel({
                   >
                     <XIcon className="size-3" />
                     <span className="sr-only">
-                      {threadBrowserState?.tabs.length === 1 ? "Close Browser" : "Close tab"}
+                      {threadBrowserState?.tabs.length === 1
+                        ? "Close Browser"
+                        : `Close tab: ${tab.title || "Untitled"}`}
                     </span>
                   </Button>
                 </div>
@@ -1638,7 +1688,14 @@ export function BrowserPanel({
             </div>
           ) : null}
         </div>
-        <div className="relative min-h-0 flex-1 bg-transparent">
+        <div
+          id={`${browserTabsId}-tabpanel`}
+          className="relative min-h-0 flex-1 bg-transparent"
+          role="tabpanel"
+          aria-labelledby={
+            activeTabIndex >= 0 ? `${browserTabsId}-tab-${activeTabIndex}` : undefined
+          }
+        >
           {!isLiveRuntime ? (
             <BrowserRuntimePreview
               title={activeTab?.title || "Browser is sleeping"}

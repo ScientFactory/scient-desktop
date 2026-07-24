@@ -72,4 +72,41 @@ describe("native browser overlay coordination", () => {
     popup.style.visibility = "hidden";
     expect(hasNativeBrowserObscuringOverlay(viewport)).toBe(false);
   });
+
+  it.each(["autocomplete-popup", "preview-card-popup", "tooltip-popup", "sheet-popup"])(
+    "recognizes an intersecting %s surface",
+    (slot) => {
+      const viewport = document.createElement("div");
+      Object.assign(viewport.style, {
+        position: "fixed",
+        left: "100px",
+        top: "100px",
+        width: "240px",
+        height: "240px",
+      });
+      const overlay = document.createElement("div");
+      overlay.dataset.slot = slot;
+      Object.assign(overlay.style, {
+        position: "fixed",
+        left: "160px",
+        top: "160px",
+        width: "120px",
+        height: "120px",
+      });
+      document.body.append(viewport, overlay);
+
+      expect(hasNativeBrowserObscuringOverlay(viewport)).toBe(true);
+    },
+  );
+
+  it("does not treat the browser's own containing sheet as an obstruction", () => {
+    const sheet = document.createElement("div");
+    sheet.dataset.slot = "sheet-popup";
+    const viewport = document.createElement("div");
+    Object.assign(viewport.style, { width: "240px", height: "240px" });
+    sheet.append(viewport);
+    document.body.append(sheet);
+
+    expect(hasNativeBrowserObscuringOverlay(viewport)).toBe(false);
+  });
 });

@@ -39,6 +39,7 @@
     "brand:check": "node scripts/check-brand-identity.ts",
     "workflow:check": "bun scripts/check-workflow-actions.ts",
     "test:desktop-smoke": "turbo run smoke-test --filter=@synara/desktop",
+    "test:desktop-browser-overlay-lifecycle": "bun run --cwd apps/desktop test:browser-overlay-lifecycle",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "build:contracts": "turbo run build --filter=@synara/contracts",
