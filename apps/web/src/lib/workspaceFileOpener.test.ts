@@ -87,6 +87,11 @@ describe("resolveScratchPreviewFileOpenTarget", () => {
     expect(
       resolveScratchPreviewFileOpenTarget(`/tmp/${SCRATCH_WORKSPACES_DIRNAME}/thread-1/shot.png`),
     ).toBe(`/tmp/${SCRATCH_WORKSPACES_DIRNAME}/thread-1/shot.png`);
+    expect(
+      resolveScratchPreviewFileOpenTarget(
+        `/tmp/${SCRATCH_WORKSPACES_DIRNAME}/thread-1/interview.mp3`,
+      ),
+    ).toBe(`/tmp/${SCRATCH_WORKSPACES_DIRNAME}/thread-1/interview.mp3`);
   });
 
   it("strips :line and :line:col position suffixes", () => {
