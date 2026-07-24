@@ -5593,7 +5593,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       return { promise, resolve };
     })();
-    const branchLookup = vi.fn(async () => exactWorktreeBranchResult);
+    const branchLookup = vi.fn<NativeApi["git"]["listBranches"]>(
+      async () => exactWorktreeBranchResult,
+    );
     const baseSnapshot = createSnapshotForTargetUser({
       targetMessageId: "msg-user-context-worktree-test" as MessageId,
       targetText: "context worktree test",
@@ -5719,7 +5721,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
       ],
     };
-    const branchLookup = vi.fn(async () => exactWorktreeBranchResult);
+    const branchLookup = vi.fn<NativeApi["git"]["listBranches"]>(
+      async () => exactWorktreeBranchResult,
+    );
     const baseSnapshot = createSnapshotForTargetUser({
       targetMessageId: "msg-user-context-worktree-moved" as MessageId,
       targetText: "context worktree moved",
