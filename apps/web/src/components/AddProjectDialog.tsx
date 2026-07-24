@@ -414,7 +414,7 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
       <CommandPanel
         data-testid={supportsFolderDrop ? "folder-drop-dialog-panel" : undefined}
         className={cn(
-          "overflow-hidden transition-[background-color,box-shadow] duration-150",
+          "flex min-h-0 flex-1 flex-col overflow-hidden transition-[background-color,box-shadow] duration-150",
           isFolderDragActive &&
             "bg-emerald-500/[0.015] shadow-[inset_0_0_0_1px_rgb(34_197_94/0.18)]",
         )}
@@ -482,7 +482,12 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
             )}
           </div>
         ) : null}
-        <CommandList className="max-h-[min(28rem,62vh)] min-h-64 not-empty:px-1.5 not-empty:pb-1.5">
+        <CommandList
+          className={cn(
+            "max-h-[min(28rem,62vh)] flex-1 not-empty:px-1.5 not-empty:pb-1.5",
+            error || browseError ? "min-h-40" : "min-h-64",
+          )}
+        >
           <CommandGroup>
             <CommandGroupLabel className="py-2 pl-3">
               {props.cloneDirectoryName ? "Select where to clone" : "Directories"}
@@ -719,7 +724,13 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
 
   return (
     <CommandDialog open={props.open} onOpenChange={handleOpenChange}>
-      <CommandDialogPopup className="overflow-hidden" aria-label="Add project">
+      <CommandDialogPopup
+        className={cn(
+          "overflow-hidden",
+          step === "local" && "[&>*]:flex [&>*]:min-h-0 [&>*]:flex-1 [&>*]:flex-col",
+        )}
+        aria-label="Add project"
+      >
         {step === "local" ? (
           <ProjectPathBrowser
             homeDir={props.homeDir}

@@ -335,9 +335,27 @@ describe("AddProjectDialog", () => {
       expect((await page.getByRole("listbox").element()).contains(await alert.element())).toBe(
         false,
       );
+      for (const viewport of [
+        { width: 1_280, height: 800 },
+        { width: 600, height: 480 },
+      ]) {
+        await page.viewport(viewport.width, viewport.height);
+        const popup = document.querySelector<HTMLElement>('[data-slot="command-dialog-popup"]');
+        const footer = document.querySelector<HTMLElement>('[data-slot="command-footer"]');
+        expect(popup).not.toBeNull();
+        expect(footer).not.toBeNull();
+        const popupRect = popup!.getBoundingClientRect();
+        const alertRect = (await alert.element()).getBoundingClientRect();
+        const footerRect = footer!.getBoundingClientRect();
+        expect(alertRect.height).toBeGreaterThan(0);
+        expect(alertRect.top).toBeGreaterThanOrEqual(popupRect.top - 1);
+        expect(alertRect.bottom).toBeLessThanOrEqual(popupRect.bottom + 1);
+        expect(footerRect.bottom).toBeLessThanOrEqual(popupRect.bottom + 1);
+      }
       await expect.element(page.getByText("Documents", { exact: true })).toBeVisible();
       expect(onAddProjectPath).not.toHaveBeenCalled();
     } finally {
+      await page.viewport(1_280, 720);
       restoreBridge();
       restoreApi();
     }
