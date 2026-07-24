@@ -865,8 +865,7 @@ function clearActiveTurnState(
   // Deliberately NOT cleared here: a permission auto-approved at the tail of a turn can
   // have its permission.replied echo arrive after turn teardown, and dropping the id first
   // would misclassify that echo as a real resolution (orphaned "Approval resolved" in the
-  // UI). Ids are unique per request so stale entries are inert; the set is freed with the
-  // session context when the session is removed.
+  // UI). The insertion path bounds these tombstones when a provider omits reply echoes.
   return true;
 }
 
@@ -2102,14 +2101,18 @@ const abortOpenCodeSessionBounded = Effect.fn("abortOpenCodeSessionBounded")(fun
 const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
   context: OpenCodeSessionContext,
 ) {
-  if (yield* Ref.getAndSet(context.stopped, true)) {
+  if (yield* Ref.get(context.stopped)) {
     return;
   }
 
-  yield* Effect.gen(function* () {
-    yield* abortOpenCodeSessionBounded(context).pipe(Effect.ignore({ log: true }));
-    yield* Scope.close(context.sessionScope, Exit.void);
-  }).pipe(Effect.ensuring(Effect.sync(() => unregisterOpenCodeContext(context))));
+  // Do not discard observation or report a graceful stop until the provider has
+  // confirmed cancellation. External/shared servers can otherwise keep running
+  // full-access work after Scient has forgotten the session.
+  yield* abortOpenCodeSessionBounded(context);
+  yield* Ref.set(context.stopped, true);
+  yield* Scope.close(context.sessionScope, Exit.void).pipe(
+    Effect.ensuring(Effect.sync(() => unregisterOpenCodeContext(context))),
+  );
 });
 
 export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
@@ -2210,21 +2213,6 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           Effect.ensuring(Effect.sync(() => replyState.abortController.abort())),
         );
 
-      yield* Effect.addFinalizer(() =>
-        Effect.gen(function* () {
-          const contexts = [...sessions.values()];
-          sessions.clear();
-          yield* Effect.forEach(
-            contexts,
-            (context) => Effect.ignoreCause(stopOpenCodeContext(context)),
-            { concurrency: "unbounded", discard: true },
-          );
-          if (managedNativeEventLogger !== undefined) {
-            yield* managedNativeEventLogger.close();
-          }
-        }),
-      );
-
       const emit = (event: ProviderRuntimeEvent) =>
         Queue.offer(runtimeEvents, event).pipe(Effect.asVoid);
       const writeNativeEvent = (
@@ -2316,6 +2304,51 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           context.autoApprovedPermissionIds.delete(requestId);
         }
       });
+
+      const retireOpenCodeContext = Effect.fn("retireOpenCodeContext")(function* (
+        context: OpenCodeSessionContext,
+      ) {
+        const generation = context.activeTurnGeneration;
+        if (generation !== undefined) {
+          generation.state = "cancelling";
+          generation.interactionOwned = false;
+          generation.sessionNextOwned = false;
+          generation.sessionNextProgressObserved = false;
+          yield* cancelPendingInteractionsForGeneration(context, generation);
+        }
+        const stopExit = yield* Effect.exit(stopOpenCodeContext(context));
+        if (Exit.isFailure(stopExit)) {
+          context.quarantinedAfterAbortFailure = true;
+          const cause = Cause.squash(stopExit.cause);
+          updateProviderSession(context, {
+            status: "error",
+            lastError: `Provider cancellation could not be confirmed: ${openCodeRuntimeErrorDetail(cause)}`,
+          });
+          return yield* Effect.failCause(stopExit.cause);
+        }
+      });
+
+      yield* Effect.addFinalizer(() =>
+        Effect.gen(function* () {
+          const contexts = [...sessions.values()];
+          yield* Effect.forEach(
+            contexts,
+            (context) =>
+              retireOpenCodeContext(context).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    sessions.delete(context.session.threadId);
+                  }),
+                ),
+                Effect.ignoreCause,
+              ),
+            { concurrency: "unbounded", discard: true },
+          );
+          if (managedNativeEventLogger !== undefined) {
+            yield* managedNativeEventLogger.close();
+          }
+        }),
+      );
 
       const emitContextCompactionProgress = Effect.fn("emitContextCompactionProgress")(function* (
         context: OpenCodeSessionContext,
@@ -3044,11 +3077,13 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
 
       const loadOpenCodeRecoveryMessages = Effect.fn("loadOpenCodeRecoveryMessages")(function* (
         context: OpenCodeSessionContext,
+        options?: { readonly limit?: number },
       ) {
         return yield* runBoundedOpenCodeSdk("session.messages", (signal) =>
           context.client.session.messages(
             {
               sessionID: context.openCodeSessionId,
+              ...(options?.limit !== undefined ? { limit: options.limit } : {}),
             },
             { signal },
           ),
@@ -3270,7 +3305,6 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
               // Claim cancellation before unblocking sendTurn so a caller cannot open
               // a successor during the cleanup window.
               claimOpenCodeTurnCancellation(context, input.generation);
-              yield* Deferred.succeed(settled, requestError);
               yield* failOpenCodeTurnWithAbort(context, {
                 generation: input.generation,
                 message: requestError.detail,
@@ -3317,7 +3351,6 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
               // Let sendTurn fail immediately only after synchronously closing the
               // generation to successors.
               claimOpenCodeTurnCancellation(context, input.generation);
-              yield* Deferred.succeed(settled, requestError);
               yield* failOpenCodeTurnWithAbort(context, {
                 generation: input.generation,
                 message: requestError.detail,
@@ -3696,6 +3729,14 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
               context.permissionReplyStateById.set(event.properties.id, replyState);
               context.autoApprovedPermissionIds.add(event.properties.id);
               context.autoApprovedPermissionGenerationById.set(event.properties.id, generation.id);
+              while (context.autoApprovedPermissionIds.size > context.subscribedEventDedupeLimit) {
+                const oldestRequestId = context.autoApprovedPermissionIds.values().next().value;
+                if (oldestRequestId === undefined) {
+                  break;
+                }
+                context.autoApprovedPermissionIds.delete(oldestRequestId);
+                context.autoApprovedPermissionGenerationById.delete(oldestRequestId);
+              }
               const replyExit = yield* Effect.exit(
                 runBoundedOpenCodeInteractionSdk("permission.reply", replyState, (signal) =>
                   context.client.permission.reply(
@@ -3767,15 +3808,14 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           }
 
           case "permission.replied": {
-            if (
-              context.autoApprovedPermissionGenerationById.get(event.properties.requestID) ===
-                generation?.id &&
-              context.autoApprovedPermissionIds.delete(event.properties.requestID)
-            ) {
+            if (context.autoApprovedPermissionIds.delete(event.properties.requestID)) {
+              const autoApprovedGenerationId = context.autoApprovedPermissionGenerationById.get(
+                event.properties.requestID,
+              );
               const replyState = context.permissionReplyStateById.get(event.properties.requestID);
               if (
                 replyState !== undefined &&
-                replyState.generationId === generation?.id &&
+                replyState.generationId === autoApprovedGenerationId &&
                 !replyState.cancelled
               ) {
                 replyState.acknowledged = true;
@@ -4424,8 +4464,9 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
 
       const loadCurrentMessageSnapshots = Effect.fn("loadCurrentMessageSnapshots")(function* (
         context: OpenCodeSessionContext,
+        options?: { readonly limit?: number },
       ) {
-        const messages = yield* loadOpenCodeRecoveryMessages(context);
+        const messages = yield* loadOpenCodeRecoveryMessages(context, options);
         return messages ? openCodeMessageSnapshotsFromResponse(messages.data ?? []) : null;
       });
 
@@ -4579,7 +4620,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
 
             let hasFinalAssistantMessage = false;
             if (options.pollMessagesWhileBusy || (statusKnown && !sessionBusy)) {
-              const snapshots = yield* loadCurrentMessageSnapshots(context);
+              const snapshots = yield* loadCurrentMessageSnapshots(context, { limit: 256 });
               if (
                 (yield* Ref.get(context.stopped)) ||
                 !isOpenCodeTurnGenerationActive(context, generation)
@@ -4779,7 +4820,9 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
               : undefined;
           const existing = sessions.get(input.threadId);
           if (existing) {
-            yield* stopOpenCodeContext(existing);
+            yield* retireOpenCodeContext(existing).pipe(
+              Effect.mapError((cause) => toAdapterProcessError(input.threadId, cause)),
+            );
             sessions.delete(input.threadId);
           }
 
@@ -4806,8 +4849,10 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
                 });
                 const createSessionId = resumedSessionId
                   ? // Resumed sessions skip session.create, so re-apply the runtime-mode
-                    // permission ruleset explicitly. Non-fatal: older servers may reject the
-                    // field, and full-access asks are still auto-approved in the event pump.
+                    // permission ruleset explicitly. Approval-required must fail closed:
+                    // otherwise a previously permissive provider session can keep executing
+                    // without emitting approval events. Full access may retain compatibility
+                    // with older servers because its event pump still auto-approves asks.
                     runOpenCodeSdk("session.update", () =>
                       client.session.update({
                         sessionID: resumedSessionId,
@@ -4815,10 +4860,12 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
                       }),
                     ).pipe(
                       Effect.catchCause((cause) =>
-                        Effect.logWarning(
-                          `${adapterConfig.displayName} failed to apply permission ruleset on resume`,
-                          Cause.squash(cause),
-                        ),
+                        input.runtimeMode === "full-access"
+                          ? Effect.logWarning(
+                              `${adapterConfig.displayName} failed to apply permission ruleset on resume`,
+                              Cause.squash(cause),
+                            )
+                          : Effect.failCause(cause),
                       ),
                       Effect.as(resumedSessionId),
                     )
@@ -5101,78 +5148,91 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           { clearLastError: true },
         );
 
-        yield* emit({
-          ...buildEventBase({ threadId: input.threadId, turnId }),
-          type: "turn.started",
-          payload: {
-            model: modelSelection?.model ?? context.session.model,
-            ...(variant ? { effort: variant } : {}),
-          },
-        });
-
-        if (provider === "kilo") {
-          const snapshotWatchdogBaseline = yield* captureTurnSnapshotWatchdogBaseline(context);
-          context.activeTurnBaselineTrusted = snapshotWatchdogBaseline.baselineTrusted;
-          for (const messageId of snapshotWatchdogBaseline.messageIds) {
-            context.activeTurnBaselineMessageIds.add(messageId);
-          }
-          const providerActivitySerial = context.activeTurnProviderActivitySerial;
-          yield* schedulePromptAcceptedWatchdog(context, {
-            turnId,
-            generation,
-            providerActivitySerial,
-            excludedMessageIds: snapshotWatchdogBaseline.messageIds,
-          });
-          yield* submitOpenCodePrompt(context, {
-            turnId,
-            generation,
-            promptInput: {
-              sessionID: context.openCodeSessionId,
-              messageID: context.activeTurnPromptMessageId,
-              model: parsedModel,
-              ...(context.activeAgent ? { agent: context.activeAgent } : {}),
-              ...(context.activeVariant ? { variant: context.activeVariant } : {}),
-              noReply: false,
-              parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
+        return yield* Effect.gen(function* () {
+          yield* emit({
+            ...buildEventBase({ threadId: input.threadId, turnId }),
+            type: "turn.started",
+            payload: {
+              model: modelSelection?.model ?? context.session.model,
+              ...(variant ? { effort: variant } : {}),
             },
           });
-          yield* startTurnSnapshotWatchdog(context, turnId, snapshotWatchdogBaseline.messageIds, {
-            pollMessagesWhileBusy: true,
-          });
-        } else {
-          // Capture the pre-turn message ids before submitting so the watchdog can
-          // distinguish this turn's final assistant message from prior ones.
-          const snapshotWatchdogBaseline = yield* captureTurnSnapshotWatchdogBaseline(context);
-          context.activeTurnBaselineTrusted = snapshotWatchdogBaseline.baselineTrusted;
-          for (const messageId of snapshotWatchdogBaseline.messageIds) {
-            context.activeTurnBaselineMessageIds.add(messageId);
-          }
-          yield* submitOpenCodePromptAsync(context, {
-            turnId,
-            generation,
-            promptInput: {
-              sessionID: context.openCodeSessionId,
-              messageID: context.activeTurnPromptMessageId,
-              model: parsedModel,
-              ...(context.activeAgent ? { agent: context.activeAgent } : {}),
-              ...(context.activeVariant ? { variant: context.activeVariant } : {}),
-              parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
-            },
-          });
-          // OpenCode lacks Kilo's prompt-accepted hard-fail watchdog, but it still
-          // needs a completion backstop for dropped/delayed idle events. Keep the
-          // poll cheap (status-first) so large turns are not penalized.
-          yield* startTurnSnapshotWatchdog(context, turnId, snapshotWatchdogBaseline.messageIds, {
-            pollMessagesWhileBusy: false,
-          });
-        }
-        yield* startTurnStallWatchdog(context, generation);
 
-        return {
-          threadId: input.threadId,
-          turnId,
-          resumeCursor: { openCodeSessionId: context.openCodeSessionId, cwd: context.directory },
-        };
+          if (provider === "kilo") {
+            const snapshotWatchdogBaseline = yield* captureTurnSnapshotWatchdogBaseline(context);
+            context.activeTurnBaselineTrusted = snapshotWatchdogBaseline.baselineTrusted;
+            for (const messageId of snapshotWatchdogBaseline.messageIds) {
+              context.activeTurnBaselineMessageIds.add(messageId);
+            }
+            const providerActivitySerial = context.activeTurnProviderActivitySerial;
+            yield* schedulePromptAcceptedWatchdog(context, {
+              turnId,
+              generation,
+              providerActivitySerial,
+              excludedMessageIds: snapshotWatchdogBaseline.messageIds,
+            });
+            yield* submitOpenCodePrompt(context, {
+              turnId,
+              generation,
+              promptInput: {
+                sessionID: context.openCodeSessionId,
+                messageID: generation.promptMessageId,
+                model: parsedModel,
+                ...(context.activeAgent ? { agent: context.activeAgent } : {}),
+                ...(context.activeVariant ? { variant: context.activeVariant } : {}),
+                noReply: false,
+                parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
+              },
+            });
+            yield* startTurnSnapshotWatchdog(context, turnId, snapshotWatchdogBaseline.messageIds, {
+              pollMessagesWhileBusy: true,
+            });
+          } else {
+            // Capture the pre-turn message ids before submitting so the watchdog can
+            // distinguish this turn's final assistant message from prior ones.
+            const snapshotWatchdogBaseline = yield* captureTurnSnapshotWatchdogBaseline(context);
+            context.activeTurnBaselineTrusted = snapshotWatchdogBaseline.baselineTrusted;
+            for (const messageId of snapshotWatchdogBaseline.messageIds) {
+              context.activeTurnBaselineMessageIds.add(messageId);
+            }
+            yield* submitOpenCodePromptAsync(context, {
+              turnId,
+              generation,
+              promptInput: {
+                sessionID: context.openCodeSessionId,
+                messageID: generation.promptMessageId,
+                model: parsedModel,
+                ...(context.activeAgent ? { agent: context.activeAgent } : {}),
+                ...(context.activeVariant ? { variant: context.activeVariant } : {}),
+                parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
+              },
+            });
+            // OpenCode lacks Kilo's prompt-accepted hard-fail watchdog, but it still
+            // needs a completion backstop for dropped/delayed idle events. Keep the
+            // poll cheap (status-first) so large turns are not penalized.
+            yield* startTurnSnapshotWatchdog(context, turnId, snapshotWatchdogBaseline.messageIds, {
+              pollMessagesWhileBusy: false,
+            });
+          }
+          yield* startTurnStallWatchdog(context, generation);
+
+          return {
+            threadId: input.threadId,
+            turnId,
+            resumeCursor: { openCodeSessionId: context.openCodeSessionId, cwd: context.directory },
+          };
+        }).pipe(
+          Effect.onExit((exit) =>
+            Exit.isFailure(exit)
+              ? failOpenCodeTurnWithAbort(context, {
+                  generation,
+                  message: `${adapterConfig.displayName} turn initialization was interrupted or failed.`,
+                  raw: { source: `scient.${provider}.send-turn-initialization-failed` },
+                  errorClass: "transport_error",
+                }).pipe(Effect.ignore)
+              : Effect.void,
+          ),
+        );
       });
 
       const interruptTurn: OpenCodeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
@@ -5495,15 +5555,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
       const stopSession: OpenCodeAdapterShape["stopSession"] = Effect.fn("stopSession")(
         function* (threadId) {
           const context = ensureAdapterSessionContext(threadId);
-          const generation = context.activeTurnGeneration;
-          if (generation) {
-            generation.state = "cancelling";
-            generation.interactionOwned = false;
-            generation.sessionNextOwned = false;
-            generation.sessionNextProgressObserved = false;
-            yield* cancelPendingInteractionsForGeneration(context, generation);
-          }
-          yield* stopOpenCodeContext(context);
+          yield* retireOpenCodeContext(context).pipe(Effect.mapError(toAdapterRequestError));
           sessions.delete(threadId);
           yield* emit({
             ...buildEventBase({ threadId }),
@@ -6003,10 +6055,17 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
       const stopAll: OpenCodeAdapterShape["stopAll"] = () =>
         Effect.gen(function* () {
           const contexts = [...sessions.values()];
-          sessions.clear();
           yield* Effect.forEach(
             contexts,
-            (context) => Effect.ignoreCause(stopOpenCodeContext(context)),
+            (context) =>
+              retireOpenCodeContext(context).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    sessions.delete(context.session.threadId);
+                  }),
+                ),
+                Effect.mapError(toAdapterRequestError),
+              ),
             { concurrency: "unbounded", discard: true },
           );
         });

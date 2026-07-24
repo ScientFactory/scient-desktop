@@ -115,6 +115,7 @@ function createMockOpenCodeRuntime(options?: {
   readonly events?: AsyncIterable<unknown>;
   readonly prompt?: (input: Record<string, unknown>) => Promise<unknown>;
   readonly promptAsync?: (input: Record<string, unknown>) => Promise<unknown>;
+  readonly update?: (input: Record<string, unknown>) => Promise<unknown>;
   readonly commandList?: () => Promise<{
     data?: ReadonlyArray<{ name: string; description?: string }>;
   }>;
@@ -154,6 +155,7 @@ function createMockOpenCodeRuntime(options?: {
   const permissionReplyCalls: Array<Record<string, unknown>> = [];
   const questionReplyCalls: Array<Record<string, unknown>> = [];
   const promptCalls: Array<Record<string, unknown>> = [];
+  const messageCalls: Array<Record<string, unknown> | undefined> = [];
   let sessionCreateCallCount = 0;
   const emptySubscription = {
     async *[Symbol.asyncIterator]() {
@@ -173,6 +175,9 @@ function createMockOpenCodeRuntime(options?: {
       },
       update: async (input: Record<string, unknown>) => {
         updateCalls.push(input);
+        if (options?.update) {
+          return options.update(input);
+        }
         return { data: null };
       },
       promptAsync: async (promptInput: Record<string, unknown>) => {
@@ -203,7 +208,10 @@ function createMockOpenCodeRuntime(options?: {
       messages: async (
         input?: Record<string, unknown>,
         requestOptions?: { readonly signal?: AbortSignal },
-      ) => options?.messages?.(input, requestOptions) ?? { data: [] },
+      ) => {
+        messageCalls.push(input);
+        return options?.messages?.(input, requestOptions) ?? { data: [] };
+      },
       status: async (
         input?: Record<string, unknown>,
         requestOptions?: { readonly signal?: AbortSignal },
@@ -316,6 +324,7 @@ function createMockOpenCodeRuntime(options?: {
     permissionReplyCalls,
     questionReplyCalls,
     promptCalls,
+    messageCalls,
     runtime,
   };
 }
@@ -1540,6 +1549,65 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
         permission: [{ permission: "*", pattern: "*", action: "allow" }],
       },
     ]);
+  });
+
+  it("fails closed when approval-required rules cannot be applied to a resumed session", async () => {
+    const runtime = createMockOpenCodeRuntime({
+      update: async () => Promise.reject(new Error("permission update unsupported")),
+    });
+
+    await expect(
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const adapter = yield* OpenCodeAdapter;
+          yield* adapter.startSession({
+            provider: "opencode",
+            threadId: asThreadId("thread-resume-approval-required"),
+            runtimeMode: "approval-required",
+            resumeCursor: { openCodeSessionId: "previously-permissive", cwd: "/repo/resume" },
+          });
+        }).pipe(
+          Effect.provide(
+            makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+        ),
+      ),
+    ).rejects.toThrow("permission update unsupported");
+    expect(runtime.createCalls).toEqual([]);
+  });
+
+  it("retains older-server compatibility for full-access resumed sessions", async () => {
+    const runtime = createMockOpenCodeRuntime({
+      update: async () => Promise.reject(new Error("permission update unsupported")),
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        return yield* adapter.startSession({
+          provider: "opencode",
+          threadId: asThreadId("thread-resume-full-access-compat"),
+          runtimeMode: "full-access",
+          resumeCursor: { openCodeSessionId: "existing-session-1", cwd: "/repo/resume" },
+        });
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(result.resumeCursor).toMatchObject({ openCodeSessionId: "existing-session-1" });
   });
 
   it("declines inactive OpenCode native fork when source and target cwd differ", async () => {
@@ -10305,4 +10373,459 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
       expect(session?.lastError).toBe("Kilo session failed.");
     });
   }
+
+  it("keeps a session quarantined when stop cannot confirm provider cancellation", async () => {
+    const runtime = createMockOpenCodeRuntime({
+      abort: async () => Promise.reject(new Error("abort rejected")),
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-stop-abort-rejected");
+        yield* adapter.startSession({ provider: "opencode", threadId, runtimeMode: "full-access" });
+        const stopExit = yield* Effect.exit(adapter.stopSession(threadId));
+        const present = yield* adapter.hasSession(threadId);
+        const [session] = yield* adapter.listSessions();
+        return { present, session, stopExit };
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(Exit.isFailure(result.stopExit)).toBe(true);
+    expect(result.present).toBe(true);
+    expect(result.session).toMatchObject({
+      status: "error",
+      lastError: expect.stringContaining("abort rejected"),
+    });
+  });
+
+  it("refuses replacement when the old provider session cannot be stopped", async () => {
+    const runtime = createMockOpenCodeRuntime({
+      abort: async () => Promise.reject(new Error("replacement abort rejected")),
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-replacement-abort-rejected");
+        yield* adapter.startSession({ provider: "opencode", threadId, runtimeMode: "full-access" });
+        const replacementExit = yield* Effect.exit(
+          adapter.startSession({ provider: "opencode", threadId, runtimeMode: "full-access" }),
+        );
+        return {
+          present: yield* adapter.hasSession(threadId),
+          replacementExit,
+        };
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(Exit.isFailure(result.replacementExit)).toBe(true);
+    expect(result.present).toBe(true);
+    expect(runtime.connectCalls).toHaveLength(1);
+  });
+
+  for (const provider of ["opencode", "kilo"] as const) {
+    it(`cleans up a claimed ${provider} generation when baseline capture is interrupted`, async () => {
+      let baselineStarted: (() => void) | undefined;
+      const baselineReady = new Promise<void>((resolve) => {
+        baselineStarted = resolve;
+      });
+      let firstMessageSignalAborted = false;
+      let messageCallCount = 0;
+      const runtime = createMockOpenCodeRuntime({
+        messages: async (_input, requestOptions) => {
+          messageCallCount += 1;
+          if (messageCallCount > 1) {
+            return { data: [] };
+          }
+          baselineStarted?.();
+          return new Promise((resolve, reject) => {
+            requestOptions?.signal?.addEventListener(
+              "abort",
+              () => {
+                firstMessageSignalAborted = true;
+                reject(new Error("baseline interrupted"));
+              },
+              { once: true },
+            );
+          });
+        },
+      });
+
+      const exercise = (adapter: OpenCodeAdapterShape | KiloAdapterShape) =>
+        Effect.gen(function* () {
+          const threadId = asThreadId(`thread-interrupted-baseline-${provider}`);
+          yield* adapter.startSession({ provider, threadId, runtimeMode: "full-access" });
+          const first = yield* adapter
+            .sendTurn({
+              threadId,
+              input: "first",
+              attachments: [],
+              modelSelection: { provider, model: "openai/gpt-5.4" },
+            })
+            .pipe(Effect.forkChild);
+          yield* Effect.promise(() => baselineReady);
+          yield* Fiber.interrupt(first);
+          return yield* adapter.sendTurn({
+            threadId,
+            input: "successor",
+            attachments: [],
+            modelSelection: { provider, model: "openai/gpt-5.4" },
+          });
+        });
+
+      const successor =
+        provider === "kilo"
+          ? await Effect.runPromise(
+              Effect.gen(function* () {
+                return yield* exercise(yield* KiloAdapter);
+              }).pipe(
+                Effect.provide(
+                  makeKiloAdapterLive({
+                    runtime: runtime.runtime,
+                    promptAcceptedActivityTimeoutMs: 1_000,
+                    promptAcceptedRecoveryDelaysMs: [],
+                  }).pipe(
+                    Layer.provideMerge(
+                      ServerConfig.layerTest(process.cwd(), { prefix: "kilo-adapter-test-" }),
+                    ),
+                    Layer.provideMerge(NodeServices.layer),
+                  ),
+                ),
+              ),
+            )
+          : await Effect.runPromise(
+              Effect.gen(function* () {
+                return yield* exercise(yield* OpenCodeAdapter);
+              }).pipe(
+                Effect.provide(
+                  makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+                    Layer.provideMerge(
+                      ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+                    ),
+                    Layer.provideMerge(NodeServices.layer),
+                  ),
+                ),
+              ),
+            );
+
+      expect(firstMessageSignalAborted).toBe(true);
+      expect(runtime.abortCalls.length).toBeGreaterThanOrEqual(1);
+      expect(successor.turnId).toBeDefined();
+    });
+
+    it(`cleans up a claimed ${provider} generation when prompt settlement wait is interrupted`, async () => {
+      let promptStarted: (() => void) | undefined;
+      const promptReady = new Promise<void>((resolve) => {
+        promptStarted = resolve;
+      });
+      let promptCallCount = 0;
+      const prompt = async () => {
+        promptCallCount += 1;
+        if (promptCallCount > 1) {
+          return { data: null };
+        }
+        promptStarted?.();
+        return new Promise<never>(() => undefined);
+      };
+      const runtime = createMockOpenCodeRuntime({
+        messages: async () => ({ data: [] }),
+        ...(provider === "kilo" ? { prompt } : { promptAsync: prompt }),
+      });
+
+      const exercise = (adapter: OpenCodeAdapterShape | KiloAdapterShape) =>
+        Effect.gen(function* () {
+          const threadId = asThreadId(`thread-interrupted-prompt-wait-${provider}`);
+          yield* adapter.startSession({ provider, threadId, runtimeMode: "full-access" });
+          const first = yield* adapter
+            .sendTurn({
+              threadId,
+              input: "first",
+              attachments: [],
+              modelSelection: { provider, model: "openai/gpt-5.4" },
+            })
+            .pipe(Effect.forkChild);
+          yield* Effect.promise(() => promptReady);
+          yield* Fiber.interrupt(first);
+          return yield* adapter.sendTurn({
+            threadId,
+            input: "successor",
+            attachments: [],
+            modelSelection: { provider, model: "openai/gpt-5.4" },
+          });
+        });
+
+      const successor =
+        provider === "kilo"
+          ? await Effect.runPromise(
+              Effect.gen(function* () {
+                return yield* exercise(yield* KiloAdapter);
+              }).pipe(
+                Effect.provide(
+                  makeKiloAdapterLive({
+                    runtime: runtime.runtime,
+                    promptSubmissionInlineWaitMs: 10_000,
+                    promptAcceptedActivityTimeoutMs: 1_000,
+                    promptAcceptedRecoveryDelaysMs: [],
+                  }).pipe(
+                    Layer.provideMerge(
+                      ServerConfig.layerTest(process.cwd(), { prefix: "kilo-adapter-test-" }),
+                    ),
+                    Layer.provideMerge(NodeServices.layer),
+                  ),
+                ),
+              ),
+            )
+          : await Effect.runPromise(
+              Effect.gen(function* () {
+                return yield* exercise(yield* OpenCodeAdapter);
+              }).pipe(
+                Effect.provide(
+                  makeOpenCodeAdapterLive({
+                    runtime: runtime.runtime,
+                    promptSubmissionInlineWaitMs: 10_000,
+                  }).pipe(
+                    Layer.provideMerge(
+                      ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+                    ),
+                    Layer.provideMerge(NodeServices.layer),
+                  ),
+                ),
+              ),
+            );
+
+      expect(runtime.abortCalls.length).toBeGreaterThanOrEqual(1);
+      expect(successor.turnId).toBeDefined();
+    });
+  }
+
+  it("cancels an in-flight permission reply before replacing its session", async () => {
+    const eventQueue = createSubscribedEventQueue();
+    let replyStarted: (() => void) | undefined;
+    const replyReady = new Promise<void>((resolve) => {
+      replyStarted = resolve;
+    });
+    let replySignalAborted = false;
+    const runtime = createMockOpenCodeRuntime({
+      sessionIds: ["opencode-session-1", "opencode-session-2"],
+      permissionReply: (_input, requestOptions) =>
+        new Promise((resolve, reject) => {
+          replyStarted?.();
+          requestOptions?.signal?.addEventListener(
+            "abort",
+            () => {
+              replySignalAborted = true;
+              reject(new Error("reply retired"));
+            },
+            { once: true },
+          );
+          void resolve;
+        }),
+    });
+    bindSubscribedEventQueue(runtime, eventQueue);
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-replace-pending-permission");
+        yield* adapter.startSession({
+          provider: "opencode",
+          threadId,
+          runtimeMode: "approval-required",
+        });
+        yield* adapter.sendTurn({
+          threadId,
+          input: "first",
+          attachments: [],
+          modelSelection: { provider: "opencode", model: "openai/gpt-5.4" },
+        });
+        pushActivePromptEcho(eventQueue, runtime);
+        pushActiveAssistantOwnership(eventQueue, runtime, "msg-replacement-permission-owner");
+        eventQueue.push({
+          type: "permission.asked",
+          properties: {
+            id: "permission-replacement",
+            sessionID: "opencode-session-1",
+            permission: "bash",
+            patterns: ["rm file"],
+            metadata: {},
+            always: [],
+          },
+        });
+        yield* Effect.sleep(10);
+        const replyFiber = yield* adapter
+          .respondToRequest(
+            threadId,
+            ApprovalRequestId.makeUnsafe("permission-replacement"),
+            "accept",
+          )
+          .pipe(Effect.forkChild);
+        yield* Effect.promise(() => replyReady);
+        const replacement = yield* adapter.startSession({
+          provider: "opencode",
+          threadId,
+          runtimeMode: "approval-required",
+        });
+        const replyExit = yield* Fiber.await(replyFiber);
+        eventQueue.close();
+        return { replacement, replyExit };
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(replySignalAborted).toBe(true);
+    expect(Exit.isFailure(result.replyExit)).toBe(true);
+    expect(result.replacement.resumeCursor).toMatchObject({
+      openCodeSessionId: "opencode-session-2",
+    });
+  });
+
+  it("cancels an in-flight question reply during adapter shutdown", async () => {
+    const eventQueue = createSubscribedEventQueue();
+    let replyStarted: (() => void) | undefined;
+    const replyReady = new Promise<void>((resolve) => {
+      replyStarted = resolve;
+    });
+    let replySignalAborted = false;
+    const runtime = createMockOpenCodeRuntime({
+      questionReply: (_input, requestOptions) =>
+        new Promise((resolve, reject) => {
+          replyStarted?.();
+          requestOptions?.signal?.addEventListener(
+            "abort",
+            () => {
+              replySignalAborted = true;
+              reject(new Error("question retired"));
+            },
+            { once: true },
+          );
+          void resolve;
+        }),
+    });
+    bindSubscribedEventQueue(runtime, eventQueue);
+
+    const replyExit = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-shutdown-pending-question");
+        yield* adapter.startSession({
+          provider: "opencode",
+          threadId,
+          runtimeMode: "approval-required",
+        });
+        yield* adapter.sendTurn({
+          threadId,
+          input: "first",
+          attachments: [],
+          modelSelection: { provider: "opencode", model: "openai/gpt-5.4" },
+        });
+        pushActivePromptEcho(eventQueue, runtime);
+        pushActiveAssistantOwnership(eventQueue, runtime, "msg-shutdown-question-owner");
+        eventQueue.push({
+          type: "question.asked",
+          properties: {
+            id: "question-shutdown",
+            sessionID: "opencode-session-1",
+            questions: [
+              {
+                question: "Proceed?",
+                header: "Confirm",
+                options: [{ label: "Yes", description: "" }],
+                multiple: false,
+                custom: false,
+              },
+            ],
+          },
+        });
+        yield* Effect.sleep(10);
+        const replyFiber = yield* adapter
+          .respondToUserInput(threadId, ApprovalRequestId.makeUnsafe("question-shutdown"), {})
+          .pipe(Effect.forkChild);
+        yield* Effect.promise(() => replyReady);
+        yield* adapter.stopAll();
+        eventQueue.close();
+        return yield* Fiber.await(replyFiber);
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(replySignalAborted).toBe(true);
+    expect(Exit.isFailure(replyExit)).toBe(true);
+  });
+
+  it("bounds Kilo busy-turn transcript recovery requests", async () => {
+    const runtime = createMockOpenCodeRuntime({
+      status: async () => ({ data: { "opencode-session-1": { type: "busy" } } }),
+      messages: async () => ({ data: [] }),
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* KiloAdapter;
+        const threadId = asThreadId("thread-kilo-bounded-recovery");
+        yield* adapter.startSession({ provider: "kilo", threadId, runtimeMode: "full-access" });
+        yield* adapter.sendTurn({
+          threadId,
+          input: "hello",
+          attachments: [],
+          modelSelection: { provider: "kilo", model: "openai/gpt-5.4" },
+        });
+        yield* Effect.sleep(550);
+        yield* adapter.stopSession(threadId);
+      }).pipe(
+        Effect.provide(
+          makeKiloAdapterLive({
+            runtime: runtime.runtime,
+            promptAcceptedActivityTimeoutMs: 5_000,
+            promptAcceptedRecoveryDelaysMs: [],
+          }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "kilo-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(runtime.messageCalls[0]).toEqual({ sessionID: "opencode-session-1" });
+    expect(runtime.messageCalls.slice(1)).toEqual(
+      expect.arrayContaining([{ sessionID: "opencode-session-1", limit: 256 }]),
+    );
+    expect(runtime.messageCalls.slice(1).every((call) => call?.limit === 256)).toBe(true);
+  });
 });
