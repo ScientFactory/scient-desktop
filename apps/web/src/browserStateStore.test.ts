@@ -27,33 +27,36 @@ describe("browserStateStore selectors", () => {
     expect(first).toEqual([]);
   });
 
-  it("never persists artifact capability URLs into browser history", () => {
-    const history = browserHistoryAfterThreadState([], {
-      threadId: THREAD_ID,
-      version: 1,
-      open: true,
-      activeTabId: "artifact",
-      tabs: [
-        {
-          id: "artifact",
-          kind: "artifact",
-          url: "http://g-secret.preview.localhost:5000/",
-          displayUrl: "/workspace/report.html",
-          title: "Report",
-          status: "live",
-          isLoading: false,
-          canGoBack: false,
-          canGoForward: false,
-          faviconUrl: null,
-          lastCommittedUrl: "http://g-secret.preview.localhost:5000/",
-          lastError: null,
-        },
-      ],
-      lastError: null,
-    });
+  it.each(["artifact", "local-html"] as const)(
+    "never persists %s capability URLs into browser history",
+    (kind) => {
+      const history = browserHistoryAfterThreadState([], {
+        threadId: THREAD_ID,
+        version: 1,
+        open: true,
+        activeTabId: "preview",
+        tabs: [
+          {
+            id: "preview",
+            kind,
+            url: "http://g-secret.preview.localhost:5000/",
+            displayUrl: "/workspace/report.html",
+            title: "Report",
+            status: "live",
+            isLoading: false,
+            canGoBack: false,
+            canGoForward: false,
+            faviconUrl: null,
+            lastCommittedUrl: "http://g-secret.preview.localhost:5000/",
+            lastError: null,
+          },
+        ],
+        lastError: null,
+      });
 
-    expect(history).toEqual([]);
-  });
+      expect(history).toEqual([]);
+    },
+  );
 });
 
 describe("createDedupedBrowserStateStorage", () => {

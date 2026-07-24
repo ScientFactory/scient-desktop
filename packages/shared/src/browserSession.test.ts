@@ -4,6 +4,7 @@ import {
   BROWSER_SEARCH_URL_PREFIX,
   buildAcceptLanguageHeader,
   buildChromeClientHints,
+  browserSessionPartition,
   chromeMajorVersionFromUserAgent,
   classifyBrowserWindowOpen,
   deriveChromeUserAgent,
@@ -15,6 +16,26 @@ import {
 
 const ELECTRON_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Synara/0.3.1 Chrome/124.0.6367.91 Electron/30.0.1 Safari/537.36";
+
+describe("browserSessionPartition", () => {
+  it("gives full local HTML and local apps the thread-local persistent browser session", () => {
+    expect(browserSessionPartition("local-html", "thread-1", "tab-1")).toBe(
+      "persist:scient-local-preview-thread-1",
+    );
+    expect(browserSessionPartition("local-app", "thread-1", "tab-2")).toBe(
+      "persist:scient-local-preview-thread-1",
+    );
+  });
+
+  it("keeps static artifact previews ephemeral and tab-isolated", () => {
+    expect(browserSessionPartition("artifact", "thread-1", "tab-1")).toBe(
+      "scient-artifact-preview-thread-1-tab-1",
+    );
+    expect(browserSessionPartition("artifact", "thread-1", "tab-2")).not.toBe(
+      browserSessionPartition("artifact", "thread-1", "tab-1"),
+    );
+  });
+});
 
 describe("deriveChromeUserAgent", () => {
   it("strips Electron and app product tokens to leave a vanilla Chrome UA", () => {
@@ -88,7 +109,10 @@ describe("resolveCopyableBrowserTabUrl", () => {
   it("prefers a non-blank live url over cached tab urls", () => {
     expect(
       resolveCopyableBrowserTabUrl(
-        { url: "https://current.example/", lastCommittedUrl: "https://committed.example/" },
+        {
+          url: "https://current.example/",
+          lastCommittedUrl: "https://committed.example/",
+        },
         "https://live.example/",
       ),
     ).toBe("https://live.example/");
@@ -101,7 +125,12 @@ describe("resolveCopyableBrowserTabUrl", () => {
         lastCommittedUrl: "about:blank",
       }),
     ).toBe("https://current.example/");
-    expect(resolveCopyableBrowserTabUrl({ url: "about:blank", lastCommittedUrl: null })).toBeNull();
+    expect(
+      resolveCopyableBrowserTabUrl({
+        url: "about:blank",
+        lastCommittedUrl: null,
+      }),
+    ).toBeNull();
   });
 });
 

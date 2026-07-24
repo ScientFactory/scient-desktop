@@ -10,6 +10,7 @@
 // Layer: Chat/editor file-preview UI
 // Exports: WorkspaceFilePreviewHeader
 
+import type { EditorId } from "@synara/contracts";
 import { isWorkspaceRelativePathSafe, joinWorkspaceRelativePath } from "@synara/shared/path";
 import { Fragment, memo, useCallback, useMemo } from "react";
 
@@ -30,6 +31,12 @@ interface WorkspaceFilePreviewHeaderProps {
   /** True while the rendered preview is shown; false for the source view. */
   markdownPreviewEnabled: boolean;
   onMarkdownPreviewChange: (rendered: boolean) => void;
+  /** SVG files get an independent visual/source switch without changing Markdown behavior. */
+  isSvg?: boolean;
+  svgSourceEnabled?: boolean;
+  onSvgSourceChange?: ((source: boolean) => void) | undefined;
+  /** Pins the primary external action to the OS-registered application. */
+  defaultOpenEditor?: EditorId | undefined;
   /** Whole-file chat actions, surfaced in the overflow menu when wired. */
   onReferenceInChat?: ((reference: ChatFileReference) => void) | undefined;
   onAskWhyInChat?: ((reference: ChatFileReference) => void) | undefined;
@@ -52,6 +59,21 @@ const MARKDOWN_VIEW_SEGMENTS = [
     label: "Preview",
     title: "Rendered preview — browse and toggle task lists",
     Icon: EyeIcon,
+  },
+] as const;
+
+const SVG_VIEW_SEGMENTS = [
+  {
+    source: false,
+    label: "Preview",
+    title: "Rendered SVG preview",
+    Icon: EyeIcon,
+  },
+  {
+    source: true,
+    label: "Source",
+    title: "SVG source — inspect and reference exact lines in chat",
+    Icon: FileIcon,
   },
 ] as const;
 
@@ -170,6 +192,37 @@ export const WorkspaceFilePreviewHeader = memo(function WorkspaceFilePreviewHead
           </div>
         ) : null}
 
+        {props.isSvg ? (
+          <div
+            role="radiogroup"
+            aria-label="SVG view"
+            className="flex h-7 shrink-0 items-center rounded-lg bg-[var(--color-background-elevated-secondary)] p-0.5"
+          >
+            {SVG_VIEW_SEGMENTS.map((segment) => {
+              const selected = segment.source === Boolean(props.svgSourceEnabled);
+              return (
+                <button
+                  key={segment.label}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  title={segment.title}
+                  className={cn(
+                    "flex h-6 cursor-pointer items-center gap-1.5 rounded-md px-2 text-[11px] transition-colors",
+                    selected
+                      ? "bg-[var(--color-background-button-secondary)] text-[var(--color-text-foreground)]"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                  onClick={() => props.onSvgSourceChange?.(segment.source)}
+                >
+                  <segment.Icon aria-hidden="true" className="size-3.5 shrink-0" />
+                  <span className="sr-only @sm/header-actions:not-sr-only">{segment.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+
         {hasChatActions ? (
           <Menu>
             <MenuTrigger render={<ChatHeaderIconButton label="More actions" tone="plain" />}>
@@ -195,6 +248,7 @@ export const WorkspaceFilePreviewHeader = memo(function WorkspaceFilePreviewHead
               ? filePath
               : joinWorkspaceRelativePath(workspaceRoot, filePath)
           }
+          {...(props.defaultOpenEditor ? { defaultEditor: props.defaultOpenEditor } : {})}
         />
       </div>
     </div>

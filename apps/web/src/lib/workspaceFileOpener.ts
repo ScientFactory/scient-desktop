@@ -27,12 +27,12 @@ export interface WorkspaceFileOpener {
   /**
    * Opens a file referenced in the chat. Returns true when the reference was
    * handled by an in-app viewer; false tells the caller to fall back to the
-   * external editor (path outside the workspace, no viewer on this surface).
+   * external editor when no in-app viewer can resolve the path.
    */
   openFile: (path: string) => boolean;
-  /** Opens the inert rendered HTML preview in the user's external browser. */
+  /** Opens the rendered HTML site in the user's external browser. */
   openHtmlInExternalBrowser?: (path: string) => boolean;
-  /** Resolves a short-lived inert HTML preview URL for thumbnail rendering. */
+  /** Resolves the local HTML site's preview URL for thumbnail rendering. */
   getHtmlPreviewUrl?: (path: string) => Promise<string | null>;
   /** Optional hover warm-up for the file contents + syntax highlighter. */
   prefetchFile?: (path: string) => void;
@@ -95,14 +95,12 @@ export function resolveWorkspaceFileOpenTarget(
 }
 
 /**
- * Out-of-workspace fallback for surfaces that can preview binary files: a
+ * Out-of-workspace fallback for surfaces that can preview streamed files: a
  * session that starts before its chat workspace exists runs in a scratch
  * directory under the OS temp dir, and the agent references those files by
- * absolute path. Images and PDFs stream through the allowlisted local-image
- * route (which also serves the scratch root), so they can still open in-app.
- * Anything else returns null — the text file-read RPC only accepts
- * workspace-relative paths, so those references fall back to the external
- * editor.
+ * absolute path. Images, PDFs, audio, and video stream through the allowlisted
+ * local-file route (which also serves the scratch root), so they can still
+ * open in-app. General absolute-path handling is provided by the dock opener.
  */
 export function resolveScratchPreviewFileOpenTarget(rawPath: string): string | null {
   const withoutPosition = rawPath.trim().replace(FILE_POSITION_SUFFIX_PATTERN, "");
@@ -174,8 +172,8 @@ export function prefetchWorkspaceFile(
   workspaceRoot: string,
   relativePath: string,
 ): void {
-  // Images and PDFs stream through the local-image HTTP route, so there is no
-  // text read to warm and no syntax highlighter to load.
+  // Images, PDFs, audio, and video stream through the local-file HTTP route, so
+  // there is no text read to warm and no syntax highlighter to load.
   if (isSupportedLocalPreviewFilePath(relativePath)) {
     return;
   }

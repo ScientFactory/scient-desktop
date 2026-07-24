@@ -15,8 +15,12 @@ import {
   isLocalAbsolutePath,
   isWorkspaceRelativePathSafe,
   joinWorkspaceRelativePath,
+  parentDirectoryOfLocalPath,
 } from "@synara/shared/path";
-import { isSupportedLocalHtmlPath } from "@synara/shared/localPreviewFiles";
+import {
+  isSupportedLocalHtmlPath,
+  localFileViewerKindForPath,
+} from "@synara/shared/localPreviewFiles";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
@@ -1780,11 +1784,12 @@ function SingleChatSurface(props: {
       if (!absolutePath) {
         return null;
       }
-      if (!workspaceRoot) {
+      const htmlCwd = workspaceRoot ?? parentDirectoryOfLocalPath(absolutePath);
+      if (!htmlCwd) {
         return null;
       }
       const inspection = await queryClient.fetchQuery(
-        projectInspectHtmlArtifactQueryOptions({ cwd: workspaceRoot, path: absolutePath }),
+        projectInspectHtmlArtifactQueryOptions({ cwd: htmlCwd, path: absolutePath }),
       );
       // Thumbnails are deliberately inert. Never execute an interactive bundle
       // merely because its card scrolled into view.
@@ -1796,7 +1801,7 @@ function SingleChatSurface(props: {
         return null;
       }
       const prepared = await api.projects.prepareHtmlArtifactPreview({
-        cwd: workspaceRoot,
+        cwd: htmlCwd,
         path: absolutePath,
       });
       return prepared.mode === "static-document" ? (prepared.previewUrl ?? null) : null;
@@ -1819,15 +1824,18 @@ function SingleChatSurface(props: {
           : workspaceRoot
             ? joinWorkspaceRelativePath(workspaceRoot, targetPath)
             : null;
-        if (!absolutePath || !workspaceRoot) {
-          throw new Error("This HTML file is outside the active workspace.");
+        const htmlCwd = absolutePath
+          ? (workspaceRoot ?? parentDirectoryOfLocalPath(absolutePath))
+          : null;
+        if (!absolutePath || !htmlCwd) {
+          throw new Error("This HTML file path could not be resolved.");
         }
         const prepared = await api.projects.prepareHtmlArtifactPreview({
-          cwd: workspaceRoot,
+          cwd: htmlCwd,
           path: absolutePath,
         });
         let url = prepared.previewUrl ?? null;
-        let browserKind: "artifact" | "local-app" = "artifact";
+        let browserKind: "local-html" | "local-app" = "local-html";
 
         if (prepared.mode === "dev-server-entrypoint") {
           if (!prepared.runTarget || !props.projectId || !activeProject) {
@@ -1845,7 +1853,7 @@ function SingleChatSurface(props: {
             cwd: prepared.runTarget.cwd,
             env: {
               SYNARA_PROJECT_ROOT: activeProject.cwd,
-              ...(workspaceRoot !== activeProject.cwd
+              ...(workspaceRoot && workspaceRoot !== activeProject.cwd
                 ? { SYNARA_WORKTREE_PATH: workspaceRoot }
                 : {}),
             },
@@ -1864,11 +1872,6 @@ function SingleChatSurface(props: {
           throw new Error("This HTML file is not available for preview.");
         }
         if (destination === "external") {
-          if (prepared.mode === "interactive-bundle") {
-            throw new Error(
-              "Interactive artifact previews are available only inside Scient's isolated browser.",
-            );
-          }
           await api.shell.openExternal(url);
         } else {
           requestImmediateDockHydration("browser");
@@ -1900,8 +1903,7 @@ function SingleChatSurface(props: {
     ],
   );
   // Chat surface: file references open in the right-dock file pane. References
-  // outside the workspace report unhandled so chips fall back to the external
-  // editor.
+  // outside the workspace use absolute-path preview grants when available.
   const dockFileOpener = useMemo<WorkspaceFileOpener>(
     () => ({
       openFile: (path) => {
@@ -1912,7 +1914,7 @@ function SingleChatSurface(props: {
         if (!targetPath) {
           return false;
         }
-        if (isSupportedLocalHtmlPath(targetPath)) {
+        if (localFileViewerKindForPath(targetPath) === "html") {
           return openHtmlPreview(path, "internal");
         }
         requestImmediateDockHydration("file");
@@ -1938,19 +1940,19 @@ function SingleChatSurface(props: {
   const editorFileOpener = useMemo<WorkspaceFileOpener>(
     () => ({
       openFile: (path) => {
-        if (!workspaceRoot) {
+        const targetPath = resolveDockFileOpenTarget(path, workspaceRoot);
+        if (!targetPath) {
           return false;
         }
-        const relativePath = resolveWorkspaceFileOpenTarget(path, workspaceRoot);
-        if (!relativePath) {
-          return false;
+        if (localFileViewerKindForPath(targetPath) === "html") {
+          return openHtmlPreview(path, "internal");
         }
-        handleSelectEditorFile(relativePath);
+        handleSelectEditorFile(targetPath);
         return true;
       },
       prefetchFile: prefetchOpenerFile,
     }),
-    [handleSelectEditorFile, prefetchOpenerFile, workspaceRoot],
+    [handleSelectEditorFile, openHtmlPreview, prefetchOpenerFile, workspaceRoot],
   );
 
   const handleSplitSurface = useCallback(() => {
@@ -2229,10 +2231,14 @@ function SingleChatSurface(props: {
 
   const handleOpenDockFile = useCallback(
     (path: string) => {
+      if (localFileViewerKindForPath(path) === "html") {
+        openHtmlPreview(path, "internal");
+        return;
+      }
       requestImmediateDockHydration("file");
       openPane(props.threadId, { kind: "file", filePath: path });
     },
-    [openPane, props.threadId, requestImmediateDockHydration],
+    [openHtmlPreview, openPane, props.threadId, requestImmediateDockHydration],
   );
 
   const handleToggleDockFileExplorer = useCallback(() => {
@@ -2402,11 +2408,12 @@ function SingleChatSurface(props: {
   // so neither the ancestor prefetch nor the preview ever queries them.
   const rawEditorFilePath = props.search.editorFilePath ?? null;
   const selectedEditorFilePath =
-    rawEditorFilePath !== null && isWorkspaceRelativePathSafe(rawEditorFilePath)
+    rawEditorFilePath !== null &&
+    (isWorkspaceRelativePathSafe(rawEditorFilePath) || isLocalAbsolutePath(rawEditorFilePath))
       ? rawEditorFilePath
       : null;
   useEffect(() => {
-    if (!selectedEditorFilePath) {
+    if (!selectedEditorFilePath || isLocalAbsolutePath(selectedEditorFilePath)) {
       return;
     }
 
@@ -2474,7 +2481,7 @@ function SingleChatSurface(props: {
               selectedDiffFilePath={editorDiffPanelState.diffFilePath ?? null}
               diffOptionsControl={editorDiffOptionsControl}
               onSelectDiffFile={handleSelectEditorDiffFile}
-              onSelectFile={handleSelectEditorFile}
+              onSelectFile={editorFileOpener.openFile}
               onToggleDirectory={handleToggleEditorDirectory}
               onCenterModeChange={setEditorCenterMode}
               onExitEditorView={handleCloseEditorView}

@@ -7,13 +7,12 @@ import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 
+import Mime from "@effect/platform-node/Mime";
 import type {
-  ProjectHtmlArtifactMode,
   ProjectInspectHtmlArtifactInput,
   ProjectPrepareHtmlArtifactPreviewInput,
   ProjectRevokeHtmlArtifactPreviewInput,
 } from "@synara/contracts";
-import { SUPPORTED_LOCAL_IMAGE_EXTENSIONS } from "@synara/shared/localPreviewFiles";
 import { Effect, Layer } from "effect";
 
 import { inspectHtmlArtifact } from "../Inspector";
@@ -23,36 +22,13 @@ import {
   type HtmlArtifactPreviewShape,
 } from "../Services/HtmlArtifactPreview";
 
-const PREVIEW_GRANT_TTL_MS = 15 * 60 * 1000;
-const PREVIEW_MAX_ACTIVE_GRANTS = 128;
-const PREVIEW_MAX_ASSET_BYTES = 25 * 1024 * 1024;
+const PREVIEW_MAX_ACTIVE_GRANTS = 512;
 const PREVIEW_HOST_SUFFIX = ".preview.localhost";
-const PREVIEW_ASSET_EXTENSIONS: ReadonlySet<string> = new Set([
-  ...SUPPORTED_LOCAL_IMAGE_EXTENSIONS,
-  ".css",
-  ".js",
-  ".mjs",
-  ".otf",
-  ".ttf",
-  ".woff",
-  ".woff2",
-]);
-const STATIC_PREVIEW_ASSET_EXTENSIONS: ReadonlySet<string> = new Set(
-  [...PREVIEW_ASSET_EXTENSIONS].filter((extension) => extension !== ".js" && extension !== ".mjs"),
-);
-
-function executableHtmlPreviewEnabled(): boolean {
-  const value = process.env.SCIENT_EXECUTABLE_HTML_PREVIEW?.trim().toLowerCase();
-  return value === "1" || value === "true";
-}
 
 interface PreviewGrant {
   readonly id: string;
   readonly entryPath: string;
-  readonly baseDirectory: string;
-  readonly mode: Extract<ProjectHtmlArtifactMode, "static-document" | "interactive-bundle">;
-  readonly expiresAtMs: number;
-  readonly allowedFiles: ReadonlySet<string>;
+  readonly siteRoot: string;
   readonly listenerPort: number;
   readonly dedicatedServer?: http.Server;
 }
@@ -60,28 +36,6 @@ interface PreviewGrant {
 function isPathInside(candidate: string, root: string): boolean {
   const relative = path.relative(root, candidate);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
-function previewContentSecurityPolicy(mode: PreviewGrant["mode"]): string {
-  const executable = mode === "interactive-bundle";
-  return [
-    "default-src 'none'",
-    executable ? "script-src 'self' 'unsafe-inline'" : "script-src 'none'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob:",
-    "font-src 'self' data:",
-    "media-src 'none'",
-    executable ? "connect-src 'self'" : "connect-src 'none'",
-    "worker-src 'none'",
-    "manifest-src 'none'",
-    "object-src 'none'",
-    "frame-src 'none'",
-    "child-src 'none'",
-    "base-uri 'none'",
-    "form-action 'none'",
-    "frame-ancestors http://localhost:* http://127.0.0.1:* scient:",
-    executable ? "sandbox allow-scripts allow-same-origin" : "sandbox",
-  ].join("; ");
 }
 
 function contentTypeFor(filePath: string): string {
@@ -118,7 +72,7 @@ function contentTypeFor(filePath: string): string {
     case ".otf":
       return "font/otf";
     default:
-      return "application/octet-stream";
+      return Mime.getType(filePath) ?? "application/octet-stream";
   }
 }
 
@@ -156,7 +110,7 @@ function decodeRequestedAssetPath(rawUrl: string | undefined): string | null {
   }
   if (decoded.includes("\0") || decoded.includes("\\") || decoded.includes("%")) return null;
   const relativePath = decoded.replace(/^\/+/, "");
-  if (relativePath.length > 2_048) return null;
+  if (relativePath.length > 8_192) return null;
   const segments = relativePath.split("/");
   if (segments.some((segment) => segment === "." || segment === ".." || segment.startsWith("."))) {
     return null;
@@ -170,36 +124,59 @@ async function resolveGrantedFile(
 ): Promise<string | null> {
   const relativePath = decodeRequestedAssetPath(rawUrl);
   if (relativePath === null) return null;
-  if (relativePath.length > 0) {
-    const extension = path.extname(relativePath).toLowerCase();
-    const allowedExtensions =
-      grant.mode === "interactive-bundle"
-        ? PREVIEW_ASSET_EXTENSIONS
-        : STATIC_PREVIEW_ASSET_EXTENSIONS;
-    if (!allowedExtensions.has(extension)) return null;
-  }
-
   const candidate =
-    relativePath.length === 0 ? grant.entryPath : path.resolve(grant.baseDirectory, relativePath);
-  const canonicalFile = await fs.realpath(candidate).catch(() => null);
-  if (!canonicalFile || !isPathInside(canonicalFile, grant.baseDirectory)) return null;
-  if (!grant.allowedFiles.has(canonicalFile)) return null;
-  const stat = await fs.stat(canonicalFile).catch(() => null);
-  return stat?.isFile() && stat.size <= PREVIEW_MAX_ASSET_BYTES ? canonicalFile : null;
+    relativePath.length === 0 ? grant.entryPath : path.resolve(grant.siteRoot, relativePath);
+  let canonicalFile = await fs.realpath(candidate).catch(() => null);
+  if (!canonicalFile || !isPathInside(canonicalFile, grant.siteRoot)) return null;
+  let stat = await fs.stat(canonicalFile).catch(() => null);
+  if (stat?.isDirectory()) {
+    canonicalFile = await fs.realpath(path.join(canonicalFile, "index.html")).catch(() => null);
+    if (!canonicalFile || !isPathInside(canonicalFile, grant.siteRoot)) return null;
+    stat = await fs.stat(canonicalFile).catch(() => null);
+  }
+  return stat?.isFile() ? canonicalFile : null;
 }
 
-function securityHeaders(grant: PreviewGrant): Record<string, string> {
+function browserHeaders(): Record<string, string> {
   return {
     "Cache-Control": "no-store",
-    "Content-Security-Policy": previewContentSecurityPolicy(grant.mode),
-    "Cross-Origin-Opener-Policy": "same-origin",
-    "Cross-Origin-Resource-Policy": "same-origin",
-    "Origin-Agent-Cluster": "?1",
-    "Permissions-Policy":
-      "camera=(), microphone=(), geolocation=(), display-capture=(), fullscreen=(), payment=(), usb=(), serial=(), hid=(), clipboard-read=(), clipboard-write=()",
-    "Referrer-Policy": "no-referrer",
-    "X-Content-Type-Options": "nosniff",
+    "Accept-Ranges": "bytes",
   };
+}
+
+function parseSingleByteRange(
+  value: string | undefined,
+  sizeBytes: number,
+): { readonly start: number; readonly end: number } | null | "invalid" {
+  if (!value) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
+  if (!match || sizeBytes <= 0) return "invalid";
+  const rawStart = match[1] ?? "";
+  const rawEnd = match[2] ?? "";
+  if (!rawStart && !rawEnd) return "invalid";
+  if (!rawStart) {
+    const suffixLength = Number(rawEnd);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return "invalid";
+    return { start: Math.max(0, sizeBytes - suffixLength), end: sizeBytes - 1 };
+  }
+  const start = Number(rawStart);
+  const requestedEnd = rawEnd ? Number(rawEnd) : sizeBytes - 1;
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(requestedEnd) ||
+    start < 0 ||
+    requestedEnd < start ||
+    start >= sizeBytes
+  ) {
+    return "invalid";
+  }
+  return { start, end: Math.min(requestedEnd, sizeBytes - 1) };
+}
+
+function previewPathFor(entryPath: string, siteRoot: string): string {
+  const relativePath = path.relative(siteRoot, entryPath);
+  if (!relativePath || relativePath === path.basename(entryPath)) return "/";
+  return `/${relativePath.split(path.sep).map(encodeURIComponent).join("/")}`;
 }
 
 async function closeServer(server: http.Server): Promise<void> {
@@ -245,14 +222,7 @@ export const HtmlArtifactPreviewLive = Layer.effect(
       return true;
     };
 
-    const pruneExpiredGrants = (nowMs: number): void => {
-      for (const [id, grant] of grants) {
-        if (grant.expiresAtMs <= nowMs) removeGrant(id);
-      }
-    };
-
-    const reserveGrantCapacity = (nowMs: number): void => {
-      pruneExpiredGrants(nowMs);
+    const reserveGrantCapacity = (): void => {
       while (grants.size >= PREVIEW_MAX_ACTIVE_GRANTS) {
         const oldestId = grants.keys().next().value as string | undefined;
         if (!oldestId) break;
@@ -267,15 +237,13 @@ export const HtmlArtifactPreviewLive = Layer.effect(
             writeNotFound(response);
             return;
           }
-          const nowMs = Date.now();
-          pruneExpiredGrants(nowMs);
           const grantId = dedicatedGrantId
             ? normalizedHostName(request.headers.host) === "127.0.0.1"
               ? dedicatedGrantId
               : null
             : grantIdFromHost(request.headers.host);
           const grant = grantId ? grants.get(grantId) : undefined;
-          if (!grant || grant.expiresAtMs <= nowMs) {
+          if (!grant) {
             writeNotFound(response);
             return;
           }
@@ -285,21 +253,35 @@ export const HtmlArtifactPreviewLive = Layer.effect(
             return;
           }
           const stat = await fs.stat(filePath).catch(() => null);
-          if (!stat?.isFile() || stat.size > PREVIEW_MAX_ASSET_BYTES) {
+          if (!stat?.isFile()) {
             writeNotFound(response);
             return;
           }
-          response.writeHead(200, {
-            ...securityHeaders(grant),
-            "Content-Length": String(stat.size),
-            "Content-Type": contentTypeFor(filePath),
+          const contentType = contentTypeFor(filePath);
+          const range = parseSingleByteRange(request.headers.range, stat.size);
+          if (range === "invalid") {
+            response.writeHead(416, {
+              ...browserHeaders(),
+              "Content-Range": `bytes */${stat.size}`,
+            });
+            response.end();
+            return;
+          }
+          const responseSize = range ? range.end - range.start + 1 : stat.size;
+          response.writeHead(range ? 206 : 200, {
+            ...browserHeaders(),
+            "Content-Length": String(responseSize),
+            "Content-Type": contentType,
+            ...(range ? { "Content-Range": `bytes ${range.start}-${range.end}/${stat.size}` } : {}),
           });
           if (request.method === "HEAD") {
             response.end();
             return;
           }
           const file = await fs.open(filePath, "r");
-          const stream = file.createReadStream();
+          const stream = file.createReadStream(
+            range ? { start: range.start, end: range.end } : undefined,
+          );
           stream.on("error", () => response.destroy());
           stream.on("close", () => void file.close().catch(() => undefined));
           stream.pipe(response);
@@ -318,7 +300,7 @@ export const HtmlArtifactPreviewLive = Layer.effect(
         },
         catch: (cause) =>
           new HtmlArtifactPreviewError({
-            message: "Failed to start the isolated HTML preview listener.",
+            message: "Failed to start the local HTML preview listener.",
             cause,
           }),
       }),
@@ -346,30 +328,16 @@ export const HtmlArtifactPreviewLive = Layer.effect(
         try: async () => {
           const inspected = await inspectHtmlArtifact(input);
           if (
-            !executableHtmlPreviewEnabled() &&
-            (inspected.result.mode === "interactive-bundle" ||
-              inspected.result.mode === "dev-server-entrypoint")
-          ) {
-            const { runTarget: _runTarget, ...inspectionWithoutRunTarget } = inspected.result;
-            return {
-              ...inspectionWithoutRunTarget,
-              mode: "unsupported" as const,
-              reason:
-                "Executable HTML previews are disabled by the SCIENT_EXECUTABLE_HTML_PREVIEW rollout switch.",
-            };
-          }
-          if (
             !inspected.absolutePath ||
             !inspected.baseDirectory ||
+            !inspected.siteRoot ||
             (inspected.result.mode !== "static-document" &&
               inspected.result.mode !== "interactive-bundle")
           ) {
             return inspected.result;
           }
-          const canonicalBaseDirectory = await fs.realpath(inspected.baseDirectory);
-          const nowMs = Date.now();
-          reserveGrantCapacity(nowMs);
-          const expiresAtMs = nowMs + PREVIEW_GRANT_TTL_MS;
+          const canonicalSiteRoot = await fs.realpath(inspected.siteRoot);
+          reserveGrantCapacity();
           const id = crypto.randomUUID();
           const dedicatedServer = process.platform === "win32" ? createServer(id) : undefined;
           const grantListenerPort = dedicatedServer
@@ -378,19 +346,15 @@ export const HtmlArtifactPreviewLive = Layer.effect(
           grants.set(id, {
             id,
             entryPath: inspected.absolutePath,
-            baseDirectory: canonicalBaseDirectory,
-            mode: inspected.result.mode,
-            expiresAtMs,
-            allowedFiles: new Set([inspected.absolutePath, ...inspected.allowedResourcePaths]),
+            siteRoot: canonicalSiteRoot,
             listenerPort: grantListenerPort,
             ...(dedicatedServer ? { dedicatedServer } : {}),
           });
           return {
             ...inspected.result,
             previewUrl: dedicatedServer
-              ? `http://127.0.0.1:${grantListenerPort}/`
-              : `http://g-${id}${PREVIEW_HOST_SUFFIX}:${grantListenerPort}/`,
-            expiresAt: new Date(expiresAtMs).toISOString(),
+              ? `http://127.0.0.1:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`
+              : `http://g-${id}${PREVIEW_HOST_SUFFIX}:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`,
           };
         },
         catch: (cause) =>

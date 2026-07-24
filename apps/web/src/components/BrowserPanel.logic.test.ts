@@ -5,9 +5,57 @@ import {
   browserCopyFeedbackMatches,
   buildBrowserAddressSuggestions,
   normalizeBrowserAddressInput,
+  reconcileHtmlPreviewGrants,
   resolveBrowserChromeStatus,
   resolveBrowserAddressSync,
 } from "./BrowserPanel.logic";
+
+describe("reconcileHtmlPreviewGrants", () => {
+  it("keeps the original grant while its local HTML tab navigates", () => {
+    const previous = new Map([["tab-local", "http://g-preview.preview.localhost:5000/index.html"]]);
+
+    const result = reconcileHtmlPreviewGrants(previous, [
+      {
+        id: "tab-local",
+        kind: "local-html",
+        url: "http://g-preview.preview.localhost:5000/details/page.html",
+      },
+    ]);
+
+    expect(result.revoked).toEqual([]);
+    expect(result.active.get("tab-local")).toBe(
+      "http://g-preview.preview.localhost:5000/index.html",
+    );
+  });
+
+  it("revokes the original grant after its preview tab closes", () => {
+    const previewUrl = "http://g-preview.preview.localhost:5000/index.html";
+    const result = reconcileHtmlPreviewGrants(new Map([["tab-local", previewUrl]]), []);
+
+    expect(result.revoked).toEqual([previewUrl]);
+    expect(result.active.size).toBe(0);
+  });
+
+  it("keeps a shared local-site grant until its final tab closes", () => {
+    const previewUrl = "http://g-preview.preview.localhost:5000/index.html";
+    const result = reconcileHtmlPreviewGrants(
+      new Map([
+        ["tab-one", previewUrl],
+        ["tab-two", "http://g-preview.preview.localhost:5000/details.html"],
+      ]),
+      [
+        {
+          id: "tab-two",
+          kind: "local-html",
+          url: "http://g-preview.preview.localhost:5000/details.html",
+        },
+      ],
+    );
+
+    expect(result.revoked).toEqual([]);
+    expect(result.active.get("tab-two")).toContain("g-preview.preview.localhost");
+  });
+});
 
 describe("browserCopyFeedbackMatches", () => {
   const feedback = {

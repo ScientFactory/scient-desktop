@@ -298,7 +298,7 @@ export interface DesktopUpdateActionResult {
   state: DesktopUpdateState;
 }
 
-export type BrowserTabKind = "web" | "artifact" | "local-app";
+export type BrowserTabKind = "web" | "artifact" | "local-app" | "local-html";
 
 export interface BrowserTabState {
   id: string;

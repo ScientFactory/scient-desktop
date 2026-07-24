@@ -3,7 +3,11 @@
 // Layer: Chat timeline presentation
 
 import type { EditorId, ProjectInspectHtmlArtifactResult } from "@synara/contracts";
-import { isLocalAbsolutePath, joinWorkspaceRelativePath } from "@synara/shared/path";
+import {
+  isLocalAbsolutePath,
+  joinWorkspaceRelativePath,
+  parentDirectoryOfLocalPath,
+} from "@synara/shared/path";
 import { useQuery } from "@tanstack/react-query";
 import { memo, useEffect, useId, useMemo, useState } from "react";
 
@@ -136,9 +140,11 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
     [serverConfigQuery.data?.availableEditors],
   );
   const absolutePath = absoluteArtifactPath(props.artifact.path, props.workspaceRoot);
+  const inspectionCwd =
+    props.workspaceRoot ?? (absolutePath ? parentDirectoryOfLocalPath(absolutePath) : null);
   const inspectionQuery = useQuery(
     projectInspectHtmlArtifactQueryOptions({
-      cwd: props.workspaceRoot ?? null,
+      cwd: inspectionCwd,
       path: props.artifact.kind === "html" ? absolutePath : null,
       enabled: props.artifact.kind === "html" && absolutePath !== null,
     }),
@@ -232,10 +238,7 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
             </MenuItem>
             {props.artifact.kind === "html" ? (
               <MenuItem
-                disabled={
-                  !opener?.openHtmlInExternalBrowser ||
-                  inspectionQuery.data?.mode === "interactive-bundle"
-                }
+                disabled={!opener?.openHtmlInExternalBrowser}
                 onClick={() => {
                   setOpenError(null);
                   if (!opener?.openHtmlInExternalBrowser?.(props.artifact.path)) {

@@ -70,6 +70,32 @@ export function joinWorkspaceRelativePath(workspaceRoot: string, relativePath: s
   return `${normalizedRoot}${separator}${normalizedRelativePath}`;
 }
 
+/**
+ * Returns the parent directory of an absolute local path without depending on
+ * the host operating system. This matters when a macOS Scient instance is
+ * displaying a Windows path from a remote/provider transcript (and vice
+ * versa): node:path would otherwise apply only the host's separator rules.
+ */
+export function parentDirectoryOfLocalPath(value: string): string | null {
+  const trimmed = value.trim().replace(/[\\/]+$/, "");
+  if (!isLocalAbsolutePath(trimmed)) {
+    return null;
+  }
+
+  const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  if (separatorIndex < 0) {
+    return null;
+  }
+  if (separatorIndex === 0) {
+    return "/";
+  }
+  // Preserve a Windows drive root (`C:\\`) instead of returning `C:`.
+  if (separatorIndex === 2 && isWindowsDrivePath(trimmed)) {
+    return trimmed.slice(0, 3);
+  }
+  return trimmed.slice(0, separatorIndex);
+}
+
 // True for workspace-relative paths that cannot escape the workspace root:
 // rejects absolute paths (POSIX and Windows) and any "." / ".." segments.
 export function isWorkspaceRelativePathSafe(value: string): boolean {
