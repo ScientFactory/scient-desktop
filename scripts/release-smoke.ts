@@ -288,6 +288,50 @@ function verifyReleaseWorkflowSafety(): void {
   ) {
     throw new Error("Expected the release-note gate to verify the exact resolved version.");
   }
+  const collectAssetsIndex = buildSteps.findIndex((step) => step.name === "Collect release assets");
+  const packagedStartupIndex = buildSteps.findIndex(
+    (step) => step.name === "Smoke exact packaged desktop startup",
+  );
+  const uploadArtifactsIndex = buildSteps.findIndex(
+    (step) => step.name === "Upload build artifacts",
+  );
+  const packagedStartupStep = buildSteps[packagedStartupIndex];
+  if (
+    collectAssetsIndex < 0 ||
+    packagedStartupIndex <= collectAssetsIndex ||
+    uploadArtifactsIndex <= packagedStartupIndex ||
+    packagedStartupStep?.if !== "${{ matrix.platform != 'linux' }}" ||
+    !packagedStartupStep.run?.includes("node scripts/verify-packaged-desktop-startup.ts") ||
+    !packagedStartupStep.run.includes("--assets-dir release-publish")
+  ) {
+    throw new Error(
+      "Expected exact macOS and Windows packaged-startup proof after collection and before upload.",
+    );
+  }
+  const packagedStartupVerifier = readFileSync(
+    resolve(repoRoot, "scripts/verify-packaged-desktop-startup.ts"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  assertContains(
+    packagedStartupVerifier,
+    "SCIENT_HOME: scientHome",
+    "Expected packaged startup verification to isolate Scient state.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    "PACKAGED_SMOKE_INHERITED_ENVIRONMENT_ALLOWLIST",
+    "Expected packaged startup verification to inherit only explicit host variables.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    'log.includes("renderer main frame loaded")',
+    "Expected packaged startup proof to require successful renderer loading.",
+  );
+  assertNotContains(
+    packagedStartupVerifier,
+    '"linux" | "mac" | "win"',
+    "The extracted startup verifier must not absorb deferred Linux packaging policy.",
+  );
   const appleSigningNames = [
     "CSC_LINK",
     "CSC_KEY_PASSWORD",
