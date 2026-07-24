@@ -31,6 +31,7 @@ import {
 
 import {
   antigravityAuthenticationCommandArgs,
+  CODEX_DEVICE_CODE_CONNECTION_TIMEOUT,
   expectedMethodForProvider,
   makeProviderConnectionLive,
   parseAntigravityOAuthAuthorizationUrl,
@@ -38,6 +39,7 @@ import {
   parseCodexOAuthAuthorizationUrl,
   parseGrokOAuthAuthorizationUrl,
   providerConnectionCommandArgs,
+  resolveProviderConnectionTimeout,
 } from "./ProviderConnection";
 import { resolveProviderProbeCwd } from "./ProviderHealth";
 
@@ -130,6 +132,7 @@ function makeConnectionTestLayer(input?: {
   readonly provider?: ProviderKind;
   readonly runtimeSource?: ServerProviderRuntimeSource;
   readonly timeout?: Duration.Duration;
+  readonly codexDeviceCodeTimeout?: Duration.Duration;
   readonly antigravityCodeWindowTimeout?: Duration.Duration;
   readonly antigravityCodeWindowCloseSignal?: Effect.Effect<void>;
   readonly antigravityTimeout?: Duration.Duration;
@@ -371,6 +374,9 @@ function makeConnectionTestLayer(input?: {
   } satisfies ProviderRuntimeManagerShape);
   const layer = makeProviderConnectionLive({
     ...(input?.timeout ? { timeout: input.timeout } : {}),
+    ...(input?.codexDeviceCodeTimeout
+      ? { codexDeviceCodeTimeout: input.codexDeviceCodeTimeout }
+      : {}),
     ...(input?.antigravityCodeWindowTimeout
       ? { antigravityCodeWindowTimeout: input.antigravityCodeWindowTimeout }
       : {}),
@@ -740,6 +746,57 @@ describe("ProviderConnectionLive", () => {
         yield* connection.cancel({ provider: "codex", operationId: operationId! });
       }).pipe(Effect.provide(fixture.layer)),
     );
+  });
+
+  it("gives Codex device authorization its full provider window and respects explicit overrides", () => {
+    const defaultTimeout = Duration.minutes(10);
+    const antigravityTimeout = Duration.minutes(11);
+    expect(Duration.toMillis(CODEX_DEVICE_CODE_CONNECTION_TIMEOUT)).toBe(16 * 60 * 1_000);
+    expect(
+      Duration.toMillis(
+        resolveProviderConnectionTimeout({
+          provider: "codex",
+          method: "codex_device_code",
+          defaultTimeout,
+          codexDeviceCodeTimeout: CODEX_DEVICE_CODE_CONNECTION_TIMEOUT,
+          antigravityTimeout,
+        }),
+      ),
+    ).toBe(16 * 60 * 1_000);
+    expect(
+      Duration.toMillis(
+        resolveProviderConnectionTimeout({
+          provider: "codex",
+          method: "codex_device_code",
+          explicitTimeout: Duration.millis(5),
+          defaultTimeout,
+          codexDeviceCodeTimeout: CODEX_DEVICE_CODE_CONNECTION_TIMEOUT,
+          antigravityTimeout,
+        }),
+      ),
+    ).toBe(5);
+  });
+
+  it("times out and cleans up a Codex device authorization using its dedicated policy", async () => {
+    const onKill = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      hanging: true,
+      codexDeviceCodeTimeout: Duration.millis(5),
+      onKill,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({ provider: "codex", method: "codex_device_code" });
+        yield* Effect.sleep(Duration.millis(20));
+        expect(fixture.getConnectionState()?.status).toBe("failed");
+        expect(fixture.getConnectionState()?.message).toContain("timed out");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onKill).toHaveBeenCalledTimes(1);
   });
 
   it("runs managed Antigravity's browser-auth bootstrap and verifies models", async () => {

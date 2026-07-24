@@ -958,9 +958,82 @@ describe("ProviderConnectionDialog", () => {
     try {
       await vi.waitFor(() => expect(openExternal).toHaveBeenCalledWith(authorizationUrl));
       await expect.element(page.getByText("ABCD-EFGH")).toBeVisible();
+      const deviceCodeStatus = page.getByRole("status", { name: "Codex device code" });
+      await expect.element(deviceCodeStatus).toHaveAttribute("aria-live", "polite");
+      await expect.element(deviceCodeStatus).toHaveAttribute("aria-atomic", "true");
+      await expect.element(page.getByText(/Automatic timeout in (?:16:00|15:59)/u)).toBeVisible();
       await expect.element(page.getByRole("button", { name: "Copy code" })).toBeVisible();
+      await page.getByRole("button", { name: "Copy code" }).click();
+      await expect.element(page.getByRole("button", { name: "Copied" })).toBeVisible();
       await expect
         .element(page.getByRole("button", { name: "Use device code instead" }))
+        .not.toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("ignores a stale automatic-browser failure after the device operation changes", async () => {
+    let rejectFirstOpen: (error: Error) => void = () => undefined;
+    const firstOpen = new Promise<void>((_resolve, reject) => {
+      rejectFirstOpen = reject;
+    });
+    const authorizationUrl = "https://auth.openai.com/codex/device";
+    const active = {
+      provider: "codex",
+      status: "error",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+      runtime: systemRuntime,
+      connectionState: {
+        operationId: "connect-codex-device-first",
+        method: "codex_device_code",
+        status: "waiting_for_browser",
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        message: "Enter the one-time code shown here.",
+        authorizationUrl,
+        userCode: "ABCD-EFGH",
+      },
+    } satisfies ServerProviderStatus;
+    const openExternal = vi
+      .fn()
+      .mockImplementationOnce(() => firstOpen)
+      .mockResolvedValue(undefined);
+    const restoreNativeApi = installNativeApi({ openExternal });
+    const queryClient = createQueryClient(active);
+    useProviderConnectionDialogStore.getState().openDialog("codex", "provider_picker");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await vi.waitFor(() => expect(openExternal).toHaveBeenCalledTimes(1));
+      applyProviderStatusesToCache(queryClient, [
+        {
+          ...active,
+          connectionState: {
+            ...active.connectionState,
+            operationId: "connect-codex-device-successor",
+            userCode: "IJKL-MNOP",
+          },
+        },
+      ]);
+      await vi.waitFor(() => expect(openExternal).toHaveBeenCalledTimes(2));
+      rejectFirstOpen(new Error("stale browser failure"));
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      await expect
+        .element(
+          page.getByText(
+            "Scient could not open the browser automatically. Use Open browser again below.",
+          ),
+        )
         .not.toBeInTheDocument();
     } finally {
       await screen.unmount();

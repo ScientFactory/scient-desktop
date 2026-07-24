@@ -49,6 +49,7 @@ import { ProviderRuntimeManager } from "../Services/ProviderRuntimeManager";
 import { parseAntigravityModelsAuthStatus, resolveProviderProbeCwd } from "./ProviderHealth";
 
 const CONNECTION_TIMEOUT = Duration.minutes(10);
+export const CODEX_DEVICE_CODE_CONNECTION_TIMEOUT = Duration.minutes(16);
 const INSTALLATION_HANDOFF_TIMEOUT = Duration.minutes(30);
 const INSTALLATION_HANDOFF_POLL_INTERVAL = Duration.millis(250);
 const ANTIGRAVITY_AUTHORIZATION_WINDOW_SECONDS = 10 * 60;
@@ -349,8 +350,25 @@ function makeConnectionError(input: {
   return new ServerProviderConnectionError(input);
 }
 
+export function resolveProviderConnectionTimeout(input: {
+  readonly provider: ProviderKind;
+  readonly method: ServerProviderConnectionMethod;
+  readonly explicitTimeout?: Duration.Duration;
+  readonly defaultTimeout: Duration.Duration;
+  readonly codexDeviceCodeTimeout: Duration.Duration;
+  readonly antigravityTimeout: Duration.Duration;
+}): Duration.Duration {
+  if (input.explicitTimeout !== undefined) return input.explicitTimeout;
+  if (input.provider === "codex" && input.method === "codex_device_code") {
+    return input.codexDeviceCodeTimeout;
+  }
+  if (input.provider === "antigravity") return input.antigravityTimeout;
+  return input.defaultTimeout;
+}
+
 export function makeProviderConnectionLive(options?: {
   readonly timeout?: Duration.Duration;
+  readonly codexDeviceCodeTimeout?: Duration.Duration;
   readonly antigravityCodeWindowTimeout?: Duration.Duration;
   readonly antigravityCodeWindowCloseSignal?: Effect.Effect<void>;
   readonly antigravityTimeout?: Duration.Duration;
@@ -361,6 +379,8 @@ export function makeProviderConnectionLive(options?: {
   readonly droidAuthenticationProbe?: typeof probeDroidAcpAuthentication;
 }) {
   const timeout = options?.timeout ?? CONNECTION_TIMEOUT;
+  const codexDeviceCodeTimeout =
+    options?.codexDeviceCodeTimeout ?? CODEX_DEVICE_CODE_CONNECTION_TIMEOUT;
   const antigravityCodeWindowTimeout =
     options?.antigravityCodeWindowTimeout ?? ANTIGRAVITY_CODE_WINDOW_TIMEOUT;
   const antigravityTimeout = options?.antigravityTimeout ?? ANTIGRAVITY_CONNECTION_TIMEOUT;
@@ -956,10 +976,14 @@ export function makeProviderConnectionLive(options?: {
                       oauthOutputObserver,
                     )
                   : runCommand(command, oauthOutputObserver).pipe(Effect.scoped);
-            const operationTimeout =
-              provider === "antigravity" && options?.timeout === undefined
-                ? antigravityTimeout
-                : timeout;
+            const operationTimeout = resolveProviderConnectionTimeout({
+              provider,
+              method,
+              ...(options?.timeout !== undefined ? { explicitTimeout: options.timeout } : {}),
+              defaultTimeout: timeout,
+              codexDeviceCodeTimeout,
+              antigravityTimeout,
+            });
             const exitCodeResult = yield* connectionProcess.pipe(
               Effect.timeoutOption(operationTimeout),
               Effect.result,

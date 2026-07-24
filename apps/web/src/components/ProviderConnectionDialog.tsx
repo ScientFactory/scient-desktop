@@ -35,6 +35,7 @@ import { Input } from "./ui/input";
 import { Spinner } from "./ui/spinner";
 
 const CONNECTION_TIMEOUT_MS = 10 * 60 * 1_000;
+const CODEX_DEVICE_CODE_CONNECTION_TIMEOUT_MS = 16 * 60 * 1_000;
 const ANTIGRAVITY_CONNECTION_TIMEOUT_MS = 10 * 60 * 1_000;
 
 function formatRemainingTime(startedAt: string, nowMs: number, timeoutMs: number): string {
@@ -179,13 +180,20 @@ export function ProviderConnectionDialog() {
     const key = `${activeConnectionOperationId}:${activeConnectionAuthorizationUrl}`;
     if (openedAuthorizationUrlsRef.current.has(key)) return;
     openedAuthorizationUrlsRef.current.add(key);
+    let disposed = false;
     void ensureNativeApi()
       .shell.openExternal(activeConnectionAuthorizationUrl)
-      .catch(() =>
+      .catch(() => {
+        if (disposed || activeConnectionOperationIdRef.current !== activeConnectionOperationId) {
+          return;
+        }
         setActionError(
           "Scient could not open the browser automatically. Use Open browser again below.",
-        ),
-      );
+        );
+      });
+    return () => {
+      disposed = true;
+    };
   }, [
     isOpen,
     activeConnectionOperationId,
@@ -437,7 +445,9 @@ export function ProviderConnectionDialog() {
                     clockMs,
                     provider === "antigravity"
                       ? ANTIGRAVITY_CONNECTION_TIMEOUT_MS
-                      : CONNECTION_TIMEOUT_MS,
+                      : activeConnectionMethod === "codex_device_code"
+                        ? CODEX_DEVICE_CODE_CONNECTION_TIMEOUT_MS
+                        : CONNECTION_TIMEOUT_MS,
                   )}
                 </p>
               ) : null}
@@ -528,7 +538,13 @@ export function ProviderConnectionDialog() {
           ) : null}
 
           {activeCodexDeviceCode ? (
-            <div className="space-y-2 rounded-xl border border-[color:var(--color-border)] bg-[var(--color-background-elevated-secondary)] px-3 py-3">
+            <div
+              className="space-y-2 rounded-xl border border-[color:var(--color-border)] bg-[var(--color-background-elevated-secondary)] px-3 py-3"
+              role="status"
+              aria-label="Codex device code"
+              aria-live="polite"
+              aria-atomic="true"
+            >
               <p className="text-xs font-medium text-muted-foreground">
                 Enter this one-time code on the OpenAI page
               </p>
