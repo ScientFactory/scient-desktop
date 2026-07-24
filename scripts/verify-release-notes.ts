@@ -3,7 +3,7 @@
 
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 export interface ReleaseNoteFeature {
   readonly id: string;
@@ -18,6 +18,7 @@ export interface ReleaseNoteEntry {
   readonly version: string;
   readonly date: string;
   readonly headline: string;
+  readonly kind?: "standard" | "hotfix";
   readonly features: readonly ReleaseNoteFeature[];
   readonly heroImage?: string;
   readonly heroImageAlt?: string;
@@ -31,6 +32,14 @@ export interface ReleaseNoteVerification {
   readonly errors: readonly string[];
 }
 
+export interface ReleaseNoteVerificationOptions {
+  readonly assetExists?: (publicPath: string) => boolean;
+}
+
+const RELEASE_NOTE_ASSET_PATTERN =
+  /^\/release-notes\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.(?:avif|jpe?g|png|webp)$/i;
+const WEB_PUBLIC_ROOT = fileURLToPath(new URL("../apps/web/public/", import.meta.url));
+
 export function normalizeReleaseVersion(rawVersion: string): string {
   const version = rawVersion.trim().replace(/^v/, "");
   if (!SEMVER_PATTERN.test(version)) {
@@ -42,6 +51,7 @@ export function normalizeReleaseVersion(rawVersion: string): string {
 export function verifyReleaseNoteForVersion(
   rawVersion: string,
   entries: readonly ReleaseNoteEntry[],
+  options: ReleaseNoteVerificationOptions = {},
 ): ReleaseNoteVerification {
   let version = rawVersion.trim().replace(/^v/, "");
   const errors: string[] = [];
@@ -64,10 +74,27 @@ export function verifyReleaseNoteForVersion(
 
     if (entry.date.trim().length === 0) errors.push(`${label} needs a release date.`);
     if (entry.headline.trim().length === 0) errors.push(`${label} needs a benefit-led headline.`);
-    if (entry.features.length < 1 || entry.features.length > 5) {
-      errors.push(`${label} must contain between 1 and 5 user-facing highlights.`);
+    const isHotfix = entry.kind === "hotfix";
+    if (entry.kind !== undefined && entry.kind !== "standard" && !isHotfix) {
+      errors.push(`${label} kind must be standard or hotfix.`);
     }
-    validateImagePair(label, "hero", entry.heroImage, entry.heroImageAlt, errors);
+    const minimumHighlights = isHotfix ? 1 : 3;
+    const maximumHighlights = isHotfix ? 2 : 5;
+    if (entry.features.length < minimumHighlights || entry.features.length > maximumHighlights) {
+      errors.push(
+        isHotfix
+          ? `${label} hotfix must contain between 1 and 2 user-facing highlights.`
+          : `${label} must contain between 3 and 5 user-facing highlights.`,
+      );
+    }
+    validateImagePair(
+      label,
+      "hero",
+      entry.heroImage,
+      entry.heroImageAlt,
+      errors,
+      options.assetExists,
+    );
 
     const featureIds = new Set<string>();
     for (const [featureIndex, feature] of entry.features.entries()) {
@@ -82,7 +109,14 @@ export function verifyReleaseNoteForVersion(
       if (feature.details !== undefined && feature.details.trim().length === 0) {
         errors.push(`${featureLabel} details cannot be blank.`);
       }
-      validateImagePair(featureLabel, "image", feature.image, feature.imageAlt, errors);
+      validateImagePair(
+        featureLabel,
+        "image",
+        feature.image,
+        feature.imageAlt,
+        errors,
+        options.assetExists,
+      );
     }
   }
 
@@ -104,13 +138,27 @@ function validateImagePair(
   image: string | undefined,
   alt: string | undefined,
   errors: string[],
+  assetExists: ((publicPath: string) => boolean) | undefined,
 ) {
   if ((image === undefined) !== (alt === undefined)) {
     errors.push(`${label} ${kind} and accessible alt text must be provided together.`);
   }
   if (image !== undefined && image.trim().length === 0) errors.push(`${label} ${kind} is blank.`);
+  if (image !== undefined && image.trim().length > 0) {
+    if (!RELEASE_NOTE_ASSET_PATTERN.test(image)) {
+      errors.push(
+        `${label} ${kind} must be a bundled raster asset under /release-notes/ with no URL, query, hash, or traversal.`,
+      );
+    } else if (!(assetExists ?? bundledReleaseNoteAssetExists)(image)) {
+      errors.push(`${label} ${kind} asset does not exist in apps/web/public${image}.`);
+    }
+  }
   if (alt !== undefined && alt.trim().length === 0)
     errors.push(`${label} ${kind} alt text is blank.`);
+}
+
+function bundledReleaseNoteAssetExists(publicPath: string): boolean {
+  return existsSync(resolve(WEB_PUBLIC_ROOT, publicPath.slice(1)));
 }
 
 function main(args: readonly string[]) {

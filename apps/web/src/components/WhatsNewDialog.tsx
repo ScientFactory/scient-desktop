@@ -54,6 +54,7 @@ export default function WhatsNewDialog({
 }: WhatsNewDialogProps) {
   const [view, setView] = useState<View>("current");
   const titleRef = useRef<HTMLHeadingElement>(null);
+  const historyTitleRef = useRef<HTMLHeadingElement>(null);
 
   // Reset back to the primary view whenever the dialog re-opens so the next
   // release doesn't boot into the secondary "Release history" screen just
@@ -63,6 +64,14 @@ export default function WhatsNewDialog({
       setView("current");
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => {
+      (view === "current" ? titleRef.current : historyTitleRef.current)?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open, view]);
 
   // Guard against a race where the hook has already reset but base-ui is
   // still transitioning — rendering an empty card would briefly flash a
@@ -79,6 +88,7 @@ export default function WhatsNewDialog({
     <Dialog handle={dialogHandle} open={open} onOpenChange={onOpenChange}>
       <DialogPopup
         className="max-w-lg gap-0 p-0"
+        surface="solid"
         initialFocus={titleRef}
         finalFocus={() =>
           document.querySelector<HTMLElement>("[data-activity-center-trigger]") ?? false
@@ -92,7 +102,7 @@ export default function WhatsNewDialog({
               titleRef={titleRef}
             />
           ) : (
-            <ChangelogHeader onBack={() => setView("current")} />
+            <ChangelogHeader titleRef={historyTitleRef} onBack={() => setView("current")} />
           )}
         </DialogHeader>
 
@@ -160,14 +170,22 @@ function CurrentHeader({
   );
 }
 
-function ChangelogHeader({ onBack }: { readonly onBack: () => void }) {
+function ChangelogHeader({
+  titleRef,
+  onBack,
+}: {
+  readonly titleRef: React.Ref<HTMLHeadingElement>;
+  readonly onBack: () => void;
+}) {
   return (
     <div className="flex items-center gap-3">
       <Button size="icon-sm" variant="ghost" aria-label="Back to What's new" onClick={onBack}>
         <ArrowLeftIcon className="size-4" />
       </Button>
       <div className="flex min-w-0 flex-col">
-        <DialogTitle className="text-base">Release history</DialogTitle>
+        <DialogTitle ref={titleRef} tabIndex={-1} className="text-base outline-none">
+          Release history
+        </DialogTitle>
         <DialogDescription className="text-xs">
           Earlier Scient updates, newest first.
         </DialogDescription>

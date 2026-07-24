@@ -12,6 +12,16 @@ const entry = (overrides: Partial<ReleaseNoteEntry> = {}): ReleaseNoteEntry => (
       title: "Find your work faster",
       description: "The workspace now keeps the things you need easier to reach.",
     },
+    {
+      id: "calmer-updates",
+      title: "Understand each update",
+      description: "Release notes now focus on what became better for you.",
+    },
+    {
+      id: "quieter-notices",
+      title: "Stay in control",
+      description: "The note appears once and waits for you to open it.",
+    },
   ],
   ...overrides,
 });
@@ -56,7 +66,7 @@ describe("verifyReleaseNoteForVersion", () => {
     expect(errors).toContain("details cannot be blank");
   });
 
-  it("requires one to five highlights and paired feature artwork", () => {
+  it("requires three to five standard highlights and permits a concise declared hotfix", () => {
     const noFeatures = entry({ features: [] });
     const tooMany = entry({
       version: "1.2.4",
@@ -76,8 +86,46 @@ describe("verifyReleaseNoteForVersion", () => {
       ),
     });
     const errors = verifyReleaseNoteForVersion("1.2.3", [noFeatures, tooMany]).errors.join("\n");
-    expect(errors).toContain("between 1 and 5");
+    expect(errors).toContain("between 3 and 5");
     expect(errors).toContain("accessible alt text must be provided together");
+
+    expect(
+      verifyReleaseNoteForVersion("1.2.3", [
+        entry({ kind: "hotfix", features: [entry().features[0]!] }),
+      ]).errors,
+    ).toEqual([]);
+    expect(
+      verifyReleaseNoteForVersion("1.2.3", [entry({ features: entry().features.slice(0, 2) })])
+        .errors,
+    ).toContain("Entry 1 must contain between 3 and 5 user-facing highlights.");
+  });
+
+  it("allows only existing bundled raster artwork under the release-notes directory", () => {
+    const withHero = (heroImage: string) =>
+      entry({ heroImage, heroImageAlt: "Scient release highlights" });
+    const verify = (heroImage: string, exists = false) =>
+      verifyReleaseNoteForVersion("1.2.3", [withHero(heroImage)], {
+        assetExists: () => exists,
+      }).errors.join("\n");
+
+    expect(verify("/release-notes/1.2.3/hero.webp", true)).toBe("");
+    for (const unsafe of [
+      "https://example.invalid/pixel.png",
+      "http://example.invalid/pixel.png",
+      "//example.invalid/pixel.png",
+      "data:image/png;base64,AAAA",
+      "file:///tmp/pixel.png",
+      "blob:scient",
+      "/release-notes/../secret.png",
+      "/release-notes/hero.svg",
+      "/release-notes/hero.png?cache=1",
+      "/release-notes/hero.png#fragment",
+    ]) {
+      expect(verify(unsafe)).toContain("must be a bundled raster asset");
+    }
+    expect(verify("/release-notes/missing.png")).toContain(
+      "asset does not exist in apps/web/public/release-notes/missing.png",
+    );
   });
 
   it("does not mutate its input", () => {

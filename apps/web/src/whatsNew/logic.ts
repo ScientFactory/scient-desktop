@@ -39,6 +39,8 @@ export interface WhatsNewEntry {
   readonly date: string;
   /** Short, benefit-led summary used on the one-time sidebar card. */
   readonly headline: string;
+  /** Standard releases carry 3–5 highlights; declared hotfixes may carry 1–2. */
+  readonly kind?: "standard" | "hotfix";
   readonly features: readonly WhatsNewFeature[];
   readonly heroImage?: string;
   readonly heroImageAlt?: string;

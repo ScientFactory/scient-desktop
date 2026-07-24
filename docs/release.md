@@ -122,13 +122,15 @@ The release owner prepares and approves the entry before promotion:
 
 1. List only improvements that are present and verified in the exact candidate.
 2. Write a short, benefit-led headline for the small sidebar card.
-3. Add normally three to five highlights (one is acceptable for a focused hotfix).
-   Explain what became easier, clearer, safer, or more reliable for the user.
+3. Add three to five highlights. A focused hotfix may use one or two only when
+   the entry explicitly sets `"kind": "hotfix"`. Explain what became easier,
+   clearer, safer, or more reliable for the user.
 4. Keep the language warm, concise, and nontechnical. Do not mention commits,
    pull requests, frameworks, internal components, protocols, migrations, or
    implementation details.
-5. Add only Scient-owned artwork. Pair every image with useful alt text, and
-   verify the image at normal, minimum, mobile, and short-height layouts.
+5. Add only Scient-owned raster artwork under `apps/web/public/release-notes/`.
+   Use its `/release-notes/...` bundled path, pair every image with useful alt
+   text, and verify it at normal, minimum, mobile, and short-height layouts.
 6. Have the product owner approve the claims, order, and wording. This human
    review is the authority for tone and accuracy; automated checks cannot infer it.
 7. Run `bun run release:notes:check -- X.Y.Z` and commit the approved entry with

@@ -85,8 +85,6 @@ export function WhatsNewPopoutCard({
     };
   }, [onPresented]);
 
-  const heroAlt = entry.heroImageAlt ?? `Highlights from Scient v${currentVersion}`;
-
   return (
     <div
       ref={shellRef}
@@ -104,7 +102,7 @@ export function WhatsNewPopoutCard({
           <button
             type="button"
             data-whats-new-trigger
-            aria-label={`Read what improved in Scient v${currentVersion}`}
+            aria-label={`Read what improved in Scient v${currentVersion}: ${entry.headline}`}
             onClick={onOpen}
             className={cn(
               "group flex w-full min-w-0 flex-col overflow-hidden text-start",
@@ -118,7 +116,8 @@ export function WhatsNewPopoutCard({
           {entry.heroImage ? (
             <img
               src={entry.heroImage}
-              alt={heroAlt}
+              alt=""
+              aria-hidden="true"
               className="h-full w-full object-cover"
               loading="lazy"
               decoding="async"
