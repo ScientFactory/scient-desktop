@@ -5,7 +5,8 @@
 
 interface DraftNavigationSlotState {
   tail: Promise<void>;
-  readonly operationByRequestKey: Map<string, Promise<unknown>>;
+  latestOperation: Promise<unknown> | null;
+  latestRequestKey: string | null;
 }
 
 const draftNavigationStateBySlot = new Map<string, DraftNavigationSlotState>();
@@ -28,34 +29,36 @@ export function runDraftNavigationOnce<T>(
   if (!state) {
     state = {
       tail: Promise.resolve(),
-      operationByRequestKey: new Map(),
+      latestOperation: null,
+      latestRequestKey: null,
     };
     draftNavigationStateBySlot.set(slotKey, state);
   }
 
-  const existing = state.operationByRequestKey.get(requestKey) as Promise<T> | undefined;
-  if (existing) {
-    return existing;
+  if (state.latestRequestKey === requestKey && state.latestOperation) {
+    return state.latestOperation as Promise<T>;
   }
 
   const execution = state.tail.then(run, run);
   let operation!: Promise<T>;
-  const clearRequest = () => {
-    if (state.operationByRequestKey.get(requestKey) === operation) {
-      state.operationByRequestKey.delete(requestKey);
+  const clearLatestRequest = () => {
+    if (state.latestOperation === operation) {
+      state.latestOperation = null;
+      state.latestRequestKey = null;
     }
   };
   operation = execution.then(
     (value) => {
-      clearRequest();
+      clearLatestRequest();
       return value;
     },
     (error: unknown) => {
-      clearRequest();
+      clearLatestRequest();
       throw error;
     },
   );
-  state.operationByRequestKey.set(requestKey, operation);
+  state.latestOperation = operation;
+  state.latestRequestKey = requestKey;
 
   const tail = operation.then(
     () => undefined,
@@ -66,7 +69,7 @@ export function runDraftNavigationOnce<T>(
     if (
       draftNavigationStateBySlot.get(slotKey) === state &&
       state.tail === tail &&
-      state.operationByRequestKey.size === 0
+      state.latestOperation === null
     ) {
       draftNavigationStateBySlot.delete(slotKey);
     }

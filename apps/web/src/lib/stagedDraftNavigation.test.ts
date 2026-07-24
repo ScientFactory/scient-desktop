@@ -114,4 +114,40 @@ describe("stagedDraftNavigation", () => {
     expect(exactRun).toHaveBeenCalledOnce();
     expect(defaultRun).toHaveBeenCalledOnce();
   });
+
+  it("preserves default-exact-default ordering instead of rejoining the first request", async () => {
+    let finishFirstDefault!: (value: string) => void;
+    const calls: string[] = [];
+    const firstDefaultRun = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          calls.push("default:first");
+          finishFirstDefault = resolve;
+        }),
+    );
+    const exactRun = vi.fn(async () => {
+      calls.push("exact");
+      return "exact";
+    });
+    const lastDefaultRun = vi.fn(async () => {
+      calls.push("default:last");
+      return "default:last";
+    });
+    const slotKey = draftNavigationSlotKey("project-three-actions", "chat");
+
+    const firstDefault = runDraftNavigationOnce(slotKey, "project-default", firstDefaultRun);
+    const exact = runDraftNavigationOnce(slotKey, "exact-worktree", exactRun);
+    const lastDefault = runDraftNavigationOnce(slotKey, "project-default", lastDefaultRun);
+    await Promise.resolve();
+    expect(calls).toEqual(["default:first"]);
+    finishFirstDefault("default:first");
+
+    await expect(firstDefault).resolves.toBe("default:first");
+    await expect(exact).resolves.toBe("exact");
+    await expect(lastDefault).resolves.toBe("default:last");
+    expect(calls).toEqual(["default:first", "exact", "default:last"]);
+    expect(firstDefaultRun).toHaveBeenCalledOnce();
+    expect(exactRun).toHaveBeenCalledOnce();
+    expect(lastDefaultRun).toHaveBeenCalledOnce();
+  });
 });
