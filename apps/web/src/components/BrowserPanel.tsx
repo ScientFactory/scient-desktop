@@ -73,6 +73,7 @@ import {
   hasNativeBrowserObscuringOverlay,
   isNativeBrowserTransitionSignalTarget,
   nativeBrowserOverlayMutationsRequireSync,
+  resolveNativeBrowserBoundsSyncMode,
   setBrowserWebviewOverlayOcclusion,
 } from "./BrowserPanel.overlay";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
@@ -740,24 +741,29 @@ export function BrowserPanel({
       setBrowserWebviewOverlayOcclusion(browserWebviewRef.current, webviewOccluded);
       const rect = element.getBoundingClientRect();
       const paneIsActuallyHidden = showLocalServersHome || rect.width <= 0 || rect.height <= 0;
+      const boundsSyncMode = resolveNativeBrowserBoundsSyncMode({
+        obscuredByOverlay,
+        paneIsActuallyHidden,
+      });
       // App-owned menus, dialogs, and other transient overlays only occlude the renderer
       // surface. Sending null bounds here tells main that the pane itself is hidden, which
       // starts the 30-second runtime suspension timer and can destroy the adopted webview
       // while its DOM node remains mounted. Keep the last native geometry/lifecycle active;
       // a close mutation or resize will send the current real bounds when the overlay leaves.
-      if (obscuredByOverlay && !paneIsActuallyHidden) {
+      if (boundsSyncMode === "suppress") {
         lastMeasuredBoundsKeyRef.current = "renderer:overlay-occluded";
         perfCountersRef.current.syncSkips += 1;
         return;
       }
-      const bounds = paneIsActuallyHidden
-        ? null
-        : {
-            x: rect.left,
-            y: rect.top,
-            width: rect.width,
-            height: rect.height,
-          };
+      const bounds =
+        boundsSyncMode === "hide"
+          ? null
+          : {
+              x: rect.left,
+              y: rect.top,
+              width: rect.width,
+              height: rect.height,
+            };
       const nextKey = bounds
         ? `renderer:${Math.round(bounds.x)}:${Math.round(bounds.y)}:${Math.round(bounds.width)}:${Math.round(bounds.height)}`
         : "renderer:hidden";
@@ -1256,7 +1262,7 @@ export function BrowserPanel({
   }, [copyFeedback]);
 
   const onCloseTab = useCallback(
-    (tabId: string) => {
+    (tabId: string, options?: { restoreTabFocus?: boolean }) => {
       if (!ensureLiveRuntime()) {
         return;
       }
@@ -1276,6 +1282,14 @@ export function BrowserPanel({
           return;
         }
         upsertThreadState(state);
+        if (options?.restoreTabFocus && state.activeTabId) {
+          const nextActiveIndex = state.tabs.findIndex((tab) => tab.id === state.activeTabId);
+          if (nextActiveIndex >= 0) {
+            window.requestAnimationFrame(() => {
+              document.getElementById(`${browserTabsId}-tab-${nextActiveIndex}`)?.focus();
+            });
+          }
+        }
         if (shouldCloseBrowserPanelAfterTabClose(state)) {
           onClosePanel();
         }
@@ -1283,6 +1297,7 @@ export function BrowserPanel({
     },
     [
       api,
+      browserTabsId,
       ensureLiveRuntime,
       onClosePanel,
       runBrowserAction,
@@ -1616,7 +1631,7 @@ export function BrowserPanel({
                     onKeyDown={(event) => {
                       if (event.key === "Delete") {
                         event.preventDefault();
-                        onCloseTab(tab.id);
+                        onCloseTab(tab.id, { restoreTabFocus: true });
                         return;
                       }
                       const tabs = threadBrowserState?.tabs ?? [];
@@ -1646,6 +1661,7 @@ export function BrowserPanel({
                     variant="ghost"
                     size="icon-sm"
                     className={closeButtonClassName(isActive)}
+                    tabIndex={-1}
                     onClick={(event) => {
                       event.stopPropagation();
                       onCloseTab(tab.id);

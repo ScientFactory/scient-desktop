@@ -2,14 +2,17 @@
 // Purpose: Real-Electron regression for adopted renderer webview overlay lifetime.
 // Layer: Desktop integration harness (bundled and launched by the sibling runner).
 
-import { app, BrowserWindow, type WebContents } from "electron";
+import { join } from "node:path";
+
 import type { ThreadId } from "@synara/contracts";
+import { app, BrowserWindow, ipcMain, type WebContents } from "electron";
 
 import { DesktopBrowserManager } from "../src/browserManager";
 
 const THREAD_ID = "electron-overlay-lifecycle" as ThreadId;
 const OVERLAY_HOLD_MS = 31_250;
 const TEST_TIMEOUT_MS = 10_000;
+const BOUNDS_CHANNEL = "scient:test:browser-overlay:set-bounds";
 
 function invariant(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -26,7 +29,32 @@ function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
   ]);
 }
 
+async function waitForRendererHarness(hostWindow: BrowserWindow): Promise<void> {
+  await withTimeout(
+    (async () => {
+      while (!hostWindow.isDestroyed()) {
+        const ready = await hostWindow.webContents.executeJavaScript(
+          `Boolean(window.scientBrowserOverlayLifecycle?.ready)`,
+        );
+        if (ready) return;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      throw new Error("The host window was destroyed before its renderer harness loaded.");
+    })(),
+    "the renderer coordination harness",
+  );
+}
+
 async function main(): Promise<void> {
+  const profileDir = process.env.SCIENT_BROWSER_OVERLAY_TEST_PROFILE;
+  const fixturePath = process.env.SCIENT_BROWSER_OVERLAY_TEST_FIXTURE;
+  const preloadPath = process.env.SCIENT_BROWSER_OVERLAY_TEST_PRELOAD;
+  invariant(profileDir, "Missing isolated Electron profile path.");
+  invariant(fixturePath, "Missing renderer fixture path.");
+  invariant(preloadPath, "Missing preload fixture path.");
+  app.setPath("userData", profileDir);
+  app.setPath("sessionData", join(profileDir, "session-data"));
+
   await app.whenReady();
 
   let resolveGuest: ((webContents: WebContents) => void) | null = null;
@@ -47,49 +75,51 @@ async function main(): Promise<void> {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      preload: preloadPath,
       sandbox: true,
       webviewTag: true,
     },
   });
   const manager = new DesktopBrowserManager();
   manager.setWindow(hostWindow);
+  const boundsEvents: Array<{ width: number; height: number } | null> = [];
+  ipcMain.handle(BOUNDS_CHANNEL, (_event, bounds: { width: number; height: number } | null) => {
+    boundsEvents.push(bounds);
+    manager.setPanelBounds({
+      threadId: THREAD_ID,
+      bounds: bounds ? { x: 20, y: 30, width: bounds.width, height: bounds.height } : null,
+      surface: "renderer",
+    });
+  });
 
   try {
-    await hostWindow.loadURL(
-      `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html>
-        <style>
-          html, body { margin: 0; width: 100%; height: 100%; }
-          #browser-host { width: 640px; height: 480px; }
-          webview { display: flex; width: 100%; height: 100%; }
-        </style>
-        <div id="browser-host">
-          <webview id="browser" src="about:blank" partition="persist:scient-browser"></webview>
-        </div>`)}`,
-    );
+    await hostWindow.loadFile(fixturePath);
+    await waitForRendererHarness(hostWindow);
     const guest = await withTimeout(guestPromise, "the renderer webview");
     const guestId = guest.id;
 
     const opened = manager.open({ threadId: THREAD_ID });
     const tabId = opened.activeTabId;
     invariant(tabId, "The browser session did not create an active tab.");
-    manager.setPanelBounds({
-      threadId: THREAD_ID,
-      bounds: { x: 20, y: 30, width: 640, height: 480 },
-      surface: "renderer",
-    });
     manager.attachWebview({ threadId: THREAD_ID, tabId, webContentsId: guestId });
+    const initialMode = await hostWindow.webContents.executeJavaScript(
+      `window.scientBrowserOverlayLifecycle.syncBounds()`,
+    );
+    invariant(initialMode === "send", `Initial renderer bounds mode was ${String(initialMode)}.`);
 
     const beforeOverlay = manager.getState({ threadId: THREAD_ID });
     invariant(beforeOverlay.activeTabId === tabId, "The adopted tab was not active.");
     invariant(beforeOverlay.tabs[0]?.status === "live", "The adopted tab was not live.");
+    const boundsEventsBeforeOverlay = boundsEvents.length;
 
-    await hostWindow.webContents.executeJavaScript(`(() => {
-      const webview = document.querySelector('#browser');
-      if (!(webview instanceof HTMLElement)) throw new Error('Missing browser webview');
-      webview.style.visibility = 'hidden';
-      webview.style.pointerEvents = 'none';
-      document.querySelector('#browser-host').style.width = '700px';
-    })()`);
+    const openMode = await hostWindow.webContents.executeJavaScript(
+      `window.scientBrowserOverlayLifecycle.openOverlay()`,
+    );
+    invariant(openMode === "suppress", `Overlay renderer bounds mode was ${String(openMode)}.`);
+    invariant(
+      boundsEvents.length === boundsEventsBeforeOverlay,
+      "Opening the overlay sent a lifecycle-changing bounds event.",
+    );
 
     await new Promise((resolve) => setTimeout(resolve, OVERLAY_HOLD_MS));
 
@@ -100,21 +130,18 @@ async function main(): Promise<void> {
       whileOccluded.tabs.some((tab) => tab.id === tabId && tab.status === "live"),
       "The adopted tab session was suspended while occluded.",
     );
+    invariant(
+      !boundsEvents.slice(boundsEventsBeforeOverlay).includes(null),
+      "Overlay occlusion sent null bounds and started the hide lifecycle.",
+    );
 
-    await hostWindow.webContents.executeJavaScript(`(() => {
-      const webview = document.querySelector('#browser');
-      if (!(webview instanceof HTMLElement)) throw new Error('Missing browser webview');
-      webview.style.visibility = 'visible';
-      webview.style.pointerEvents = 'auto';
-    })()`);
-    manager.setPanelBounds({
-      threadId: THREAD_ID,
-      bounds: { x: 24, y: 34, width: 700, height: 480 },
-      surface: "renderer",
-    });
+    const closeMode = await hostWindow.webContents.executeJavaScript(
+      `window.scientBrowserOverlayLifecycle.closeOverlay()`,
+    );
+    invariant(closeMode === "send", `Recovered renderer bounds mode was ${String(closeMode)}.`);
 
     const recoveredWidth = await hostWindow.webContents.executeJavaScript(
-      `document.querySelector('#browser').getBoundingClientRect().width`,
+      `document.querySelector('#browser-host').getBoundingClientRect().width`,
     );
     const afterOverlay = manager.getState({ threadId: THREAD_ID });
     const internals = manager as unknown as {
@@ -124,6 +151,10 @@ async function main(): Promise<void> {
     const runtime = internals.runtimes.get(`${THREAD_ID}:${tabId}`);
 
     invariant(recoveredWidth === 700, `Renderer geometry recovered to ${recoveredWidth}, not 700.`);
+    invariant(
+      boundsEvents.at(-1)?.width === 700,
+      "The renderer did not send recovered geometry after the overlay closed.",
+    );
     invariant(
       runtime?.webContents.id === guestId,
       "A different runtime replaced the adopted webview.",
@@ -141,10 +172,13 @@ async function main(): Promise<void> {
         heldOccludedMs: OVERLAY_HOLD_MS,
         adoptedWebContentsId: guestId,
         activeTabId: tabId,
+        openMode,
+        closeMode,
         recoveredWidth,
       }),
     );
   } finally {
+    ipcMain.removeHandler(BOUNDS_CHANNEL);
     manager.dispose();
     if (!hostWindow.isDestroyed()) {
       hostWindow.destroy();

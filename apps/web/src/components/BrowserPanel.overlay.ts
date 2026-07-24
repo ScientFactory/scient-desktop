@@ -60,6 +60,18 @@ export interface BrowserWebviewElement extends HTMLElement {
   getWebContentsId?: () => number;
 }
 
+export type NativeBrowserBoundsSyncMode = "send" | "hide" | "suppress";
+
+export function resolveNativeBrowserBoundsSyncMode(options: {
+  obscuredByOverlay: boolean;
+  paneIsActuallyHidden: boolean;
+}): NativeBrowserBoundsSyncMode {
+  if (options.paneIsActuallyHidden) {
+    return "hide";
+  }
+  return options.obscuredByOverlay ? "suppress" : "send";
+}
+
 export function setBrowserWebviewOverlayOcclusion(
   webview: BrowserWebviewElement | null,
   occluded: boolean,
@@ -90,8 +102,19 @@ function rectsIntersect(a: DOMRect, b: DOMRect): boolean {
   return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 }
 
+function sharesNativeBrowserOverlayOwner(candidate: HTMLElement, element: HTMLElement): boolean {
+  const candidateOwner = candidate.getAttribute("data-native-browser-overlay-owner");
+  const elementOwner = element
+    .closest("[data-native-browser-overlay-owner]")
+    ?.getAttribute("data-native-browser-overlay-owner");
+  return Boolean(candidateOwner && candidateOwner === elementOwner);
+}
+
 function candidateObscuresNativeBrowser(candidate: HTMLElement, element: HTMLElement): boolean {
   if (candidate === element || candidate.contains(element) || element.contains(candidate)) {
+    return false;
+  }
+  if (sharesNativeBrowserOverlayOwner(candidate, element)) {
     return false;
   }
   if (!isVisibleOverlayElement(candidate)) {
@@ -126,6 +149,9 @@ function hasTopLayerDomObstruction(element: HTMLElement): boolean {
         continue;
       }
       if (hitElement === element || element.contains(hitElement) || hitElement.contains(element)) {
+        continue;
+      }
+      if (sharesNativeBrowserOverlayOwner(hitElement, element)) {
         continue;
       }
       if (isNativeBrowserNonObscuringOverlayElement(hitElement)) {

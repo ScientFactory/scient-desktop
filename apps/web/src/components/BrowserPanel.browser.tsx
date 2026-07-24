@@ -30,6 +30,7 @@ vi.mock("~/nativeApi", async (importOriginal) => ({
 
 import { useBrowserStateStore } from "../browserStateStore";
 import { BrowserPanel } from "./BrowserPanel";
+import { RecentViewSwitcher } from "./RecentViewSwitcher";
 
 const THREAD_ID = "thread-browser-copy" as ThreadId;
 
@@ -87,7 +88,7 @@ function renderPanel() {
   );
 }
 
-function renderLivePanel(onClosePanel: () => void) {
+function renderLivePanel(onClosePanel: () => void, options?: { showRecentViews?: boolean }) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
@@ -98,6 +99,25 @@ function renderLivePanel(onClosePanel: () => void) {
           runtimeMode="live"
           onClosePanel={onClosePanel}
         />
+        {options?.showRecentViews ? (
+          <RecentViewSwitcher
+            selectedIndex={0}
+            entries={[
+              {
+                key: "current-thread",
+                view: { kind: "thread", threadId: THREAD_ID },
+                kind: "thread",
+                icon: { kind: "chat" },
+                title: "Current browser thread",
+                subtitle: "Recent view",
+                isCurrent: true,
+                isPinned: false,
+                isSplit: false,
+                isTerminal: false,
+              },
+            ]}
+          />
+        ) : null}
       </div>
     </QueryClientProvider>,
   );
@@ -130,6 +150,7 @@ function renderPreviewToLivePanel() {
 function liveBrowserApi(options?: {
   openState?: ThreadBrowserState;
   newTabState?: ThreadBrowserState;
+  closeTabState?: ThreadBrowserState;
 }) {
   const openState = options?.openState ?? browserState("tab-1");
   return {
@@ -141,7 +162,7 @@ function liveBrowserApi(options?: {
       detachWebview: vi.fn(async () => undefined),
       newTab: vi.fn(async () => options?.newTabState ?? openState),
       selectTab: vi.fn(async ({ tabId }) => browserState(tabId)),
-      closeTab: vi.fn(async () => openState),
+      closeTab: vi.fn(async () => options?.closeTabState ?? openState),
       onState: vi.fn(() => () => undefined),
       onCopyLink: vi.fn(() => () => undefined),
     },
@@ -311,7 +332,13 @@ describe("BrowserPanel interactions", () => {
 
   it("exposes roving tab semantics and activates adjacent tabs from the keyboard", async () => {
     const openState = browserState("tab-1");
-    const api = liveBrowserApi({ openState });
+    const closeTabState: ThreadBrowserState = {
+      ...openState,
+      version: openState.version + 1,
+      activeTabId: "tab-1",
+      tabs: [openState.tabs[0]!],
+    };
+    const api = liveBrowserApi({ openState, closeTabState });
     nativeApiTestState.api = api;
     useBrowserStateStore.getState().upsertThreadState(openState);
 
@@ -324,9 +351,12 @@ describe("BrowserPanel interactions", () => {
     await expect.element(firstTab).toHaveAttribute("tabindex", "0");
     await expect.element(secondTab).toHaveAttribute("aria-selected", "false");
     await expect.element(secondTab).toHaveAttribute("tabindex", "-1");
+    const tablistElement = (await tablist.element()) as HTMLElement;
+    expect(tablistElement.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
 
+    const firstTabElement = (await firstTab.element()) as HTMLButtonElement;
     const secondTabElement = (await secondTab.element()) as HTMLButtonElement;
-    ((await firstTab.element()) as HTMLButtonElement).focus();
+    firstTabElement.focus();
     await userEvent.keyboard("{ArrowRight}");
 
     await vi.waitFor(() => {
@@ -347,6 +377,23 @@ describe("BrowserPanel interactions", () => {
         threadId: THREAD_ID,
         tabId: "tab-2",
       });
+      expect(document.activeElement).toBe(firstTabElement);
+    });
+  });
+
+  it("occludes the native surface for the real recent-view switcher", async () => {
+    const openState = browserState("tab-1");
+    const api = liveBrowserApi({ openState });
+    nativeApiTestState.api = api;
+
+    await renderLivePanel(vi.fn(), { showRecentViews: true });
+    await expect.element(page.getByRole("listbox", { name: "Recent views" })).toBeVisible();
+    await vi.waitFor(() => {
+      const webview = document.querySelector<HTMLElement>("webview");
+      expect(webview?.style.visibility).toBe("hidden");
+      expect(vi.mocked(api.browser.setPanelBounds).mock.calls).not.toContainEqual([
+        { threadId: THREAD_ID, bounds: null, surface: "renderer" },
+      ]);
     });
   });
 

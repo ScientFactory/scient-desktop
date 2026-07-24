@@ -100,13 +100,32 @@ describe("native browser overlay coordination", () => {
   );
 
   it("does not treat the browser's own containing sheet as an obstruction", () => {
+    const backdrop = document.createElement("div");
+    backdrop.dataset.slot = "sheet-backdrop";
+    backdrop.dataset.nativeBrowserOverlayOwner = "owning-sheet";
+    Object.assign(backdrop.style, { position: "fixed", inset: "0" });
+    const sheetViewport = document.createElement("div");
+    sheetViewport.dataset.slot = "sheet-viewport";
+    sheetViewport.dataset.nativeBrowserOverlayOwner = "owning-sheet";
     const sheet = document.createElement("div");
     sheet.dataset.slot = "sheet-popup";
     const viewport = document.createElement("div");
-    Object.assign(viewport.style, { width: "240px", height: "240px" });
+    Object.assign(viewport.style, {
+      position: "fixed",
+      left: "100px",
+      top: "100px",
+      width: "240px",
+      height: "240px",
+    });
     sheet.append(viewport);
-    document.body.append(sheet);
+    sheetViewport.append(sheet);
+    document.body.append(backdrop, sheetViewport);
 
     expect(hasNativeBrowserObscuringOverlay(viewport)).toBe(false);
+
+    const otherBackdrop = backdrop.cloneNode() as HTMLElement;
+    otherBackdrop.dataset.nativeBrowserOverlayOwner = "other-sheet";
+    document.body.append(otherBackdrop);
+    expect(hasNativeBrowserObscuringOverlay(viewport)).toBe(true);
   });
 });
