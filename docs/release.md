@@ -135,10 +135,10 @@ The release owner prepares and approves the entry before promotion:
 5. Add only Scient-owned, non-interlaced PNG artwork under
    `apps/web/public/release-notes/`. The release gate decodes every PNG in that
    tree, including unreferenced files, and rejects interlaced images, oversized
-   dimensions or files, symlinks, special files, and non-PNG leaves before Vite
-   can stage them. Use an exact `/release-notes/...` bundled path. Feature images need
-   useful alt text; the compact card hero is decorative. Verify artwork at
-   normal, minimum, mobile, and short-height layouts.
+   dimensions, files, palettes or chunk tables, symlinks, special files, and
+   non-PNG leaves before Vite can stage them. Use an exact `/release-notes/...`
+   bundled path. Feature images need useful alt text; the compact card hero is
+   decorative. Verify artwork at normal, minimum, mobile, and short-height layouts.
 6. Have the product owner approve the claims, order, and wording. This human
    review is the authority for tone and accuracy; automated checks cannot infer it.
 7. Run `bun run release:notes:check -- X.Y.Z` and commit the approved entry with

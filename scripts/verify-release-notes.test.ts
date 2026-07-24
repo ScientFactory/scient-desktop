@@ -31,6 +31,39 @@ const { PNG } = createRequire(import.meta.url)("pngjs") as {
 const makeValidPng = () =>
   PNG.sync.write({ width: 1, height: 1, data: Buffer.from([46, 125, 246, 255]) });
 
+function makePngChunk(type: string, data = Buffer.alloc(0)): Buffer {
+  const typeBytes = Buffer.from(type, "ascii");
+  const chunk = Buffer.alloc(12 + data.length);
+  chunk.writeUInt32BE(data.length, 0);
+  typeBytes.copy(chunk, 4);
+  data.copy(chunk, 8);
+  chunk.writeUInt32BE(crc32(Buffer.concat([typeBytes, data])), 8 + data.length);
+  return chunk;
+}
+
+function crc32(contents: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of contents) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function insertBeforeIdat(png: Buffer, chunks: readonly Buffer[]): Buffer {
+  let offset = 8;
+  while (offset < png.length) {
+    const chunkLength = png.readUInt32BE(offset);
+    if (png.toString("ascii", offset + 4, offset + 8) === "IDAT") {
+      return Buffer.concat([png.subarray(0, offset), ...chunks, png.subarray(offset)]);
+    }
+    offset += 12 + chunkLength;
+  }
+  throw new Error("Expected generated PNG to contain IDAT.");
+}
+
 afterEach(() => {
   for (const path of temporaryDirectories.splice(0)) {
     rmSync(path, { recursive: true, force: true });
@@ -199,6 +232,17 @@ describe("verifyReleaseNoteForVersion", () => {
     const oversizedPath = join(releaseNotesRoot, "oversized.png");
     writeFileSync(oversizedPath, png);
     truncateSync(oversizedPath, 10 * 1024 * 1024 + 1);
+    writeFileSync(
+      join(releaseNotesRoot, "oversized-palette.png"),
+      insertBeforeIdat(png, [makePngChunk("PLTE", Buffer.alloc(771))]),
+    );
+    writeFileSync(
+      join(releaseNotesRoot, "too-many-chunks.png"),
+      insertBeforeIdat(
+        png,
+        Array.from({ length: 256 }, () => makePngChunk("vpAg")),
+      ),
+    );
     mkdirSync(join(releaseNotesRoot, "directory.png"));
 
     expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/1.2.3/hero.png", publicRoot)).toBe(
@@ -220,6 +264,12 @@ describe("verifyReleaseNoteForVersion", () => {
     expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/oversized.png", publicRoot)).toBe(
       false,
     );
+    expect(
+      isSafeBundledReleaseNoteRasterAsset("/release-notes/oversized-palette.png", publicRoot),
+    ).toBe(false);
+    expect(
+      isSafeBundledReleaseNoteRasterAsset("/release-notes/too-many-chunks.png", publicRoot),
+    ).toBe(false);
     expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/directory.png", publicRoot)).toBe(
       false,
     );

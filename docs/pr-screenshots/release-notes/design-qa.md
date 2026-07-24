@@ -45,7 +45,7 @@ remained inside the viewport. Automated acceptance separately closes this nested
 path with both Escape and **Done**, verifies that only the topmost dialog closes,
 and confirms coherent focus recovery to Activity.
 
-![Full release-note dialog opened from the mobile sidebar](mobile-dialog.png)
+![Full release-note dialog opened from the mobile sidebar](mobile-dialog.jpg)
 
 ## 5. Short-height layout
 
@@ -59,7 +59,7 @@ the viewport; its header and footer remained fixed and reachable while the
 middle content panel supplied the bounded scrolling region. The geometry suite
 asserts the popup bounds, header/footer containment, and actual panel scrolling.
 
-![Full release-note dialog in a short-height viewport](short-height-dialog.png)
+![Full release-note dialog in a short-height viewport](short-height-dialog.jpg)
 
 ## 6. Reduced motion
 

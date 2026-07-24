@@ -41,6 +41,7 @@ const RELEASE_NOTE_ASSET_PATTERN =
   /^\/release-notes\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.png$/i;
 const WEB_PUBLIC_ROOT = fileURLToPath(new URL("../apps/web/public/", import.meta.url));
 const MAX_RELEASE_NOTE_PNG_BYTES = 10 * 1024 * 1024;
+const MAX_RELEASE_NOTE_PNG_CHUNKS = 256;
 const MAX_RELEASE_NOTE_PNG_DIMENSION = 8_192;
 const MAX_RELEASE_NOTE_PNG_PIXELS = 16_000_000;
 
@@ -303,6 +304,8 @@ function isDecodableReleaseNotePng(contents: Buffer): boolean {
     return false;
   }
 
+  if (!hasBoundedPngChunkTable(contents)) return false;
+
   const declaredWidth = contents.readUInt32BE(16);
   const declaredHeight = contents.readUInt32BE(20);
   if (
@@ -325,6 +328,61 @@ function isDecodableReleaseNotePng(contents: Buffer): boolean {
   } catch {
     return false;
   }
+}
+
+function hasBoundedPngChunkTable(contents: Buffer): boolean {
+  let chunkCount = 0;
+  let offset = 8;
+  let sawIdat = false;
+  let idatSequenceClosed = false;
+  let sawPalette = false;
+
+  while (offset < contents.length) {
+    if (contents.length - offset < 12) return false;
+    const chunkLength = contents.readUInt32BE(offset);
+    const chunkTypeBytes = contents.subarray(offset + 4, offset + 8);
+    if (
+      ![...chunkTypeBytes].every(
+        (byte) => (byte >= 65 && byte <= 90) || (byte >= 97 && byte <= 122),
+      ) ||
+      chunkTypeBytes[2]! < 65 ||
+      chunkTypeBytes[2]! > 90
+    ) {
+      return false;
+    }
+    const chunkType = chunkTypeBytes.toString("ascii");
+    const chunkEnd = offset + 12 + chunkLength;
+    if (chunkEnd > contents.length) return false;
+
+    chunkCount += 1;
+    if (chunkCount > MAX_RELEASE_NOTE_PNG_CHUNKS) return false;
+    if (chunkCount === 1) {
+      if (chunkType !== "IHDR" || chunkLength !== 13) return false;
+    } else if (chunkType === "IHDR") {
+      return false;
+    }
+
+    if (chunkType === "PLTE") {
+      if (sawPalette || sawIdat || chunkLength < 3 || chunkLength > 768 || chunkLength % 3 !== 0) {
+        return false;
+      }
+      sawPalette = true;
+    }
+
+    if (chunkType === "IDAT") {
+      if (idatSequenceClosed) return false;
+      sawIdat = true;
+    } else if (sawIdat) {
+      idatSequenceClosed = true;
+    }
+
+    if (chunkType === "IEND") {
+      return chunkLength === 0 && sawIdat && chunkEnd === contents.length;
+    }
+    offset = chunkEnd;
+  }
+
+  return false;
 }
 
 function formatError(error: unknown): string {
