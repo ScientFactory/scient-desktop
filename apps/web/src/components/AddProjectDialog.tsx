@@ -69,6 +69,7 @@ interface PathBrowserProps {
   isBusy: boolean;
   cloneDirectoryName?: string;
   acceptFolderDrop?: boolean;
+  folderDropTarget?: HTMLElement | null;
   onBack: () => void;
   onSubmit: (path: string, options: { createIfMissing: boolean }) => Promise<void>;
 }
@@ -359,6 +360,9 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
       return;
     }
 
+    const dropTarget = props.folderDropTarget;
+    if (!dropTarget) return;
+
     let dragDepth = 0;
     const resetDragState = () => {
       dragDepth = 0;
@@ -412,18 +416,18 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
       });
     };
 
-    window.addEventListener("dragenter", handleDragEnter, true);
-    window.addEventListener("dragover", handleDragOver, true);
-    window.addEventListener("dragleave", handleDragLeave, true);
-    window.addEventListener("drop", handleDrop, true);
+    dropTarget.addEventListener("dragenter", handleDragEnter, true);
+    dropTarget.addEventListener("dragover", handleDragOver, true);
+    dropTarget.addEventListener("dragleave", handleDragLeave, true);
+    dropTarget.addEventListener("drop", handleDrop, true);
     return () => {
-      window.removeEventListener("dragenter", handleDragEnter, true);
-      window.removeEventListener("dragover", handleDragOver, true);
-      window.removeEventListener("dragleave", handleDragLeave, true);
-      window.removeEventListener("drop", handleDrop, true);
+      dropTarget.removeEventListener("dragenter", handleDragEnter, true);
+      dropTarget.removeEventListener("dragover", handleDragOver, true);
+      dropTarget.removeEventListener("dragleave", handleDragLeave, true);
+      dropTarget.removeEventListener("drop", handleDrop, true);
       dragDepth = 0;
     };
-  }, [isBusy, onSubmit, runSubmission, supportsFolderDrop]);
+  }, [isBusy, onSubmit, props.folderDropTarget, runSubmission, supportsFolderDrop]);
 
   return (
     <Command
@@ -610,6 +614,7 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
   const [error, setError] = useState<string | null>(null);
   const [isWorking, setIsWorking] = useState(false);
   const [highlightedSource, setHighlightedSource] = useState<string | null>(null);
+  const [dialogPopupElement, setDialogPopupElement] = useState<HTMLElement | null>(null);
   const openRef = useRef(props.open);
   const operationGenerationRef = useRef(0);
   openRef.current = props.open;
@@ -739,7 +744,12 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
 
   return (
     <CommandDialog open={props.open} onOpenChange={handleOpenChange}>
-      <CommandDialogPopup className="overflow-hidden" aria-label="Add project">
+      <CommandDialogPopup
+        ref={setDialogPopupElement}
+        data-testid="add-project-dialog-card"
+        className="overflow-hidden"
+        aria-label="Add project"
+      >
         {step === "local" ? (
           <ProjectPathBrowser
             homeDir={props.homeDir}
@@ -748,6 +758,7 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
             busyLabel="Opening…"
             isBusy={isWorking}
             acceptFolderDrop
+            folderDropTarget={dialogPopupElement}
             onBack={returnToSources}
             onSubmit={async (path, options) => {
               const operationGeneration = beginOperation();

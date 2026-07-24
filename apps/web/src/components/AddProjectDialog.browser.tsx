@@ -106,14 +106,24 @@ function makeFolderDragTransfer(
   } as unknown as DataTransfer;
 }
 
-function dispatchWindowDrag(
+function dispatchDrag(
+  target: EventTarget,
   type: "dragenter" | "dragover" | "dragleave" | "drop",
   dataTransfer: DataTransfer,
 ) {
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
-  window.dispatchEvent(event);
+  target.dispatchEvent(event);
   return event;
+}
+
+function dispatchDialogDrag(
+  type: "dragenter" | "dragover" | "dragleave" | "drop",
+  dataTransfer: DataTransfer,
+) {
+  const card = document.querySelector('[data-testid="add-project-dialog-card"]');
+  if (!card) throw new Error("Expected folder-drop dialog card.");
+  return dispatchDrag(card, type, dataTransfer);
 }
 
 describe("AddProjectDialog", () => {
@@ -282,7 +292,63 @@ describe("AddProjectDialog", () => {
     }
   });
 
-  it("accepts a folder dropped anywhere with copy feedback and synchronous single-flight", async () => {
+  it("accepts folder drag feedback across the dialog card but not on its backdrop", async () => {
+    const onAddProjectPath = vi.fn().mockResolvedValue(false);
+    const restoreApi = installNativeApi({
+      statuses: vi.fn().mockResolvedValue({ sources: [] }),
+      browse: vi.fn().mockResolvedValue({
+        parentPath: "/Users/tester",
+        entries: [{ name: "Documents", fullPath: "/Users/tester/Documents" }],
+      }),
+    });
+    const restoreBridge = installDesktopFilePathResolver(() => "/Users/tester/Research");
+    renderDialog(onAddProjectPath);
+
+    try {
+      await page.getByText("Local folder", { exact: true }).click();
+      const folder = new File([new Blob([])], "Research");
+      const transfer = makeFolderDragTransfer([{ file: folder, directory: true }]);
+      const targets = [
+        await page.getByPlaceholder("Type or browse a folder path").element(),
+        await page.getByText("Documents", { exact: true }).element(),
+        await page.getByTestId("folder-drop-affordance").element(),
+        document.querySelector<HTMLElement>('[data-slot="command-footer"]'),
+      ];
+
+      for (const target of targets) {
+        expect(target).not.toBeNull();
+        dispatchDrag(target!, "dragenter", transfer);
+        await expect
+          .element(page.getByTestId("folder-drop-affordance"))
+          .toHaveAttribute("data-drop-state", "active");
+        const dragOver = dispatchDrag(target!, "dragover", transfer);
+        expect(dragOver.defaultPrevented).toBe(true);
+        expect(transfer.dropEffect).toBe("copy");
+        dispatchDrag(target!, "dragleave", transfer);
+        await expect
+          .element(page.getByTestId("folder-drop-affordance"))
+          .toHaveAttribute("data-drop-state", "idle");
+      }
+
+      const backdrop = document.querySelector<HTMLElement>('[data-slot="command-dialog-backdrop"]');
+      expect(backdrop).not.toBeNull();
+      const outsideTransfer = makeFolderDragTransfer([{ file: folder, directory: true }]);
+      const outsideOver = dispatchDrag(backdrop!, "dragover", outsideTransfer);
+      expect(outsideOver.defaultPrevented).toBe(false);
+      expect(outsideTransfer.dropEffect).toBe("none");
+      const outsideDrop = dispatchDrag(backdrop!, "drop", outsideTransfer);
+      expect(outsideDrop.defaultPrevented).toBe(false);
+      await expect
+        .element(page.getByTestId("folder-drop-affordance"))
+        .toHaveAttribute("data-drop-state", "idle");
+      expect(onAddProjectPath).not.toHaveBeenCalled();
+    } finally {
+      restoreBridge();
+      restoreApi();
+    }
+  });
+
+  it("accepts a folder dropped inside the card with copy feedback and synchronous single-flight", async () => {
     let resolveAdd!: (shouldClose: boolean) => void;
     const onAddProjectPath = vi.fn(
       () =>
@@ -312,7 +378,7 @@ describe("AddProjectDialog", () => {
       const folder = new File([new Blob([])], "Study (2)");
       const transfer = makeFolderDragTransfer([{ file: folder, directory: "unknown" }]);
 
-      dispatchWindowDrag("dragenter", transfer);
+      dispatchDialogDrag("dragenter", transfer);
       await expect
         .element(page.getByText("Release to add this folder", { exact: true }))
         .toBeVisible();
@@ -321,11 +387,11 @@ describe("AddProjectDialog", () => {
         .toHaveAttribute("data-drop-state", "active");
       await expect.element(page.getByText("Documents", { exact: true })).toBeVisible();
 
-      const dragOver = dispatchWindowDrag("dragover", transfer);
+      const dragOver = dispatchDialogDrag("dragover", transfer);
       expect(dragOver.defaultPrevented).toBe(true);
       expect(transfer.dropEffect).toBe("copy");
 
-      dispatchWindowDrag("drop", transfer);
+      dispatchDialogDrag("drop", transfer);
       await vi.waitFor(() =>
         expect(onAddProjectPath).toHaveBeenCalledWith("/Users/tester/Research Projects/Study (2)", {
           createIfMissing: false,
@@ -337,7 +403,7 @@ describe("AddProjectDialog", () => {
       expect(onAddProjectPath).toHaveBeenCalledTimes(1);
 
       const secondTransfer = makeFolderDragTransfer([{ file: folder, directory: true }]);
-      dispatchWindowDrag("drop", secondTransfer);
+      dispatchDialogDrag("drop", secondTransfer);
       expect(onAddProjectPath).toHaveBeenCalledTimes(1);
 
       resolveAdd(false);
@@ -367,19 +433,19 @@ describe("AddProjectDialog", () => {
       const file = new File(["notes"], "notes.md", { type: "text/markdown" });
       const transfer = makeFolderDragTransfer([{ file, directory: false }]);
 
-      dispatchWindowDrag("dragenter", transfer);
+      dispatchDialogDrag("dragenter", transfer);
       await expect
         .element(page.getByTestId("folder-drop-affordance"))
         .toHaveAttribute("data-drop-state", "idle");
-      const dragOver = dispatchWindowDrag("dragover", transfer);
+      const dragOver = dispatchDialogDrag("dragover", transfer);
       expect(dragOver.defaultPrevented).toBe(true);
       expect(transfer.dropEffect).toBe("none");
-      dispatchWindowDrag("dragleave", transfer);
+      dispatchDialogDrag("dragleave", transfer);
       await expect
         .element(page.getByTestId("folder-drop-affordance"))
         .toHaveTextContent("Drop your folder here or browse below");
 
-      dispatchWindowDrag("drop", transfer);
+      dispatchDialogDrag("drop", transfer);
       const alert = page.getByRole("alert");
       await expect.element(alert).toHaveTextContent("Drop a folder, not a file.");
       expect((await page.getByRole("listbox").element()).contains(await alert.element())).toBe(
@@ -439,11 +505,11 @@ describe("AddProjectDialog", () => {
       const file = new File(["notes"], "notes.md", { type: "text/markdown" });
       const transfer = makeFolderDragTransfer([{ file, directory: "unknown" }]);
 
-      dispatchWindowDrag("dragenter", transfer);
+      dispatchDialogDrag("dragenter", transfer);
       await expect
         .element(page.getByTestId("folder-drop-affordance"))
         .toHaveAttribute("data-drop-state", "active");
-      dispatchWindowDrag("drop", transfer);
+      dispatchDialogDrag("drop", transfer);
 
       await expect
         .element(page.getByRole("alert"))
@@ -473,7 +539,7 @@ describe("AddProjectDialog", () => {
       const folder = new File([new Blob([])], "Research ");
       const transfer = makeFolderDragTransfer([{ file: folder, directory: true }]);
 
-      dispatchWindowDrag("drop", transfer);
+      dispatchDialogDrag("drop", transfer);
       await expect
         .element(
           page.getByText(
