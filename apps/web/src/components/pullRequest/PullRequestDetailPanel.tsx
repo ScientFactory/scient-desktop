@@ -200,7 +200,6 @@ export function PullRequestDetailPanel({
     if (!detail || preparingThread !== null) return;
     setPreparingThread(kind);
     setOperationError(null);
-    let superseded = false;
     try {
       const mode = settings.defaultThreadEnvMode;
       const threadId = await handleNewThread(detail.projectId, {
@@ -214,7 +213,6 @@ export function PullRequestDetailPanel({
             mode,
           });
           if (!ownership.isCurrent()) {
-            superseded = true;
             return false;
           }
           if (mode === "worktree") {
@@ -235,8 +233,7 @@ export function PullRequestDetailPanel({
         },
       });
       if (!threadId) {
-        if (superseded) return;
-        throw new Error("Could not create a draft thread for this pull request.");
+        return;
       }
       appendComposerPromptText(threadId, prompt);
     } catch (error) {

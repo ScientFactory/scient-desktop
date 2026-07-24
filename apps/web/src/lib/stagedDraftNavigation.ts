@@ -1,6 +1,6 @@
 // FILE: stagedDraftNavigation.ts
-// Purpose: Serializes draft-route creation across the shared navigation surface and finalizes staged drafts only
-//          after their destination route actually commits.
+// Purpose: Coordinates draft-route creation across the shared navigation surface and finalizes
+//          staged drafts only after their destination route actually commits.
 // Layer: Web navigation orchestration
 
 interface DraftNavigationSlotState {
@@ -25,15 +25,15 @@ export function draftNavigationSlotKey(): string {
   return DRAFT_NAVIGATION_SURFACE_KEY;
 }
 
-/** Resolves after the operations currently queued for the shared navigation surface have drained. */
+/** Resolves after the operations currently running on the shared navigation surface have drained. */
 export function waitForDraftNavigationIdle(slotKey: string): Promise<void> {
   return draftNavigationStateBySlot.get(slotKey)?.tail ?? Promise.resolve();
 }
 
 /**
- * Coalesces adjacent identical requests while serializing distinct requests for the shared route.
- * A distinct later request becomes the owner immediately, allowing awaited work to stop before a
- * stale navigation or draft-mapping commit can overwrite the user's latest intent.
+ * Coalesces adjacent identical requests while starting distinct requests independently. A distinct
+ * later request becomes the owner immediately, allowing it to make progress without waiting for a
+ * stale preparation and allowing awaited older work to stop before a route or draft-mapping commit.
  */
 export function runDraftNavigationOnce<T>(
   slotKey: string,
@@ -60,8 +60,7 @@ export function runDraftNavigationOnce<T>(
     isCurrent: () => state.latestOwner === owner,
   };
   state.latestOwner = owner;
-  const execute = () => run(ownership);
-  const execution = state.tail.then(execute, execute);
+  const execution = Promise.resolve().then(() => run(ownership));
   let operation!: Promise<T>;
   const clearLatestRequest = () => {
     if (state.latestOperation === operation) {
@@ -83,7 +82,8 @@ export function runDraftNavigationOnce<T>(
   state.latestOperation = operation;
   state.latestRequestKey = requestKey;
 
-  const tail = operation.then(
+  const previousTail = state.tail;
+  const tail = Promise.all([previousTail, operation]).then(
     () => undefined,
     () => undefined,
   );

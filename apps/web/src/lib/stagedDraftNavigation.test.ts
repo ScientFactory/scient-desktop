@@ -124,7 +124,7 @@ describe("stagedDraftNavigation", () => {
     expect(rollback).toHaveBeenCalledOnce();
   });
 
-  it("coalesces identical requests and serializes different requests for the same slot", async () => {
+  it("coalesces identical requests without blocking a distinct later request", async () => {
     let finishFirst!: (value: string) => void;
     const firstRun = vi.fn(
       () =>
@@ -139,12 +139,12 @@ describe("stagedDraftNavigation", () => {
     const duplicateFirst = runDraftNavigationOnce(slotKey, "project-default", secondRun);
     const second = runDraftNavigationOnce(slotKey, "exact-worktree", secondRun);
     await Promise.resolve();
-    expect(secondRun).not.toHaveBeenCalled();
+    expect(secondRun).toHaveBeenCalledOnce();
+    await expect(second).resolves.toBe("second");
     finishFirst("first");
 
     await expect(first).resolves.toBe("first");
     await expect(duplicateFirst).resolves.toBe("first");
-    await expect(second).resolves.toBe("second");
     expect(firstRun).toHaveBeenCalledOnce();
     expect(secondRun).toHaveBeenCalledOnce();
 
@@ -154,7 +154,7 @@ describe("stagedDraftNavigation", () => {
     expect(secondRun).toHaveBeenCalledTimes(2);
   });
 
-  it("serializes a later project-default request behind an exact-workspace request", async () => {
+  it("lets a later project-default request progress during exact-workspace preparation", async () => {
     let finishExact!: (value: string) => void;
     const exactRun = vi.fn(
       () =>
@@ -168,11 +168,11 @@ describe("stagedDraftNavigation", () => {
     const exact = runDraftNavigationOnce(slotKey, "exact-worktree", exactRun);
     const projectDefault = runDraftNavigationOnce(slotKey, "project-default", defaultRun);
     await Promise.resolve();
-    expect(defaultRun).not.toHaveBeenCalled();
+    expect(defaultRun).toHaveBeenCalledOnce();
+    await expect(projectDefault).resolves.toBe("default");
     finishExact("exact");
 
     await expect(exact).resolves.toBe("exact");
-    await expect(projectDefault).resolves.toBe("default");
     expect(exactRun).toHaveBeenCalledOnce();
     expect(defaultRun).toHaveBeenCalledOnce();
   });
@@ -228,10 +228,10 @@ describe("stagedDraftNavigation", () => {
       "project-b-terminal-default",
       async (ownership) => (ownership.isCurrent() ? "latest-navigation" : "superseded"),
     );
+    await expect(otherProjectTerminal).resolves.toBe("latest-navigation");
     releaseProjectChat();
 
     await expect(projectChat).resolves.toBe("superseded");
-    await expect(otherProjectTerminal).resolves.toBe("latest-navigation");
     expect(projectChatWasCurrentAfterRelease).toBe(false);
   });
 
@@ -259,7 +259,7 @@ describe("stagedDraftNavigation", () => {
     const exact = runDraftNavigationOnce(slotKey, "exact-worktree", exactRun);
     const lastDefault = runDraftNavigationOnce(slotKey, "project-default", lastDefaultRun);
     await Promise.resolve();
-    expect(calls).toEqual(["default:first"]);
+    expect(calls).toEqual(["default:first", "exact", "default:last"]);
     finishFirstDefault("default:first");
 
     await expect(firstDefault).resolves.toBe("default:first");

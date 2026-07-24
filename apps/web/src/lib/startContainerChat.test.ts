@@ -6,6 +6,7 @@ import {
   startFreshChatForActiveSurface,
   type StartContainerChatResult,
 } from "./startContainerChat";
+import { draftNavigationSlotKey, runDraftNavigationOnce } from "./stagedDraftNavigation";
 
 const paths = {
   homeDir: "/Users/tester",
@@ -86,9 +87,39 @@ describe("startContainerChat", () => {
       startContainerChat({
         ensureProjectId: async () => projectId,
         handleNewThread: async () => threadId,
+        navigationTargetKey: "home-chat",
         fresh: true,
         errorLabel: "failed",
       }),
     ).resolves.toEqual({ ok: true, threadId });
+  });
+
+  it("does not let delayed container resolution retake ownership from a later intent", async () => {
+    const projectId = ProjectId.makeUnsafe("project-delayed-container");
+    let resolveProject!: (value: ProjectId) => void;
+    const ensuredProject = new Promise<ProjectId>((resolve) => {
+      resolveProject = resolve;
+    });
+    const handleNewThread = vi.fn(async () => ThreadId.makeUnsafe("thread-stale-container"));
+
+    const delayedContainer = startContainerChat({
+      ensureProjectId: () => ensuredProject,
+      handleNewThread,
+      navigationTargetKey: "home-chat-delayed",
+      fresh: true,
+      errorLabel: "failed",
+    });
+    await Promise.resolve();
+
+    const laterIntent = runDraftNavigationOnce(
+      draftNavigationSlotKey(),
+      "project-b-terminal",
+      async (ownership) => (ownership.isCurrent() ? "later" : "superseded"),
+    );
+    await expect(laterIntent).resolves.toBe("later");
+    resolveProject(projectId);
+
+    await expect(delayedContainer).resolves.toEqual({ ok: true, threadId: null });
+    expect(handleNewThread).not.toHaveBeenCalled();
   });
 });

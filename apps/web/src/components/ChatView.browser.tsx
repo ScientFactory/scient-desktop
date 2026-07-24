@@ -5764,7 +5764,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         branchLookup.mock.calls.filter(([input]) => input.cwd === "/repo/project").length;
       defaultNavigationOperation = runDraftNavigationOnce(
         draftNavigationSlotKey(),
-        newThreadNavigationRequestKey({}),
+        newThreadNavigationRequestKey({ projectId: PROJECT_ID, entryPoint: "chat" }),
         () => defaultNavigationBlocker.promise,
       );
       const threadRow = await waitForElement(
@@ -5786,8 +5786,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       openContextMenu();
       await vi.waitFor(() => expect(contextMenuShow).toHaveBeenCalledTimes(1));
-      await Promise.resolve();
-      expect(projectValidationCallCount()).toBe(0);
+      await vi.waitFor(() => expect(projectValidationCallCount()).toBe(1));
       openContextMenu();
       await vi.waitFor(() => expect(contextMenuShow).toHaveBeenCalledTimes(2));
       expect(contextMenuShow.mock.calls[0]?.[0]?.[0]).toMatchObject({
@@ -5795,9 +5794,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         label: "New thread in worktree (feature/exact-worktree)",
       });
 
-      defaultNavigationBlocker.resolve();
-      await defaultNavigationOperation;
-      await vi.waitFor(() => expect(projectValidationCallCount()).toBe(1));
+      expect(projectValidationCallCount()).toBe(1);
       branchLookupDeferred.resolve(exactWorktreeBranchResult);
       const newThreadPath = await waitForURL(
         mounted.router,

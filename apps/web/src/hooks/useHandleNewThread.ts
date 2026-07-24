@@ -17,6 +17,7 @@ import {
   newThreadNavigationRequestKey,
   resolveTerminalThreadCreationState,
   resolveThreadBootstrapPlan,
+  type NewThreadNavigationOwnership,
   type NewThreadOptions,
 } from "../lib/threadBootstrap";
 import { promoteThreadCreate } from "../lib/threadCreatePromotion";
@@ -59,6 +60,7 @@ export function useHandleNewThread() {
       projectId: ProjectId,
       options?: NewThreadOptions,
       navigation?: NewThreadNavigationOptions,
+      existingOwnership?: NewThreadNavigationOwnership,
     ): Promise<ThreadId | null> => {
       const entryPoint = options?.entryPoint ?? "chat";
       const wantsTemporaryThread = options?.temporary === true;
@@ -117,226 +119,231 @@ export function useHandleNewThread() {
           api,
         );
       };
-      return runDraftNavigationOnce(
-        draftNavigationSlotKey(),
-        newThreadNavigationRequestKey({
-          customSearch: navigation?.search,
-          options,
-        }),
-        async (ownership) => {
+      const runOwnedNavigation = async (
+        ownership: NewThreadNavigationOwnership,
+      ): Promise<ThreadId | null> => {
+        if (!ownership.isCurrent()) {
+          return null;
+        }
+        let effectiveOptions = options;
+        try {
+          const preparation = await options?.prepareNavigation?.(ownership);
+          if (!ownership.isCurrent() || preparation === false) {
+            return null;
+          }
+          if (preparation?.workspace) {
+            effectiveOptions = { ...options, workspace: preparation.workspace };
+          }
+        } catch (error) {
           if (!ownership.isCurrent()) {
             return null;
           }
-          let effectiveOptions = options;
-          try {
-            const preparation = await options?.prepareNavigation?.(ownership);
-            if (!ownership.isCurrent() || preparation === false) {
-              return null;
-            }
-            if (preparation?.workspace) {
-              effectiveOptions = { ...options, workspace: preparation.workspace };
-            }
-          } catch (error) {
-            if (!ownership.isCurrent()) {
-              return null;
-            }
-            throw error;
+          throw error;
+        }
+        const {
+          getDraftThread,
+          getDraftThreadByProjectId,
+          applyStickyState,
+          clearDraftThread,
+          registerDraftThread,
+          setDraftThreadContext,
+          setProjectDraftThreadId,
+          setModelSelection,
+        } = useComposerDraftStore.getState();
+        const applyProviderOverride = (threadId: ThreadId) => {
+          if (!effectiveOptions?.provider) {
+            return;
           }
-          const {
-            getDraftThread,
-            getDraftThreadByProjectId,
-            applyStickyState,
-            clearDraftThread,
-            registerDraftThread,
-            setDraftThreadContext,
-            setProjectDraftThreadId,
-            setModelSelection,
-          } = useComposerDraftStore.getState();
-          const applyProviderOverride = (threadId: ThreadId) => {
-            if (!effectiveOptions?.provider) {
-              return;
-            }
-            const defaultModelSelection = getRecommendedDefaultModelSelection(
-              effectiveOptions.provider,
-            );
-            if (defaultModelSelection) {
-              setModelSelection(threadId, defaultModelSelection);
-            }
-          };
-          const currentPathMatch = /^\/([^/]+)$/.exec(router.state.location.pathname);
-          const currentRouteThreadId = currentPathMatch?.[1]
-            ? ThreadId.makeUnsafe(decodeURIComponent(currentPathMatch[1]))
+          const defaultModelSelection = getRecommendedDefaultModelSelection(
+            effectiveOptions.provider,
+          );
+          if (defaultModelSelection) {
+            setModelSelection(threadId, defaultModelSelection);
+          }
+        };
+        const currentPathMatch = /^\/([^/]+)$/.exec(router.state.location.pathname);
+        const currentRouteThreadId = currentPathMatch?.[1]
+          ? ThreadId.makeUnsafe(decodeURIComponent(currentPathMatch[1]))
+          : null;
+        const currentFocusedThreadId =
+          focusedThreadId === routeThreadId ? currentRouteThreadId : focusedThreadId;
+        const shouldForceFreshThread = effectiveOptions?.fresh === true;
+        const storedDraftThreadCandidate = getDraftThreadByProjectId(projectId, entryPoint);
+        const latestActiveDraftThreadCandidate: DraftThreadState | null = currentFocusedThreadId
+          ? getDraftThread(currentFocusedThreadId)
+          : null;
+        const storedDraftThread =
+          !shouldForceFreshThread &&
+          !wantsTemporaryThread &&
+          storedDraftThreadCandidate?.isTemporary !== true
+            ? storedDraftThreadCandidate
             : null;
-          const currentFocusedThreadId =
-            focusedThreadId === routeThreadId ? currentRouteThreadId : focusedThreadId;
-          const shouldForceFreshThread = effectiveOptions?.fresh === true;
-          const storedDraftThreadCandidate = getDraftThreadByProjectId(projectId, entryPoint);
-          const latestActiveDraftThreadCandidate: DraftThreadState | null = currentFocusedThreadId
-            ? getDraftThread(currentFocusedThreadId)
+        const latestActiveDraftThread =
+          !shouldForceFreshThread &&
+          !wantsTemporaryThread &&
+          latestActiveDraftThreadCandidate?.isTemporary !== true
+            ? latestActiveDraftThreadCandidate
             : null;
-          const storedDraftThread =
-            !shouldForceFreshThread &&
-            !wantsTemporaryThread &&
-            storedDraftThreadCandidate?.isTemporary !== true
-              ? storedDraftThreadCandidate
-              : null;
-          const latestActiveDraftThread =
-            !shouldForceFreshThread &&
-            !wantsTemporaryThread &&
-            latestActiveDraftThreadCandidate?.isTemporary !== true
-              ? latestActiveDraftThreadCandidate
-              : null;
-          const bootstrapPlan = resolveThreadBootstrapPlan({
-            storedDraftThread,
-            latestActiveDraftThread,
-            entryPoint,
+        const bootstrapPlan = resolveThreadBootstrapPlan({
+          storedDraftThread,
+          latestActiveDraftThread,
+          entryPoint,
+          projectId,
+          routeThreadId: currentFocusedThreadId,
+        });
+        const currentAppState = useStore.getState();
+        const activeThreadSnapshot = createActiveThreadSnapshot(
+          currentFocusedThreadId
+            ? currentAppState.threads.find((thread) => thread.id === currentFocusedThreadId)
+            : null,
+          projectId,
+        );
+        const activeDraftThreadSnapshot = createActiveDraftThreadSnapshot(
+          latestActiveDraftThreadCandidate,
+          projectId,
+        );
+        const projectDefaultModelSelection =
+          currentAppState.projects.find((project) => project.id === projectId)
+            ?.defaultModelSelection ?? null;
+        const resolveCreationState = (
+          targetThreadId: ThreadId,
+          draftThread: DraftThreadState | null,
+        ) =>
+          resolveTerminalThreadCreationState({
+            activeDraftThread: activeDraftThreadSnapshot,
+            activeThread: activeThreadSnapshot,
+            defaultEnvMode: settings.defaultThreadEnvMode,
+            defaultProvider: effectiveOptions?.provider ?? settings.defaultProvider,
+            draftComposerState:
+              useComposerDraftStore.getState().draftsByThreadId[targetThreadId] ?? null,
+            draftThread,
+            projectDefaultModelSelection,
             projectId,
-            routeThreadId: currentFocusedThreadId,
           });
-          const currentAppState = useStore.getState();
-          const activeThreadSnapshot = createActiveThreadSnapshot(
-            currentFocusedThreadId
-              ? currentAppState.threads.find((thread) => thread.id === currentFocusedThreadId)
-              : null,
-            projectId,
-          );
-          const activeDraftThreadSnapshot = createActiveDraftThreadSnapshot(
-            latestActiveDraftThreadCandidate,
-            projectId,
-          );
-          const projectDefaultModelSelection =
-            currentAppState.projects.find((project) => project.id === projectId)
-              ?.defaultModelSelection ?? null;
-          const resolveCreationState = (
-            targetThreadId: ThreadId,
-            draftThread: DraftThreadState | null,
-          ) =>
-            resolveTerminalThreadCreationState({
-              activeDraftThread: activeDraftThreadSnapshot,
-              activeThread: activeThreadSnapshot,
-              defaultEnvMode: settings.defaultThreadEnvMode,
-              defaultProvider: effectiveOptions?.provider ?? settings.defaultProvider,
-              draftComposerState:
-                useComposerDraftStore.getState().draftsByThreadId[targetThreadId] ?? null,
-              draftThread,
-              projectDefaultModelSelection,
-              projectId,
-            });
 
-          if (bootstrapPlan.kind !== "fresh") {
-            const preservedComposerDraft =
-              useComposerDraftStore.getState().draftsByThreadId[bootstrapPlan.threadId] ?? null;
-            if (
-              bootstrapPlan.kind === "stored" &&
-              currentFocusedThreadId !== bootstrapPlan.threadId
-            ) {
-              try {
-                await navigate({
-                  to: "/$threadId",
-                  params: { threadId: bootstrapPlan.threadId },
-                  ...(navigation?.search ? { search: navigation.search } : {}),
-                });
-              } catch (error) {
-                if (!ownership.isCurrent()) {
-                  return null;
-                }
-                throw error;
-              }
-              if (
-                !ownership.isCurrent() ||
-                router.state.location.pathname !== `/${bootstrapPlan.threadId}`
-              ) {
+        if (bootstrapPlan.kind !== "fresh") {
+          const preservedComposerDraft =
+            useComposerDraftStore.getState().draftsByThreadId[bootstrapPlan.threadId] ?? null;
+          if (
+            bootstrapPlan.kind === "stored" &&
+            currentFocusedThreadId !== bootstrapPlan.threadId
+          ) {
+            try {
+              await navigate({
+                to: "/$threadId",
+                params: { threadId: bootstrapPlan.threadId },
+                ...(navigation?.search ? { search: navigation.search } : {}),
+              });
+            } catch (error) {
+              if (!ownership.isCurrent()) {
                 return null;
               }
+              throw error;
             }
-            if (!ownership.isCurrent()) {
+            if (
+              !ownership.isCurrent() ||
+              router.state.location.pathname !== `/${bootstrapPlan.threadId}`
+            ) {
               return null;
             }
-            const draftContextPatch = buildDraftThreadWorkspacePatch({
-              defaultEnvMode: settings.defaultThreadEnvMode,
-              draftThread: bootstrapPlan.draftThread,
-              entryPoint,
-              options: effectiveOptions,
-              reuseKind: bootstrapPlan.kind,
-            });
-            if (draftContextPatch) {
-              setDraftThreadContext(bootstrapPlan.threadId, draftContextPatch);
-            }
-            applyProviderOverride(bootstrapPlan.threadId);
-            setProjectDraftThreadId(projectId, bootstrapPlan.threadId, { entryPoint });
-            restoreComposerDraft(bootstrapPlan.threadId, preservedComposerDraft);
-            activateThreadEntryPoint(bootstrapPlan.threadId);
-            if (entryPoint === "terminal" && ownership.isCurrent()) {
-              await createTerminalThread(
-                bootstrapPlan.threadId,
-                resolveCreationState(
-                  bootstrapPlan.threadId,
-                  getDraftThread(bootstrapPlan.threadId),
-                ),
-              );
-            }
-            return bootstrapPlan.threadId;
           }
-
-          const threadId = newThreadId();
-          if (wantsTemporaryThread) {
-            markTemporaryThread(threadId);
-          }
-          const createdAt = new Date().toISOString();
-          const draftSeed = createFreshDraftThreadSeed({
-            createdAt,
-            defaultEnvMode: settings.defaultThreadEnvMode,
-            entryPoint,
-            options: effectiveOptions,
-          });
-          const committed = await stageDraftNavigation({
-            isCurrent: ownership.isCurrent,
-            // Keep the previous routed draft alive while the destination loads. Replacing the
-            // project's primary slot earlier makes the route guard redirect the old URL to Home.
-            stage: () => {
-              registerDraftThread(threadId, { projectId, ...draftSeed });
-              markNewThreadLanding(threadId);
-              activateThreadEntryPoint(threadId);
-              applyStickyState(threadId);
-              applyProviderOverride(threadId);
-            },
-            // Mark the draft-landing navigation as a transition so the new route
-            // subtree renders interruptibly and the browser can paint the composer
-            // skeleton immediately instead of freezing on the synchronous commit.
-            navigate: () =>
-              new Promise<void>((resolve, reject) => {
-                startTransition(() => {
-                  navigate({
-                    to: "/$threadId",
-                    params: { threadId },
-                    ...(navigation?.search ? { search: navigation.search } : {}),
-                  }).then(resolve, reject);
-                });
-              }),
-            // TanStack resolves an older navigate() promise when a newer navigation supersedes it.
-            // Verify the committed route before deleting the previous project draft.
-            isDestinationActive: () => router.state.location.pathname === `/${threadId}`,
-            finalize: () => setProjectDraftThreadId(projectId, threadId, draftSeed),
-            rollback: () => {
-              clearNewThreadLanding(threadId);
-              clearDraftThread(threadId);
-              clearTerminalState(threadId);
-              if (wantsTemporaryThread) {
-                clearTemporaryThread(threadId);
-              }
-            },
-          });
-          if (!committed) {
+          if (!ownership.isCurrent()) {
             return null;
           }
+          const draftContextPatch = buildDraftThreadWorkspacePatch({
+            defaultEnvMode: settings.defaultThreadEnvMode,
+            draftThread: bootstrapPlan.draftThread,
+            entryPoint,
+            options: effectiveOptions,
+            reuseKind: bootstrapPlan.kind,
+          });
+          if (draftContextPatch) {
+            setDraftThreadContext(bootstrapPlan.threadId, draftContextPatch);
+          }
+          applyProviderOverride(bootstrapPlan.threadId);
+          setProjectDraftThreadId(projectId, bootstrapPlan.threadId, { entryPoint });
+          restoreComposerDraft(bootstrapPlan.threadId, preservedComposerDraft);
+          activateThreadEntryPoint(bootstrapPlan.threadId);
           if (entryPoint === "terminal" && ownership.isCurrent()) {
             await createTerminalThread(
-              threadId,
-              resolveCreationState(threadId, getDraftThread(threadId)),
+              bootstrapPlan.threadId,
+              resolveCreationState(bootstrapPlan.threadId, getDraftThread(bootstrapPlan.threadId)),
             );
           }
-          return threadId;
-        },
+          return bootstrapPlan.threadId;
+        }
+
+        const threadId = newThreadId();
+        if (wantsTemporaryThread) {
+          markTemporaryThread(threadId);
+        }
+        const createdAt = new Date().toISOString();
+        const draftSeed = createFreshDraftThreadSeed({
+          createdAt,
+          defaultEnvMode: settings.defaultThreadEnvMode,
+          entryPoint,
+          options: effectiveOptions,
+        });
+        const committed = await stageDraftNavigation({
+          isCurrent: ownership.isCurrent,
+          // Keep the previous routed draft alive while the destination loads. Replacing the
+          // project's primary slot earlier makes the route guard redirect the old URL to Home.
+          stage: () => {
+            registerDraftThread(threadId, { projectId, ...draftSeed });
+            markNewThreadLanding(threadId);
+            activateThreadEntryPoint(threadId);
+            applyStickyState(threadId);
+            applyProviderOverride(threadId);
+          },
+          // Mark the draft-landing navigation as a transition so the new route
+          // subtree renders interruptibly and the browser can paint the composer
+          // skeleton immediately instead of freezing on the synchronous commit.
+          navigate: () =>
+            new Promise<void>((resolve, reject) => {
+              startTransition(() => {
+                navigate({
+                  to: "/$threadId",
+                  params: { threadId },
+                  ...(navigation?.search ? { search: navigation.search } : {}),
+                }).then(resolve, reject);
+              });
+            }),
+          // TanStack resolves an older navigate() promise when a newer navigation supersedes it.
+          // Verify the committed route before deleting the previous project draft.
+          isDestinationActive: () => router.state.location.pathname === `/${threadId}`,
+          finalize: () => setProjectDraftThreadId(projectId, threadId, draftSeed),
+          rollback: () => {
+            clearNewThreadLanding(threadId);
+            clearDraftThread(threadId);
+            clearTerminalState(threadId);
+            if (wantsTemporaryThread) {
+              clearTemporaryThread(threadId);
+            }
+          },
+        });
+        if (!committed) {
+          return null;
+        }
+        if (entryPoint === "terminal" && ownership.isCurrent()) {
+          await createTerminalThread(
+            threadId,
+            resolveCreationState(threadId, getDraftThread(threadId)),
+          );
+        }
+        return threadId;
+      };
+      if (existingOwnership) {
+        return runOwnedNavigation(existingOwnership);
+      }
+      return runDraftNavigationOnce(
+        draftNavigationSlotKey(),
+        newThreadNavigationRequestKey({
+          projectId,
+          entryPoint,
+          customSearch: navigation?.search,
+          options,
+        }),
+        runOwnedNavigation,
       );
     },
     [

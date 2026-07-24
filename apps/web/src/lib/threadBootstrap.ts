@@ -83,6 +83,8 @@ function navigationCallbackKey(callback: ((...args: never[]) => unknown) | undef
 }
 
 export function newThreadNavigationRequestKey(input: {
+  readonly projectId: string;
+  readonly entryPoint: ThreadPrimarySurface;
   readonly customSearch?:
     | ((previous: Record<string, unknown>) => Record<string, unknown>)
     | undefined;
@@ -92,6 +94,8 @@ export function newThreadNavigationRequestKey(input: {
   const branch = "branch" in workspace ? workspace.branch : "";
   const worktreePath = "worktreePath" in workspace ? workspace.worktreePath : "";
   return [
+    input.projectId,
+    input.entryPoint,
     workspace.kind,
     branch,
     worktreePath,

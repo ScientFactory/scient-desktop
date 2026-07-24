@@ -15,6 +15,7 @@ import {
 
 const PROJECT_ID = ProjectId.makeUnsafe("project-bootstrap");
 const THREAD_ID = ThreadId.makeUnsafe("thread-bootstrap");
+const DEFAULT_NAVIGATION_TARGET = { projectId: PROJECT_ID, entryPoint: "chat" as const };
 const FIRST_NAVIGATION_SEARCH = (previous: Record<string, unknown>) => ({
   ...previous,
   editor: "first",
@@ -82,14 +83,16 @@ function makeComposerDraftState(
 
 describe("threadBootstrap", () => {
   it("uses distinct navigation request keys for default and exact workspace intents", () => {
-    const defaultKey = newThreadNavigationRequestKey({});
+    const defaultKey = newThreadNavigationRequestKey(DEFAULT_NAVIGATION_TARGET);
     expect(
       newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
         options: { workspace: { kind: "project-default" } },
       }),
     ).toBe(defaultKey);
     expect(
       newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
         options: {
           workspace: {
             kind: "existing-worktree",
@@ -101,36 +104,70 @@ describe("threadBootstrap", () => {
     ).not.toBe(defaultKey);
     expect(
       newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
         options: { fresh: true },
       }),
     ).not.toBe(defaultKey);
   });
 
   it("does not coalesce distinct custom-search or preparation callbacks", () => {
-    expect(newThreadNavigationRequestKey({ customSearch: FIRST_NAVIGATION_SEARCH })).toBe(
-      newThreadNavigationRequestKey({ customSearch: FIRST_NAVIGATION_SEARCH }),
-    );
-    expect(newThreadNavigationRequestKey({ customSearch: FIRST_NAVIGATION_SEARCH })).not.toBe(
-      newThreadNavigationRequestKey({ customSearch: SECOND_NAVIGATION_SEARCH }),
+    expect(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        customSearch: FIRST_NAVIGATION_SEARCH,
+      }),
+    ).toBe(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        customSearch: FIRST_NAVIGATION_SEARCH,
+      }),
     );
     expect(
       newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        customSearch: FIRST_NAVIGATION_SEARCH,
+      }),
+    ).not.toBe(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        customSearch: SECOND_NAVIGATION_SEARCH,
+      }),
+    );
+    expect(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
         options: { prepareNavigation: FIRST_NAVIGATION_PREPARATION },
       }),
     ).toBe(
       newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
         options: { prepareNavigation: FIRST_NAVIGATION_PREPARATION },
       }),
     );
     expect(
       newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
         options: { prepareNavigation: FIRST_NAVIGATION_PREPARATION },
       }),
     ).not.toBe(
       newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
         options: { prepareNavigation: SECOND_NAVIGATION_PREPARATION },
       }),
     );
+  });
+
+  it("keeps project and entry-point targets distinct on the global navigation surface", () => {
+    const projectChat = newThreadNavigationRequestKey({
+      projectId: "project-a",
+      entryPoint: "chat",
+    });
+    expect(newThreadNavigationRequestKey({ projectId: "project-b", entryPoint: "chat" })).not.toBe(
+      projectChat,
+    );
+    expect(
+      newThreadNavigationRequestKey({ projectId: "project-a", entryPoint: "terminal" }),
+    ).not.toBe(projectChat);
   });
 
   it("resolves project defaults and exact existing workspaces without partial states", () => {

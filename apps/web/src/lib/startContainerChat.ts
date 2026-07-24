@@ -6,9 +6,10 @@
 
 import type { ProjectId, ThreadId } from "@synara/contracts";
 import type { Project } from "../types";
+import { draftNavigationSlotKey, runDraftNavigationOnce } from "./stagedDraftNavigation";
 import { isStudioContainerProject } from "./studioProjects";
 import type { ServerWorkspacePaths } from "./serverWorkspacePaths";
-import type { NewThreadOptions } from "./threadBootstrap";
+import type { NewThreadNavigationOwnership, NewThreadOptions } from "./threadBootstrap";
 
 export type StartContainerChatResult =
   | { ok: true; threadId: ThreadId | null }
@@ -44,19 +45,45 @@ export async function startContainerChat(input: {
   readonly handleNewThread: (
     projectId: ProjectId,
     options?: NewThreadOptions,
+    navigation?: undefined,
+    existingOwnership?: NewThreadNavigationOwnership,
   ) => Promise<ThreadId | null>;
+  readonly navigationTargetKey: string;
   readonly fresh?: boolean | undefined;
   readonly errorLabel: string;
 }): Promise<StartContainerChatResult> {
   try {
-    const projectId = await input.ensureProjectId();
-    if (!projectId) {
-      return { ok: false, error: input.errorLabel };
-    }
-    const threadOptions: NewThreadOptions | undefined =
-      input.fresh === true ? { fresh: true, workspace: { kind: "local-container" } } : undefined;
-    const threadId = await input.handleNewThread(projectId, threadOptions);
-    return { ok: true, threadId };
+    return await runDraftNavigationOnce(
+      draftNavigationSlotKey(),
+      `container:${input.navigationTargetKey}:${input.fresh === true ? "fresh" : "reuse"}`,
+      async (ownership) => {
+        try {
+          const projectId = await input.ensureProjectId();
+          if (!ownership.isCurrent()) {
+            return { ok: true, threadId: null };
+          }
+          if (!projectId) {
+            return { ok: false, error: input.errorLabel };
+          }
+          const threadOptions: NewThreadOptions | undefined =
+            input.fresh === true
+              ? { fresh: true, workspace: { kind: "local-container" } }
+              : undefined;
+          const threadId = await input.handleNewThread(
+            projectId,
+            threadOptions,
+            undefined,
+            ownership,
+          );
+          return { ok: true, threadId };
+        } catch (error) {
+          if (!ownership.isCurrent()) {
+            return { ok: true, threadId: null };
+          }
+          throw error;
+        }
+      },
+    );
   } catch (error) {
     return {
       ok: false,
