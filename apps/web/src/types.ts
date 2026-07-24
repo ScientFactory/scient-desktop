@@ -18,6 +18,7 @@ import type {
   ProjectScript as ContractProjectScript,
   ThreadId,
   ProjectId,
+  EventId,
   TurnId,
   MessageId,
   ProviderMentionReference,
@@ -225,6 +226,10 @@ export interface Thread extends ThreadWorkspaceState {
   subagentNickname?: string | null;
   subagentRole?: string | null;
   forkSourceThreadId?: ThreadId | null;
+  forkSourceMessageId?: MessageId | null;
+  forkTitleFamilyRootId?: ThreadId | null;
+  forkTitleBase?: string | null;
+  forkTitleOrdinal?: number | null;
   sidechatSourceThreadId?: ThreadId | null;
   handoff?: ThreadHandoff | null;
   lastKnownPr?: OrchestrationThreadPullRequest | null;
@@ -261,6 +266,10 @@ export interface ThreadShell extends ThreadWorkspaceState {
   subagentNickname?: string | null;
   subagentRole?: string | null;
   forkSourceThreadId?: ThreadId | null;
+  forkSourceMessageId?: MessageId | null;
+  forkTitleFamilyRootId?: ThreadId | null;
+  forkTitleBase?: string | null;
+  forkTitleOrdinal?: number | null;
   sidechatSourceThreadId?: ThreadId | null;
   handoff?: ThreadHandoff | null;
   lastKnownPr?: OrchestrationThreadPullRequest | null;
@@ -305,6 +314,7 @@ export interface SidebarThreadSummary {
   hasActionableProposedPlan: boolean;
   hasLiveTailWork: boolean;
   forkSourceThreadId?: ThreadId | null;
+  forkSourceMessageId?: MessageId | null;
   sidechatSourceThreadId?: ThreadId | null;
   handoff?: ThreadHandoff | null;
   lastKnownPr?: OrchestrationThreadPullRequest | null;
@@ -317,5 +327,7 @@ export interface ThreadSession {
   createdAt: string;
   updatedAt: string;
   lastError?: string;
+  lastErrorEventId?: EventId;
+  lastErrorClass?: string;
   orchestrationStatus: OrchestrationSessionStatus;
 }

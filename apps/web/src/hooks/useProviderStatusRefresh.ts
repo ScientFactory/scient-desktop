@@ -1,5 +1,5 @@
 // FILE: useProviderStatusRefresh.ts
-// Purpose: Shared provider-status refresh hooks — focus/periodic version checks plus an
+// Purpose: Shared provider-status refresh hooks — scheduled version checks plus an
 //          imperative refresh callback for UI affordances (voice auth retry, banners).
 // Layer: Web hooks
 // Exports: useProviderStatusRefresh, useRefreshProviderStatusesNow
@@ -7,9 +7,23 @@
 import { useCallback, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { ServerProviderStatus } from "@synara/contracts";
-import { toastManager } from "../components/ui/toast";
 import { readNativeApi } from "../nativeApi";
 import { applyProviderStatusesToCache } from "../lib/providerStatusCache";
+import { activityManager } from "../notifications/activityStore";
+
+const PROVIDER_REFRESH_ACTIVITY_KEY = "provider:status-refresh";
+
+function clearResolvedProviderActivities(providers: readonly ServerProviderStatus[]): void {
+  activityManager.remove(PROVIDER_REFRESH_ACTIVITY_KEY);
+  for (const provider of providers) {
+    if (
+      provider.versionAdvisory?.status === "current" ||
+      provider.updateState?.status === "succeeded"
+    ) {
+      activityManager.remove(`provider:update:${provider.provider}`);
+    }
+  }
+}
 
 export type RefreshProviderStatusesOptions = {
   readonly silent?: boolean;
@@ -21,7 +35,8 @@ export type RefreshProviderStatusesNow = (
 
 /**
  * Imperative one-shot provider-status refresh: re-checks providers on the server
- * and folds the result into the cached server config. Surfaces failures as a toast.
+ * and folds the result into the cached server config. Non-silent failures are
+ * retained in Activity so they stay reviewable without interrupting the current task.
  */
 export function useRefreshProviderStatusesNow(): RefreshProviderStatusesNow {
   const queryClient = useQueryClient();
@@ -32,14 +47,19 @@ export function useRefreshProviderStatusesNow(): RefreshProviderStatusesNow {
       try {
         const result = await api.server.refreshProviders();
         applyProviderStatusesToCache(queryClient, result.providers);
+        clearResolvedProviderActivities(result.providers);
         return result.providers;
       } catch (error) {
         if (!options?.silent) {
-          toastManager.add({
-            type: "error",
+          activityManager.publish({
+            dedupeKey: PROVIDER_REFRESH_ACTIVITY_KEY,
+            source: "provider",
+            status: "needs_attention",
+            tone: "error",
             title: "Unable to refresh provider status",
             description:
               error instanceof Error ? error.message : "Unknown error refreshing provider status.",
+            destination: { type: "settings", section: "providers" },
           });
         }
         return null;
@@ -53,8 +73,6 @@ type ProviderStatusRefreshOptions = {
   readonly enabled?: boolean;
   readonly initialDelayMs?: number;
   readonly intervalMs?: number;
-  readonly minIntervalMs?: number;
-  readonly refreshOnFocus?: boolean;
 };
 
 export function useProviderStatusRefresh(options: ProviderStatusRefreshOptions): void {
@@ -62,8 +80,6 @@ export function useProviderStatusRefresh(options: ProviderStatusRefreshOptions):
   const enabled = options.enabled ?? true;
   const initialDelayMs = options.initialDelayMs;
   const intervalMs = options.intervalMs;
-  const minIntervalMs = options.minIntervalMs ?? 0;
-  const refreshOnFocus = options.refreshOnFocus ?? false;
 
   useEffect(() => {
     if (!enabled || typeof window === "undefined" || typeof document === "undefined") {
@@ -71,20 +87,14 @@ export function useProviderStatusRefresh(options: ProviderStatusRefreshOptions):
     }
 
     let disposed = false;
-    let lastRefreshAtMs = 0;
     const refreshProviderStatuses = () => {
       if (document.visibilityState !== "visible") {
-        return;
-      }
-      const nowMs = Date.now();
-      if (minIntervalMs > 0 && nowMs - lastRefreshAtMs < minIntervalMs) {
         return;
       }
       const api = readNativeApi();
       if (!api) {
         return;
       }
-      lastRefreshAtMs = nowMs;
       void api.server
         .refreshProviders()
         .then((result) => {
@@ -92,6 +102,7 @@ export function useProviderStatusRefresh(options: ProviderStatusRefreshOptions):
             return;
           }
           applyProviderStatusesToCache(queryClient, result.providers);
+          clearResolvedProviderActivities(result.providers);
         })
         .catch(() => undefined);
     };
@@ -105,11 +116,6 @@ export function useProviderStatusRefresh(options: ProviderStatusRefreshOptions):
         ? window.setInterval(refreshProviderStatuses, intervalMs)
         : null;
 
-    if (refreshOnFocus) {
-      window.addEventListener("focus", refreshProviderStatuses);
-      document.addEventListener("visibilitychange", refreshProviderStatuses);
-    }
-
     return () => {
       disposed = true;
       if (initialRefreshId !== null) {
@@ -118,10 +124,6 @@ export function useProviderStatusRefresh(options: ProviderStatusRefreshOptions):
       if (refreshIntervalId !== null) {
         window.clearInterval(refreshIntervalId);
       }
-      if (refreshOnFocus) {
-        window.removeEventListener("focus", refreshProviderStatuses);
-        document.removeEventListener("visibilitychange", refreshProviderStatuses);
-      }
     };
-  }, [enabled, initialDelayMs, intervalMs, minIntervalMs, queryClient, refreshOnFocus]);
+  }, [enabled, initialDelayMs, intervalMs, queryClient]);
 }

@@ -130,6 +130,10 @@ export const ServerProviderStatus = Schema.Struct({
   status: ServerProviderStatusState,
   available: Schema.Boolean,
   authStatus: ServerProviderAuthStatus,
+  // `false` means this runtime owns authentication outside the provider's
+  // account flow (for example a custom Codex model provider). Older servers
+  // omit the field, so clients retain their provider-specific default.
+  requiresProviderAccount: Schema.optional(Schema.Boolean),
   authType: Schema.optional(TrimmedNonEmptyString),
   authLabel: Schema.optional(TrimmedNonEmptyString),
   voiceTranscriptionAvailable: Schema.optional(Schema.Boolean),
@@ -279,6 +283,7 @@ export const ServerLocalServerProcess = Schema.Struct({
   id: TrimmedNonEmptyString,
   pid: PositiveInt,
   ppid: Schema.optional(PositiveInt),
+  ancestorPids: Schema.optional(Schema.Array(PositiveInt)),
   command: TrimmedNonEmptyString,
   displayName: TrimmedNonEmptyString,
   pageTitle: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
@@ -348,8 +353,14 @@ export const ServerDiagnosticsResult = Schema.Struct({
 });
 export type ServerDiagnosticsResult = typeof ServerDiagnosticsResult.Type;
 
+export const VoiceTranscriptionMode = Schema.Literals(["automatic", "offline-only"]);
+export type VoiceTranscriptionMode = typeof VoiceTranscriptionMode.Type;
+
 export const ServerVoiceTranscriptionInput = Schema.Struct({
-  provider: ProviderKind,
+  // Kept optional during the provider-neutral migration so older clients and
+  // servers can interoperate. Voice routing no longer follows the text provider.
+  provider: Schema.optionalKey(ProviderKind),
+  mode: Schema.optionalKey(VoiceTranscriptionMode),
   cwd: TrimmedNonEmptyString,
   threadId: Schema.optional(ThreadId),
   mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
@@ -363,6 +374,9 @@ export type ServerVoiceTranscriptionInput = typeof ServerVoiceTranscriptionInput
 
 export const ServerVoiceTranscriptionResult = Schema.Struct({
   text: TrimmedNonEmptyString,
+  engine: Schema.optionalKey(Schema.Literals(["chatgpt", "local"])),
+  fallbackUsed: Schema.optionalKey(Schema.Boolean),
+  fallbackReason: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerVoiceTranscriptionResult = typeof ServerVoiceTranscriptionResult.Type;
 
@@ -594,6 +608,7 @@ export type ServerProviderInstallationResult = typeof ServerProviderInstallation
 export const ServerProviderConnectionStartInput = Schema.Struct({
   provider: ProviderKind,
   method: ServerProviderConnectionMethod,
+  mode: Schema.optional(Schema.Literals(["connect", "reauthenticate"])),
 });
 export type ServerProviderConnectionStartInput = typeof ServerProviderConnectionStartInput.Type;
 
@@ -602,6 +617,22 @@ export const ServerProviderConnectionCancelInput = Schema.Struct({
   operationId: TrimmedNonEmptyString,
 });
 export type ServerProviderConnectionCancelInput = typeof ServerProviderConnectionCancelInput.Type;
+
+export const ServerProviderConnectionAuthorizationCode = Schema.redact(
+  TrimmedNonEmptyString.check(
+    Schema.isMinLength(8),
+    Schema.isMaxLength(2_048),
+    Schema.isPattern(/^[A-Za-z0-9._~+/=-]+$/),
+  ),
+);
+
+export const ServerProviderConnectionSubmitAuthorizationCodeInput = Schema.Struct({
+  provider: ProviderKind,
+  operationId: TrimmedNonEmptyString,
+  authorizationCode: ServerProviderConnectionAuthorizationCode,
+});
+export type ServerProviderConnectionSubmitAuthorizationCodeInput =
+  typeof ServerProviderConnectionSubmitAuthorizationCodeInput.Type;
 
 export class ServerProviderConnectionError extends Schema.TaggedErrorClass<ServerProviderConnectionError>()(
   "ServerProviderConnectionError",
@@ -613,6 +644,9 @@ export class ServerProviderConnectionError extends Schema.TaggedErrorClass<Serve
       "invalid_method",
       "already_running",
       "operation_not_found",
+      "authorization_code_not_supported",
+      "authorization_code_already_submitted",
+      "authorization_code_not_accepted",
       "provider_disabled",
     ]),
     message: TrimmedNonEmptyString,

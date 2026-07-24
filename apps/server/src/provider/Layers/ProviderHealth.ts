@@ -9,6 +9,7 @@
  * @module ProviderHealthLive
  */
 import * as OS from "node:os";
+import * as NodePath from "node:path";
 import type {
   ProviderKind,
   ServerSettings,
@@ -19,7 +20,10 @@ import type {
   ServerProviderUpdateState,
 } from "@synara/contracts";
 import { ServerProviderUpdateError } from "@synara/contracts";
-import { parseCodexConfigModelProvider } from "@synara/shared/codexConfig";
+import {
+  codexModelProviderRequiresOpenAIAccount,
+  parseCodexConfigModelProvider,
+} from "@synara/shared/codexConfig";
 import { decodeJsonResult } from "@synara/shared/schemaJson";
 import { prepareWindowsSafeProcess } from "@synara/shared/windowsProcess";
 import {
@@ -70,6 +74,7 @@ import {
   type ClaudeAccountCapabilities,
 } from "../claudeCapabilities";
 import { buildClaudeProcessEnv } from "../claudeProcessEnv";
+import { MINIMUM_ANTIGRAVITY_CLI_VERSION } from "../antigravityReleaseChannel";
 import {
   detailFromResult,
   extractAuthBoolean,
@@ -89,6 +94,7 @@ import {
   writeProviderStatusCache,
 } from "../providerStatusCache";
 import { makeProviderMaintenanceCommandCoordinator } from "../providerMaintenanceCommandCoordinator";
+import { providerExternalUpdateBlockReason } from "../providerUpdateRuntimePolicy";
 import {
   enrichProviderStatusWithVersionAdvisory,
   compareSemverVersions,
@@ -99,12 +105,17 @@ import {
   type PackageManagedProviderMaintenanceDefinition,
 } from "../providerMaintenance";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText";
+import { ensurePrivateDirectorySync } from "../../privatePathPermissions";
 import { buildCodexProcessEnv } from "../../codexProcessEnv.ts";
 import { parseAntigravityModelLines } from "./AntigravityAdapter";
 import { parseGrokCliModelList } from "./GrokAdapter";
 
 export { parseClaudeAuthStatusFromOutput } from "../claudeAuthStatus";
 export type { CommandResult } from "../providerCliOutput";
+
+export function resolveProviderProbeCwd(stateDir: string): string {
+  return NodePath.join(stateDir, "provider-health-probe");
+}
 
 const DEFAULT_TIMEOUT_MS = 4_000;
 const CLAUDE_HEALTH_TIMEOUT_MS = 20_000;
@@ -120,8 +131,6 @@ const OPENCODE_PROVIDER = "opencode" as const;
 const PI_PROVIDER = "pi" as const;
 type ProviderStatuses = ReadonlyArray<ServerProviderStatus>;
 const DISABLED_PROVIDER_STATUS_MESSAGE = "Provider is disabled in Scient settings.";
-const MINIMUM_ANTIGRAVITY_CLI_VERSION = "1.0.12";
-
 const PROVIDERS = [
   CODEX_PROVIDER,
   CLAUDE_AGENT_PROVIDER,
@@ -536,15 +545,6 @@ export function parseAuthStatusFromOutput(result: CommandResult): {
 // ── Codex CLI config detection ──────────────────────────────────────
 
 /**
- * Providers that use OpenAI-native authentication via `codex login`.
- * When the configured `model_provider` is one of these, the `codex login
- * status` probe still runs. For any other provider value the auth probe
- * is skipped because authentication is handled externally (e.g. via
- * environment variables like `PORTKEY_API_KEY` or `AZURE_API_KEY`).
- */
-const OPENAI_AUTH_PROVIDERS = new Set(["openai"]);
-
-/**
  * Read the `model_provider` value from the Codex CLI config file.
  *
  * Looks for the file at `$CODEX_HOME/config.toml` (falls back to
@@ -552,7 +552,8 @@ const OPENAI_AUTH_PROVIDERS = new Set(["openai"]);
  * a full TOML parser to avoid adding a dependency for a single key.
  *
  * Returns `undefined` when the file does not exist or does not set
- * `model_provider`.
+ * `model_provider`. Other filesystem failures remain failures so callers cannot
+ * mistake an unreadable configuration for the default OpenAI provider.
  */
 export const readCodexConfigModelProvider = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -560,13 +561,10 @@ export const readCodexConfigModelProvider = Effect.gen(function* () {
   const codexHome = process.env.CODEX_HOME || path.join(OS.homedir(), ".codex");
   const configPath = path.join(codexHome, "config.toml");
 
-  const content = yield* fileSystem
-    .readFileString(configPath)
-    .pipe(Effect.orElseSucceed(() => undefined));
-  if (content === undefined) {
+  if (!(yield* fileSystem.exists(configPath))) {
     return undefined;
   }
-
+  const content = yield* fileSystem.readFileString(configPath);
   return parseCodexConfigModelProvider(content);
 });
 
@@ -578,7 +576,7 @@ export const readCodexConfigModelProvider = Effect.gen(function* () {
  */
 export const hasCustomModelProvider = Effect.map(
   readCodexConfigModelProvider,
-  (provider) => provider !== undefined && !OPENAI_AUTH_PROVIDERS.has(provider),
+  (provider) => !codexModelProviderRequiresOpenAIAccount(provider),
 );
 
 // ── Effect-native command execution ─────────────────────────────────
@@ -594,14 +592,19 @@ const runProviderCommand = (
   executable: string,
   args: ReadonlyArray<string>,
   env: NodeJS.ProcessEnv = process.env,
+  cwd?: string,
 ) =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const prepared = prepareWindowsSafeProcess(executable, args, { env });
+    const prepared = prepareWindowsSafeProcess(executable, args, {
+      env,
+      ...(cwd ? { cwd } : {}),
+    });
     const command = ChildProcess.make(prepared.command, prepared.args, {
       shell: prepared.shell,
       ...(prepared.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
       env,
+      ...(cwd ? { cwd } : {}),
       // Health probes are non-interactive. Leaving stdin as a pipe can keep CLIs
       // such as Antigravity waiting even after a read-only subcommand has finished.
       stdin: "ignore",
@@ -760,11 +763,16 @@ function cursorModelsOutputHasNoModels(output: string): boolean {
   return output.toLowerCase().includes("no models available");
 }
 
-const runAntigravityCommand = (args: ReadonlyArray<string>, executable = "agy") =>
-  runProviderCommand(executable, args, {
-    ...process.env,
-    AGY_CLI_DISABLE_AUTO_UPDATE: "true",
-  }).pipe(
+const runAntigravityCommand = (args: ReadonlyArray<string>, executable = "agy", cwd?: string) =>
+  runProviderCommand(
+    executable,
+    args,
+    {
+      ...process.env,
+      AGY_CLI_DISABLE_AUTO_UPDATE: "true",
+    },
+    cwd,
+  ).pipe(
     Effect.flatMap((result) =>
       isWindowsShellCommandMissingResult({ code: result.code, stderr: result.stderr })
         ? Effect.fail(new Error(`spawn ${executable} ENOENT`))
@@ -788,21 +796,12 @@ const readCodexConfigModelProviderForEnv = (env: NodeJS.ProcessEnv) =>
     const codexHome = env.CODEX_HOME?.trim() || path.join(OS.homedir(), ".codex");
     const configPath = path.join(codexHome, "config.toml");
 
-    const content = yield* fileSystem
-      .readFileString(configPath)
-      .pipe(Effect.orElseSucceed(() => undefined));
-    if (content === undefined) {
+    if (!(yield* fileSystem.exists(configPath))) {
       return undefined;
     }
-
+    const content = yield* fileSystem.readFileString(configPath);
     return parseCodexConfigModelProvider(content);
   });
-
-const hasCustomModelProviderForEnv = (env: NodeJS.ProcessEnv) =>
-  Effect.map(
-    readCodexConfigModelProviderForEnv(env),
-    (provider) => provider !== undefined && !OPENAI_AUTH_PROVIDERS.has(provider),
-  );
 
 export const makeCheckCodexProviderStatus = (
   binaryPath?: string,
@@ -815,7 +814,22 @@ export const makeCheckCodexProviderStatus = (
   Effect.gen(function* () {
     const checkedAt = new Date().toISOString();
     const executable = nonEmptyTrimmed(binaryPath) ?? "codex";
-    const probeEnv = yield* Effect.promise(() => makeCodexProbeEnv(homePath));
+    const probeEnvResult = yield* Effect.tryPromise({
+      try: () => makeCodexProbeEnv(homePath),
+      catch: (cause) => cause,
+    }).pipe(Effect.result);
+    if (Result.isFailure(probeEnvResult)) {
+      return {
+        provider: CODEX_PROVIDER,
+        status: "warning" as const,
+        available: false,
+        authStatus: "unknown" as const,
+        checkedAt,
+        message:
+          "Could not prepare the Codex provider environment because its configuration could not be read.",
+      } satisfies ServerProviderStatus;
+    }
+    const probeEnv = probeEnvResult.success;
 
     // Probe 1: `codex --version` — is the CLI reachable?
     const versionProbe = yield* runCodexCommand(["--version"], executable, probeEnv).pipe(
@@ -881,12 +895,29 @@ export const makeCheckCodexProviderStatus = (
     // authentication through their own environment variables, so `codex
     // login status` will report "not logged in" even when the CLI works
     // fine.  Skip the auth probe entirely for non-OpenAI providers.
-    if (yield* hasCustomModelProviderForEnv(probeEnv)) {
+    const accountRequirement = yield* readCodexConfigModelProviderForEnv(probeEnv).pipe(
+      Effect.map(codexModelProviderRequiresOpenAIAccount),
+      Effect.result,
+    );
+    if (Result.isFailure(accountRequirement)) {
+      return {
+        provider: CODEX_PROVIDER,
+        status: "warning" as const,
+        available: true,
+        authStatus: "unknown" as const,
+        version: parsedVersion,
+        checkedAt,
+        message:
+          "Could not determine whether this Codex provider uses an OpenAI account because config.toml could not be read.",
+      } satisfies ServerProviderStatus;
+    }
+    if (!accountRequirement.success) {
       return {
         provider: CODEX_PROVIDER,
         status: "ready" as const,
         available: true,
         authStatus: "unknown" as const,
+        requiresProviderAccount: false,
         version: parsedVersion,
         checkedAt,
         message: "Using a custom Codex model provider; OpenAI login check skipped.",
@@ -946,6 +977,7 @@ export const makeCheckCodexProviderStatus = (
       status: parsed.status,
       available: true,
       authStatus: parsed.authStatus,
+      requiresProviderAccount: true,
       version: parsedVersion,
       ...(codexAuthType ? { authType: codexAuthType } : {}),
       ...(codexLabel ? { authLabel: codexLabel } : {}),
@@ -1288,7 +1320,7 @@ const runDroidCommand = (args: ReadonlyArray<string>, executable = "droid") =>
 
 export const makeCheckDroidProviderStatus = (
   binaryPath?: string,
-  homeDir: string = OS.homedir(),
+  probeCwd: string = OS.homedir(),
   authenticationProbe: typeof verifyDroidAcpAuthentication = verifyDroidAcpAuthentication,
   modelProbe: (input: {
     readonly binaryPath: string;
@@ -1362,7 +1394,7 @@ export const makeCheckDroidProviderStatus = (
     const authentication = yield* authenticationProbe({
       binaryPath: executable,
       childProcessSpawner,
-      cwd: homeDir,
+      cwd: probeCwd,
     }).pipe(Effect.timeoutOption(CLAUDE_HEALTH_TIMEOUT_MS));
     const authStatus = Option.getOrElse(authentication, () => "unknown" as const);
     const modelReadiness =
@@ -1370,7 +1402,7 @@ export const makeCheckDroidProviderStatus = (
         ? yield* modelProbe({
             binaryPath: executable,
             childProcessSpawner,
-            cwd: homeDir,
+            cwd: probeCwd,
           }).pipe(Effect.timeoutOption(CLAUDE_HEALTH_TIMEOUT_MS))
         : Option.none<boolean>();
     const verified =
@@ -1572,11 +1604,12 @@ export function parseAntigravityModelsAuthStatus(result: CommandResult): ServerP
 
 export const checkAntigravityProviderStatus = (
   binaryPath?: string,
+  cwd?: string,
 ): Effect.Effect<ServerProviderStatus, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.gen(function* () {
     const checkedAt = new Date().toISOString();
     const executable = nonEmptyTrimmed(binaryPath) ?? "agy";
-    const versionProbe = yield* runAntigravityCommand(["--version"], executable).pipe(
+    const versionProbe = yield* runAntigravityCommand(["--version"], executable, cwd).pipe(
       Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
       Effect.result,
     );
@@ -1595,11 +1628,12 @@ export const checkAntigravityProviderStatus = (
     if (Option.isNone(versionProbe.success)) {
       return {
         provider: ANTIGRAVITY_PROVIDER,
-        status: "warning",
-        available: true,
+        status: "error",
+        available: false,
         authStatus: "unknown",
         checkedAt,
-        message: "Antigravity CLI version check timed out.",
+        message:
+          "Scient could not verify Antigravity CLI 1.1.4 or newer because the version check timed out.",
       } satisfies ServerProviderStatus;
     }
     const version = versionProbe.success.value;
@@ -1614,10 +1648,18 @@ export const checkAntigravityProviderStatus = (
       } satisfies ServerProviderStatus;
     }
     const parsedVersion = parseGenericCliVersion(`${version.stdout}\n${version.stderr}`);
-    if (
-      parsedVersion !== null &&
-      compareSemverVersions(parsedVersion, MINIMUM_ANTIGRAVITY_CLI_VERSION) < 0
-    ) {
+    if (parsedVersion === null) {
+      return {
+        provider: ANTIGRAVITY_PROVIDER,
+        status: "error",
+        available: false,
+        authStatus: "unknown",
+        checkedAt,
+        message:
+          "Scient could not verify Antigravity CLI 1.1.4 or newer from the version command output.",
+      } satisfies ServerProviderStatus;
+    }
+    if (compareSemverVersions(parsedVersion, MINIMUM_ANTIGRAVITY_CLI_VERSION) < 0) {
       return {
         provider: ANTIGRAVITY_PROVIDER,
         status: "error",
@@ -1628,7 +1670,7 @@ export const checkAntigravityProviderStatus = (
         message: `Antigravity CLI ${parsedVersion} is too old for Scient. Upgrade to ${MINIMUM_ANTIGRAVITY_CLI_VERSION} or newer.`,
       } satisfies ServerProviderStatus;
     }
-    const models = yield* runAntigravityCommand(["models"], executable).pipe(
+    const models = yield* runAntigravityCommand(["models"], executable, cwd).pipe(
       Effect.timeoutOption(CLAUDE_HEALTH_TIMEOUT_MS),
       Effect.result,
     );
@@ -1890,6 +1932,7 @@ export function providerStatusesEqual(
       status.status === next.status &&
       status.available === next.available &&
       status.authStatus === next.authStatus &&
+      status.requiresProviderAccount === next.requiresProviderAccount &&
       (status.authType ?? null) === (next.authType ?? null) &&
       (status.authLabel ?? null) === (next.authLabel ?? null) &&
       status.voiceTranscriptionAvailable === next.voiceTranscriptionAvailable &&
@@ -1937,10 +1980,23 @@ export function stabilizeProviderStatusesAgainstTransientTimeouts(
     }
 
     // A single slow CLI probe should not make an already usable provider look broken.
-    return {
+    const stabilized = {
       ...previous,
       checkedAt: status.checkedAt,
       ...(status.updateState !== undefined ? { updateState: status.updateState } : {}),
+    };
+    if (status.provider !== CODEX_PROVIDER) {
+      return stabilized;
+    }
+
+    // Never restore stale account ownership from the cache. Reauthentication is
+    // authorized only from the current config read, including false or unknown.
+    const { requiresProviderAccount: _staleOwnership, ...withoutStaleOwnership } = stabilized;
+    return {
+      ...withoutStaleOwnership,
+      ...(status.requiresProviderAccount !== undefined
+        ? { requiresProviderAccount: status.requiresProviderAccount }
+        : {}),
     };
   });
 }
@@ -2059,6 +2115,8 @@ export function makeProviderHealthLive(options?: {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
+      const providerHealthProbeCwd = resolveProviderProbeCwd(serverConfig.stateDir);
+      yield* Effect.sync(() => ensurePrivateDirectorySync(providerHealthProbeCwd));
       const changesPubSub = yield* Effect.acquireRelease(
         PubSub.unbounded<ReadonlyArray<ServerProviderStatus>>(),
         PubSub.shutdown,
@@ -2181,8 +2239,22 @@ export function makeProviderHealthLive(options?: {
               updateLockKey: null,
             });
           }
+          const configuredExecutable = getProviderBinaryPath(provider, settings);
+          const runtime = options?.resolveProviderRuntime
+            ? yield* options.resolveProviderRuntime(provider, configuredExecutable)
+            : null;
+          if (runtime && !runtime.executable) {
+            return makeProviderMaintenanceCapabilities({
+              provider,
+              packageName: definition.npmPackageName,
+              latestVersionSource: definition.latestVersionSource ?? null,
+              updateExecutable: null,
+              updateArgs: [],
+              updateLockKey: null,
+            });
+          }
           return yield* resolveProviderMaintenanceCapabilitiesEffect(definition, {
-            binaryPath: getProviderBinaryPath(provider, settings),
+            binaryPath: runtime?.executable ?? configuredExecutable,
             env: process.env,
             platform: process.platform,
           }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
@@ -2350,7 +2422,7 @@ export function makeProviderHealthLive(options?: {
                           probeClaudeAccountCapabilities({
                             executable,
                             env,
-                            cwd: serverConfig.cwd,
+                            cwd: providerHealthProbeCwd,
                           }),
                         ),
                         executable,
@@ -2370,7 +2442,11 @@ export function makeProviderHealthLive(options?: {
                   resolveProviderBinaryPath(
                     ANTIGRAVITY_PROVIDER,
                     settings.providers.antigravity.binaryPath,
-                  ).pipe(Effect.flatMap(checkAntigravityProviderStatus)),
+                  ).pipe(
+                    Effect.flatMap((binaryPath) =>
+                      checkAntigravityProviderStatus(binaryPath, serverConfig.stateDir),
+                    ),
+                  ),
                 ),
                 checkProviderWhenEnabled(
                   settings,
@@ -2387,7 +2463,7 @@ export function makeProviderHealthLive(options?: {
                     settings.providers.droid.binaryPath,
                   ).pipe(
                     Effect.flatMap((binaryPath) =>
-                      makeCheckDroidProviderStatus(binaryPath, serverConfig.homeDir),
+                      makeCheckDroidProviderStatus(binaryPath, providerHealthProbeCwd),
                     ),
                   ),
                 ),
@@ -2593,6 +2669,18 @@ export function makeProviderHealthLive(options?: {
             provider,
             reason: "Provider is disabled in Scient settings.",
           });
+        }
+        if (options?.resolveProviderRuntime) {
+          const runtime = yield* options
+            .resolveProviderRuntime(provider, getProviderBinaryPath(provider, settings))
+            .pipe(Effect.mapError(toUpdateError));
+          const blockReason = providerExternalUpdateBlockReason(provider, runtime);
+          if (blockReason) {
+            return yield* new ServerProviderUpdateError({
+              provider,
+              reason: blockReason,
+            });
+          }
         }
         const capabilities = yield* getProviderMaintenanceCapabilities(provider).pipe(
           Effect.mapError(toUpdateError),

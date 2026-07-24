@@ -4,7 +4,10 @@ import { Schema } from "effect";
 import {
   ServerProviderConnectionCancelInput,
   ServerProviderConnectionStartInput,
+  ServerProviderConnectionSubmitAuthorizationCodeInput,
   ServerProviderStatus,
+  ServerVoiceTranscriptionInput,
+  ServerVoiceTranscriptionResult,
 } from "./server";
 
 describe("provider connection contracts", () => {
@@ -13,6 +16,11 @@ describe("provider connection contracts", () => {
     expect(decode({ provider: "codex", method: "codex_browser" })).toEqual({
       provider: "codex",
       method: "codex_browser",
+    });
+    expect(decode({ provider: "codex", method: "codex_browser", mode: "reauthenticate" })).toEqual({
+      provider: "codex",
+      method: "codex_browser",
+      mode: "reauthenticate",
     });
     expect(decode({ provider: "claudeAgent", method: "claude_account" })).toEqual({
       provider: "claudeAgent",
@@ -40,11 +48,47 @@ describe("provider connection contracts", () => {
       }),
     ).toThrow();
     expect(() =>
+      Schema.decodeUnknownSync(ServerProviderConnectionStartInput)({
+        provider: "codex",
+        method: "codex_browser",
+        mode: "force",
+      }),
+    ).toThrow();
+    expect(() =>
       Schema.decodeUnknownSync(ServerProviderConnectionCancelInput)({
         provider: "codex",
         operationId: "   ",
       }),
     ).toThrow();
+  });
+
+  it("accepts a bounded one-time authorization code and rejects control characters", () => {
+    const decode = Schema.decodeUnknownSync(ServerProviderConnectionSubmitAuthorizationCodeInput);
+    expect(
+      decode({
+        provider: "antigravity",
+        operationId: "operation-1",
+        authorizationCode: "  4/test_code-123  ",
+      }),
+    ).toEqual({
+      provider: "antigravity",
+      operationId: "operation-1",
+      authorizationCode: "4/test_code-123",
+    });
+    const rejectedCode = "4/test-code\nsecond-line";
+    let diagnostic = "";
+    try {
+      decode({
+        provider: "antigravity",
+        operationId: "operation-1",
+        authorizationCode: rejectedCode,
+      });
+    } catch (error) {
+      diagnostic = String(error);
+    }
+    expect(diagnostic).not.toBe("");
+    expect(diagnostic).not.toContain(rejectedCode);
+    expect(diagnostic).not.toContain("test-code");
   });
 
   it("keeps connection progress optional for old provider snapshots", () => {
@@ -82,5 +126,29 @@ describe("provider connection contracts", () => {
     expect(decoded.connectionState?.authorizationUrl).toContain("https://auth.x.ai/");
     expect(Object.keys(decoded.connectionState ?? {})).not.toContain("token");
     expect(Object.keys(decoded.connectionState ?? {})).not.toContain("output");
+  });
+});
+
+describe("voice transcription contracts", () => {
+  it("accepts provider-neutral desktop requests and routed metadata", () => {
+    const request = Schema.decodeUnknownSync(ServerVoiceTranscriptionInput)({
+      cwd: "/workspace",
+      mode: "offline-only",
+      mimeType: "audio/wav",
+      sampleRateHz: 24_000,
+      durationMs: 1,
+      audioBase64: "AAAA",
+    });
+    expect(request.provider).toBeUndefined();
+    expect(request.mode).toBe("offline-only");
+
+    expect(
+      Schema.decodeUnknownSync(ServerVoiceTranscriptionResult)({
+        text: "hello",
+        engine: "local",
+        fallbackUsed: true,
+        fallbackReason: "network",
+      }),
+    ).toMatchObject({ engine: "local", fallbackUsed: true });
   });
 });

@@ -41,7 +41,14 @@ describe("ScientProjectInitializationService", () => {
       canApply: true,
       canRecover: false,
       canRollback: false,
-      skills: [],
+      skills: [
+        expect.objectContaining({
+          id: "scient.evidence-to-note",
+          selected: false,
+          defaultSelected: false,
+          readiness: "latent",
+        }),
+      ],
     });
 
     const projectOperation = preview.operations.find(
@@ -63,6 +70,50 @@ describe("ScientProjectInitializationService", () => {
       "tampered browser contents",
     );
     await expect(service.apply("preview-1")).rejects.toThrow("expired");
+  });
+
+  it("offers Evidence to Note as latent and records it only when explicitly selected", async () => {
+    const root = await makeProjectFolder();
+    const service = new ScientProjectInitializationService({
+      createPreviewId: () => "evidence-to-note-preview",
+    });
+
+    const preview = await service.preview({
+      root,
+      request: { title: "Evidence project", skillIds: ["scient.evidence-to-note"] },
+    });
+    const skill = preview.skills.find((candidate) => candidate.id === "scient.evidence-to-note");
+    if (!skill) throw new Error("Expected Evidence to Note in the initialization preview.");
+
+    expect(skill).toMatchObject({
+      displayName: "Evidence to Note",
+      selected: true,
+      defaultSelected: false,
+      readiness: "latent",
+      capabilities: {
+        network: false,
+        codeExecution: false,
+        projectWrites: "proposal-only",
+      },
+    });
+    expect(skill?.prerequisites).toContain("Project object: selected source evidence");
+    expect(skill?.prerequisites).toContain("Operation: propose evidence-linked note");
+
+    const result = await service.apply("evidence-to-note-preview");
+    expect(result.activatedSkills).toEqual([
+      {
+        id: "scient.evidence-to-note",
+        version: "0.1.0",
+        digest: skill.digest,
+        origin: "scient:builtin",
+      },
+    ]);
+    expect(JSON.parse(await readFile(path.join(root, ".scient/skills.lock.json"), "utf8"))).toEqual(
+      {
+        formatVersion: 1,
+        skills: result.activatedSkills,
+      },
+    );
   });
 
   it("previews and records only explicitly selected researcher-facing built-ins", async () => {

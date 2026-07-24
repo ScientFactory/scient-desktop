@@ -6,7 +6,6 @@ import {
   type OrchestrationShellStreamEvent,
   type OrchestrationThread,
   type ServerConfig,
-  type ServerProviderStatus,
 } from "@synara/contracts";
 import { defaultTerminalTitleForCliKind } from "@synara/shared/terminalThreads";
 import {
@@ -17,26 +16,24 @@ import {
   useParams,
   useRouterState,
 } from "@tanstack/react-router";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { APP_DISPLAY_NAME } from "../branding";
 import { DesktopWindowControls } from "../components/DesktopWindowControls";
 import { AppSnapCoordinator } from "../components/AppSnapCoordinator";
-import { AppSnapWelcomeDialog } from "../components/AppSnapWelcomeDialog";
 import { FeedbackDialog } from "../components/FeedbackDialog";
 import { ProviderConnectionDialog } from "../components/ProviderConnectionDialog";
 import { ConnectionRecoveryNotifications } from "../components/ConnectionRecoveryNotifications";
-import { SETTINGS_TARGETS } from "../settingsNavigation";
 import ShortcutsDialog from "../components/ShortcutsDialog";
 import WhatsNewDialog from "../components/WhatsNewDialog";
 import { useWhatsNew } from "../whatsNew/useWhatsNew";
 import { WhatsNewPopoutCard } from "../whatsNew/WhatsNewPopoutCard";
 import { shouldRenderTerminalWorkspace } from "../components/ChatView.logic";
 import { Button, dialogActionButtonClassName } from "../components/ui/button";
-import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
+import { AnchoredToastProvider, ToastProvider } from "../components/ui/toast";
+import { UndoSnackbarProvider } from "../components/ui/undoSnackbar";
 import { useGitProgressToastPreview } from "../components/useGitProgressToastPreview";
-import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { useFeatureFlags } from "../featureFlags";
 import { useFocusedChatContext } from "../focusedChatContext";
 import { useFeedbackDialogStore } from "../feedbackDialogStore";
@@ -48,7 +45,7 @@ import {
   serverSettingsQueryOptions,
 } from "../lib/serverReactQuery";
 import { applyProviderStatusesToCache } from "../lib/providerStatusCache";
-import { ensureNativeApi, readNativeApi } from "../nativeApi";
+import { readNativeApi } from "../nativeApi";
 import {
   finalizePromotedDraftThreads,
   markPromotedDraftThreads,
@@ -84,7 +81,6 @@ import { useNativeFontSmoothing } from "../hooks/useNativeFontSmoothing";
 import { invalidateGitQueries, invalidateGitQueriesForCwds } from "../lib/gitReactQuery";
 import { hasLiveThreadsWithMissingProjects } from "../lib/desktopProjectRecovery";
 import { useDiffRouteSearch } from "../hooks/useDiffRouteSearch";
-import { useProviderAuthRefreshOnFocus } from "../hooks/useProviderAuthRefreshOnFocus";
 import { useProviderStatusRefresh } from "../hooks/useProviderStatusRefresh";
 import { resolveSplitViewThreadIds, selectSplitView, useSplitViewStore } from "../splitViewStore";
 import { providerModelDiscoveryInvalidationFingerprint } from "../lib/providerDiscoveryInvalidation";
@@ -92,12 +88,11 @@ import { providerDiscoveryQueryKeys } from "../lib/providerDiscoveryReactQuery";
 import { useAppSettings } from "../appSettings";
 import {
   getVisibleProviderUpdateStatuses,
-  isProviderUpdateActive,
   providerUpdateNotificationKey,
   PROVIDER_UPDATE_INITIAL_REFRESH_DELAY_MS,
   PROVIDER_UPDATE_REFRESH_INTERVAL_MS,
-  withProviderUpdateTimeout,
 } from "../providerUpdates";
+import { activityManager } from "../notifications/activityStore";
 import {
   getGitInvalidationThreadIdForEvent,
   getProjectFileInvalidationThreadIdForEvent,
@@ -113,12 +108,7 @@ const PENDING_SHELL_EVENT_BUFFER_LIMIT = 1_024;
 const PENDING_THREAD_EVENT_BUFFER_LIMIT = 512;
 const IMMEDIATE_ASSISTANT_FLUSH_ID_LIMIT = 512;
 const DOMAIN_EVENT_FLUSH_DELAY_MS = 100;
-const seenProviderUpdateNotificationKeys = new Set<string>();
-
-type ProviderUpdateToastId = ReturnType<typeof toastManager.add>;
-type ActiveProviderUpdateToast =
-  | { readonly kind: "prompt"; readonly key: string; readonly toastId: ProviderUpdateToastId }
-  | { readonly kind: "update"; readonly key: string; readonly toastId: ProviderUpdateToastId };
+const PROVIDER_UPDATE_ACTIVITY_KEY = "provider:updates:available";
 
 function shellThreadHasStarted(thread: OrchestrationShellSnapshot["threads"][number]): boolean {
   return thread.latestTurn !== null || thread.session !== null;
@@ -196,23 +186,24 @@ function RootRouteView() {
 
   return (
     <>
-      <ToastProvider position="top-center">
-        <AnchoredToastProvider>
-          <GitProgressToastPreviewDev />
-          <EventRouter />
-          <ProviderStatusRefreshCoordinator />
-          <GlobalShortcutsDialog />
-          <GlobalFeedbackDialog />
-          <ProviderConnectionDialog />
-          <ConnectionRecoveryNotifications />
-          <GlobalWhatsNewSurface />
-          <TaskCompletionNotifications />
-          <AppSnapWelcomeDialog />
-          <AppSnapCoordinator />
-          <ProviderUpdateNotifications />
-          <DesktopProjectBootstrap />
-          <Outlet />
-        </AnchoredToastProvider>
+      <ToastProvider position="top-right">
+        <UndoSnackbarProvider>
+          <AnchoredToastProvider>
+            <GitProgressToastPreviewDev />
+            <EventRouter />
+            <ProviderStatusRefreshCoordinator />
+            <GlobalShortcutsDialog />
+            <GlobalFeedbackDialog />
+            <ProviderConnectionDialog />
+            <ConnectionRecoveryNotifications />
+            <GlobalWhatsNewSurface />
+            <TaskCompletionNotifications />
+            <AppSnapCoordinator />
+            <ProviderUpdateNotifications />
+            <DesktopProjectBootstrap />
+            <Outlet />
+          </AnchoredToastProvider>
+        </UndoSnackbarProvider>
       </ToastProvider>
       {desktopWindowControls}
     </>
@@ -232,9 +223,10 @@ function ProviderStatusRefreshCoordinator() {
   const providerUpdateChecksEnabled =
     serverSettingsQuery.data !== undefined && settings.enableProviderUpdateChecks;
 
-  useProviderAuthRefreshOnFocus();
   // Provider latest-version checks are slow/network-backed, so keep this cadence
-  // coarse while still honoring the automatic update-check setting.
+  // coarse while still honoring the automatic update-check setting. Provider
+  // auth is refreshed by explicit connection flows and server status events;
+  // returning to the app must not launch every provider CLI in the background.
   useProviderStatusRefresh({
     enabled: providerUpdateChecksEnabled,
     initialDelayMs: PROVIDER_UPDATE_INITIAL_REFRESH_DELAY_MS,
@@ -245,8 +237,6 @@ function ProviderStatusRefreshCoordinator() {
 }
 
 function ProviderUpdateNotifications() {
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const { settings } = useAppSettings();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
   const serverSettingsQuery = useQuery(serverSettingsQueryOptions());
@@ -260,10 +250,7 @@ function ProviderUpdateNotifications() {
         : null,
     [serverSettingsQuery.data, settings.enableProviderUpdateChecks],
   );
-  const [isUpdatingAll, setIsUpdatingAll] = useState(false);
-  const activeToastRef = useRef<ActiveProviderUpdateToast | null>(null);
-  const isUpdatingAllRef = useRef(false);
-  const progressToastDismissedRef = useRef(false);
+  const lastNotificationKeyRef = useRef<string | null>(null);
   const outdatedProviders = useMemo(
     () =>
       getVisibleProviderUpdateStatuses({
@@ -274,236 +261,46 @@ function ProviderUpdateNotifications() {
       }),
     [providerUpdateServerSettings, serverConfigQuery.data?.providers, settings.hiddenProviders],
   );
-  const oneClickProviders = useMemo(
-    () => outdatedProviders.filter((provider) => !isProviderUpdateActive(provider)),
-    [outdatedProviders],
-  );
   const notificationKey = useMemo(
     () => providerUpdateNotificationKey(outdatedProviders),
     [outdatedProviders],
   );
 
-  const updateAll = useCallback(
-    async (providers: ReadonlyArray<ServerProviderStatus>) => {
-      const activeNotificationKey = providerUpdateNotificationKey(providers);
-      if (isUpdatingAllRef.current || providers.length === 0 || !activeNotificationKey) {
-        return;
-      }
-
-      isUpdatingAllRef.current = true;
-      progressToastDismissedRef.current = false;
-      setIsUpdatingAll(true);
-      const trackedToast = activeToastRef.current;
-      const toastId =
-        trackedToast?.toastId ??
-        toastManager.add({
-          type: "loading",
-          title: "Updating providers...",
-          description:
-            providers.length === 1
-              ? `Updating ${PROVIDER_DISPLAY_NAMES[providers[0]!.provider]}.`
-              : `Updating ${providers.length} providers.`,
-          timeout: 0,
-        });
-      activeToastRef.current = { kind: "update", key: activeNotificationKey, toastId };
-      const dismissProgressToast = () => {
-        progressToastDismissedRef.current = true;
-        if (activeToastRef.current?.toastId === toastId) {
-          activeToastRef.current = null;
-        }
-        toastManager.close(toastId);
-      };
-
-      toastManager.update(toastId, {
-        type: "loading",
-        title: "Updating providers...",
-        description:
-          providers.length === 1
-            ? `Updating ${PROVIDER_DISPLAY_NAMES[providers[0]!.provider]}.`
-            : `Updating ${providers.length} providers.`,
-        actionProps: undefined,
-        data: { onClose: dismissProgressToast },
-        timeout: 0,
-      });
-
-      const failures: Array<{ provider: ServerProviderStatus; reason: string }> = [];
-
-      try {
-        const api = ensureNativeApi();
-        for (const provider of providers) {
-          try {
-            const result = await withProviderUpdateTimeout({
-              provider: provider.provider,
-              request: api.server.updateProvider({ provider: provider.provider }),
-            });
-            const refreshed = result.providers.find(
-              (entry) => entry.provider === provider.provider,
-            );
-            const updateState = refreshed?.updateState;
-            if (updateState?.status === "failed" || updateState?.status === "unchanged") {
-              failures.push({
-                provider,
-                reason: updateState.message ?? "The update command did not complete successfully.",
-              });
-            } else if (refreshed?.versionAdvisory?.status === "behind_latest") {
-              failures.push({
-                provider,
-                reason: "The provider still appears outdated after updating.",
-              });
-            }
-          } catch (error) {
-            failures.push({
-              provider,
-              reason: error instanceof Error ? error.message : "The update request failed.",
-            });
-          }
-        }
-      } catch (error) {
-        for (const provider of providers) {
-          failures.push({
-            provider,
-            reason:
-              error instanceof Error
-                ? error.message
-                : "The provider update request could not start.",
-          });
-        }
-      } finally {
-        // Refresh is best-effort UI sync; it must not keep the progress toast alive.
-        await queryClient
-          .invalidateQueries({ queryKey: serverQueryKeys.config() })
-          .catch(() => undefined);
-        isUpdatingAllRef.current = false;
-        setIsUpdatingAll(false);
-      }
-
-      if (progressToastDismissedRef.current || activeToastRef.current?.toastId !== toastId) {
-        return;
-      }
-
-      if (failures.length > 0) {
-        activeToastRef.current = null;
-        // Surface the exact manual commands so a user whose one-click update
-        // failed (EACCES on global npm, PATH/package-manager mismatch, etc.) can
-        // copy and run them in a terminal instead of being stuck.
-        const manualCommands = Array.from(
-          new Set(
-            failures
-              .map(({ provider }) => provider.versionAdvisory?.updateCommand)
-              .filter(
-                (command): command is string =>
-                  typeof command === "string" && command.trim().length > 0,
-              ),
-          ),
-        );
-        const failureLines = failures
-          .map(({ provider, reason }) => `${PROVIDER_DISPLAY_NAMES[provider.provider]}: ${reason}`)
-          .join("\n");
-        toastManager.update(toastId, {
-          type: "error",
-          title:
-            failures.length === providers.length
-              ? "Provider updates failed"
-              : "Some provider updates failed",
-          description:
-            manualCommands.length > 0
-              ? `${failureLines}\n\nCopy the command${manualCommands.length === 1 ? "" : "s"} below to update manually in a terminal.`
-              : failureLines,
-          data: {
-            onClose: dismissProgressToast,
-            ...(manualCommands.length > 0 ? { copyText: manualCommands.join("\n") } : {}),
-          },
-          timeout: 0,
-        });
-        return;
-      }
-
-      activeToastRef.current = null;
-      toastManager.update(toastId, {
-        type: "success",
-        title:
-          providers.length === 1
-            ? `${PROVIDER_DISPLAY_NAMES[providers[0]!.provider]} updated`
-            : `${providers.length} providers updated`,
-        description: "New sessions will use the refreshed provider tools.",
-        data: { onClose: dismissProgressToast },
-        timeout: 6000,
-      });
-    },
-    [queryClient],
-  );
-
   useEffect(() => {
-    const activeToast = activeToastRef.current;
-    if (activeToast?.kind === "prompt" && activeToast.key !== notificationKey) {
-      toastManager.close(activeToast.toastId);
-      activeToastRef.current = null;
-    }
-
-    if (
-      outdatedProviders.length === 0 ||
-      oneClickProviders.length === 0 ||
-      !notificationKey ||
-      isUpdatingAll ||
-      activeToastRef.current ||
-      seenProviderUpdateNotificationKeys.has(notificationKey)
-    ) {
+    if (serverConfigQuery.data === undefined || serverSettingsQuery.data === undefined) {
       return;
     }
+    if (!notificationKey || outdatedProviders.length === 0) {
+      activityManager.remove(PROVIDER_UPDATE_ACTIVITY_KEY);
+      lastNotificationKeyRef.current = null;
+      return;
+    }
+    if (lastNotificationKeyRef.current === notificationKey) return;
+    lastNotificationKeyRef.current = notificationKey;
 
-    // Key the prompt by the complete provider/version set so a partial refresh
-    // cannot stack a second "Update all" prompt on top of the first one.
-    seenProviderUpdateNotificationKeys.add(notificationKey);
-
-    const firstProvider = outdatedProviders[0]!;
-    const additionalCount = outdatedProviders.length - 1;
-    const providerName = PROVIDER_DISPLAY_NAMES[firstProvider.provider];
-    const title =
-      outdatedProviders.length === 1
-        ? `${providerName} update available`
-        : `${outdatedProviders.length} provider updates available`;
-    const description =
-      outdatedProviders.length === 1
-        ? `${providerName} has a newer version available.`
-        : `${providerName} and ${additionalCount} more provider${additionalCount === 1 ? "" : "s"} have newer versions available.`;
-
-    let toastId!: ProviderUpdateToastId;
-    const closeTrackedPrompt = () => {
-      if (activeToastRef.current?.toastId === toastId) {
-        activeToastRef.current = null;
-      }
-      toastManager.close(toastId);
-    };
-    toastId = toastManager.add({
-      type: "warning",
-      title,
-      description,
-      timeout: 0,
-      actionProps: {
-        children: "Review updates",
-        onClick: () => {
-          if (activeToastRef.current?.toastId === toastId) {
-            toastManager.close(toastId);
-            activeToastRef.current = null;
-          }
-          void navigate({
-            to: "/settings",
-            search: { section: "providers", target: SETTINGS_TARGETS.providerUpdates },
-          });
-        },
-      },
-      data: {
-        onClose: closeTrackedPrompt,
-        secondaryActionProps: {
-          children: "Update all",
-          onClick: () => {
-            void updateAll(oneClickProviders);
-          },
-        },
+    const providerNames = outdatedProviders.map(
+      (provider) => PROVIDER_DISPLAY_NAMES[provider.provider],
+    );
+    activityManager.publish({
+      dedupeKey: PROVIDER_UPDATE_ACTIVITY_KEY,
+      source: "provider",
+      status: "needs_attention",
+      tone: "warning",
+      title:
+        providerNames.length === 1
+          ? `${providerNames[0]} update available`
+          : `${providerNames.length} provider updates available`,
+      description:
+        providerNames.length === 1
+          ? `${providerNames[0]} has a newer version available.`
+          : `${providerNames.slice(0, -1).join(", ")} and ${providerNames.at(-1)} have newer versions available.`,
+      destination: {
+        type: "settings",
+        section: "providers",
+        target: "provider-updates",
       },
     });
-    activeToastRef.current = { kind: "prompt", key: notificationKey, toastId };
-  }, [isUpdatingAll, navigate, notificationKey, oneClickProviders, outdatedProviders, updateAll]);
+  }, [notificationKey, outdatedProviders, serverConfigQuery.data, serverSettingsQuery.data]);
 
   return null;
 }
@@ -869,6 +666,7 @@ function EventRouter() {
   const workspacePagesRef = useRef(workspacePages);
   const pathnameRef = useRef(pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
+  const keybindingActivityKeyRef = useRef<string | null>(null);
   const routeVisibleThreadIdsRef = useRef(visibleThreadIds);
   const visibleThreadIdsRef = useRef(subscribedThreadIds);
   const reconcileThreadSubscriptionsRef = useRef<
@@ -1401,44 +1199,34 @@ function EventRouter() {
         handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
       })().catch(() => undefined);
     });
-    // onServerConfigUpdated replays the latest cached value synchronously
-    // during subscribe. Skip the toast for that replay so effect re-runs
-    // don't produce duplicate toasts.
-    let subscribed = false;
+    // onServerConfigUpdated replays the latest cached value synchronously.
+    // Activity is deduplicated, so the replay safely refreshes the same health item.
     const unsubServerConfigUpdated = onServerConfigUpdated((payload) => {
       void queryClient.invalidateQueries({ queryKey: serverQueryKeys.config() });
-      if (!subscribed) return;
       const issue = payload.issues.find((entry) => entry.kind.startsWith("keybindings."));
       if (!issue) {
+        if (keybindingActivityKeyRef.current) {
+          activityManager.remove(keybindingActivityKeyRef.current);
+          keybindingActivityKeyRef.current = null;
+        }
         return;
       }
 
-      toastManager.add({
-        type: "warning",
+      const issueKey = `system:keybindings-invalid:${issue.kind}:${issue.message}`;
+      if (keybindingActivityKeyRef.current && keybindingActivityKeyRef.current !== issueKey) {
+        activityManager.remove(keybindingActivityKeyRef.current);
+      }
+      keybindingActivityKeyRef.current = issueKey;
+
+      activityManager.publish({
+        dedupeKey: issueKey,
+        source: "system",
+        status: "needs_attention",
+        tone: "warning",
         title: "Invalid keybindings configuration",
         description: issue.message,
-        actionProps: {
-          children: "Open keybindings.json",
-          onClick: () => {
-            void queryClient
-              .ensureQueryData(serverConfigQueryOptions())
-              .then((config) => {
-                const editor = resolveAndPersistPreferredEditor(config.availableEditors);
-                if (!editor) {
-                  throw new Error("No available editors found.");
-                }
-                return api.shell.openInEditor(config.keybindingsConfigPath, editor);
-              })
-              .catch((error) => {
-                toastManager.add({
-                  type: "error",
-                  title: "Unable to open keybindings file",
-                  description:
-                    error instanceof Error ? error.message : "Unknown error opening file.",
-                });
-              });
-          },
-        },
+        destination: { type: "settings", section: "shortcuts" },
+        preserveRead: true,
       });
     });
     const unsubProviderStatusesUpdated = onServerProviderStatusesUpdated((payload) => {
@@ -1487,7 +1275,6 @@ function EventRouter() {
         queryKey: serverSettingsQueryOptions().queryKey,
       });
     });
-    subscribed = true;
     // Start scoped streams once for this mounted router. The welcome listener can
     // replay a cached value and then receive another lifecycle welcome, so the
     // idempotent guard above prevents either path from restarting a live thread

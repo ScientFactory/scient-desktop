@@ -54,6 +54,7 @@ function installNativeApi(overrides: {
   refreshProviders?: ReturnType<typeof vi.fn>;
   startProviderConnection?: ReturnType<typeof vi.fn>;
   cancelProviderConnection?: ReturnType<typeof vi.fn>;
+  submitProviderConnectionAuthorizationCode?: ReturnType<typeof vi.fn>;
   prepareProviderInstall?: ReturnType<typeof vi.fn>;
   installProvider?: ReturnType<typeof vi.fn>;
   openExternal?: ReturnType<typeof vi.fn>;
@@ -74,6 +75,12 @@ function installNativeApi(overrides: {
           : {}),
         ...(overrides.cancelProviderConnection
           ? { cancelProviderConnection: overrides.cancelProviderConnection }
+          : {}),
+        ...(overrides.submitProviderConnectionAuthorizationCode
+          ? {
+              submitProviderConnectionAuthorizationCode:
+                overrides.submitProviderConnectionAuthorizationCode,
+            }
           : {}),
         ...(overrides.prepareProviderInstall
           ? { prepareProviderInstall: overrides.prepareProviderInstall }
@@ -98,6 +105,7 @@ function installNativeApi(overrides: {
 describe("ProviderConnectionDialog", () => {
   afterEach(() => {
     useProviderConnectionDialogStore.getState().setOpen(false);
+    document.documentElement.style.removeProperty("--app-font-size-ui");
     document.body.innerHTML = "";
     vi.restoreAllMocks();
   });
@@ -155,8 +163,312 @@ describe("ProviderConnectionDialog", () => {
       await expect
         .element(page.getByText("Finish signing in in the browser window."))
         .toBeVisible();
-      await expect.element(page.getByRole("button", { name: "Cancel sign in" })).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "Cancel sign-in" })).toBeVisible();
       await expect.element(page.getByText(/sign in continues in the background/u)).toBeVisible();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("keeps every active sign-in action inside the dialog at the largest UI text size", async () => {
+    document.documentElement.style.setProperty("--app-font-size-ui", "18px");
+    const activeProvider = {
+      provider: "codex",
+      status: "warning",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+      runtime: systemRuntime,
+      connectionState: {
+        operationId: "connect-codex-large-text",
+        method: "codex_browser",
+        status: "waiting_for_browser",
+        startedAt: checkedAt,
+        finishedAt: null,
+        message: "Finish signing in in the browser window.",
+      },
+    } satisfies ServerProviderStatus;
+    const restoreNativeApi = installNativeApi({});
+    const queryClient = createQueryClient(activeProvider);
+    useProviderConnectionDialogStore.getState().openDialog("codex", "settings");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await vi.waitFor(() => {
+        const popup = document.querySelector<HTMLElement>('[data-slot="dialog-popup"]');
+        const buttons = Array.from(
+          popup?.querySelectorAll<HTMLButtonElement>('[data-slot="button"]') ?? [],
+        ).filter((button) => button.getAttribute("aria-label") !== "Close");
+
+        expect(popup, "Expected the provider dialog popup.").toBeTruthy();
+        expect(buttons).toHaveLength(3);
+
+        const popupRect = popup!.getBoundingClientRect();
+        for (const button of buttons) {
+          const buttonRect = button.getBoundingClientRect();
+          expect(buttonRect.left).toBeGreaterThanOrEqual(popupRect.left);
+          expect(buttonRect.right).toBeLessThanOrEqual(popupRect.right);
+        }
+      });
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("forces a fresh Codex login after a classified runtime auth failure", async () => {
+    const authenticatedProvider = {
+      provider: "codex",
+      status: "ready",
+      available: true,
+      authStatus: "authenticated",
+      requiresProviderAccount: true,
+      checkedAt,
+      runtime: systemRuntime,
+    } satisfies ServerProviderStatus;
+    const waitingProvider = {
+      ...authenticatedProvider,
+      status: "warning",
+      authStatus: "unauthenticated",
+      connectionState: {
+        operationId: "reconnect-codex-1",
+        method: "codex_browser",
+        status: "waiting_for_browser",
+        startedAt: checkedAt,
+        finishedAt: null,
+        message: "Finish reconnecting Codex in the browser window.",
+      },
+    } satisfies ServerProviderStatus;
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [authenticatedProvider] });
+    const startProviderConnection = vi.fn().mockResolvedValue({ providers: [waitingProvider] });
+    const restoreNativeApi = installNativeApi({ refreshProviders, startProviderConnection });
+    const queryClient = createQueryClient(authenticatedProvider);
+    useProviderConnectionDialogStore.getState().openDialog("codex", "runtime_authentication_error");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await expect.element(page.getByRole("button", { name: "Reconnect Codex" })).toBeVisible();
+      await page.getByRole("button", { name: "Reconnect Codex" }).click();
+      await vi.waitFor(() => {
+        expect(startProviderConnection).toHaveBeenCalledWith({
+          provider: "codex",
+          method: "codex_browser",
+          mode: "reauthenticate",
+        });
+      });
+      await expect
+        .element(page.getByText("Finish reconnecting Codex in the browser window."))
+        .toBeVisible();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("does not mistake a stale connected operation for completion of the new recovery attempt", async () => {
+    const staleConnectedProvider = {
+      provider: "codex",
+      status: "ready",
+      available: true,
+      authStatus: "authenticated",
+      requiresProviderAccount: true,
+      checkedAt,
+      runtime: systemRuntime,
+      connectionState: {
+        operationId: "stale-connected-operation",
+        method: "codex_browser",
+        status: "connected",
+        startedAt: checkedAt,
+        finishedAt: checkedAt,
+        message: "An older sign-in completed.",
+      },
+    } satisfies ServerProviderStatus;
+    const newlyConnectedProvider = {
+      ...staleConnectedProvider,
+      connectionState: {
+        ...staleConnectedProvider.connectionState,
+        operationId: "new-connected-operation",
+        message: "The new sign-in completed.",
+      },
+    } satisfies ServerProviderStatus;
+    let resolveStartProviderConnection:
+      | ((value: { providers: ServerProviderStatus[] }) => void)
+      | undefined;
+    const startProviderConnection = vi.fn(
+      () =>
+        new Promise<{ providers: ServerProviderStatus[] }>((resolve) => {
+          resolveStartProviderConnection = resolve;
+        }),
+    );
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [staleConnectedProvider] });
+    const restoreNativeApi = installNativeApi({ refreshProviders, startProviderConnection });
+    const queryClient = createQueryClient(staleConnectedProvider);
+    useProviderConnectionDialogStore.getState().openDialog("codex", "runtime_authentication_error");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await page.getByRole("button", { name: "Reconnect Codex" }).click();
+      await vi.waitFor(() => expect(startProviderConnection).toHaveBeenCalledTimes(1));
+      await expect.element(page.getByRole("button", { name: "Done" })).not.toBeInTheDocument();
+
+      resolveStartProviderConnection?.({ providers: [newlyConnectedProvider] });
+      await expect.element(page.getByRole("button", { name: "Done" })).toBeVisible();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it.each(["failed", "cancelled"] as const)(
+    "keeps a %s recovery attempt retryable and forced despite stale authenticated health",
+    async (operationStatus) => {
+      const terminalProvider = {
+        provider: "codex",
+        status: "ready",
+        available: true,
+        authStatus: "authenticated",
+        requiresProviderAccount: true,
+        checkedAt,
+        runtime: systemRuntime,
+        connectionState: {
+          operationId: `reconnect-codex-${operationStatus}`,
+          method: "codex_browser",
+          status: operationStatus,
+          startedAt: checkedAt,
+          finishedAt: checkedAt,
+          message: `Codex reconnect ${operationStatus}.`,
+        },
+      } satisfies ServerProviderStatus;
+      const waitingProvider = {
+        ...terminalProvider,
+        status: "warning",
+        authStatus: "unauthenticated",
+        connectionState: {
+          ...terminalProvider.connectionState,
+          operationId: `reconnect-codex-${operationStatus}-retry`,
+          status: "waiting_for_browser",
+          finishedAt: null,
+          message: "Finish reconnecting Codex in the browser window.",
+        },
+      } satisfies ServerProviderStatus;
+      const refreshProviders = vi.fn().mockResolvedValue({ providers: [terminalProvider] });
+      const startProviderConnection = vi.fn().mockResolvedValue({ providers: [waitingProvider] });
+      const restoreNativeApi = installNativeApi({ refreshProviders, startProviderConnection });
+      const queryClient = createQueryClient(terminalProvider);
+      useProviderConnectionDialogStore
+        .getState()
+        .openDialog("codex", "runtime_authentication_error");
+
+      const screen = await render(
+        <QueryClientProvider client={queryClient}>
+          <ProviderConnectionDialog />
+        </QueryClientProvider>,
+      );
+
+      try {
+        await expect.element(page.getByRole("button", { name: "Try again" })).toBeVisible();
+        await expect.element(page.getByRole("button", { name: "Done" })).not.toBeInTheDocument();
+        await page.getByRole("button", { name: "Try again" }).click();
+        await vi.waitFor(() =>
+          expect(startProviderConnection).toHaveBeenCalledWith({
+            provider: "codex",
+            method: "codex_browser",
+            mode: "reauthenticate",
+          }),
+        );
+      } finally {
+        await screen.unmount();
+        queryClient.clear();
+        restoreNativeApi();
+      }
+    },
+  );
+
+  it("keeps restart inside an active recovery attempt in forced reauthentication mode", async () => {
+    const activeProvider = {
+      provider: "codex",
+      status: "warning",
+      available: true,
+      authStatus: "authenticated",
+      requiresProviderAccount: true,
+      checkedAt,
+      runtime: systemRuntime,
+      connectionState: {
+        operationId: "reconnect-codex-active",
+        method: "codex_browser",
+        status: "waiting_for_browser",
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        message: "Finish reconnecting Codex.",
+      },
+    } satisfies ServerProviderStatus;
+    const cancelledProvider = {
+      ...activeProvider,
+      connectionState: {
+        ...activeProvider.connectionState,
+        status: "cancelled",
+        finishedAt: new Date().toISOString(),
+        message: "Codex reconnect cancelled.",
+      },
+    } satisfies ServerProviderStatus;
+    const restartedProvider = {
+      ...activeProvider,
+      connectionState: {
+        ...activeProvider.connectionState,
+        operationId: "reconnect-codex-restarted",
+      },
+    } satisfies ServerProviderStatus;
+    const cancelProviderConnection = vi.fn().mockResolvedValue({ providers: [cancelledProvider] });
+    const startProviderConnection = vi.fn().mockResolvedValue({ providers: [restartedProvider] });
+    const restoreNativeApi = installNativeApi({
+      cancelProviderConnection,
+      startProviderConnection,
+    });
+    const queryClient = createQueryClient(activeProvider);
+    useProviderConnectionDialogStore.getState().openDialog("codex", "runtime_authentication_error");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await page.getByRole("button", { name: "Restart sign in" }).click();
+      await vi.waitFor(() => {
+        expect(cancelProviderConnection).toHaveBeenCalledWith({
+          provider: "codex",
+          operationId: "reconnect-codex-active",
+        });
+        expect(startProviderConnection).toHaveBeenCalledWith({
+          provider: "codex",
+          method: "codex_browser",
+          mode: "reauthenticate",
+        });
+      });
+      expect(cancelProviderConnection.mock.invocationCallOrder[0]).toBeLessThan(
+        startProviderConnection.mock.invocationCallOrder[0]!,
+      );
     } finally {
       await screen.unmount();
       queryClient.clear();
@@ -431,7 +743,7 @@ describe("ProviderConnectionDialog", () => {
     );
 
     try {
-      await expect.element(page.getByRole("button", { name: "Cancel sign in" })).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "Cancel sign-in" })).toBeVisible();
       await expect.element(page.getByRole("button", { name: "Restart sign in" })).toBeVisible();
       await expect.element(page.getByText(/Automatic timeout in/u)).toBeVisible();
       await page.getByRole("button", { name: "Restart sign in" }).click();
@@ -474,9 +786,27 @@ describe("ProviderConnectionDialog", () => {
         message: "Finish signing in to Grok.",
         authorizationUrl,
       },
+      installationState: {
+        operationId: "install-grok-finished",
+        operation: "install",
+        status: "installed",
+        startedAt: checkedAt,
+        finishedAt: checkedAt,
+        message: "Grok is installed and verified.",
+      },
     } satisfies ServerProviderStatus;
     const openExternal = vi.fn().mockResolvedValue(undefined);
-    const restoreNativeApi = installNativeApi({ openExternal });
+    const cancelled = {
+      ...active,
+      connectionState: {
+        ...active.connectionState,
+        status: "cancelled",
+        finishedAt: checkedAt,
+        message: "Sign in was cancelled.",
+      },
+    } satisfies ServerProviderStatus;
+    const cancelProviderConnection = vi.fn().mockResolvedValue({ providers: [cancelled] });
+    const restoreNativeApi = installNativeApi({ openExternal, cancelProviderConnection });
     const queryClient = createQueryClient(active);
     useProviderConnectionDialogStore.getState().openDialog("grok", "provider_picker");
 
@@ -487,14 +817,209 @@ describe("ProviderConnectionDialog", () => {
     );
 
     try {
-      await page.getByRole("button", { name: "Open xAI sign-in again" }).click();
+      const progressActions = page.getByRole("group", { name: "Sign-in progress actions" });
+      await progressActions.getByRole("button", { name: "Open browser again" }).click();
       await vi.waitFor(() => expect(openExternal).toHaveBeenCalledWith(authorizationUrl));
+      await expect
+        .element(page.getByPlaceholder("Paste authorization code"))
+        .not.toBeInTheDocument();
+      await expect
+        .element(page.getByRole("button", { name: "Cancel installation" }))
+        .not.toBeInTheDocument();
+      await page.getByRole("button", { name: "Cancel sign-in" }).click();
+      await vi.waitFor(() =>
+        expect(cancelProviderConnection).toHaveBeenCalledWith({
+          provider: "grok",
+          operationId: "connect-grok-active",
+        }),
+      );
     } finally {
       await screen.unmount();
       queryClient.clear();
       restoreNativeApi();
     }
   });
+
+  it("reopens the validated Google authorization page without terminal use", async () => {
+    const authorizationUrl =
+      "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&client_id=test-client&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
+    const active = {
+      provider: "antigravity",
+      status: "error",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+      runtime: systemRuntime,
+      connectionState: {
+        operationId: "connect-antigravity-active",
+        method: "antigravity_browser",
+        status: "waiting_for_browser",
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        message: "Finish signing in to Google.",
+        authorizationUrl,
+      },
+    } satisfies ServerProviderStatus;
+    const openExternal = vi.fn().mockResolvedValue(undefined);
+    const restoreNativeApi = installNativeApi({ openExternal });
+    const queryClient = createQueryClient(active);
+    useProviderConnectionDialogStore.getState().openDialog("antigravity", "provider_picker");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await page.getByRole("button", { name: "Open browser again" }).click();
+      await vi.waitFor(() => expect(openExternal).toHaveBeenCalledWith(authorizationUrl));
+      await expect.element(page.getByText(/Automatic timeout in (?:10:00|9:5\d)/u)).toBeVisible();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("stops showing the OAuth countdown while Antigravity verifies the account", async () => {
+    const verifying = {
+      provider: "antigravity",
+      status: "error",
+      available: true,
+      authStatus: "unauthenticated",
+      checkedAt,
+      runtime: systemRuntime,
+      connectionState: {
+        operationId: "connect-antigravity-verifying",
+        method: "antigravity_browser",
+        status: "verifying",
+        startedAt: new Date().toISOString(),
+        finishedAt: null,
+        message: "Verifying the connection.",
+      },
+    } satisfies ServerProviderStatus;
+    const restoreNativeApi = installNativeApi({});
+    const queryClient = createQueryClient(verifying);
+    useProviderConnectionDialogStore.getState().openDialog("antigravity", "provider_picker");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await expect.element(page.getByText("Verifying the connection.")).toBeVisible();
+      await expect.element(page.getByText(/Automatic timeout in/u)).not.toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it.each(["resolve", "reject"] as const)(
+    "clears Google's one-time code immediately and ignores a late %s after cancellation",
+    async (lateSettlement) => {
+      const active = {
+        provider: "antigravity",
+        status: "error",
+        available: true,
+        authStatus: "unauthenticated",
+        checkedAt,
+        runtime: systemRuntime,
+        connectionState: {
+          operationId: "connect-antigravity-code",
+          method: "antigravity_browser",
+          status: "waiting_for_browser",
+          startedAt: new Date().toISOString(),
+          finishedAt: null,
+          message: "Finish signing in to Google, then paste the code here.",
+        },
+      } satisfies ServerProviderStatus;
+      const cancelled = {
+        ...active,
+        connectionState: {
+          ...active.connectionState,
+          status: "cancelled",
+          finishedAt: new Date().toISOString(),
+          message: "Sign in was cancelled.",
+        },
+      } satisfies ServerProviderStatus;
+      let resolveSubmission!: (result: { providers: ServerProviderStatus[] }) => void;
+      let rejectSubmission!: (error: Error) => void;
+      const pendingSubmission = new Promise<{ providers: ServerProviderStatus[] }>(
+        (resolve, reject) => {
+          resolveSubmission = resolve;
+          rejectSubmission = reject;
+        },
+      );
+      const submitProviderConnectionAuthorizationCode = vi.fn().mockReturnValue(pendingSubmission);
+      const cancelProviderConnection = vi.fn().mockResolvedValue({ providers: [cancelled] });
+      const restoreNativeApi = installNativeApi({
+        submitProviderConnectionAuthorizationCode,
+        cancelProviderConnection,
+      });
+      const queryClient = createQueryClient(active);
+      useProviderConnectionDialogStore.getState().openDialog("antigravity", "provider_picker");
+
+      const screen = await render(
+        <QueryClientProvider client={queryClient}>
+          <ProviderConnectionDialog />
+        </QueryClientProvider>,
+      );
+
+      try {
+        const submitButton = page.getByRole("button", { name: "Submit code" });
+        await expect.element(submitButton).toBeDisabled();
+        await page.getByPlaceholder("Paste authorization code").fill("4/test-code-123");
+        await submitButton.click();
+        await vi.waitFor(() =>
+          expect(submitProviderConnectionAuthorizationCode).toHaveBeenCalledWith({
+            provider: "antigravity",
+            operationId: "connect-antigravity-code",
+            authorizationCode: "4/test-code-123",
+          }),
+        );
+        await expect.element(page.getByText("Code submitted. Finishing sign in.")).toBeVisible();
+        await expect
+          .element(page.getByPlaceholder("Paste authorization code"))
+          .not.toBeInTheDocument();
+        const cancelButton = page.getByRole("button", { name: "Cancel sign-in" });
+        const restartButton = page.getByRole("button", { name: "Restart sign in" });
+        await expect.element(cancelButton).not.toBeDisabled();
+        await expect.element(restartButton).not.toBeDisabled();
+        expect(submitProviderConnectionAuthorizationCode).toHaveBeenCalledTimes(1);
+        await cancelButton.click();
+        await vi.waitFor(() =>
+          expect(cancelProviderConnection).toHaveBeenCalledWith({
+            provider: "antigravity",
+            operationId: "connect-antigravity-code",
+          }),
+        );
+        await expect.element(page.getByText("Sign in was cancelled.")).toBeVisible();
+
+        if (lateSettlement === "resolve") resolveSubmission({ providers: [active] });
+        else rejectSubmission(new Error("Stale authorization-code failure."));
+        await Promise.resolve();
+        await Promise.resolve();
+
+        await expect.element(page.getByText("Sign in was cancelled.")).toBeVisible();
+        await expect
+          .element(page.getByText("Stale authorization-code failure."))
+          .not.toBeInTheDocument();
+        expect(
+          queryClient.getQueryData<ServerConfig>(serverQueryKeys.config())?.providers[0]
+            ?.connectionState?.status,
+        ).toBe("cancelled");
+      } finally {
+        await screen.unmount();
+        queryClient.clear();
+        restoreNativeApi();
+      }
+    },
+  );
 
   it("retries the same Claude sign-in method after a failed attempt", async () => {
     const failed = {
@@ -549,7 +1074,7 @@ describe("ProviderConnectionDialog", () => {
     }
   });
 
-  it("requires reviewed consent before starting a managed installation", async () => {
+  it("requires explicit consent before installing the trusted latest release", async () => {
     const initialProvider = {
       provider: "antigravity",
       status: "error",
@@ -587,16 +1112,16 @@ describe("ProviderConnectionDialog", () => {
         status: "downloading",
         startedAt: checkedAt,
         finishedAt: null,
-        message: "Downloading Antigravity 1.1.4.",
-        version: "1.1.4",
+        message: "Downloading Antigravity 1.1.5.",
+        version: "1.1.5",
         bytesDownloaded: 0,
         totalBytes: 46_664_998,
       },
     } satisfies ServerProviderStatus;
     const prepareProviderInstall = vi.fn().mockResolvedValue({
       provider: "antigravity",
-      planToken: "reviewed-plan-1",
-      version: "1.1.4",
+      planToken: "trusted-plan-1",
+      version: "1.1.5",
       target: "darwin-arm64",
       sourceHost: "storage.googleapis.com",
       downloadBytes: 46_664_998,
@@ -620,17 +1145,105 @@ describe("ProviderConnectionDialog", () => {
 
     try {
       await page.getByRole("button", { name: "Install Antigravity" }).click();
-      await expect.element(page.getByText("Ready to install version 1.1.4")).toBeVisible();
+      await expect.element(page.getByText("Ready to install version 1.1.5")).toBeVisible();
       expect(installProvider).not.toHaveBeenCalled();
 
       await page.getByRole("button", { name: "Download and install" }).click();
       await vi.waitFor(() => {
         expect(installProvider).toHaveBeenCalledWith({
           provider: "antigravity",
-          planToken: "reviewed-plan-1",
+          planToken: "trusted-plan-1",
         });
       });
-      await expect.element(page.getByText("Downloading Antigravity 1.1.4.")).toBeVisible();
+      await expect.element(page.getByText("Downloading Antigravity 1.1.5.")).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "Cancel installation" })).toBeVisible();
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
+  it("updates a managed runtime through the verified install lifecycle", async () => {
+    const currentProvider = {
+      provider: "antigravity",
+      status: "ready",
+      available: true,
+      authStatus: "authenticated",
+      version: "1.1.4",
+      checkedAt,
+      runtime: {
+        source: "managed",
+        managedVersion: "1.1.4",
+        canInstall: false,
+        canRepair: true,
+        canRollback: false,
+        canRemove: true,
+        message: null,
+      },
+      versionAdvisory: {
+        status: "unknown",
+        currentVersion: "1.1.4",
+        latestVersion: null,
+        updateCommand: null,
+        canUpdate: false,
+        checkedAt,
+        message: "Updates for this runtime are managed by Scient.",
+      },
+    } satisfies ServerProviderStatus;
+    const updatingProvider = {
+      ...currentProvider,
+      installationState: {
+        operationId: "update-antigravity-1",
+        operation: "install",
+        status: "downloading",
+        startedAt: checkedAt,
+        finishedAt: null,
+        message: "Downloading Antigravity 1.1.5.",
+        version: "1.1.5",
+        bytesDownloaded: 0,
+        totalBytes: null,
+      },
+    } satisfies ServerProviderStatus;
+    const prepareProviderInstall = vi.fn().mockResolvedValue({
+      provider: "antigravity",
+      planToken: "managed-update-plan-1",
+      version: "1.1.5",
+      target: "darwin-arm64",
+      sourceHost: "storage.googleapis.com",
+      downloadBytes: null,
+      expiresAt: "2026-07-21T12:10:00.000Z",
+    });
+    const installProvider = vi.fn().mockResolvedValue({ providers: [updatingProvider] });
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [currentProvider] });
+    const restoreNativeApi = installNativeApi({
+      refreshProviders,
+      prepareProviderInstall,
+      installProvider,
+    });
+    const queryClient = createQueryClient(currentProvider);
+    useProviderConnectionDialogStore.getState().openDialog("antigravity", "managed_update");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await expect.element(page.getByRole("heading", { name: "Update Antigravity" })).toBeVisible();
+      await page.getByRole("button", { name: "Check latest version" }).click();
+      await expect.element(page.getByText("Ready to update from 1.1.4 to 1.1.5")).toBeVisible();
+      expect(installProvider).not.toHaveBeenCalled();
+
+      await page.getByRole("button", { name: "Download and update" }).click();
+      await vi.waitFor(() => {
+        expect(installProvider).toHaveBeenCalledWith({
+          provider: "antigravity",
+          planToken: "managed-update-plan-1",
+        });
+      });
+      await expect.element(page.getByText("Downloading Antigravity 1.1.5.")).toBeVisible();
       await expect.element(page.getByRole("button", { name: "Cancel installation" })).toBeVisible();
     } finally {
       await screen.unmount();

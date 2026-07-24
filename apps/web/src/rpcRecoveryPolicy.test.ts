@@ -102,7 +102,7 @@ describe("runRpcWithRecovery", () => {
     expect(recover).toHaveBeenCalledOnce();
   });
 
-  it("does not replay a mutation even when recovery could replace the session", async () => {
+  it("starts recovery without replaying or replacing a mutation error", async () => {
     const failure = new Error("outcome unknown");
     const run = vi.fn(async () => Promise.reject(failure));
     const recover = vi.fn(async () => ({ generation: 2 }));
@@ -117,7 +117,7 @@ describe("runRpcWithRecovery", () => {
       }),
     ).rejects.toBe(failure);
     expect(run).toHaveBeenCalledOnce();
-    expect(recover).not.toHaveBeenCalled();
+    expect(recover).toHaveBeenCalledOnce();
   });
 
   it("does not replay a read without a genuinely new generation", async () => {

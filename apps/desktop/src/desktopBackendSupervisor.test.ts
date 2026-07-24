@@ -3,26 +3,29 @@ import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  DesktopBackendTerminationError,
   DesktopBackendSupervisor,
   type DesktopBackendChild,
   type DesktopBackendSupervisorOptions,
 } from "./desktopBackendSupervisor";
 
 class FakeBackendChild extends EventEmitter implements DesktopBackendChild {
-  readonly pid: number;
+  pid: number | undefined;
   connected = true;
+  sendReturnValue = true;
   exitCode: number | null = null;
   signalCode: NodeJS.Signals | null = null;
   readonly sent: unknown[] = [];
 
-  constructor(pid: number) {
+  constructor(pid: number | undefined) {
     super();
     this.pid = pid;
   }
 
-  send(message: unknown): boolean {
+  send(message: unknown, callback?: (error: Error | null) => void): boolean {
     this.sent.push(message);
-    return this.connected;
+    callback?.(this.connected ? null : new Error("IPC disconnected"));
+    return this.connected && this.sendReturnValue;
   }
 
   spawn(): void {
@@ -30,6 +33,11 @@ class FakeBackendChild extends EventEmitter implements DesktopBackendChild {
   }
 
   fail(error: Error): void {
+    this.emit("error", error);
+  }
+
+  failSpawn(error: Error): void {
+    this.pid = undefined;
     this.emit("error", error);
   }
 
@@ -57,14 +65,29 @@ function makeHarness(overrides: Partial<DesktopBackendSupervisorOptions> = {}) {
       children.push(child);
       return child;
     },
-    requestGracefulShutdown: (child, reason) =>
-      child.send?.({ type: "scient.backend.shutdown", reason }) ?? false,
+    requestGracefulShutdown: async (child, reason) => {
+      if (!child.send || child.connected === false) return false;
+      return await new Promise<boolean>((resolve) => {
+        try {
+          child.send!({ type: "scient.backend.shutdown", reason }, (error) =>
+            resolve(error === null),
+          );
+        } catch {
+          resolve(false);
+        }
+      });
+    },
     forceTerminateTree,
     onGenerationExited: (event) => exits.push(event),
     onRestartScheduled: (event) => restarts.push(event),
     ...overrides,
   });
   return { children, exits, forceTerminateTree, prepared, restarts, supervisor };
+}
+
+async function settleLifecycle(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
 }
 
 beforeEach(() => {
@@ -86,20 +109,51 @@ describe("DesktopBackendSupervisor", () => {
     expect(harness.supervisor.currentGeneration?.number).toBe(1);
   });
 
-  it("handles an error followed by exit exactly once", async () => {
-    const harness = makeHarness();
+  it("keeps a running process active after a non-terminal child error", async () => {
+    const onError = vi.fn();
+    const harness = makeHarness({ onError });
     await harness.supervisor.start();
     const child = harness.children[0]!;
 
-    child.fail(new Error("spawn failed"));
+    child.fail(new Error("IPC write failed"));
+
+    expect(harness.supervisor.currentGeneration?.number).toBe(1);
+    expect(harness.exits).toHaveLength(0);
+    expect(harness.restarts).toHaveLength(0);
+    expect(onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "IPC write failed" }),
+      "generation 1 process error",
+    );
+
     child.exit(1);
+    await settleLifecycle();
 
     expect(harness.exits).toEqual([
-      { generation: 1, pid: 1001, reason: "error=spawn failed", expected: false },
+      { generation: 1, pid: 1001, reason: "code=1 signal=null", expected: false },
     ]);
-    expect(harness.restarts).toEqual([{ attempt: 0, delayMs: 500, reason: "error=spawn failed" }]);
+    expect(harness.restarts).toEqual([{ attempt: 0, delayMs: 500, reason: "code=1 signal=null" }]);
     await vi.advanceTimersByTimeAsync(500);
     expect(harness.children).toHaveLength(2);
+  });
+
+  it("closes a generation when spawning fails before a pid exists", async () => {
+    const harness = makeHarness();
+    await harness.supervisor.start();
+
+    harness.children[0]!.failSpawn(new Error("executable missing"));
+    await settleLifecycle();
+
+    expect(harness.exits).toEqual([
+      {
+        generation: 1,
+        pid: null,
+        reason: "spawn error=executable missing",
+        expected: false,
+      },
+    ]);
+    expect(harness.restarts).toEqual([
+      { attempt: 0, delayMs: 500, reason: "spawn error=executable missing" },
+    ]);
   });
 
   it("backs off across unstable generations and resets only after readiness", async () => {
@@ -112,6 +166,7 @@ describe("DesktopBackendSupervisor", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     harness.supervisor.markReady(3);
     harness.children[2]!.exit(1);
+    await settleLifecycle();
 
     expect(harness.restarts.map(({ attempt, delayMs }) => ({ attempt, delayMs }))).toEqual([
       { attempt: 0, delayMs: 500 },
@@ -120,49 +175,61 @@ describe("DesktopBackendSupervisor", () => {
     ]);
   });
 
+  it("fails closed when descendants of an exited generation cannot be cleaned up", async () => {
+    const cleanupError = new Error("descendant cleanup could not be proven");
+    const onUnrecoverableGeneration = vi.fn();
+    const harness = makeHarness({
+      forceTerminateTree: vi.fn(async () => {
+        throw cleanupError;
+      }),
+      onUnrecoverableGeneration,
+    });
+    await harness.supervisor.start();
+
+    harness.children[0]!.exit(1);
+    await settleLifecycle();
+
+    expect(harness.supervisor.desiredRunning).toBe(false);
+    expect(harness.supervisor.currentGeneration).toBeNull();
+    expect(harness.restarts).toHaveLength(0);
+    expect(onUnrecoverableGeneration).toHaveBeenCalledWith({
+      error: cleanupError,
+      generation: expect.objectContaining({ number: 1 }),
+      reason: "code=1 signal=null",
+    });
+  });
+
   it("ignores late events from a closed generation", async () => {
     const harness = makeHarness();
     await harness.supervisor.start();
     const first = harness.children[0]!;
-    first.fail(new Error("first failure"));
+    first.exit(1);
     await vi.advanceTimersByTimeAsync(500);
 
-    first.exit(1);
+    first.fail(new Error("late child error"));
 
     expect(harness.supervisor.currentGeneration?.number).toBe(2);
     expect(harness.exits).toHaveLength(1);
     expect(harness.restarts).toHaveLength(1);
   });
 
-  it("restarts an alive generation that never becomes ready", async () => {
-    const harness = makeHarness({
-      gracefulShutdownTimeoutMs: 100,
-      forcedExitTimeoutMs: 50,
-    });
+  it("replaces only the generation whose semantic readiness failed", async () => {
+    const harness = makeHarness();
     await harness.supervisor.start();
     const first = harness.children[0]!;
 
-    const restarting = harness.supervisor.restartGeneration(1, "readiness timed out");
-    await Promise.resolve();
+    const restarting = harness.supervisor.restartGeneration(1, "readiness check failed");
+    await settleLifecycle();
     first.exit(0);
     await restarting;
 
-    expect(first.sent).toEqual([
-      { type: "scient.backend.shutdown", reason: "readiness timed out" },
+    expect(harness.restarts).toEqual([
+      { attempt: 0, delayMs: 500, reason: "readiness check failed" },
     ]);
-    expect(harness.restarts).toEqual([{ attempt: 0, delayMs: 500, reason: "readiness timed out" }]);
     await vi.advanceTimersByTimeAsync(500);
     expect(harness.supervisor.currentGeneration?.number).toBe(2);
-  });
 
-  it("ignores a readiness timeout reported by a stale generation", async () => {
-    const harness = makeHarness();
-    await harness.supervisor.start();
-    harness.children[0]!.exit(1);
-    await vi.advanceTimersByTimeAsync(500);
-
-    await harness.supervisor.restartGeneration(1, "late readiness timeout");
-
+    await harness.supervisor.restartGeneration(1, "stale readiness timeout");
     expect(harness.supervisor.currentGeneration?.number).toBe(2);
     expect(harness.restarts).toHaveLength(1);
   });
@@ -214,6 +281,38 @@ describe("DesktopBackendSupervisor", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("waits for an accepted IPC send even when send reports backpressure", async () => {
+    const harness = makeHarness();
+    await harness.supervisor.start();
+    const child = harness.children[0]!;
+    child.sendReturnValue = false;
+
+    const stopping = harness.supervisor.stop("app quit");
+    await settleLifecycle();
+    child.exit(0);
+    await stopping;
+
+    expect(child.sent).toEqual([{ type: "scient.backend.shutdown", reason: "app quit" }]);
+    expect(harness.forceTerminateTree).not.toHaveBeenCalled();
+  });
+
+  it("rejects shutdown and retains ownership when force termination cannot stop the backend", async () => {
+    const harness = makeHarness({
+      gracefulShutdownTimeoutMs: 10,
+      forcedExitTimeoutMs: 10,
+      forceTerminateTree: vi.fn(async () => undefined),
+    });
+    await harness.supervisor.start();
+
+    const stopping = harness.supervisor.stop("app quit");
+    await vi.advanceTimersByTimeAsync(20);
+
+    await expect(stopping).rejects.toBeInstanceOf(DesktopBackendTerminationError);
+    expect(harness.supervisor.currentGeneration?.number).toBe(1);
+    expect(harness.supervisor.desiredRunning).toBe(false);
+    expect(harness.restarts).toHaveLength(0);
+  });
+
   it("does not overlap a replacement with a backend that survived force termination", async () => {
     const onError = vi.fn();
     const onUnrecoverableGeneration = vi.fn();
@@ -236,12 +335,14 @@ describe("DesktopBackendSupervisor", () => {
     expect(harness.restarts).toHaveLength(0);
     expect(harness.supervisor.desiredRunning).toBe(false);
     expect(onError).toHaveBeenCalledWith(
-      expect.objectContaining({ message: "Backend remained alive after force termination." }),
+      expect.objectContaining({
+        message: "Backend generation 1 remained alive after force termination.",
+      }),
       "generation 1 restart blocked",
     );
     expect(onUnrecoverableGeneration).toHaveBeenCalledWith({
       error: expect.objectContaining({
-        message: "Backend remained alive after force termination.",
+        message: "Backend generation 1 remained alive after force termination.",
       }),
       generation: { child: first, number: 1 },
       reason: "readiness timed out",

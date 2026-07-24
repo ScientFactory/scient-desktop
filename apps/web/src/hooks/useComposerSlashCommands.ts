@@ -1,5 +1,6 @@
 import {
   type ModelSelection,
+  type MessageId,
   type OrchestrationShellSnapshot,
   type ProviderInteractionMode,
   type ProviderKind,
@@ -10,7 +11,7 @@ import {
 } from "@synara/contracts";
 import { buildPromptThreadTitleFallback } from "@synara/shared/chatThreads";
 import { deriveAssociatedWorktreeMetadata } from "@synara/shared/threadWorkspace";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { newCommandId, newMessageId, newThreadId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import type { Project, Thread } from "../types";
@@ -26,8 +27,11 @@ import {
   parseForkSlashCommandArgs,
   type ForkSlashCommandTarget,
 } from "../composerSlashCommands";
-import { buildThreadHandoffImportedMessages } from "../lib/threadHandoff";
-import { toastManager } from "../components/ui/toast";
+import {
+  buildThreadForkImportedMessagesThrough,
+  buildThreadHandoffImportedMessages,
+} from "../lib/threadHandoff";
+import type { ReportComposerLocalFeedback } from "../components/chat/useComposerVoiceController";
 import type { ComposerCommandItem } from "../components/chat/ComposerCommandMenu";
 import { buildNextProviderOptions } from "../providerModelOptions";
 import { resolveForkThreadEnvironment } from "../lib/threadEnvironment";
@@ -76,6 +80,7 @@ export function useComposerSlashCommands(input: {
   handleInteractionModeChange: (mode: "default" | "plan") => Promise<void> | void;
   openForkTargetPicker: () => void;
   openReviewTargetPicker: () => void;
+  reportComposerFeedback: ReportComposerLocalFeedback;
   setComposerDraftProviderModelOptions: (
     threadId: ThreadId,
     provider: ProviderKind,
@@ -100,6 +105,7 @@ export function useComposerSlashCommands(input: {
   };
 }) {
   const [isSlashStatusDialogOpen, setIsSlashStatusDialogOpen] = useState(false);
+  const forkCreationInFlightRef = useRef(false);
   const openGlobalFeedbackDialog = useFeedbackDialogStore((state) => state.openDialog);
   const {
     activeProject,
@@ -127,6 +133,7 @@ export function useComposerSlashCommands(input: {
     handleInteractionModeChange,
     openForkTargetPicker,
     openReviewTargetPicker,
+    reportComposerFeedback,
     setComposerDraftProviderModelOptions,
     editorActions,
   } = input;
@@ -151,7 +158,7 @@ export function useComposerSlashCommands(input: {
       !activeThread?.session ||
       activeThread.session.status === "closed"
     ) {
-      toastManager.add({
+      reportComposerFeedback({
         type: "warning",
         title: "Compact is unavailable",
         description: "Open an active supported server thread before compacting context.",
@@ -165,7 +172,7 @@ export function useComposerSlashCommands(input: {
           threadId: activeThread.id,
         })
         .catch((error) => {
-          toastManager.add({
+          reportComposerFeedback({
             type: "error",
             title: "Could not compact thread",
             description:
@@ -176,7 +183,7 @@ export function useComposerSlashCommands(input: {
         });
       return true;
     } catch (error) {
-      toastManager.add({
+      reportComposerFeedback({
         type: "error",
         title: "Could not compact thread",
         description:
@@ -184,7 +191,7 @@ export function useComposerSlashCommands(input: {
       });
       return false;
     }
-  }, [activeThread, canOfferCompactCommand, isServerThread]);
+  }, [activeThread, canOfferCompactCommand, isServerThread, reportComposerFeedback]);
 
   const setFastModeFromSlashCommand = useCallback(
     (enabled: boolean) => {
@@ -209,7 +216,7 @@ export function useComposerSlashCommands(input: {
         return false;
       }
       if (!supportsFastSlashCommand) {
-        toastManager.add({
+        reportComposerFeedback({
           type: "warning",
           title: "Fast mode is unavailable",
           description: "The selected model does not support Fast mode.",
@@ -217,7 +224,7 @@ export function useComposerSlashCommands(input: {
         return true;
       }
       if (action === "invalid") {
-        toastManager.add({
+        reportComposerFeedback({
           type: "warning",
           title: "Invalid /fast command",
           description: "Use /fast, /fast on, /fast off, or /fast status.",
@@ -225,7 +232,7 @@ export function useComposerSlashCommands(input: {
         return true;
       }
       if (action === "status") {
-        toastManager.add({
+        reportComposerFeedback({
           type: "info",
           title: `Fast mode is ${fastModeEnabled ? "on" : "off"}`,
         });
@@ -233,20 +240,25 @@ export function useComposerSlashCommands(input: {
       }
       const nextEnabled = action === "on" ? true : action === "off" ? false : !fastModeEnabled;
       setFastModeFromSlashCommand(nextEnabled);
-      toastManager.add({
+      reportComposerFeedback({
         type: "success",
         title: `Fast mode ${nextEnabled ? "enabled" : "disabled"}`,
       });
       return true;
     },
-    [fastModeEnabled, supportsFastSlashCommand, setFastModeFromSlashCommand],
+    [
+      fastModeEnabled,
+      reportComposerFeedback,
+      supportsFastSlashCommand,
+      setFastModeFromSlashCommand,
+    ],
   );
 
   const createForkThreadFromSlashCommand = useCallback(
-    async (inputOptions?: { target?: ForkSlashCommandTarget }) => {
+    async (inputOptions?: { target?: ForkSlashCommandTarget; sourceMessageId?: MessageId }) => {
       const api = readNativeApi();
       if (!api || !activeProject || !activeThread || !isServerThread) {
-        toastManager.add({
+        reportComposerFeedback({
           type: "warning",
           title: "Fork is unavailable",
           description: "Only existing server-backed threads can be forked right now.",
@@ -254,9 +266,23 @@ export function useComposerSlashCommands(input: {
         return true;
       }
 
-      const importedMessages = buildThreadHandoffImportedMessages(activeThread);
-
       const nextThreadId = newThreadId();
+      const importedMessages = inputOptions?.sourceMessageId
+        ? buildThreadForkImportedMessagesThrough(
+            activeThread,
+            inputOptions.sourceMessageId,
+            nextThreadId,
+          )
+        : buildThreadHandoffImportedMessages(activeThread);
+      if (inputOptions?.sourceMessageId && importedMessages.length === 0) {
+        reportComposerFeedback({
+          type: "warning",
+          title: "Fork is unavailable",
+          description: "That message is not available as a completed conversation boundary.",
+        });
+        return true;
+      }
+
       const createdAt = new Date().toISOString();
       // Fork first, then let the normal first-send worktree bootstrap create the cwd if needed.
       const resolvedTarget = resolveForkThreadEnvironment({
@@ -270,6 +296,7 @@ export function useComposerSlashCommands(input: {
         commandId: newCommandId(),
         threadId: nextThreadId,
         sourceThreadId: activeThread.id,
+        ...(inputOptions?.sourceMessageId ? { sourceMessageId: inputOptions.sourceMessageId } : {}),
         projectId: activeProject.id,
         title: activeThread.title,
         modelSelection: selectedModelSelection,
@@ -296,17 +323,17 @@ export function useComposerSlashCommands(input: {
       interactionMode,
       isServerThread,
       navigateToThread,
+      reportComposerFeedback,
       runtimeMode,
       selectedModelSelection,
       syncServerShellSnapshot,
     ],
   );
-
   const createSidechatFromSlashCommand = useCallback(
     async (inputOptions?: { initialPrompt?: string }) => {
       const api = readNativeApi();
       if (!api || !activeProject || !activeThread || !isServerThread || !canOfferSideCommand) {
-        toastManager.add({
+        reportComposerFeedback({
           type: "warning",
           title: "Side is unavailable",
           description: "Open a server-backed main thread before starting Side.",
@@ -377,6 +404,7 @@ export function useComposerSlashCommands(input: {
       activeThread,
       canOfferSideCommand,
       isServerThread,
+      reportComposerFeedback,
       selectedModelSelection,
       syncServerShellSnapshot,
     ],
@@ -395,7 +423,7 @@ export function useComposerSlashCommands(input: {
     async (target: "changes" | "base-branch") => {
       const api = readNativeApi();
       if (!api || !activeThread || !activeProject) {
-        toastManager.add({
+        reportComposerFeedback({
           type: "warning",
           title: "Review is unavailable",
           description: "Open a project thread before starting a native review.",
@@ -404,7 +432,7 @@ export function useComposerSlashCommands(input: {
       }
 
       if (target === "base-branch" && !activeRootBranch) {
-        toastManager.add({
+        reportComposerFeedback({
           type: "warning",
           title: "Base branch unavailable",
           description: "Select or detect a base branch before starting this review.",
@@ -476,7 +504,7 @@ export function useComposerSlashCommands(input: {
         await navigateToThread(nextThreadId);
         return true;
       } catch (error) {
-        toastManager.add({
+        reportComposerFeedback({
           type: "error",
           title: "Could not start review",
           description:
@@ -490,6 +518,7 @@ export function useComposerSlashCommands(input: {
       activeRootBranch,
       activeThread,
       navigateToThread,
+      reportComposerFeedback,
       runtimeMode,
       selectedModelSelection,
       syncServerShellSnapshot,
@@ -511,10 +540,12 @@ export function useComposerSlashCommands(input: {
 
   const handleForkTargetSelection = useCallback(
     async (target: ForkSlashCommandTarget) => {
+      if (forkCreationInFlightRef.current) return;
+      forkCreationInFlightRef.current = true;
       try {
         await createForkThreadFromSlashCommand({ target });
       } catch (error) {
-        toastManager.add({
+        reportComposerFeedback({
           type: "error",
           title: "Could not fork thread",
           description:
@@ -522,16 +553,43 @@ export function useComposerSlashCommands(input: {
               ? error.message
               : "An error occurred while creating the forked thread.",
         });
+      } finally {
+        forkCreationInFlightRef.current = false;
       }
     },
-    [createForkThreadFromSlashCommand],
+    [createForkThreadFromSlashCommand, reportComposerFeedback],
+  );
+
+  const handleForkFromMessage = useCallback(
+    async (sourceMessageId: MessageId) => {
+      if (forkCreationInFlightRef.current) return;
+      forkCreationInFlightRef.current = true;
+      try {
+        await createForkThreadFromSlashCommand({
+          target: "local",
+          sourceMessageId,
+        });
+      } catch (error) {
+        reportComposerFeedback({
+          type: "error",
+          title: "Could not fork from message",
+          description:
+            error instanceof Error
+              ? error.message
+              : "An error occurred while creating the message fork.",
+        });
+      } finally {
+        forkCreationInFlightRef.current = false;
+      }
+    },
+    [createForkThreadFromSlashCommand, reportComposerFeedback],
   );
 
   const checkClaudeFastSlashCommandAvailability = useCallback(async (): Promise<boolean> => {
     const api = readNativeApi();
     if (!api || !providerCommandDiscoveryCwd) {
       editorActions.clearComposerSlashDraft();
-      toastManager.add({
+      reportComposerFeedback({
         type: "warning",
         title: "Fast mode could not be checked",
         description: "Claude command discovery is unavailable right now.",
@@ -557,7 +615,7 @@ export function useComposerSlashCommands(input: {
       }
     } catch {
       editorActions.clearComposerSlashDraft();
-      toastManager.add({
+      reportComposerFeedback({
         type: "warning",
         title: "Fast mode could not be checked",
         description: "Claude command discovery failed. Please try again.",
@@ -566,19 +624,19 @@ export function useComposerSlashCommands(input: {
     }
 
     editorActions.clearComposerSlashDraft();
-    toastManager.add({
+    reportComposerFeedback({
       type: "info",
       title: "Fast mode is unavailable",
       description: "Claude did not expose /fast for this account or environment.",
     });
     return false;
-  }, [editorActions, providerCommandDiscoveryCwd, threadId]);
+  }, [editorActions, providerCommandDiscoveryCwd, reportComposerFeedback, threadId]);
 
   const runExportSlashCommand = useCallback(() => {
     // Re-validate at call time (mirrors /compact): menu selections and stale
     // highlights can outlive the availability computed at render time.
     if (!canOfferExportCommand) {
-      toastManager.add({
+      reportComposerFeedback({
         type: "warning",
         title: "Export is unavailable",
         description:
@@ -591,14 +649,14 @@ export function useComposerSlashCommands(input: {
       url: resolveWsHttpUrl(`/api/thread-export?${params.toString()}`),
       filename: `scient-thread-${threadId}.zip`,
     }).catch((error: unknown) => {
-      toastManager.add({
+      reportComposerFeedback({
         type: "error",
         title: "Could not export thread",
         description:
           error instanceof Error ? error.message : "An error occurred while exporting the thread.",
       });
     });
-  }, [canOfferExportCommand, threadId]);
+  }, [canOfferExportCommand, reportComposerFeedback, threadId]);
 
   const openFeedbackDialog = useCallback(() => {
     openGlobalFeedbackDialog({
@@ -689,7 +747,7 @@ export function useComposerSlashCommands(input: {
           const target =
             normalizedArgs === "base" || normalizedArgs.startsWith("base ") ? "base-branch" : null;
           if (!target) {
-            toastManager.add({
+            reportComposerFeedback({
               type: "warning",
               title: "Invalid /review command",
               description: "Use /review and then choose a review target.",
@@ -719,7 +777,7 @@ export function useComposerSlashCommands(input: {
       if (slashInvocation.command === "fork") {
         const { target, invalid } = parseForkSlashCommandArgs(slashInvocation.args);
         if (invalid) {
-          toastManager.add({
+          reportComposerFeedback({
             type: "warning",
             title: "Invalid /fork command",
             description: "Use /fork and then choose Local or New Worktree.",
@@ -737,7 +795,7 @@ export function useComposerSlashCommands(input: {
           });
           editorActions.clearComposerSlashDraft();
         } catch (error) {
-          toastManager.add({
+          reportComposerFeedback({
             type: "error",
             title: "Could not fork thread",
             description:
@@ -753,7 +811,7 @@ export function useComposerSlashCommands(input: {
           editorActions.clearComposerSlashDraft();
           await createSidechatFromSlashCommand({ initialPrompt: slashInvocation.args });
         } catch (error) {
-          toastManager.add({
+          reportComposerFeedback({
             type: "error",
             title: "Could not start Side",
             description:
@@ -776,6 +834,7 @@ export function useComposerSlashCommands(input: {
       openForkTargetPicker,
       openFeedbackDialog,
       openReviewTargetPicker,
+      reportComposerFeedback,
       selectedProvider,
       supportsTextNativeReviewCommand,
       runCodexReviewStart,
@@ -977,7 +1036,7 @@ export function useComposerSlashCommands(input: {
         }
         editorActions.setComposerHighlightedItemId(null);
         void createSidechatFromSlashCommand().catch((error) => {
-          toastManager.add({
+          reportComposerFeedback({
             type: "error",
             title: "Could not start Side",
             description:
@@ -995,6 +1054,7 @@ export function useComposerSlashCommands(input: {
       openForkTargetPicker,
       openFeedbackDialog,
       openReviewTargetPicker,
+      reportComposerFeedback,
       selectedProvider,
       supportsTextNativeReviewCommand,
       runExportSlashCommand,
@@ -1003,6 +1063,7 @@ export function useComposerSlashCommands(input: {
   );
 
   return {
+    handleForkFromMessage,
     handleForkTargetSelection,
     handleReviewTargetSelection,
     isSlashStatusDialogOpen,

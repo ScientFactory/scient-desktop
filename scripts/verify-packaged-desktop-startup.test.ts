@@ -129,7 +129,7 @@ describe("packaged desktop startup verification", () => {
 
   it("requires the exact versioned and architecture-specific release asset", () => {
     expect(expectedPackagedDesktopStartupAssetName("linux", "x64", "1.2.3")).toBe(
-      "Scient-1.2.3-x86_64.AppImage",
+      "Scient-1.2.3-amd64.deb",
     );
     expect(expectedPackagedDesktopStartupAssetName("mac", "arm64", "1.2.3")).toBe(
       "Scient-1.2.3-arm64.zip",
@@ -140,16 +140,14 @@ describe("packaged desktop startup verification", () => {
 
     const root = mkdtempSync(join(tmpdir(), "scient-packaged-smoke-assets-test-"));
     temporaryRoots.push(root);
-    const expected = join(root, "Scient-1.2.3-x86_64.AppImage");
+    const expected = join(root, "Scient-1.2.3-amd64.deb");
     writeFileSync(expected, "payload");
-    expect(resolveExactPackagedDesktopStartupAsset(root, "Scient-1.2.3-x86_64.AppImage")).toBe(
-      expected,
-    );
+    expect(resolveExactPackagedDesktopStartupAsset(root, "Scient-1.2.3-amd64.deb")).toBe(expected);
 
-    writeFileSync(join(root, "Scient-1.2.2-x86_64.AppImage"), "stale payload");
-    expect(() =>
-      resolveExactPackagedDesktopStartupAsset(root, "Scient-1.2.3-x86_64.AppImage"),
-    ).toThrow("found 2 .AppImage payloads");
+    writeFileSync(join(root, "Scient-1.2.2-amd64.deb"), "stale payload");
+    expect(() => resolveExactPackagedDesktopStartupAsset(root, "Scient-1.2.3-amd64.deb")).toThrow(
+      "found 2 .deb payloads",
+    );
   });
 
   it("does not accept proof from a packaged process that exits immediately", async () => {
@@ -285,15 +283,12 @@ describe("packaged desktop startup verification", () => {
   });
 
   it("keeps exact packaged Linux verification on the real sandboxed command line", () => {
-    const launch = createLinuxPackagedLaunchCommand(
-      "/tmp/scient-payload/AppRun",
-      "/tmp/scient-payload",
-    );
+    const launch = createLinuxPackagedLaunchCommand("/opt/Scient/scient", "/opt/Scient");
 
     expect(launch).toEqual({
       command: "xvfb-run",
-      args: ["-a", "/tmp/scient-payload/AppRun", "--disable-gpu"],
-      cwd: "/tmp/scient-payload",
+      args: ["-a", "/opt/Scient/scient", "--disable-gpu"],
+      cwd: "/opt/Scient",
     });
     expect(launch.args).not.toContain("--no-sandbox");
     expect(() => assertPackagedLaunchCommandSafety(launch)).not.toThrow();

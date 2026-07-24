@@ -1,5 +1,13 @@
 import type { ProviderKind } from "@synara/contracts";
+import { compareSemverVersions, isStableSemver } from "@synara/shared/providerVersions";
 
+import {
+  ANTIGRAVITY_ARTIFACT_HOSTS,
+  ANTIGRAVITY_MANIFEST_HOST,
+  antigravityManifestUrl,
+  MINIMUM_ANTIGRAVITY_CLI_VERSION,
+  validateAntigravityArtifactUrl,
+} from "./antigravityReleaseChannel";
 import type {
   ProviderRuntimeArtifact,
   ProviderRuntimeRecipe,
@@ -255,41 +263,53 @@ const claudeRecipe: ProviderRuntimeRecipe = {
   },
 };
 
-function antigravityPlatform(target: ProviderRuntimeTarget): string {
-  const arch = target.arch === "arm64" ? "arm64" : "amd64";
-  if (target.platform === "linux" && target.libc === "musl") return `linux_${arch}_musl`;
-  const os = target.platform === "win32" ? "windows" : target.platform;
-  return `${os}_${arch}`;
-}
-
 const antigravityRecipe: ProviderRuntimeRecipe = {
   provider: "antigravity",
   executableName: "agy",
   resolve: async (target, signal) => {
-    const manifestHost = "antigravity-cli-auto-updater-974169037036.us-central1.run.app";
-    const platform = antigravityPlatform(target);
     const manifest = assertRecord(
       await fetchJson({
-        url: `https://${manifestHost}/manifests/${platform}.json`,
+        url: antigravityManifestUrl(target),
         signal,
-        allowedHosts: [manifestHost],
+        allowedHosts: [ANTIGRAVITY_MANIFEST_HOST],
       }),
       "Antigravity release manifest",
     );
     const version = requiredString(manifest, "version", "Antigravity release manifest");
-    if (version !== "1.1.4") {
+    if (!isStableSemver(version)) {
       throw new ProviderRuntimeRecipeError(
-        "A newer Antigravity release is available but has not yet passed Scient's runtime review.",
+        "Antigravity's stable release manifest returned an invalid version.",
       );
     }
-    const url = requiredString(manifest, "url", "Antigravity release manifest");
-    const digest = requiredString(manifest, "sha512", "Antigravity release manifest");
+    if (compareSemverVersions(version, MINIMUM_ANTIGRAVITY_CLI_VERSION) < 0) {
+      throw new ProviderRuntimeRecipeError(
+        `Antigravity ${version} is older than Scient's minimum compatible version ${MINIMUM_ANTIGRAVITY_CLI_VERSION}.`,
+      );
+    }
+    let url: string;
+    try {
+      url = validateAntigravityArtifactUrl({
+        url: requiredString(manifest, "url", "Antigravity release manifest"),
+        version,
+      });
+    } catch (cause) {
+      throw new ProviderRuntimeRecipeError(
+        cause instanceof Error ? cause.message : "Antigravity returned an invalid artifact URL.",
+        { cause },
+      );
+    }
+    const digest = requiredString(manifest, "sha512", "Antigravity release manifest").toLowerCase();
+    if (!/^[0-9a-f]{128}$/u.test(digest)) {
+      throw new ProviderRuntimeRecipeError(
+        "Antigravity release manifest does not contain a valid SHA-512 digest.",
+      );
+    }
     return {
       provider: "antigravity",
       version,
       target,
       url,
-      allowedHosts: ["storage.googleapis.com"],
+      allowedHosts: ANTIGRAVITY_ARTIFACT_HOSTS,
       digestAlgorithm: "sha512",
       digest,
       archiveFormat: target.platform === "win32" ? "raw" : "tar.gz",

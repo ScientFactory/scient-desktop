@@ -43,6 +43,12 @@ export interface FinalizedMacUpdateZip {
   readonly removedZipBlockmapPath: string | null;
 }
 
+export interface VerifyMacUpdateZipArtifactOptions {
+  readonly signed: boolean;
+  readonly verbose?: boolean;
+  readonly zipPath: string;
+}
+
 function readDirectoryEntries(path: string): string[] {
   try {
     return readdirSync(path);
@@ -125,6 +131,23 @@ function assertMacZipFrameworkSymlinks(zipPath: string): string {
   return appBundleName;
 }
 
+export function verifyMacUpdateZipArtifact(options: VerifyMacUpdateZipArtifactOptions): string {
+  if (process.platform !== "darwin") {
+    throw new Error("macOS update zip verification must run on macOS.");
+  }
+  const zippedAppBundleName = assertMacZipFrameworkSymlinks(options.zipPath);
+  const extractedZipRoot = mkdtempSync(join(tmpdir(), "scient-mac-update-zip-verify-"));
+  try {
+    runTextCommand("ditto", ["-x", "-k", options.zipPath, extractedZipRoot], {
+      verbose: options.verbose === true,
+    });
+    verifyMacAppSignature(join(extractedZipRoot, zippedAppBundleName), options.signed);
+    return zippedAppBundleName;
+  } finally {
+    rmSync(extractedZipRoot, { force: true, recursive: true });
+  }
+}
+
 function computeSha512Base64(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const hash = createHash("sha512");
@@ -164,16 +187,8 @@ export async function finalizeMacUpdateZip(
     verbose,
   });
 
-  const zippedAppBundleName = assertMacZipFrameworkSymlinks(zipPath);
   verifyMacAppSignature(appBundlePath, options.signed);
-
-  const extractedZipRoot = mkdtempSync(join(tmpdir(), "synara-mac-update-zip-"));
-  try {
-    runTextCommand("ditto", ["-x", "-k", zipPath, extractedZipRoot], { verbose });
-    verifyMacAppSignature(join(extractedZipRoot, zippedAppBundleName), options.signed);
-  } finally {
-    rmSync(extractedZipRoot, { force: true, recursive: true });
-  }
+  verifyMacUpdateZipArtifact({ signed: options.signed, verbose, zipPath });
 
   const zipStat = statSync(zipPath);
   if (!zipStat.isFile()) {

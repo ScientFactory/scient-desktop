@@ -7,8 +7,10 @@ import {
   type AutomationDefinition,
   EventId,
   MessageId,
+  type NativeApi,
   ORCHESTRATION_WS_METHODS,
   type OrchestrationReadModel,
+  type OrchestrationThreadActivity,
   type ProjectId,
   type ServerConfig,
   ThreadId,
@@ -25,6 +27,7 @@ import { page, userEvent } from "vitest/browser";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
+import { CURRENT_APP_SETTINGS_VERSION } from "../appSettings";
 import { type ComposerImageAttachment, useComposerDraftStore } from "../composerDraftStore";
 import {
   AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
@@ -37,6 +40,7 @@ import {
 } from "../lib/terminalContext";
 import { isMacPlatform } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
+import { useProviderConnectionDialogStore } from "../providerConnectionDialogStore";
 import { resetHomeChatProjectPrewarmStateForTests } from "../lib/chatProjects";
 import { resetStudioProjectPrewarmStateForTests } from "../lib/studioProjects";
 import { getRouter } from "../router";
@@ -243,6 +247,116 @@ function createComposerImage(input: {
     previewUrl: input.previewUrl,
     file,
   };
+}
+
+function installFakeMicrophoneCapture(): {
+  emitSamples: () => void;
+  restore: () => void;
+} {
+  const mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(navigator, "mediaDevices");
+  const audioContextDescriptor = Object.getOwnPropertyDescriptor(globalThis, "AudioContext");
+  const trackStop = vi.fn();
+  const processor = {
+    onaudioprocess: null as
+      | ((event: {
+          inputBuffer: {
+            numberOfChannels: number;
+            length: number;
+            getChannelData: (channel: number) => Float32Array;
+          };
+        }) => void)
+      | null,
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  };
+  const source = { connect: vi.fn(), disconnect: vi.fn() };
+  const gain = {
+    gain: { value: 1 },
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  };
+
+  class FakeAudioContext {
+    readonly sampleRate = 48_000;
+    readonly destination = {};
+
+    resume = vi.fn(async () => undefined);
+    close = vi.fn(async () => undefined);
+    createMediaStreamSource = vi.fn(() => source);
+    createScriptProcessor = vi.fn(() => processor);
+    createGain = vi.fn(() => gain);
+  }
+
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: {
+      getUserMedia: vi.fn(async () => ({
+        getTracks: () => [{ stop: trackStop }],
+      })),
+    },
+  });
+  Object.defineProperty(globalThis, "AudioContext", {
+    configurable: true,
+    value: FakeAudioContext,
+  });
+
+  return {
+    emitSamples: () => {
+      const samples = new Float32Array(4_096).fill(0.25);
+      processor.onaudioprocess?.({
+        inputBuffer: {
+          numberOfChannels: 1,
+          length: samples.length,
+          getChannelData: () => samples,
+        },
+      });
+    },
+    restore: () => {
+      if (mediaDevicesDescriptor) {
+        Object.defineProperty(navigator, "mediaDevices", mediaDevicesDescriptor);
+      } else {
+        Reflect.deleteProperty(navigator, "mediaDevices");
+      }
+      if (audioContextDescriptor) {
+        Object.defineProperty(globalThis, "AudioContext", audioContextDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, "AudioContext");
+      }
+    },
+  };
+}
+
+function appendActiveThreadActivity(activity: OrchestrationThreadActivity): void {
+  const snapshot: OrchestrationReadModel = {
+    ...fixture.snapshot,
+    snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+    threads: fixture.snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? {
+            ...thread,
+            activities: [...thread.activities, activity],
+            updatedAt: activity.createdAt,
+          }
+        : thread,
+    ),
+    updatedAt: activity.createdAt,
+  };
+  fixture = { ...fixture, snapshot };
+  useStore.getState().syncServerReadModel(snapshot);
+}
+
+function configureSuccessfulVoiceTranscription(transcript: string): (api: NativeApi) => NativeApi {
+  return (api) => ({
+    ...api,
+    server: {
+      ...api.server,
+      transcribeVoice: vi.fn(async () => ({
+        text: transcript,
+        engine: "local" as const,
+      })),
+      cancelVoiceTranscription: vi.fn(async () => undefined),
+    },
+  });
 }
 
 function createSnapshotForTargetUser(options: {
@@ -1002,6 +1116,146 @@ function recordProjectCreateCommand(command: unknown): boolean {
   return true;
 }
 
+function recordThreadForkCreateCommand(command: unknown): boolean {
+  if (
+    !command ||
+    typeof command !== "object" ||
+    !("type" in command) ||
+    command.type !== "thread.fork.create" ||
+    !("threadId" in command) ||
+    !("sourceThreadId" in command) ||
+    !("importedMessages" in command) ||
+    !Array.isArray(command.importedMessages)
+  ) {
+    return false;
+  }
+
+  const sourceThread = fixture.snapshot.threads.find(
+    (thread) => thread.id === command.sourceThreadId,
+  );
+  if (!sourceThread) {
+    return false;
+  }
+
+  const createdAt =
+    "createdAt" in command && typeof command.createdAt === "string" ? command.createdAt : NOW_ISO;
+  const importedMessages = command.importedMessages.map((message) => {
+    const imported = message as {
+      messageId: MessageId;
+      role: "user" | "assistant";
+      text: string;
+      attachments?: OrchestrationReadModel["threads"][number]["messages"][number]["attachments"];
+      createdAt: string;
+      updatedAt: string;
+    };
+    return {
+      id: imported.messageId,
+      role: imported.role,
+      text: imported.text,
+      ...(imported.attachments ? { attachments: imported.attachments } : {}),
+      turnId: null,
+      streaming: false,
+      source: "fork-import" as const,
+      createdAt: imported.createdAt,
+      updatedAt: imported.updatedAt,
+    };
+  });
+  const forkedThread: OrchestrationReadModel["threads"][number] = {
+    ...sourceThread,
+    id: command.threadId as ThreadId,
+    title: `${sourceThread.title} (2)`,
+    modelSelection:
+      "modelSelection" in command &&
+      command.modelSelection &&
+      typeof command.modelSelection === "object"
+        ? (command.modelSelection as typeof sourceThread.modelSelection)
+        : sourceThread.modelSelection,
+    runtimeMode:
+      "runtimeMode" in command &&
+      (command.runtimeMode === "approval-required" || command.runtimeMode === "full-access")
+        ? command.runtimeMode
+        : sourceThread.runtimeMode,
+    interactionMode:
+      "interactionMode" in command &&
+      (command.interactionMode === "default" || command.interactionMode === "plan")
+        ? command.interactionMode
+        : sourceThread.interactionMode,
+    envMode:
+      "envMode" in command && (command.envMode === "local" || command.envMode === "worktree")
+        ? command.envMode
+        : sourceThread.envMode,
+    branch: "branch" in command && typeof command.branch === "string" ? command.branch : null,
+    worktreePath:
+      "worktreePath" in command && typeof command.worktreePath === "string"
+        ? command.worktreePath
+        : null,
+    associatedWorktreePath:
+      "associatedWorktreePath" in command && typeof command.associatedWorktreePath === "string"
+        ? command.associatedWorktreePath
+        : null,
+    associatedWorktreeBranch:
+      "associatedWorktreeBranch" in command && typeof command.associatedWorktreeBranch === "string"
+        ? command.associatedWorktreeBranch
+        : null,
+    associatedWorktreeRef:
+      "associatedWorktreeRef" in command && typeof command.associatedWorktreeRef === "string"
+        ? command.associatedWorktreeRef
+        : null,
+    createBranchFlowCompleted: false,
+    isPinned: false,
+    parentThreadId: null,
+    subagentAgentId: null,
+    subagentNickname: null,
+    subagentRole: null,
+    forkSourceThreadId: sourceThread.id,
+    forkSourceMessageId:
+      "sourceMessageId" in command && typeof command.sourceMessageId === "string"
+        ? MessageId.makeUnsafe(command.sourceMessageId)
+        : null,
+    forkTitleBase: sourceThread.title,
+    forkTitleOrdinal: 2,
+    sidechatSourceThreadId: null,
+    lastKnownPr: null,
+    latestTurn: null,
+    createdAt,
+    updatedAt: createdAt,
+    archivedAt: null,
+    deletedAt: null,
+    handoff: null,
+    messages: importedMessages,
+    activities: [],
+    proposedPlans: [],
+    checkpoints: [],
+    session: null,
+  };
+
+  fixture = {
+    ...fixture,
+    snapshot: {
+      ...fixture.snapshot,
+      snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+      threads: [
+        ...fixture.snapshot.threads.filter((thread) => thread.id !== forkedThread.id),
+        forkedThread,
+      ],
+      updatedAt: createdAt,
+    },
+  };
+  return true;
+}
+
+function findRecordedThreadForkCreateCommand(): Record<string, unknown> | null {
+  const request = wsRequests.find(
+    (entry) =>
+      entry._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+      typeof entry.command === "object" &&
+      entry.command !== null &&
+      "type" in entry.command &&
+      entry.command.type === "thread.fork.create",
+  );
+  return (request?.command as Record<string, unknown> | undefined) ?? null;
+}
+
 function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   const tag = body._tag;
   if (tag === ORCHESTRATION_WS_METHODS.getShellSnapshot) {
@@ -1012,6 +1266,9 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   }
   if (tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
     if (recordProjectCreateCommand(body.command)) {
+      return { sequence: fixture.snapshot.snapshotSequence };
+    }
+    if (recordThreadForkCreateCommand(body.command)) {
       return { sequence: fixture.snapshot.snapshotSequence };
     }
     return { sequence: fixture.snapshot.snapshotSequence + 1 };
@@ -1099,84 +1356,91 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   return {};
 }
 
-function installDeterministicActionNativeApi(): () => void {
+function installDeterministicActionNativeApi(
+  configure?: (api: NativeApi) => NativeApi,
+): () => void {
   const previousNativeApi = window.nativeApi;
   const wsNativeApi = readNativeApi();
   if (!wsNativeApi) {
     throw new Error("Expected browser native API fixture.");
   }
 
-  Object.defineProperty(window, "nativeApi", {
-    configurable: true,
-    value: {
-      ...wsNativeApi,
-      shell: {
-        ...wsNativeApi.shell,
-        openInEditor: async (
-          cwd: Parameters<typeof wsNativeApi.shell.openInEditor>[0],
-          editor: Parameters<typeof wsNativeApi.shell.openInEditor>[1],
-        ) => {
-          wsRequests.push({
-            _tag: WS_METHODS.shellOpenInEditor,
-            cwd,
-            editor,
-          });
-        },
-      },
-      git: {
-        ...wsNativeApi.git,
-        createWorktree: async (input: Parameters<typeof wsNativeApi.git.createWorktree>[0]) => {
-          const request: WsRequestEnvelope["body"] = {
-            _tag: WS_METHODS.gitCreateWorktree,
-            ...input,
-          };
-          wsRequests.push(request);
-          return resolveWsRpc(request) as Awaited<
-            ReturnType<typeof wsNativeApi.git.createWorktree>
-          >;
-        },
-      },
-      terminal: {
-        ...wsNativeApi.terminal,
-        open: async (input: Parameters<typeof wsNativeApi.terminal.open>[0]) => {
-          const request: WsRequestEnvelope["body"] = {
-            _tag: WS_METHODS.terminalOpen,
-            ...input,
-          };
-          wsRequests.push(request);
-          return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.terminal.open>>;
-        },
-        write: async (input: Parameters<typeof wsNativeApi.terminal.write>[0]) => {
-          wsRequests.push({
-            _tag: WS_METHODS.terminalWrite,
-            ...input,
-          });
-        },
-      },
-      orchestration: {
-        ...wsNativeApi.orchestration,
-        dispatchCommand: async (
-          command: Parameters<typeof wsNativeApi.orchestration.dispatchCommand>[0],
-        ) => {
-          wsRequests.push({
-            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
-            command,
-          });
-          return { sequence: fixture.snapshot.snapshotSequence + 1 };
-        },
-      },
-      automation: {
-        ...wsNativeApi.automation,
-        create: async (input: Parameters<typeof wsNativeApi.automation.create>[0]) => {
-          const request: WsRequestEnvelope["body"] = {
-            _tag: WS_METHODS.automationCreate,
-            ...input,
-          };
-          wsRequests.push(request);
-          return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.automation.create>>;
-        },
+  const deterministicApi: NativeApi = {
+    ...wsNativeApi,
+    shell: {
+      ...wsNativeApi.shell,
+      openInEditor: async (
+        cwd: Parameters<typeof wsNativeApi.shell.openInEditor>[0],
+        editor: Parameters<typeof wsNativeApi.shell.openInEditor>[1],
+      ) => {
+        wsRequests.push({
+          _tag: WS_METHODS.shellOpenInEditor,
+          cwd,
+          editor,
+        });
       },
     },
+    git: {
+      ...wsNativeApi.git,
+      createWorktree: async (input: Parameters<typeof wsNativeApi.git.createWorktree>[0]) => {
+        const request: WsRequestEnvelope["body"] = {
+          _tag: WS_METHODS.gitCreateWorktree,
+          ...input,
+        };
+        wsRequests.push(request);
+        return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.git.createWorktree>>;
+      },
+    },
+    terminal: {
+      ...wsNativeApi.terminal,
+      open: async (input: Parameters<typeof wsNativeApi.terminal.open>[0]) => {
+        const request: WsRequestEnvelope["body"] = {
+          _tag: WS_METHODS.terminalOpen,
+          ...input,
+        };
+        wsRequests.push(request);
+        return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.terminal.open>>;
+      },
+      write: async (input: Parameters<typeof wsNativeApi.terminal.write>[0]) => {
+        wsRequests.push({
+          _tag: WS_METHODS.terminalWrite,
+          ...input,
+        });
+      },
+    },
+    orchestration: {
+      ...wsNativeApi.orchestration,
+      dispatchCommand: async (
+        command: Parameters<typeof wsNativeApi.orchestration.dispatchCommand>[0],
+      ) => {
+        wsRequests.push({
+          _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+          command,
+        });
+        const recordedFork = recordThreadForkCreateCommand(command);
+        return {
+          sequence: recordedFork
+            ? fixture.snapshot.snapshotSequence
+            : fixture.snapshot.snapshotSequence + 1,
+        };
+      },
+    },
+    automation: {
+      ...wsNativeApi.automation,
+      create: async (input: Parameters<typeof wsNativeApi.automation.create>[0]) => {
+        const request: WsRequestEnvelope["body"] = {
+          _tag: WS_METHODS.automationCreate,
+          ...input,
+        };
+        wsRequests.push(request);
+        return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.automation.create>>;
+      },
+    },
+  };
+
+  Object.defineProperty(window, "nativeApi", {
+    configurable: true,
+    value: configure ? configure(deterministicApi) : deterministicApi,
   });
 
   return () => {
@@ -1325,6 +1589,7 @@ async function waitForProductionStyles(): Promise<void> {
 async function waitForElement<T extends Element>(
   query: () => T | null,
   errorMessage: string,
+  timeout = 8_000,
 ): Promise<T> {
   let element: T | null = null;
   await vi.waitFor(
@@ -1333,7 +1598,7 @@ async function waitForElement<T extends Element>(
       expect(element, errorMessage).toBeTruthy();
     },
     {
-      timeout: 8_000,
+      timeout,
       interval: 16,
     },
   );
@@ -1359,10 +1624,11 @@ async function waitForURL(
   return pathname;
 }
 
-async function waitForComposerEditor(): Promise<HTMLElement> {
+async function waitForComposerEditor(timeout = 8_000): Promise<HTMLElement> {
   return waitForElement(
     () => document.querySelector<HTMLElement>('[contenteditable="true"]'),
     "Unable to find composer editor.",
+    timeout,
   );
 }
 
@@ -1578,6 +1844,7 @@ async function measureUserRow(options: {
   const scrollContainer = await waitForElement(
     () => host.querySelector<HTMLElement>("[data-chat-scroll-container='true']"),
     "Unable to find ChatView message scroll container.",
+    20_000,
   );
 
   let row: HTMLElement | null = null;
@@ -1652,6 +1919,7 @@ async function mountChatView(options: {
   viewport: ViewportSpec;
   snapshot: OrchestrationReadModel;
   configureFixture?: (fixture: TestFixture) => void;
+  configureNativeApi?: (api: NativeApi) => NativeApi;
   initialEntry?: string;
 }): Promise<MountedChatView> {
   fixture = buildFixture(options.snapshot);
@@ -1660,7 +1928,7 @@ async function mountChatView(options: {
   // transport-level contract. Record mutating native actions synchronously so
   // a slow Linux WebSocket round trip cannot outlive unmount and dispose the
   // next test's Effect runtime.
-  const restoreNativeApi = installDeterministicActionNativeApi();
+  const restoreNativeApi = installDeterministicActionNativeApi(options.configureNativeApi);
   await setViewport(options.viewport);
   await waitForProductionStyles();
 
@@ -1786,6 +2054,363 @@ describe("ChatView timeline estimator parity (full app)", () => {
     resetRetainedThreadDetailSubscriptionsForTests();
     resetWsNativeApiForTest();
     document.body.innerHTML = "";
+  });
+
+  it("keeps unavailable provider setup out of an empty chat until the user tries to send", async () => {
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-empty-provider-health" as MessageId,
+      targetText: "This message is removed to create an empty thread",
+    });
+    const emptyThreadSnapshot: OrchestrationReadModel = {
+      ...snapshot,
+      threads: snapshot.threads.map((thread) => ({
+        ...thread,
+        latestTurn: null,
+        messages: [],
+      })),
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: emptyThreadSnapshot,
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [
+            {
+              provider: "codex",
+              status: "error",
+              available: false,
+              authStatus: "unauthenticated",
+              message: "Codex is not installed.",
+              checkedAt: NOW_ISO,
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForComposerEditor(20_000);
+      expect(document.body.textContent).not.toContain("Codex provider status");
+      expect(document.body.textContent).not.toContain("Codex is not installed.");
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Help me connect Codex");
+      const sendButton = await waitForSendButton();
+      await vi.waitFor(() => expect(sendButton.disabled).toBe(false));
+      sendButton.click();
+
+      await vi.waitFor(() => {
+        expect(useProviderConnectionDialogStore.getState()).toMatchObject({
+          isOpen: true,
+          provider: "codex",
+          source: "send",
+        });
+      });
+    } finally {
+      useProviderConnectionDialogStore.getState().setOpen(false);
+      await mounted.cleanup();
+    }
+  });
+
+  it("still shows provider health when an existing conversation loses its provider", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-provider-health" as MessageId,
+        targetText: "Keep this existing conversation visible",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [
+            {
+              provider: "codex",
+              status: "error",
+              available: false,
+              authStatus: "unauthenticated",
+              message: "Codex is not installed.",
+              checkedAt: NOW_ISO,
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-slot='alert-title']")).find(
+            (element) => element.textContent === "Codex provider status",
+          ) ?? null,
+        "Unable to find provider health for the existing conversation.",
+        20_000,
+      );
+      expect(document.body.textContent).toContain("Codex is not installed.");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("dispatches a bounded fork command from the message action and navigates to the new task", async () => {
+    const sourceMessageId = MessageId.makeUnsafe("msg-user-message-fork-source");
+    const sourceSnapshot = createSnapshotForTargetUser({
+      targetMessageId: sourceMessageId,
+      targetText: "Fork exactly here",
+    });
+    const sourceThread = sourceSnapshot.threads[0]!;
+    const sourceMessageIndex = sourceThread.messages.findIndex(
+      (message) => message.id === sourceMessageId,
+    );
+    const snapshot: OrchestrationReadModel = {
+      ...sourceSnapshot,
+      threads: [
+        {
+          ...sourceThread,
+          messages: sourceThread.messages.slice(sourceMessageIndex, sourceMessageIndex + 2),
+        },
+      ],
+    };
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      const sourceRow = await waitForElement(
+        () =>
+          document.querySelector<HTMLElement>(
+            `[data-message-id="${sourceMessageId}"][data-message-role="user"]`,
+          ),
+        "Unable to find source message for the fork action.",
+        20_000,
+      );
+      await userEvent.hover(sourceRow);
+      const forkButton = sourceRow.querySelector<HTMLButtonElement>(
+        'button[aria-label="Fork conversation from this message"]',
+      );
+      expect(forkButton).not.toBeNull();
+      forkButton?.click();
+      forkButton?.click();
+
+      await vi.waitFor(
+        () => {
+          expect(findRecordedThreadForkCreateCommand()).not.toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      const forkCommand = findRecordedThreadForkCreateCommand();
+      if (!forkCommand) {
+        throw new Error("Expected a recorded thread fork command.");
+      }
+
+      expect(forkCommand).toMatchObject({
+        type: "thread.fork.create",
+        sourceThreadId: THREAD_ID,
+        sourceMessageId,
+        projectId: PROJECT_ID,
+        envMode: "local",
+        branch: "main",
+      });
+      expect(forkCommand?.importedMessages).toEqual([
+        expect.objectContaining({
+          role: "user",
+          text: "Fork exactly here",
+        }),
+      ]);
+      expect(
+        wsRequests.filter(
+          (entry) =>
+            entry._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            typeof entry.command === "object" &&
+            entry.command !== null &&
+            "type" in entry.command &&
+            entry.command.type === "thread.fork.create",
+        ),
+      ).toHaveLength(1);
+
+      const forkThreadId = forkCommand?.threadId;
+      expect(typeof forkThreadId).toBe("string");
+      await vi.waitFor(
+        () => {
+          expect(mounted.router.state.location.pathname).toBe(`/${forkThreadId}`);
+          expect(
+            useStore.getState().threads.find((thread) => thread.id === forkThreadId)?.title,
+          ).toBe(`${THREAD_TITLE} (2)`);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("intercepts Claude /fork in the app instead of sending it to the provider", async () => {
+    const sourceSnapshot = createSnapshotForTargetUser({
+      targetMessageId: MessageId.makeUnsafe("msg-user-claude-fork-slash-source"),
+      targetText: "Claude fork slash source",
+    });
+    const claudeSnapshot: OrchestrationReadModel = {
+      ...sourceSnapshot,
+      threads: sourceSnapshot.threads.map((thread) => ({
+        ...thread,
+        modelSelection: { provider: "claudeAgent", model: "claude-opus-4-8" },
+        session: thread.session
+          ? {
+              ...thread.session,
+              providerName: "claudeAgent",
+            }
+          : null,
+      })),
+    };
+
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/fork");
+    const forkMounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: claudeSnapshot,
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => expect(composerEditor.textContent ?? "").toContain("/fork"));
+      wsRequests.length = 0;
+      await userEvent.click(await waitForSendButton());
+
+      await expect.element(page.getByText("Fork Into New Worktree", { exact: true })).toBeVisible();
+      await expect.element(page.getByText("Fork Into Local", { exact: true })).toBeVisible();
+      expect(hasDispatchedCommandType("thread.turn.start")).toBe(false);
+    } finally {
+      await forkMounted.cleanup();
+    }
+  });
+
+  it("forks from an assistant row that first rendered while streaming", async () => {
+    const targetUserMessageId = MessageId.makeUnsafe("msg-user-message-fork-settling-source");
+    const sourceSnapshot = createSnapshotForTargetUser({
+      targetMessageId: targetUserMessageId,
+      targetText: "Wait for the answer",
+    });
+    const sourceThread = sourceSnapshot.threads[0]!;
+    const sourceMessageIndex = sourceThread.messages.findIndex(
+      (message) => message.id === targetUserMessageId,
+    );
+    const settledMessages = sourceThread.messages.slice(sourceMessageIndex, sourceMessageIndex + 2);
+    const assistantMessage = settledMessages[1]!;
+    const activeTurnId = TurnId.makeUnsafe("turn-message-fork-settling");
+    const streamingSnapshot: OrchestrationReadModel = {
+      ...sourceSnapshot,
+      threads: [
+        {
+          ...sourceThread,
+          latestTurn: {
+            turnId: activeTurnId,
+            state: "running",
+            requestedAt: isoAt(1_100),
+            startedAt: isoAt(1_101),
+            completedAt: null,
+            assistantMessageId: assistantMessage.id,
+          },
+          messages: [
+            settledMessages[0]!,
+            {
+              ...assistantMessage,
+              turnId: activeTurnId,
+              streaming: true,
+            },
+          ],
+          session: sourceThread.session
+            ? {
+                ...sourceThread.session,
+                status: "running",
+                activeTurnId,
+              }
+            : null,
+        },
+      ],
+    };
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: streamingSnapshot,
+    });
+
+    try {
+      const assistantRowSelector = `[data-message-id="${assistantMessage.id}"][data-message-role="assistant"]`;
+      const assistantRow = await waitForElement(
+        () => document.querySelector<HTMLElement>(assistantRowSelector),
+        "Unable to find the streaming assistant message for the fork action.",
+      );
+      expect(
+        assistantRow.querySelector('button[aria-label="Fork conversation from this message"]'),
+      ).toBeNull();
+
+      const settledSnapshot: OrchestrationReadModel = {
+        ...streamingSnapshot,
+        snapshotSequence: streamingSnapshot.snapshotSequence + 1,
+        threads: [
+          {
+            ...streamingSnapshot.threads[0]!,
+            latestTurn: {
+              ...streamingSnapshot.threads[0]!.latestTurn!,
+              state: "completed",
+              completedAt: isoAt(1_108),
+            },
+            messages: [
+              settledMessages[0]!,
+              {
+                ...assistantMessage,
+                turnId: activeTurnId,
+                // The provider lifecycle is settled, but a delayed transport snapshot can
+                // briefly leave the raw message flag true. The terminal footer intentionally
+                // treats lifecycle state as authoritative in this case.
+                streaming: true,
+              },
+            ],
+            session: sourceThread.session
+              ? {
+                  ...sourceThread.session,
+                  status: "ready",
+                  activeTurnId: null,
+                }
+              : null,
+          },
+        ],
+        updatedAt: isoAt(1_109),
+      };
+      fixture = { ...fixture, snapshot: settledSnapshot };
+      useStore.getState().syncServerReadModel(settledSnapshot);
+
+      const forkButton = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>(
+            `${assistantRowSelector} button[aria-label="Fork conversation from this message"]`,
+          ),
+        "Unable to find the fork action after the assistant message settled.",
+      );
+      forkButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(findRecordedThreadForkCreateCommand()).not.toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      const forkCommand = findRecordedThreadForkCreateCommand();
+      if (!forkCommand) {
+        throw new Error("Expected a recorded thread fork command.");
+      }
+
+      expect(forkCommand).toMatchObject({
+        type: "thread.fork.create",
+        sourceThreadId: THREAD_ID,
+        sourceMessageId: assistantMessage.id,
+      });
+      expect(forkCommand?.importedMessages).toEqual([
+        expect.objectContaining({ role: "user", text: "Wait for the answer" }),
+        expect.objectContaining({ role: "assistant", text: assistantMessage.text }),
+      ]);
+    } finally {
+      await mounted.cleanup();
+    }
   });
 
   it.each(TEXT_VIEWPORT_MATRIX)(
@@ -2854,7 +3479,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         expect(
           useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.modelSelectionByProvider
             .codex,
-        ).toMatchObject({ provider: "codex", model: "gpt-5.5" });
+        ).toMatchObject({ provider: "codex", model: "gpt-5.6-sol" });
       });
       expect(document.querySelector('[data-slot="menu-popup"]')).toBeNull();
 
@@ -3103,6 +3728,36 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       expect(getComputedStyle(stopButton).cursor).toBe("pointer");
+      expect(document.querySelector('button[aria-label="Record voice note"]')).not.toBeNull();
+      expect(document.querySelector('button[aria-label="Queue follow-up"]')).toBeNull();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps slash-command validation feedback inside the composer controls", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/review unsupported-target");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-local-slash-feedback" as MessageId,
+        targetText: "local slash feedback target",
+      }),
+    });
+
+    try {
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find composer form.",
+      );
+      composerForm.requestSubmit();
+
+      const feedback = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-composer-local-feedback="true"]'),
+        "Unable to find composer-local slash feedback.",
+      );
+      expect(feedback.textContent).toContain("Invalid /review command");
+      expect(feedback.closest('[data-chat-composer-footer="true"]')).not.toBeNull();
     } finally {
       await mounted.cleanup();
     }
@@ -3121,11 +3776,18 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const composerForm = await waitForElement(
-        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
-        "Unable to find composer form.",
+      const queueButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Queue follow-up"]'),
+        "Unable to find the running-turn queue button.",
       );
-      composerForm.requestSubmit();
+      expect(queueButton.title).toContain("Enter");
+      expect(queueButton.title).toContain("Cmd/Ctrl+Enter");
+      expect(document.querySelector('button[aria-label="Stop generation"]')).toBeNull();
+      expect(document.querySelector('button[aria-label="Record voice note"]')).not.toBeNull();
+      await mounted.setViewport(TEXT_VIEWPORT_MATRIX[3]);
+      expect(document.querySelector('button[aria-label="Queue follow-up"]')).not.toBeNull();
+      expect(document.querySelector('button[aria-label="Record voice note"]')).not.toBeNull();
+      document.querySelector<HTMLButtonElement>('button[aria-label="Queue follow-up"]')?.click();
 
       await vi.waitFor(
         () => {
@@ -3146,6 +3808,219 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "Unable to find stop generation button.",
       );
       expect(stopButton).not.toBeNull();
+      expect(document.querySelector('button[aria-label="Record voice note"]')).not.toBeNull();
+      expect(hasDispatchedCommandType("thread.turn.interrupt")).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps active recorder controls usable when an approval arrives", async () => {
+    const microphone = installFakeMicrophoneCapture();
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-voice-approval-transition" as MessageId,
+        targetText: "voice approval transition target",
+        sessionStatus: "running",
+      }),
+      configureNativeApi: configureSuccessfulVoiceTranscription("approval-safe transcript"),
+    });
+
+    try {
+      const recordButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Record voice note"]'),
+        "Unable to find voice recording button.",
+      );
+      recordButton.click();
+      await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>('button[aria-label="Cancel voice recording"]'),
+        "Voice recorder did not start.",
+      );
+      microphone.emitSamples();
+
+      appendActiveThreadActivity({
+        id: EventId.makeUnsafe("approval-during-voice"),
+        createdAt: isoAt(1_200),
+        kind: "approval.requested",
+        summary: "Command approval requested",
+        tone: "approval",
+        turnId: null,
+        payload: {
+          requestId: "approval-during-voice",
+          requestKind: "command",
+          detail: "bun run test",
+        },
+      });
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("bun run test");
+          expect(
+            document.querySelector<HTMLButtonElement>(
+              'button[aria-label="Cancel voice recording"]',
+            ),
+          ).not.toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const insertButton = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Stop and insert voice note"]',
+      );
+      const sendButton = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Send voice note"]',
+      );
+      expect(insertButton?.disabled).toBe(false);
+      expect(sendButton?.disabled).toBe(false);
+
+      document
+        .querySelector<HTMLButtonElement>('button[aria-label="Cancel voice recording"]')
+        ?.click();
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-chat-composer-footer="true"]')).toBeNull();
+      });
+    } finally {
+      await mounted.cleanup();
+      microphone.restore();
+    }
+  });
+
+  it("queues voice Send instead of answering a question that arrives mid-recording", async () => {
+    const microphone = installFakeMicrophoneCapture();
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "existing draft");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-voice-question-transition" as MessageId,
+        targetText: "voice question transition target",
+        sessionStatus: "running",
+      }),
+      configureNativeApi: configureSuccessfulVoiceTranscription("spoken follow-up"),
+    });
+
+    try {
+      const recordButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Record voice note"]'),
+        "Unable to find voice recording button.",
+      );
+      recordButton.click();
+      await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>('button[aria-label="Cancel voice recording"]'),
+        "Voice recorder did not start.",
+      );
+      microphone.emitSamples();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 300));
+
+      appendActiveThreadActivity({
+        id: EventId.makeUnsafe("question-during-voice"),
+        createdAt: isoAt(1_210),
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        turnId: null,
+        payload: {
+          requestId: "question-during-voice",
+          questions: [
+            {
+              id: "release_choice",
+              header: "Release",
+              question: "Which release path should be used?",
+              options: [
+                {
+                  label: "safe",
+                  description: "Use the safe release path",
+                },
+              ],
+            },
+          ],
+        },
+      });
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Which release path should be used?");
+          expect(
+            document.querySelector<HTMLButtonElement>('button[aria-label="Send voice note"]'),
+          ).not.toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      document.querySelector<HTMLButtonElement>('button[aria-label="Send voice note"]')?.click();
+
+      await vi.waitFor(
+        () => {
+          const queuedRow = document.querySelector<HTMLElement>(
+            '[data-testid="queued-follow-up-row"]',
+          );
+          const queuedTurn =
+            useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.queuedTurns[0];
+          expect(queuedRow?.textContent).toContain("existing draft");
+          expect(queuedTurn?.kind).toBe("chat");
+          expect(queuedTurn?.kind === "chat" ? queuedTurn.prompt : null).toBe(
+            "existing draft\nspoken follow-up",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            typeof request.command === "object" &&
+            request.command !== null &&
+            "type" in request.command &&
+            request.command.type === "thread.user-input.respond",
+        ),
+      ).toBe(false);
+      expect(document.body.textContent).toContain("Which release path should be used?");
+    } finally {
+      await mounted.cleanup();
+      microphone.restore();
+    }
+  });
+
+  it("keeps Cmd/Ctrl+Enter as the immediate steering shortcut while a turn is running", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "steer this follow-up now");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-running-steer-shortcut" as MessageId,
+        targetText: "running steer shortcut target",
+        sessionStatus: "running",
+      }),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      const useMetaForMod = isMacPlatform(navigator.platform);
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          metaKey: useMetaForMod,
+          ctrlKey: !useMetaForMod,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const steeredTurn = wsRequests
+            .map((request) => readDispatchedCommand(request))
+            .find(
+              (command) =>
+                command?.type === "thread.turn.start" && command.dispatchMode === "steer",
+            );
+          expect(steeredTurn).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(document.querySelector('[data-testid="queued-follow-up-row"]')).toBeNull();
     } finally {
       await mounted.cleanup();
     }
@@ -3631,6 +4506,15 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("coalesces repeated Studio new-chat clicks and stays in Studio after navigation settles", async () => {
+    // Studio is hidden by default; this Studio-specific regression test opts in explicitly.
+    localStorage.setItem(
+      "scient:app-settings:v1",
+      JSON.stringify({
+        appSettingsVersion: CURRENT_APP_SETTINGS_VERSION,
+        showStudioSection: true,
+      }),
+    );
+
     useComposerDraftStore.setState({
       draftThreadsByThreadId: {
         [STUDIO_DRAFT_THREAD_ID]: {

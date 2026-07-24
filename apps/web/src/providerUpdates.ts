@@ -78,6 +78,10 @@ export function isProviderUpdateActive(provider: ServerProviderStatus): boolean 
 
 export function shouldOfferProviderUpdateAction(provider: ServerProviderStatus): boolean {
   const advisory = provider.versionAdvisory;
+  if (!provider.available) return false;
+  if (provider.runtime?.source === "managed") {
+    return provider.provider === "antigravity" && provider.runtime.managedVersion !== null;
+  }
   return (
     advisory?.canUpdate === true &&
     advisory.updateCommand !== null &&
@@ -101,6 +105,7 @@ export function shouldShowProviderUpdateStatus(input: ProviderUpdateVisibilityIn
   const hiddenProviderSet = input.hiddenProviderSet ?? new Set(input.hiddenProviders ?? []);
   if (
     !advisory ||
+    !input.provider.available ||
     input.serverSettings?.enableProviderUpdateChecks === false ||
     advisory.status !== "behind_latest" ||
     advisory.latestVersion === null ||

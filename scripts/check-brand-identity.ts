@@ -192,7 +192,6 @@ const scientOnlySurfacePaths = new Set([
   "apps/server/src/terminal/managedTerminalWrappers.ts",
   "apps/server/src/terminal/Layers/BunPTY.ts",
   "apps/web/src/components/AppSnapCoordinator.tsx",
-  "apps/web/src/components/AppSnapWelcomeDialog.tsx",
   "apps/web/src/components/BranchToolbarBranchSelector.tsx",
   "apps/web/src/components/ThreadWorktreeHandoffDialog.tsx",
   "apps/web/src/components/ChatView.logic.ts",

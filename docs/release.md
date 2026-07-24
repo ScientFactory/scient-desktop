@@ -13,22 +13,36 @@ This document covers build-only native validation, promotion through the protect
 - Builds four artifacts in parallel:
   - macOS `arm64` DMG
   - macOS `x64` DMG
-  - Linux `x64` AppImage
+  - Linux `x64` Debian package
   - Windows `x64` NSIS installer
 - Publishes one versioned GitHub Release with all produced files.
   - Versions with a suffix after `X.Y.Z` (for example `1.2.3-alpha.1`) are published as GitHub prereleases.
   - Stable 0.5.x releases are GitHub Latest; the 0.4.x compatibility release remains historical.
-- Publishes default `latest*.yml` metadata plus byte-identical `scient*.yml` aliases on every stable release.
+- Publishes the macOS and Windows `latest` metadata plus dedicated `scient`
+  aliases, and publishes Debian updates only as `scient-deb-linux.yml`.
 - Keeps the historical 0.4.x compatibility release unchanged; current stable payloads stay on their own GitHub Latest release.
 - Publishes prerelease installers only on their versioned GitHub prerelease; prereleases never replace the stable `scient` update manifests.
 - Publishes the CLI package (`apps/server`, npm package `@scientfactory/cli`, executable `scient`) with OIDC trusted publishing when `SCIENT_PUBLISH_CLI=1`.
 - Build-only runs auto-detect signing credentials and may produce unsigned validation artifacts.
-- Public releases fail closed unless signing credentials are complete or a manual dispatch explicitly enables the temporary unsigned early-access lane.
+- Public macOS releases always fail closed unless signing and notarization credentials are complete. A manual dispatch may explicitly allow only an unsigned Windows early-access installer.
 
 ## Desktop auto-update notes
 
 - Runtime updater: `electron-updater` in `apps/desktop/src/main.ts`.
-- Client update checks are enabled in packaged production builds by `SCIENT_DESKTOP_UPDATES_ENABLED = true`. Development builds, unpackaged builds, builds without `app-update.yml`, Linux builds not running as an AppImage, and installations with `SYNARA_DISABLE_AUTO_UPDATE=1` remain disabled.
+- Client update checks are enabled in packaged production builds by
+  `SCIENT_DESKTOP_UPDATES_ENABLED = true`. Development builds, unpackaged
+  builds, builds without `app-update.yml`, unsupported Linux package types, and
+  installations with `SYNARA_DISABLE_AUTO_UPDATE=1` remain disabled.
+- The supported Ubuntu route is the installed Debian package. Its package
+  scripts install electron-builder's AppArmor user-namespace profile and manage
+  the Chromium sandbox helper. Acceptance launches the installed executable as
+  a normal user and rejects the real process if any `--no-sandbox` argument is
+  present.
+- The AppImage compatibility build remains fail-closed and is checked in CI for
+  sandbox-bypass injection, but it is not published as the supported Ubuntu
+  download. Stock Ubuntu 24.04 can deny the randomized AppImage mount path the
+  user namespace needed by Chromium; Scient does not answer that denial by
+  disabling the sandbox.
 - `v0.5.6` was published with client update checks disabled. Existing `v0.5.6`
   installations therefore require one manual installation of the first
   updater-enabled release; the application cannot remotely enable code that is
@@ -39,25 +53,42 @@ This document covers build-only native validation, promotion through the protect
   - The desktop UI shows a rocket update button while preparing and switches to an install action once the update is ready.
 - Provider: GitHub Releases (`provider: github`) configured at build time.
 - Repository visibility: public. The authenticated private-repository provider does not honor custom channel filenames.
-- Runtime channel: `scient`. Stable releases publish both `latest` and `scient` metadata; the configured 0.4.x compatibility release remains available for historical migration.
+- Runtime channels: macOS and Windows use `scient`; installed Debian packages
+  use `scient-deb`. The format-specific Linux channel prevents an older
+  AppImage updater from downloading a `.deb` and attempting a cross-format
+  replacement.
 - Repository slug source:
   - `SCIENT_DESKTOP_UPDATE_REPOSITORY` (format `owner/repo`) is required when releases are enabled.
   - The workflow requires it to equal the current GitHub repository and requires that repository to be public.
 - Required Scient release assets for updater:
-  - platform installers (`.exe`, `.dmg`, `.AppImage`, plus macOS `.zip` for Squirrel.Mac update payloads)
-  - `scient-mac.yml`, `scient.yml`, and `scient-linux.yml` metadata
-  - every stable release includes both `scient-mac.yml`, `scient.yml`, `scient-linux.yml` and `latest-mac.yml`, `latest.yml`, `latest-linux.yml`
+  - platform installers (`.exe`, `.dmg`, `.deb`, plus macOS `.zip` for Squirrel.Mac update payloads)
+  - `scient-mac.yml`, `scient.yml`, and `scient-deb-linux.yml` metadata
+  - stable releases intentionally omit `latest-linux.yml` and
+    `scient-linux.yml`; those names belong to legacy AppImage updaters
   - `*.blockmap` files, except the macOS update `.zip.blockmap` removed after zip repack
 - Enforced upgrade path:
-  - Stable clean Scient releases are created with `make_latest=true` and carry both six-manifest filenames in the versioned release.
+  - Stable clean Scient releases are created with `make_latest=true` and carry
+    the two default macOS/Windows manifests plus the three dedicated
+    platform-channel manifests in the versioned release.
   - The historical 0.4.x compatibility release remains available for predecessor migration and is never overwritten by a 0.5.x release.
   - Clean releases do not mirror payloads onto the historical compatibility release, so the 0.4.x line remains immutable.
-  - Clean-release publication fails closed if either the default Latest manifests or the dedicated `scient` aliases are missing.
+  - Clean-release publication fails closed if the macOS/Windows Latest
+    manifests or any dedicated platform alias is missing.
+  - Existing AppImage users require a one-time manual installation of the
+    Debian package. There is deliberately no automatic cross-format updater.
 - Production desktop builds omit web/server/desktop source maps by default to keep update payloads small. Set the inherited `SYNARA_WEB_SOURCEMAP=1` or `SYNARA_SERVER_SOURCEMAP=1`, or the Scient-owned `SCIENT_DESKTOP_SOURCEMAP=1`, only for a diagnostic release that needs them.
 - macOS metadata note:
   - The build initially emits `latest-mac.yml` for both Intel and Apple Silicon.
   - The workflow merges the per-arch macOS metadata, then keeps the merged manifest as `latest-mac.yml` and copies it to `scient-mac.yml` for stable releases.
-  - The desktop build script gives unsigned early-access apps a complete ad-hoc signature before packaging, repacks the macOS update `.zip` with `ditto`, verifies Electron framework symlinks and both source/extracted app signatures, validates the app inside the final DMG, patches the matching `latest-mac*.yml` hash/size, and removes the stale `.zip.blockmap`.
+  - Local unsigned validation builds receive a complete ad-hoc signature. Public
+    builds use the stable Developer ID identity, a dedicated minimal AppSnap
+    signature, controlled notarization, and stapling. The notarization hook
+    captures Apple's submission ID immediately, polls for up to 90 minutes,
+    preserves Apple's completed log, and writes architecture-specific evidence
+    even when the build fails. The build then repacks the macOS update `.zip`
+    with `ditto`, verifies Electron framework symlinks and both source/extracted
+    app signatures, validates the app inside the final DMG, patches the matching
+    `latest-mac*.yml` hash/size, and removes the stale `.zip.blockmap`.
   - macOS updater downloads intentionally use the full zip payload so Squirrel.Mac installs the exact signed archive validated by release build.
 - Local smoke test:
   - Run `bun run release:smoke:mac-update -- --skip-build --build-version 0.1.5` on macOS after local desktop/server/web dist files exist.
@@ -94,6 +125,10 @@ Checklist:
 - Set `SCIENT_DESKTOP_RELEASES_ENABLED=true` only after `SCIENT_DESKTOP_UPDATE_REPOSITORY=ScientFactory/scient-desktop` is configured and the release candidate is ready for native CI validation.
 - The desktop updater expects the pinned compatibility release in this repository to include the generated updater metadata files, not just the installers.
 - The published release title should read `Scient vX.Y.Z`.
+- Before publishing the first Debian-based Linux release, deploy the coordinated
+  website change that selects `Scient-*-amd64.deb`, labels it as a Debian
+  package, and gives package-manager installation instructions. The current
+  AppImage download selector must not remain the public default.
 - By default, the first-party desktop release path does not require CLI publish or post-release version-bump automation.
 - Optional jobs stay disabled unless repository variables enable them:
   - `SCIENT_PUBLISH_CLI=1`
@@ -124,23 +159,23 @@ To publish from a manual dispatch instead of a tag push, dispatch the exact
 `release/stable` head with `publish_release=true`. The workflow rejects
 publication from every other ref or commit.
 
-### Temporary unsigned early-access publication
+### Temporary unsigned Windows early-access publication
 
 When signing credentials are unavailable, a manual dispatch from the exact
 `release/stable` head may set both `publish_release=true` and
 `allow_unsigned_release=true`. This option is unavailable to tag-triggered
 publication and never weakens the default signed-release gate.
 
-Unsigned behavior is platform-specific:
+The override applies only to Windows:
 
 - Windows keeps the normal in-app NSIS update handoff. Windows may show an
   Unknown Publisher or SmartScreen warning before installation continues.
-- macOS checks and downloads the update inside Scient, then opens the downloaded
-  ZIP in Finder. The user must replace Scient in Applications and reopen it.
-  Early-access bundles are ad-hoc signed so macOS can verify their internal
-  integrity, but they remain unnotarized and can still show an unidentified
-  developer warning that the user must explicitly bypass once.
-- Linux keeps the existing AppImage behavior.
+- macOS publication still requires a Developer ID signature, successful
+  notarization, a stapled ticket, and final artifact verification. There is no
+  unsigned public macOS lane because ad-hoc releases do not retain a stable
+  privacy identity across updates.
+- Linux keeps the required sandboxed Debian-package behavior and is unaffected
+  by the override.
 
 Never enable unsigned publication while a platform has a partial signing-secret
 configuration. Remove incomplete secrets or finish the signing setup first.
@@ -168,12 +203,29 @@ Checklist:
    - `APPLE_API_KEY`: contents of the downloaded `.p8`
    - `APPLE_API_KEY_ID`: Key ID
    - `APPLE_API_ISSUER`: Issuer ID
-8. Re-run a tag release and confirm macOS artifacts are signed/notarized.
+8. Re-run a tag release and confirm macOS artifacts are signed, notarized, and
+   stapled. The macOS jobs allow up to 120 minutes for Apple service delays;
+   Linux and Windows remain capped at 30 minutes.
+9. Download the `notarization-<arch>` workflow artifacts and confirm each
+   evidence file records an Apple submission ID, `Accepted` status, Developer ID
+   Team ID, successful stapling, Gatekeeper acceptance, and the corresponding
+   Apple notarization log.
+10. For publishing runs, confirm both `Verify published macOS` jobs downloaded
+    the public DMGs and updater ZIPs, matched them against `SHA256SUMS.txt`, and
+    re-ran Developer ID, nested-helper identity, stapling, and Gatekeeper checks
+    against the extracted delivered copies. Release finalization waits for these
+    checks.
 
 Notes:
 
 - `APPLE_API_KEY` is stored as raw key text in secrets.
-- The workflow writes it to a temporary `AuthKey_<id>.p8` file at runtime.
+- The workflow writes it with owner-only permissions to a temporary
+  `AuthKey_<id>.p8` file at runtime and removes the file when the build exits.
+- The custom notarization workflow deliberately disables electron-builder's
+  opaque automatic `submit --wait` integration. A submission timeout is
+  recovered from `notarytool history` when Apple accepted the uniquely named
+  archive but the runner lost the response; the entire app build is never
+  retried automatically after notarization starts.
 
 ## 3) Windows signing setup
 

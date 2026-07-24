@@ -45,9 +45,10 @@ const APP_SETTINGS_STORAGE_KEY = "scient:app-settings:v1";
 const SERVER_SETTINGS_MIGRATION_STORAGE_KEY = "scient:server-settings-migrated:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
+export const CURRENT_APP_SETTINGS_VERSION = 1;
 export const MIN_CHAT_FONT_SIZE_PX = 11;
 export const MAX_CHAT_FONT_SIZE_PX = 18;
-export const DEFAULT_CHAT_FONT_SIZE_PX = 12;
+export const DEFAULT_CHAT_FONT_SIZE_PX = 15;
 export const MIN_TERMINAL_FONT_SIZE_PX = 10;
 export const MAX_TERMINAL_FONT_SIZE_PX = 22;
 export const DEFAULT_TERMINAL_FONT_SIZE_PX = 12;
@@ -85,6 +86,9 @@ export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "update
 export const UiDensity = Schema.Literals(UI_DENSITY_MODES);
 export type UiDensity = typeof UiDensity.Type;
 export { DEFAULT_UI_DENSITY };
+
+export const VoiceTranscriptionMode = Schema.Literals(["automatic", "offline-only"]);
+export type VoiceTranscriptionMode = typeof VoiceTranscriptionMode.Type;
 
 export function getDefaultNativeFontSmoothing(platform = globalThis.navigator?.platform ?? "") {
   return /mac|iphone|ipad|ipod/i.test(platform);
@@ -157,6 +161,10 @@ const PersistedProviderKind = Schema.Literals([
 );
 
 export const AppSettingsSchema = Schema.Struct({
+  appSettingsVersion: Schema.Number.pipe(
+    Schema.withConstructorDefault(() => Option.some(CURRENT_APP_SETTINGS_VERSION)),
+    Schema.withDecodingDefault(() => 0),
+  ),
   telemetryPrivacyLevel: TelemetryPrivacyLevel.pipe(withDefaults(() => "essential" as const)),
   claudeBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(withDefaults(() => "")),
   uiDensity: UiDensity.pipe(withDefaults(() => DEFAULT_UI_DENSITY)),
@@ -187,6 +195,9 @@ export const AppSettingsSchema = Schema.Struct({
   ),
   openCodeExperimentalWebSockets: Schema.Boolean.pipe(withDefaults(() => false)),
   defaultThreadEnvMode: EnvMode.pipe(withDefaults(() => "local" as const satisfies EnvMode)),
+  addProjectBaseDirectory: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    withDefaults(() => ""),
+  ),
   confirmThreadDelete: Schema.Boolean.pipe(withDefaults(() => true)),
   confirmThreadArchive: Schema.Boolean.pipe(withDefaults(() => false)),
   confirmTerminalTabClose: Schema.Boolean.pipe(withDefaults(() => true)),
@@ -196,7 +207,7 @@ export const AppSettingsSchema = Schema.Struct({
   // (rootless chats not tied to a project). `showStudioSection` and
   // `showWorkspaceSection` control optional tabs in the section switcher.
   showChatsSection: Schema.Boolean.pipe(withDefaults(() => true)),
-  showStudioSection: Schema.Boolean.pipe(withDefaults(() => true)),
+  showStudioSection: Schema.Boolean.pipe(withDefaults(() => false)),
   showWorkspaceSection: Schema.Boolean.pipe(withDefaults(() => false)),
   // Local-only UI preferences: which optional sections of the chat Environment panel are
   // shown. The git block (Changes/Worktree/branch/Commit and Push) is always visible; these
@@ -218,6 +229,9 @@ export const AppSettingsSchema = Schema.Struct({
   enableNativeFontSmoothing: Schema.Boolean.pipe(withDefaults(getDefaultNativeFontSmoothing)),
   enableTaskCompletionToasts: Schema.Boolean.pipe(withDefaults(() => true)),
   enableSystemTaskCompletionNotifications: Schema.Boolean.pipe(withDefaults(() => true)),
+  // Local UI preference. Automatic prefers an eligible ChatGPT subscription
+  // and always falls back to the verified on-device model.
+  voiceTranscriptionMode: VoiceTranscriptionMode.pipe(withDefaults(() => "automatic" as const)),
   // Local desktop preference. Native capability/permission state remains owned by Electron.
   // AppSnap is opt-in because enabling its Settings toggle requests macOS
   // Input Monitoring and Screen Recording permissions.
@@ -519,6 +533,7 @@ function serverSettingsToAppSettings(settings: ServerSettings): Partial<AppSetti
     cursorApiEndpoint: settings.providers.cursor.apiEndpoint,
     cursorBinaryPath: settings.providers.cursor.binaryPath,
     defaultThreadEnvMode: settings.defaultThreadEnvMode,
+    addProjectBaseDirectory: settings.addProjectBaseDirectory,
     enableAssistantStreaming: settings.enableAssistantStreaming,
     enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
     antigravityBinaryPath: settings.providers.antigravity.binaryPath,
@@ -591,6 +606,9 @@ function appSettingsPatchToServerSettingsPatch(patch: Partial<AppSettings>): Ser
   }
   if (patch.defaultThreadEnvMode === "local" || patch.defaultThreadEnvMode === "worktree") {
     serverPatch.defaultThreadEnvMode = patch.defaultThreadEnvMode;
+  }
+  if (hasOwn(patch, "addProjectBaseDirectory")) {
+    serverPatch.addProjectBaseDirectory = patch.addProjectBaseDirectory ?? "";
   }
   if (hasOwn(patch, "textGenerationModel") || hasOwn(patch, "textGenerationProvider")) {
     const model = patch.textGenerationModel ?? DEFAULT_GIT_TEXT_GENERATION_MODEL;
@@ -778,7 +796,20 @@ function buildInitialServerSettingsMigrationPatch(settings: AppSettings): Server
 }
 
 export function normalizeStoredAppSettings(settings: AppSettings): AppSettings {
-  return normalizeAppSettings(settings);
+  const normalizedSettings = normalizeAppSettings(settings);
+  if (normalizedSettings.appSettingsVersion >= CURRENT_APP_SETTINGS_VERSION) {
+    return normalizedSettings;
+  }
+
+  // v1 intentionally applies the new product defaults once to every existing local profile,
+  // including profiles with explicit values. Persisting the version alongside the settings
+  // ensures later user changes remain untouched.
+  return normalizeAppSettings({
+    ...normalizedSettings,
+    appSettingsVersion: CURRENT_APP_SETTINGS_VERSION,
+    chatFontSizePx: DEFAULT_CHAT_FONT_SIZE_PX,
+    showStudioSection: false,
+  });
 }
 
 export function getCustomModelsForProvider(
@@ -1159,13 +1190,18 @@ export function useAppSettings() {
     [],
   );
 
+  const migratedLocalSettings = useMemo(
+    () => normalizeStoredAppSettings(localSettings),
+    [localSettings],
+  );
+
   const settings = useMemo(
     () =>
       normalizeAppSettings({
-        ...localSettings,
+        ...migratedLocalSettings,
         ...(serverSettingsQuery.data ? serverSettingsToAppSettings(serverSettingsQuery.data) : {}),
       }),
-    [localSettings, serverSettingsQuery.data],
+    [migratedLocalSettings, serverSettingsQuery.data],
   );
 
   useEffect(() => {
@@ -1208,7 +1244,9 @@ export function useAppSettings() {
 
   const updateSettings = useCallback(
     (patch: Partial<AppSettings>) => {
-      setSettings((prev) => normalizeAppSettings({ ...prev, ...patch }));
+      setSettings((previous) =>
+        normalizeAppSettings({ ...normalizeStoredAppSettings(previous), ...patch }),
+      );
       if (touchesProviderDiscoverySettings(patch)) {
         void queryClient.invalidateQueries({ queryKey: providerDiscoveryQueryKeys.all });
       }

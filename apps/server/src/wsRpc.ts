@@ -43,9 +43,10 @@ import { GitManager } from "./git/Services/GitManager";
 import { GitHubCliError } from "./git/Errors";
 import { GitStatusBroadcaster } from "./git/Services/GitStatusBroadcaster";
 import { TextGeneration } from "./git/Services/TextGeneration";
+import { HtmlArtifactPreview } from "./htmlPreview/Services/HtmlArtifactPreview";
 import { Keybindings } from "./keybindings";
 import { createLocalPreviewGrant } from "./localImageFiles";
-import { listLocalServers, stopLocalServer } from "./localServerMonitor";
+import { listLocalServers } from "./localServerMonitor";
 import { Open, resolveAvailableEditors } from "./open";
 import { makeDispatchCommandNormalizer } from "./orchestration/dispatchCommandNormalization";
 import { makeImportThreadHandler } from "./orchestration/importThreadRoute";
@@ -58,6 +59,7 @@ import { ProviderAdapterRegistry } from "./provider/Services/ProviderAdapterRegi
 import { ProviderHealth } from "./provider/Services/ProviderHealth";
 import { ProviderConnection } from "./provider/Services/ProviderConnection";
 import { ProviderClientStatusProjection } from "./provider/Services/ProviderClientStatusProjection";
+import { providerExternalUpdateBlockReason } from "./provider/providerUpdateRuntimePolicy";
 import { ProviderRuntimeManager } from "./provider/Services/ProviderRuntimeManager";
 import { ProviderService } from "./provider/Services/ProviderService";
 import { listProviderUsage } from "./providerUsage";
@@ -81,6 +83,7 @@ import { shouldRejectUntrustedRequestOrigin } from "./trustedOrigins";
 import { bufferLiveUiStream, type LiveUiStreamDropReport } from "./wsStreamBackpressure";
 import { PullRequestService } from "./pullRequests/Services/PullRequestService";
 import { resolveGitHubRepository } from "./pullRequests/repositoryResolution";
+import { cloneProjectSource, getRepositorySourceStatuses } from "./projectSources";
 
 const MAX_DIAGNOSTIC_CHILD_PROCESSES = 80;
 const MAX_DIAGNOSTIC_ARGS_CHARS = 500;
@@ -265,6 +268,7 @@ export const makeWsRpcLayer = () =>
       const git = yield* GitCore;
       const gitManager = yield* GitManager;
       const gitStatusBroadcaster = yield* GitStatusBroadcaster;
+      const htmlArtifactPreview = yield* HtmlArtifactPreview;
       const keybindings = yield* Keybindings;
       const open = yield* Open;
       const orchestrationEngine = yield* OrchestrationEngineService;
@@ -461,20 +465,52 @@ export const makeWsRpcLayer = () =>
           localServerSnapshot.servers.find(
             (server) => server.pid === input.pid && server.ports.includes(input.port),
           ) ?? null;
-        const result = yield* Effect.promise(() => stopLocalServer(input, localServer));
-        if (localServer?.isStoppable) {
-          const devServers = yield* devServerManager.list;
-          const trackedServer = findProjectDevServerForLocalServer({
-            localServer,
-            devServers: devServers.servers,
-          });
-          if (trackedServer) {
-            yield* devServerManager
-              .stop({ projectId: trackedServer.projectId })
-              .pipe(Effect.catch(() => Effect.void));
-          }
+        const devServers = yield* devServerManager.list;
+        const trackedServer = localServer
+          ? findProjectDevServerForLocalServer({
+              localServer,
+              devServers: devServers.servers,
+            })
+          : null;
+        if (!localServer || !trackedServer) {
+          return {
+            pid: input.pid,
+            stopped: false,
+            message:
+              "Scient only stops development servers that it launched and can identify safely.",
+          };
         }
-        return result;
+        const stopped = yield* devServerManager.stop({ projectId: trackedServer.projectId });
+        return {
+          pid: input.pid,
+          stopped: stopped.stopped,
+          message: stopped.stopped
+            ? "Development server stopped."
+            : "That development server is no longer running.",
+        };
+      });
+
+      const listLocalServersWithStopOwnership = Effect.gen(function* () {
+        const snapshot = yield* Effect.promise(() => listLocalServers());
+        const devServers = yield* devServerManager.list;
+        return {
+          ...snapshot,
+          servers: snapshot.servers.map((server) => {
+            const tracked = findProjectDevServerForLocalServer({
+              localServer: server,
+              devServers: devServers.servers,
+            });
+            if (tracked) {
+              const ownedServer = Object.assign({}, server, { isStoppable: true });
+              Reflect.deleteProperty(ownedServer, "stopDisabledReason");
+              return ownedServer;
+            }
+            return Object.assign({}, server, {
+              isStoppable: false,
+              stopDisabledReason: "Only Scient-managed servers can be stopped here.",
+            });
+          }),
+        };
       });
 
       const loadServerConfig = Effect.gen(function* () {
@@ -691,6 +727,12 @@ export const makeWsRpcLayer = () =>
             Effect.promise(() => createLocalPreviewGrant({ requestedPath: input.path })),
             "Failed to create local file preview grant",
           ),
+        [WS_METHODS.projectsInspectHtmlArtifact]: (input) =>
+          rpcEffect(htmlArtifactPreview.inspect(input), "Failed to inspect HTML artifact"),
+        [WS_METHODS.projectsPrepareHtmlArtifactPreview]: (input) =>
+          rpcEffect(htmlArtifactPreview.prepare(input), "Failed to prepare HTML artifact preview"),
+        [WS_METHODS.projectsRevokeHtmlArtifactPreview]: (input) =>
+          rpcEffect(htmlArtifactPreview.revoke(input), "Failed to revoke HTML artifact preview"),
         [WS_METHODS.projectsWriteFile]: (input) =>
           rpcEffect(workspaceFileSystem.writeFile(input), "Failed to write workspace file"),
         [WS_METHODS.scientProjectInitializationPreview]: (input) =>
@@ -719,6 +761,16 @@ export const makeWsRpcLayer = () =>
           rpcEffect(devServerManager.stop(input), "Failed to stop dev server"),
         [WS_METHODS.projectsListDevServers]: () =>
           rpcEffect(devServerManager.list, "Failed to list dev servers"),
+        [WS_METHODS.projectsRepositorySourceStatuses]: () =>
+          rpcEffect(
+            Effect.tryPromise(() => getRepositorySourceStatuses()),
+            "Failed to inspect repository sources",
+          ),
+        [WS_METHODS.projectsCloneSource]: (input) =>
+          rpcEffect(
+            Effect.tryPromise(() => cloneProjectSource(input, config.homeDir)),
+            "Failed to clone repository",
+          ),
         [WS_METHODS.subscribeProjectDevServerEvents]: () =>
           bufferLiveWhileInitialStreamLoads(
             Stream.fromEffect(
@@ -785,6 +837,13 @@ export const makeWsRpcLayer = () =>
           ),
         [WS_METHODS.filesystemBrowse]: (input) =>
           rpcEffect(workspaceEntries.browse(input), "Failed to browse filesystem"),
+        [WS_METHODS.filesystemCreateDirectory]: (input) =>
+          rpcEffect(
+            canonicalizeProjectWorkspaceRoot(input.path, { createIfMissing: true }).pipe(
+              Effect.map((createdPath) => ({ path: createdPath })),
+            ),
+            "Failed to create directory",
+          ),
         [WS_METHODS.shellOpenInEditor]: (input) =>
           rpcEffect(open.openInEditor(input), "Failed to open editor"),
 
@@ -1049,6 +1108,11 @@ export const makeWsRpcLayer = () =>
             Effect.andThen(providerClientStatusProjection.getStatuses),
             Effect.map((providers) => ({ providers })),
           ),
+        [WS_METHODS.serverSubmitProviderConnectionAuthorizationCode]: (input) =>
+          providerConnection.submitAuthorizationCode(input).pipe(
+            Effect.andThen(providerClientStatusProjection.getStatuses),
+            Effect.map((providers) => ({ providers })),
+          ),
         [WS_METHODS.serverPrepareProviderInstall]: (input) =>
           providerRuntimeManager.prepareInstall(input.provider),
         [WS_METHODS.serverInstallProvider]: (input) =>
@@ -1091,27 +1155,24 @@ export const makeWsRpcLayer = () =>
                 settings.providers[input.provider].binaryPath,
               ),
             ),
-            Effect.flatMap((runtime) =>
-              runtime.source === "managed" || runtime.source === "bundled"
+            Effect.flatMap((runtime) => {
+              const blockReason = providerExternalUpdateBlockReason(input.provider, runtime);
+              return blockReason
                 ? Effect.fail(
                     new ServerProviderUpdateError({
                       provider: input.provider,
-                      reason:
-                        "This runtime is managed by Scient. Use the managed install, repair, or rollback controls instead.",
+                      reason: blockReason,
                     }),
                   )
                 : providerHealth.updateProvider(input).pipe(
                     Effect.andThen(providerClientStatusProjection.getStatuses),
                     Effect.map((providers) => ({ providers })),
-                  ),
-            ),
+                  );
+            }),
           ),
         [WS_METHODS.serverListWorktrees]: () => Effect.succeed({ worktrees: [] }),
         [WS_METHODS.serverListLocalServers]: () =>
-          rpcEffect(
-            Effect.promise(() => listLocalServers()),
-            "Failed to list local servers",
-          ),
+          rpcEffect(listLocalServersWithStopOwnership, "Failed to list local servers"),
         [WS_METHODS.serverStopLocalServer]: (input) =>
           rpcEffect(stopLocalServerAndTrackedProjectRun(input), "Failed to stop local server"),
         [WS_METHODS.statsGetProfileStats]: (input) =>
@@ -1161,19 +1222,23 @@ export const makeWsRpcLayer = () =>
           ),
         [WS_METHODS.serverTranscribeVoice]: (input) =>
           rpcEffect(
-            providerAdapterRegistry
-              .getByProvider(input.provider)
-              .pipe(
-                Effect.flatMap((adapter) =>
-                  adapter.transcribeVoice
-                    ? adapter.transcribeVoice(input)
-                    : Effect.fail(
-                        new Error(
-                          `Voice transcription is unavailable for provider '${input.provider}'.`,
-                        ),
-                      ),
+            input.mode === "offline-only"
+              ? Effect.fail(
+                  new Error("Offline voice transcription is available in the Scient desktop app."),
+                )
+              : providerAdapterRegistry.getByProvider("codex").pipe(
+                  Effect.flatMap((adapter) =>
+                    adapter.transcribeVoice
+                      ? adapter.transcribeVoice(input).pipe(
+                          Effect.map((result) => ({
+                            ...result,
+                            engine: "chatgpt" as const,
+                            fallbackUsed: false,
+                          })),
+                        )
+                      : Effect.fail(new Error("Voice transcription is unavailable right now.")),
+                  ),
                 ),
-              ),
             "Voice transcription failed",
           ),
         [WS_METHODS.serverGenerateThreadRecap]: (input) =>

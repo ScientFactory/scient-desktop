@@ -51,6 +51,7 @@ import {
   CircleCheckIcon,
   CircleQuestionIcon,
   ClockIcon,
+  ConversationForkIcon,
   EyeIcon,
   GitHubIcon,
   HammerIcon,
@@ -76,6 +77,8 @@ import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImage
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ToolCallDetailsContent, ToolCallDetailsDialog } from "./ToolCallDetailsDialog";
 import { DiffStatLabel } from "./DiffStatLabel";
+import { resolveChangedFilesPresentation } from "./changedFilesPresentation";
+import { ChangedFilesCompactPreview } from "./ChangedFilesCompactPreview";
 import { fileDiffStatsByPath, resolveFileDiffStatByChangedPath } from "~/lib/diffRendering";
 import { ReviewChangesButton } from "./ReviewChangesButton";
 import { FileEntryIcon } from "./FileEntryIcon";
@@ -85,6 +88,7 @@ import { InlineAgentChip } from "./InlineAgentChip";
 import { MessageActionButton, MESSAGE_ACTION_ICON_CLASS_NAME } from "./MessageActionButton";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { AssistantSelectionsSummaryChip } from "./AssistantSelectionsSummaryChip";
+import { AssistantArtifactShelf } from "./AssistantArtifactShelf";
 import { FileAttachmentChip } from "./FileAttachmentChip";
 import { FileCommentsSummaryChip } from "./FileCommentsSummaryChip";
 import { UserMessagePastedTextCard } from "./PastedTextChip";
@@ -165,6 +169,7 @@ import {
   userMessageLikelyOverflows,
 } from "./userMessageCollapse";
 import { observeUserMessageOverflow } from "./userMessageOverflowObserver";
+import { resolveRawTextDirectionHint, type ResolvedTextDirection } from "~/lib/textDirection";
 import {
   resolveActiveTrailSnapshot,
   type ActiveTrailSnapshot,
@@ -392,6 +397,8 @@ interface MessagesTimelineProps {
   controllerRef?: RefObject<MessagesTimelineController | null>;
   /** Message ids currently pinned for the active thread (drives the footer pin toggle state). */
   pinnedMessageIds?: ReadonlySet<MessageId>;
+  /** Message whose pin control most recently hit the per-thread limit. */
+  pinLimitMessageId?: MessageId | null;
   /** Excludes transient rows from persistent pin affordances. */
   canPinMessage?: (messageId: MessageId) => boolean;
   /** Toggle a message's pinned state from the assistant footer. */
@@ -414,6 +421,10 @@ interface MessagesTimelineProps {
   onRevertUserMessage: (messageId: MessageId) => void;
   onUndoTurnFiles?: (turnCounts: readonly number[]) => void;
   onEditUserMessage?: (messageId: MessageId, text: string) => boolean | Promise<boolean>;
+  /** Create an independent conversation whose imported transcript ends at this message. */
+  onForkFromMessage?: (messageId: MessageId) => void;
+  /** Server-backed boundaries whose complete prefix is safe to import. */
+  forkableMessageIds?: ReadonlySet<MessageId>;
   activeTurnId?: TurnId | null;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -454,6 +465,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   listRef,
   controllerRef,
   pinnedMessageIds,
+  pinLimitMessageId,
   canPinMessage,
   onTogglePinMessage,
   threadMarkers = [],
@@ -471,6 +483,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onRevertUserMessage,
   onUndoTurnFiles,
   onEditUserMessage,
+  onForkFromMessage,
+  forkableMessageIds,
   activeTurnId,
   isRevertingCheckpoint,
   onImageExpand,
@@ -546,6 +560,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [expandedFileChangesByTurnId, setExpandedFileChangesByTurnId] = useState<
     Record<string, boolean>
   >({});
+  const changedFilesDisclosureToggleByTurnIdRef = useRef(new Map<TurnId, HTMLButtonElement>());
   // Tracks which turns have their changed-files list expanded past MAX_VISIBLE_CHANGED_FILES.
   const [expandedFileListByTurnId, setExpandedFileListByTurnId] = useState<Record<string, boolean>>(
     {},
@@ -618,13 +633,31 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+  const currentChangedFilesTurnId = useMemo(() => {
+    // Only the latest settled answer can own a current change. A newer user
+    // message, a live turn, or a newer answer without changes makes every
+    // existing changed-files card historical and therefore compact by default.
+    if (activeTurnInProgress) return null;
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index]!;
+      if (row.kind !== "message") continue;
+      if (row.message.role !== "assistant") return null;
+      if (!row.showAssistantCopyButton) continue;
+      const summary = row.assistantTurnDiffSummary;
+      return summary && summary.files.length > 0 ? summary.turnId : null;
+    }
+    return null;
+  }, [activeTurnInProgress, rows]);
+  const assistantDirectionHintByMessageId = useStableAssistantDirectionHints(rows);
   const settledTurnCollapseTransitions = useSettledTurnCollapseTransitions(rows);
   const enteringMessageRowIds = useMessageSendEnterAnimations(rows, enteringUserMessageIds);
   const timelineExtraData = useMemo(
     () => ({
       editingUserMessageId,
+      assistantDirectionHintByMessageId,
       enteringMessageRowIds,
       expandedCollapsedWork,
+      currentChangedFilesTurnId,
       expandedFileChangesByTurnId,
       expandedFileListByTurnId,
       expandedUserMessagesById,
@@ -637,8 +670,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }),
     [
       editingUserMessageId,
+      assistantDirectionHintByMessageId,
       enteringMessageRowIds,
       expandedCollapsedWork,
+      currentChangedFilesTurnId,
       expandedFileChangesByTurnId,
       expandedFileListByTurnId,
       expandedUserMessagesById,
@@ -898,10 +933,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       window.cancelAnimationFrame(frameId);
     };
   }, [emitTrailHighlightsForViewport, onTrailHighlightsChange, resolvedListRef, rows.length]);
-  const toggleFileChangesExpanded = useCallback((turnId: TurnId) => {
+  const setFileChangesExpanded = useCallback((turnId: TurnId, expanded: boolean) => {
     setExpandedFileChangesByTurnId((current) => ({
       ...current,
-      [turnId]: !(current[turnId] ?? true),
+      [turnId]: expanded,
+    }));
+  }, []);
+  const setFileListExpanded = useCallback((turnId: TurnId, expanded: boolean) => {
+    setExpandedFileListByTurnId((current) => ({
+      ...current,
+      [turnId]: expanded,
     }));
   }, []);
   const toggleFileListExpanded = useCallback((turnId: TurnId) => {
@@ -1190,6 +1231,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                           className={MESSAGE_HOVER_REVEAL_CLASS_NAME}
                         />
                       )}
+                      {onForkFromMessage &&
+                      (forkableMessageIds === undefined ||
+                        forkableMessageIds.has(row.message.id)) ? (
+                        <MessageActionButton
+                          label="Fork conversation from this message"
+                          tooltip="Fork conversation from here"
+                          className={MESSAGE_HOVER_REVEAL_CLASS_NAME}
+                          onClick={() => onForkFromMessage(row.message.id)}
+                        >
+                          <ConversationForkIcon className={MESSAGE_ACTION_ICON_CLASS_NAME} />
+                        </MessageActionButton>
+                      ) : null}
                       {showEditUserMessage && (
                         <MessageActionButton
                           label="Edit message"
@@ -1422,6 +1475,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   text={item.message.text}
                   cwd={markdownCwd}
                   isStreaming={false}
+                  directionHint={assistantDirectionHintByMessageId.get(row.message.id)}
                   style={chatTypographyStyle}
                   onImageExpand={onImageExpand}
                 />
@@ -1500,6 +1554,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                       text={messageText}
                       cwd={markdownCwd}
                       isStreaming={Boolean(row.message.streaming)}
+                      directionHint={assistantDirectionHintByMessageId.get(row.message.id)}
                       style={chatTypographyStyle}
                       onImageExpand={onImageExpand}
                       markers={messageMarkers}
@@ -1528,6 +1583,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     ))}
                   </div>
                 )}
+                {isTerminalAssistantMessage && messageText !== null && !row.message.streaming ? (
+                  <AssistantArtifactShelf
+                    markdown={messageText}
+                    markdownCwd={markdownCwd}
+                    workspaceRoot={workspaceRoot}
+                  />
+                ) : null}
                 {(showPinToggle || assistantCopyState.visible || assistantMeta.length > 0) && (
                   <div
                     className="mt-0.5 flex items-center gap-2 font-system-ui font-normal text-muted-foreground/45"
@@ -1558,6 +1620,18 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                         className={MESSAGE_HOVER_REVEAL_CLASS_NAME}
                       />
                     ) : null}
+                    {assistantCopyState.visible &&
+                    onForkFromMessage &&
+                    (forkableMessageIds === undefined || forkableMessageIds.has(row.message.id)) ? (
+                      <MessageActionButton
+                        label="Fork conversation from this message"
+                        tooltip="Fork conversation from here"
+                        className={MESSAGE_HOVER_REVEAL_CLASS_NAME}
+                        onClick={() => onForkFromMessage(row.message.id)}
+                      >
+                        <ConversationForkIcon className={MESSAGE_ACTION_ICON_CLASS_NAME} />
+                      </MessageActionButton>
+                    ) : null}
                     {assistantMeta.length > 0 ? (
                       <p className={cn("tabular-nums", MESSAGE_HOVER_REVEAL_CLASS_NAME)}>
                         {assistantMeta}
@@ -1565,6 +1639,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     ) : null}
                   </div>
                 )}
+                {pinLimitMessageId === row.message.id ? (
+                  <p
+                    className="mt-1 font-system-ui text-destructive text-xs"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    You’ve reached the pinned-message limit for this thread. Unpin one to add
+                    another.
+                  </p>
+                ) : null}
                 {(() => {
                   // Hold the end-of-turn changes card (Undo / Review) until the
                   // turn settles. While the turn is live the composer's own
@@ -1573,8 +1657,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   if (!turnSummary || row.assistantTurnInProgress) return null;
                   const checkpointFiles = turnSummary.files;
                   if (checkpointFiles.length === 0) return null;
-                  const fileChangesExpanded =
-                    expandedFileChangesByTurnId[turnSummary.turnId] ?? true;
+                  const fileChangesPresentation = resolveChangedFilesPresentation({
+                    files: checkpointFiles,
+                    isCurrentChange: currentChangedFilesTurnId === turnSummary.turnId,
+                    userOverride: expandedFileChangesByTurnId[turnSummary.turnId],
+                  });
+                  const fileChangesExpanded = fileChangesPresentation === "expanded";
                   const fileListExpanded = expandedFileListByTurnId[turnSummary.turnId] ?? false;
                   const checkpointTurnCount = turnSummary.checkpointTurnCount;
                   const checkpointTurnCounts =
@@ -1641,7 +1729,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     </button>
                   );
                   return (
-                    <div className="mt-1 mb-4 overflow-hidden rounded-[0.65rem] border border-[color:var(--color-border-light)] dark:border-[color:color-mix(in_srgb,var(--color-border-light)_55%,transparent)]">
+                    <div
+                      className="mt-1 mb-4 overflow-hidden rounded-[0.65rem] border border-[color:var(--color-border-light)] dark:border-[color:color-mix(in_srgb,var(--color-border-light)_55%,transparent)]"
+                      data-changed-files-state={fileChangesPresentation}
+                      data-changed-files-turn-id={turnSummary.turnId}
+                    >
                       <div
                         className={cn(
                           "flex items-center justify-between gap-3 bg-[color:color-mix(in_srgb,var(--app-user-message-background)_40%,transparent)] px-3 py-1.5",
@@ -1693,16 +1785,29 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                             aria-expanded={fileChangesExpanded}
                             aria-label={
                               fileChangesExpanded
-                                ? "Collapse changed files list"
-                                : "Expand changed files list"
+                                ? `Collapse changed files list, ${checkpointFiles.length} ${pluralize(checkpointFiles.length, "file")}`
+                                : `Expand changed files list, ${checkpointFiles.length} ${pluralize(checkpointFiles.length, "file")}`
                             }
+                            data-changed-files-disclosure-toggle="true"
+                            ref={(element) => {
+                              if (element) {
+                                changedFilesDisclosureToggleByTurnIdRef.current.set(
+                                  turnSummary.turnId,
+                                  element,
+                                );
+                              } else {
+                                changedFilesDisclosureToggleByTurnIdRef.current.delete(
+                                  turnSummary.turnId,
+                                );
+                              }
+                            }}
                             onClick={(event) => {
                               event.preventDefault();
                               event.stopPropagation();
                               if (!fileChangesExpanded && isTailContentRow) {
                                 scrollTailExpansionToEnd();
                               }
-                              toggleFileChangesExpanded(turnSummary.turnId);
+                              setFileChangesExpanded(turnSummary.turnId, !fileChangesExpanded);
                             }}
                             data-scroll-anchor-ignore={isTailContentRow ? true : undefined}
                           >
@@ -1713,6 +1818,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                           </button>
                         </div>
                       </div>
+                      {fileChangesPresentation === "preview" ? (
+                        <ChangedFilesCompactPreview
+                          files={checkpointFiles}
+                          resolvedTheme={resolvedTheme}
+                          fontSize={chatTypographyStyle.fontSize}
+                          onOpenFile={(filePath) => onOpenTurnDiff(turnSummary.turnId, filePath)}
+                          onShowAll={() => {
+                            changedFilesDisclosureToggleByTurnIdRef.current
+                              .get(turnSummary.turnId)
+                              ?.focus({ preventScroll: true });
+                            if (isTailContentRow) {
+                              scrollTailExpansionToEnd();
+                            }
+                            setFileListExpanded(turnSummary.turnId, true);
+                            setFileChangesExpanded(turnSummary.turnId, true);
+                          }}
+                        />
+                      ) : null}
                       <DisclosureRegion open={fileChangesExpanded}>
                         {firstCheckpointFiles.map((file) => renderCheckpointFileRow(file, true))}
                         {overflowCheckpointFiles.length > 0 ? (
@@ -1928,6 +2051,70 @@ function useStableRows(rows: MessagesTimelineRow[]): MessagesTimelineRow[] {
     const nextState = computeStableMessagesTimelineRows(rows, previousStateRef.current);
     previousStateRef.current = nextState;
     return nextState.result;
+  }, [rows]);
+}
+
+function directionHintMapsEqual(
+  left: ReadonlyMap<MessageId, ResolvedTextDirection>,
+  right: ReadonlyMap<MessageId, ResolvedTextDirection>,
+): boolean {
+  if (left.size !== right.size) {
+    return false;
+  }
+  for (const [messageId, direction] of left) {
+    if (right.get(messageId) !== direction) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Assistant text changes on every streaming token, but its weak direction hint
+// changes only when the surrounding user-message sequence changes. Preserve the
+// map identity so LegendList does not invalidate all cached rows on every token.
+function useStableAssistantDirectionHints(
+  rows: readonly MessagesTimelineRow[],
+): ReadonlyMap<MessageId, ResolvedTextDirection> {
+  const previousHintsRef = useRef<ReadonlyMap<MessageId, ResolvedTextDirection>>(new Map());
+  const userDirectionCacheRef = useRef<
+    ReadonlyMap<MessageId, { readonly text: string; readonly direction?: ResolvedTextDirection }>
+  >(new Map());
+
+  return useMemo(() => {
+    const nextHints = new Map<MessageId, ResolvedTextDirection>();
+    const nextUserDirectionCache = new Map<
+      MessageId,
+      { readonly text: string; readonly direction?: ResolvedTextDirection }
+    >();
+    let latestUserDirection: ResolvedTextDirection | undefined;
+
+    for (const row of rows) {
+      if (row.kind !== "message") {
+        continue;
+      }
+      if (row.message.role === "user") {
+        const cached = userDirectionCacheRef.current.get(row.message.id);
+        const direction =
+          cached?.text === row.message.text
+            ? cached.direction
+            : resolveRawTextDirectionHint(row.message.text);
+        nextUserDirectionCache.set(row.message.id, {
+          text: row.message.text,
+          ...(direction ? { direction } : {}),
+        });
+        latestUserDirection = direction ?? latestUserDirection;
+      } else if (latestUserDirection) {
+        nextHints.set(row.message.id, latestUserDirection);
+      }
+    }
+
+    userDirectionCacheRef.current = nextUserDirectionCache;
+
+    if (directionHintMapsEqual(previousHintsRef.current, nextHints)) {
+      return previousHintsRef.current;
+    }
+    previousHintsRef.current = nextHints;
+    return nextHints;
   }, [rows]);
 }
 
@@ -2394,7 +2581,8 @@ const UserMessageEditForm = memo(function UserMessageEditForm(props: {
         disabled={props.disabled}
         rows={1}
         aria-label="Edit message"
-        className="max-h-60 min-h-0 w-full resize-none overflow-y-auto border-0 bg-transparent p-0 font-system-ui text-foreground outline-none placeholder:text-muted-foreground/45 disabled:opacity-70"
+        className="max-h-60 min-h-0 w-full resize-none overflow-y-auto border-0 bg-transparent p-0 text-start font-system-ui text-foreground outline-none placeholder:text-muted-foreground/45 disabled:opacity-70"
+        dir="auto"
         style={props.chatTypographyStyle}
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={handleKeyDown}
@@ -2541,7 +2729,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   ) {
     return (
       <div
-        className="flex max-w-full min-w-0 items-center leading-none text-foreground [&>span]:translate-y-0"
+        className="flex max-w-full min-w-0 items-center text-start leading-none text-foreground [&>span]:translate-y-0"
+        dir="auto"
         style={props.chatTypographyStyle}
       >
         {renderUserMessageInlineText(

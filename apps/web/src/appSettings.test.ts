@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   AppSettingsSchema,
   CUSTOM_MODEL_EDITOR_PROVIDER_SETTINGS,
+  CURRENT_APP_SETTINGS_VERSION,
   DEFAULT_CHAT_FONT_SIZE_PX,
   DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
   DEFAULT_TERMINAL_FONT_SIZE_PX,
@@ -65,6 +66,9 @@ describe("getAppModelOptions", () => {
     const options = getAppModelOptions("codex", ["custom/internal-model"]);
 
     expect(options.map((option) => option.slug)).toEqual([
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
       "gpt-5.5",
       "gpt-5.4",
       "gpt-5.4-mini",
@@ -223,7 +227,7 @@ describe("resolveAppModelSelection", () => {
         },
         "",
       ),
-    ).toBe("gpt-5.5");
+    ).toBe("gpt-5.6-sol");
   });
 
   it("resolves display names through the shared resolver", () => {
@@ -294,14 +298,58 @@ describe("timestamp format defaults", () => {
 });
 
 describe("chat font size defaults", () => {
-  it("defaults chat font size to 12px", () => {
-    expect(DEFAULT_CHAT_FONT_SIZE_PX).toBe(12);
+  it("defaults chat font size to 15px", () => {
+    expect(DEFAULT_CHAT_FONT_SIZE_PX).toBe(15);
   });
 
   it("clamps chat font size updates into the supported range", () => {
     expect(normalizeChatFontSizePx(9)).toBe(11);
     expect(normalizeChatFontSizePx(18.4)).toBe(18);
     expect(normalizeChatFontSizePx(Number.NaN)).toBe(DEFAULT_CHAT_FONT_SIZE_PX);
+  });
+});
+
+describe("app settings default migration", () => {
+  it("starts new profiles with Studio hidden and the 15px base font", () => {
+    expect(AppSettingsSchema.makeUnsafe({})).toMatchObject({
+      appSettingsVersion: CURRENT_APP_SETTINGS_VERSION,
+      chatFontSizePx: 15,
+      showStudioSection: false,
+      showWorkspaceSection: false,
+    });
+  });
+
+  it("overrides existing profile preferences once", () => {
+    const decode = Schema.decodeSync(Schema.fromJsonString(AppSettingsSchema));
+    const existingSettings = decode(
+      JSON.stringify({
+        chatFontSizePx: 18,
+        showStudioSection: true,
+      }),
+    );
+
+    expect(existingSettings.appSettingsVersion).toBe(0);
+    expect(normalizeStoredAppSettings(existingSettings)).toMatchObject({
+      appSettingsVersion: CURRENT_APP_SETTINGS_VERSION,
+      chatFontSizePx: 15,
+      showStudioSection: false,
+    });
+  });
+
+  it("preserves preferences changed after the one-time migration", () => {
+    const codec = Schema.fromJsonString(AppSettingsSchema);
+    const currentSettings = AppSettingsSchema.makeUnsafe({
+      appSettingsVersion: CURRENT_APP_SETTINGS_VERSION,
+      chatFontSizePx: 13,
+      showStudioSection: true,
+    });
+    const reloadedSettings = Schema.decodeSync(codec)(Schema.encodeSync(codec)(currentSettings));
+
+    expect(normalizeStoredAppSettings(reloadedSettings)).toMatchObject({
+      appSettingsVersion: CURRENT_APP_SETTINGS_VERSION,
+      chatFontSizePx: 13,
+      showStudioSection: true,
+    });
   });
 });
 
@@ -369,6 +417,7 @@ describe("normalizeStoredAppSettings", () => {
   it("preserves an explicitly stored updated_at project sort order", () => {
     const decodedSettings = Schema.decodeSync(Schema.fromJsonString(AppSettingsSchema))(
       JSON.stringify({
+        appSettingsVersion: CURRENT_APP_SETTINGS_VERSION,
         sidebarProjectSortOrder: "updated_at",
         chatFontSizePx: 99,
         terminalFontSizePx: 3,
@@ -801,6 +850,7 @@ describe("AppSettingsSchema", () => {
       ),
     ).toMatchObject({
       claudeBinaryPath: "",
+      appSettingsVersion: 0,
       uiDensity: "comfortable",
       chatFontSizePx: DEFAULT_CHAT_FONT_SIZE_PX,
       codexBinaryPath: "/usr/local/bin/codex",
@@ -812,9 +862,10 @@ describe("AppSettingsSchema", () => {
       enableAppSnap: false,
       appSnapPlaySound: true,
       enableAssistantStreaming: true,
+      voiceTranscriptionMode: "automatic",
       sidebarProjectSortOrder: DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
       sidebarThreadSortOrder: DEFAULT_SIDEBAR_THREAD_SORT_ORDER,
-      showStudioSection: true,
+      showStudioSection: false,
       timestampFormat: DEFAULT_TIMESTAMP_FORMAT,
       customCodexModels: [],
       customClaudeModels: [],
@@ -824,6 +875,13 @@ describe("AppSettingsSchema", () => {
       customKiloModels: [],
       customOpenCodeModels: [],
       customPiModels: [],
+    });
+  });
+
+  it("preserves an explicit offline-only voice preference", () => {
+    const decode = Schema.decodeSync(Schema.fromJsonString(AppSettingsSchema));
+    expect(decode(JSON.stringify({ voiceTranscriptionMode: "offline-only" }))).toMatchObject({
+      voiceTranscriptionMode: "offline-only",
     });
   });
 

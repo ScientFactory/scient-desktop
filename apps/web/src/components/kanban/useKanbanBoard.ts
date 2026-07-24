@@ -7,7 +7,7 @@ import type { ProjectId, ThreadId } from "@synara/contracts";
 import { useEffect, useMemo, useRef } from "react";
 
 import { useAppSettings } from "~/appSettings";
-import { toastManager } from "~/components/ui/toast";
+import { activityManager } from "~/notifications/activityStore";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useKanbanUiStore } from "../../kanbanUiStore";
 import { isHomeChatContainerProject } from "../../lib/chatProjects";
@@ -33,6 +33,22 @@ import {
 // Generous on purpose: slow provider session init (e.g. Cursor) is the normal case.
 const OPTIMISTIC_DISPATCH_TIMEOUT_MS = 30_000;
 const OPTIMISTIC_DISPATCH_EXPIRY_CHECK_MS = 5_000;
+
+function kanbanDispatchActivityKey(threadId: string): string {
+  return `kanban:dispatch:${threadId}`;
+}
+
+function publishKanbanDispatchFailure(input: { threadId: ThreadId; description: string }): void {
+  activityManager.publish({
+    dedupeKey: kanbanDispatchActivityKey(input.threadId),
+    source: "thread",
+    status: "needs_attention",
+    tone: "error",
+    title: "Task didn't start",
+    description: input.description,
+    destination: { type: "thread", threadId: input.threadId },
+  });
+}
 
 export function useKanbanBoard(): KanbanBoard {
   const selectDisplayThreads = useMemo(() => createSidebarDisplayThreadsSelector(), []);
@@ -132,11 +148,12 @@ export function useKanbanBoard(): KanbanBoard {
       }
       kanbanUi.clearOptimisticDispatch(threadId);
       if (outcome === "failed") {
-        toastManager.add({
-          type: "error",
-          title: "Task didn't start",
+        publishKanbanDispatchFailure({
+          threadId: threadId as ThreadId,
           description: thread.session?.lastError ?? `${entry.title} was moved back to Draft.`,
         });
+      } else {
+        activityManager.remove(kanbanDispatchActivityKey(threadId));
       }
     }
   }, [optimisticDispatchByThreadId, threads]);
@@ -167,9 +184,8 @@ export function useKanbanBoard(): KanbanBoard {
         if (thread && deriveKanbanColumn(thread) === "inProgress") {
           continue;
         }
-        toastManager.add({
-          type: "error",
-          title: "Task didn't start",
+        publishKanbanDispatchFailure({
+          threadId: threadId as ThreadId,
           description: `${entry.title} was moved back to Draft.`,
         });
       }

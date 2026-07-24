@@ -20,6 +20,22 @@ afterEach(() => {
 });
 
 describe("RotatingFileSink", () => {
+  it("repairs the active log and rotated backups to private file modes", () => {
+    if (process.platform === "win32") return;
+
+    const filePath = path.join(makeTempDir(), "private.log");
+    fs.writeFileSync(filePath, "active");
+    fs.writeFileSync(`${filePath}.1`, "backup");
+    fs.chmodSync(filePath, 0o644);
+    fs.chmodSync(`${filePath}.1`, 0o664);
+
+    const sink = new RotatingFileSink({ filePath, maxBytes: 1024, maxFiles: 2 });
+    sink.write(" next");
+
+    expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
+    expect(fs.statSync(`${filePath}.1`).mode & 0o777).toBe(0o600);
+  });
+
   it("rotates when writes exceed max bytes", () => {
     const dir = makeTempDir();
     const logPath = path.join(dir, "desktop-main.log");

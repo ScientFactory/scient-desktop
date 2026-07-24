@@ -43,6 +43,7 @@ import {
 } from "../session-logic";
 import { localSubagentThreadId } from "./ChatView.selectors";
 import type { ProviderModelOption } from "../providerModelOptions";
+import type { ComposerVoiceCompletionIntent } from "./chat/composerVoiceState";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "scient:last-invoked-script-by-project";
 export const DISMISSED_PROVIDER_HEALTH_BANNERS_KEY = "scient:dismissed-provider-health-banners";
@@ -88,12 +89,25 @@ export function hasFileUndoSettled(input: {
 
 const ALWAYS_ALLOW_RUNTIME_MODE: RuntimeMode = "full-access";
 
+export function resolveComposerRuntimeMode(input: {
+  readonly pendingRuntimeMode?: RuntimeMode | null | undefined;
+  readonly serverRuntimeMode?: RuntimeMode | null | undefined;
+  readonly draftRuntimeMode?: RuntimeMode | null | undefined;
+  readonly defaultRuntimeMode: RuntimeMode;
+}): RuntimeMode {
+  return (
+    input.pendingRuntimeMode ??
+    input.serverRuntimeMode ??
+    input.draftRuntimeMode ??
+    input.defaultRuntimeMode
+  );
+}
+
 /**
  * "Always allow" (acceptForSession) only auto-approves the live provider turn.
- * Because the client is the source of truth for runtime mode (it sends it with
- * every turn), the choice must also flip the thread to full-access so it survives
- * idle-stop and runtime restarts instead of reverting to approval-required on the
- * next turn. Returns the runtime mode to persist, or null when nothing changes.
+ * The choice must also durably flip the server thread to full-access so it
+ * survives idle-stop and runtime restarts. Returns the runtime mode to persist,
+ * or null when nothing changes.
  */
 export function resolveRuntimeModeAfterApprovalDecision(
   currentRuntimeMode: RuntimeMode,
@@ -108,8 +122,13 @@ export function resolveRuntimeModeAfterApprovalDecision(
 export function shouldRenderProviderHealthBanner(input: {
   threadEntryPoint: ThreadPrimarySurface;
   terminalWorkspaceTerminalTabActive: boolean;
+  hasConversationActivity: boolean;
 }): boolean {
-  return input.threadEntryPoint === "chat" && !input.terminalWorkspaceTerminalTabActive;
+  return (
+    input.hasConversationActivity &&
+    input.threadEntryPoint === "chat" &&
+    !input.terminalWorkspaceTerminalTabActive
+  );
 }
 
 // Big-paste cards are sent only by the normal chat path; non-chat composer flows
@@ -432,6 +451,27 @@ export function resolveEnvironmentPanelVisible(input: {
   return input.environmentEnabled && input.environmentPanelOpen;
 }
 
+// Normal project toolbars stay stable while repository discovery is pending. Studio folders are
+// casual context, so they opt into Git UI only after a positive repository result.
+export function resolveGitRepoUiState(input: {
+  isStudioContainer: boolean;
+  queriedIsRepo: boolean | undefined;
+}): boolean {
+  return input.queriedIsRepo ?? !input.isStudioContainer;
+}
+
+export function shouldShowGitActions(input: {
+  isStudioContainer: boolean;
+  isContainerLandingProject: boolean;
+  hasResolvedWorktreePath: boolean;
+  isGitRepo: boolean;
+}): boolean {
+  if (input.isStudioContainer) {
+    return input.hasResolvedWorktreePath && input.isGitRepo;
+  }
+  return !input.isContainerLandingProject || input.hasResolvedWorktreePath;
+}
+
 // The composer live strip prefers the turn's computed diff (the
 // `thread.turn-diff-completed` event) so it can show real per-file +/- stats.
 // Before that lands, it falls back to mid-turn file-edit work-log activity so
@@ -611,6 +651,23 @@ export function appendVoiceTranscriptToPrompt(
     : `${currentPrompt.replace(/\s+$/, "")}\n${trimmedTranscript}`;
 }
 
+export async function completeComposerVoiceTranscript(input: {
+  intent: ComposerVoiceCompletionIntent;
+  currentPrompt: string;
+  transcript: string;
+  insertTranscript: (transcript: string, completedPrompt: string) => boolean;
+  sendPrompt: (prompt: string) => Promise<boolean>;
+}): Promise<"empty" | "inserted" | "preserved" | "sent"> {
+  const nextPrompt = appendVoiceTranscriptToPrompt(input.currentPrompt, input.transcript);
+  if (!nextPrompt) {
+    return "empty";
+  }
+  if (input.intent === "send" && (await input.sendPrompt(nextPrompt))) {
+    return "sent";
+  }
+  return input.insertTranscript(input.transcript, nextPrompt) ? "inserted" : "preserved";
+}
+
 export function sanitizeVoiceErrorMessage(message: string): string {
   const normalized = message.trim();
   if (normalized.length === 0) {
@@ -665,6 +722,7 @@ export function describeVoiceRecordingStartError(error: unknown): string {
 export function deriveComposerVoiceState(input: {
   authStatus: ServerProviderAuthStatus | null | undefined;
   voiceTranscriptionAvailable: boolean | undefined;
+  desktopVoiceAvailable?: boolean;
   isRecording: boolean;
   isTranscribing: boolean;
 }): {
@@ -672,8 +730,11 @@ export function deriveComposerVoiceState(input: {
   canStartVoiceNotes: boolean;
   showVoiceNotesControl: boolean;
 } {
-  const canRenderVoiceNotes = input.authStatus !== "unauthenticated";
-  const canStartVoiceNotes = canRenderVoiceNotes && input.voiceTranscriptionAvailable !== false;
+  const canRenderVoiceNotes =
+    input.desktopVoiceAvailable === true || input.authStatus !== "unauthenticated";
+  const canStartVoiceNotes =
+    input.desktopVoiceAvailable === true ||
+    (canRenderVoiceNotes && input.voiceTranscriptionAvailable !== false);
 
   return {
     canRenderVoiceNotes,
@@ -1042,6 +1103,78 @@ export function deriveComposerSendState(options: {
       sendableTerminalContexts.length > 0 ||
       sendablePastedTexts.length > 0,
   };
+}
+
+export type ComposerFooterPrimaryAction =
+  | "none"
+  | "pending-input"
+  | "plan-follow-up"
+  | "stop-generation"
+  | "queue-message"
+  | "send-message";
+
+export function deriveComposerFooterActionPlan(options: {
+  hasLiveTurn: boolean;
+  hasSendableContent: boolean;
+  hasActivePendingProgress: boolean;
+  hasPendingApproval: boolean;
+  hasPendingUserInput: boolean;
+  isVoiceActive: boolean;
+  showPlanFollowUpPrompt: boolean;
+  canShowVoiceNotes: boolean;
+}): {
+  primaryAction: ComposerFooterPrimaryAction;
+  showVoiceButton: boolean;
+} {
+  if (options.isVoiceActive) {
+    return { primaryAction: "none", showVoiceButton: false };
+  }
+
+  if (options.hasActivePendingProgress) {
+    return { primaryAction: "pending-input", showVoiceButton: false };
+  }
+
+  if (options.hasPendingApproval) {
+    return { primaryAction: "none", showVoiceButton: false };
+  }
+
+  if (options.hasLiveTurn) {
+    const composerCanAcceptActions = !options.hasPendingUserInput;
+    return {
+      primaryAction:
+        composerCanAcceptActions && options.hasSendableContent
+          ? "queue-message"
+          : "stop-generation",
+      showVoiceButton: composerCanAcceptActions && options.canShowVoiceNotes,
+    };
+  }
+
+  if (options.hasPendingUserInput) {
+    return { primaryAction: "none", showVoiceButton: false };
+  }
+
+  if (options.showPlanFollowUpPrompt) {
+    return { primaryAction: "plan-follow-up", showVoiceButton: false };
+  }
+
+  return {
+    primaryAction: "send-message",
+    showVoiceButton: options.canShowVoiceNotes,
+  };
+}
+
+export function shouldRouteComposerSendToPendingInput(options: {
+  hasActivePendingProgress: boolean;
+  hasVoicePromptOverride: boolean;
+}): boolean {
+  return options.hasActivePendingProgress && !options.hasVoicePromptOverride;
+}
+
+export function shouldRenderComposerFooter(options: {
+  hasPendingApproval: boolean;
+  isVoiceActive: boolean;
+}): boolean {
+  return !options.hasPendingApproval || options.isVoiceActive;
 }
 
 export function collectUserMessageAssistantSelections(

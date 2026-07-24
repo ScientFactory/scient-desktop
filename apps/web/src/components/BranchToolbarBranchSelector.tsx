@@ -57,7 +57,7 @@ import {
   ComboboxTrigger,
 } from "./ui/combobox";
 import { Input } from "./ui/input";
-import { toastManager } from "./ui/toast";
+import { transientAlertManager } from "../notifications/transientAlert";
 import {
   ENVIRONMENT_ROW_CLASS_NAME,
   ENVIRONMENT_ROW_ICON_CLASS_NAME,
@@ -106,18 +106,18 @@ const UNRESOLVED_INDEX_PATTERN = /you need to resolve your current index/i;
 const GIT_INDEX_LOCK_PATTERN =
   /(?:Unable to create '([^']*\.git\/index\.lock)'|Another git process seems to be running|\.git\/index\.lock.*File exists)/i;
 const GIT_INDEX_WRITE_PATTERN = /could not write index/i;
-let activeBranchRecoveryToastId: ReturnType<typeof toastManager.add> | null = null;
+let activeBranchRecoveryAlertId: ReturnType<typeof transientAlertManager.add> | null = null;
 
-function closeActiveBranchRecoveryToast(): void {
-  if (!activeBranchRecoveryToastId) return;
-  toastManager.close(activeBranchRecoveryToastId);
-  activeBranchRecoveryToastId = null;
+function closeActiveBranchRecoveryAlert(): void {
+  if (!activeBranchRecoveryAlertId) return;
+  transientAlertManager.close(activeBranchRecoveryAlertId);
+  activeBranchRecoveryAlertId = null;
 }
 
-function addBranchRecoveryToast(input: Parameters<typeof toastManager.add>[0]) {
-  closeActiveBranchRecoveryToast();
-  activeBranchRecoveryToastId = toastManager.add(input);
-  return activeBranchRecoveryToastId;
+function addBranchRecoveryAlert(input: Parameters<typeof transientAlertManager.add>[0]) {
+  closeActiveBranchRecoveryAlert();
+  activeBranchRecoveryAlertId = transientAlertManager.add(input);
+  return activeBranchRecoveryAlertId;
 }
 
 function parseDirtyWorktreeError(error: unknown): { branch: string; files: string[] } | null {
@@ -187,13 +187,13 @@ function handleCheckoutError(
     input.onSuccess();
   };
 
-  const addGitIndexLockToast = (error: unknown): void => {
+  const addGitIndexLockAlert = (error: unknown): void => {
     const lockError = parseGitIndexLockError(error);
     if (!lockError) return;
     const lockFileLabel = lockError.lockPath
       ? lockError.lockPath.split("/").slice(-2).join("/")
       : ".git/index.lock";
-    addBranchRecoveryToast({
+    addBranchRecoveryAlert({
       type: "error",
       title: "Git index is locked.",
       description: `${lockFileLabel} already exists. Close any running Git operation, remove the stale lock file if none is running, then retry.`,
@@ -214,8 +214,8 @@ function handleCheckoutError(
     });
   };
 
-  const addGitIndexWriteToast = (error: unknown): void => {
-    addBranchRecoveryToast({
+  const addGitIndexWriteAlert = (error: unknown): void => {
+    addBranchRecoveryAlert({
       type: "error",
       title: "Git index could not be written.",
       description:
@@ -239,7 +239,7 @@ function handleCheckoutError(
   const dirtyWorktree = parseDirtyWorktreeError(error);
   if (dirtyWorktree) {
     const copyText = toBranchActionErrorMessage(error);
-    const dirtyToastId = addBranchRecoveryToast({
+    addBranchRecoveryAlert({
       type: "warning",
       title: "Uncommitted changes block checkout.",
       description: formatDirtyWorktreeDescription(dirtyWorktree.files),
@@ -247,23 +247,23 @@ function handleCheckoutError(
       actionProps: {
         children: "Stash & Switch",
         onClick: () => {
-          closeActiveBranchRecoveryToast();
+          closeActiveBranchRecoveryAlert();
           input.runBranchAction(async () => {
             try {
               await retryStashAndCheckout();
             } catch (stashError) {
               if (parseGitIndexLockError(stashError)) {
-                addGitIndexLockToast(stashError);
+                addGitIndexLockAlert(stashError);
                 return;
               }
               if (isGitIndexWriteError(stashError)) {
-                addGitIndexWriteToast(stashError);
+                addGitIndexWriteAlert(stashError);
                 return;
               }
               if (isStashConflictError(stashError)) {
                 await invalidateGitQueries(input.queryClient);
                 input.onSuccess();
-                const stashConflictToastId = addBranchRecoveryToast({
+                addBranchRecoveryAlert({
                   type: "warning",
                   title: "Changes saved, but not reapplied.",
                   description:
@@ -274,7 +274,7 @@ function handleCheckoutError(
                     className:
                       "border-destructive bg-destructive text-white shadow-destructive/24 hover:bg-destructive/90",
                     onClick: () => {
-                      closeActiveBranchRecoveryToast();
+                      closeActiveBranchRecoveryAlert();
                       input.onRequestDiscardStash({ cwd: input.cwd });
                     },
                   },
@@ -282,7 +282,7 @@ function handleCheckoutError(
                 return;
               }
               if (parseDirtyWorktreeError(stashError)) {
-                addBranchRecoveryToast({
+                addBranchRecoveryAlert({
                   type: "error",
                   title: "Cannot switch branches.",
                   description:
@@ -291,7 +291,7 @@ function handleCheckoutError(
                 });
                 return;
               }
-              addBranchRecoveryToast({
+              addBranchRecoveryAlert({
                 type: "error",
                 title: "Failed to stash and switch.",
                 description: toBranchActionErrorMessage(stashError),
@@ -306,15 +306,15 @@ function handleCheckoutError(
   }
 
   if (parseGitIndexLockError(error)) {
-    addGitIndexLockToast(error);
+    addGitIndexLockAlert(error);
     return;
   }
   if (isGitIndexWriteError(error)) {
-    addGitIndexWriteToast(error);
+    addGitIndexWriteAlert(error);
     return;
   }
 
-  addBranchRecoveryToast({
+  addBranchRecoveryAlert({
     type: "error",
     title: isUnresolvedIndexError(error)
       ? "Unresolved conflicts in the repository."
@@ -382,6 +382,7 @@ export function BranchToolbarBranchSelector({
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [isCreateBranchDialogOpen, setIsCreateBranchDialogOpen] = useState(false);
   const [createBranchName, setCreateBranchName] = useState("");
+  const [createBranchError, setCreateBranchError] = useState<string | null>(null);
   const [branchQuery, setBranchQuery] = useState("");
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
@@ -476,6 +477,7 @@ export function BranchToolbarBranchSelector({
 
   const openCreateBranchDialog = useCallback(() => {
     setCreateBranchName(canPrefillCreateBranch && !hasExactBranchMatch ? trimmedBranchQuery : "");
+    setCreateBranchError(null);
     setIsBranchMenuOpen(false);
     setIsCreateBranchDialogOpen(true);
   }, [canPrefillCreateBranch, hasExactBranchMatch, trimmedBranchQuery]);
@@ -519,6 +521,12 @@ export function BranchToolbarBranchSelector({
       try {
         await api.git.stashDrop({ cwd: dialog.cwd });
         setStashDiscardDialog(null);
+      } catch (error) {
+        setStashDiscardDialog((current) =>
+          current?.cwd === dialog.cwd
+            ? { ...current, error: toBranchActionErrorMessage(error), loading: false }
+            : current,
+        );
       } finally {
         setIsDroppingStash(false);
       }
@@ -605,10 +613,14 @@ export function BranchToolbarBranchSelector({
   const createBranch = (rawName: string) => {
     const name = rawName.trim();
     const api = readNativeApi();
-    if (!api || !branchCwd || !name || isBranchActionPending) return;
+    if (!name || isBranchActionPending) return;
+    if (!api || !branchCwd) {
+      setCreateBranchError("Branch creation is unavailable.");
+      return;
+    }
 
+    setCreateBranchError(null);
     setIsBranchMenuOpen(false);
-    onComposerFocusRequest?.();
 
     runBranchAction(async () => {
       setOptimisticBranch(name);
@@ -618,6 +630,12 @@ export function BranchToolbarBranchSelector({
         try {
           await api.git.checkout({ cwd: branchCwd, branch: name });
         } catch (error) {
+          // The branch now exists, so leave creation mode before offering
+          // checkout-specific recovery actions. Retrying creation would be wrong.
+          setIsCreateBranchDialogOpen(false);
+          setCreateBranchName("");
+          setCreateBranchError(null);
+          onComposerFocusRequest?.();
           handleCheckoutError(error, {
             api,
             branch: name,
@@ -639,11 +657,7 @@ export function BranchToolbarBranchSelector({
           return;
         }
       } catch (error) {
-        toastManager.add({
-          type: "error",
-          title: "Failed to create branch.",
-          description: toBranchActionErrorMessage(error),
-        });
+        setCreateBranchError(toBranchActionErrorMessage(error));
         return;
       }
 
@@ -654,6 +668,9 @@ export function BranchToolbarBranchSelector({
       });
       setBranchQuery("");
       setCreateBranchName("");
+      setCreateBranchError(null);
+      setIsCreateBranchDialogOpen(false);
+      onComposerFocusRequest?.();
     });
   };
 
@@ -918,6 +935,7 @@ export function BranchToolbarBranchSelector({
           setIsCreateBranchDialogOpen(open);
           if (!open) {
             setCreateBranchName("");
+            setCreateBranchError(null);
           }
         }}
       >
@@ -937,7 +955,6 @@ export function BranchToolbarBranchSelector({
                 if (!nextName || branchByName.has(nextName)) {
                   return;
                 }
-                setIsCreateBranchDialogOpen(false);
                 createBranch(nextName);
               }}
             >
@@ -950,11 +967,19 @@ export function BranchToolbarBranchSelector({
                   id="branch-create-name"
                   placeholder="feature/my-change"
                   value={createBranchName}
-                  onChange={(event) => setCreateBranchName(event.target.value)}
+                  onChange={(event) => {
+                    setCreateBranchName(event.target.value);
+                    setCreateBranchError(null);
+                  }}
                 />
               </div>
               {branchByName.has(createBranchName.trim()) ? (
                 <p className="text-destructive text-sm">A branch with this name already exists.</p>
+              ) : null}
+              {createBranchError ? (
+                <p className="text-destructive text-sm" role="alert">
+                  {createBranchError}
+                </p>
               ) : null}
               <DialogFooter variant="bare">
                 <Button
@@ -964,6 +989,7 @@ export function BranchToolbarBranchSelector({
                   onClick={() => {
                     setIsCreateBranchDialogOpen(false);
                     setCreateBranchName("");
+                    setCreateBranchError(null);
                   }}
                 >
                   Cancel
@@ -972,11 +998,12 @@ export function BranchToolbarBranchSelector({
                   type="submit"
                   size="sm"
                   disabled={
+                    isBranchActionPending ||
                     createBranchName.trim().length === 0 ||
                     branchByName.has(createBranchName.trim())
                   }
                 >
-                  Create and switch
+                  {isBranchActionPending ? "Creating..." : "Create and switch"}
                 </Button>
               </DialogFooter>
             </form>

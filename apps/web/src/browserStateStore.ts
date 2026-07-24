@@ -82,6 +82,27 @@ function sameBrowserHistoryEntries(
   });
 }
 
+export function browserHistoryAfterThreadState(
+  previousHistory: BrowserHistoryEntry[],
+  state: ThreadBrowserState,
+): BrowserHistoryEntry[] {
+  const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId) ?? null;
+  const orderedTabs = activeTab
+    ? [activeTab, ...state.tabs.filter((tab) => tab.id !== activeTab.id)]
+    : state.tabs;
+  return orderedTabs.reduce(
+    (entries, tab) =>
+      tab.kind === "artifact"
+        ? entries
+        : upsertRecentHistoryEntry(entries, {
+            url: tab.lastCommittedUrl ?? tab.url,
+            title: tab.title,
+            tabId: tab.id,
+          }),
+    previousHistory,
+  );
+}
+
 function sanitizeBrowserHistoryEntry(rawEntry: unknown): BrowserHistoryEntry | null {
   if (!isPlainObject(rawEntry)) {
     return null;
@@ -148,21 +169,9 @@ export const useBrowserStateStore = create<BrowserStateStore>()(
           if (previousState?.version === state.version) {
             return current;
           }
-          const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId) ?? null;
-          const orderedTabs = activeTab
-            ? [activeTab, ...state.tabs.filter((tab) => tab.id !== activeTab.id)]
-            : state.tabs;
           const previousHistory =
             current.recentHistoryByThreadId[state.threadId] ?? EMPTY_BROWSER_HISTORY;
-          const nextHistory = orderedTabs.reduce(
-            (entries, tab) =>
-              upsertRecentHistoryEntry(entries, {
-                url: tab.lastCommittedUrl ?? tab.url,
-                title: tab.title,
-                tabId: tab.id,
-              }),
-            previousHistory,
-          );
+          const nextHistory = browserHistoryAfterThreadState(previousHistory, state);
           const historyChanged = !sameBrowserHistoryEntries(previousHistory, nextHistory);
 
           return {

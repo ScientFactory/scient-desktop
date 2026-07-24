@@ -297,9 +297,14 @@ const DEFAULT_EFFORT_BY_MODEL: Readonly<Record<string, string>> = {
   "Claude Sonnet 4.6": "thinking",
   "Claude Opus 4.6": "thinking",
   "GPT-OSS 120B": "medium",
+  "gemini-3.5-flash": "medium",
+  "gemini-3.1-pro": "low",
+  "claude-opus-4-6": "thinking",
+  "gpt-oss-120b": "medium",
 };
 
-const EFFORT_ORDER = ["low", "medium", "high", "thinking"] as const;
+const EFFORT_ORDER = ["low", "medium", "high", "thinking", "ultra"] as const;
+const MACHINE_MODEL_EFFORTS = new Set(EFFORT_ORDER);
 
 function effortLabel(value: string): string {
   return value
@@ -307,6 +312,23 @@ function effortLabel(value: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
     .join(" ");
+}
+
+function isAntigravityMachineModelSlug(value: string): boolean {
+  return /^(?:claude|deepseek|gemini|gpt|grok|llama|mistral|qwen)(?:-[a-z0-9.]+)+$/u.test(value);
+}
+
+function antigravityModelDisplayName(model: string): string {
+  if (!isAntigravityMachineModelSlug(model)) return model;
+  return model
+    .split("-")
+    .map((part) => {
+      if (part === "gpt" || part === "oss") return part.toUpperCase();
+      if (/^\d+b$/u.test(part)) return part.toUpperCase();
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(" ")
+    .replace(/\b(\d+) (\d+)\b/gu, "$1.$2");
 }
 
 export function parseAntigravityCliModelLabel(
@@ -318,11 +340,23 @@ export function parseAntigravityCliModelLabel(
     .replace(/^(?:[*•-]\s+)+/u, "");
   if (!trimmed) return null;
   const match = trimmed.match(/^(.*?)\s+\(([^()]+)\)$/u);
-  if (!match?.[1] || !match[2]) return { model: trimmed };
-  return {
-    model: match[1].trim(),
-    effort: match[2].trim().toLowerCase(),
-  };
+  if (match?.[1] && match[2]) {
+    return {
+      model: match[1].trim(),
+      effort: match[2].trim().toLowerCase(),
+    };
+  }
+  if (isAntigravityMachineModelSlug(trimmed)) {
+    const separatorIndex = trimmed.lastIndexOf("-");
+    const possibleEffort = trimmed.slice(separatorIndex + 1);
+    if (MACHINE_MODEL_EFFORTS.has(possibleEffort as (typeof EFFORT_ORDER)[number])) {
+      return {
+        model: trimmed.slice(0, separatorIndex),
+        effort: possibleEffort,
+      };
+    }
+  }
+  return { model: trimmed };
 }
 
 export function antigravityPromptCommandLineIssue(
@@ -340,13 +374,14 @@ export function parseAntigravityModelLines(output: string): ProviderListModelsRe
   for (const line of output.split(/\r?\n/g)) {
     const parsed = parseAntigravityCliModelLabel(line);
     if (
-      !parsed?.effort ||
-      !/^(?:claude|deepseek|gemini|gpt|grok|llama|mistral|qwen)\b/iu.test(parsed.model)
+      !parsed ||
+      !/^(?:claude|deepseek|gemini|gpt|grok|llama|mistral|qwen)\b/iu.test(parsed.model) ||
+      (!parsed.effort && !isAntigravityMachineModelSlug(parsed.model))
     ) {
       continue;
     }
     const efforts = groups.get(parsed.model) ?? [];
-    if (!efforts.includes(parsed.effort)) efforts.push(parsed.effort);
+    if (parsed.effort && !efforts.includes(parsed.effort)) efforts.push(parsed.effort);
     groups.set(parsed.model, efforts);
   }
   return [...groups.entries()].map(([model, discoveredEfforts]) => {
@@ -361,7 +396,7 @@ export function parseAntigravityModelLines(output: string): ProviderListModelsRe
     const defaultEffort = DEFAULT_EFFORT_BY_MODEL[model] ?? efforts[0];
     return {
       slug: model,
-      name: model,
+      name: antigravityModelDisplayName(model),
       ...(efforts.length > 0
         ? {
             supportedReasoningEfforts: efforts.map((effort) => ({
@@ -387,7 +422,10 @@ export function resolveAntigravityCliModelLabel(
     options?.reasoningEffort?.trim().toLowerCase() ??
     discoveredDefaultEffort?.trim().toLowerCase() ??
     DEFAULT_EFFORT_BY_MODEL[parsed.model];
-  return effort ? `${parsed.model} (${effortLabel(effort)})` : parsed.model;
+  if (!effort) return parsed.model;
+  return isAntigravityMachineModelSlug(parsed.model)
+    ? `${parsed.model}-${effort}`
+    : `${parsed.model} (${effortLabel(effort)})`;
 }
 
 function parseModelLines(output: string): ProviderListModelsResult["models"] {

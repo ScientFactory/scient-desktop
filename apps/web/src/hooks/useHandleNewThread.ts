@@ -1,5 +1,5 @@
 import { type ProjectId, ThreadId } from "@synara/contracts";
-import { getDefaultModel } from "@synara/shared/model";
+import { getRecommendedDefaultModelSelection } from "@synara/shared/model";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { startTransition, useCallback } from "react";
 import { useAppSettings } from "../appSettings";
@@ -65,14 +65,11 @@ export function useHandleNewThread() {
         if (!options?.provider) {
           return;
         }
-        const defaultModel = getDefaultModel(options.provider);
-        if (!defaultModel) {
+        const defaultModelSelection = getRecommendedDefaultModelSelection(options.provider);
+        if (!defaultModelSelection) {
           return;
         }
-        setModelSelection(threadId, {
-          provider: options.provider,
-          model: defaultModel,
-        });
+        setModelSelection(threadId, defaultModelSelection);
       };
       const restoreComposerDraft = (
         threadId: ThreadId,

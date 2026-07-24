@@ -28,6 +28,13 @@ export function providerRequiresVerifiedAuth(provider: ProviderKind): boolean {
   return PROVIDERS_REQUIRING_VERIFIED_AUTH.has(provider);
 }
 
+export function providerStatusRequiresVerifiedAuth(status: ServerProviderStatus): boolean {
+  if (status.requiresProviderAccount === false) {
+    return false;
+  }
+  return providerRequiresVerifiedAuth(status.provider);
+}
+
 export function normalizeCustomBinaryPath(value: string | null | undefined): string | null {
   if (typeof value !== "string") {
     return null;
@@ -64,6 +71,9 @@ export function normalizeProviderStatusForLocalConfig(input: {
       status: "ready",
       authStatus: status.authStatus,
       checkedAt: status.checkedAt,
+      ...(status.requiresProviderAccount !== undefined
+        ? { requiresProviderAccount: status.requiresProviderAccount }
+        : {}),
       ...(status.authType ? { authType: status.authType } : {}),
       ...(status.authLabel ? { authLabel: status.authLabel } : {}),
       ...(status.voiceTranscriptionAvailable !== undefined
@@ -85,7 +95,7 @@ export function isProviderUsable(status: ServerProviderStatus | null | undefined
     // Missing status means the health check has not confirmed an installed provider yet.
     return false;
   }
-  const authUsable = providerRequiresVerifiedAuth(status.provider)
+  const authUsable = providerStatusRequiresVerifiedAuth(status)
     ? status.authStatus === "authenticated"
     : status.authStatus !== "unauthenticated";
   return status.available && status.status === "ready" && authUsable;

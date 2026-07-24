@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { ensurePrivateFileSync, repairPrivateFileSync } from "./privatePathPermissions";
+
 export interface RotatingFileSinkOptions {
   readonly filePath: string;
   readonly maxBytes: number;
@@ -29,6 +31,11 @@ export class RotatingFileSink {
     this.throwOnError = options.throwOnError ?? false;
 
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
+    ensurePrivateFileSync(this.filePath);
+    for (let index = 1; index <= this.maxFiles; index += 1) {
+      const backupPath = this.withSuffix(index);
+      if (fs.existsSync(backupPath)) repairPrivateFileSync(backupPath);
+    }
     this.pruneOverflowBackups();
     this.currentSize = this.readCurrentSize();
   }
@@ -42,6 +49,7 @@ export class RotatingFileSink {
         this.rotate();
       }
 
+      ensurePrivateFileSync(this.filePath);
       fs.appendFileSync(this.filePath, buffer);
       this.currentSize += buffer.length;
 

@@ -189,6 +189,7 @@ export const FoldersIcon: LucideIcon = centralIconWrapper("folders");
 export const GitCommitIcon: LucideIcon = centralIconWrapper("commits");
 export const GitBranchIcon: LucideIcon = centralIconWrapper("branch");
 export const GitForkIcon = centralIconWrapper("fork");
+export const ConversationForkIcon: LucideIcon = centralIconWrapper("fork-simple");
 export const GitMergeIcon: LucideIcon = centralIconWrapper("merged");
 export const GitMergedSimpleIcon: LucideIcon = centralIconWrapper("merged-simple");
 export const PushIcon: LucideIcon = centralIconWrapper("cloud-simple-upload");

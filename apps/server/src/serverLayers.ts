@@ -16,6 +16,7 @@ import { ThreadDeletionReactorLive } from "./orchestration/Layers/ThreadDeletion
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer";
 
 import { DevServerManagerLive } from "./devServerManager";
+import { HtmlArtifactPreviewLive } from "./htmlPreview/Layers/HtmlArtifactPreview";
 import { KeybindingsLive } from "./keybindings";
 import { GitCoreLive } from "./git/Layers/GitCore";
 import { GitLayerLive, TextGenerationLayerLive } from "./git/runtimeLayer";
@@ -139,6 +140,7 @@ export function makeServerRuntimeServicesLayer() {
     orchestrationReactorLayer,
     threadDeletionReactorLayer,
     devServerManagerLayer,
+    HtmlArtifactPreviewLive,
     GitLayerLive,
     TextGenerationLayerLive,
     TerminalLayerLive,

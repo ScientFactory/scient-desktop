@@ -315,7 +315,9 @@ function threadSessionsEqual(
     left.activeTurnId === right.activeTurnId &&
     left.createdAt === right.createdAt &&
     left.updatedAt === right.updatedAt &&
-    left.lastError === right.lastError
+    left.lastError === right.lastError &&
+    left.lastErrorEventId === right.lastErrorEventId &&
+    left.lastErrorClass === right.lastErrorClass
   );
 }
 
@@ -385,6 +387,10 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     (left.subagentNickname ?? null) === (right.subagentNickname ?? null) &&
     (left.subagentRole ?? null) === (right.subagentRole ?? null) &&
     (left.forkSourceThreadId ?? null) === (right.forkSourceThreadId ?? null) &&
+    (left.forkSourceMessageId ?? null) === (right.forkSourceMessageId ?? null) &&
+    (left.forkTitleFamilyRootId ?? null) === (right.forkTitleFamilyRootId ?? null) &&
+    (left.forkTitleBase ?? null) === (right.forkTitleBase ?? null) &&
+    (left.forkTitleOrdinal ?? null) === (right.forkTitleOrdinal ?? null) &&
     (left.sidechatSourceThreadId ?? null) === (right.sidechatSourceThreadId ?? null) &&
     deepEqualJson(left.lastKnownPr ?? null, right.lastKnownPr ?? null) &&
     (left.handoff ?? null) === (right.handoff ?? null) &&
@@ -433,6 +439,10 @@ function toThreadShell(thread: Thread): ThreadShell {
     subagentNickname: thread.subagentNickname ?? null,
     subagentRole: thread.subagentRole ?? null,
     forkSourceThreadId: thread.forkSourceThreadId ?? null,
+    forkSourceMessageId: thread.forkSourceMessageId ?? null,
+    forkTitleFamilyRootId: thread.forkTitleFamilyRootId ?? null,
+    forkTitleBase: thread.forkTitleBase ?? null,
+    forkTitleOrdinal: thread.forkTitleOrdinal ?? null,
     sidechatSourceThreadId: thread.sidechatSourceThreadId ?? null,
     lastKnownPr: thread.lastKnownPr ?? null,
     handoff: thread.handoff ?? null,
@@ -1126,6 +1136,8 @@ function readModelSessionFromThreadSession(
     runtimeMode: previousThread?.runtimeMode ?? incomingSession?.runtimeMode ?? "full-access",
     activeTurnId: previousSession.activeTurnId ?? null,
     lastError: previousSession.lastError ?? null,
+    lastErrorEventId: previousSession.lastErrorEventId ?? null,
+    lastErrorClass: previousSession.lastErrorClass ?? null,
     updatedAt: previousSession.updatedAt,
   };
 }
@@ -1577,6 +1589,8 @@ function normalizeThreadSession(
     createdAt: incoming.updatedAt,
     updatedAt: incoming.updatedAt,
     ...(nextLastError ? { lastError: nextLastError } : {}),
+    ...(incoming.lastErrorEventId ? { lastErrorEventId: incoming.lastErrorEventId } : {}),
+    ...(incoming.lastErrorClass ? { lastErrorClass: incoming.lastErrorClass } : {}),
   } satisfies NonNullable<Thread["session"]>;
   if (
     previous &&
@@ -1586,7 +1600,9 @@ function normalizeThreadSession(
     previous.activeTurnId === nextSession.activeTurnId &&
     previous.createdAt === nextSession.createdAt &&
     previous.updatedAt === nextSession.updatedAt &&
-    previous.lastError === nextSession.lastError
+    previous.lastError === nextSession.lastError &&
+    previous.lastErrorEventId === nextSession.lastErrorEventId &&
+    previous.lastErrorClass === nextSession.lastErrorClass
   ) {
     return previous;
   }
@@ -1740,6 +1756,10 @@ function normalizeThreadFromReadModel(
     previous.hasPendingUserInput === resolvedHasPendingUserInput &&
     previous.hasActionableProposedPlan === resolvedHasActionableProposedPlan &&
     (previous.forkSourceThreadId ?? null) === (incoming.forkSourceThreadId ?? null) &&
+    (previous.forkSourceMessageId ?? null) === (incoming.forkSourceMessageId ?? null) &&
+    (previous.forkTitleFamilyRootId ?? null) === (incoming.forkTitleFamilyRootId ?? null) &&
+    (previous.forkTitleBase ?? null) === (incoming.forkTitleBase ?? null) &&
+    (previous.forkTitleOrdinal ?? null) === (incoming.forkTitleOrdinal ?? null) &&
     (previous.sidechatSourceThreadId ?? null) === (incoming.sidechatSourceThreadId ?? null) &&
     deepEqualJson(previous.lastKnownPr ?? null, lastKnownPr) &&
     (previous.handoff ?? null) === handoff &&
@@ -1783,6 +1803,10 @@ function normalizeThreadFromReadModel(
     associatedWorktreeRef: nextAssociatedWorktreeRef,
     createBranchFlowCompleted: resolvedCreateBranchFlowCompleted,
     forkSourceThreadId: incoming.forkSourceThreadId ?? null,
+    forkSourceMessageId: incoming.forkSourceMessageId ?? null,
+    forkTitleFamilyRootId: incoming.forkTitleFamilyRootId ?? null,
+    forkTitleBase: incoming.forkTitleBase ?? null,
+    forkTitleOrdinal: incoming.forkTitleOrdinal ?? null,
     sidechatSourceThreadId: incoming.sidechatSourceThreadId ?? null,
     lastKnownPr,
     handoff,
@@ -1876,6 +1900,10 @@ function normalizeThreadShellSnapshot(
     subagentNickname: incoming.subagentNickname ?? null,
     subagentRole: incoming.subagentRole ?? null,
     forkSourceThreadId: incoming.forkSourceThreadId ?? null,
+    forkSourceMessageId: incoming.forkSourceMessageId ?? null,
+    forkTitleFamilyRootId: incoming.forkTitleFamilyRootId ?? null,
+    forkTitleBase: incoming.forkTitleBase ?? null,
+    forkTitleOrdinal: incoming.forkTitleOrdinal ?? null,
     sidechatSourceThreadId: incoming.sidechatSourceThreadId ?? null,
     lastKnownPr,
     handoff,
@@ -2180,6 +2208,7 @@ function sidebarThreadSummariesEqual(
     left.hasActionableProposedPlan === right.hasActionableProposedPlan &&
     left.hasLiveTailWork === right.hasLiveTailWork &&
     (left.forkSourceThreadId ?? null) === (right.forkSourceThreadId ?? null) &&
+    (left.forkSourceMessageId ?? null) === (right.forkSourceMessageId ?? null) &&
     (left.sidechatSourceThreadId ?? null) === (right.sidechatSourceThreadId ?? null) &&
     deepEqualJson(left.lastKnownPr ?? null, right.lastKnownPr ?? null) &&
     (left.handoff ?? null) === (right.handoff ?? null)
@@ -2222,6 +2251,7 @@ function buildSidebarThreadSummary(
     hasActionableProposedPlan: metadata.hasActionableProposedPlan,
     hasLiveTailWork: metadata.hasLiveTailWork,
     forkSourceThreadId: thread.forkSourceThreadId ?? null,
+    forkSourceMessageId: thread.forkSourceMessageId ?? null,
     sidechatSourceThreadId: thread.sidechatSourceThreadId ?? null,
     lastKnownPr: thread.lastKnownPr ?? null,
     handoff: thread.handoff ?? null,

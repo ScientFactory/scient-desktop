@@ -1,8 +1,7 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { constants as FS_CONSTANTS } from "node:fs";
 import {
   access,
-  chmod,
   copyFile,
   mkdtemp,
   mkdir,
@@ -15,7 +14,7 @@ import {
 } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { chromium } from "playwright";
@@ -26,15 +25,21 @@ import {
   assertSandboxedPackagedArguments,
   fetchWithinDeadline,
   waitFor,
-} from "./linux-appimage-smoke-support.mjs";
+} from "./linux-packaged-smoke-support.mjs";
 
 const SCRIPT_DIR = fileURLToPath(new URL(".", import.meta.url));
 const REPO_ROOT = resolve(SCRIPT_DIR, "../../..");
 const RELEASE_DIR = resolve(REPO_ROOT, process.env.SCIENT_LINUX_ARTIFACT_DIR || "release");
 const DIAGNOSTIC_DIR = resolve(
   REPO_ROOT,
-  process.env.SCIENT_LINUX_SMOKE_ARTIFACT_DIR || "test-results/linux-appimage",
+  process.env.SCIENT_LINUX_SMOKE_ARTIFACT_DIR || "test-results/linux-deb",
 );
+const DEBIAN_PACKAGE_NAME = "scient";
+const INSTALLED_APP_DIRECTORY = "/opt/Scient";
+const INSTALLED_EXECUTABLE = join(INSTALLED_APP_DIRECTORY, "scient");
+const INSTALLED_SANDBOX_HELPER = join(INSTALLED_APP_DIRECTORY, "chrome-sandbox");
+const BUNDLED_APPARMOR_PROFILE = join(INSTALLED_APP_DIRECTORY, "resources", "apparmor-profile");
+const INSTALLED_APPARMOR_PROFILE = "/etc/apparmor.d/scient";
 const STARTUP_TIMEOUT_MS = 45_000;
 const ACTION_TIMEOUT_MS = 20_000;
 const RECOVERY_TIMEOUT_MS = 30_000;
@@ -63,19 +68,137 @@ async function reservePort() {
   return address.port;
 }
 
-async function findAppImage() {
+function runCommand(command, args, { allowFailure = false } = {}) {
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    maxBuffer: 8 * 1024 * 1024,
+    shell: false,
+    windowsHide: true,
+  });
+  if (result.error) {
+    if (allowFailure && result.error.code === "ENOENT") return result;
+    throw new Error(`${command} could not start: ${result.error.message}`);
+  }
+  if (!allowFailure && result.status !== 0) {
+    const detail = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+    throw new Error(
+      `${command} ${args.join(" ")} failed with exit ${result.status ?? "unknown"}${detail ? `:\n${detail}` : "."}`,
+    );
+  }
+  return result;
+}
+
+async function findDebianPackage() {
   const entries = (await readdir(RELEASE_DIR, { withFileTypes: true })).filter(
-    (entry) => entry.isFile() && entry.name.endsWith(".AppImage"),
+    (entry) => entry.isFile() && entry.name.endsWith(".deb"),
   );
   if (entries.length !== 1) {
     throw new Error(
-      `Expected exactly one AppImage in ${RELEASE_DIR}, found ${entries.map((entry) => entry.name).join(", ") || "none"}.`,
+      `Expected exactly one Debian package in ${RELEASE_DIR}, found ${entries.map((entry) => entry.name).join(", ") || "none"}.`,
     );
   }
-  const appImagePath = join(RELEASE_DIR, entries[0].name);
-  await chmod(appImagePath, 0o755);
-  await access(appImagePath, FS_CONSTANTS.X_OK);
-  return appImagePath;
+  const packagePath = join(RELEASE_DIR, entries[0].name);
+  await access(packagePath, FS_CONSTANTS.R_OK);
+  return packagePath;
+}
+
+function readDebianPackageField(packagePath, field) {
+  return runCommand("dpkg-deb", ["--field", packagePath, field]).stdout.trim();
+}
+
+function assertNoExistingScientInstallation() {
+  const result = runCommand("dpkg-query", ["--show", DEBIAN_PACKAGE_NAME], {
+    allowFailure: true,
+  });
+  if (result.status === 0) {
+    throw new Error(
+      "Refusing to replace an existing system Scient installation during packaged acceptance.",
+    );
+  }
+}
+
+async function assertInstalledDebianSandbox(packagePath) {
+  const packageName = readDebianPackageField(packagePath, "Package");
+  const architecture = readDebianPackageField(packagePath, "Architecture");
+  if (packageName !== DEBIAN_PACKAGE_NAME) {
+    throw new Error(`Expected Debian package ${DEBIAN_PACKAGE_NAME}, found ${packageName}.`);
+  }
+  if (architecture !== "amd64") {
+    throw new Error(`Expected Debian architecture amd64, found ${architecture}.`);
+  }
+
+  const executableMetadata = await stat(INSTALLED_EXECUTABLE);
+  if (
+    !executableMetadata.isFile() ||
+    executableMetadata.uid !== 0 ||
+    (executableMetadata.mode & 0o7777) !== 0o755
+  ) {
+    throw new Error(
+      `Expected ${INSTALLED_EXECUTABLE} to be a root-owned regular file with exact mode 0755.`,
+    );
+  }
+  await access(INSTALLED_EXECUTABLE, FS_CONSTANTS.X_OK);
+
+  const sandboxMetadata = await stat(INSTALLED_SANDBOX_HELPER);
+  const sandboxMode = sandboxMetadata.mode & 0o7777;
+  if (
+    !sandboxMetadata.isFile() ||
+    sandboxMetadata.uid !== 0 ||
+    (sandboxMode !== 0o755 && sandboxMode !== 0o4755)
+  ) {
+    throw new Error(
+      `Expected ${INSTALLED_SANDBOX_HELPER} to be root-owned, regular, and exact mode 0755 or 4755; found ${sandboxMode.toString(8).padStart(4, "0")}.`,
+    );
+  }
+
+  const bundledProfile = await readFile(BUNDLED_APPARMOR_PROFILE, "utf8");
+  if (
+    !bundledProfile.includes(`"${INSTALLED_EXECUTABLE}"`) ||
+    !bundledProfile.includes("userns,")
+  ) {
+    throw new Error(
+      `Bundled AppArmor profile ${BUNDLED_APPARMOR_PROFILE} does not grant user namespaces to the exact Scient executable.`,
+    );
+  }
+
+  const appArmorEnabled =
+    runCommand("apparmor_status", ["--enabled"], {
+      allowFailure: true,
+    }).status === 0;
+  if (appArmorEnabled) {
+    const profile = await readFile(INSTALLED_APPARMOR_PROFILE, "utf8");
+    if (!profile.includes(`"${INSTALLED_EXECUTABLE}"`) || !profile.includes("userns,")) {
+      throw new Error(
+        `Installed AppArmor profile ${INSTALLED_APPARMOR_PROFILE} does not grant user namespaces to the exact Scient executable.`,
+      );
+    }
+  }
+}
+
+function installDebianPackage(packagePath) {
+  runCommand("sudo", [
+    "env",
+    "DEBIAN_FRONTEND=noninteractive",
+    "apt-get",
+    "install",
+    "--yes",
+    packagePath,
+  ]);
+}
+
+function uninstallDebianPackage() {
+  const query = runCommand("dpkg-query", ["--show", DEBIAN_PACKAGE_NAME], {
+    allowFailure: true,
+  });
+  if (query.status !== 0) return;
+  runCommand("sudo", [
+    "env",
+    "DEBIAN_FRONTEND=noninteractive",
+    "apt-get",
+    "purge",
+    "--yes",
+    DEBIAN_PACKAGE_NAME,
+  ]);
 }
 
 async function readRuntimeState(runtimeStatePath) {
@@ -271,8 +394,9 @@ function signalProcessGroup(processGroupId, signal) {
 }
 
 async function readLinuxProcessInfo(processId) {
-  const [statContents, commandLineContents, executablePath] = await Promise.all([
+  const [statContents, statusContents, commandLineContents, executablePath] = await Promise.all([
     readFile(`/proc/${processId}/stat`, "utf8"),
+    readFile(`/proc/${processId}/status`, "utf8"),
     readFile(`/proc/${processId}/cmdline`),
     readlink(`/proc/${processId}/exe`),
   ]);
@@ -288,11 +412,15 @@ async function readLinuxProcessInfo(processId) {
   if (!Number.isInteger(parentProcessId) || !Number.isInteger(processGroupId) || !startTimeTicks) {
     throw new Error(`Incomplete /proc stat identity for PID ${processId}.`);
   }
+  const uid = Number(/^Uid:\s+(\d+)/mu.exec(statusContents)?.[1]);
+  if (!Number.isInteger(uid))
+    throw new Error(`Incomplete /proc user identity for PID ${processId}.`);
   return {
     processId,
     parentProcessId,
     processGroupId,
     startTimeTicks,
+    uid,
     executablePath,
     commandLine: commandLineContents.toString("utf8").split("\0").filter(Boolean),
   };
@@ -509,8 +637,8 @@ async function preserveFailureDiagnostics({
   ).catch(() => undefined);
 }
 
-async function runScenario(appImagePath, scenario) {
-  const scenarioRoot = await mkdtemp(join(tmpdir(), `scient-appimage-${scenario.name}-`));
+async function runScenario(executablePath, scenario) {
+  const scenarioRoot = await mkdtemp(join(tmpdir(), `scient-deb-${scenario.name}-`));
   const homeDir = join(scenarioRoot, "home");
   const configHome = join(scenarioRoot, "config");
   const cacheHome = join(scenarioRoot, "cache");
@@ -573,8 +701,9 @@ async function runScenario(appImagePath, scenario) {
     assertSandboxedPackagedArguments(packagedArguments);
     const previousUmask = process.umask(scenario.umask);
     try {
-      child = spawn("xvfb-run", ["-a", appImagePath, ...packagedArguments], {
+      child = spawn("xvfb-run", ["-a", executablePath, ...packagedArguments], {
         detached: true,
+        cwd: dirname(executablePath),
         env: {
           ...sanitizePackagedDesktopInheritedEnvironment(process.env),
           HOME: homeDir,
@@ -605,6 +734,16 @@ async function runScenario(appImagePath, scenario) {
     browser = renderer.browser;
     page = renderer.page;
     electronProcess = await findPackagedElectronProcess(child.pid, debuggingPort);
+    if (electronProcess.executablePath !== executablePath) {
+      throw new Error(
+        `Expected packaged Electron to run ${executablePath}, found ${electronProcess.executablePath}.`,
+      );
+    }
+    if (electronProcess.uid !== process.getuid?.()) {
+      throw new Error(
+        `Expected packaged Electron to run as uid ${process.getuid?.()}, found ${electronProcess.uid}.`,
+      );
+    }
     assertSandboxedPackagedArguments(electronProcess.commandLine);
     page.on("console", (message) => {
       recordOutput(`\n[renderer:${message.type()}] ${message.text()}`);
@@ -727,22 +866,49 @@ async function runScenario(appImagePath, scenario) {
 
 async function main() {
   if (process.platform !== "linux") {
-    throw new Error("The packaged AppImage smoke test must run on Linux.");
+    throw new Error("The installed Debian-package smoke test must run on Linux.");
   }
-  const appImagePath = await findAppImage();
-  console.log(`Testing packaged AppImage: ${basename(appImagePath)}`);
-  await runScenario(appImagePath, {
-    name: "fresh-profile",
-    umask: 0o022,
-    precreatePermissiveState: false,
-    crashBackend: false,
-  });
-  await runScenario(appImagePath, {
-    name: "shared-group-umask",
-    umask: 0o002,
-    precreatePermissiveState: true,
-    crashBackend: true,
-  });
+  const packagePath = await findDebianPackage();
+  console.log(`Testing installed Debian package: ${basename(packagePath)}`);
+  assertNoExistingScientInstallation();
+  let installationAttempted = false;
+  try {
+    installationAttempted = true;
+    installDebianPackage(packagePath);
+    await assertInstalledDebianSandbox(packagePath);
+    await runScenario(INSTALLED_EXECUTABLE, {
+      name: "fresh-profile",
+      umask: 0o022,
+      precreatePermissiveState: false,
+      crashBackend: false,
+    });
+    await runScenario(INSTALLED_EXECUTABLE, {
+      name: "shared-group-umask",
+      umask: 0o002,
+      precreatePermissiveState: true,
+      crashBackend: true,
+    });
+  } finally {
+    if (installationAttempted) {
+      uninstallDebianPackage();
+      await access(INSTALLED_EXECUTABLE).then(
+        () => {
+          throw new Error(`Debian package removal left ${INSTALLED_EXECUTABLE} installed.`);
+        },
+        (error) => {
+          if (error?.code !== "ENOENT") throw error;
+        },
+      );
+      await access(INSTALLED_APPARMOR_PROFILE).then(
+        () => {
+          throw new Error(`Debian package removal left ${INSTALLED_APPARMOR_PROFILE} installed.`);
+        },
+        (error) => {
+          if (error?.code !== "ENOENT") throw error;
+        },
+      );
+    }
+  }
 }
 
 await main();

@@ -17,8 +17,12 @@ import {
   createDesktopPlatformBuildConfig,
   MAC_ADHOC_SIGN_HOOK_PATH,
   MAC_APPSNAP_HELPER_STAGE_PATH,
+  MAC_SIGNING_POLICY_PATH,
+  WHISPER_RUNTIME_STAGE_PATH,
   validateDesktopNativeBuildHost,
 } from "./lib/desktop-platform-build-config.ts";
+import { isolateDesktopSigningEnvironment } from "./lib/desktop-signing-environment.ts";
+import { resolvePinnedElectronBuilder } from "./lib/electron-builder-authority.ts";
 import { SCIENT_PRODUCTION_BUNDLE_ID } from "@synara/shared/desktopIdentity";
 import { parseBooleanEnvValue } from "./lib/env-bool.ts";
 import { verifySingleMacDmgSignature } from "./lib/mac-artifact-signature.ts";
@@ -31,6 +35,7 @@ import {
 } from "./lib/release-workspace-manifests.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import { resolveWindowsSigningProvider } from "./lib/windows-signing.ts";
+import { verifyPackagedWhisperRuntime } from "./stage-whisper-runtime.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -40,7 +45,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
-
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("..", import.meta.url))),
 );
@@ -72,6 +76,12 @@ const AppSnapHelperBuildScript = Effect.zipWith(
   Effect.service(Path.Path),
   (repoRoot, path) => path.join(repoRoot, "apps/desktop/scripts/build-appsnap-helper.mjs"),
 );
+const WhisperRuntimeStageScript = Effect.zipWith(
+  RepoRoot,
+  Effect.service(Path.Path),
+  (repoRoot, path) => path.join(repoRoot, "scripts/stage-whisper-runtime.ts"),
+);
+export const WHISPER_RUNTIME_STAGE_RUNNER = "bun";
 const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
 
 interface PlatformConfig {
@@ -88,7 +98,7 @@ const PLATFORM_CONFIG: Record<typeof BuildPlatform.Type, PlatformConfig> = {
   },
   linux: {
     cliFlag: "--linux",
-    defaultTarget: "AppImage",
+    defaultTarget: "deb",
     archChoices: ["x64", "arm64"],
   },
   win: {
@@ -211,6 +221,7 @@ interface StagePackageJson {
   readonly private: true;
   readonly description: string;
   readonly author: string;
+  readonly homepage: string;
   readonly main: string;
   readonly build: Record<string, unknown>;
   readonly dependencies: Record<string, unknown>;
@@ -675,6 +686,7 @@ const installLockedStageDependencies = Effect.fn("installLockedStageDependencies
 const verifyStagedPatchedDependencies = Effect.fn("verifyStagedPatchedDependencies")(function* (
   repoRoot: string,
   stageAppDir: string,
+  stagedRuntimeDependencies: Readonly<Record<string, unknown>>,
 ) {
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
@@ -683,6 +695,11 @@ const verifyStagedPatchedDependencies = Effect.fn("verifyStagedPatchedDependenci
     rootPackageJson.patchedDependencies ?? {},
   )) {
     const packageName = patchedPackageName(dependency);
+    // Build-tool patches (for example app-builder-lib) are applied in the
+    // repository install but intentionally omitted from the packaged runtime.
+    if (!(packageName in stagedRuntimeDependencies)) {
+      continue;
+    }
     const patchContents = yield* fs.readFileString(path.join(repoRoot, patchRelativePath));
     for (const expectation of parsePatchAddedLines(patchContents)) {
       const stagedFilePath = path.join(stageAppDir, "node_modules", packageName, expectation.file);
@@ -714,6 +731,8 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   mockUpdates: boolean,
   mockUpdateServerPort: string | undefined,
 ) {
+  const repoRoot = yield* RepoRoot;
+  const path = yield* Path.Path;
   const buildConfig: Record<string, unknown> = {
     appId: SCIENT_PRODUCTION_BUNDLE_ID,
     productName,
@@ -761,6 +780,12 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     platform,
     signed,
     target,
+    ...(platform === "mac" && signed
+      ? {
+          macNotarizeHookPath: path.join(repoRoot, "scripts/notarize-mac-app.cjs"),
+          macSignHookPath: path.join(repoRoot, "scripts/sign-mac-app.cjs"),
+        }
+      : {}),
     ...(windowsAzureSignOptions ? { windowsAzureSignOptions } : {}),
   } as const;
 
@@ -816,6 +841,39 @@ const stageMacAppSnapHelper = Effect.fn("stageMacAppSnapHelper")(function* (
   }
 });
 
+const stageWhisperRuntime = Effect.fn("stageWhisperRuntime")(function* (
+  stageAppDir: string,
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+  verbose: boolean,
+) {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const stageScript = yield* WhisperRuntimeStageScript;
+  const outputPath = path.join(stageAppDir, WHISPER_RUNTIME_STAGE_PATH);
+
+  yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true });
+  yield* Effect.log(`[desktop-artifact] Staging whisper.cpp runtime (${platform}/${arch})...`);
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: stageAppDir,
+      ...commandOutputOptions(verbose),
+    })`${WHISPER_RUNTIME_STAGE_RUNNER} ${stageScript} --platform ${platform} --arch ${arch} --output ${outputPath} --verbose`,
+  );
+
+  const executableName = platform === "win" ? "whisper-server.exe" : "whisper-server";
+  if (!(yield* fs.exists(path.join(outputPath, executableName)))) {
+    return yield* new BuildScriptError({
+      message: `whisper.cpp runtime staging completed but ${executableName} was not found at ${outputPath}`,
+    });
+  }
+  if (!(yield* fs.exists(path.join(outputPath, "provenance.json")))) {
+    return yield* new BuildScriptError({
+      message: `whisper.cpp runtime staging did not produce provenance at ${outputPath}`,
+    });
+  }
+});
+
 const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   options: ResolvedBuildOptions,
 ) {
@@ -842,6 +900,19 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   const electronVersion = desktopPackageJson.dependencies.electron;
+  const platformBuildConfig = yield* createBuildConfig(
+    options.platform,
+    options.target,
+    desktopPackageJson.productName ?? "Scient",
+    options.signed,
+    options.mockUpdates,
+    options.mockUpdateServerPort,
+  );
+  const signingEnvironment = isolateDesktopSigningEnvironment(
+    process.env,
+    options.platform,
+    options.signed,
+  );
 
   const serverDependencies = serverPackageJson.dependencies;
   if (!serverDependencies || Object.keys(serverDependencies).length === 0) {
@@ -947,14 +1018,19 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
 
   yield* assertPlatformBuildResources(options.platform, stageResourcesDir, options.verbose);
+  yield* stageWhisperRuntime(stageAppDir, options.platform, options.arch, options.verbose);
 
   if (options.platform === "mac") {
     yield* stageMacAppSnapHelper(stageAppDir, options.arch, options.verbose);
     if (!options.signed) {
       const hookSourcePath = path.join(repoRoot, MAC_ADHOC_SIGN_HOOK_PATH);
       const hookStagePath = path.join(stageAppDir, MAC_ADHOC_SIGN_HOOK_PATH);
+      const policySourcePath = path.join(repoRoot, MAC_SIGNING_POLICY_PATH);
+      const policyStagePath = path.join(stageAppDir, MAC_SIGNING_POLICY_PATH);
       yield* fs.makeDirectory(path.dirname(hookStagePath), { recursive: true });
+      yield* fs.makeDirectory(path.dirname(policyStagePath), { recursive: true });
       yield* fs.copyFile(hookSourcePath, hookStagePath);
+      yield* fs.copyFile(policySourcePath, policyStagePath);
     }
   }
 
@@ -970,15 +1046,9 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     private: true,
     description: "Scient desktop build",
     author: "Yaacov Corcos",
+    homepage: "https://github.com/ScientFactory/scient-desktop",
     main: "apps/desktop/dist-electron/main.js",
-    build: yield* createBuildConfig(
-      options.platform,
-      options.target,
-      desktopPackageJson.productName ?? "Scient",
-      options.signed,
-      options.mockUpdates,
-      options.mockUpdateServerPort,
-    ),
+    build: platformBuildConfig,
     dependencies: {
       ...resolvedServerDependencies,
       ...resolvedDesktopRuntimeDependencies,
@@ -996,13 +1066,22 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
 
-  yield* verifyStagedPatchedDependencies(repoRoot, stageAppDir);
+  yield* verifyStagedPatchedDependencies(repoRoot, stageAppDir, stagePackageJson.dependencies);
 
   yield* prepareStagedNodePty(repoRoot, stageAppDir, options.verbose);
   yield* verifyStagedNodePty(stageAppDir, options.verbose);
 
   const buildEnv: NodeJS.ProcessEnv = {
     ...process.env,
+    ...signingEnvironment,
+    ...(options.platform === "mac" && options.signed
+      ? {
+          SCIENT_NOTARIZATION_ARCH: options.arch,
+          SCIENT_NOTARIZATION_COMMIT: commitHash,
+          SCIENT_NOTARIZATION_EVIDENCE_DIR: options.outputDir,
+          SCIENT_NOTARIZATION_VERSION: appVersion,
+        }
+      : {}),
   };
   for (const [key, value] of Object.entries(buildEnv)) {
     if (value === "") {
@@ -1011,13 +1090,6 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
   if (!options.signed) {
     buildEnv.CSC_IDENTITY_AUTO_DISCOVERY = "false";
-    delete buildEnv.CSC_LINK;
-    delete buildEnv.CSC_KEY_PASSWORD;
-    delete buildEnv.WIN_CSC_LINK;
-    delete buildEnv.WIN_CSC_KEY_PASSWORD;
-    delete buildEnv.APPLE_API_KEY;
-    delete buildEnv.APPLE_API_KEY_ID;
-    delete buildEnv.APPLE_API_ISSUER;
   }
 
   if (process.platform === "win32") {
@@ -1033,7 +1105,15 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* Effect.log(
     `[desktop-artifact] Building ${options.platform}/${options.target} (arch=${options.arch}, version=${appVersion})...`,
   );
-  const electronBuilderCli = path.join(repoRoot, "node_modules", "electron-builder", "cli.js");
+  const electronBuilderCli = yield* Effect.try({
+    try: () => resolvePinnedElectronBuilder(repoRoot).cliPath,
+    catch: (cause) =>
+      new BuildScriptError({
+        message:
+          "Pinned electron-builder CLI could not be resolved within repository dependency authority.",
+        cause,
+      }),
+  });
   if (!(yield* fs.exists(electronBuilderCli))) {
     return yield* new BuildScriptError({
       message: `Pinned electron-builder CLI was not found at ${electronBuilderCli}`,
@@ -1053,6 +1133,24 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       message: `Build completed but dist directory was not found at ${stageDistDir}`,
     });
   }
+  yield* Effect.tryPromise({
+    try: () =>
+      verifyPackagedWhisperRuntime({
+        distDir: stageDistDir,
+        ...(options.platform === "mac"
+          ? { macSignatureMode: options.signed ? "developer-id" : "adhoc" }
+          : {}),
+        platform: options.platform,
+        ...(options.platform === "win"
+          ? { windowsSignatureMode: options.signed ? "authenticode" : "unsigned" }
+          : {}),
+      }),
+    catch: (cause) =>
+      new BuildScriptError({
+        message: "Packaged whisper.cpp runtime verification failed.",
+        cause,
+      }),
+  });
 
   const macUpdateArtifactsEnabled =
     options.platform === "mac" &&

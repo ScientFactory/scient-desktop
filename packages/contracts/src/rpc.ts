@@ -19,7 +19,12 @@ import {
   AutomationUpdateInput,
 } from "./automation";
 import { OpenInEditorInput } from "./editor";
-import { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem";
+import {
+  FilesystemBrowseInput,
+  FilesystemBrowseResult,
+  FilesystemCreateDirectoryInput,
+  FilesystemCreateDirectoryResult,
+} from "./filesystem";
 import { StudioListThreadOutputsInput, StudioListThreadOutputsResult } from "./studio";
 import {
   GitCheckoutInput,
@@ -113,11 +118,17 @@ import {
   ProjectDevServerEvent,
   ProjectDiscoverScriptsInput,
   ProjectDiscoverScriptsResult,
+  ProjectInspectHtmlArtifactInput,
+  ProjectInspectHtmlArtifactResult,
   ProjectListDevServersResult,
   ProjectListDirectoriesInput,
   ProjectListDirectoriesResult,
   ProjectReadFileInput,
   ProjectReadFileResult,
+  ProjectPrepareHtmlArtifactPreviewInput,
+  ProjectPrepareHtmlArtifactPreviewResult,
+  ProjectRevokeHtmlArtifactPreviewInput,
+  ProjectRevokeHtmlArtifactPreviewResult,
   ProjectRunDevServerInput,
   ProjectRunDevServerResult,
   ProjectSearchEntriesInput,
@@ -129,6 +140,11 @@ import {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
+import {
+  CloneProjectSourceInput,
+  CloneProjectSourceResult,
+  RepositorySourceStatusesResult,
+} from "./projectSources";
 import {
   ScientProjectInitializationActionInput,
   ScientProjectInitializationApplyResult,
@@ -157,6 +173,7 @@ import {
   ServerProviderConnectionError,
   ServerProviderConnectionResult,
   ServerProviderConnectionStartInput,
+  ServerProviderConnectionSubmitAuthorizationCodeInput,
   ServerProviderInstallCancelInput,
   ServerProviderInstallInput,
   ServerProviderInstallPlanInput,
@@ -377,6 +394,30 @@ export const WsProjectsCreateLocalFilePreviewGrantRpc = Rpc.make(
   },
 );
 
+export const WsProjectsInspectHtmlArtifactRpc = Rpc.make(WS_METHODS.projectsInspectHtmlArtifact, {
+  payload: ProjectInspectHtmlArtifactInput,
+  success: ProjectInspectHtmlArtifactResult,
+  error: WsRpcError,
+});
+
+export const WsProjectsPrepareHtmlArtifactPreviewRpc = Rpc.make(
+  WS_METHODS.projectsPrepareHtmlArtifactPreview,
+  {
+    payload: ProjectPrepareHtmlArtifactPreviewInput,
+    success: ProjectPrepareHtmlArtifactPreviewResult,
+    error: WsRpcError,
+  },
+);
+
+export const WsProjectsRevokeHtmlArtifactPreviewRpc = Rpc.make(
+  WS_METHODS.projectsRevokeHtmlArtifactPreview,
+  {
+    payload: ProjectRevokeHtmlArtifactPreviewInput,
+    success: ProjectRevokeHtmlArtifactPreviewResult,
+    error: WsRpcError,
+  },
+);
+
 export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
@@ -420,6 +461,27 @@ export const WsStudioListThreadOutputsRpc = Rpc.make(WS_METHODS.studioListThread
 export const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   payload: FilesystemBrowseInput,
   success: FilesystemBrowseResult,
+  error: WsRpcError,
+});
+
+export const WsFilesystemCreateDirectoryRpc = Rpc.make(WS_METHODS.filesystemCreateDirectory, {
+  payload: FilesystemCreateDirectoryInput,
+  success: FilesystemCreateDirectoryResult,
+  error: WsRpcError,
+});
+
+export const WsProjectsRepositorySourceStatusesRpc = Rpc.make(
+  WS_METHODS.projectsRepositorySourceStatuses,
+  {
+    payload: Schema.Struct({}),
+    success: RepositorySourceStatusesResult,
+    error: WsRpcError,
+  },
+);
+
+export const WsProjectsCloneSourceRpc = Rpc.make(WS_METHODS.projectsCloneSource, {
+  payload: CloneProjectSourceInput,
+  success: CloneProjectSourceResult,
   error: WsRpcError,
 });
 
@@ -714,6 +776,15 @@ export const WsServerCancelProviderConnectionRpc = Rpc.make(
   },
 );
 
+export const WsServerSubmitProviderConnectionAuthorizationCodeRpc = Rpc.make(
+  WS_METHODS.serverSubmitProviderConnectionAuthorizationCode,
+  {
+    payload: ServerProviderConnectionSubmitAuthorizationCodeInput,
+    success: ServerProviderConnectionResult,
+    error: ServerProviderConnectionError,
+  },
+);
+
 export const WsServerInstallProviderRpc = Rpc.make(WS_METHODS.serverInstallProvider, {
   payload: ServerProviderInstallInput,
   success: ServerProviderInstallationResult,
@@ -997,10 +1068,15 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchLocalEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsCreateLocalFilePreviewGrantRpc,
+  WsProjectsInspectHtmlArtifactRpc,
+  WsProjectsPrepareHtmlArtifactPreviewRpc,
+  WsProjectsRevokeHtmlArtifactPreviewRpc,
   WsProjectsWriteFileRpc,
   WsProjectsRunDevServerRpc,
   WsProjectsStopDevServerRpc,
   WsProjectsListDevServersRpc,
+  WsProjectsRepositorySourceStatusesRpc,
+  WsProjectsCloneSourceRpc,
   WsSubscribeProjectDevServerEventsRpc,
   WsScientProjectInitializationPreviewRpc,
   WsScientProjectInitializationApplyRpc,
@@ -1008,6 +1084,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsScientProjectInitializationRollbackRpc,
   WsStudioListThreadOutputsRpc,
   WsFilesystemBrowseRpc,
+  WsFilesystemCreateDirectoryRpc,
   WsShellOpenInEditorRpc,
   WsGitGithubRepositoryRpc,
   WsGitStatusRpc,
@@ -1054,6 +1131,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshProvidersRpc,
   WsServerStartProviderConnectionRpc,
   WsServerCancelProviderConnectionRpc,
+  WsServerSubmitProviderConnectionAuthorizationCodeRpc,
   WsServerPrepareProviderInstallRpc,
   WsServerInstallProviderRpc,
   WsServerCancelProviderInstallRpc,

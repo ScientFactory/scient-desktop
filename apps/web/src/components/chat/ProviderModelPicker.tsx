@@ -199,6 +199,9 @@ type ProviderModelMenuItemsProps = {
   providerOrder?: ReadonlyArray<ProviderKind>;
   disabled?: boolean;
   onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
+  // Records that this composer should activate the provider once the guided
+  // connection flow reaches verified readiness.
+  onProviderConnectionRequested?: (provider: ProviderKind) => void;
   // Invoked after a model selection commits so callers can close ancestor
   // menus and refocus the composer.
   onAfterSelection?: () => void;
@@ -447,6 +450,7 @@ export const ProviderModelMenuItems = memo(function ProviderModelMenuItems(
             <MenuItem
               key={option.value}
               onClick={() => {
+                props.onProviderConnectionRequested?.(option.value);
                 onAfterSelection?.();
                 window.setTimeout(() => openProviderConnection(option.value, "provider_picker"), 0);
               }}
@@ -545,6 +549,7 @@ type ProviderModelPickerProps = {
   onSelectionCommitted?: () => void;
   shortcutLabel?: string | null;
   onProviderModelChange: (provider: ProviderKind, model: ModelSlug) => void;
+  onProviderConnectionRequested?: (provider: ProviderKind) => void;
 };
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(
@@ -648,7 +653,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(
           <span className="sr-only">{selectedModelLabel}</span>
         </MenuTrigger>
       )}
-      <ComposerPickerMenuPopup align="start" fixedWidth={props.lockedProvider !== null}>
+      <ComposerPickerMenuPopup align="start" fixedWidth>
         <ProviderModelMenuItems
           provider={props.provider}
           model={props.model}
@@ -662,6 +667,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(
           {...(props.providerOrder ? { providerOrder: props.providerOrder } : {})}
           {...(props.disabled !== undefined ? { disabled: props.disabled } : {})}
           onProviderModelChange={props.onProviderModelChange}
+          {...(props.onProviderConnectionRequested
+            ? { onProviderConnectionRequested: props.onProviderConnectionRequested }
+            : {})}
           onAfterSelection={handleAfterSelection}
         />
       </ComposerPickerMenuPopup>

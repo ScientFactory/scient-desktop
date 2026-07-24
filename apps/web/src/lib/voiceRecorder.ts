@@ -191,35 +191,22 @@ export function useVoiceRecorder() {
     if (!recorded) {
       return null;
     }
-
-    const mergedSamples = mergeFloat32Chunks(recorded.chunks);
-    if (mergedSamples.length === 0) {
-      return null;
-    }
-
-    const resampledSamples = resampleLinear(
-      mergedSamples,
-      recorded.sampleRateHz,
-      TARGET_SAMPLE_RATE,
-    );
-    if (resampledSamples.length === 0) {
-      return null;
-    }
-
-    const wavBytes = encodeMono16BitWav(resampledSamples, TARGET_SAMPLE_RATE);
-    const audioBase64 = await blobToBase64(new Blob([wavBytes], { type: "audio/wav" }));
-
-    const payload: VoiceRecordingPayload = {
-      audioBase64,
-      mimeType: "audio/wav",
-      sampleRateHz: TARGET_SAMPLE_RATE,
-      durationMs: Math.max(
-        1,
-        Math.round((resampledSamples.length / TARGET_SAMPLE_RATE) * 1_000) || recorded.durationMs,
-      ),
-    };
-    return payload;
+    return createVoiceRecordingPayload(recorded);
   }, [teardownRuntime]);
+
+  const snapshotRecording = useCallback(async (): Promise<VoiceRecordingPayload | null> => {
+    const runtime = runtimeRef.current;
+    if (!runtime) {
+      return null;
+    }
+    // Audio callbacks append immutable chunks. Copy the list so encoding sees a
+    // stable prefix while capture continues without pausing or dropping samples.
+    return createVoiceRecordingPayload({
+      chunks: runtime.chunks.slice(),
+      sampleRateHz: runtime.sampleRateHz,
+      durationMs: Math.max(0, performance.now() - runtime.startedAt),
+    });
+  }, []);
 
   const cancelRecording = useCallback(async () => {
     await teardownRuntime();
@@ -240,8 +227,37 @@ export function useVoiceRecorder() {
     durationMs,
     waveformLevels,
     startRecording,
+    snapshotRecording,
     stopRecording,
     cancelRecording,
+  };
+}
+
+async function createVoiceRecordingPayload(recorded: {
+  readonly chunks: readonly Float32Array[];
+  readonly sampleRateHz: number;
+  readonly durationMs: number;
+}): Promise<VoiceRecordingPayload | null> {
+  const mergedSamples = mergeFloat32Chunks(recorded.chunks);
+  if (mergedSamples.length === 0) {
+    return null;
+  }
+
+  const resampledSamples = resampleLinear(mergedSamples, recorded.sampleRateHz, TARGET_SAMPLE_RATE);
+  if (resampledSamples.length === 0) {
+    return null;
+  }
+
+  const wavBytes = encodeMono16BitWav(resampledSamples, TARGET_SAMPLE_RATE);
+  const audioBase64 = await blobToBase64(new Blob([wavBytes], { type: "audio/wav" }));
+  return {
+    audioBase64,
+    mimeType: "audio/wav",
+    sampleRateHz: TARGET_SAMPLE_RATE,
+    durationMs: Math.max(
+      1,
+      Math.round((resampledSamples.length / TARGET_SAMPLE_RATE) * 1_000) || recorded.durationMs,
+    ),
   };
 }
 

@@ -46,6 +46,7 @@ import { EnvironmentLocalServersSection } from "./EnvironmentLocalServersSection
 import { EnvironmentPullRequestSection } from "./EnvironmentPullRequestSection";
 import { EnvironmentMarkersSection } from "./EnvironmentMarkersSection";
 import { EnvironmentStudioOutputsSection } from "./EnvironmentStudioOutputsSection";
+import { EnvironmentStudioFolderRow } from "./EnvironmentStudioFolderRow";
 import { EnvironmentNotesSection } from "./EnvironmentNotesSection";
 import { EnvironmentPinnedSection } from "./EnvironmentPinnedSection";
 import { EnvironmentProjectInstructionsSection } from "./EnvironmentProjectInstructionsSection";
@@ -96,6 +97,8 @@ export interface EnvironmentPanelProps {
    * the Outbox files THIS chat produced, so its output stays attached to the chat.
    */
   isStudioChat: boolean;
+  /** Folder selected as casual Studio context; null when Studio is not using a folder. */
+  studioFolderPath?: string | null;
   /** Whether the active runtime exposes git actions (hides "Commit and Push" otherwise). */
   showGitActions: boolean;
   /** Current diff-panel open state, so the "Changes" row reflects/toggles it. */
@@ -207,6 +210,7 @@ export function EnvironmentPanel({
   activeThreadId,
   activeProvider,
   isStudioChat,
+  studioFolderPath = null,
   showGitActions,
   diffOpen,
   threadAutomations,
@@ -285,6 +289,12 @@ export function EnvironmentPanel({
           <SettingsIcon className="size-3.5" />
         </IconButton>
       </div>
+
+      <EnvironmentStudioFolderRow
+        isStudioChat={isStudioChat}
+        studioFolderPath={studioFolderPath}
+        onClose={onClose}
+      />
 
       {isGitRepo ? (
         <EnvironmentRow

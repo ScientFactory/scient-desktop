@@ -30,6 +30,10 @@ export interface WorkspaceFileOpener {
    * external editor (path outside the workspace, no viewer on this surface).
    */
   openFile: (path: string) => boolean;
+  /** Opens the inert rendered HTML preview in the user's external browser. */
+  openHtmlInExternalBrowser?: (path: string) => boolean;
+  /** Resolves a short-lived inert HTML preview URL for thumbnail rendering. */
+  getHtmlPreviewUrl?: (path: string) => Promise<string | null>;
   /** Optional hover warm-up for the file contents + syntax highlighter. */
   prefetchFile?: (path: string) => void;
 }
@@ -136,15 +140,26 @@ export function resolveDockFileOpenTarget(
  * reference isn't viewable in-app (path outside the workspace, no opener).
  * Pass a null opener to force the external editor (e.g. meta/ctrl-click).
  */
-export function openWorkspaceFileReference(opener: WorkspaceFileOpener | null, path: string): void {
+export function openWorkspaceFileReference(
+  opener: WorkspaceFileOpener | null,
+  path: string,
+  options?: { onError?: (error: unknown) => void },
+): void {
   if (opener?.openFile(path)) {
     return;
   }
   const api = readNativeApi();
   if (api) {
-    void openInPreferredEditor(api, path).catch(() => undefined);
+    void openInPreferredEditor(api, path).catch((error) => {
+      options?.onError?.(error);
+    });
   } else {
-    console.warn("Native API not found. Unable to open file in editor.");
+    const error = new Error("The desktop file opener is unavailable.");
+    if (options?.onError) {
+      options.onError(error);
+    } else {
+      console.warn("Native API not found. Unable to open file in editor.");
+    }
   }
 }
 

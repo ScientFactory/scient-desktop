@@ -111,6 +111,7 @@ export type SerializedComposerTerminalContextNode = Spread<
 // and make the token unselectable so the caret skips over it as one unit.
 function resetInlineChipContainer(container: HTMLElement): void {
   container.textContent = "";
+  container.dir = "ltr";
   container.style.setProperty("user-select", "none");
   container.style.setProperty("-webkit-user-select", "none");
 }

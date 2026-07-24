@@ -43,7 +43,7 @@ async function forceTerminateWindowsTree(
   await new Promise<void>((resolve, reject) => {
     child.once("error", reject);
     child.once("exit", (code) => {
-      if (code === 0 || code === 128) {
+      if (code === 0) {
         resolve();
         return;
       }

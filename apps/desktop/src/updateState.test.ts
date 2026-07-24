@@ -226,7 +226,7 @@ describe("getAutoUpdateDisabledReason", () => {
     ).toContain("SYNARA_DISABLE_AUTO_UPDATE");
   });
 
-  it("reports linux non-AppImage builds as disabled", () => {
+  it("reports unsupported Linux package types as disabled", () => {
     expect(
       getAutoUpdateDisabledReason({
         isDevelopment: false,
@@ -236,7 +236,21 @@ describe("getAutoUpdateDisabledReason", () => {
         disabledByEnv: false,
         hasUpdateFeedConfig: true,
       }),
-    ).toContain("AppImage");
+    ).toContain("Debian package");
+  });
+
+  it("allows installed Debian packages to use their dedicated update channel", () => {
+    expect(
+      getAutoUpdateDisabledReason({
+        isDevelopment: false,
+        isPackaged: true,
+        platform: "linux",
+        appImage: undefined,
+        linuxPackageType: "deb",
+        disabledByEnv: false,
+        hasUpdateFeedConfig: true,
+      }),
+    ).toBeNull();
   });
 });
 

@@ -137,6 +137,7 @@ async function mountPicker(props: {
   providers?: ReadonlyArray<ServerProviderStatus>;
   loadingModelProviders?: Partial<Record<ProviderKind, boolean>>;
   onSelectionCommitted?: () => void;
+  onProviderConnectionRequested?: (provider: ProviderKind) => void;
   modelOptionsByProvider?: Record<
     ProviderKind,
     ReadonlyArray<ProviderModelOption & { slug: ModelSlug }>
@@ -156,6 +157,9 @@ async function mountPicker(props: {
         : {})}
       {...(props.providers ? { providers: props.providers } : {})}
       {...(props.onSelectionCommitted ? { onSelectionCommitted: props.onSelectionCommitted } : {})}
+      {...(props.onProviderConnectionRequested
+        ? { onProviderConnectionRequested: props.onProviderConnectionRequested }
+        : {})}
       onProviderModelChange={onProviderModelChange}
     />,
     { container: host },
@@ -192,6 +196,30 @@ describe("ProviderModelPicker", () => {
         expect(text).toContain("Codex");
         expect(text).toContain("Claude");
         expect(text).not.toContain("Claude Sonnet 4.6");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the provider-switching popup on the shared fixed picker width", async () => {
+    const mounted = await mountPicker({
+      provider: "claudeAgent",
+      model: "claude-opus-4-6",
+      lockedProvider: null,
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      await vi.waitFor(() => {
+        const popup = document.querySelector<HTMLElement>('[data-slot="menu-popup"]');
+        expect(popup).not.toBeNull();
+        expect(popup?.classList.contains("composer-picker-menu-fixed")).toBe(true);
+        const bounds = popup?.getBoundingClientRect();
+        expect(bounds?.width).toBeGreaterThan(0);
+        expect(bounds?.left).toBeGreaterThanOrEqual(0);
+        expect(bounds?.right).toBeLessThanOrEqual(window.innerWidth);
       });
     } finally {
       await mounted.cleanup();
@@ -532,6 +560,7 @@ describe("ProviderModelPicker", () => {
   });
 
   it("opens guided connection from an unavailable provider row", async () => {
+    const onProviderConnectionRequested = vi.fn();
     const mounted = await mountPicker({
       provider: "codex",
       model: "gpt-5-codex",
@@ -552,6 +581,7 @@ describe("ProviderModelPicker", () => {
           checkedAt: "2026-04-10T10:00:00.000Z",
         },
       ],
+      onProviderConnectionRequested,
     });
 
     try {
@@ -564,6 +594,9 @@ describe("ProviderModelPicker", () => {
         expect(text).toContain("Set up");
       });
       await page.getByRole("menuitem", { name: /Claude.*Set up/u }).click();
+
+      expect(onProviderConnectionRequested).toHaveBeenCalledOnce();
+      expect(onProviderConnectionRequested).toHaveBeenCalledWith("claudeAgent");
 
       await vi.waitFor(() => {
         expect(useProviderConnectionDialogStore.getState()).toMatchObject({

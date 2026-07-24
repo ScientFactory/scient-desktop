@@ -94,7 +94,28 @@ it.effect("accepts project script discovery requests", () =>
   }),
 );
 
-it.effect("accepts provider connection start and cancel requests", () =>
+it.effect("accepts project source status and clone requests", () =>
+  Effect.gen(function* () {
+    const statuses = yield* decode(WebSocketRequest, {
+      id: "req-project-source-statuses",
+      body: { _tag: WS_METHODS.projectsRepositorySourceStatuses },
+    });
+    assert.strictEqual(statuses.body._tag, WS_METHODS.projectsRepositorySourceStatuses);
+
+    const clone = yield* decode(WebSocketRequest, {
+      id: "req-project-source-clone",
+      body: {
+        _tag: WS_METHODS.projectsCloneSource,
+        source: "gitlab",
+        repository: "group/project",
+        destinationPath: "/tmp/project",
+      },
+    });
+    assert.strictEqual(clone.body._tag, WS_METHODS.projectsCloneSource);
+  }),
+);
+
+it.effect("accepts provider connection start, code submission, and cancel requests", () =>
   Effect.gen(function* () {
     const start = yield* decode(WebSocketRequest, {
       id: "req-provider-connect-1",
@@ -105,6 +126,20 @@ it.effect("accepts provider connection start and cancel requests", () =>
       },
     });
     assert.strictEqual(start.body._tag, WS_METHODS.serverStartProviderConnection);
+
+    const submitCode = yield* decode(WebSocketRequest, {
+      id: "req-provider-connect-code-1",
+      body: {
+        _tag: WS_METHODS.serverSubmitProviderConnectionAuthorizationCode,
+        provider: "antigravity",
+        operationId: "operation-1",
+        authorizationCode: "4/test-code-123",
+      },
+    });
+    assert.strictEqual(
+      submitCode.body._tag,
+      WS_METHODS.serverSubmitProviderConnectionAuthorizationCode,
+    );
 
     const cancel = yield* decode(WebSocketRequest, {
       id: "req-provider-connect-2",

@@ -53,6 +53,7 @@ function TranscriptPerfHarness(props: { onTranscriptRender: () => void }) {
     composerFilesRef,
     composerAssistantSelectionsRef,
     addComposerAssistantSelectionToDraft: () => true,
+    reportComposerFeedback: () => undefined,
     scheduleComposerFocus: NOOP,
     onMessagesClickCaptureBase: NOOP,
     onMessagesPointerCancelBase: NOOP,

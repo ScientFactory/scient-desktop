@@ -20,10 +20,12 @@ export default mergeConfig(
         "src/hooks/**/*.browser.tsx",
         "src/lib/**/*.browser.ts",
         "src/lib/**/*.browser.tsx",
+        "src/notifications/**/*.browser.tsx",
       ],
       browser: {
         enabled: true,
         provider: playwright(),
+        api: Number(process.env.VITEST_BROWSER_PORT ?? 63_315),
         instances: [{ browser: "chromium" }],
         headless: true,
       },

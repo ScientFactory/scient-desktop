@@ -25,8 +25,20 @@ import {
   type WsPushChannel,
   type WsPushMessage,
 } from "@synara/contracts";
-import { Cause, Data, Effect, Exit, Layer, ManagedRuntime, Scope, Stream } from "effect";
-import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
+import {
+  Cause,
+  Data,
+  Effect,
+  Exit,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Schedule,
+  Schema,
+  Scope,
+  Stream,
+} from "effect";
+import { RpcClient, RpcClientError, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
 
 import { ConnectionSupervisor, type ConnectionSupervisorSession } from "./connectionSupervisor";
@@ -52,7 +64,20 @@ type ActiveSession = ConnectionSupervisorSession<SessionHandle>;
 
 interface StreamCleanup {
   readonly generation: number;
+  readonly identity: symbol;
   readonly cancel: () => void;
+  readonly settled: Promise<void>;
+  readonly healthyTimer: ReturnType<typeof setTimeout>;
+}
+
+interface StreamStartToken {
+  readonly generation: number;
+  readonly identity: symbol;
+}
+
+interface StreamRestartTimer {
+  readonly generation: number;
+  readonly timer: ReturnType<typeof setTimeout>;
 }
 
 class WsTransportRpcError extends Data.TaggedError("WsTransportRpcError")<{
@@ -72,6 +97,26 @@ const makeRpcClient = RpcClient.make(WsRpcGroup);
 const REQUEST_TIMEOUT_MS = 60_000;
 const SESSION_VALIDATION_TIMEOUT_MS = 15_000;
 const WAKE_PROBE_TIMEOUT_MS = 5_000;
+const STREAM_RESTART_BASE_DELAY_MS = 250;
+const STREAM_RESTART_MAX_DELAY_MS = 10_000;
+const STREAM_RESTART_JITTER_RATIO = 0.2;
+const STREAM_RESTART_RESET_AFTER_MS = 30_000;
+const STREAM_SETTLEMENT_TIMEOUT_MS = 2_000;
+
+export const EFFECT_RPC_RETRY_CONFIG = {
+  retryTransientErrors: false,
+  retryCount: 0,
+} as const;
+
+export function streamRestartDelayMs(attempt: number, random = Math.random): number {
+  const boundedAttempt = Math.max(0, Math.floor(attempt));
+  const exponential = Math.min(
+    STREAM_RESTART_BASE_DELAY_MS * 2 ** boundedAttempt,
+    STREAM_RESTART_MAX_DELAY_MS,
+  );
+  const jitter = 1 + (random() * 2 - 1) * STREAM_RESTART_JITTER_RATIO;
+  return Math.min(STREAM_RESTART_MAX_DELAY_MS, Math.max(0, Math.round(exponential * jitter)));
+}
 
 function resolveRpcUrl(rawUrl: string): string {
   const url = new URL(rawUrl);
@@ -99,9 +144,14 @@ function makeProtocolLayer(url: string) {
   // JSON keeps the wire format symmetric with any server build: a serialization
   // mismatch on this single multiplexed socket is a hard connect failure, and the
   // desktop/dev setup routinely runs web and server on independently-built copies.
-  return RpcClient.layerProtocolSocket().pipe(
-    Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson)),
+  const protocolLayer = Layer.effect(
+    RpcClient.Protocol,
+    RpcClient.makeProtocolSocket({
+      retryTransientErrors: EFFECT_RPC_RETRY_CONFIG.retryTransientErrors,
+      retryPolicy: Schedule.recurs(EFFECT_RPC_RETRY_CONFIG.retryCount),
+    }),
   );
+  return protocolLayer.pipe(Layer.provide(Layer.mergeAll(socketLayer, RpcSerialization.layerJson)));
 }
 
 function causeToError(cause: Cause.Cause<unknown>): Error {
@@ -120,6 +170,47 @@ function connectionErrorSummary(error: unknown): string {
   }
   if (/disposed|interrupt/i.test(message)) return "connection closed";
   return "connection operation failed";
+}
+
+export function isConnectionTransportFailure(error: unknown): boolean {
+  const seen = new Set<object>();
+  const visit = (value: unknown): boolean => {
+    if (!value || typeof value !== "object") return false;
+    if (seen.has(value)) return false;
+    seen.add(value);
+    if (Socket.isSocketError(value) || Schema.is(RpcClientError.RpcClientError)(value)) return true;
+    const record = value as Record<string, unknown>;
+    // A server-declared RPC failure is stream-local even when its diagnostic
+    // cause resembles a transport error from the server's own dependencies.
+    if (record._tag === "WsRpcError") return false;
+    if (
+      typeof record._tag === "string" &&
+      /^(?:SocketCloseError|SocketOpenError|SocketError|RpcClientError|RpcClientDefect)$/.test(
+        record._tag,
+      )
+    ) {
+      return true;
+    }
+    return [record.cause, record.reason, record.error, record.failure].some(visit);
+  };
+  return visit(error);
+}
+
+export function isConnectionProtocolFailure(error: unknown): boolean {
+  const seen = new Set<object>();
+  const visit = (value: unknown): boolean => {
+    if (!value || typeof value !== "object" || seen.has(value)) return false;
+    seen.add(value);
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record._tag === "string" &&
+      /^(?:ParseError|SchemaError|DecodeError|EncodeError|ProtocolError)$/.test(record._tag)
+    ) {
+      return true;
+    }
+    return [record.cause, record.reason, record.error, record.failure].some(visit);
+  };
+  return visit(error);
 }
 
 function omitNullUserInputAnswers(input: unknown): unknown {
@@ -164,6 +255,13 @@ export class WsTransport {
   private disposed = false;
   private readonly supervisor: ConnectionSupervisor<SessionHandle>;
   private readonly streamCleanups = new Map<string, StreamCleanup>();
+  private readonly streamStartTokens = new Map<string, StreamStartToken>();
+  private readonly streamTransitions = new Map<string, Promise<void>>();
+  private readonly streamRestartTimers = new Map<string, StreamRestartTimer>();
+  private readonly streamRestartAttempts = new Map<
+    string,
+    { readonly generation: number; readonly attempt: number }
+  >();
   private readonly wakeCleanups: Array<() => void> = [];
   private shellSubscribed = false;
   private readonly threadSubscriptions = new Map<string, unknown>();
@@ -171,7 +269,7 @@ export class WsTransport {
   constructor(url?: string) {
     this.explicitUrl = url ?? null;
     this.supervisor = new ConnectionSupervisor({
-      connect: () => this.createValidatedSession(),
+      connect: (_generation, signal) => this.createValidatedSession(signal),
       close: ({ value }) => this.closeSession(value),
       probe: ({ value }) =>
         this.validateSession(value, WAKE_PROBE_TIMEOUT_MS, WS_METHODS.serverGetEnvironment),
@@ -305,21 +403,29 @@ export class WsTransport {
     if (this.disposed) return;
     this.disposed = true;
     for (const cleanup of this.wakeCleanups.splice(0)) cleanup();
-    for (const cleanup of this.streamCleanups.values()) cleanup.cancel();
-    this.streamCleanups.clear();
+    for (const key of new Set([
+      ...this.streamCleanups.keys(),
+      ...this.streamStartTokens.keys(),
+      ...this.streamRestartTimers.keys(),
+    ])) {
+      this.stopStream(key);
+    }
     this.supervisor.dispose();
   }
 
-  private async createValidatedSession(): Promise<SessionHandle> {
+  private async createValidatedSession(signal: AbortSignal): Promise<SessionHandle> {
     const runtime = ManagedRuntime.make(makeProtocolLayer(makeSocketUrl(this.explicitUrl)));
     const clientScope = runtime.runSync(Scope.make());
     try {
-      const client = await runtime.runPromise(Scope.provide(clientScope)(makeRpcClient));
+      const client = await runtime.runPromise(Scope.provide(clientScope)(makeRpcClient), {
+        signal,
+      });
       const session = { client, clientScope, runtime } satisfies SessionHandle;
       await this.validateSession(
         session,
         SESSION_VALIDATION_TIMEOUT_MS,
         WS_METHODS.serverGetConfig,
+        signal,
       );
       return session;
     } catch (error) {
@@ -332,6 +438,7 @@ export class WsTransport {
     session: SessionHandle,
     timeoutMs: number,
     method: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     const validate = (
       session.client as unknown as Record<
@@ -353,7 +460,7 @@ export class WsTransport {
       }),
       Effect.asVoid,
     );
-    return session.runtime.runPromise(validation);
+    return session.runtime.runPromise(validation, signal ? { signal } : undefined);
   }
 
   private closeSession(session: SessionHandle): Promise<void> {
@@ -507,7 +614,7 @@ export class WsTransport {
           this.startStream(
             session,
             "server.config",
-            client[WS_METHODS.subscribeServerConfig]({}),
+            () => client[WS_METHODS.subscribeServerConfig]({}),
             (event: ServerConfigStreamEvent) => {
               if (event.type === "snapshot") {
                 this.emit(WS_CHANNELS.serverConfigUpdated, {
@@ -518,50 +625,57 @@ export class WsTransport {
                 this.emit(WS_CHANNELS.serverConfigUpdated, event.payload);
               }
             },
+            { isDesired: () => this.listeners.has(channel) },
           );
         } else if (channel === WS_CHANNELS.serverProviderStatusesUpdated) {
           this.startStream(
             session,
             "server.providers",
-            client[WS_METHODS.subscribeServerProviderStatuses]({}),
+            () => client[WS_METHODS.subscribeServerProviderStatuses]({}),
             (payload: ServerProviderStatusesUpdatedPayload) =>
               this.emit(WS_CHANNELS.serverProviderStatusesUpdated, payload),
+            { isDesired: () => this.listeners.has(channel) },
           );
         } else if (channel === WS_CHANNELS.serverSettingsUpdated) {
           this.startStream(
             session,
             "server.settings",
-            client[WS_METHODS.subscribeServerSettings]({}),
+            () => client[WS_METHODS.subscribeServerSettings]({}),
             (payload: ServerSettingsUpdatedPayload) =>
               this.emit(WS_CHANNELS.serverSettingsUpdated, payload),
+            { isDesired: () => this.listeners.has(channel) },
           );
         } else if (channel === WS_CHANNELS.terminalEvent) {
           this.startStream(
             session,
             "terminal.events",
-            client[WS_METHODS.subscribeTerminalEvents]({}),
+            () => client[WS_METHODS.subscribeTerminalEvents]({}),
             (event: TerminalEvent) => this.emit(WS_CHANNELS.terminalEvent, event),
+            { isDesired: () => this.listeners.has(channel) },
           );
         } else if (channel === WS_CHANNELS.projectDevServerEvent) {
           this.startStream(
             session,
             "project.devServers",
-            client[WS_METHODS.subscribeProjectDevServerEvents]({}),
+            () => client[WS_METHODS.subscribeProjectDevServerEvents]({}),
             (event: ProjectDevServerEvent) => this.emit(WS_CHANNELS.projectDevServerEvent, event),
+            { isDesired: () => this.listeners.has(channel) },
           );
         } else if (channel === WS_CHANNELS.automationEvent) {
           this.startStream(
             session,
             "automation.events",
-            client[WS_METHODS.subscribeAutomationEvents]({}),
+            () => client[WS_METHODS.subscribeAutomationEvents]({}),
             (event: AutomationStreamEvent) => this.emit(WS_CHANNELS.automationEvent, event),
+            { isDesired: () => this.listeners.has(channel) },
           );
         } else if (channel === ORCHESTRATION_WS_CHANNELS.domainEvent) {
           this.startStream(
             session,
             "orchestration.domain",
-            client[WS_METHODS.subscribeOrchestrationDomainEvents]({}),
+            () => client[WS_METHODS.subscribeOrchestrationDomainEvents]({}),
             (event: OrchestrationEvent) => this.emit(ORCHESTRATION_WS_CHANNELS.domainEvent, event),
+            { isDesired: () => this.listeners.has(channel) },
           );
         }
       })
@@ -596,7 +710,7 @@ export class WsTransport {
     this.startStream(
       session,
       "server.lifecycle",
-      session.value.client[WS_METHODS.subscribeServerLifecycle]({}),
+      () => session.value.client[WS_METHODS.subscribeServerLifecycle]({}),
       (event: ServerLifecycleStreamEvent) => {
         if (event.type === "welcome") {
           this.emit(WS_CHANNELS.serverWelcome, event.payload);
@@ -604,6 +718,7 @@ export class WsTransport {
           this.emit(WS_CHANNELS.serverMaintenanceUpdated, event);
         }
       },
+      { isDesired: () => this.shouldKeepLifecycleStream() },
     );
   }
 
@@ -611,88 +726,317 @@ export class WsTransport {
     this.startStream(
       session,
       "orchestration.shell",
-      session.value.client[ORCHESTRATION_WS_METHODS.subscribeShell]({}),
+      () => session.value.client[ORCHESTRATION_WS_METHODS.subscribeShell]({}),
       (event: OrchestrationShellStreamItem) =>
         this.emit(ORCHESTRATION_WS_CHANNELS.shellEvent, event),
+      { isDesired: () => this.shellSubscribed },
     );
   }
 
   private startThreadStream(session: ActiveSession, threadId: string, input: unknown): void {
     if (this.supervisor.currentSession?.generation !== session.generation) return;
     const key = `orchestration.thread:${threadId}`;
-    this.stopStream(key);
     this.startStream(
       session,
       key,
-      session.value.client[ORCHESTRATION_WS_METHODS.subscribeThread](input as never),
+      () => session.value.client[ORCHESTRATION_WS_METHODS.subscribeThread](input as never),
       (event: OrchestrationThreadStreamItem) =>
         this.emit(ORCHESTRATION_WS_CHANNELS.threadEvent, event),
+      {
+        isDesired: () => this.threadSubscriptions.get(threadId) === input,
+        replace: true,
+      },
     );
   }
 
   private startStream<T>(
     session: ActiveSession,
     key: string,
-    stream: unknown,
+    streamFactory: () => unknown,
     listener: (event: T) => void,
+    options: {
+      readonly isDesired: () => boolean;
+      readonly replace?: boolean;
+    },
   ): void {
     if (this.supervisor.currentSession?.generation !== session.generation) return;
     const existing = this.streamCleanups.get(key);
-    if (existing?.generation === session.generation) return;
+    const pending = this.streamStartTokens.get(key);
+    if (
+      !options.replace &&
+      (existing?.generation === session.generation || pending?.generation === session.generation)
+    ) {
+      return;
+    }
+    this.clearStreamRestartTimer(key);
+    const identity = Symbol(key);
+    this.streamStartTokens.set(key, { generation: session.generation, identity });
+    const previous = this.streamTransitions.get(key) ?? Promise.resolve();
+    const transition = previous
+      .catch(() => undefined)
+      .then(() => this.replaceStream(session, key, identity, streamFactory, listener, options))
+      .finally(() => {
+        if (this.streamTransitions.get(key) === transition) {
+          this.streamTransitions.delete(key);
+        }
+      });
+    this.streamTransitions.set(key, transition);
+  }
+
+  private async replaceStream<T>(
+    session: ActiveSession,
+    key: string,
+    identity: symbol,
+    streamFactory: () => unknown,
+    listener: (event: T) => void,
+    options: {
+      readonly isDesired: () => boolean;
+      readonly replace?: boolean;
+    },
+  ): Promise<void> {
+    if (this.streamStartTokens.get(key)?.identity !== identity) return;
+    const existing = this.streamCleanups.get(key);
     if (existing) {
       this.streamCleanups.delete(key);
+      clearTimeout(existing.healthyTimer);
       existing.cancel();
+      const settled = await this.waitForStreamSettlement(existing.settled);
+      if (!settled) {
+        if (this.streamStartTokens.get(key)?.identity === identity) {
+          this.streamStartTokens.delete(key);
+        }
+        this.supervisor.invalidate(
+          existing.generation,
+          `stream ${key} did not settle after cancellation`,
+        );
+        return;
+      }
     }
-    const runnableStream = stream as Stream.Stream<T, WsTransportRpcError, never>;
-    const cancel = session.value.runtime.runCallback(
-      Stream.runForEach(runnableStream, (event) =>
-        Effect.sync(() => {
-          if (this.supervisor.currentSession?.generation !== session.generation) return;
-          listener(event);
-        }),
-      ),
-      {
-        onExit: (exit) => {
-          // A replacement or intentional stop removes this exact cleanup from
-          // the map before cancellation. Ignore that stale stream's later exit;
-          // otherwise it can reconnect over the replacement and lose events.
-          if (this.streamCleanups.get(key)?.cancel !== cancel || this.disposed) {
-            return;
-          }
-          this.streamCleanups.delete(key);
-          if (Exit.isFailure(exit)) {
-            const interrupted = Cause.hasInterruptsOnly(exit.cause);
-            if (!interrupted) {
-              console.warn(
-                `[scient-connection] stream ${key} failed: ${connectionErrorSummary(causeToError(exit.cause))}`,
-              );
+    if (
+      this.disposed ||
+      this.streamStartTokens.get(key)?.identity !== identity ||
+      this.supervisor.currentSession?.generation !== session.generation ||
+      !options.isDesired()
+    ) {
+      if (this.streamStartTokens.get(key)?.identity === identity) {
+        this.streamStartTokens.delete(key);
+      }
+      return;
+    }
+
+    let resolveSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve;
+    });
+    let cleanup!: StreamCleanup;
+    try {
+      const runnableStream = streamFactory() as Stream.Stream<T, WsTransportRpcError, never>;
+      const cancel = session.value.runtime.runCallback(
+        Stream.runForEach(runnableStream, (event) =>
+          Effect.sync(() => {
+            if (
+              this.supervisor.currentSession?.generation !== session.generation ||
+              this.streamCleanups.get(key) !== cleanup
+            ) {
+              return;
             }
-            this.supervisor.invalidate(
-              session.generation,
-              interrupted ? `stream ${key} interrupted` : `stream ${key} failed`,
-            );
-          } else {
-            this.supervisor.invalidate(session.generation, `stream ${key} completed`);
-          }
+            listener(event);
+          }),
+        ),
+        {
+          onExit: (exit) => {
+            resolveSettled();
+            queueMicrotask(() => {
+              this.handleStreamExit(session, key, cleanup, exit, streamFactory, listener, options);
+            });
+          },
         },
-      },
+      );
+      const healthyTimer = setTimeout(() => {
+        if (this.streamCleanups.get(key) === cleanup) {
+          this.streamRestartAttempts.delete(key);
+        }
+      }, STREAM_RESTART_RESET_AFTER_MS);
+      cleanup = { generation: session.generation, identity, cancel, settled, healthyTimer };
+      this.streamCleanups.set(key, cleanup);
+      if (this.streamStartTokens.get(key)?.identity === identity) {
+        this.streamStartTokens.delete(key);
+      }
+    } catch (error) {
+      resolveSettled();
+      if (this.streamStartTokens.get(key)?.identity === identity) {
+        this.streamStartTokens.delete(key);
+      }
+      this.handleStreamFailure(session, key, error, streamFactory, listener, options);
+    }
+  }
+
+  private handleStreamExit<T>(
+    session: ActiveSession,
+    key: string,
+    cleanup: StreamCleanup,
+    exit: Exit.Exit<void, WsTransportRpcError>,
+    streamFactory: () => unknown,
+    listener: (event: T) => void,
+    options: {
+      readonly isDesired: () => boolean;
+      readonly replace?: boolean;
+    },
+  ): void {
+    if (this.streamCleanups.get(key) !== cleanup || this.disposed) return;
+    this.streamCleanups.delete(key);
+    clearTimeout(cleanup.healthyTimer);
+    if (Exit.isFailure(exit)) {
+      const error = causeToError(exit.cause);
+      const failure = Cause.findErrorOption(exit.cause);
+      if (
+        (Option.isSome(failure) && isConnectionTransportFailure(failure.value)) ||
+        isConnectionTransportFailure(error)
+      ) {
+        this.supervisor.invalidate(session.generation, `stream ${key} transport failed`);
+        return;
+      }
+      if (
+        (Option.isSome(failure) && isConnectionProtocolFailure(failure.value)) ||
+        isConnectionProtocolFailure(error)
+      ) {
+        this.supervisor.invalidate(session.generation, `stream ${key} protocol failed`);
+        return;
+      }
+      if (!Cause.hasInterruptsOnly(exit.cause)) {
+        console.warn(
+          `[scient-connection] stream ${key} failed without closing the session: ${connectionErrorSummary(error)}`,
+        );
+      }
+    }
+    this.scheduleStreamRestart(session, key, streamFactory, listener, options);
+  }
+
+  private handleStreamFailure<T>(
+    session: ActiveSession,
+    key: string,
+    error: unknown,
+    streamFactory: () => unknown,
+    listener: (event: T) => void,
+    options: {
+      readonly isDesired: () => boolean;
+      readonly replace?: boolean;
+    },
+  ): void {
+    if (isConnectionTransportFailure(error)) {
+      this.supervisor.invalidate(session.generation, `stream ${key} transport failed to start`);
+      return;
+    }
+    if (isConnectionProtocolFailure(error)) {
+      this.supervisor.invalidate(session.generation, `stream ${key} protocol failed to start`);
+      return;
+    }
+    console.warn(
+      `[scient-connection] stream ${key} failed to start without closing the session: ${connectionErrorSummary(error)}`,
     );
-    this.streamCleanups.set(key, { generation: session.generation, cancel });
+    this.scheduleStreamRestart(session, key, streamFactory, listener, options);
+  }
+
+  private scheduleStreamRestart<T>(
+    session: ActiveSession,
+    key: string,
+    streamFactory: () => unknown,
+    listener: (event: T) => void,
+    options: {
+      readonly isDesired: () => boolean;
+      readonly replace?: boolean;
+    },
+  ): void {
+    if (
+      this.disposed ||
+      this.supervisor.currentSession?.generation !== session.generation ||
+      !options.isDesired()
+    ) {
+      return;
+    }
+    this.clearStreamRestartTimer(key);
+    const previousAttempt = this.streamRestartAttempts.get(key);
+    const attempt =
+      previousAttempt?.generation === session.generation ? previousAttempt.attempt + 1 : 0;
+    this.streamRestartAttempts.set(key, { generation: session.generation, attempt });
+    const delayMs = streamRestartDelayMs(attempt);
+    const timer = setTimeout(() => {
+      if (this.streamRestartTimers.get(key)?.timer !== timer) return;
+      this.streamRestartTimers.delete(key);
+      if (
+        this.disposed ||
+        this.supervisor.currentSession?.generation !== session.generation ||
+        !options.isDesired()
+      ) {
+        return;
+      }
+      this.startStream(session, key, streamFactory, listener, options);
+    }, delayMs);
+    this.streamRestartTimers.set(key, { generation: session.generation, timer });
   }
 
   private stopStream(key: string): void {
-    const cleanup = this.streamCleanups.get(key);
-    if (!cleanup) return;
-    this.streamCleanups.delete(key);
-    cleanup.cancel();
+    this.streamStartTokens.delete(key);
+    this.clearStreamRestartTimer(key);
+    this.streamRestartAttempts.delete(key);
+    const previous = this.streamTransitions.get(key) ?? Promise.resolve();
+    const transition = previous
+      .catch(() => undefined)
+      .then(async () => {
+        const cleanup = this.streamCleanups.get(key);
+        if (!cleanup) return;
+        this.streamCleanups.delete(key);
+        clearTimeout(cleanup.healthyTimer);
+        cleanup.cancel();
+        const settled = await this.waitForStreamSettlement(cleanup.settled);
+        if (!settled) {
+          this.supervisor.invalidate(
+            cleanup.generation,
+            `stream ${key} did not settle after cancellation`,
+          );
+        }
+      })
+      .finally(() => {
+        if (this.streamTransitions.get(key) === transition) {
+          this.streamTransitions.delete(key);
+        }
+      });
+    this.streamTransitions.set(key, transition);
+  }
+
+  private async waitForStreamSettlement(settled: Promise<void>): Promise<boolean> {
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    try {
+      return await Promise.race([
+        settled.then(() => true),
+        new Promise<boolean>((resolve) => {
+          timeout = setTimeout(() => resolve(false), STREAM_SETTLEMENT_TIMEOUT_MS);
+        }),
+      ]);
+    } finally {
+      if (timeout !== null) clearTimeout(timeout);
+    }
+  }
+
+  private clearStreamRestartTimer(key: string): void {
+    const restart = this.streamRestartTimers.get(key);
+    if (!restart) return;
+    clearTimeout(restart.timer);
+    this.streamRestartTimers.delete(key);
   }
 
   private stopGenerationStreams(generation: number): void {
+    const keys = new Set<string>();
     for (const [key, cleanup] of this.streamCleanups) {
-      if (cleanup.generation !== generation) continue;
-      this.streamCleanups.delete(key);
-      cleanup.cancel();
+      if (cleanup.generation === generation) keys.add(key);
     }
+    for (const [key, pending] of this.streamStartTokens) {
+      if (pending.generation === generation) keys.add(key);
+    }
+    for (const [key, restart] of this.streamRestartTimers) {
+      if (restart.generation === generation) keys.add(key);
+    }
+    for (const key of keys) this.stopStream(key);
   }
 
   private async runGitActionStream(

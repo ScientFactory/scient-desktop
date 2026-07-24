@@ -54,6 +54,7 @@ import {
   SCIENT_DESKTOP_UPDATE_CHANNEL,
   SCIENT_DESKTOP_UPDATES_ENABLED,
   scientBundleId,
+  scientDesktopUpdateChannel,
 } from "@synara/shared/desktopIdentity";
 import { NetService } from "@synara/shared/Net";
 import { RotatingFileSink } from "@synara/shared/logging";
@@ -108,7 +109,10 @@ import {
   shouldBroadcastDownloadProgress,
   shouldCheckForUpdatesOnForeground,
 } from "./updateState";
-import { registerDesktopVoiceTranscriptionHandler } from "./voiceTranscription";
+import {
+  disposeDesktopVoiceTranscription,
+  registerDesktopVoiceTranscriptionHandler,
+} from "./voiceTranscription";
 import {
   resolveDesktopMenuAccelerator,
   resolveKeyboardShortcutsMenuAccelerator,
@@ -569,9 +573,18 @@ async function waitForBackendWindowReady(baseUrl: string): Promise<"listening" |
           }
         },
       }),
-    cancelHttpWait: cancelBackendReadinessWait,
+    onHttpReady: () => {
+      if (generation !== null) backendSupervisor?.markReady(generation);
+    },
+    onHttpFailure: (error) => {
+      if (generation === null) return;
+      const message = formatErrorMessage(error);
+      writeDesktopLogHeader(
+        `backend generation=${generation} semantic readiness failed message=${message}`,
+      );
+      void backendSupervisor?.restartGeneration(generation, `readiness failed: ${message}`);
+    },
   });
-  if (generation !== null) backendSupervisor?.markReady(generation);
   return source;
 }
 
@@ -913,6 +926,20 @@ function parseAppUpdateYml(): Record<string, string> | null {
       if (match?.[1] && match[2]) entries[match[1]] = match[2].trim();
     }
     return entries.provider ? entries : null;
+  } catch {
+    return null;
+  }
+}
+
+function readLinuxPackageType(): string | null {
+  if (process.platform !== "linux" || !app.isPackaged) return null;
+  if (process.env.APPIMAGE) return "AppImage";
+  try {
+    const packageType = FS.readFileSync(
+      Path.join(process.resourcesPath, "package-type"),
+      "utf8",
+    ).trim();
+    return packageType || null;
   } catch {
     return null;
   }
@@ -1359,6 +1386,7 @@ function resolveAutoUpdateDisabledReason(): string | null {
     isPackaged: app.isPackaged,
     platform: process.platform,
     appImage: process.env.APPIMAGE,
+    linuxPackageType: readLinuxPackageType() ?? undefined,
     disabledByEnv: process.env.SYNARA_DISABLE_AUTO_UPDATE === "1",
     hasUpdateFeedConfig: hasConfiguredUpdateFeed(),
   });
@@ -2591,7 +2619,7 @@ function configureAutoUpdater(): void {
   // Stable production builds use the dedicated Scient-owned update channel.
   // resolveAutoUpdateDisabledReason still keeps development, unpackaged, and
   // unsupported runtime environments away from the public feed.
-  autoUpdater.channel = SCIENT_DESKTOP_UPDATE_CHANNEL;
+  autoUpdater.channel = scientDesktopUpdateChannel(process.platform, readLinuxPackageType());
   autoUpdater.allowPrerelease = DESKTOP_UPDATE_ALLOW_PRERELEASE;
   autoUpdater.allowDowngrade = false;
   // Match electron-updater's native GitHub provider path; the packaged
@@ -2893,13 +2921,15 @@ function getBackendSupervisor(): DesktopBackendSupervisor {
       );
     },
     spawn: spawnBackendGeneration,
-    requestGracefulShutdown: (child, reason) => {
+    requestGracefulShutdown: async (child, reason) => {
       if (!child.send || child.connected === false) return false;
-      try {
-        return child.send(makeScientBackendShutdownMessage(reason));
-      } catch {
-        return false;
-      }
+      return await new Promise<boolean>((resolve) => {
+        try {
+          child.send!(makeScientBackendShutdownMessage(reason), (error) => resolve(error === null));
+        } catch {
+          resolve(false);
+        }
+      });
     },
     forceTerminateTree: (child) => forceTerminateBackendProcessTree(child),
     onGenerationStarted: handleBackendGenerationStarted,
@@ -2915,11 +2945,17 @@ function getBackendSupervisor(): DesktopBackendSupervisor {
     classifyStartFailure: (error) =>
       error instanceof MissingBackendEntryError ? "fatal" : "retry",
     onFatalStartFailure: (error) => handleFatalStartupError("backend", error),
-    onUnrecoverableGeneration: ({ error, generation, reason }) =>
-      handleFatalStartupError(
-        `backend generation ${generation.number} recovery (${reason})`,
-        error,
-      ),
+    onUnrecoverableGeneration: ({ error, generation, reason }) => {
+      const message = formatErrorMessage(error);
+      writeDesktopLogHeader(
+        `backend generation=${generation.number} unrecoverable reason=${reason} message=${message}`,
+      );
+      console.error(`[desktop] backend generation ${generation.number} could not recover`, error);
+      dialog.showErrorBox(
+        `${SCIENT_APP_NAME} backend needs attention`,
+        `Scient kept the desktop open because backend generation ${generation.number} could not be stopped safely.\n\n${message}`,
+      );
+    },
     gracefulShutdownTimeoutMs: BACKEND_FORCE_KILL_DELAY_MS,
     forcedExitTimeoutMs: BACKEND_SHUTDOWN_TIMEOUT_MS - BACKEND_FORCE_KILL_DELAY_MS,
   });
@@ -2946,11 +2982,7 @@ function stopBackend(reason = "desktop stop"): void {
 async function stopBackendAndWaitForExit(reason = "desktop shutdown"): Promise<void> {
   cancelBackendReadinessWait();
   if (!backendSupervisor) return;
-  try {
-    await backendSupervisor.stop(reason);
-  } catch (error) {
-    safeConsoleError(`[desktop] backend stop failed: ${formatErrorMessage(error)}`);
-  }
+  await backendSupervisor.stop(reason);
 }
 
 async function disposeBrowserUsePipeServerForShutdown(reason: string): Promise<void> {
@@ -2974,26 +3006,31 @@ async function shutdownDesktopRuntime(reason: string): Promise<void> {
   }
 
   isQuitting = true;
-  desktopShutdownPromise = (async () => {
+  const shutdown = (async () => {
     writeDesktopLogHeader(`${reason} shutdown start`);
-    try {
-      clearUpdateBackgroundBlurTimer();
-      clearUpdateCheckTimeoutTimer();
-      clearUpdatePollTimer();
-      cancelBackendReadinessWait();
-      appSnapManager?.dispose();
-      appSnapManager = null;
-      await disposeBrowserUsePipeServerForShutdown(reason);
-      await stopBackendAndWaitForExit(reason);
-      browserManager.dispose();
-      restoreStdIoCapture?.();
-      writeDesktopLogHeader(`${reason} shutdown complete`);
-    } finally {
-      desktopShutdownComplete = true;
-    }
+    clearUpdateBackgroundBlurTimer();
+    clearUpdateCheckTimeoutTimer();
+    clearUpdatePollTimer();
+    cancelBackendReadinessWait();
+    appSnapManager?.dispose();
+    appSnapManager = null;
+    await disposeBrowserUsePipeServerForShutdown(reason);
+    await disposeDesktopVoiceTranscription();
+    await stopBackendAndWaitForExit(reason);
+    browserManager.dispose();
+    restoreStdIoCapture?.();
+    writeDesktopLogHeader(`${reason} shutdown complete`);
+    desktopShutdownComplete = true;
   })();
+  desktopShutdownPromise = shutdown;
 
-  return desktopShutdownPromise;
+  try {
+    await shutdown;
+  } catch (error) {
+    desktopShutdownPromise = null;
+    isQuitting = false;
+    throw error;
+  }
 }
 
 function requestGracefulAppQuit(reason: string): void {
@@ -3003,13 +3040,17 @@ function requestGracefulAppQuit(reason: string): void {
   }
 
   void shutdownDesktopRuntime(reason)
+    .then(() => {
+      app.quit();
+    })
     .catch((error: unknown) => {
       const message = formatErrorMessage(error);
       writeDesktopLogHeader(`${reason} shutdown failed message=${message}`);
       console.warn(`[desktop] Shutdown failed during ${reason}: ${message}`);
-    })
-    .finally(() => {
-      app.quit();
+      dialog.showErrorBox(
+        `${SCIENT_APP_NAME} could not close safely`,
+        `Scient stayed open because its backend did not stop. Retry after checking running tasks.\n\n${message}`,
+      );
     });
 }
 
@@ -3329,7 +3370,10 @@ function registerIpcHandlers(): void {
   if (appSnapManager) {
     registerAppSnapIpcHandlers(ipcMain, appSnapManager);
   }
-  registerDesktopVoiceTranscriptionHandler();
+  registerDesktopVoiceTranscriptionHandler({
+    scientHome: BASE_DIR,
+    stateDirectory: Path.join(BASE_DIR, isDevelopment ? "dev" : "userdata"),
+  });
   startBrowserPerformanceLogging();
   void ensureBrowserUsePipeServer().catch((error) => {
     console.warn("[Scient browser] Failed to start browser-use native pipe", error);
@@ -3688,7 +3732,10 @@ if (hasSingleInstanceLock) {
         emitDesktopConnectionWake("app-activate");
         if (BrowserWindow.getAllWindows().length === 0) {
           if (!isDevelopment) {
-            ensureInitialBackendWindowOpen(backendHttpUrl);
+            ensureInitialBackendWindowOpen(
+              backendHttpUrl,
+              backendSupervisor?.currentGeneration?.number,
+            );
             return;
           }
           void waitForBackendWindowReady(backendHttpUrl)

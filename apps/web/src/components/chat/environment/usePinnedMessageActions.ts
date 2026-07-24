@@ -9,9 +9,9 @@ import {
   type PinnedMessage,
   type ThreadId,
 } from "@synara/contracts";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import { toastManager } from "~/components/ui/toast";
+import { activityManager } from "~/notifications/activityStore";
 import {
   addPin,
   dispatchPinnedMessageAdd,
@@ -34,6 +34,7 @@ interface UsePinnedMessageActionsInput {
 }
 
 interface UsePinnedMessageActionsResult {
+  readonly pinLimitMessageId: MessageId | null;
   readonly handleTogglePinMessage: (messageId: MessageId) => void;
   readonly handleTogglePinnedMessageDone: (messageId: MessageId) => void;
   readonly handleUnpinMessage: (messageId: MessageId) => void;
@@ -51,6 +52,14 @@ function matchesPinState(pin: PinnedMessage | undefined, expected: PinnedMessage
   );
 }
 
+function pinnedMessageActivityKey(threadId: ThreadId, messageId: MessageId): string {
+  return `thread:${threadId}:pinned-message:${messageId}`;
+}
+
+function threadNotesActivityKey(threadId: ThreadId): string {
+  return `thread:${threadId}:notes`;
+}
+
 // Keeps rapid pin clicks based on the latest optimistic ref until server events reconcile the store.
 export function usePinnedMessageActions({
   activeThreadId,
@@ -58,28 +67,70 @@ export function usePinnedMessageActions({
 }: UsePinnedMessageActionsInput): UsePinnedMessageActionsResult {
   const pinnedMessagesRef = useRef<readonly PinnedMessage[]>(pinnedMessages);
   const activePinnedThreadIdRef = useRef<ThreadId | null>(activeThreadId);
+  const activityOperationVersionRef = useRef(new Map<string, number>());
+  const [pinLimitMessageId, setPinLimitMessageId] = useState<MessageId | null>(null);
 
   useEffect(() => {
     pinnedMessagesRef.current = pinnedMessages;
     activePinnedThreadIdRef.current = activeThreadId;
   }, [activeThreadId, pinnedMessages]);
 
-  const handlePinnedMessageDispatchError = useCallback((error: unknown) => {
-    toastManager.add({
-      type: "error",
-      title: "Failed to update pinned message",
-      description:
-        error instanceof Error ? error.message : "The pinned message change could not be saved.",
-    });
+  useEffect(() => {
+    setPinLimitMessageId(null);
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    if (!pinLimitMessageId) return;
+    const timeoutId = window.setTimeout(() => setPinLimitMessageId(null), 4_000);
+    return () => window.clearTimeout(timeoutId);
+  }, [pinLimitMessageId]);
+
+  const beginActivityOperation = useCallback((key: string): number => {
+    const version = (activityOperationVersionRef.current.get(key) ?? 0) + 1;
+    activityOperationVersionRef.current.set(key, version);
+    return version;
   }, []);
 
-  const handleThreadNotesDispatchError = useCallback((error: unknown) => {
-    toastManager.add({
-      type: "error",
-      title: "Failed to save notes",
-      description: error instanceof Error ? error.message : "The note change could not be saved.",
-    });
+  const clearActivityAfterLatestOperation = useCallback((key: string, version: number) => {
+    if (activityOperationVersionRef.current.get(key) === version) {
+      activityManager.remove(key);
+    }
   }, []);
+
+  const handlePinnedMessageDispatchError = useCallback(
+    (threadId: ThreadId, messageId: MessageId, version: number, error: unknown) => {
+      const dedupeKey = pinnedMessageActivityKey(threadId, messageId);
+      if (activityOperationVersionRef.current.get(dedupeKey) !== version) return;
+      activityManager.publish({
+        dedupeKey,
+        source: "thread",
+        status: "needs_attention",
+        tone: "error",
+        title: "Pinned message change was not saved",
+        description:
+          error instanceof Error ? error.message : "The pinned message change could not be saved.",
+        destination: { type: "thread", threadId },
+      });
+    },
+    [],
+  );
+
+  const handleThreadNotesDispatchError = useCallback(
+    (threadId: ThreadId, version: number, error: unknown) => {
+      const dedupeKey = threadNotesActivityKey(threadId);
+      if (activityOperationVersionRef.current.get(dedupeKey) !== version) return;
+      activityManager.publish({
+        dedupeKey,
+        source: "thread",
+        status: "needs_attention",
+        tone: "error",
+        title: "Thread notes were not saved",
+        description: error instanceof Error ? error.message : "The note change could not be saved.",
+        destination: { type: "thread", threadId },
+      });
+    },
+    [],
+  );
 
   const handleTogglePinMessage = useCallback(
     (messageId: MessageId) => {
@@ -89,43 +140,52 @@ export function usePinnedMessageActions({
       }
       const pins = pinnedMessagesRef.current;
       if (isMessagePinned(pins, messageId)) {
+        setPinLimitMessageId(null);
         const removedPinIndex = pins.findIndex((pin) => pin.messageId === messageId);
         const removedPin = removedPinIndex >= 0 ? pins[removedPinIndex] : undefined;
+        const activityKey = pinnedMessageActivityKey(threadId, messageId);
+        const operationVersion = beginActivityOperation(activityKey);
         pinnedMessagesRef.current = removePin(pins, messageId);
-        void dispatchPinnedMessageRemove(threadId, messageId).catch((error) => {
-          if (removedPin) {
-            pinnedMessagesRef.current = restorePinAtIndex(
-              pinnedMessagesRef.current,
-              removedPin,
-              removedPinIndex,
-            );
-          }
-          handlePinnedMessageDispatchError(error);
-        });
+        void dispatchPinnedMessageRemove(threadId, messageId)
+          .then(() => clearActivityAfterLatestOperation(activityKey, operationVersion))
+          .catch((error) => {
+            if (
+              removedPin &&
+              activityOperationVersionRef.current.get(activityKey) === operationVersion
+            ) {
+              pinnedMessagesRef.current = restorePinAtIndex(
+                pinnedMessagesRef.current,
+                removedPin,
+                removedPinIndex,
+              );
+            }
+            handlePinnedMessageDispatchError(threadId, messageId, operationVersion, error);
+          });
         return;
       }
       if (pins.length >= PINNED_MESSAGES_MAX_COUNT) {
-        toastManager.add({
-          type: "warning",
-          title: "Pinned message limit reached",
-          description: `You can keep up to ${PINNED_MESSAGES_MAX_COUNT} pinned messages in a thread.`,
-        });
+        setPinLimitMessageId(messageId);
         return;
       }
+      setPinLimitMessageId(null);
       const pinnedAt = new Date().toISOString();
       const optimisticPin = { messageId, label: null, done: false, pinnedAt };
+      const activityKey = pinnedMessageActivityKey(threadId, messageId);
+      const operationVersion = beginActivityOperation(activityKey);
       pinnedMessagesRef.current = addPin(pins, messageId, pinnedAt);
-      void dispatchPinnedMessageAdd(threadId, messageId).catch((error) => {
-        const currentPin = pinnedMessagesRef.current.find(
-          (candidate) => candidate.messageId === messageId,
-        );
-        if (matchesPinState(currentPin, optimisticPin)) {
-          pinnedMessagesRef.current = removePin(pinnedMessagesRef.current, messageId);
-        }
-        handlePinnedMessageDispatchError(error);
-      });
+      void dispatchPinnedMessageAdd(threadId, messageId)
+        .then(() => clearActivityAfterLatestOperation(activityKey, operationVersion))
+        .catch((error) => {
+          const currentPin = pinnedMessagesRef.current.find(
+            (candidate) => candidate.messageId === messageId,
+          );
+          if (matchesPinState(currentPin, optimisticPin)) {
+            pinnedMessagesRef.current = removePin(pinnedMessagesRef.current, messageId);
+          }
+          handlePinnedMessageDispatchError(threadId, messageId, operationVersion, error);
+        });
     },
-    [handlePinnedMessageDispatchError],
+    [beginActivityOperation, clearActivityAfterLatestOperation, handlePinnedMessageDispatchError],
   );
 
   const handleTogglePinnedMessageDone = useCallback(
@@ -140,22 +200,26 @@ export function usePinnedMessageActions({
       }
       const previousDone = pin.done === true;
       const done = !previousDone;
+      const activityKey = pinnedMessageActivityKey(threadId, messageId);
+      const operationVersion = beginActivityOperation(activityKey);
       pinnedMessagesRef.current = togglePinDone(pinnedMessagesRef.current, messageId);
-      void dispatchPinnedMessageDoneSet(threadId, messageId, done).catch((error) => {
-        const currentPin = pinnedMessagesRef.current.find(
-          (candidate) => candidate.messageId === messageId,
-        );
-        if (currentPin?.done === done) {
-          pinnedMessagesRef.current = setPinDone(
-            pinnedMessagesRef.current,
-            messageId,
-            previousDone,
+      void dispatchPinnedMessageDoneSet(threadId, messageId, done)
+        .then(() => clearActivityAfterLatestOperation(activityKey, operationVersion))
+        .catch((error) => {
+          const currentPin = pinnedMessagesRef.current.find(
+            (candidate) => candidate.messageId === messageId,
           );
-        }
-        handlePinnedMessageDispatchError(error);
-      });
+          if (currentPin?.done === done) {
+            pinnedMessagesRef.current = setPinDone(
+              pinnedMessagesRef.current,
+              messageId,
+              previousDone,
+            );
+          }
+          handlePinnedMessageDispatchError(threadId, messageId, operationVersion, error);
+        });
     },
-    [handlePinnedMessageDispatchError],
+    [beginActivityOperation, clearActivityAfterLatestOperation, handlePinnedMessageDispatchError],
   );
 
   const handleUnpinMessage = useCallback(
@@ -172,17 +236,23 @@ export function usePinnedMessageActions({
       if (!removedPin) {
         return;
       }
+      const activityKey = pinnedMessageActivityKey(threadId, messageId);
+      const operationVersion = beginActivityOperation(activityKey);
       pinnedMessagesRef.current = removePin(pinnedMessagesRef.current, messageId);
-      void dispatchPinnedMessageRemove(threadId, messageId).catch((error) => {
-        pinnedMessagesRef.current = restorePinAtIndex(
-          pinnedMessagesRef.current,
-          removedPin,
-          removedPinIndex,
-        );
-        handlePinnedMessageDispatchError(error);
-      });
+      void dispatchPinnedMessageRemove(threadId, messageId)
+        .then(() => clearActivityAfterLatestOperation(activityKey, operationVersion))
+        .catch((error) => {
+          if (activityOperationVersionRef.current.get(activityKey) === operationVersion) {
+            pinnedMessagesRef.current = restorePinAtIndex(
+              pinnedMessagesRef.current,
+              removedPin,
+              removedPinIndex,
+            );
+          }
+          handlePinnedMessageDispatchError(threadId, messageId, operationVersion, error);
+        });
     },
-    [handlePinnedMessageDispatchError],
+    [beginActivityOperation, clearActivityAfterLatestOperation, handlePinnedMessageDispatchError],
   );
 
   const handleRenamePinnedMessage = useCallback(
@@ -196,37 +266,45 @@ export function usePinnedMessageActions({
       );
       const previousLabel = previousPin?.label ?? null;
       const nextLabel = normalizePinLabel(label);
+      const activityKey = pinnedMessageActivityKey(threadId, messageId);
+      const operationVersion = beginActivityOperation(activityKey);
       pinnedMessagesRef.current = setPinLabel(pinnedMessagesRef.current, messageId, label);
-      void dispatchPinnedMessageLabelSet(threadId, messageId, label).catch((error) => {
-        const currentPin = pinnedMessagesRef.current.find(
-          (candidate) => candidate.messageId === messageId,
-        );
-        if ((currentPin?.label ?? null) === nextLabel) {
-          pinnedMessagesRef.current = setPinLabel(
-            pinnedMessagesRef.current,
-            messageId,
-            previousLabel,
+      void dispatchPinnedMessageLabelSet(threadId, messageId, label)
+        .then(() => clearActivityAfterLatestOperation(activityKey, operationVersion))
+        .catch((error) => {
+          const currentPin = pinnedMessagesRef.current.find(
+            (candidate) => candidate.messageId === messageId,
           );
-        }
-        handlePinnedMessageDispatchError(error);
-      });
+          if ((currentPin?.label ?? null) === nextLabel) {
+            pinnedMessagesRef.current = setPinLabel(
+              pinnedMessagesRef.current,
+              messageId,
+              previousLabel,
+            );
+          }
+          handlePinnedMessageDispatchError(threadId, messageId, operationVersion, error);
+        });
     },
-    [handlePinnedMessageDispatchError],
+    [beginActivityOperation, clearActivityAfterLatestOperation, handlePinnedMessageDispatchError],
   );
 
   const handleNotesChange = useCallback(
     async (threadId: ThreadId, notes: string) => {
+      const activityKey = threadNotesActivityKey(threadId);
+      const operationVersion = beginActivityOperation(activityKey);
       try {
         await dispatchThreadNotes(threadId, notes);
+        clearActivityAfterLatestOperation(activityKey, operationVersion);
       } catch (error) {
-        handleThreadNotesDispatchError(error);
+        handleThreadNotesDispatchError(threadId, operationVersion, error);
         throw error;
       }
     },
-    [handleThreadNotesDispatchError],
+    [beginActivityOperation, clearActivityAfterLatestOperation, handleThreadNotesDispatchError],
   );
 
   return {
+    pinLimitMessageId,
     handleTogglePinMessage,
     handleTogglePinnedMessageDone,
     handleUnpinMessage,

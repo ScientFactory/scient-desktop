@@ -6,8 +6,6 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import {
   chmodSync,
-  copyFileSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -116,8 +114,8 @@ export function expectedPackagedDesktopStartupAssetName(
   arch: string,
   version: string,
 ): string {
-  const artifactArch = platform === "linux" && arch === "x64" ? "x86_64" : arch;
-  const extension = platform === "mac" ? ".zip" : platform === "linux" ? ".AppImage" : ".exe";
+  const artifactArch = platform === "linux" && arch === "x64" ? "amd64" : arch;
+  const extension = platform === "mac" ? ".zip" : platform === "linux" ? ".deb" : ".exe";
   return `Scient-${version}-${artifactArch}${extension}`;
 }
 
@@ -181,35 +179,22 @@ function prepareMacLaunch(
 }
 
 export function createLinuxPackagedLaunchCommand(
-  appRun: string,
+  executable: string,
   cwd: string,
 ): PackagedDesktopLaunchCommand {
   return {
     command: "xvfb-run",
-    args: ["-a", appRun, "--disable-gpu"],
+    args: ["-a", executable, "--disable-gpu"],
     cwd,
   };
 }
 
 function prepareLinuxLaunch(
   assetsDirectory: string,
-  extractionRoot: string,
   expectedAssetName: string,
 ): PackagedDesktopLaunchCommand {
-  const collectedAppImage = resolveExactPackagedDesktopStartupAsset(
-    assetsDirectory,
-    expectedAssetName,
-  );
-  const appImage = join(extractionRoot, basename(collectedAppImage));
-  copyFileSync(collectedAppImage, appImage);
-  chmodSync(appImage, 0o755);
-  runCommand(appImage, ["--appimage-extract"], extractionRoot);
-  const appRun = join(extractionRoot, "squashfs-root", "AppRun");
-  if (!existsSync(appRun)) {
-    throw new Error(`${basename(appImage)} did not extract a runnable AppRun payload.`);
-  }
-  chmodSync(appRun, 0o755);
-  return createLinuxPackagedLaunchCommand(appRun, join(extractionRoot, "squashfs-root"));
+  resolveExactPackagedDesktopStartupAsset(assetsDirectory, expectedAssetName);
+  return createLinuxPackagedLaunchCommand("/opt/Scient/scient", "/opt/Scient");
 }
 
 export function isScientWindowsExecutable(candidate: string): boolean {
@@ -256,7 +241,7 @@ function prepareLaunch(
   if (options.platform === "mac") {
     launch = prepareMacLaunch(options.assetsDirectory, extractionRoot, expectedAssetName);
   } else if (options.platform === "linux") {
-    launch = prepareLinuxLaunch(options.assetsDirectory, extractionRoot, expectedAssetName);
+    launch = prepareLinuxLaunch(options.assetsDirectory, expectedAssetName);
   } else {
     launch = prepareWindowsLaunch(options.assetsDirectory, extractionRoot, expectedAssetName);
   }

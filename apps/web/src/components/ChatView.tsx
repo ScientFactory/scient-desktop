@@ -38,7 +38,11 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
 } from "@synara/contracts";
-import { getModelCapabilities, normalizeModelSlug } from "@synara/shared/model";
+import {
+  getModelCapabilities,
+  getRecommendedDefaultModelSelection,
+  normalizeModelSlug,
+} from "@synara/shared/model";
 import { resolveTailUserMessageEditTarget } from "@synara/shared/conversationEdit";
 import { threadExportBlockedReason } from "@synara/shared/threadExport";
 import { buildTemporaryWorktreeBranchName } from "@synara/shared/git";
@@ -92,6 +96,10 @@ import {
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
 import { useRefreshProviderStatusesNow } from "~/hooks/useProviderStatusRefresh";
+import {
+  useApplyProviderSelectionAfterConnection,
+  useProviderConnectionSelectionIntent,
+} from "~/hooks/useProviderSelectionAfterConnection";
 import { SINGLE_CHAT_PANE_SCOPE_ID } from "~/lib/chatPaneScope";
 import {
   composerMentionPathNeedsQuoting,
@@ -115,6 +123,7 @@ import {
   saveConfirmedCustomBinaryPaths,
 } from "../confirmedCustomBinaryPathStore";
 import { isElectron } from "../env";
+import { ensureDesktopVoiceReady, hasDesktopVoiceRuntime } from "../lib/desktopVoiceSetup";
 import { stripDiffSearchParams } from "../diffRouteSearch";
 import { resolveSubagentPresentationForThread } from "../lib/subagentPresentation";
 import { ensureHomeChatProject, isHomeChatContainerProject } from "../lib/chatProjects";
@@ -179,12 +188,14 @@ import {
   resolveEnvironmentPanelPreferenceAfterFirstSend,
   resolveEnvironmentPanelPreferenceUpdate,
   resolveEnvironmentPanelVisible,
+  resolveGitRepoUiState,
   resolveProjectScriptTerminalTarget,
   resolvePromptHistoryNavigation,
   shouldHandlePromptHistoryNavigationKey,
   shouldEnableComposerPastedTextCollapse,
   shouldConsumePendingCustomBinaryConfirmation,
   shouldShowComposerModelBootstrapSkeleton,
+  shouldShowGitActions,
 } from "./ChatView.logic";
 import {
   createRelevantWorkLogThreadsSelector,
@@ -291,7 +302,8 @@ import { Skeleton } from "./ui/skeleton";
 import { Menu, MenuItem, MenuTrigger } from "./ui/menu";
 import { disposeAndCloseTerminalSession, randomTerminalId } from "./terminal/terminalSession";
 import { cn, isMacPlatform, randomUUID } from "~/lib/utils";
-import { toastManager } from "./ui/toast";
+import { activityManager } from "../notifications/activityStore";
+import { transientAlertManager } from "../notifications/transientAlert";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
@@ -376,6 +388,7 @@ import {
   deriveLatestContextWindowSnapshot,
   deriveSelectedContextWindowSnapshot,
 } from "../lib/contextWindow";
+import { LiveVoicePreviewSession } from "../lib/liveVoicePreview";
 import { formatVoiceRecordingDuration, useVoiceRecorder } from "../lib/voiceRecorder";
 import {
   composerFooterPlanForTier,
@@ -461,11 +474,16 @@ import { ComposerInputBanners } from "./chat/ComposerInputBanners";
 import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPanel";
 import { ComposerVoiceButton } from "./chat/ComposerVoiceButton";
 import { ComposerVoiceRecorderBar } from "./chat/ComposerVoiceRecorderBar";
+import type { ComposerVoiceCompletionIntent } from "./chat/composerVoiceState";
 import { ComposerReferenceAttachments } from "./chat/ComposerReferenceAttachments";
 import { TranscriptSelectionActionLayer } from "./chat/TranscriptSelectionActionLayer";
 import { ComposerActiveTaskListCard } from "./chat/ComposerActiveTaskListCard";
 import { ComposerColumnFrame } from "./chat/ComposerColumnFrame";
 import { useTranscriptAssistantSelectionAction } from "./chat/useTranscriptAssistantSelectionAction";
+import type {
+  ComposerLocalFeedback,
+  ReportComposerLocalFeedback,
+} from "./chat/useComposerVoiceController";
 import { resolveTranscriptMarkerRange } from "./chat/chatSelectionActions";
 import {
   dispatchThreadMarkerAdd,
@@ -493,6 +511,7 @@ import { ProjectPicker } from "./chat/ProjectPicker";
 import { FolderClosed } from "./FolderClosed";
 import { ProviderHealthBanner } from "./chat/ProviderHealthBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
+import { CodexAuthenticationRecoveryGate } from "./CodexAuthenticationRecoveryGate";
 import {
   RateLimitBanner,
   deriveLatestRateLimitStatus,
@@ -501,6 +520,7 @@ import {
 import {
   ACTIVE_TURN_LAYOUT_SETTLE_DELAY_MS,
   appendVoiceTranscriptToPrompt,
+  completeComposerVoiceTranscript,
   describeVoiceRecordingStartError,
   isVoiceAuthExpiredMessage,
   sanitizeVoiceErrorMessage,
@@ -512,9 +532,12 @@ import {
   DismissedProviderHealthBannersSchema,
   shouldRenderTerminalWorkspace,
   collectUserMessageBlobPreviewUrls,
+  deriveComposerFooterActionPlan,
   deriveComposerSendState,
   failWorktreeSetupSnapshot,
   filterSidechatTranscriptMessages,
+  shouldRenderComposerFooter,
+  shouldRouteComposerSendToPendingInput,
   hasServerAcknowledgedLocalDispatch,
   resolveNextLocalDispatchSnapshot,
   WORKTREE_SETUP_ERROR_HOLD_MS,
@@ -526,6 +549,7 @@ import {
   PullRequestDialogState,
   type QueuedSteerGate,
   resolveQueuedSteerGateTransition,
+  resolveComposerRuntimeMode,
   shouldRenderProviderHealthBanner,
   resolveRuntimeModeAfterApprovalDecision,
   revokeBlobPreviewUrl,
@@ -538,6 +562,7 @@ import { collapseCursorModelVariants } from "../cursorModelVariants";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import {
   canCreateThreadHandoff,
+  resolveThreadForkableMessageIds,
   resolveAvailableHandoffTargetProviders,
   resolveThreadHandoffBadgeLabel,
 } from "../lib/threadHandoff";
@@ -1144,10 +1169,47 @@ export default function ChatView({
     durationMs: voiceRecordingDurationMs,
     waveformLevels: voiceWaveformLevels,
     startRecording: startVoiceRecording,
+    snapshotRecording: snapshotVoiceRecording,
     stopRecording: stopVoiceRecording,
     cancelRecording: cancelVoiceRecording,
   } = useVoiceRecorder();
-  const [isVoiceTranscribing, setIsVoiceTranscribing] = useState(false);
+  const [voiceCompletionIntent, setVoiceCompletionIntent] =
+    useState<ComposerVoiceCompletionIntent | null>(null);
+  const [liveVoicePreview, setLiveVoicePreview] = useState<string | null>(null);
+  const liveVoicePreviewSessionRef = useRef<LiveVoicePreviewSession | null>(null);
+  if (liveVoicePreviewSessionRef.current === null) {
+    liveVoicePreviewSessionRef.current = new LiveVoicePreviewSession();
+  }
+  const isVoiceTranscribing = voiceCompletionIntent !== null;
+  const isVoiceActive = isVoiceRecording || isVoiceTranscribing;
+  const sendVoiceTranscriptRef = useRef<(prompt: string) => Promise<boolean>>(async () => false);
+  const composerFeedbackIdRef = useRef(0);
+  const [composerLocalFeedback, setComposerLocalFeedback] = useState<
+    (ComposerLocalFeedback & { id: number }) | null
+  >(null);
+  const reportComposerFeedback = useCallback<ReportComposerLocalFeedback>((feedback) => {
+    composerFeedbackIdRef.current += 1;
+    setComposerLocalFeedback({ ...feedback, id: composerFeedbackIdRef.current });
+  }, []);
+  useEffect(() => {
+    if (!composerLocalFeedback) {
+      return;
+    }
+    const timeout = window.setTimeout(
+      () => setComposerLocalFeedback(null),
+      composerLocalFeedback.type === "success" ? 4_000 : 8_000,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [composerLocalFeedback]);
+  useEffect(() => {
+    setComposerLocalFeedback(null);
+  }, [threadId]);
+  useEffect(
+    () => () => {
+      void liveVoicePreviewSessionRef.current?.stop();
+    },
+    [],
+  );
   const composerSendState = useMemo(
     () =>
       deriveComposerSendState({
@@ -1667,10 +1729,8 @@ export default function ChatView({
         ? buildLocalDraftThread(
             threadId,
             draftThread,
-            fallbackDraftProject?.defaultModelSelection ?? {
-              provider: "codex",
-              model: DEFAULT_MODEL_BY_PROVIDER.codex,
-            },
+            fallbackDraftProject?.defaultModelSelection ??
+              getRecommendedDefaultModelSelection("codex")!,
             localDraftError,
           )
         : undefined,
@@ -1686,8 +1746,30 @@ export default function ChatView({
       setIsRevertingCheckpoint(false);
     }
   }, [activeThread, pendingFileUndo]);
-  const runtimeMode =
-    composerDraft.runtimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+  const [pendingServerRuntimeMode, setPendingServerRuntimeMode] = useState<{
+    readonly threadId: ThreadId;
+    readonly mode: RuntimeMode;
+  } | null>(null);
+  const runtimeMode = resolveComposerRuntimeMode({
+    pendingRuntimeMode:
+      pendingServerRuntimeMode?.threadId === threadId ? pendingServerRuntimeMode.mode : null,
+    serverRuntimeMode: serverThread?.runtimeMode,
+    draftRuntimeMode: composerDraft.runtimeMode,
+    defaultRuntimeMode: DEFAULT_RUNTIME_MODE,
+  });
+  useEffect(() => {
+    if (serverThread && composerDraft.runtimeMode !== null) {
+      setComposerDraftRuntimeMode(threadId, null);
+    }
+  }, [composerDraft.runtimeMode, serverThread, setComposerDraftRuntimeMode, threadId]);
+  useEffect(() => {
+    if (
+      pendingServerRuntimeMode?.threadId === threadId &&
+      serverThread?.runtimeMode === pendingServerRuntimeMode.mode
+    ) {
+      setPendingServerRuntimeMode(null);
+    }
+  }, [pendingServerRuntimeMode, serverThread?.runtimeMode, threadId]);
   const interactionMode =
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isServerThread = serverThread !== undefined;
@@ -2018,16 +2100,22 @@ export default function ChatView({
       activeThread.messages.length > 0 ||
       activeThread.session !== null),
   );
+  const hasConversationActivity = Boolean(
+    activeThread && (activeThread.latestTurn !== null || activeThread.messages.length > 0),
+  );
   const lockedProvider: ProviderKind | null = hasThreadStarted
     ? (sessionProvider ?? threadProvider ?? selectedProviderByThreadId ?? null)
     : null;
   const selectedProvider: ProviderKind =
     lockedProvider ?? selectedProviderByThreadId ?? threadProvider ?? settings.defaultProvider;
+  const providerSelectionIntent = useProviderConnectionSelectionIntent(threadId);
+  const pendingProviderSelection = providerSelectionIntent.pendingProvider;
   const previousSelectedProviderRef = useRef<{
     threadId: ThreadId;
     provider: ProviderKind;
   } | null>(null);
   const voiceTranscriptionRequestIdRef = useRef(0);
+  const voiceCompletionInFlightRef = useRef(false);
   const voiceThreadIdRef = useRef(threadId);
   const voiceProviderRef = useRef<ProviderKind>(selectedProvider);
   const voiceRecordingStartedAtRef = useRef<number | null>(null);
@@ -2073,17 +2161,30 @@ export default function ChatView({
   );
   const codexDynamicModelsQuery = useQuery(providerModelsQueryOptions({ provider: "codex" }));
   const openCodeModelDiscoveryEnabled =
-    selectedProvider === "opencode" || lockedProvider === "opencode" || isModelPickerOpen;
+    selectedProvider === "opencode" ||
+    lockedProvider === "opencode" ||
+    pendingProviderSelection === "opencode" ||
+    isModelPickerOpen;
   const kiloModelDiscoveryEnabled =
-    selectedProvider === "kilo" || lockedProvider === "kilo" || isModelPickerOpen;
+    selectedProvider === "kilo" ||
+    lockedProvider === "kilo" ||
+    pendingProviderSelection === "kilo" ||
+    isModelPickerOpen;
   const piModelDiscoveryEnabled =
-    selectedProvider === "pi" || lockedProvider === "pi" || isModelPickerOpen;
+    selectedProvider === "pi" ||
+    lockedProvider === "pi" ||
+    pendingProviderSelection === "pi" ||
+    isModelPickerOpen;
   const cursorDynamicModelsQuery = useQuery(
     providerModelsQueryOptions({
       provider: "cursor",
       binaryPath: settings.cursorBinaryPath || null,
       apiEndpoint: settings.cursorApiEndpoint || null,
-      enabled: selectedProvider === "cursor" || lockedProvider === "cursor" || isModelPickerOpen,
+      enabled:
+        selectedProvider === "cursor" ||
+        lockedProvider === "cursor" ||
+        pendingProviderSelection === "cursor" ||
+        isModelPickerOpen,
     }),
   );
   const antigravityModelsQuery = useQuery(
@@ -2092,17 +2193,27 @@ export default function ChatView({
       binaryPath: settings.antigravityBinaryPath || null,
       cwd: providerModelDiscoveryCwd,
       enabled:
-        selectedProvider === "antigravity" || lockedProvider === "antigravity" || isModelPickerOpen,
+        selectedProvider === "antigravity" ||
+        lockedProvider === "antigravity" ||
+        pendingProviderSelection === "antigravity" ||
+        isModelPickerOpen,
     }),
   );
   const grokDynamicModelsQuery = useQuery(
     providerModelsQueryOptions({
       provider: "grok",
       binaryPath: settings.grokBinaryPath || null,
-      enabled: selectedProvider === "grok" || lockedProvider === "grok" || isModelPickerOpen,
+      enabled:
+        selectedProvider === "grok" ||
+        lockedProvider === "grok" ||
+        pendingProviderSelection === "grok" ||
+        isModelPickerOpen,
     }),
   );
-  const droidModelDiscoveryEnabled = selectedProvider === "droid" || lockedProvider === "droid";
+  const droidModelDiscoveryEnabled =
+    selectedProvider === "droid" ||
+    lockedProvider === "droid" ||
+    pendingProviderSelection === "droid";
   const droidDynamicModelsQuery = useQuery(
     providerModelsQueryOptions({
       provider: "droid",
@@ -2161,7 +2272,10 @@ export default function ChatView({
     [cursorDynamicModelsQuery.data?.models],
   );
   const cursorModelDiscoveryEnabled =
-    selectedProvider === "cursor" || lockedProvider === "cursor" || isModelPickerOpen;
+    selectedProvider === "cursor" ||
+    lockedProvider === "cursor" ||
+    pendingProviderSelection === "cursor" ||
+    isModelPickerOpen;
   const hasResolvedCursorModelDiscovery =
     (cursorDynamicModelsQuery.data?.source === "cursor.cli" ||
       cursorDynamicModelsQuery.data?.source === "cursor.acp") &&
@@ -2205,6 +2319,24 @@ export default function ChatView({
       antigravityModelsQuery.data?.source === "antigravity.cli" &&
       (antigravityModelsQuery.data.models.length ?? 0) > 0
     ) && isInitialModelDiscoveryPending(antigravityModelsQuery);
+  const providerModelDiscoveryPendingByProvider = useMemo<Partial<Record<ProviderKind, boolean>>>(
+    () => ({
+      antigravity: antigravityModelDiscoveryPending,
+      cursor: cursorModelDiscoveryPending,
+      droid: droidModelDiscoveryPending,
+      kilo: kiloModelDiscoveryPending,
+      opencode: openCodeModelDiscoveryPending,
+      pi: piModelDiscoveryPending,
+    }),
+    [
+      antigravityModelDiscoveryPending,
+      cursorModelDiscoveryPending,
+      droidModelDiscoveryPending,
+      kiloModelDiscoveryPending,
+      openCodeModelDiscoveryPending,
+      piModelDiscoveryPending,
+    ],
+  );
   const modelOptionsByProvider = useMemo(() => {
     const staticOptions: Record<ProviderKind, ReturnType<typeof getAppModelOptions>> = {
       codex: getAppModelOptions(
@@ -2305,14 +2437,6 @@ export default function ChatView({
     openCodeDynamicModelsQuery.data,
     piDynamicModelsQuery.data,
   ]);
-  const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
-    threadId,
-    selectedProvider,
-    threadModelSelection: activeThread?.modelSelection,
-    projectModelSelection: activeProject?.defaultModelSelection,
-    customModelsByProvider,
-    availableModelOptionsByProvider: modelOptionsByProvider,
-  });
   const runtimeModelsByProvider = useMemo(
     () => ({
       claudeAgent: claudeDynamicModelsQuery.data?.models ?? [],
@@ -2337,6 +2461,15 @@ export default function ChatView({
       piDynamicModelsQuery.data?.models,
     ],
   );
+  const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
+    threadId,
+    selectedProvider,
+    threadModelSelection: activeThread?.modelSelection,
+    projectModelSelection: activeProject?.defaultModelSelection,
+    customModelsByProvider,
+    availableModelOptionsByProvider: modelOptionsByProvider,
+    runtimeModelOptionsByProvider: runtimeModelsByProvider,
+  });
   const providerModelsQueryByProvider = {
     claudeAgent: claudeDynamicModelsQuery,
     codex: codexDynamicModelsQuery,
@@ -2781,7 +2914,11 @@ export default function ChatView({
     activeThreadId === null ? null : `${activeThreadId}:${activeLatestTurn?.turnId ?? "idle"}`;
   const activeTurnInProgress = activeTurnLayoutLive || keepSettledActiveTurnLayout;
   const isComposerApprovalState = activePendingApproval !== null;
-  const isComposerEditorDisabled = isConnecting || isComposerApprovalState;
+  const liveVoicePreviewPrompt = liveVoicePreview
+    ? (appendVoiceTranscriptToPrompt(prompt, liveVoicePreview) ?? prompt)
+    : null;
+  const isComposerEditorDisabled =
+    isConnecting || isComposerApprovalState || isVoiceActive || liveVoicePreview !== null;
   const canCollapsePastedTextToDraft = shouldEnableComposerPastedTextCollapse({
     isComposerApprovalState,
     hasPendingUserInput: pendingUserInputs.length > 0,
@@ -2837,8 +2974,26 @@ export default function ChatView({
   }, [activeLatestTurn?.startedAt, activeTurnLayoutKey, activeTurnLayoutLive]);
 
   useEffect(() => {
+    // A provider question can arrive while microphone capture is already active.
+    // Keep promptRef anchored to the untouched chat draft until voice settles;
+    // otherwise the question's empty custom answer drops that draft from Send.
+    if (isVoiceActive) {
+      return;
+    }
     const nextCustomAnswer = activePendingProgress?.customAnswer;
     if (typeof nextCustomAnswer !== "string") {
+      if (lastSyncedPendingInputRef.current !== null) {
+        // The question temporarily borrowed promptRef without replacing the
+        // persisted chat draft. Restore that draft when the question settles
+        // so the next voice note or keyboard send cannot reuse a stale answer.
+        promptRef.current = prompt;
+        const nextCursor = collapseExpandedComposerCursor(prompt, prompt.length);
+        setComposerCursor(nextCursor);
+        setComposerTrigger(
+          detectComposerTrigger(prompt, expandCollapsedComposerCursor(prompt, nextCursor)),
+        );
+        setComposerHighlightedItemId(null);
+      }
       lastSyncedPendingInputRef.current = null;
       return;
     }
@@ -2872,6 +3027,8 @@ export default function ChatView({
     activePendingProgress?.customAnswer,
     activePendingUserInput?.requestId,
     activePendingProgress?.activeQuestion?.id,
+    isVoiceActive,
+    prompt,
   ]);
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
@@ -3036,6 +3193,10 @@ export default function ChatView({
     () => new Set(optimisticUserMessages.map((message) => message.id)),
     [optimisticUserMessages],
   );
+  const forkableMessageIds = useMemo(
+    () => (activeThread ? resolveThreadForkableMessageIds(activeThread) : new Set<MessageId>()),
+    [activeThread],
+  );
   // --- Pinned messages & notes (per-thread, server-synced through sidepanel commands) ---
   const pinnedMessages = activeThread?.pinnedMessages ?? EMPTY_PINNED_MESSAGES;
   const threadMarkers = activeThread?.threadMarkers ?? EMPTY_THREAD_MARKERS;
@@ -3074,6 +3235,7 @@ export default function ChatView({
     };
   }, [markerMessageIds, pinnedMessageIds, timelineMessages]);
   const {
+    pinLimitMessageId,
     handleTogglePinMessage,
     handleTogglePinnedMessageDone,
     handleUnpinMessage,
@@ -3101,16 +3263,9 @@ export default function ChatView({
     if (nextNotes === threadNotes) {
       return;
     }
-    void handleNotesChange(activeThreadId, nextNotes)
-      .then(() => {
-        toastManager.add({
-          type: "success",
-          title: "Project instructions added to notepad.",
-        });
-      })
-      .catch(() => {
-        // `handleNotesChange` already surfaces the save failure through the shared notes toast.
-      });
+    void handleNotesChange(activeThreadId, nextNotes).catch(() => {
+      // `handleNotesChange` already records the save failure in Activity.
+    });
   }, [activeThreadId, handleNotesChange, projectInstructions, threadNotes]);
   const handleJumpToPinnedMessage = useCallback((messageId: MessageId) => {
     timelineControllerRef.current?.scrollToMessage(messageId);
@@ -3125,7 +3280,7 @@ export default function ChatView({
       }
       void dispatchThreadMarkerRemove(activeThreadId, markerId).catch((error) => {
         console.error("Failed to remove thread marker", error);
-        toastManager.add({
+        transientAlertManager.add({
           type: "error",
           title: "Could not remove marker.",
         });
@@ -3144,7 +3299,7 @@ export default function ChatView({
       }
       void dispatchThreadMarkerDoneSet(activeThreadId, markerId, !marker.done).catch((error) => {
         console.error("Failed to update thread marker", error);
-        toastManager.add({
+        transientAlertManager.add({
           type: "error",
           title: "Could not update marker.",
         });
@@ -3159,7 +3314,7 @@ export default function ChatView({
       }
       void dispatchThreadMarkerLabelSet(activeThreadId, markerId, label).catch((error) => {
         console.error("Failed to rename thread marker", error);
-        toastManager.add({
+        transientAlertManager.add({
           type: "error",
           title: "Could not rename marker.",
         });
@@ -3239,7 +3394,6 @@ export default function ChatView({
       })
     : null;
   const gitCwd = threadWorkspaceCwd;
-  const showGitActions = !isContainerLandingProject || Boolean(resolvedThreadWorktreePath);
   const gitBranchSourceCwd = activeProject
     ? resolveThreadBranchSourceCwd({
         projectCwd: activeProject.cwd,
@@ -3251,6 +3405,10 @@ export default function ChatView({
   const isMentionTrigger = composerTriggerKind === "mention";
   const platform = typeof navigator === "undefined" ? "" : navigator.platform;
   const branchesQuery = useQuery(gitBranchesQueryOptions(gitBranchSourceCwd));
+  const isGitRepo = resolveGitRepoUiState({
+    isStudioContainer,
+    queriedIsRepo: branchesQuery.data?.isRepo,
+  });
   const localFolderBrowseRootPath = getLocalFolderBrowseRootPath(
     serverConfigQuery.data?.homeDir ?? null,
     isMacPlatform(platform),
@@ -3399,7 +3557,7 @@ export default function ChatView({
       ? stripComposerTriggerText(prompt, composerTrigger)
       : prompt;
   const canOfferReviewCommand =
-    (branchesQuery.data?.isRepo ?? true) &&
+    isGitRepo &&
     canOfferReviewSlashCommand({
       prompt: composerPromptWithoutActiveSlashTrigger,
       imageCount: composerImages.length,
@@ -3661,16 +3819,34 @@ export default function ChatView({
     () => findProviderStatus(providerStatuses, "codex"),
     [providerStatuses],
   );
+  const desktopVoiceAvailable = hasDesktopVoiceRuntime();
   const refreshProviderStatuses = useRefreshProviderStatusesNow();
   const voiceRecordingDurationLabel = useMemo(
     () => formatVoiceRecordingDuration(voiceRecordingDurationMs),
     [voiceRecordingDurationMs],
   );
-  const canRenderVoiceNotes = voiceProviderStatus?.authStatus !== "unauthenticated";
+  const canRenderVoiceNotes =
+    desktopVoiceAvailable || voiceProviderStatus?.authStatus !== "unauthenticated";
   const canStartVoiceNotes =
-    voiceProviderStatus?.authStatus !== "unauthenticated" &&
-    voiceProviderStatus?.voiceTranscriptionAvailable !== false;
+    desktopVoiceAvailable ||
+    (voiceProviderStatus?.authStatus !== "unauthenticated" &&
+      voiceProviderStatus?.voiceTranscriptionAvailable !== false);
   const showVoiceNotesControl = canRenderVoiceNotes || isVoiceRecording || isVoiceTranscribing;
+  const composerFooterActionPlan = deriveComposerFooterActionPlan({
+    hasLiveTurn,
+    hasSendableContent: composerSendState.hasSendableContent,
+    hasActivePendingProgress: activePendingProgress !== null,
+    hasPendingApproval: isComposerApprovalState,
+    hasPendingUserInput: pendingUserInputs.length > 0,
+    isVoiceActive,
+    showPlanFollowUpPrompt,
+    canShowVoiceNotes: showVoiceNotesControl,
+  });
+  const composerSubmitIsQueue = composerFooterActionPlan.primaryAction === "queue-message";
+  const composerSubmitLabel = composerSubmitIsQueue ? "Queue follow-up" : "Send message";
+  const composerSubmitTitle = composerSubmitIsQueue
+    ? "Queue follow-up (Enter). Press Cmd/Ctrl+Enter to steer the current response instead."
+    : undefined;
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const hasNativeUserMessages = useMemo(
@@ -3689,8 +3865,12 @@ export default function ChatView({
       worktreePath: activeThreadWorktreePath,
     });
   }, [activeProjectCwd, activeThreadWorktreePath]);
-  // Default true while loading to avoid toolbar flicker.
-  const isGitRepo = branchesQuery.data?.isRepo ?? true;
+  const showGitActions = shouldShowGitActions({
+    isStudioContainer,
+    isContainerLandingProject,
+    hasResolvedWorktreePath: Boolean(resolvedThreadWorktreePath),
+    isGitRepo,
+  });
   const repoDiffTotals = useRepoDiffTotals({
     gitCwd: threadWorkspaceCwd,
     isGitRepo,
@@ -3789,7 +3969,7 @@ export default function ChatView({
     (url: string) => {
       const api = readNativeApi();
       void api?.browser.open({ threadId, initialUrl: url }).catch((error) => {
-        toastManager.add({
+        transientAlertManager.add({
           type: "error",
           title: "Could not open repository",
           description:
@@ -3843,6 +4023,7 @@ export default function ChatView({
   const shouldShowProviderHealthBanner = shouldRenderProviderHealthBanner({
     threadEntryPoint: terminalState.entryPoint,
     terminalWorkspaceTerminalTabActive,
+    hasConversationActivity,
   });
   // Terminal-only threads should not pay to mount the hidden chat/composer pane.
   const shouldRenderChatPaneContent = !(
@@ -4718,8 +4899,6 @@ export default function ChatView({
       if (!activeProject) return;
       const nextScripts = activeProject.scripts.filter((script) => script.id !== scriptId);
 
-      const deletedName = activeProject.scripts.find((s) => s.id === scriptId)?.name;
-
       try {
         await persistProjectScripts({
           projectId: activeProject.id,
@@ -4729,12 +4908,8 @@ export default function ChatView({
           keybinding: null,
           keybindingCommand: commandForProjectScript(scriptId),
         });
-        toastManager.add({
-          type: "success",
-          title: `Deleted action "${deletedName ?? "Unknown"}"`,
-        });
       } catch (error) {
-        toastManager.add({
+        transientAlertManager.add({
           type: "error",
           title: "Could not delete action",
           description: error instanceof Error ? error.message : "An unexpected error occurred.",
@@ -4747,13 +4922,14 @@ export default function ChatView({
   const handleRuntimeModeChange = useCallback(
     (mode: RuntimeMode) => {
       if (mode === runtimeMode) return;
-      setComposerDraftRuntimeMode(threadId, mode);
       if (isLocalDraftThread) {
+        setComposerDraftRuntimeMode(threadId, mode);
         setDraftThreadContext(threadId, { runtimeMode: mode });
       }
       if (serverThread) {
         const api = readNativeApi();
         if (api) {
+          setPendingServerRuntimeMode({ threadId, mode });
           void api.orchestration
             .dispatchCommand({
               type: "thread.runtime-mode.set",
@@ -4763,7 +4939,10 @@ export default function ChatView({
               createdAt: new Date().toISOString(),
             })
             .catch((error) => {
-              toastManager.add({
+              setPendingServerRuntimeMode((pending) =>
+                pending?.threadId === threadId && pending.mode === mode ? null : pending,
+              );
+              reportComposerFeedback({
                 type: "error",
                 title: "Could not update access mode",
                 description:
@@ -4776,6 +4955,7 @@ export default function ChatView({
     },
     [
       isLocalDraftThread,
+      reportComposerFeedback,
       runtimeMode,
       scheduleComposerFocus,
       serverThread,
@@ -4804,7 +4984,7 @@ export default function ChatView({
               createdAt: new Date().toISOString(),
             })
             .catch((error) => {
-              toastManager.add({
+              reportComposerFeedback({
                 type: "error",
                 title: "Could not update plan mode",
                 description:
@@ -4818,6 +4998,7 @@ export default function ChatView({
     [
       interactionMode,
       isLocalDraftThread,
+      reportComposerFeedback,
       scheduleComposerFocus,
       serverThread,
       setComposerDraftInteractionMode,
@@ -5086,6 +5267,7 @@ export default function ChatView({
     addComposerAssistantSelectionToDraft,
     canReferenceAssistantSelection: (selection) =>
       !isPendingSetupBubbleId(MessageId.makeUnsafe(selection.assistantMessageId)),
+    reportComposerFeedback,
     scheduleComposerFocus,
     onMessagesClickCaptureBase,
     onMessagesPointerCancelBase,
@@ -5112,7 +5294,7 @@ export default function ChatView({
       }
       const message = timelineMessages.find((candidate) => candidate.id === messageId);
       if (!message) {
-        toastManager.add({
+        reportComposerFeedback({
           type: "warning",
           title: "Could not find the selected message.",
         });
@@ -5123,7 +5305,7 @@ export default function ChatView({
         selectedText: pendingSelection.selection.text,
       });
       if (!range) {
-        toastManager.add({
+        reportComposerFeedback({
           type: "warning",
           title: "Select a unique phrase to mark it.",
           description: "Try including a few more words so Scient can find the exact place.",
@@ -5143,7 +5325,7 @@ export default function ChatView({
         for (const marker of sameStyleOverlappingMarkers) {
           void dispatchThreadMarkerRemove(activeThreadId, marker.id).catch((error) => {
             console.error("Failed to remove thread marker", error);
-            toastManager.add({
+            reportComposerFeedback({
               type: "error",
               title: "Could not remove marker.",
             });
@@ -5162,7 +5344,7 @@ export default function ChatView({
         color,
       }).catch((error) => {
         console.error("Failed to create thread marker", error);
-        toastManager.add({
+        reportComposerFeedback({
           type: "error",
           title: "Could not create marker.",
         });
@@ -5173,6 +5355,7 @@ export default function ChatView({
       dismissTranscriptSelectionAction,
       isPendingSetupBubbleId,
       pendingTranscriptSelectionAction,
+      reportComposerFeedback,
       threadMarkers,
       timelineMessages,
     ],
@@ -5443,9 +5626,13 @@ export default function ChatView({
 
   useEffect(() => {
     voiceTranscriptionRequestIdRef.current += 1;
+    voiceCompletionInFlightRef.current = false;
     voiceRecordingStartedAtRef.current = null;
+    setLiveVoicePreview(null);
+    void liveVoicePreviewSessionRef.current?.stop();
+    void readNativeApi()?.server.cancelVoiceTranscription?.();
     void cancelVoiceRecording();
-    setIsVoiceTranscribing(false);
+    setVoiceCompletionIntent(null);
     setOptimisticUserMessages((existing) => {
       if (existing.length === 0) return existing;
       for (const message of existing) {
@@ -5472,9 +5659,12 @@ export default function ChatView({
       isVoiceRecording,
     });
     voiceTranscriptionRequestIdRef.current += 1;
+    voiceCompletionInFlightRef.current = false;
     voiceRecordingStartedAtRef.current = null;
+    setLiveVoicePreview(null);
+    void liveVoicePreviewSessionRef.current?.stop();
     void cancelVoiceRecording();
-    setIsVoiceTranscribing(false);
+    setVoiceCompletionIntent(null);
   }, [
     canStartVoiceNotes,
     cancelVoiceRecording,
@@ -5821,6 +6011,24 @@ export default function ChatView({
     ],
   );
 
+  const onProviderConnectionRequested = useCallback(
+    (provider: ProviderKind) => {
+      providerSelectionIntent.request(provider, findProviderStatus(providerStatuses, provider));
+    },
+    [providerSelectionIntent, providerStatuses],
+  );
+  useApplyProviderSelectionAfterConnection({
+    controller: providerSelectionIntent,
+    scopeKey: threadId,
+    lockedProvider,
+    statuses: providerStatuses,
+    modelOptionsByProvider,
+    loadingModelProviders: providerModelDiscoveryPendingByProvider,
+    preferredModelByProvider: composerModelHintByProvider,
+    canApply: activeThread !== undefined,
+    onProviderModelChange: onProviderModelSelect,
+  });
+
   useEffect(() => {
     if (surfaceMode === "split" && !isFocusedPane) {
       return;
@@ -6080,30 +6288,66 @@ export default function ChatView({
     if (!activeProject) {
       return;
     }
-    if (voiceProviderStatus?.authStatus === "unauthenticated") {
+    if (!desktopVoiceAvailable && voiceProviderStatus?.authStatus === "unauthenticated") {
       useProviderConnectionDialogStore.getState().openDialog("codex", "runtime_error");
       return;
     }
     if (!canStartVoiceNotes) {
-      toastManager.add({
+      reportComposerFeedback({
         type: "error",
-        title: "Voice notes require a ChatGPT-authenticated Codex session.",
+        title: "Voice transcription is unavailable in this browser session.",
       });
       return;
     }
     if (pendingUserInputs.length > 0) {
-      toastManager.add({
+      reportComposerFeedback({
         type: "error",
         title: "Answer plan questions before recording a voice note.",
       });
       return;
     }
 
+    if (!(await ensureDesktopVoiceReady(settings.voiceTranscriptionMode, reportComposerFeedback))) {
+      return;
+    }
+
     try {
+      await liveVoicePreviewSessionRef.current?.stop();
       await startVoiceRecording();
       voiceRecordingStartedAtRef.current = performance.now();
+      setLiveVoicePreview(null);
+      if (desktopVoiceAvailable) {
+        const api = readNativeApi();
+        if (api) {
+          try {
+            liveVoicePreviewSessionRef.current?.start({
+              getRecordingDurationMs: () => {
+                const startedAt = voiceRecordingStartedAtRef.current;
+                return startedAt === null
+                  ? Number.POSITIVE_INFINITY
+                  : Math.max(0, performance.now() - startedAt);
+              },
+              captureSnapshot: snapshotVoiceRecording,
+              transcribeSnapshot: async (payload) => {
+                const result = await api.server.transcribeVoice({
+                  mode: "offline-only",
+                  cwd: activeProject.cwd,
+                  ...(activeThread ? { threadId: activeThread.id } : {}),
+                  ...payload,
+                });
+                return result.text;
+              },
+              cancelActiveTranscription: () =>
+                api.server.cancelVoiceTranscription?.() ?? Promise.resolve(),
+              onPreview: setLiveVoicePreview,
+            });
+          } catch {
+            // Preview is opportunistic; the authoritative Stop/Send pass still works.
+          }
+        }
+      }
     } catch (error) {
-      toastManager.add({
+      reportComposerFeedback({
         type: "error",
         title: "Could not start recording",
         description: describeVoiceRecordingStartError(error),
@@ -6111,138 +6355,166 @@ export default function ChatView({
     }
   }, [
     activeProject,
+    activeThread,
     canStartVoiceNotes,
+    desktopVoiceAvailable,
     pendingUserInputs.length,
+    reportComposerFeedback,
+    settings.voiceTranscriptionMode,
+    snapshotVoiceRecording,
     startVoiceRecording,
     voiceProviderStatus?.authStatus,
   ]);
 
-  const submitComposerVoiceRecording = useCallback(async () => {
-    if (!activeProject || !isVoiceRecording) {
-      return;
-    }
-    const recordedForMs =
-      voiceRecordingStartedAtRef.current === null
-        ? null
-        : Math.round(performance.now() - voiceRecordingStartedAtRef.current);
-    if (
-      recordedForMs !== null &&
-      recordedForMs >= 0 &&
-      recordedForMs < VOICE_RECORDER_ACTION_ARM_DELAY_MS
-    ) {
-      warnVoiceGuard("ignored recorder action immediately after start", {
-        recordedForMs,
-      });
-      return;
-    }
-
-    const api = readNativeApi();
-    if (!api) {
-      toastManager.add({
-        type: "error",
-        title: "Voice transcription is unavailable right now.",
-      });
-      void cancelVoiceRecording();
-      return;
-    }
-
-    setIsVoiceTranscribing(true);
-    const requestId = voiceTranscriptionRequestIdRef.current + 1;
-    voiceTranscriptionRequestIdRef.current = requestId;
-    const requestThreadId = threadId;
-    const requestProvider = selectedProvider;
-    const isCurrentVoiceRequest = () =>
-      voiceTranscriptionRequestIdRef.current === requestId &&
-      voiceThreadIdRef.current === requestThreadId &&
-      voiceProviderRef.current === requestProvider;
-
-    try {
-      const payload = await stopVoiceRecording();
-      if (!isCurrentVoiceRequest()) {
+  const finishComposerVoiceRecording = useCallback(
+    async (intent: ComposerVoiceCompletionIntent) => {
+      if (!activeProject || !isVoiceRecording || voiceCompletionInFlightRef.current) {
         return;
       }
-      if (!payload) {
-        toastManager.add({
-          type: "warning",
-          title: "No audio was captured.",
+      const recordedForMs =
+        voiceRecordingStartedAtRef.current === null
+          ? null
+          : Math.round(performance.now() - voiceRecordingStartedAtRef.current);
+      if (
+        recordedForMs !== null &&
+        recordedForMs >= 0 &&
+        recordedForMs < VOICE_RECORDER_ACTION_ARM_DELAY_MS
+      ) {
+        warnVoiceGuard("ignored recorder action immediately after start", {
+          recordedForMs,
         });
         return;
       }
-      const result = await api.server.transcribeVoice({
-        provider: "codex",
-        cwd: activeProject.cwd,
-        ...(activeThread ? { threadId: activeThread.id } : {}),
-        ...payload,
-      });
-      if (!isCurrentVoiceRequest()) {
+
+      const api = readNativeApi();
+      if (!api) {
+        reportComposerFeedback({
+          type: "error",
+          title: "Voice transcription is unavailable right now.",
+        });
+        void cancelVoiceRecording();
         return;
       }
-      appendVoiceTranscriptToComposer(result.text);
-    } catch (error) {
-      if (!isCurrentVoiceRequest()) {
-        return;
-      }
-      const description =
-        error instanceof Error
-          ? sanitizeVoiceErrorMessage(error.message)
-          : "The voice note could not be transcribed.";
-      const authExpired = isVoiceAuthExpiredMessage(description);
-      if (authExpired) {
-        void refreshProviderStatuses();
-      }
-      toastManager.add({
-        type: "error",
-        title: authExpired ? "Sign in to ChatGPT again" : "Couldn't transcribe voice note",
-        description: authExpired
-          ? "Voice transcription uses your ChatGPT session in Codex. That session was rejected, so sign in again there and retry."
-          : description,
-        ...(authExpired
-          ? {
-              actionProps: {
-                children: "Refresh status",
-                onClick: () => {
-                  void refreshProviderStatuses();
-                },
-              },
+
+      setVoiceCompletionIntent(intent);
+      voiceCompletionInFlightRef.current = true;
+      const requestId = voiceTranscriptionRequestIdRef.current + 1;
+      voiceTranscriptionRequestIdRef.current = requestId;
+      const requestThreadId = threadId;
+      const requestProvider = selectedProvider;
+      const isCurrentVoiceRequest = () =>
+        voiceTranscriptionRequestIdRef.current === requestId &&
+        voiceThreadIdRef.current === requestThreadId &&
+        voiceProviderRef.current === requestProvider;
+
+      try {
+        // A partial uses the same serialized local helper as the final pass.
+        // Cancel and drain it first so Stop/Send never waits behind stale work.
+        await liveVoicePreviewSessionRef.current?.stop();
+        if (!isCurrentVoiceRequest()) {
+          return;
+        }
+        const payload = await stopVoiceRecording();
+        if (!isCurrentVoiceRequest()) {
+          return;
+        }
+        if (!payload) {
+          reportComposerFeedback({
+            type: "warning",
+            title: "No audio was captured.",
+          });
+          return;
+        }
+        const result = await api.server.transcribeVoice({
+          mode: settings.voiceTranscriptionMode,
+          cwd: activeProject.cwd,
+          ...(activeThread ? { threadId: activeThread.id } : {}),
+          ...payload,
+        });
+        if (!isCurrentVoiceRequest()) {
+          return;
+        }
+        const completion = await completeComposerVoiceTranscript({
+          intent,
+          currentPrompt: promptRef.current,
+          transcript: result.text,
+          insertTranscript: (transcript, completedPrompt) => {
+            if (promptRef.current === completedPrompt) {
+              return false;
             }
-          : {}),
-      });
-    } finally {
-      if (isCurrentVoiceRequest()) {
-        voiceRecordingStartedAtRef.current = null;
-        setIsVoiceTranscribing(false);
+            appendVoiceTranscriptToComposer(transcript);
+            return true;
+          },
+          sendPrompt: (nextPrompt) => sendVoiceTranscriptRef.current(nextPrompt),
+        });
+        if (completion === "empty") {
+          reportComposerFeedback({
+            type: "warning",
+            title: "No speech was detected.",
+          });
+        }
+      } catch (error) {
+        if (!isCurrentVoiceRequest()) {
+          return;
+        }
+        const description =
+          error instanceof Error
+            ? sanitizeVoiceErrorMessage(error.message)
+            : "The voice note could not be transcribed.";
+        const authExpired = !desktopVoiceAvailable && isVoiceAuthExpiredMessage(description);
+        if (authExpired) {
+          void refreshProviderStatuses();
+        }
+        reportComposerFeedback({
+          type: "error",
+          title: authExpired ? "Sign in to ChatGPT again" : "Couldn't transcribe voice note",
+          description: authExpired
+            ? "Your ChatGPT session was rejected. Sign in again and retry."
+            : description,
+          ...(authExpired
+            ? {
+                actionProps: {
+                  children: "Refresh status",
+                  onClick: () => {
+                    void refreshProviderStatuses();
+                  },
+                },
+              }
+            : {}),
+        });
+      } finally {
+        if (isCurrentVoiceRequest()) {
+          voiceCompletionInFlightRef.current = false;
+          voiceRecordingStartedAtRef.current = null;
+          setLiveVoicePreview(null);
+          setVoiceCompletionIntent(null);
+        }
       }
-    }
-  }, [
-    activeProject,
-    activeThread,
-    appendVoiceTranscriptToComposer,
-    cancelVoiceRecording,
-    isVoiceRecording,
-    refreshProviderStatuses,
-    selectedProvider,
-    stopVoiceRecording,
-    threadId,
-  ]);
+    },
+    [
+      activeProject,
+      activeThread,
+      appendVoiceTranscriptToComposer,
+      cancelVoiceRecording,
+      desktopVoiceAvailable,
+      isVoiceRecording,
+      reportComposerFeedback,
+      refreshProviderStatuses,
+      selectedProvider,
+      settings.voiceTranscriptionMode,
+      stopVoiceRecording,
+      threadId,
+    ],
+  );
 
   const cancelComposerVoiceRecording = useCallback(() => {
-    const recordedForMs =
-      voiceRecordingStartedAtRef.current === null
-        ? null
-        : Math.round(performance.now() - voiceRecordingStartedAtRef.current);
-    if (
-      recordedForMs !== null &&
-      recordedForMs >= 0 &&
-      recordedForMs < VOICE_RECORDER_ACTION_ARM_DELAY_MS
-    ) {
-      warnVoiceGuard("ignored recorder action immediately after start", {
-        recordedForMs,
-      });
-      return;
-    }
     voiceTranscriptionRequestIdRef.current += 1;
+    voiceCompletionInFlightRef.current = false;
     voiceRecordingStartedAtRef.current = null;
-    setIsVoiceTranscribing(false);
+    setLiveVoicePreview(null);
+    setVoiceCompletionIntent(null);
+    void liveVoicePreviewSessionRef.current?.stop();
+    void readNativeApi()?.server.cancelVoiceTranscription?.();
     void cancelVoiceRecording();
   }, [cancelVoiceRecording]);
 
@@ -6253,7 +6525,7 @@ export default function ChatView({
       return;
     }
     if (isVoiceRecording) {
-      void submitComposerVoiceRecording();
+      void finishComposerVoiceRecording("insert");
       return;
     }
     void startComposerVoiceRecording();
@@ -6261,7 +6533,7 @@ export default function ChatView({
     isVoiceRecording,
     isVoiceTranscribing,
     startComposerVoiceRecording,
-    submitComposerVoiceRecording,
+    finishComposerVoiceRecording,
   ]);
 
   // --- Composer attachment entry points -------------------------------------
@@ -6270,7 +6542,7 @@ export default function ChatView({
       if (!activeThreadId || files.length === 0) return;
 
       if (pendingUserInputs.length > 0) {
-        toastManager.add({
+        reportComposerFeedback({
           type: "error",
           title: "Attach images after answering plan questions.",
         });
@@ -6289,14 +6561,16 @@ export default function ChatView({
       } else if (nextImages.length > 1) {
         addComposerImagesToDraft(nextImages);
       }
-      setThreadError(activeThreadId, error);
+      if (error) {
+        reportComposerFeedback({ type: "error", title: error });
+      }
     },
     [
       activeThreadId,
       addComposerImage,
       addComposerImagesToDraft,
       pendingUserInputs.length,
-      setThreadError,
+      reportComposerFeedback,
     ],
   );
 
@@ -6309,7 +6583,7 @@ export default function ChatView({
       if (!activeThreadId || files.length === 0) return;
 
       if (pendingUserInputs.length > 0) {
-        toastManager.add({
+        reportComposerFeedback({
           type: "error",
           title: "Attach files after answering plan questions.",
         });
@@ -6326,9 +6600,11 @@ export default function ChatView({
       if (nextFiles.length > 0) {
         addComposerFilesToDraft(nextFiles);
       }
-      setThreadError(activeThreadId, error);
+      if (error) {
+        reportComposerFeedback({ type: "error", title: error });
+      }
     },
-    [activeThreadId, addComposerFilesToDraft, pendingUserInputs.length, setThreadError],
+    [activeThreadId, addComposerFilesToDraft, pendingUserInputs.length, reportComposerFeedback],
   );
 
   const removeComposerFile = (fileId: string) => {
@@ -6461,7 +6737,7 @@ export default function ChatView({
       try {
         await createThreadHandoff(activeThread, targetProvider);
       } catch (error) {
-        toastManager.add({
+        reportComposerFeedback({
           type: "error",
           title: "Could not create handoff thread",
           description:
@@ -6471,7 +6747,7 @@ export default function ChatView({
         });
       }
     },
-    [activeThread, createThreadHandoff, handoffDisabled],
+    [activeThread, createThreadHandoff, handoffDisabled, reportComposerFeedback],
   );
 
   const clearComposerInput = useCallback(
@@ -6626,7 +6902,7 @@ export default function ChatView({
                 createdAt,
               });
             } catch {
-              toastManager.add({
+              reportComposerFeedback({
                 type: "warning",
                 title: "Thread note not added",
                 description:
@@ -6638,14 +6914,14 @@ export default function ChatView({
         void queryClient.invalidateQueries({ queryKey: automationQueryKey });
         clearComposerInput(activeThread?.id ?? threadId);
         resetAutomationDraftState();
-        toastManager.add({
+        reportComposerFeedback({
           type: "success",
           title: "Automation created",
           description: `${definition.name} - ${formatCadence(definition.schedule)}`,
         });
         return true;
       } catch (error) {
-        toastManager.add({
+        reportComposerFeedback({
           type: "error",
           title: "Could not create automation",
           description:
@@ -6664,6 +6940,7 @@ export default function ChatView({
       isServerThread,
       providerOptionsForDispatch,
       queryClient,
+      reportComposerFeedback,
       resetAutomationDraftState,
       threadId,
     ],
@@ -6678,7 +6955,7 @@ export default function ChatView({
     }): Promise<ThreadId | null> => {
       const api = readNativeApi();
       if (!api || !activeProject || !activeThread) {
-        toastManager.add({
+        reportComposerFeedback({
           type: "warning",
           title: "Chat required",
           description: "Open a chat before creating a chat-bound automation.",
@@ -6714,7 +6991,7 @@ export default function ChatView({
           { force: true },
         );
         if (result === "unavailable") {
-          toastManager.add({
+          reportComposerFeedback({
             type: "error",
             title: "Could not create chat",
             description: "Scient could not promote this draft before saving the automation.",
@@ -6734,7 +7011,7 @@ export default function ChatView({
 
         return activeThread.id;
       } catch (error) {
-        toastManager.add({
+        reportComposerFeedback({
           type: "error",
           title: "Could not create chat",
           description:
@@ -6745,7 +7022,14 @@ export default function ChatView({
         return null;
       }
     },
-    [activeProject, activeThread, activeThreadAssociatedWorktree, isServerThread, threadNotes],
+    [
+      activeProject,
+      activeThread,
+      activeThreadAssociatedWorktree,
+      isServerThread,
+      reportComposerFeedback,
+      threadNotes,
+    ],
   );
 
   const prepareAutomationFormForCreate = useCallback(
@@ -6846,7 +7130,7 @@ export default function ChatView({
           updateInputFromForm(input.definition, input.form, providerOptions, acknowledgedRisks),
         );
         resetAutomationDraftState();
-        toastManager.add({
+        reportComposerFeedback({
           type: "success",
           title: "Automation updated",
           description: `${updated.name} - ${formatCadence(updated.schedule)}`,
@@ -6859,7 +7143,12 @@ export default function ChatView({
         setIsAutomationDraftSubmitting(false);
       }
     },
-    [automationUpdateMutation, providerOptionsForDispatch, resetAutomationDraftState],
+    [
+      automationUpdateMutation,
+      providerOptionsForDispatch,
+      reportComposerFeedback,
+      resetAutomationDraftState,
+    ],
   );
 
   const submitAutomationDraft = useCallback(async () => {
@@ -6996,6 +7285,7 @@ export default function ChatView({
     e?: { preventDefault: () => void },
     dispatchMode: "queue" | "steer" = "queue",
     queuedTurn?: QueuedComposerChatTurn,
+    voicePromptOverride?: string,
   ): Promise<boolean> => {
     e?.preventDefault();
     const api = readNativeApi();
@@ -7004,13 +7294,19 @@ export default function ChatView({
       !activeThread ||
       isSendBusy ||
       isConnecting ||
-      isVoiceTranscribing ||
+      (isVoiceTranscribing && voicePromptOverride === undefined) ||
       sendPreflightInFlightRef.current ||
       sendInFlightRef.current
     ) {
       return false;
     }
-    if (activePendingProgress) {
+    if (
+      shouldRouteComposerSendToPendingInput({
+        hasActivePendingProgress: activePendingProgress !== null,
+        hasVoicePromptOverride: voicePromptOverride !== undefined,
+      }) &&
+      activePendingProgress
+    ) {
       const activeQuestion = activePendingProgress.activeQuestion;
       const liveComposerSnapshot = composerEditorRef.current?.readSnapshot() ?? null;
       const livePendingAnswerText = liveComposerSnapshot?.value ?? promptRef.current;
@@ -7048,7 +7344,11 @@ export default function ChatView({
     const queuedChatTurn = queuedTurn ?? null;
     const liveComposerSnapshot =
       queuedChatTurn === null ? (composerEditorRef.current?.readSnapshot() ?? null) : null;
-    let promptForSend = queuedChatTurn?.prompt ?? liveComposerSnapshot?.value ?? promptRef.current;
+    let promptForSend =
+      queuedChatTurn?.prompt ??
+      voicePromptOverride ??
+      liveComposerSnapshot?.value ??
+      promptRef.current;
     let composerImagesForSend = queuedChatTurn?.images ?? composerImages;
     // AppSnap captures persist as IndexedDB blobs and hydrate into `images`
     // asynchronously (see AppSnapCoordinator). Right after a reload the user can
@@ -7204,7 +7504,7 @@ export default function ChatView({
           expiredTerminalContextCount,
           "empty",
         );
-        toastManager.add({
+        reportComposerFeedback({
           type: "warning",
           title: toastCopy.title,
           description: toastCopy.description,
@@ -7241,7 +7541,7 @@ export default function ChatView({
           // clearing the composer would drop attachments/mentions Cancel can't restore,
           // and ephemeral setup bubbles must not anchor a running turn's work rows.
           if (!hasPromptOnlySendableContent || hasLiveTurn) {
-            toastManager.add({
+            reportComposerFeedback({
               type: "warning",
               title: "Automation needs a bit more detail",
               description:
@@ -7382,7 +7682,7 @@ export default function ChatView({
       if (nextAttachmentCount <= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
         composerImagesForSend = [...composerImagesForSend, browserPromptAttachment.image];
       } else {
-        toastManager.add({
+        reportComposerFeedback({
           type: "warning",
           title: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} references per message.`,
           description:
@@ -7398,7 +7698,7 @@ export default function ChatView({
             : browserPromptAttachment.reason === "attachment-too-large"
               ? `The browser screenshot exceeded the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`
               : "The current browser context could not be attached.";
-      toastManager.add({
+      reportComposerFeedback({
         type: "warning",
         title: "Couldn’t attach the in-app browser context",
         description,
@@ -7726,7 +8026,7 @@ export default function ChatView({
         expiredTerminalContextCount,
         "omitted",
       );
-      toastManager.add({
+      reportComposerFeedback({
         type: "warning",
         title: toastCopy.title,
         description: toastCopy.description,
@@ -8014,6 +8314,8 @@ export default function ChatView({
     }
     return turnStartSucceeded;
   };
+  sendVoiceTranscriptRef.current = (voicePrompt) =>
+    onSend(undefined, "queue", undefined, voicePrompt);
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
@@ -8023,31 +8325,64 @@ export default function ChatView({
       setRespondingRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
-      // Durably persist "always allow" client-side so the next turn (after an
-      // idle-stop or runtime restart) keeps full-access instead of asking again.
-      // The server's session override only covers the current live turn.
+      // The provider's session override only covers the current live turn.
+      // Persist "always allow" on the server thread as well so a restart does
+      // not silently return to approval-required.
       const durableRuntimeMode = resolveRuntimeModeAfterApprovalDecision(runtimeMode, decision);
-      if (durableRuntimeMode) {
-        setComposerDraftRuntimeMode(activeThreadId, durableRuntimeMode);
-      }
-      await api.orchestration
-        .dispatchCommand({
-          type: "thread.approval.respond",
-          commandId: newCommandId(),
-          threadId: activeThreadId,
-          requestId,
-          decision,
-          createdAt: new Date().toISOString(),
-        })
-        .catch((err: unknown) => {
+      try {
+        try {
+          await api.orchestration.dispatchCommand({
+            type: "thread.approval.respond",
+            commandId: newCommandId(),
+            threadId: activeThreadId,
+            requestId,
+            decision,
+            createdAt: new Date().toISOString(),
+          });
+        } catch (err: unknown) {
           setStoreThreadError(
             activeThreadId,
             err instanceof Error ? err.message : "Failed to submit approval decision.",
           );
-        });
-      setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
+          return;
+        }
+        if (durableRuntimeMode) {
+          const runtimeModeActivityKey = `thread:${activeThreadId}:runtime-mode-persistence`;
+          setPendingServerRuntimeMode({ threadId: activeThreadId, mode: durableRuntimeMode });
+          try {
+            await api.orchestration.dispatchCommand({
+              type: "thread.runtime-mode.set",
+              commandId: newCommandId(),
+              threadId: activeThreadId,
+              runtimeMode: durableRuntimeMode,
+              createdAt: new Date().toISOString(),
+            });
+            activityManager.remove(runtimeModeActivityKey);
+          } catch (err: unknown) {
+            setPendingServerRuntimeMode((pending) =>
+              pending?.threadId === activeThreadId && pending.mode === durableRuntimeMode
+                ? null
+                : pending,
+            );
+            activityManager.publish({
+              dedupeKey: runtimeModeActivityKey,
+              source: "thread",
+              status: "needs_attention",
+              tone: "warning",
+              title: "Approval sent, but agent access was not saved",
+              description:
+                err instanceof Error
+                  ? err.message
+                  : "Choose Unrestricted again to keep it for future turns.",
+              destination: { type: "thread", threadId: activeThreadId },
+            });
+          }
+        }
+      } finally {
+        setRespondingRequestIds((existing) => existing.filter((id) => id !== requestId));
+      }
     },
-    [activeThreadId, runtimeMode, setComposerDraftRuntimeMode, setStoreThreadError],
+    [activeThreadId, runtimeMode, setStoreThreadError],
   );
 
   const onRespondToUserInput = useCallback(
@@ -8709,7 +9044,7 @@ export default function ChatView({
               useStore.getState().removeDeletedThreadFromClientState,
           });
         }
-        toastManager.add({
+        reportComposerFeedback({
           type: "error",
           title: "Could not start implementation thread",
           description:
@@ -8732,6 +9067,7 @@ export default function ChatView({
     selectedPromptEffort,
     selectedModelSelection,
     providerOptionsForDispatch,
+    reportComposerFeedback,
     rememberCustomBinaryPathForDispatch,
     selectedProvider,
     assistantDeliveryMode,
@@ -8859,17 +9195,11 @@ export default function ChatView({
         lockedProvider={lockedProvider}
         providers={providerStatuses}
         modelOptionsByProvider={modelOptionsByProvider}
-        loadingModelProviders={{
-          antigravity: antigravityModelDiscoveryPending,
-          cursor: cursorModelDiscoveryPending,
-          droid: droidModelDiscoveryPending,
-          kilo: kiloModelDiscoveryPending,
-          opencode: openCodeModelDiscoveryPending,
-          pi: piModelDiscoveryPending,
-        }}
+        loadingModelProviders={providerModelDiscoveryPendingByProvider}
         hiddenProviders={settings.hiddenProviders}
         providerOrder={settings.providerOrder}
         onProviderModelChange={onProviderModelSelect}
+        onProviderConnectionRequested={onProviderConnectionRequested}
         onSelectionCommitted={scheduleComposerFocus}
         open={isModelPickerOpen}
         onOpenChange={handleModelPickerOpenChange}
@@ -8902,14 +9232,7 @@ export default function ChatView({
       lockedProvider={lockedProvider}
       providers={providerStatuses}
       modelOptionsByProvider={modelOptionsByProvider}
-      loadingModelProviders={{
-        antigravity: antigravityModelDiscoveryPending,
-        cursor: cursorModelDiscoveryPending,
-        droid: droidModelDiscoveryPending,
-        kilo: kiloModelDiscoveryPending,
-        opencode: openCodeModelDiscoveryPending,
-        pi: piModelDiscoveryPending,
-      }}
+      loadingModelProviders={providerModelDiscoveryPendingByProvider}
       hiddenProviders={settings.hiddenProviders}
       providerOrder={settings.providerOrder}
       threadId={threadId}
@@ -8920,6 +9243,7 @@ export default function ChatView({
       prompt={prompt}
       onPromptChange={setPromptFromTraits}
       onProviderModelChange={onProviderModelSelect}
+      onProviderConnectionRequested={onProviderConnectionRequested}
       onSelectionCommitted={scheduleComposerFocus}
       open={isComposerModelEffortPickerOpen}
       onOpenChange={handleComposerModelEffortPickerOpenChange}
@@ -9420,6 +9744,7 @@ export default function ChatView({
   );
 
   const {
+    handleForkFromMessage,
     handleForkTargetSelection,
     handleReviewTargetSelection,
     isSlashStatusDialogOpen,
@@ -9459,7 +9784,7 @@ export default function ChatView({
       }),
     handleClearConversation: async () => {
       if (!activeProject) {
-        toastManager.add({
+        reportComposerFeedback({
           type: "warning",
           title: "Clear is unavailable",
           description: "Open a project before starting a fresh thread.",
@@ -9477,6 +9802,7 @@ export default function ChatView({
       setComposerCommandPicker("review-target");
       setComposerHighlightedItemId("review-target:changes");
     },
+    reportComposerFeedback,
     setComposerDraftProviderModelOptions,
     editorActions: slashEditorActions,
   });
@@ -10092,7 +10418,7 @@ export default function ChatView({
           }
         : undefined,
     }).catch((error) => {
-      toastManager.add({
+      transientAlertManager.add({
         type: "error",
         title: "Failed to rename thread",
         description: error instanceof Error ? error.message : "An error occurred.",
@@ -10101,7 +10427,7 @@ export default function ChatView({
     });
 
     if (outcome === "empty") {
-      toastManager.add({
+      transientAlertManager.add({
         type: "warning",
         title: "Thread title cannot be empty",
       });
@@ -10289,6 +10615,7 @@ export default function ChatView({
     activeThreadId: activeThread.id,
     activeProvider: activeThread.session?.provider ?? activeThread.modelSelection.provider,
     isStudioChat: isStudioContainer,
+    studioFolderPath: isStudioContainer ? resolvedThreadWorktreePath : null,
     showGitActions,
     diffOpen: resolvedDiffOpen,
     threadAutomations: threadAutomationItems,
@@ -10514,13 +10841,17 @@ export default function ChatView({
                   <ComposerPromptEditor
                     ref={composerEditorRef}
                     value={
-                      isComposerApprovalState
-                        ? ""
-                        : activePendingProgress
-                          ? activePendingProgress.customAnswer
-                          : prompt
+                      isVoiceActive
+                        ? (liveVoicePreviewPrompt ?? prompt)
+                        : isComposerApprovalState
+                          ? ""
+                          : activePendingProgress
+                            ? activePendingProgress.customAnswer
+                            : liveVoicePreviewPrompt
+                              ? liveVoicePreviewPrompt
+                              : prompt
                     }
-                    cursor={composerCursor}
+                    cursor={liveVoicePreviewPrompt ? liveVoicePreviewPrompt.length : composerCursor}
                     terminalContexts={
                       !isComposerApprovalState && pendingUserInputs.length === 0
                         ? composerTerminalContexts
@@ -10535,27 +10866,32 @@ export default function ChatView({
                       ? { onCollapsePastedText: addPastedTextToDraft }
                       : {})}
                     placeholder={
-                      isComposerApprovalState
-                        ? "Resolve this approval request to continue"
-                        : activePendingProgress
-                          ? activePendingProgress.activeQuestion?.options.length === 0
-                            ? "Type your answer to continue"
-                            : "Type your own answer, or leave this blank to use the selected option"
-                          : showPlanFollowUpPrompt && activeProposedPlan
-                            ? "Add feedback to refine the plan, or leave this blank to implement it"
-                            : hasLiveTurn
-                              ? "Ask for follow-up changes"
-                              : phase === "disconnected"
-                                ? "Ask for follow-up changes or attach images"
-                                : "Ask anything, @tag files/folders, or use / to show available commands"
+                      isVoiceActive
+                        ? "Listening..."
+                        : isComposerApprovalState
+                          ? "Resolve this approval request to continue"
+                          : activePendingProgress
+                            ? activePendingProgress.activeQuestion?.options.length === 0
+                              ? "Type your answer to continue"
+                              : "Type your own answer, or leave this blank to use the selected option"
+                            : showPlanFollowUpPrompt && activeProposedPlan
+                              ? "Add feedback to refine the plan, or leave this blank to implement it"
+                              : hasLiveTurn
+                                ? "Ask for follow-up changes"
+                                : phase === "disconnected"
+                                  ? "Ask for follow-up changes or attach images"
+                                  : "Ask anything, @tag files/folders, or use / to show available commands"
                     }
+                    {...(liveVoicePreview ? { className: "opacity-55" } : {})}
                     disabled={isComposerEditorDisabled}
                   />
                 </div>
-                {/* Bottom toolbar — hidden while an approval takes over the composer,
-                    since the approve/decline actions live in the detached approval card
-                    floating above (see ComposerPendingApprovalPanel). */}
-                {activePendingApproval ? null : (
+                {/* An idle approval owns the composer footer. If it arrives during active
+                    voice capture, keep recorder controls mounted until voice settles. */}
+                {shouldRenderComposerFooter({
+                  hasPendingApproval: activePendingApproval !== null,
+                  isVoiceActive,
+                }) ? (
                   <div
                     data-chat-composer-footer="true"
                     className={cn(
@@ -10580,6 +10916,52 @@ export default function ChatView({
                       {relocateComposerLeadingControls
                         ? null
                         : renderComposerLeadingControls({ iconOnly: false })}
+
+                      {!isVoiceRecording && !isVoiceTranscribing && composerLocalFeedback ? (
+                        <span
+                          data-composer-local-feedback="true"
+                          role={
+                            composerLocalFeedback.type === "error" ||
+                            composerLocalFeedback.type === "warning"
+                              ? "alert"
+                              : "status"
+                          }
+                          title={
+                            composerLocalFeedback.description
+                              ? `${composerLocalFeedback.title} — ${composerLocalFeedback.description}`
+                              : composerLocalFeedback.title
+                          }
+                          className={cn(
+                            "flex min-w-0 max-w-72 flex-1 items-center gap-1.5 px-1 text-[length:var(--app-font-size-ui-sm,11px)]",
+                            composerLocalFeedback.type === "error" ||
+                              composerLocalFeedback.type === "warning"
+                              ? "text-destructive"
+                              : "text-[var(--color-text-foreground-secondary)]",
+                          )}
+                        >
+                          <span className="truncate">
+                            {composerLocalFeedback.title}
+                            {composerLocalFeedback.description ? (
+                              <span className="opacity-80">
+                                {" — "}
+                                {composerLocalFeedback.description}
+                              </span>
+                            ) : null}
+                          </span>
+                          {composerLocalFeedback.actionProps ? (
+                            <button
+                              type="button"
+                              className="shrink-0 font-medium underline underline-offset-2 hover:text-foreground"
+                              onClick={() => {
+                                composerLocalFeedback.actionProps?.onClick();
+                                setComposerLocalFeedback(null);
+                              }}
+                            >
+                              {composerLocalFeedback.actionProps.children}
+                            </button>
+                          ) : null}
+                        </span>
+                      ) : null}
 
                       {!isVoiceRecording && !isVoiceTranscribing ? (
                         <>
@@ -10649,24 +11031,26 @@ export default function ChatView({
                       {!isVoiceRecording && !isVoiceTranscribing ? composerPickerControls : null}
                       {showVoiceNotesControl && (isVoiceRecording || isVoiceTranscribing) ? (
                         <ComposerVoiceRecorderBar
+                          disabled={isConnecting || isSendBusy}
+                          completionIntent={voiceCompletionIntent}
+                          durationLabel={voiceRecordingDurationLabel}
+                          waveformLevels={voiceWaveformLevels}
+                          onCancel={cancelComposerVoiceRecording}
+                          onInsert={() => void finishComposerVoiceRecording("insert")}
+                          onSend={() => void finishComposerVoiceRecording("send")}
+                        />
+                      ) : null}
+                      {composerFooterActionPlan.showVoiceButton ? (
+                        <ComposerVoiceButton
                           disabled={isComposerApprovalState || isConnecting || isSendBusy}
                           isRecording={isVoiceRecording}
                           isTranscribing={isVoiceTranscribing}
                           durationLabel={voiceRecordingDurationLabel}
-                          waveformLevels={voiceWaveformLevels}
-                          onCancel={() => {
-                            if (isVoiceRecording) {
-                              void submitComposerVoiceRecording();
-                              return;
-                            }
-                            cancelComposerVoiceRecording();
-                          }}
-                          onSubmit={() => {
-                            void submitComposerVoiceRecording();
-                          }}
+                          onClick={toggleComposerVoiceRecording}
                         />
                       ) : null}
-                      {activePendingProgress ? (
+                      {composerFooterActionPlan.primaryAction === "pending-input" &&
+                      activePendingProgress ? (
                         <Button
                           type="submit"
                           size="sm"
@@ -10684,7 +11068,7 @@ export default function ChatView({
                               ? "Submit answers"
                               : "Next question"}
                         </Button>
-                      ) : phase === "running" ? (
+                      ) : composerFooterActionPlan.primaryAction === "stop-generation" ? (
                         <Button
                           type="button"
                           variant="prominent"
@@ -10699,9 +11083,7 @@ export default function ChatView({
                             className="block size-2 rounded-[1px] bg-current"
                           />
                         </Button>
-                      ) : pendingUserInputs.length === 0 &&
-                        !isVoiceRecording &&
-                        !isVoiceTranscribing ? (
+                      ) : composerFooterActionPlan.primaryAction === "plan-follow-up" ? (
                         showPlanFollowUpPrompt ? (
                           prompt.trim().length > 0 ? (
                             <Button
@@ -10747,72 +11129,62 @@ export default function ChatView({
                               </Menu>
                             </div>
                           )
-                        ) : (
-                          <>
-                            {showVoiceNotesControl ? (
-                              <ComposerVoiceButton
-                                disabled={isComposerApprovalState || isConnecting || isSendBusy}
-                                isRecording={isVoiceRecording}
-                                isTranscribing={isVoiceTranscribing}
-                                durationLabel={voiceRecordingDurationLabel}
-                                onClick={toggleComposerVoiceRecording}
-                              />
-                            ) : null}
-                            <Button
-                              type="submit"
-                              variant="prominent"
-                              size="icon-xs"
-                              className="size-7 rounded-full sm:size-7"
-                              disabled={
-                                isSendBusy ||
-                                isConnecting ||
-                                isVoiceTranscribing ||
-                                !composerSendState.hasSendableContent
-                              }
-                              aria-label={
-                                isConnecting
-                                  ? "Connecting"
-                                  : isVoiceTranscribing
-                                    ? "Transcribing voice note"
-                                    : isPreparingWorktree
-                                      ? "Preparing worktree"
-                                      : isSendBusy
-                                        ? "Sending"
-                                        : "Send message"
-                              }
+                        ) : null
+                      ) : composerFooterActionPlan.primaryAction === "queue-message" ||
+                        composerFooterActionPlan.primaryAction === "send-message" ? (
+                        <Button
+                          type="submit"
+                          variant="prominent"
+                          size="icon-xs"
+                          className="size-7 rounded-full sm:size-7"
+                          disabled={
+                            isSendBusy ||
+                            isConnecting ||
+                            isVoiceTranscribing ||
+                            !composerSendState.hasSendableContent
+                          }
+                          aria-label={
+                            isConnecting
+                              ? "Connecting"
+                              : isVoiceTranscribing
+                                ? "Transcribing voice note"
+                                : isPreparingWorktree
+                                  ? "Preparing worktree"
+                                  : isSendBusy
+                                    ? composerSubmitIsQueue
+                                      ? "Queueing follow-up"
+                                      : "Sending"
+                                    : composerSubmitLabel
+                          }
+                          title={composerSubmitTitle}
+                        >
+                          {isConnecting || isSendBusy ? (
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 14 14"
+                              fill="none"
+                              className="animate-spin"
+                              aria-hidden="true"
                             >
-                              {isConnecting || isSendBusy ? (
-                                <svg
-                                  width="12"
-                                  height="12"
-                                  viewBox="0 0 14 14"
-                                  fill="none"
-                                  className="animate-spin"
-                                  aria-hidden="true"
-                                >
-                                  <circle
-                                    cx="7"
-                                    cy="7"
-                                    r="5.5"
-                                    stroke="currentColor"
-                                    strokeWidth="1.5"
-                                    strokeLinecap="round"
-                                    strokeDasharray="20 12"
-                                  />
-                                </svg>
-                              ) : (
-                                <ComposerSendArrowIcon
-                                  aria-hidden="true"
-                                  className="size-5 shrink-0"
-                                />
-                              )}
-                            </Button>
-                          </>
-                        )
+                              <circle
+                                cx="7"
+                                cy="7"
+                                r="5.5"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                                strokeDasharray="20 12"
+                              />
+                            </svg>
+                          ) : (
+                            <ComposerSendArrowIcon aria-hidden="true" className="size-5 shrink-0" />
+                          )}
+                        </Button>
                       ) : null}
                     </div>
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
           </ComposerColumnFrame>
@@ -10843,6 +11215,13 @@ export default function ChatView({
       onDragLeave={onComposerDragLeave}
       onDrop={onComposerDrop}
     >
+      <CodexAuthenticationRecoveryGate
+        provider={selectedProvider}
+        sessionStatus={activeThread?.session?.status}
+        sessionLastErrorEventId={activeThread?.session?.lastErrorEventId}
+        sessionLastErrorClass={activeThread?.session?.lastErrorClass}
+        providerStatus={activeProviderStatus}
+      />
       {/* Subtle accent tint over the whole pane while a file is dragged anywhere over it,
           signalling that dropping it will attach the file to the composer. */}
       <div
@@ -11086,6 +11465,7 @@ export default function ChatView({
                     listRef={legendListRef}
                     timelineControllerRef={timelineControllerRef}
                     pinnedMessageIds={pinnedMessageIds}
+                    pinLimitMessageId={pinLimitMessageId}
                     canPinMessage={(messageId) => !isPendingSetupBubbleId(messageId)}
                     onTogglePinMessage={handleTogglePinMessageGuarded}
                     threadMarkers={threadMarkers}
@@ -11099,6 +11479,8 @@ export default function ChatView({
                     onRevertUserMessage={onRevertUserMessage}
                     onUndoTurnFiles={onUndoTurnFiles}
                     onEditUserMessage={onEditUserMessage}
+                    {...(isServerThread ? { onForkFromMessage: handleForkFromMessage } : {})}
+                    {...(isServerThread ? { forkableMessageIds } : {})}
                     isRevertingCheckpoint={isRevertingCheckpoint}
                     onExpandTimelineImage={onExpandTimelineImage}
                     followLiveOutput={hasStreamingAssistantText}

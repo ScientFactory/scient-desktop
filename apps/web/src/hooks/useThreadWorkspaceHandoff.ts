@@ -4,7 +4,7 @@ import { resolveWorktreeHandoffIntent } from "@synara/shared/worktreeHandoff";
 import { useCallback, useState } from "react";
 import { gitHandoffThreadMutationOptions } from "~/lib/gitReactQuery";
 import { buildSuggestedWorktreeName } from "../components/ChatView.logic";
-import { toastManager } from "../components/ui/toast";
+import { activityManager } from "../notifications/activityStore";
 import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import {
@@ -102,24 +102,32 @@ export function useThreadWorkspaceHandoff(input: {
           }
         }
 
-        toastManager.add({
-          type: result.conflictsDetected ? "warning" : "success",
+        activityManager.publish({
+          dedupeKey: `thread:${input.activeThread.id}:workspace-handoff`,
+          source: "thread",
+          status: result.conflictsDetected ? "needs_attention" : "recent",
+          tone: result.conflictsDetected ? "warning" : "success",
           title:
             targetMode === "worktree"
               ? "Thread handed off to worktree"
               : "Thread handed off to local",
           ...(result.message ? { description: result.message } : {}),
+          destination: { type: "thread", threadId: input.activeThread.id },
         });
         return true;
       } catch (error) {
-        toastManager.add({
-          type: "error",
+        activityManager.publish({
+          dedupeKey: `thread:${input.activeThread.id}:workspace-handoff`,
+          source: "thread",
+          status: "needs_attention",
+          tone: "error",
           title:
             targetMode === "worktree"
               ? "Could not hand off to worktree"
               : "Could not hand off to local",
           description:
             error instanceof Error ? error.message : "An error occurred during the handoff.",
+          destination: { type: "thread", threadId: input.activeThread.id },
         });
         return false;
       }

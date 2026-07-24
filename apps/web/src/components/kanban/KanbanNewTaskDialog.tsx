@@ -37,7 +37,10 @@ import {
 import { ComposerReferenceAttachments } from "~/components/chat/ComposerReferenceAttachments";
 import { ComposerVoiceButton } from "~/components/chat/ComposerVoiceButton";
 import { ComposerVoiceRecorderBar } from "~/components/chat/ComposerVoiceRecorderBar";
-import { useComposerVoiceController } from "~/components/chat/useComposerVoiceController";
+import {
+  useComposerVoiceController,
+  type ComposerLocalFeedback,
+} from "~/components/chat/useComposerVoiceController";
 import {
   COMPOSER_COMMAND_MENU_INLINE_WRAPPER_CLASS_NAME,
   COMPOSER_EDITOR_MIN_HEIGHT_CLASS_NAME,
@@ -52,12 +55,16 @@ import {
   DialogPopup,
   DialogTitle,
 } from "~/components/ui/dialog";
+import { DisclosureRegion } from "~/components/ui/DisclosureRegion";
 import { Switch } from "~/components/ui/switch";
 import { useProviderModelCatalog } from "~/hooks/useProviderModelCatalog";
 import { useRefreshProviderStatusesNow } from "~/hooks/useProviderStatusRefresh";
 import { useProviderStatusesForLocalConfig } from "~/hooks/useProviderStatusesForLocalConfig";
+import {
+  useApplyProviderSelectionAfterConnection,
+  useProviderConnectionSelectionIntent,
+} from "~/hooks/useProviderSelectionAfterConnection";
 import { useComposerDropzone } from "~/hooks/useComposerDropzone";
-import { toastManager } from "~/components/ui/toast";
 import { useTheme } from "~/hooks/useTheme";
 import { ChevronRightIcon, PaperclipIcon } from "~/lib/icons";
 import { formatComposerMentionToken } from "~/lib/composerMentions";
@@ -74,7 +81,8 @@ import { buildModelSelection } from "../../providerModelOptions";
 import { type ExpandedImagePreview } from "../chat/ExpandedImagePreview";
 import { useStore } from "../../store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "../../types";
-import { appendKanbanTaskTranscript, buildKanbanTaskPreview } from "./KanbanNewTaskDialog.logic";
+import { appendKanbanTaskTranscript } from "./KanbanNewTaskDialog.logic";
+import { KanbanInlineFeedback, type KanbanFeedback } from "./KanbanInlineFeedback";
 import { KanbanTaskExpandedImageOverlay } from "./KanbanTaskExpandedImageOverlay";
 import { KanbanTaskExtrasMenu } from "./KanbanTaskExtrasMenu";
 import { KanbanTaskProjectPicker } from "./KanbanTaskProjectPicker";
@@ -139,6 +147,8 @@ export function KanbanNewTaskDialog({
     selectedProvider,
     selectedModel,
     selectedProviderModelOptions,
+    attachmentError,
+    clearAttachmentError,
     setPrompt,
     handleProviderModelChange,
     addComposerImages,
@@ -147,6 +157,7 @@ export function KanbanNewTaskDialog({
     clearComposerFileComments,
     removeComposerTerminalContext,
   } = useKanbanTaskScratchDraft({ defaultProvider: settings.defaultProvider });
+  const providerSelectionIntent = useProviderConnectionSelectionIntent(scratchThreadId);
   const promptRef = useRef(prompt);
 
   const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>(DEFAULT_RUNTIME_MODE);
@@ -161,6 +172,8 @@ export function KanbanNewTaskDialog({
   const [isTraitsPickerOpen, setIsTraitsPickerOpen] = useState(false);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
+  const [unsupportedAttachmentError, setUnsupportedAttachmentError] = useState<string | null>(null);
+  const [voiceFeedback, setVoiceFeedback] = useState<KanbanFeedback | null>(null);
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === selectedProjectId) ?? null,
@@ -193,9 +206,26 @@ export function KanbanNewTaskDialog({
     selectedProvider,
     // Keep discovery warm whenever either picker can open so cursor/codex effort
     // and fast-mode controls are populated, not just the model list.
-    discoveryEnabled: isModelPickerOpen || isTraitsPickerOpen,
+    discoveryEnabled:
+      isModelPickerOpen || isTraitsPickerOpen || providerSelectionIntent.pendingProvider !== null,
     cwd: providerModelDiscoveryCwd,
     modelHintByProvider,
+  });
+  const handleProviderConnectionRequested = useCallback(
+    (provider: ProviderKind) => {
+      providerSelectionIntent.request(provider, findProviderStatus(providerStatuses, provider));
+    },
+    [providerSelectionIntent, providerStatuses],
+  );
+  useApplyProviderSelectionAfterConnection({
+    controller: providerSelectionIntent,
+    scopeKey: scratchThreadId,
+    lockedProvider: null,
+    statuses: providerStatuses,
+    modelOptionsByProvider,
+    loadingModelProviders,
+    preferredModelByProvider: modelHintByProvider,
+    onProviderModelChange: handleProviderModelChange,
   });
   const trimmedPrompt = prompt.trim();
   const hasSendableContent =
@@ -204,17 +234,17 @@ export function KanbanNewTaskDialog({
     composerAssistantSelections.length > 0 ||
     composerFileComments.length > 0 ||
     composerTerminalContexts.some((context) => context.text.trim().length > 0);
-  const taskPreview = buildKanbanTaskPreview({
-    trimmedPrompt,
-    firstImageName: composerImages[0]?.name,
-    assistantSelectionCount: composerAssistantSelections.length,
-  });
-  const { canCreate, isCreating, handleCreate } = useKanbanTaskSubmit({
+  const {
+    canCreate,
+    isCreating,
+    handleCreate,
+    feedback: submitFeedback,
+    clearFeedback: clearSubmitFeedback,
+  } = useKanbanTaskSubmit({
     selectedProjectId,
     hasSendableContent,
     selectedProvider,
     selectedModel,
-    taskPreview,
     trimmedPrompt,
     scratchThreadId,
     runtimeMode,
@@ -227,9 +257,43 @@ export function KanbanNewTaskDialog({
     providerStatuses,
     onOpenChange,
   });
+  const attachmentFeedback: KanbanFeedback | null = attachmentError
+    ? { tone: "warning", title: attachmentError }
+    : unsupportedAttachmentError
+      ? {
+          tone: "warning",
+          title: "Only images can be attached to new tasks.",
+          description: unsupportedAttachmentError,
+        }
+      : null;
+  const dialogFeedback = submitFeedback ?? attachmentFeedback ?? voiceFeedback;
+  const clearDialogFeedback = useCallback(() => {
+    clearSubmitFeedback();
+    clearAttachmentError();
+    setUnsupportedAttachmentError(null);
+    setVoiceFeedback(null);
+  }, [clearAttachmentError, clearSubmitFeedback]);
+  const handleVoiceFeedback = useCallback((feedback: ComposerLocalFeedback) => {
+    setVoiceFeedback({
+      tone: feedback.type,
+      title: feedback.title,
+      description: feedback.description,
+      action: feedback.actionProps
+        ? { label: feedback.actionProps.children, onClick: feedback.actionProps.onClick }
+        : undefined,
+    });
+  }, []);
   const handleCreateRequest = useCallback(() => {
     void handleCreate();
   }, [handleCreate]);
+  const addDropzoneImages = useCallback(
+    (files: readonly File[]) => {
+      clearSubmitFeedback();
+      setUnsupportedAttachmentError(null);
+      addComposerImages(files);
+    },
+    [addComposerImages, clearSubmitFeedback],
+  );
   const {
     composerCursor,
     composerTrigger,
@@ -292,6 +356,7 @@ export function KanbanNewTaskDialog({
 
   const handleTranscriptReady = useCallback(
     (transcript: string) => {
+      setVoiceFeedback(null);
       const nextPrompt = appendKanbanTaskTranscript(promptRef.current, transcript);
       setPromptAtEnd(nextPrompt);
     },
@@ -306,6 +371,7 @@ export function KanbanNewTaskDialog({
     pendingUserInputCount: 0,
     onTranscriptReady: handleTranscriptReady,
     refreshVoiceStatus: refreshProviderStatuses,
+    onFeedback: handleVoiceFeedback,
   });
 
   useEffect(() => {
@@ -338,18 +404,14 @@ export function KanbanNewTaskDialog({
     onComposerDragLeave,
     onComposerDrop,
   } = useComposerDropzone({
-    addImages: addComposerImages,
+    addImages: addDropzoneImages,
     fileSupport: {
       genericFiles: "reject",
       onUnsupportedFiles: (files) => {
-        toastManager.add({
-          type: "warning",
-          title: "Only images can be attached to new tasks.",
-          description:
-            files.length === 1
-              ? "That file was not added."
-              : `${files.length} files were not added.`,
-        });
+        clearAttachmentError();
+        setUnsupportedAttachmentError(
+          files.length === 1 ? "That file was not added." : `${files.length} files were not added.`,
+        );
       },
     },
     appendReferenceText: appendComposerPromptText,
@@ -365,11 +427,12 @@ export function KanbanNewTaskDialog({
 
   const onFileInputChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
+      clearDialogFeedback();
       addComposerImages(Array.from(event.currentTarget.files ?? []));
       event.currentTarget.value = "";
       scheduleComposerFocus();
     },
-    [addComposerImages, scheduleComposerFocus],
+    [addComposerImages, clearDialogFeedback, scheduleComposerFocus],
   );
   const closeExpandedImage = useCallback(() => {
     setExpandedImage(null);
@@ -482,6 +545,13 @@ export function KanbanNewTaskDialog({
               onPaste={onComposerPaste}
             />
           </div>
+          <DisclosureRegion open={dialogFeedback !== null}>
+            <div className="pt-2">
+              {dialogFeedback ? (
+                <KanbanInlineFeedback feedback={dialogFeedback} onDismiss={clearDialogFeedback} />
+              ) : null}
+            </div>
+          </DisclosureRegion>
         </DialogPanel>
         {/* Linear-style footer (not DialogFooter, whose !important button overrides
             would deform the chips): a chips row mirroring the chat composer
@@ -493,11 +563,10 @@ export function KanbanNewTaskDialog({
             {isVoiceActive ? (
               <ComposerVoiceRecorderBar
                 durationLabel={voice.voiceRecordingDurationLabel}
-                isRecording={voice.isVoiceRecording}
-                isTranscribing={voice.isVoiceTranscribing}
+                completionIntent={voice.voiceCompletionIntent}
                 waveformLevels={voice.voiceWaveformLevels}
                 onCancel={voice.cancelComposerVoiceRecording}
-                onSubmit={() => void voice.submitComposerVoiceRecording()}
+                onInsert={() => void voice.finishComposerVoiceRecording()}
               />
             ) : (
               <div className="flex w-full items-center justify-between gap-2">
@@ -527,6 +596,7 @@ export function KanbanNewTaskDialog({
                     hiddenProviders={settings.hiddenProviders}
                     providerOrder={settings.providerOrder}
                     onProviderModelChange={handleProviderModelChange}
+                    onProviderConnectionRequested={handleProviderConnectionRequested}
                     open={isModelPickerOpen}
                     onOpenChange={setIsModelPickerOpen}
                   />

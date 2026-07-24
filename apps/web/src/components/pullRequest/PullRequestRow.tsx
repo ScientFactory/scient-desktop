@@ -7,9 +7,10 @@
 
 import type { PullRequestListEntry } from "@synara/contracts";
 import { pullRequestListProjectContexts } from "@synara/shared/githubRepository";
-import { memo } from "react";
+import { memo, useId } from "react";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { TriangleAlertIcon } from "~/lib/icons";
 import { PinStatusIcon, pinActionLabel } from "~/lib/pin";
 import { formatRelativeTime } from "~/lib/relativeTime";
 import { cn } from "~/lib/utils";
@@ -49,6 +50,7 @@ export const PullRequestRow = memo(function PullRequestRow({
   showProjectTitle = false,
   onClick,
   onTogglePinned,
+  pinError,
 }: {
   entry: PullRequestListEntry;
   selected: boolean;
@@ -56,7 +58,9 @@ export const PullRequestRow = memo(function PullRequestRow({
   showProjectTitle?: boolean;
   onClick: (entry: PullRequestListEntry) => void;
   onTogglePinned: (entry: PullRequestListEntry) => void;
+  pinError?: string | undefined;
 }) {
+  const pinErrorId = useId();
   const isPinned = entry.isPinned === true;
   const projectContexts = pullRequestListProjectContexts(entry);
   const projectLabel =
@@ -146,8 +150,10 @@ export const PullRequestRow = memo(function PullRequestRow({
           render={
             <button
               type="button"
-              aria-label={pinLabel}
+              aria-label={pinError ? `Could not update pin: ${pinError}` : pinLabel}
               aria-pressed={entry.isPinned}
+              aria-invalid={pinError ? true : undefined}
+              aria-describedby={pinError ? pinErrorId : undefined}
               onClick={() => onTogglePinned(entry)}
               className={cn(
                 "my-auto mr-1 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,opacity] hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
@@ -156,12 +162,23 @@ export const PullRequestRow = memo(function PullRequestRow({
                   : "opacity-70 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100",
               )}
             >
-              <PinStatusIcon pinned={isPinned} className="size-3.5" aria-hidden />
+              {pinError ? (
+                <TriangleAlertIcon className="size-3.5 text-destructive" aria-hidden />
+              ) : (
+                <PinStatusIcon pinned={isPinned} className="size-3.5" aria-hidden />
+              )}
             </button>
           }
         />
-        <TooltipPopup side="top">{pinLabel}</TooltipPopup>
+        <TooltipPopup side="top" className="max-w-72">
+          {pinError ? `Could not update pin: ${pinError}` : pinLabel}
+        </TooltipPopup>
       </Tooltip>
+      {pinError ? (
+        <span id={pinErrorId} role="alert" className="sr-only">
+          Could not update pin: {pinError}
+        </span>
+      ) : null}
     </div>
   );
 });

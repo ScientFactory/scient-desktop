@@ -246,7 +246,9 @@ describe("applyDroidAcpInteractionMode", () => {
 });
 
 describe("discoverDroidAcpModels", () => {
-  it("reads each model's reasoning choices from session config options", async () => {
+  it("starts the session before reading each model's reasoning choices", async () => {
+    let startCalls = 0;
+    let started = false;
     let currentModel = "model-a";
     const configOptions = (): ReadonlyArray<EffectAcpSchema.SessionConfigOption> => [
       {
@@ -283,7 +285,22 @@ describe("discoverDroidAcpModels", () => {
       },
     ];
     const runtime = {
-      getConfigOptions: Effect.sync(configOptions),
+      start: () =>
+        Effect.sync(() => {
+          startCalls += 1;
+          started = true;
+          return {
+            sessionId: "droid-model-discovery-test",
+            initializeResult: { protocolVersion: 1 },
+            sessionSetupResult: {
+              sessionId: "droid-model-discovery-test",
+              configOptions: configOptions(),
+            },
+            modelConfigId: "model",
+            sessionSetupMethod: "new" as const,
+          };
+        }),
+      getConfigOptions: Effect.sync(() => (started ? configOptions() : [])),
       setConfigOption: (configId: string, value: string | boolean) => {
         if (configId === "model") {
           currentModel = String(value);
@@ -293,6 +310,7 @@ describe("discoverDroidAcpModels", () => {
     };
 
     const result = await Effect.runPromise(discoverDroidAcpModels(runtime));
+    expect(startCalls).toBe(1);
     expect(result.models).toEqual([
       expect.objectContaining({
         slug: "model-a",

@@ -8,12 +8,15 @@ import {
   TurnId,
 } from "@synara/contracts";
 import {
+  activeTerminalAttentionActivityKeys,
+  activeThreadAttentionActivityKeys,
   buildInputNeededCopy,
   buildTaskCompletionCopy,
   collectCompletedThreadCandidates,
   collectInputNeededThreadCandidates,
   isNotificationRuntimeFreshTimestamp,
   shouldShowThreadNotificationToast,
+  staleAttentionActivityKeys,
 } from "./taskCompletion.logic";
 import type { Thread } from "../types";
 
@@ -556,6 +559,63 @@ describe("collectInputNeededThreadCandidates", () => {
         [makeThread({ activities })],
       ),
     ).toEqual([]);
+  });
+});
+
+describe("active attention activity keys", () => {
+  it("tracks pending thread requests and drops them after resolution", () => {
+    const pending = makeThread({
+      activities: [
+        {
+          id: EventId.makeUnsafe("activity-approval-1"),
+          tone: "approval",
+          kind: "approval.requested",
+          summary: "Command approval requested",
+          payload: { requestId: "approval-request-1", requestKind: "command" },
+          turnId: TurnId.makeUnsafe("turn-1"),
+          createdAt: "2026-04-05T10:00:04.000Z",
+        },
+      ],
+    });
+
+    expect([...activeThreadAttentionActivityKeys([pending])]).toEqual([
+      "thread:thread-1:attention:approval-request-1",
+    ]);
+    expect([...activeThreadAttentionActivityKeys([makeThread({ activities: [] })])]).toEqual([]);
+  });
+
+  it("tracks only terminal states that still need attention", () => {
+    const base = {
+      runningTerminalIds: [],
+      terminalCliKindsById: {},
+      terminalIds: ["terminal-1", "terminal-2"],
+      terminalLabelsById: {},
+      terminalTitleOverridesById: {},
+    };
+    expect([
+      ...activeTerminalAttentionActivityKeys({
+        "thread-1": {
+          ...base,
+          terminalAttentionStatesById: {
+            "terminal-1": "attention",
+            "terminal-2": "review",
+          },
+        },
+      }),
+    ]).toEqual(["terminal:thread-1:terminal-1:attention"]);
+  });
+
+  it("identifies persisted attention for resolved or deleted destinations", () => {
+    expect(
+      staleAttentionActivityKeys(
+        [
+          { dedupeKey: "thread:deleted:attention:request-1" },
+          { dedupeKey: "terminal:thread-1:terminal-1:attention" },
+          { dedupeKey: "thread:thread-1:completed:today" },
+        ],
+        new Set(["terminal:thread-1:terminal-1:attention"]),
+      ),
+    ).toEqual(["thread:deleted:attention:request-1"]);
   });
 });
 

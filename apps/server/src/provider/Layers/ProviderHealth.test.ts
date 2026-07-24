@@ -1,8 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodePath from "node:path";
 import type { ServerProviderStatus } from "@synara/contracts";
 import { DEFAULT_SERVER_SETTINGS, ServerProviderUpdateError } from "@synara/contracts";
 import { describe, it, assert } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, Sink, Stream } from "effect";
+import { Duration, Effect, Fiber, FileSystem, Layer, Path, Sink, Stream } from "effect";
 import { TestClock } from "effect/testing";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -42,6 +43,7 @@ import {
   ProviderHealthLive,
   projectProviderStatusesForSettings,
   readCodexConfigModelProvider,
+  resolveProviderProbeCwd,
   stabilizeProviderStatusesAgainstTransientTimeouts,
 } from "./ProviderHealth";
 import { resolvePackageManagedProviderMaintenance } from "../providerMaintenance";
@@ -49,6 +51,16 @@ import { resolvePackageManagedProviderMaintenance } from "../providerMaintenance
 // ── Test helpers ────────────────────────────────────────────────────
 
 const encoder = new TextEncoder();
+
+describe("provider health probe cwd", () => {
+  it("isolates background provider runtimes under Scient private state", () => {
+    const stateDir = NodePath.join("root", "scient-state");
+    assert.strictEqual(
+      resolveProviderProbeCwd(stateDir),
+      NodePath.join(stateDir, "provider-health-probe"),
+    );
+  });
+});
 
 function mockHandle(result: { stdout: string; stderr: string; code: number }) {
   return ChildProcessSpawner.makeHandle({
@@ -73,6 +85,7 @@ function mockSpawnerLayer(
     options:
       | {
           readonly env?: NodeJS.ProcessEnv;
+          readonly cwd?: string;
           readonly windowsVerbatimArguments?: boolean;
         }
       | undefined,
@@ -90,6 +103,7 @@ function mockSpawnerLayer(
         args: ReadonlyArray<string>;
         options?: {
           env?: NodeJS.ProcessEnv;
+          cwd?: string;
           windowsVerbatimArguments?: boolean;
         };
       };
@@ -259,8 +273,8 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       });
 
       assert.deepStrictEqual(capabilities.update, {
-        command: "agy update",
-        executable: "agy",
+        command: "/Users/test/.local/bin/agy update",
+        executable: "/Users/test/.local/bin/agy",
         args: ["update"],
         lockKey: "antigravity-native",
         pathPrepend: "/Users/test/.local/bin",
@@ -684,6 +698,37 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
         [authTimeoutWarning],
       );
     });
+
+    it.each([false, undefined] as const)(
+      "does not restore stale Codex account ownership when the current value is %s",
+      (requiresProviderAccount) => {
+        const previousReadyCodex = {
+          provider: "codex",
+          status: "ready",
+          available: true,
+          authStatus: "authenticated",
+          requiresProviderAccount: true,
+          checkedAt: "2026-06-04T17:00:00.000Z",
+        } satisfies ServerProviderStatus;
+        const currentTransientCodex = {
+          provider: "codex",
+          status: "warning",
+          available: true,
+          authStatus: "unknown",
+          ...(requiresProviderAccount !== undefined ? { requiresProviderAccount } : {}),
+          checkedAt: "2026-06-04T17:01:00.000Z",
+          message: "Could not verify Codex authentication status. Timed out while running command.",
+        } satisfies ServerProviderStatus;
+
+        const [stabilized] = stabilizeProviderStatusesAgainstTransientTimeouts(
+          [previousReadyCodex],
+          [currentTransientCodex],
+        );
+
+        assert.notStrictEqual(stabilized?.requiresProviderAccount, true);
+        assert.strictEqual(stabilized?.requiresProviderAccount, requiresProviderAccount);
+      },
+    );
   });
 
   describe("providerStatusesEqual", () => {
@@ -744,6 +789,27 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
         false,
       );
     });
+
+    it("detects a change in Codex account ownership", () => {
+      const readyCodex = {
+        ...readyCursor,
+        provider: "codex",
+        requiresProviderAccount: true,
+      } satisfies ServerProviderStatus;
+
+      assert.strictEqual(
+        providerStatusesEqual(
+          [readyCodex],
+          [
+            {
+              ...readyCodex,
+              requiresProviderAccount: false,
+            },
+          ],
+        ),
+        false,
+      );
+    });
   });
 
   // ── checkCodexProviderStatus tests ────────────────────────────────
@@ -770,6 +836,58 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
             if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
             if (joined === "login status") return { stdout: "Logged in\n", stderr: "", code: 0 };
             throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("fails closed without an auth probe when provider config cannot be read", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { runtimeDir } = yield* withTempCodexHome();
+        const activeHome = path.join(runtimeDir, SYNARA_CODEX_HOME_OVERLAY_DIR);
+        yield* fileSystem.makeDirectory(activeHome, { recursive: true });
+        yield* fileSystem.makeDirectory(path.join(activeHome, "config.toml"));
+
+        const status = yield* makeCheckCodexProviderStatus("codex", activeHome);
+
+        assert.strictEqual(status.status, "warning");
+        assert.strictEqual(status.available, true);
+        assert.strictEqual(status.authStatus, "unknown");
+        assert.strictEqual(status.requiresProviderAccount, undefined);
+        assert.match(status.message ?? "", /config\.toml could not be read/u);
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "codex 1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Auth probe must not run after config read failure: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("fails closed when the source config prevents environment preparation", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { tmpDir } = yield* withTempCodexHome();
+        yield* fileSystem.makeDirectory(path.join(tmpDir, "config.toml"));
+
+        const status = yield* checkCodexProviderStatus;
+
+        assert.strictEqual(status.status, "warning");
+        assert.strictEqual(status.available, false);
+        assert.strictEqual(status.authStatus, "unknown");
+        assert.strictEqual(status.requiresProviderAccount, undefined);
+        assert.match(status.message ?? "", /configuration could not be read/u);
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) => {
+            throw new Error(
+              `No probe may run after environment preparation fails: ${args.join(" ")}`,
+            );
           }),
         ),
       ),
@@ -979,7 +1097,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       Effect.gen(function* () {
         yield* withTempCodexHome(
           [
-            'model_provider = "portkey"',
+            '"model_provider" = "portkey"',
             "",
             "[model_providers.portkey]",
             'base_url = "https://api.portkey.ai/v1"',
@@ -991,6 +1109,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.available, true);
         assert.strictEqual(status.authStatus, "unknown");
+        assert.strictEqual(status.requiresProviderAccount, false);
         assert.strictEqual(
           status.message,
           "Using a custom Codex model provider; OpenAI login check skipped.",
@@ -1088,6 +1207,18 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       }),
     );
 
+    it.effect("preserves an unreadable config failure instead of treating it as missing", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const { tmpDir } = yield* withTempCodexHome();
+        yield* fileSystem.makeDirectory(path.join(tmpDir, "config.toml"));
+
+        const result = yield* Effect.result(readCodexConfigModelProvider);
+        assert.strictEqual(result._tag, "Failure");
+      }),
+    );
+
     it.effect("returns undefined when config has no model_provider key", () =>
       Effect.gen(function* () {
         yield* withTempCodexHome('model = "gpt-5-codex"\n');
@@ -1170,6 +1301,13 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       Effect.gen(function* () {
         yield* withTempCodexHome('model_provider = "openai"\n');
         assert.strictEqual(yield* hasCustomModelProvider, false);
+      }),
+    );
+
+    it.effect("returns true when model_provider is mixed-case OpenAI", () =>
+      Effect.gen(function* () {
+        yield* withTempCodexHome('model_provider = "OpenAI"\n');
+        assert.strictEqual(yield* hasCustomModelProvider, true);
       }),
     );
 
@@ -1876,22 +2014,68 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
   });
 
   describe("checkAntigravityProviderStatus", () => {
-    it.effect("rejects versions that predate --new-project support", () =>
+    it.effect("rejects an unparseable Antigravity version", () =>
       Effect.gen(function* () {
         const status = yield* checkAntigravityProviderStatus();
         assert.strictEqual(status.status, "error");
         assert.strictEqual(status.available, false);
-        assert.strictEqual(status.version, "1.0.11");
+        assert.strictEqual(status.authStatus, "unknown");
+        assert.strictEqual(status.version, undefined);
         assert.strictEqual(
           status.message,
-          "Antigravity CLI 1.0.11 is too old for Scient. Upgrade to 1.0.12 or newer.",
+          "Scient could not verify Antigravity CLI 1.1.4 or newer from the version command output.",
+        );
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args) => {
+            assert.strictEqual(args.join(" "), "--version");
+            return { stdout: "Antigravity development build\n", stderr: "", code: 0 };
+          }),
+        ),
+      ),
+    );
+
+    it.effect("rejects an Antigravity version probe timeout", () => {
+      return Effect.gen(function* () {
+        const statusFiber = yield* checkAntigravityProviderStatus().pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(Duration.millis(4_001));
+        yield* Effect.yieldNow;
+        const status = yield* Fiber.join(statusFiber);
+
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.available, false);
+        assert.strictEqual(status.authStatus, "unknown");
+        assert.strictEqual(
+          status.message,
+          "Scient could not verify Antigravity CLI 1.1.4 or newer because the version check timed out.",
+        );
+      }).pipe(
+        Effect.provide(
+          hangingSpawnerLayer({
+            onKill: () => undefined,
+            shouldHang: (args, command) => command === "agy" && args.join(" ") === "--version",
+          }),
+        ),
+      );
+    });
+
+    it.effect("rejects versions that predate Scient's browser-auth flow", () =>
+      Effect.gen(function* () {
+        const status = yield* checkAntigravityProviderStatus();
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.available, false);
+        assert.strictEqual(status.version, "1.1.3");
+        assert.strictEqual(
+          status.message,
+          "Antigravity CLI 1.1.3 is too old for Scient. Upgrade to 1.1.4 or newer.",
         );
       }).pipe(
         Effect.provide(
           mockSpawnerLayer((args) => {
             const joined = args.join(" ");
             if (joined === "--version") {
-              return { stdout: "Antigravity CLI 1.0.11\n", stderr: "", code: 0 };
+              return { stdout: "Antigravity CLI 1.1.3\n", stderr: "", code: 0 };
             }
             throw new Error(`Unexpected args: ${joined}`);
           }),
@@ -1906,18 +2090,47 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.available, true);
         assert.strictEqual(status.authStatus, "authenticated");
-        assert.strictEqual(status.version, "1.1.2");
+        assert.strictEqual(status.version, "1.1.4");
       }).pipe(
         Effect.provide(
           mockSpawnerLayer((args, command) => {
             assert.strictEqual(command, "agy");
             const joined = args.join(" ");
             if (joined === "--version") {
-              return { stdout: "Antigravity CLI 1.1.2\n", stderr: "", code: 0 };
+              return { stdout: "Antigravity CLI 1.1.4\n", stderr: "", code: 0 };
             }
             if (joined === "models") {
               return {
                 stdout: "Gemini 3.5 Flash (Medium)\nClaude Sonnet 4.6 (Thinking)\n",
+                stderr: "",
+                code: 0,
+              };
+            }
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("returns ready for Antigravity 1.1.5 machine model output", () =>
+      Effect.gen(function* () {
+        const status = yield* checkAntigravityProviderStatus();
+        assert.strictEqual(status.provider, "antigravity");
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.available, true);
+        assert.strictEqual(status.authStatus, "authenticated");
+        assert.strictEqual(status.version, "1.1.5");
+      }).pipe(
+        Effect.provide(
+          mockSpawnerLayer((args, command) => {
+            assert.strictEqual(command, "agy");
+            const joined = args.join(" ");
+            if (joined === "--version") {
+              return { stdout: "1.1.5\n", stderr: "", code: 0 };
+            }
+            if (joined === "models") {
+              return {
+                stdout: "gemini-3.5-flash-medium\ngemini-3.5-flash-high\nclaude-sonnet-4-6\n",
                 stderr: "",
                 code: 0,
               };
@@ -1988,14 +2201,18 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
 
     it.effect("uses the configured Antigravity binary", () =>
       Effect.gen(function* () {
-        const status = yield* checkAntigravityProviderStatus("/custom/bin/agy");
+        const status = yield* checkAntigravityProviderStatus(
+          "/custom/bin/agy",
+          "/tmp/scient-state",
+        );
         assert.strictEqual(status.status, "ready");
       }).pipe(
         Effect.provide(
-          mockSpawnerLayer((args, command) => {
+          mockSpawnerLayer((args, command, _env, options) => {
             assert.strictEqual(command, "/custom/bin/agy");
+            assert.strictEqual(options?.cwd, "/tmp/scient-state");
             return args.join(" ") === "--version"
-              ? { stdout: "1.1.2\n", stderr: "", code: 0 }
+              ? { stdout: "1.1.4\n", stderr: "", code: 0 }
               : { stdout: "GPT-OSS 120B (Medium)\n", stderr: "", code: 0 };
           }),
         ),

@@ -360,6 +360,135 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("size-[1.125em]");
   });
 
+  it("renders message fork actions immediately after copy for user and settled assistant messages", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking={false}
+        activeTurnInProgress={false}
+        activeTurnStartedAt={null}
+        timelineEntries={[
+          {
+            id: "entry-fork-user",
+            kind: "message",
+            createdAt: "2026-07-22T08:00:00.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-fork-user"),
+              role: "user",
+              text: "Branch from my question",
+              createdAt: "2026-07-22T08:00:00.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "entry-fork-assistant",
+            kind: "message",
+            createdAt: "2026-07-22T08:00:01.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-fork-assistant"),
+              role: "assistant",
+              text: "Branch from my answer",
+              createdAt: "2026-07-22T08:00:01.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-07-22T08:00:02.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onForkFromMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    const copyLabels = [...markup.matchAll(/aria-label="Copy message"/g)];
+    const forkLabels = [...markup.matchAll(/aria-label="Fork conversation from this message"/g)];
+    expect(copyLabels).toHaveLength(2);
+    expect(forkLabels).toHaveLength(2);
+    expect(copyLabels[0]?.index).toBeLessThan(forkLabels[0]?.index ?? 0);
+    expect(copyLabels[1]?.index).toBeLessThan(forkLabels[1]?.index ?? 0);
+    expect(markup).toContain("/central-icons-reversed/fork-simple.svg");
+  });
+
+  it("hides message fork actions after an unsafe live boundary", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const priorUserId = MessageId.makeUnsafe("message-fork-safe-user");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt="2026-07-22T08:00:01.000Z"
+        timelineEntries={[
+          {
+            id: "entry-fork-safe-user",
+            kind: "message",
+            createdAt: "2026-07-22T08:00:00.000Z",
+            message: {
+              id: priorUserId,
+              role: "user",
+              text: "Completed question",
+              createdAt: "2026-07-22T08:00:00.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "entry-fork-live-assistant",
+            kind: "message",
+            createdAt: "2026-07-22T08:00:01.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-fork-live-assistant"),
+              role: "assistant",
+              text: "Still answering",
+              createdAt: "2026-07-22T08:00:01.000Z",
+              streaming: true,
+            },
+          },
+          {
+            id: "entry-fork-queued-user",
+            kind: "message",
+            createdAt: "2026-07-22T08:00:02.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-fork-queued-user"),
+              role: "user",
+              text: "Queued follow-up",
+              createdAt: "2026-07-22T08:00:02.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-07-22T08:00:03.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        onForkFromMessage={() => {}}
+        forkableMessageIds={new Set([priorUserId])}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    expect(markup.match(/aria-label="Fork conversation from this message"/g)).toHaveLength(1);
+    expect(markup).toContain('data-message-id="message-fork-queued-user"');
+  });
+
   it("keeps edit available and hides undo before a revert checkpoint exists", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
@@ -650,9 +779,70 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("chat-markdown--user");
+    expect(markup).toContain('dir="auto"');
     // remark-breaks keeps the user's single newline as a hard break.
     expect(markup).toContain("tl<br/>\ndr");
     expect(markup).not.toContain("<pre");
+  });
+
+  it("uses the latest user direction as a weak hint for a streaming assistant block", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        hasMessages
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt="2026-03-17T19:12:29.000Z"
+        timelineEntries={[
+          {
+            id: "entry-user-hebrew-direction",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-user-hebrew-direction"),
+              role: "user",
+              text: "תענה לי בעברית בבקשה",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              streaming: false,
+            },
+          },
+          {
+            id: "entry-assistant-hebrew-direction",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            message: {
+              id: MessageId.makeUnsafe("message-assistant-hebrew-direction"),
+              role: "assistant",
+              text: "Scient הוא",
+              turnId: TurnId.makeUnsafe("turn-hebrew-direction"),
+              createdAt: "2026-03-17T19:12:29.000Z",
+              streaming: true,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={new Map()}
+        nowIso="2026-03-17T19:12:30.000Z"
+        expandedWorkGroups={{}}
+        onToggleWorkGroup={() => {}}
+        onOpenTurnDiff={() => {}}
+        revertTurnCountByUserMessageId={new Map()}
+        onRevertUserMessage={() => {}}
+        isRevertingCheckpoint={false}
+        onImageExpand={() => {}}
+        markdownCwd={undefined}
+        resolvedTheme="light"
+        timestampFormat="locale"
+        workspaceRoot={undefined}
+      />,
+    );
+
+    const assistantStart = markup.indexOf(
+      'data-assistant-message-id="message-assistant-hebrew-direction"',
+    );
+    expect(assistantStart).toBeGreaterThanOrEqual(0);
+    expect(markup.slice(assistantStart, assistantStart + 500)).toContain(
+      '<p dir="rtl">Scient הוא</p>',
+    );
   });
 
   it("clamps long user messages visually and renders a separate Show more button", async () => {
@@ -1313,7 +1503,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("<h2>Complete File-Icon Rendering Map</h2>");
+    expect(markup).toContain('<h2 dir="ltr">Complete File-Icon Rendering Map</h2>');
     expect(markup).toContain("chat-markdown-codeblock");
     expect(markup).not.toContain("```tsx");
   });

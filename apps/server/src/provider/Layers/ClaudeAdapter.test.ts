@@ -5,6 +5,7 @@ import path from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
   Options as ClaudeQueryOptions,
+  ModelInfo,
   PermissionMode,
   PermissionResult,
   SDKControlGetContextUsageResponse,
@@ -331,6 +332,52 @@ describe("ClaudeAdapterLive", () => {
         harness.getLastCreateQueryInput()?.options.pathToClaudeCodeExecutable,
         "/managed/claude",
       );
+      assert.deepEqual(harness.getLastCreateQueryInput()?.options.settingSources, [
+        "user",
+        "project",
+        "local",
+      ]);
+      assert.deepEqual(harness.getLastCreateQueryInput()?.options.mcpServers, {});
+      assert.equal(harness.getLastCreateQueryInput()?.options.strictMcpConfig, true);
+      assert.equal(
+        harness.getLastCreateQueryInput()?.options.env?.ENABLE_CLAUDEAI_MCP_SERVERS,
+        "false",
+      );
+      assert.equal(harness.getLastCreateQueryInput()?.options.permissionMode, "plan");
+      assert.equal(harness.getLastCreateQueryInput()?.options.persistSession, false);
+      assert.equal(harness.query.closeCalls, 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("closes an isolated temporary command query after discovery failure", () => {
+    const harness = makeHarness();
+    (
+      harness.query as {
+        supportedCommands: () => Promise<
+          Array<{ name: string; description: string; argumentHint: string }>
+        >;
+      }
+    ).supportedCommands = async () => {
+      throw new Error("simulated command discovery failure");
+    };
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listCommands) {
+        return assert.fail("Claude adapter should support command discovery.");
+      }
+
+      const result = yield* Effect.exit(
+        adapter.listCommands({
+          provider: "claudeAgent",
+          cwd: "/tmp/claude-command-discovery-failure",
+        }),
+      );
+
+      assert.ok(Exit.isFailure(result));
+      assert.equal(harness.query.closeCalls, 1);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -339,13 +386,27 @@ describe("ClaudeAdapterLive", () => {
 
   it.effect("uses the configured Claude executable for pre-session model discovery", () => {
     const harness = makeHarness();
+    (harness.query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels =
+      async () => [
+        {
+          value: "opus[1m]",
+          resolvedModel: "claude-opus-4-8[1m]",
+          displayName: "Claude Opus 4.8 (1M context)",
+          description: "Complex agentic coding",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: true,
+          supportsAutoMode: false,
+        },
+      ];
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       if (!adapter.listModels) {
         return assert.fail("Claude adapter should support model discovery.");
       }
 
-      yield* adapter.listModels({
+      const result = yield* adapter.listModels({
         provider: "claudeAgent",
         cwd: "/tmp/claude-model-discovery",
         binaryPath: "/managed/claude-models",
@@ -355,7 +416,31 @@ describe("ClaudeAdapterLive", () => {
         harness.getLastCreateQueryInput()?.options.pathToClaudeCodeExecutable,
         "/managed/claude-models",
       );
+      assert.deepEqual(harness.getLastCreateQueryInput()?.options.mcpServers, {});
+      assert.equal(harness.getLastCreateQueryInput()?.options.strictMcpConfig, true);
+      assert.equal(
+        harness.getLastCreateQueryInput()?.options.env?.ENABLE_CLAUDEAI_MCP_SERVERS,
+        "false",
+      );
+      assert.equal(harness.getLastCreateQueryInput()?.options.permissionMode, "plan");
+      assert.equal(harness.getLastCreateQueryInput()?.options.persistSession, false);
       assert.equal(harness.query.closeCalls, 1);
+      assert.deepEqual(result.models, [
+        {
+          slug: "opus[1m]",
+          name: "Claude Opus 4.8 (1M context)",
+          resolvedModel: "claude-opus-4-8[1m]",
+          description: "Complex agentic coding",
+          supportedReasoningEfforts: [
+            { value: "low", label: "Low" },
+            { value: "medium", label: "Medium" },
+            { value: "high", label: "High" },
+            { value: "xhigh", label: "Extra High" },
+            { value: "max", label: "Max" },
+          ],
+          supportsFastMode: true,
+        },
+      ]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -378,6 +463,33 @@ describe("ClaudeAdapterLive", () => {
       });
 
       assert.equal(harness.getLastCreateQueryInput()?.options.env?.DISABLE_AUTOUPDATER, "1");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("closes an isolated temporary model query after discovery failure", () => {
+    const harness = makeHarness();
+    (harness.query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels =
+      async () => {
+        throw new Error("simulated model discovery failure");
+      };
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listModels) {
+        return assert.fail("Claude adapter should support model discovery.");
+      }
+
+      const result = yield* Effect.exit(
+        adapter.listModels({
+          provider: "claudeAgent",
+          cwd: "/tmp/claude-model-discovery-failure",
+        }),
+      );
+
+      assert.ok(Exit.isFailure(result));
+      assert.equal(harness.query.closeCalls, 1);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -433,27 +545,45 @@ describe("ClaudeAdapterLive", () => {
   it.effect("loads Claude filesystem settings sources for SDK sessions", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
-      const adapter = yield* ClaudeAdapter;
-      yield* adapter.startSession({
-        threadId: THREAD_ID,
-        provider: "claudeAgent",
-        runtimeMode: "approval-required",
-      });
+      const previousConnectorSetting = process.env.ENABLE_CLAUDEAI_MCP_SERVERS;
+      const interactiveSessionSentinel = "preserve-for-interactive-session";
+      process.env.ENABLE_CLAUDEAI_MCP_SERVERS = interactiveSessionSentinel;
 
-      const createInput = harness.getLastCreateQueryInput();
-      assert.deepEqual(createInput?.options.settingSources, ["user", "project", "local"]);
-      assert.equal(createInput?.options.permissionMode, undefined);
-      assert.equal(createInput?.options.allowDangerouslySkipPermissions, undefined);
-      assert.deepEqual(createInput?.options.systemPrompt, {
-        type: "preset",
-        preset: "claude_code",
-        append: [
-          "You are running inside Scient, a scientific workspace that embeds the Claude Agent SDK.",
-          "Do not present the host app as Claude Code unless the user is explicitly asking about Claude Code.",
-          "Treat the current working directory as the active workspace for the task.",
-          "When the user asks about the current project, codebase, or repository, proactively inspect files in the current working directory before asking the user where to look.",
-        ].join("\n"),
-      });
+      try {
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "approval-required",
+        });
+
+        const createInput = harness.getLastCreateQueryInput();
+        assert.deepEqual(createInput?.options.settingSources, ["user", "project", "local"]);
+        assert.equal(createInput?.options.permissionMode, undefined);
+        assert.equal(createInput?.options.allowDangerouslySkipPermissions, undefined);
+        assert.equal(createInput?.options.strictMcpConfig, undefined);
+        assert.equal(createInput?.options.mcpServers, undefined);
+        assert.equal(
+          createInput?.options.env?.ENABLE_CLAUDEAI_MCP_SERVERS,
+          interactiveSessionSentinel,
+        );
+        assert.deepEqual(createInput?.options.systemPrompt, {
+          type: "preset",
+          preset: "claude_code",
+          append: [
+            "You are running inside Scient, a scientific workspace that embeds the Claude Agent SDK.",
+            "Do not present the host app as Claude Code unless the user is explicitly asking about Claude Code.",
+            "Treat the current working directory as the active workspace for the task.",
+            "When the user asks about the current project, codebase, or repository, proactively inspect files in the current working directory before asking the user where to look.",
+          ].join("\n"),
+        });
+      } finally {
+        if (previousConnectorSetting === undefined) {
+          delete process.env.ENABLE_CLAUDEAI_MCP_SERVERS;
+        } else {
+          process.env.ENABLE_CLAUDEAI_MCP_SERVERS = previousConnectorSetting;
+        }
+      }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

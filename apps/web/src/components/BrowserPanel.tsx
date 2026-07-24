@@ -18,6 +18,7 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   CameraIcon,
+  CheckIcon,
   EllipsisIcon,
   ExternalLinkIcon,
   GlobeIcon,
@@ -32,13 +33,11 @@ import {
 import { localServerPrimaryLabel } from "@synara/shared/localServers";
 import {
   BROWSER_BLANK_URL,
+  browserSessionPartition,
   isBlankBrowserTabUrl,
   resolveCopyableBrowserTabUrl,
 } from "@synara/shared/browserSession";
-import {
-  BROWSER_COPY_LINK_TOAST_TITLE,
-  isBrowserCopyLinkChord,
-} from "@synara/shared/browserShortcuts";
+import { isBrowserCopyLinkChord } from "@synara/shared/browserShortcuts";
 
 import { isElectron } from "~/env";
 import { readNativeApi } from "~/nativeApi";
@@ -54,18 +53,20 @@ import {
   selectThreadBrowserState,
 } from "../browserStateStore";
 import { useComposerDraftStore } from "../composerDraftStore";
-import { anchoredToastManager } from "./ui/toast";
 import {
   composerImageFromBrowserScreenshot,
   screenshotAttachmentName,
 } from "../lib/browserPromptContext";
 import {
   browserAddressDisplayValue,
+  browserCopyFeedbackMatches,
   buildBrowserAddressSuggestions,
   normalizeBrowserAddressInput,
   resolveBrowserChromeStatus,
   resolveBrowserAddressSync,
+  shouldCloseBrowserPanelAfterTabClose,
   type BrowserAddressSuggestion,
+  type BrowserCopyFeedback,
 } from "./BrowserPanel.logic";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { LocalServerIdentity } from "./LocalServerIdentity";
@@ -74,7 +75,6 @@ import { ComposerPickerMenuPopup } from "./chat/ComposerPickerMenuPopup";
 import { Input } from "./ui/input";
 import { Menu, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu";
 import { Skeleton } from "./ui/skeleton";
-import { toastManager } from "./ui/toast";
 
 interface BrowserPanelProps {
   mode: DiffPanelMode;
@@ -86,7 +86,6 @@ interface BrowserPanelProps {
 
 const BROWSER_BOUNDS_SYNC_BURST_FRAMES = 30;
 const BROWSER_BOUNDS_SYNC_STABLE_FRAME_TARGET = 2;
-const BROWSER_WEBVIEW_PARTITION = "persist:scient-browser";
 const BROWSER_PERF_SAMPLE_INTERVAL_MS = 5_000;
 const SYNARA_BROWSER_LABEL = "Scient browser";
 // The address field and tab pills share one chrome-control surface so the whole row reads
@@ -413,7 +412,7 @@ function BrowserLocalServerThumbnail({ server }: { server: ServerLocalServerProc
   );
 }
 
-// Replaces about:blank with a local-server launcher so the browser never opens to white.
+// Replaces about:blank with a useful, theme-aware local-server launcher.
 function BrowserLocalServersHome({
   activeTabId,
   loading,
@@ -430,15 +429,15 @@ function BrowserLocalServersHome({
   const hasServers = servers.length > 0;
 
   return (
-    <div className="absolute inset-0 z-20 flex flex-col overflow-hidden bg-[#0d0d0d] text-white">
+    <div className="absolute inset-0 z-20 flex flex-col overflow-hidden bg-background text-foreground">
       <div className="mx-auto flex h-full w-full max-w-[52rem] flex-col px-8 py-9">
         <div className="flex shrink-0 items-center justify-between">
-          <p className="text-[15px] font-medium text-white/35">Local</p>
+          <p className="text-[15px] font-medium text-muted-foreground/65">Local</p>
           <Button
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="size-8 text-white/35 hover:bg-white/[0.06] hover:text-white/70"
+            className="size-8 text-muted-foreground/65 hover:bg-[var(--color-background-elevated-secondary)] hover:text-foreground"
             disabled={loading}
             onClick={onRefresh}
             aria-label="Refresh local servers"
@@ -452,15 +451,15 @@ function BrowserLocalServersHome({
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center text-center">
             {loading ? (
               <>
-                <RefreshCwIcon className="mb-4 size-12 animate-spin text-white/20" />
-                <p className="text-base font-semibold text-white">Scanning local servers</p>
-                <p className="mt-2 text-sm text-white/35">Checking localhost ports</p>
+                <RefreshCwIcon className="mb-4 size-12 animate-spin text-muted-foreground/35" />
+                <p className="text-base font-semibold text-foreground">Scanning local servers</p>
+                <p className="mt-2 text-sm text-muted-foreground/65">Checking localhost ports</p>
               </>
             ) : (
               <>
-                <GlobeIcon className="mb-4 size-16 stroke-[1.5] text-white/30" />
-                <p className="text-base font-semibold text-white">No local servers</p>
-                <p className="mt-2 text-sm text-white/35">Try another browser URL</p>
+                <GlobeIcon className="mb-4 size-16 stroke-[1.5] text-muted-foreground/45" />
+                <p className="text-base font-semibold text-foreground">No local servers</p>
+                <p className="mt-2 text-sm text-muted-foreground/65">Try another browser URL</p>
               </>
             )}
           </div>
@@ -479,7 +478,7 @@ function BrowserLocalServersHome({
                       onNavigate(url, activeTabId);
                     }
                   }}
-                  className="group grid w-full shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3.5 rounded-xl border border-white/[0.07] px-3 py-2.5 text-left transition-colors hover:border-white/[0.14] hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-45"
+                  className="group grid w-full shrink-0 cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3.5 rounded-xl border border-border/70 px-3 py-2.5 text-left transition-colors hover:border-border hover:bg-[var(--color-background-elevated-secondary)] disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <BrowserLocalServerThumbnail server={server} />
                   <LocalServerIdentity server={server} tone="browser" />
@@ -526,9 +525,15 @@ export function BrowserPanel({
   const browserWebviewTabIdRef = useRef<string | null>(null);
   const browserWebviewAttachKeyRef = useRef<string | null>(null);
   const copyScreenshotButtonRef = useRef<HTMLButtonElement>(null);
+  const [copyFeedback, setCopyFeedback] = useState<BrowserCopyFeedback | null>(null);
   const addressDraftsByTabIdRef = useRef(new Map<string, string>());
   const lastSyncedAddressByTabIdRef = useRef(new Map<string, string>());
   const previousActiveTabIdRef = useRef<string | null>(null);
+  const artifactPreviewUrlsRef = useRef(
+    new Set(
+      threadBrowserState?.tabs.filter((tab) => tab.kind === "artifact").map((tab) => tab.url) ?? [],
+    ),
+  );
   const lastSentBoundsRef = useRef<string | null>(null);
   const lastMeasuredBoundsKeyRef = useRef<string | null>(null);
   const lastOverlayObscuredRef = useRef(false);
@@ -558,6 +563,17 @@ export function BrowserPanel({
     threadBrowserState?.tabs.find((tab) => tab.id === threadBrowserState.activeTabId) ??
     threadBrowserState?.tabs[0] ??
     null;
+  const activeCopyScope = activeTab
+    ? {
+        tabId: activeTab.id,
+        url: resolveCopyableBrowserTabUrl(activeTab) ?? activeTab.url,
+      }
+    : null;
+  const visibleCopyFeedback = browserCopyFeedbackMatches(copyFeedback, activeCopyScope)
+    ? copyFeedback
+    : null;
+  const copiedBrowserItem =
+    visibleCopyFeedback?.tone === "success" ? visibleCopyFeedback.item : null;
   const loading = activeTab?.isLoading ?? false;
   const activeTabIsBlank = isBlankBrowserTabUrl(activeTab);
   const showLocalServersHome = isLiveRuntime && workspaceReady && (!activeTab || activeTabIsBlank);
@@ -573,11 +589,15 @@ export function BrowserPanel({
   const browserAddressSuggestions = buildBrowserAddressSuggestions({
     query: addressValue,
     activeTabId: activeTab?.id ?? null,
-    tabs: threadBrowserState?.tabs ?? [],
+    tabs: threadBrowserState?.tabs.filter((tab) => tab.kind !== "artifact") ?? [],
     recentHistory,
   });
   const showBrowserAddressSuggestions =
-    isLiveRuntime && isAddressFocused && browserAddressSuggestions.length > 0 && runtimeReady;
+    activeTab?.kind !== "artifact" &&
+    isLiveRuntime &&
+    isAddressFocused &&
+    browserAddressSuggestions.length > 0 &&
+    runtimeReady;
 
   const requestLiveRuntime = useCallback(() => {
     onRequestLive?.();
@@ -634,9 +654,22 @@ export function BrowserPanel({
     }
 
     return api.browser.onState((state) => {
+      if (state.threadId === threadId) {
+        const nextArtifactUrls = new Set(
+          state.tabs.filter((tab) => tab.kind === "artifact").map((tab) => tab.url),
+        );
+        for (const previewUrl of artifactPreviewUrlsRef.current) {
+          if (!nextArtifactUrls.has(previewUrl)) {
+            void api.projects
+              .revokeHtmlArtifactPreview({ previewUrl })
+              .catch(() => ({ revoked: false }));
+          }
+        }
+        artifactPreviewUrlsRef.current = nextArtifactUrls;
+      }
       upsertThreadState(state);
     });
-  }, [api, isLiveRuntime, upsertThreadState]);
+  }, [api, isLiveRuntime, threadId, upsertThreadState]);
 
   useEffect(() => {
     if (!api || !isLiveRuntime) {
@@ -708,6 +741,11 @@ export function BrowserPanel({
     }
 
     let webview = browserWebviewRef.current;
+    const expectedPartition = browserSessionPartition(activeTab.kind, threadId, activeTab.id);
+    if (webview?.getAttribute("partition") !== expectedPartition) {
+      detachRendererBrowserWebview();
+      webview = null;
+    }
     if (!webview) {
       webview = document.createElement("webview") as BrowserWebviewElement;
       webview.className = "h-full w-full";
@@ -715,13 +753,15 @@ export function BrowserPanel({
       webview.style.width = "100%";
       webview.style.height = "100%";
       webview.style.backgroundColor = "#0d0d0d";
-      webview.setAttribute("partition", BROWSER_WEBVIEW_PARTITION);
+      webview.setAttribute("partition", expectedPartition);
       webview.setAttribute("webpreferences", "contextIsolation=yes,nodeIntegration=no,sandbox=yes");
       // A <webview> blocks window.open() unless `allowpopups` is set. Without it, clicking
       // "Continue with Google" (and any OAuth/popup flow) is silently dropped before the main
       // process's window-open handler ever runs. Enabling it lets the popup classifier in
       // browserManager decide popup-vs-tab and keep the OAuth `window.opener` handshake alive.
-      webview.setAttribute("allowpopups", "true");
+      if (activeTab.kind === "web") {
+        webview.setAttribute("allowpopups", "true");
+      }
       // No `useragent` attribute on purpose: the desktop main process spoofs a desktop Chrome
       // UA on the shared persistent partition, so this webview (and OAuth popups) inherit the
       // same identity. This keeps in-app Google/OAuth sign-in working without duplicating the
@@ -1154,33 +1194,29 @@ export function BrowserPanel({
       return;
     }
 
-    void runBrowserAction(() =>
-      api.browser.copyScreenshotToClipboard({ threadId, tabId: activeTab.id }),
-    ).then((result) => {
-      if (result === null) {
-        return;
-      }
-      const anchor = copyScreenshotButtonRef.current;
-      if (anchor) {
-        anchoredToastManager.add({
-          data: {
-            tooltipStyle: true,
-          },
-          positionerProps: {
-            anchor,
-          },
-          timeout: 1_200,
-          title: "Browser screenshot copied",
+    const scope = {
+      tabId: activeTab.id,
+      url: resolveCopyableBrowserTabUrl(activeTab) ?? activeTab.url,
+    };
+    void api.browser.copyScreenshotToClipboard({ threadId, tabId: activeTab.id }).then(
+      () => {
+        setCopyFeedback({
+          ...scope,
+          item: "screenshot",
+          tone: "success",
+          message: "Screenshot copied",
         });
-        return;
-      }
-
-      toastManager.add({
-        type: "success",
-        title: "Browser screenshot copied",
-      });
-    });
-  }, [activeTab, api, ensureLiveRuntime, runBrowserAction, threadId]);
+      },
+      (error) => {
+        setCopyFeedback({
+          ...scope,
+          item: "screenshot",
+          tone: "error",
+          message: formatBrowserActionError(error) ?? "Could not copy the screenshot.",
+        });
+      },
+    );
+  }, [activeTab, api, ensureLiveRuntime, threadId]);
 
   const copyActiveTabLink = useCallback(() => {
     if (!activeTab) {
@@ -1190,8 +1226,19 @@ export function BrowserPanel({
     // with "Document is not focused" while the native browser view holds focus, so this
     // mirrors the keyboard chord — main writes the URL and emits onCopyLink, which surfaces
     // the toast in the listener below.
+    const scope = {
+      tabId: activeTab.id,
+      url: resolveCopyableBrowserTabUrl(activeTab) ?? activeTab.url,
+    };
     if (isElectron && api) {
-      void runBrowserAction(() => api.browser.copyLink({ threadId, tabId: activeTab.id }));
+      void api.browser.copyLink({ threadId, tabId: activeTab.id }).catch((error) => {
+        setCopyFeedback({
+          ...scope,
+          item: "link",
+          tone: "error",
+          message: formatBrowserActionError(error) ?? "Could not copy the link.",
+        });
+      });
       return;
     }
     const url = resolveCopyableBrowserTabUrl(activeTab);
@@ -1200,17 +1247,28 @@ export function BrowserPanel({
     }
     const clipboard = typeof navigator !== "undefined" ? navigator.clipboard : undefined;
     if (!clipboard) {
+      setCopyFeedback({
+        ...scope,
+        item: "link",
+        tone: "error",
+        message: "Clipboard access is unavailable.",
+      });
       return;
     }
     void clipboard.writeText(url).then(
       () => {
-        toastManager.add({ type: "success", title: BROWSER_COPY_LINK_TOAST_TITLE });
+        setCopyFeedback({ ...scope, item: "link", tone: "success", message: "Link copied" });
       },
-      () => {
-        // Clipboard writes can reject without user gesture; nothing actionable to surface.
+      (error) => {
+        setCopyFeedback({
+          ...scope,
+          item: "link",
+          tone: "error",
+          message: formatBrowserActionError(error) ?? "Could not copy the link.",
+        });
       },
     );
-  }, [activeTab, api, runBrowserAction, threadId]);
+  }, [activeTab, api, threadId]);
 
   // React chrome focus path: the native page handles the chord through the desktop main
   // process, so this only fires when the address bar/tab strip (not the page) is focused.
@@ -1244,7 +1302,7 @@ export function BrowserPanel({
     };
   }, [copyActiveTabLink, isLiveRuntime]);
 
-  // Native page focus path: main already wrote the URL to the clipboard, so just toast.
+  // Native page focus path: main already wrote the URL to the clipboard.
   useEffect(() => {
     if (!api || !isLiveRuntime) {
       return;
@@ -1253,9 +1311,21 @@ export function BrowserPanel({
       if (event.threadId !== threadId) {
         return;
       }
-      toastManager.add({ type: "success", title: BROWSER_COPY_LINK_TOAST_TITLE });
+      setCopyFeedback({
+        item: "link",
+        tabId: event.tabId,
+        url: event.url,
+        tone: "success",
+        message: "Link copied",
+      });
     });
   }, [api, isLiveRuntime, threadId]);
+
+  useEffect(() => {
+    if (!copyFeedback) return;
+    const timeoutId = window.setTimeout(() => setCopyFeedback(null), 2_500);
+    return () => window.clearTimeout(timeoutId);
+  }, [copyFeedback]);
 
   const onCloseTab = useCallback(
     (tabId: string) => {
@@ -1265,17 +1335,33 @@ export function BrowserPanel({
       if (!api) {
         return;
       }
-      void runBrowserAction(() => api.browser.closeTab({ threadId, tabId })).then((state) => {
+      const closingTab = threadBrowserState?.tabs.find((tab) => tab.id === tabId);
+      void runBrowserAction(async () => {
+        if (closingTab?.kind === "artifact") {
+          await api.projects
+            .revokeHtmlArtifactPreview({ previewUrl: closingTab.url })
+            .catch(() => ({ revoked: false }));
+        }
+        return api.browser.closeTab({ threadId, tabId });
+      }).then((state) => {
         if (!state) {
           return;
         }
         upsertThreadState(state);
-        if (!state.open && state.tabs.length === 0) {
+        if (shouldCloseBrowserPanelAfterTabClose(state)) {
           onClosePanel();
         }
       });
     },
-    [api, ensureLiveRuntime, onClosePanel, runBrowserAction, threadId, upsertThreadState],
+    [
+      api,
+      ensureLiveRuntime,
+      onClosePanel,
+      runBrowserAction,
+      threadBrowserState?.tabs,
+      threadId,
+      upsertThreadState,
+    ],
   );
 
   const header = (
@@ -1361,6 +1447,12 @@ export function BrowserPanel({
           <Input
             ref={addressInputRef}
             value={addressValue}
+            readOnly={activeTab?.kind === "artifact"}
+            title={
+              activeTab?.kind === "artifact"
+                ? "This isolated artifact preview cannot navigate to another origin."
+                : undefined
+            }
             onChange={(event) => {
               if (!isLiveRuntime) {
                 requestLiveRuntime();
@@ -1426,6 +1518,16 @@ export function BrowserPanel({
         ) : null}
       </div>
       <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+        <span
+          className={cn(
+            "max-w-40 truncate text-xs",
+            visibleCopyFeedback?.tone === "error" ? "text-destructive" : "sr-only",
+          )}
+          role="status"
+          aria-live="polite"
+        >
+          {visibleCopyFeedback?.message ?? ""}
+        </span>
         <Button
           ref={copyScreenshotButtonRef}
           type="button"
@@ -1433,25 +1535,37 @@ export function BrowserPanel({
           size="icon-sm"
           className="size-7"
           disabled={!activeTab}
-          aria-label="Copy screenshot"
-          title="Copy screenshot"
+          aria-label={copiedBrowserItem === "screenshot" ? "Screenshot copied" : "Copy screenshot"}
+          title={copiedBrowserItem === "screenshot" ? "Copied" : "Copy screenshot"}
           onClick={onCopyScreenshotToClipboard}
         >
-          <CameraIcon className="size-3.5" />
-          <span className="sr-only">Copy screenshot</span>
+          {copiedBrowserItem === "screenshot" ? (
+            <CheckIcon className="size-3.5 text-success" />
+          ) : (
+            <CameraIcon className="size-3.5" />
+          )}
+          <span className="sr-only">
+            {copiedBrowserItem === "screenshot" ? "Screenshot copied" : "Copy screenshot"}
+          </span>
         </Button>
         <Button
           type="button"
           variant="ghost"
           size="icon-sm"
           className="size-7"
-          disabled={!activeTab}
-          aria-label="Copy link"
-          title="Copy link"
+          disabled={!activeTab || activeTab.kind === "artifact"}
+          aria-label={copiedBrowserItem === "link" ? "Link copied" : "Copy link"}
+          title={copiedBrowserItem === "link" ? "Copied" : "Copy link"}
           onClick={copyActiveTabLink}
         >
-          <LinkIcon className="size-3.5" />
-          <span className="sr-only">Copy link</span>
+          {copiedBrowserItem === "link" ? (
+            <CheckIcon className="size-3.5 text-success" />
+          ) : (
+            <LinkIcon className="size-3.5" />
+          )}
+          <span className="sr-only">
+            {copiedBrowserItem === "link" ? "Link copied" : "Copy link"}
+          </span>
         </Button>
         <Menu modal={false}>
           <MenuTrigger
@@ -1578,7 +1692,9 @@ export function BrowserPanel({
                     }}
                   >
                     <XIcon className="size-3" />
-                    <span className="sr-only">Close tab</span>
+                    <span className="sr-only">
+                      {threadBrowserState?.tabs.length === 1 ? "Close Browser" : "Close tab"}
+                    </span>
                   </Button>
                 </div>
               );

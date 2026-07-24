@@ -4,18 +4,30 @@
 // Depends on: update-release-package-versions.ts and merge-mac-update-manifests.ts.
 
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse as parseYaml } from "yaml";
 
 import {
+  SCIENT_DESKTOP_DEB_UPDATE_CHANNEL,
   SCIENT_DESKTOP_UPDATES_ENABLED,
   SCIENT_DESKTOP_UPDATE_CHANNEL,
   SCIENT_PRODUCTION_BUNDLE_ID,
 } from "@synara/shared/desktopIdentity";
 
 import { createDesktopPlatformBuildConfig } from "./lib/desktop-platform-build-config.ts";
+import { resolvePinnedElectronBuilder } from "./lib/electron-builder-authority.ts";
 import {
   createReleaseInstallManifest,
   RELEASE_LOCKFILE_PATH,
@@ -100,6 +112,58 @@ function assertNotContains(haystack: string, needle: string, message: string): v
   }
 }
 
+function assertNotMatches(haystack: string, pattern: RegExp, message: string): void {
+  if (pattern.test(haystack)) {
+    throw new Error(message);
+  }
+}
+
+function verifyReleaseRepositoryPolicy(): void {
+  const lockfileAttributes = execFileSync(
+    "git",
+    ["check-attr", "text", "eol", "--", RELEASE_LOCKFILE_PATH],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+    },
+  )
+    .replaceAll("\r\n", "\n")
+    .trim();
+  const expectedAttributes = [
+    `${RELEASE_LOCKFILE_PATH}: text: set`,
+    `${RELEASE_LOCKFILE_PATH}: eol: lf`,
+  ].join("\n");
+  if (lockfileAttributes !== expectedAttributes) {
+    throw new Error(
+      `Expected Git to resolve ${RELEASE_LOCKFILE_PATH} as text with LF endings; got:\n${lockfileAttributes}`,
+    );
+  }
+}
+
+interface ReleaseWorkflowStep {
+  readonly env?: Record<string, unknown>;
+  readonly if?: string;
+  readonly name?: string;
+}
+
+function assertScopedSigningEnvironment(
+  step: ReleaseWorkflowStep,
+  expectedNames: ReadonlyArray<string>,
+  forbiddenNames: ReadonlyArray<string>,
+): void {
+  const environment = step.env ?? {};
+  for (const name of expectedNames) {
+    if (!(name in environment)) {
+      throw new Error(`Expected ${step.name} to receive ${name}.`);
+    }
+  }
+  for (const name of forbiddenNames) {
+    if (name in environment) {
+      throw new Error(`${step.name} must not receive ${name}.`);
+    }
+  }
+}
+
 function assertOrdered(haystack: string, needles: ReadonlyArray<string>, message: string): void {
   let previousIndex = -1;
   for (const needle of needles) {
@@ -132,14 +196,38 @@ function verifyCanonicalIdentity(): void {
   if (SCIENT_DESKTOP_UPDATE_CHANNEL !== "scient") {
     throw new Error(`Unexpected desktop update channel: ${SCIENT_DESKTOP_UPDATE_CHANNEL}.`);
   }
+  if (SCIENT_DESKTOP_DEB_UPDATE_CHANNEL !== "scient-deb") {
+    throw new Error(
+      `Unexpected Debian desktop update channel: ${SCIENT_DESKTOP_DEB_UPDATE_CHANNEL}.`,
+    );
+  }
   if (!SCIENT_DESKTOP_UPDATES_ENABLED) {
     throw new Error("Expected packaged Scient clients to use the approved update channel.");
   }
 
-  const linux = createDesktopPlatformBuildConfig({ platform: "linux", target: "AppImage" }).linux;
+  const linuxConfig = createDesktopPlatformBuildConfig({ platform: "linux", target: "deb" });
+  const linux = linuxConfig.linux;
   if (!linux || linux.executableName !== "scient") {
     throw new Error("Expected Linux desktop releases to install the scient executable.");
   }
+  if (!Array.isArray(linux.executableArgs) || linux.executableArgs.length !== 0) {
+    throw new Error("Expected Linux desktop entries to preserve Electron's sandbox.");
+  }
+  if (linuxConfig.deb?.packageName !== "scient" || linuxConfig.deb.maintainer !== "ScientFactory") {
+    throw new Error("Expected Debian releases to use the canonical Scient package identity.");
+  }
+  const requireFromElectronBuilder = createRequire(
+    realpathSync(resolve(repoRoot, "node_modules/electron-builder/package.json")),
+  );
+  const appImageLauncherGenerator = readFileSync(
+    requireFromElectronBuilder.resolve("app-builder-lib/out/targets/appimage/appImageUtil.js"),
+    "utf8",
+  );
+  assertNotContains(
+    appImageLauncherGenerator,
+    "--no-sandbox",
+    "The installed AppImage launcher generator must not disable Electron's sandbox.",
+  );
   const startupWmClass = (linux.desktop as { entry?: { StartupWMClass?: unknown } } | undefined)
     ?.entry?.StartupWMClass;
   if (startupWmClass !== "scient") {
@@ -165,6 +253,79 @@ function verifyReleaseWorkflowSafety(): void {
     resolve(repoRoot, ".github/workflows/release.yml"),
     "utf8",
   ).replaceAll("\r\n", "\n");
+  const ciWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/ci.yml"), "utf8").replaceAll(
+    "\r\n",
+    "\n",
+  );
+  const releaseBuildScript = readFileSync(
+    resolve(repoRoot, "scripts/build-release-desktop-artifact.sh"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  const notarizationHelper = readFileSync(
+    resolve(repoRoot, "scripts/lib/mac-notarization.cjs"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  const parsedWorkflow = parseYaml(workflow) as {
+    jobs?: {
+      build?: { steps?: Array<ReleaseWorkflowStep> };
+    };
+  };
+  const buildSteps = parsedWorkflow.jobs?.build?.steps ?? [];
+  const requireBuildStep = (name: string) => {
+    const step = buildSteps.find((candidate) => candidate.name === name);
+    if (!step) {
+      throw new Error(`Expected release workflow build step: ${name}.`);
+    }
+    return step;
+  };
+  const macBuildStep = requireBuildStep("Build macOS desktop artifact");
+  const linuxBuildStep = requireBuildStep("Build Linux desktop artifact");
+  const windowsBuildStep = requireBuildStep("Build Windows desktop artifact");
+  const appleSigningNames = [
+    "CSC_LINK",
+    "CSC_KEY_PASSWORD",
+    "APPLE_API_KEY",
+    "APPLE_API_KEY_ID",
+    "APPLE_API_ISSUER",
+  ];
+  const windowsSigningNames = [
+    "WIN_CSC_LINK",
+    "WIN_CSC_KEY_PASSWORD",
+    "AZURE_TENANT_ID",
+    "AZURE_CLIENT_ID",
+    "AZURE_CLIENT_SECRET",
+    "AZURE_TRUSTED_SIGNING_ENDPOINT",
+    "AZURE_TRUSTED_SIGNING_ACCOUNT_NAME",
+    "AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME",
+    "AZURE_TRUSTED_SIGNING_PUBLISHER_NAME",
+  ];
+  if (macBuildStep.if !== "matrix.platform == 'mac'") {
+    throw new Error("Expected macOS signing credentials to be gated to macOS builders.");
+  }
+  if (linuxBuildStep.if !== "matrix.platform == 'linux'") {
+    throw new Error("Expected the unsigned Linux build to be gated to Linux builders.");
+  }
+  if (windowsBuildStep.if !== "matrix.platform == 'win'") {
+    throw new Error("Expected Windows signing credentials to be gated to Windows builders.");
+  }
+  assertScopedSigningEnvironment(macBuildStep, appleSigningNames, windowsSigningNames);
+  assertScopedSigningEnvironment(windowsBuildStep, windowsSigningNames, appleSigningNames);
+  assertScopedSigningEnvironment(
+    linuxBuildStep,
+    [],
+    [...appleSigningNames, ...windowsSigningNames],
+  );
+  const expectedSigningStep = new Map<string, string>([
+    ...appleSigningNames.map((name) => [name, macBuildStep.name ?? ""] as const),
+    ...windowsSigningNames.map((name) => [name, windowsBuildStep.name ?? ""] as const),
+  ]);
+  for (const step of buildSteps) {
+    for (const name of [...appleSigningNames, ...windowsSigningNames]) {
+      if (name in (step.env ?? {}) && step.name !== expectedSigningStep.get(name)) {
+        throw new Error(`${step.name ?? "Unnamed build step"} must not receive ${name}.`);
+      }
+    }
+  }
   assertContains(
     workflow,
     "if: ${{ vars.SCIENT_DESKTOP_RELEASES_ENABLED == 'true' }}",
@@ -221,9 +382,93 @@ function verifyReleaseWorkflowSafety(): void {
     "Expected publication to require the exact release/stable head.",
   );
   assertContains(
-    workflow,
+    releaseBuildScript,
     "Public macOS releases require all Apple signing and notarization secrets.",
     "Expected public macOS releases to fail closed without signing and notarization.",
+  );
+  const macReleasePolicy = releaseBuildScript.slice(
+    releaseBuildScript.indexOf('if [[ "$platform" == "mac" ]]'),
+    releaseBuildScript.indexOf('elif [[ "$platform" == "win" ]]'),
+  );
+  assertNotContains(
+    macReleasePolicy,
+    "ALLOW_UNSIGNED_RELEASE",
+    "Public macOS releases must not expose an unsigned publication bypass.",
+  );
+  assertContains(
+    workflow,
+    "timeout-minutes: ${{ matrix.timeout_minutes }}",
+    "Expected platform-specific release timeouts.",
+  );
+  assertContains(
+    workflow,
+    "timeout_minutes: 120",
+    "Expected macOS signing and notarization to tolerate bounded Apple service delays.",
+  );
+  assertContains(
+    workflow,
+    "name: Upload macOS notarization evidence",
+    "Expected macOS builders to preserve notarization evidence even when packaging fails.",
+  );
+  assertContains(
+    workflow,
+    "path: release/notarization-*.json",
+    "Expected macOS builders to upload Apple submission evidence and logs.",
+  );
+  assertContains(
+    workflow,
+    "verify_published_macos:",
+    "Expected public macOS DMGs to be independently downloaded and verified.",
+  );
+  assertContains(
+    workflow,
+    'gh release download "$RELEASE_TAG"',
+    "Expected post-publication checks to download the public release artifact.",
+  );
+  assertContains(
+    workflow,
+    "bun scripts/verify-mac-release-artifact.ts published-macos",
+    "Expected post-publication checks to validate the delivered macOS identity.",
+  );
+  assertContains(
+    notarizationHelper,
+    '"--no-wait"',
+    "Expected notarization to capture Apple's submission ID before polling.",
+  );
+  assertNotContains(
+    notarizationHelper,
+    '"--wait"',
+    "Controlled notarization must not return to Apple's opaque wait mode.",
+  );
+  assertContains(
+    notarizationHelper,
+    "processingMs: 90 * 60 * 1000",
+    "Expected Apple processing to have an inner deadline below the macOS job limit.",
+  );
+  assertContains(
+    notarizationHelper,
+    'args: ["notarytool", "info", submissionId',
+    "Expected notarization to poll Apple explicitly.",
+  );
+  assertContains(
+    notarizationHelper,
+    'args: ["notarytool", "log", submissionId',
+    "Expected notarization to preserve Apple's completed submission log.",
+  );
+  assertNotContains(
+    releaseBuildScript,
+    "max_attempts=3",
+    "macOS release builds must not retry the whole notarization workflow.",
+  );
+  assertContains(
+    releaseBuildScript,
+    'chmod 600 "$apple_key_path"',
+    "Expected the temporary Apple API key to have owner-only permissions.",
+  );
+  assertContains(
+    releaseBuildScript,
+    "trap cleanup_sensitive_files EXIT",
+    "Expected the temporary Apple API key to be removed when the build exits.",
   );
   assertContains(
     workflow,
@@ -231,7 +476,7 @@ function verifyReleaseWorkflowSafety(): void {
     "Expected the release workflow to accept a standard Windows signing certificate.",
   );
   assertContains(
-    workflow,
+    releaseBuildScript,
     "Public Windows releases require a standard Authenticode certificate or Azure Trusted Signing.",
     "Expected public Windows releases to fail closed without signing.",
   );
@@ -247,8 +492,28 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     workflow,
-    '"Scient-${RELEASE_VERSION}-x86_64.AppImage"',
-    "Expected the public contract to validate the Linux AppImage filename.",
+    '"Scient-${RELEASE_VERSION}-amd64.deb"',
+    "Expected the public contract to validate the Linux Debian filename.",
+  );
+  assertContains(
+    workflow,
+    '"${UPDATE_CHANNEL}-deb-linux.yml"',
+    "Expected Debian updates to use a format-specific channel.",
+  );
+  assertNotContains(
+    workflow,
+    '"${UPDATE_CHANNEL}-linux.yml"',
+    "Debian releases must not overwrite the legacy AppImage update channel.",
+  );
+  assertContains(
+    ciWorkflow,
+    "Verify AppImage never injects a sandbox bypass",
+    "Expected CI to retain an honest fail-closed AppImage packaging check.",
+  );
+  assertContains(
+    ciWorkflow,
+    "grep -F -- '--no-sandbox' \"$launcher\"",
+    "Expected CI to reject AppImages that disable Electron's sandbox.",
   );
   assertContains(
     workflow,
@@ -262,8 +527,8 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     workflow,
-    "Smoke exact packaged desktop startup",
-    "Expected every native builder to launch its exact collected desktop payload.",
+    "if: ${{ matrix.platform != 'linux' }}",
+    "Expected non-Linux native builders to use the cross-platform startup smoke.",
   );
   assertContains(
     workflow,
@@ -278,18 +543,18 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     workflow,
-    "./apps/web/node_modules/.bin/playwright install-deps chromium\n          sudo apt-get install --no-install-recommends --yes libfuse2t64",
-    "Expected the Linux release runner to install only the browser-system and AppImage runtime dependencies.",
+    "./apps/web/node_modules/.bin/playwright install-deps chromium",
+    "Expected the Linux release runner to install browser-system dependencies.",
   );
   assertContains(
     workflow,
-    "SCIENT_LINUX_ARTIFACT_DIR: release-publish\n          SCIENT_LINUX_SMOKE_ARTIFACT_DIR: test-results/linux-release-appimage",
-    "Expected the deep Linux lifecycle smoke to exercise the exact collected AppImage.",
+    "SCIENT_LINUX_ARTIFACT_DIR: release-publish\n          SCIENT_LINUX_SMOKE_ARTIFACT_DIR: test-results/linux-release-deb",
+    "Expected the deep Linux lifecycle smoke to exercise the exact collected Debian package.",
   );
   assertContains(
     workflow,
-    "run: node apps/web/scripts/linux-appimage-smoke.mjs",
-    "Expected Linux release builds to run the existing packaged lifecycle test.",
+    "run: node apps/web/scripts/linux-deb-smoke.mjs",
+    "Expected Linux release builds to run the installed Debian lifecycle test.",
   );
   assertOrdered(
     workflow,
@@ -327,10 +592,7 @@ function verifyReleaseWorkflowSafety(): void {
     "Packaged startup verification must not retain the Synara executable identity.",
   );
 
-  const packagedLinuxLaunch = createLinuxPackagedLaunchCommand(
-    "/release-publish/squashfs-root/AppRun",
-    "/release-publish/squashfs-root",
-  );
+  const packagedLinuxLaunch = createLinuxPackagedLaunchCommand("/opt/Scient/scient", "/opt/Scient");
   assertPackagedLaunchCommandSafety(packagedLinuxLaunch);
   if (packagedLinuxLaunch.args.some((argument) => argument.startsWith("--no-sandbox"))) {
     throw new Error("Exact packaged Linux verification must not disable Electron's sandbox.");
@@ -347,7 +609,7 @@ function verifyReleaseWorkflowSafety(): void {
   );
 
   const packagedLinuxLifecycleSmoke = readFileSync(
-    resolve(repoRoot, "apps/web/scripts/linux-appimage-smoke.mjs"),
+    resolve(repoRoot, "apps/web/scripts/linux-deb-smoke.mjs"),
     "utf8",
   ).replaceAll("\r\n", "\n");
   assertContains(
@@ -414,8 +676,38 @@ function verifyDesktopStageLockAuthority(): void {
   );
   assertContains(
     buildScript,
+    "resolvePinnedElectronBuilder(repoRoot).cliPath",
+    "Expected desktop packaging to resolve electron-builder through the authority guard.",
+  );
+  assertContains(
+    buildScript,
+    "`${process.execPath} ${electronBuilderCli}",
+    "Expected desktop packaging to invoke electron-builder through Node.",
+  );
+  assertContains(
+    buildScript,
+    "Pinned electron-builder CLI could not be resolved within repository dependency authority.",
+    "Expected desktop packaging to fail closed when electron-builder cannot be resolved.",
+  );
+  assertContains(
+    buildScript,
+    "Pinned electron-builder CLI was not found at ${electronBuilderCli}",
+    "Expected desktop packaging to fail closed when the resolved CLI is absent.",
+  );
+  assertNotContains(
+    buildScript,
     'path.join(repoRoot, "node_modules", "electron-builder", "cli.js")',
-    "Expected packaging to invoke the pinned root electron-builder CLI without platform-specific shims.",
+    "Desktop packaging must not assume electron-builder is hoisted to the root node_modules directory.",
+  );
+  assertNotContains(
+    buildScript,
+    "electron-builder.cmd",
+    "Desktop packaging must not depend on a platform-specific Windows bin shim.",
+  );
+  assertNotMatches(
+    buildScript,
+    /const electronBuilder\w* = path\.join\([\s\S]{0,240}?["']\.bin["']/,
+    "Desktop packaging must not depend on a hard-coded electron-builder bin directory.",
   );
   assertContains(
     buildScript,
@@ -427,12 +719,53 @@ function verifyDesktopStageLockAuthority(): void {
     ")`bun run install`,",
     "Expected node-pty staging to run its pinned install and postinstall lifecycle.",
   );
+  const signingIsolationIndex = buildScript.indexOf("isolateDesktopSigningEnvironment(");
+  const firstBuildSubprocessIndex = buildScript.indexOf(")`bun run build:desktop`,");
+  if (
+    signingIsolationIndex === -1 ||
+    firstBuildSubprocessIndex === -1 ||
+    signingIsolationIndex > firstBuildSubprocessIndex
+  ) {
+    throw new Error(
+      "Expected desktop signing credentials to be removed before the first build subprocess.",
+    );
+  }
+  assertContains(
+    buildScript,
+    "...signingEnvironment",
+    "Expected signing credentials to be restored only for the electron-builder environment.",
+  );
   const rootPackage = readFileSync(resolve(repoRoot, "package.json"), "utf8");
   assertContains(
     rootPackage,
     '"node-gyp": "12.4.0"',
     "Expected native compiler tooling to be pinned.",
   );
+
+  const rootPackageJson = JSON.parse(rootPackage) as {
+    devDependencies?: Record<string, unknown>;
+  };
+  const scriptsPackageJson = JSON.parse(
+    readFileSync(resolve(repoRoot, "scripts/package.json"), "utf8"),
+  ) as { devDependencies?: Record<string, unknown> };
+  const rootElectronBuilderPin = rootPackageJson.devDependencies?.["electron-builder"];
+  const scriptsElectronBuilderPin = scriptsPackageJson.devDependencies?.["electron-builder"];
+  if (
+    typeof scriptsElectronBuilderPin !== "string" ||
+    !/^\d+\.\d+\.\d+$/.test(scriptsElectronBuilderPin) ||
+    rootElectronBuilderPin !== scriptsElectronBuilderPin
+  ) {
+    throw new Error(
+      "Expected root and scripts workspaces to use the same exact electron-builder version pin.",
+    );
+  }
+
+  const resolvedElectronBuilder = resolvePinnedElectronBuilder(repoRoot);
+  if (resolvedElectronBuilder.version !== scriptsElectronBuilderPin) {
+    throw new Error(
+      `Expected scripts/package.json to resolve electron-builder ${scriptsElectronBuilderPin}, got ${resolvedElectronBuilder.version} from ${resolvedElectronBuilder.cliPath}.`,
+    );
+  }
 }
 
 function readPackageVersion(root: string, relativePath: string): string {
@@ -518,6 +851,7 @@ function verifyFrozenDesktopStageInstall(targetRoot: string, verifyNative = fals
 const tempRoot = mkdtempSync(join(tmpdir(), "scient-release-smoke-"));
 
 try {
+  verifyReleaseRepositoryPolicy();
   verifyCanonicalIdentity();
   verifyReleaseWorkflowSafety();
   verifyDesktopStageLockAuthority();

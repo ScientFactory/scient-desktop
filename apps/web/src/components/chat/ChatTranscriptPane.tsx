@@ -52,6 +52,7 @@ interface ChatTranscriptPaneProps {
   listRef: RefObject<LegendListRef | null>;
   timelineControllerRef?: RefObject<MessagesTimelineController | null>;
   pinnedMessageIds?: ReadonlySet<MessageId>;
+  pinLimitMessageId?: MessageId | null;
   canPinMessage?: (messageId: MessageId) => boolean;
   onTogglePinMessage?: (messageId: MessageId) => void;
   threadMarkers?: readonly ThreadMarker[];
@@ -77,6 +78,8 @@ interface ChatTranscriptPaneProps {
   onRevertUserMessage: (messageId: MessageId) => void;
   onUndoTurnFiles?: ComponentProps<typeof MessagesTimeline>["onUndoTurnFiles"];
   onEditUserMessage?: (messageId: MessageId, text: string) => boolean | Promise<boolean>;
+  onForkFromMessage?: (messageId: MessageId) => void;
+  forkableMessageIds?: ReadonlySet<MessageId>;
   onScrollToBottom: () => void;
   onToggleWorkGroup?: (groupId: string) => void;
   resolvedTheme: "light" | "dark";
@@ -109,6 +112,7 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
   listRef,
   timelineControllerRef,
   pinnedMessageIds,
+  pinLimitMessageId,
   canPinMessage,
   onTogglePinMessage,
   threadMarkers,
@@ -134,6 +138,8 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
   onRevertUserMessage,
   onUndoTurnFiles,
   onEditUserMessage,
+  onForkFromMessage,
+  forkableMessageIds,
   onScrollToBottom,
   onToggleWorkGroup,
   resolvedTheme,
@@ -205,6 +211,7 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
             listRef={listRef}
             {...(timelineControllerRef ? { controllerRef: timelineControllerRef } : {})}
             {...(pinnedMessageIds ? { pinnedMessageIds } : {})}
+            {...(pinLimitMessageId ? { pinLimitMessageId } : {})}
             {...(canPinMessage ? { canPinMessage } : {})}
             {...(onTogglePinMessage ? { onTogglePinMessage } : {})}
             {...(threadMarkers ? { threadMarkers } : {})}
@@ -218,6 +225,8 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
             onRevertUserMessage={onRevertUserMessage}
             {...(onUndoTurnFiles ? { onUndoTurnFiles } : {})}
             {...(onEditUserMessage ? { onEditUserMessage } : {})}
+            {...(onForkFromMessage ? { onForkFromMessage } : {})}
+            {...(forkableMessageIds ? { forkableMessageIds } : {})}
             isRevertingCheckpoint={isRevertingCheckpoint}
             onImageExpand={onExpandTimelineImage}
             followLiveOutput={followLiveOutput}

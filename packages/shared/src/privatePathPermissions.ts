@@ -57,3 +57,68 @@ export function ensurePrivateDirectorySync(
     fs.closeSync(descriptor);
   }
 }
+
+export function repairPrivateFileSync(
+  filePath: string,
+  options: {
+    readonly executable?: boolean;
+    readonly platform?: NodeJS.Platform;
+  } = {},
+): void {
+  if (!supportsPosixPermissions(options.platform)) return;
+  const targetMode = options.executable ? PRIVATE_EXECUTABLE_FILE_MODE : PRIVATE_FILE_MODE;
+
+  const descriptor = withPrivatePathContext("open without following symlinks", filePath, () =>
+    fs.openSync(
+      filePath,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK,
+    ),
+  );
+  try {
+    withPrivatePathContext("set mode on", filePath, () => {
+      if (!fs.fstatSync(descriptor).isFile()) {
+        throw new Error("Path is not a regular file");
+      }
+      fs.fchmodSync(descriptor, targetMode);
+    });
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+export function ensurePrivateFileSync(
+  filePath: string,
+  options: {
+    readonly executable?: boolean;
+    readonly platform?: NodeJS.Platform;
+  } = {},
+): void {
+  if (!supportsPosixPermissions(options.platform)) {
+    const descriptor = withPrivatePathContext("create", filePath, () =>
+      fs.openSync(filePath, fs.constants.O_WRONLY | fs.constants.O_CREAT, PRIVATE_FILE_MODE),
+    );
+    fs.closeSync(descriptor);
+    return;
+  }
+
+  const targetMode = options.executable ? PRIVATE_EXECUTABLE_FILE_MODE : PRIVATE_FILE_MODE;
+  const flags =
+    fs.constants.O_WRONLY |
+    fs.constants.O_CREAT |
+    fs.constants.O_APPEND |
+    fs.constants.O_NOFOLLOW |
+    fs.constants.O_NONBLOCK;
+  const descriptor = withPrivatePathContext("create without following symlinks", filePath, () =>
+    fs.openSync(filePath, flags, targetMode),
+  );
+  try {
+    withPrivatePathContext("set mode on", filePath, () => {
+      if (!fs.fstatSync(descriptor).isFile()) {
+        throw new Error("Path is not a regular file");
+      }
+      fs.fchmodSync(descriptor, targetMode);
+    });
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}

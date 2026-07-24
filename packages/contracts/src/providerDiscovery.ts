@@ -47,6 +47,7 @@ export const ScientBuiltInSkillCatalogEntry = Schema.Struct({
   kind: Schema.Literals(["scientific", "meta"]),
   role: Schema.Literals(["constructive", "review", "orientation"]),
   activationScope: Schema.Literals(["user", "project"]),
+  readiness: Schema.Literals(["available", "latent"]),
   enabled: Schema.Boolean,
   defaultEnabled: Schema.Boolean,
   capabilities: Schema.Struct({
@@ -293,6 +294,8 @@ export type ProviderContextWindowDescriptor = typeof ProviderContextWindowDescri
 export const ProviderModelDescriptor = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
+  resolvedModel: Schema.optional(TrimmedNonEmptyString),
+  isDefault: Schema.optional(Schema.Literal(true)),
   description: Schema.optional(TrimmedNonEmptyString),
   upstreamProviderId: Schema.optional(TrimmedNonEmptyString),
   upstreamProviderName: Schema.optional(TrimmedNonEmptyString),

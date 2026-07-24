@@ -490,6 +490,8 @@ export const OrchestrationSession = Schema.Struct({
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(TrimmedNonEmptyString),
+  lastErrorEventId: Schema.optional(Schema.NullOr(EventId)),
+  lastErrorClass: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationSession = typeof OrchestrationSession.Type;
@@ -668,6 +670,18 @@ export const OrchestrationThread = Schema.Struct({
   forkSourceThreadId: Schema.optional(Schema.NullOr(ThreadId)).pipe(
     Schema.withDecodingDefault(() => null),
   ),
+  forkSourceMessageId: Schema.optional(Schema.NullOr(MessageId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  forkTitleFamilyRootId: Schema.optional(Schema.NullOr(ThreadId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  forkTitleBase: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  forkTitleOrdinal: Schema.optional(Schema.NullOr(PositiveInt)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   sidechatSourceThreadId: SidechatSourceThreadId,
   lastKnownPr: Schema.optional(Schema.NullOr(OrchestrationThreadPullRequest)).pipe(
     Schema.withDecodingDefault(() => null),
@@ -733,6 +747,18 @@ export const OrchestrationThreadShell = Schema.Struct({
     Schema.withDecodingDefault(() => null),
   ),
   forkSourceThreadId: Schema.optional(Schema.NullOr(ThreadId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  forkSourceMessageId: Schema.optional(Schema.NullOr(MessageId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  forkTitleFamilyRootId: Schema.optional(Schema.NullOr(ThreadId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  forkTitleBase: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  forkTitleOrdinal: Schema.optional(Schema.NullOr(PositiveInt)).pipe(
     Schema.withDecodingDefault(() => null),
   ),
   sidechatSourceThreadId: SidechatSourceThreadId,
@@ -918,6 +944,7 @@ const ThreadForkCreateCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   sourceThreadId: ThreadId,
+  sourceMessageId: Schema.optional(MessageId),
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
@@ -1486,6 +1513,18 @@ export const ThreadCreatedPayload = Schema.Struct({
     Schema.withDecodingDefault(() => null),
   ),
   forkSourceThreadId: Schema.optional(Schema.NullOr(ThreadId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  forkSourceMessageId: Schema.optional(Schema.NullOr(MessageId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  forkTitleFamilyRootId: Schema.optional(Schema.NullOr(ThreadId)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  forkTitleBase: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
+  forkTitleOrdinal: Schema.optional(Schema.NullOr(PositiveInt)).pipe(
     Schema.withDecodingDefault(() => null),
   ),
   sidechatSourceThreadId: SidechatSourceThreadId,

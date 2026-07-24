@@ -8,7 +8,7 @@ export interface DesktopBackendChild {
   once(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
   on(event: "error", listener: (error: Error) => void): this;
   off(event: "exit", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
-  send?(message: ScientBackendShutdownMessage): boolean;
+  send?(message: ScientBackendShutdownMessage, callback?: (error: Error | null) => void): boolean;
 }
 
 export interface DesktopBackendGeneration {
@@ -26,7 +26,10 @@ export interface DesktopBackendExit {
 export interface DesktopBackendSupervisorOptions {
   readonly prepareStart: (generation: number) => Promise<void>;
   readonly spawn: (generation: number) => DesktopBackendChild;
-  readonly requestGracefulShutdown: (child: DesktopBackendChild, reason: string) => boolean;
+  readonly requestGracefulShutdown: (
+    child: DesktopBackendChild,
+    reason: string,
+  ) => boolean | Promise<boolean>;
   readonly forceTerminateTree: (child: DesktopBackendChild) => Promise<void> | void;
   readonly onGenerationStarted?: (generation: DesktopBackendGeneration) => void;
   readonly onGenerationExited?: (exit: DesktopBackendExit) => void;
@@ -66,6 +69,20 @@ function childHasExited(child: DesktopBackendChild): boolean {
 
 function exitReason(code: number | null, signal: NodeJS.Signals | null): string {
   return `code=${code ?? "null"} signal=${signal ?? "null"}`;
+}
+
+export class DesktopBackendTerminationError extends Error {
+  readonly generation: number;
+  readonly pid: number | null;
+  readonly reason: string;
+
+  constructor(active: DesktopBackendGeneration, reason: string) {
+    super(`Backend generation ${active.number} remained alive after force termination.`);
+    this.name = "DesktopBackendTerminationError";
+    this.generation = active.number;
+    this.pid = active.child.pid ?? null;
+    this.reason = reason;
+  }
 }
 
 /**
@@ -109,7 +126,9 @@ export class DesktopBackendSupervisor {
     if (this.#active) this.#stoppingGenerations.add(this.#active.number);
     this.#clearRestartTimer();
     return this.#enqueue(async () => {
-      await this.#stopActive(reason);
+      const active = this.#active;
+      if (await this.#stopActive(reason)) return;
+      throw new DesktopBackendTerminationError(active!, reason);
     });
   }
 
@@ -139,20 +158,19 @@ export class DesktopBackendSupervisor {
       const exited = await this.#stopActive(reason);
       if (exited && this.#desiredRunning) {
         this.#scheduleRestart(reason);
-      } else if (!exited) {
-        // A replacement must never overlap an old process that ignored force
-        // termination. Stop automatic recovery and surface a fatal lifecycle
-        // failure instead of leaving the app in an unreported half-alive state.
-        const error = new Error("Backend remained alive after force termination.");
-        this.#desiredRunning = false;
-        this.#clearRestartTimer();
-        this.#options.onError?.(error, `generation ${generation} restart blocked`);
-        this.#options.onUnrecoverableGeneration?.({
-          error,
-          generation: target,
-          reason,
-        });
+        return;
       }
+      if (exited) return;
+
+      const error = new DesktopBackendTerminationError(target, reason);
+      this.#desiredRunning = false;
+      this.#clearRestartTimer();
+      this.#options.onError?.(error, `generation ${generation} restart blocked`);
+      this.#options.onUnrecoverableGeneration?.({
+        error,
+        generation: target,
+        reason,
+      });
     });
   }
 
@@ -190,7 +208,11 @@ export class DesktopBackendSupervisor {
 
   #bindChild(active: ActiveGeneration): void {
     active.child.on("error", (error) => {
-      this.#handleGenerationClosed(active, `error=${error.message}`);
+      if (active.child.pid === undefined) {
+        this.#handleGenerationClosed(active, `spawn error=${error.message}`);
+        return;
+      }
+      this.#options.onError?.(error, `generation ${active.number} process error`);
     });
     active.child.once("exit", (code, signal) => {
       this.#handleGenerationClosed(active, exitReason(code, signal));
@@ -209,7 +231,33 @@ export class DesktopBackendSupervisor {
       reason,
       expected,
     });
-    if (wasCurrent && !expected) this.#scheduleRestart(reason);
+    if (wasCurrent && !expected) {
+      void this.#enqueue(() => this.#cleanupExitedGenerationAndRestart(active, reason));
+    }
+  }
+
+  async #cleanupExitedGenerationAndRestart(
+    active: ActiveGeneration,
+    reason: string,
+  ): Promise<void> {
+    try {
+      await this.#options.forceTerminateTree(active.child);
+    } catch (cause) {
+      const error =
+        cause instanceof Error
+          ? cause
+          : new Error("Failed to clean up the exited backend process tree.", { cause });
+      this.#desiredRunning = false;
+      this.#clearRestartTimer();
+      this.#options.onError?.(error, `generation ${active.number} descendant cleanup`);
+      this.#options.onUnrecoverableGeneration?.({
+        error,
+        generation: active,
+        reason,
+      });
+      return;
+    }
+    this.#scheduleRestart(reason);
   }
 
   #scheduleRestart(reason: string): void {
@@ -264,14 +312,13 @@ export class DesktopBackendSupervisor {
       this.#options.onError?.(error, `generation ${active.number} force termination`);
     }
     const exitedAfterForce = await this.#waitForExit(active, forcedExitTimeoutMs);
-    if (!exitedAfterForce) return false;
-    return true;
+    return exitedAfterForce;
   }
 
   async #waitForExit(
     active: ActiveGeneration,
     timeoutMs: number,
-    begin?: () => boolean | void,
+    begin?: () => boolean | void | Promise<boolean | void>,
   ): Promise<boolean> {
     if (active.closed || childHasExited(active.child)) return true;
 
@@ -288,7 +335,20 @@ export class DesktopBackendSupervisor {
       active.child.once("exit", onExit);
       const timeout = this.#setTimer(() => settle(false), Math.max(0, timeoutMs));
       timeout.unref?.();
-      if (begin?.() === false) settle(false);
+      try {
+        void Promise.resolve(begin?.()).then(
+          (started) => {
+            if (started === false) settle(false);
+          },
+          (error: unknown) => {
+            this.#options.onError?.(error, `generation ${active.number} graceful shutdown request`);
+            settle(false);
+          },
+        );
+      } catch (error) {
+        this.#options.onError?.(error, `generation ${active.number} graceful shutdown request`);
+        settle(false);
+      }
       if (active.closed || childHasExited(active.child)) settle(true);
     });
   }
