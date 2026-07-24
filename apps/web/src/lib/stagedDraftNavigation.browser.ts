@@ -23,10 +23,10 @@ describe("draft navigation route guard", () => {
   });
 
   it("keeps the committed destination when a stale owned route tries to navigate", async () => {
-    router = getRouter(createMemoryHistory({ initialEntries: ["/activity"] }));
+    router = getRouter(createMemoryHistory({ initialEntries: ["/plugins"] }));
     unsubscribeHistory = router.history.subscribe(() => void router?.load());
     await router.load();
-    expect(router.state.location.href).toBe("/activity");
+    expect(router.state.location.href).toBe("/plugins");
 
     const slotKey = draftNavigationSlotKey();
     let staleRouteToken = "";
@@ -63,7 +63,7 @@ describe("draft navigation route guard", () => {
     });
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-    expect(router.state.location.href).toBe("/activity");
+    expect(router.state.location.href).toBe("/plugins");
     releaseStaleOperation();
     releaseCurrentOperation();
     await Promise.all([staleOperation, currentOperation]);
@@ -88,13 +88,13 @@ describe("draft navigation route guard", () => {
     );
     await Promise.resolve();
 
-    void router.navigate({ to: "/settings" });
+    void router.navigate({ to: "/plugins" });
     await Promise.resolve();
-    void router.navigate({ to: "/activity" });
+    void router.navigate({ to: "/settings" });
     await Promise.resolve();
     releaseMutation();
     await mutation;
 
-    await expect.poll(() => router?.state.location.href, { timeout: 10_000 }).toBe("/activity");
+    await expect.poll(() => router?.state.location.href, { timeout: 10_000 }).toBe("/settings");
   });
 });
