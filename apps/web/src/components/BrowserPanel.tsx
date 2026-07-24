@@ -1269,6 +1269,7 @@ export function BrowserPanel({
       if (!api) {
         return;
       }
+      const focusOrigin = document.activeElement;
       const closingTab = threadBrowserState?.tabs.find((tab) => tab.id === tabId);
       void runBrowserAction(async () => {
         if (closingTab?.kind === "artifact") {
@@ -1282,7 +1283,13 @@ export function BrowserPanel({
           return;
         }
         upsertThreadState(state);
-        if (options?.restoreTabFocus && state.activeTabId) {
+        const activeElement = document.activeElement;
+        const shouldRestoreTabFocus =
+          options?.restoreTabFocus === true &&
+          (activeElement === focusOrigin ||
+            activeElement === document.body ||
+            activeElement === null);
+        if (shouldRestoreTabFocus && state.activeTabId) {
           const nextActiveIndex = state.tabs.findIndex((tab) => tab.id === state.activeTabId);
           if (nextActiveIndex >= 0) {
             window.requestAnimationFrame(() => {
@@ -1291,7 +1298,7 @@ export function BrowserPanel({
           }
         }
         if (shouldCloseBrowserPanelAfterTabClose(state)) {
-          onClosePanel({ restoreFocus: options?.restoreTabFocus === true });
+          onClosePanel({ restoreFocus: shouldRestoreTabFocus });
         }
       });
     },
@@ -1563,7 +1570,7 @@ export function BrowserPanel({
             <MenuSeparator />
             <MenuItem
               className={BROWSER_ACTION_MENU_ITEM_CLASS_NAME}
-              onClick={() => onClosePanel()}
+              onClick={() => onClosePanel({ restoreFocus: true })}
             >
               <BrowserActionMenuIcon icon={XIcon} />
               <span>Close browser panel</span>

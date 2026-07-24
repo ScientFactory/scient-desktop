@@ -262,7 +262,9 @@ describe("BrowserPanel interactions", () => {
     fallback.dataset.browserPanelTestFallback = "true";
     document.body.append(fallback);
     const onClosePanel = vi.fn((options?: { restoreFocus?: boolean }) => {
-      if (options?.restoreFocus) fallback.focus();
+      if (options?.restoreFocus) {
+        window.requestAnimationFrame(() => fallback.focus());
+      }
     });
 
     await renderLivePanel(onClosePanel);
@@ -303,6 +305,75 @@ describe("BrowserPanel interactions", () => {
         tabId: "tab-1",
       });
       expect(document.activeElement).toBe(secondTab);
+    });
+  });
+
+  it("does not reclaim focus when an asynchronous tab close finishes after focus moved away", async () => {
+    const openState = browserState("tab-1");
+    const closeTabState: ThreadBrowserState = {
+      ...openState,
+      version: openState.version + 1,
+      activeTabId: "tab-2",
+      tabs: openState.tabs.slice(1),
+    };
+    let resolveCloseTab: ((state: ThreadBrowserState) => void) | undefined;
+    const closeTabResult = new Promise<ThreadBrowserState>((resolve) => {
+      resolveCloseTab = resolve;
+    });
+    const api = liveBrowserApi({ openState, closeTabState });
+    vi.mocked(api.browser.closeTab).mockImplementation(async () => closeTabResult);
+    nativeApiTestState.api = api;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+    const outsideControl = document.createElement("button");
+    outsideControl.textContent = "Composer";
+    outsideControl.dataset.browserPanelTestFallback = "true";
+    document.body.append(outsideControl);
+
+    await renderLivePanel(vi.fn());
+    const closeButton = (await page
+      .getByRole("button", { name: "Close tab: ScientFactory" })
+      .element()) as HTMLButtonElement;
+    closeButton.focus();
+    closeButton.click();
+    await vi.waitFor(() => expect(api.browser.closeTab).toHaveBeenCalledOnce());
+    outsideControl.focus();
+    resolveCloseTab?.(closeTabState);
+
+    await vi.waitFor(() => {
+      expect(useBrowserStateStore.getState().threadStatesByThreadId[THREAD_ID]?.activeTabId).toBe(
+        "tab-2",
+      );
+    });
+    expect(document.activeElement).toBe(outsideControl);
+  });
+
+  it("restores parent focus when the Browser actions menu closes the panel", async () => {
+    const openState = browserState("tab-1");
+    const api = liveBrowserApi({ openState });
+    nativeApiTestState.api = api;
+    const fallback = document.createElement("button");
+    fallback.textContent = "Open Browser";
+    fallback.dataset.browserPanelTestFallback = "true";
+    document.body.append(fallback);
+    const onClosePanel = vi.fn((options?: { restoreFocus?: boolean }) => {
+      if (options?.restoreFocus) {
+        window.requestAnimationFrame(() => fallback.focus());
+      }
+    });
+
+    await renderLivePanel(onClosePanel);
+    (
+      (await page.getByRole("button", { name: "Browser actions" }).element()) as HTMLButtonElement
+    ).click();
+    const closePanelItemLocator = page.getByRole("menuitem", { name: "Close browser panel" });
+    await expect.element(closePanelItemLocator).toBeVisible();
+    const closePanelItem = (await closePanelItemLocator.element()) as HTMLElement;
+    closePanelItem.focus();
+    await userEvent.keyboard("{Enter}");
+
+    await vi.waitFor(() => {
+      expect(onClosePanel).toHaveBeenCalledWith({ restoreFocus: true });
+      expect(document.activeElement).toBe(fallback);
     });
   });
 
