@@ -396,9 +396,10 @@ export function pruneProjectThreadListPagingForCollapsedProjects<
  * - The relative time now lives in the row hover card, so an idle row with no
  *   status/jump glyph and no meta chips reserves almost nothing — the title runs
  *   to the row edge instead of truncating against permanently reserved space.
- * - A status/loader (or keyboard-jump) glyph occupies a ~2.25rem slot, and each
- *   fork/worktree/handoff meta chip adds width; the reserve grows only for the
- *   badges that are present.
+ * - Status and keyboard-jump hints have independent width. When both are present,
+ *   reserve the sum of both slots rather than treating them as one glyph.
+ * - Each fork/worktree/handoff meta chip adds width; the reserve grows only for
+ *   the badges that are present.
  * - The wider reserve that clears the hover pin/archive actions is applied only
  *   on hover/focus (mirroring the project header row), so the title gives up that
  *   width exactly when those actions appear and not a moment sooner.
@@ -407,23 +408,85 @@ export function pruneProjectThreadListPagingForCollapsedProjects<
  */
 export function resolveThreadRowTrailingReserveClass(input: {
   metaChipCount: number;
-  hasTrailingGlyph: boolean;
+  jumpHintParts: readonly string[];
+  hasStatus: boolean;
 }): string {
   // Hover/focus reveals the pin/archive actions; the meta chips + glyph fade out
   // at the same time, so the hover reserve is constant regardless of rest content.
   const hoverReserve =
     "transition-[padding] duration-150 ease-out group-hover/thread-row:pr-[4.75rem] group-focus-within/thread-row:pr-[4.75rem]";
-  const { metaChipCount, hasTrailingGlyph } = input;
+  const { metaChipCount, jumpHintParts, hasStatus } = input;
+  const jumpKind =
+    jumpHintParts.length === 0
+      ? "none"
+      : jumpHintParts.some((part) => part.length > 1)
+        ? "wide"
+        : "compact";
+  const indicatorKind =
+    jumpKind === "none" ? (hasStatus ? "status" : "none") : hasStatus ? "both" : "jump";
+  const hasWideJumpHint = jumpKind === "wide";
   if (metaChipCount <= 0) {
-    return cn(hasTrailingGlyph ? "pr-[1.75rem]" : "pr-2", hoverReserve);
+    return cn(
+      indicatorKind === "both"
+        ? hasWideJumpHint
+          ? "pr-[6rem]"
+          : "pr-[5rem]"
+        : indicatorKind === "jump"
+          ? hasWideJumpHint
+            ? "pr-[4rem]"
+            : "pr-[3rem]"
+          : indicatorKind === "status"
+            ? "pr-[1.75rem]"
+            : "pr-2",
+      hoverReserve,
+    );
   }
   if (metaChipCount === 1) {
-    return cn(hasTrailingGlyph ? "pr-[3rem]" : "pr-[1.75rem]", hoverReserve);
+    return cn(
+      indicatorKind === "both"
+        ? hasWideJumpHint
+          ? "pr-[7.25rem]"
+          : "pr-[6.25rem]"
+        : indicatorKind === "jump"
+          ? hasWideJumpHint
+            ? "pr-[5.25rem]"
+            : "pr-[4.25rem]"
+          : indicatorKind === "status"
+            ? "pr-[3rem]"
+            : "pr-[1.75rem]",
+      hoverReserve,
+    );
   }
   if (metaChipCount === 2) {
-    return cn(hasTrailingGlyph ? "pr-[4rem]" : "pr-[3rem]", hoverReserve);
+    return cn(
+      indicatorKind === "both"
+        ? hasWideJumpHint
+          ? "pr-[8.25rem]"
+          : "pr-[7.25rem]"
+        : indicatorKind === "jump"
+          ? hasWideJumpHint
+            ? "pr-[6.25rem]"
+            : "pr-[5.25rem]"
+          : indicatorKind === "status"
+            ? "pr-[4rem]"
+            : "pr-[3rem]",
+      hoverReserve,
+    );
   }
-  return cn(hasTrailingGlyph ? "pr-[4.5rem]" : "pr-[4.25rem]", hoverReserve);
+  return cn(
+    indicatorKind === "both"
+      ? hasWideJumpHint
+        ? "pr-[8.75rem]"
+        : "pr-[7.75rem]"
+      : indicatorKind === "jump"
+        ? hasWideJumpHint
+          ? "pr-[6.75rem]"
+          : "pr-[5.75rem]"
+        : indicatorKind === "status"
+          ? "pr-[4.5rem]"
+          : "pr-[4.25rem]",
+    hoverReserve,
+  );
 }
 
 export function resolveThreadRowClassName(input: {

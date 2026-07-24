@@ -87,6 +87,7 @@ import {
 import { SkillCubeIcon, WorktreeIcon } from "~/lib/icons";
 import { CentralIcon } from "~/lib/central-icons";
 import { resolveProviderDiscoveryCwd } from "~/lib/providerDiscovery";
+import { automationLifecycleState } from "~/lib/automationStatus";
 import { cn } from "~/lib/utils";
 import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
 import { ensureNativeApi } from "~/nativeApi";
@@ -335,6 +336,36 @@ export function runResultSummary(run: AutomationRun): string {
   }
 }
 
+/**
+ * Concise, truth-ordered status shown at the end of an automation definition row.
+ * Live state wins over schedule and enabled state. Finished attention states identify
+ * themselves as the last run so they cannot be mistaken for the automation's current
+ * scheduler state; the dedicated Needs review section remains the place to triage them.
+ */
+export function automationRowMeta(
+  definition: AutomationDefinition,
+  latestRun: AutomationRun | null,
+): string {
+  if (
+    latestRun?.status === "pending" ||
+    latestRun?.status === "claimed" ||
+    latestRun?.status === "running" ||
+    latestRun?.status === "waiting-for-approval"
+  ) {
+    return runStatusLabel(latestRun.status);
+  }
+  if (latestRun && isTriageRun(latestRun)) {
+    if (latestRun.status === "failed") return "Last run failed";
+    if (latestRun.status === "cancelled") return "Last run cancelled";
+    if (latestRun.status === "interrupted") return "Last run interrupted";
+    if (latestRun.status === "succeeded") return "New result";
+  }
+  if (!definition.enabled) {
+    return automationLifecycleState(definition) === "done" ? "Done" : "Paused";
+  }
+  return formatCadence(definition.schedule);
+}
+
 export function canCancelAutomationRun(run: AutomationRun): boolean {
   return (
     run.status === "pending" ||
@@ -348,7 +379,6 @@ export function automationStatusDotClass(
   definition: AutomationDefinition,
   latestRun: AutomationRun | null,
 ): string {
-  if (!definition.enabled) return "text-muted-foreground/40";
   if (
     latestRun?.status === "running" ||
     latestRun?.status === "pending" ||
@@ -357,6 +387,7 @@ export function automationStatusDotClass(
     return "text-blue-500";
   }
   if (latestRun && isTriageRun(latestRun)) return "text-destructive";
+  if (!definition.enabled) return "text-muted-foreground/40";
   return "text-emerald-500";
 }
 
