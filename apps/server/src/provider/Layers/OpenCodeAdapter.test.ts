@@ -19,6 +19,7 @@ import {
   makeOpenCodeAdapterLive,
   makeKiloAdapterLive,
   normalizeOpenCodeTokenUsage,
+  resolveOpenCodeTurnIdleTimeoutMs,
   resolvePreferredOpenCodeModelProviders,
 } from "./OpenCodeAdapter.ts";
 
@@ -612,6 +613,37 @@ describe("normalizeOpenCodeTokenUsage", () => {
       maxTokens: 200,
       lastUsedTokens: 200,
     });
+  });
+});
+
+describe("resolveOpenCodeTurnIdleTimeoutMs", () => {
+  it("uses separate ten-minute defaults for OpenCode and Kilo", () => {
+    expect(resolveOpenCodeTurnIdleTimeoutMs("opencode", {})).toBe(600_000);
+    expect(resolveOpenCodeTurnIdleTimeoutMs("kilo", {})).toBe(600_000);
+  });
+
+  it("uses only the selected provider's positive override", () => {
+    const env = {
+      SYNARA_OPENCODE_TURN_IDLE_TIMEOUT_MS: " 700000 ",
+      SYNARA_KILO_TURN_IDLE_TIMEOUT_MS: "800000",
+    };
+    expect(resolveOpenCodeTurnIdleTimeoutMs("opencode", env)).toBe(700_000);
+    expect(resolveOpenCodeTurnIdleTimeoutMs("kilo", env)).toBe(800_000);
+  });
+
+  it("falls back for invalid, blank, or zero overrides", () => {
+    for (const value of ["", "soon", "0", "-1"]) {
+      expect(
+        resolveOpenCodeTurnIdleTimeoutMs("opencode", {
+          SYNARA_OPENCODE_TURN_IDLE_TIMEOUT_MS: value,
+        }),
+      ).toBe(600_000);
+      expect(
+        resolveOpenCodeTurnIdleTimeoutMs("kilo", {
+          SYNARA_KILO_TURN_IDLE_TIMEOUT_MS: value,
+        }),
+      ).toBe(600_000);
+    }
   });
 });
 
@@ -3407,6 +3439,8 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
           },
         });
 
+        pushActivePromptEcho(eventQueue, runtime);
+
         eventQueue.push({
           id: "evt-permission-asked",
           type: "permission.asked",
@@ -3450,6 +3484,194 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
     });
     expect(runtime.permissionReplyCalls).toEqual([]);
   });
+
+  for (const runtimeMode of ["approval-required", "full-access"] as const) {
+    for (const interaction of ["permission", "question"] as const) {
+      it(`fences ${runtimeMode} ${interaction} events until the exact prompt echo`, async () => {
+        const eventQueue = createSubscribedEventQueue();
+        const runtime = createMockOpenCodeRuntime();
+        bindSubscribedEventQueue(runtime, eventQueue);
+
+        const result = await Effect.runPromise(
+          Effect.gen(function* () {
+            const adapter = yield* OpenCodeAdapter;
+            const observedEvents: Array<{
+              readonly type: string;
+              readonly requestId: string | undefined;
+            }> = [];
+            const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+              Effect.sync(() =>
+                observedEvents.push({ type: event.type, requestId: event.requestId }),
+              ),
+            ).pipe(Effect.forkChild);
+            const threadId = asThreadId(`thread-${runtimeMode}-${interaction}-boundary`);
+            yield* adapter.startSession({ provider: "opencode", threadId, runtimeMode });
+            yield* adapter.sendTurn({
+              threadId,
+              input: "boundary",
+              attachments: [],
+              modelSelection: { provider: "opencode", model: "openai/gpt-5.4" },
+            });
+
+            const pushInteraction = (suffix: string) =>
+              eventQueue.push(
+                interaction === "permission"
+                  ? {
+                      type: "permission.asked",
+                      properties: {
+                        id: `${interaction}-${suffix}`,
+                        sessionID: "opencode-session-1",
+                        permission: "bash",
+                        patterns: ["pwd"],
+                        metadata: {},
+                        always: [],
+                      },
+                    }
+                  : {
+                      type: "question.asked",
+                      properties: {
+                        id: `${interaction}-${suffix}`,
+                        sessionID: "opencode-session-1",
+                        questions: [
+                          {
+                            question: "Continue?",
+                            header: "Confirm",
+                            options: [{ label: "Yes", description: "" }],
+                            multiple: false,
+                            custom: false,
+                          },
+                        ],
+                      },
+                    },
+              );
+
+            pushInteraction("before");
+            yield* Effect.sleep(10);
+            const before = {
+              events: observedEvents.filter((event) => event.requestId?.endsWith("before")),
+              permissionCalls: runtime.permissionReplyCalls.length,
+            };
+            pushActivePromptEcho(eventQueue, runtime);
+            pushInteraction("after");
+            yield* Effect.sleep(20);
+            const after = {
+              events: observedEvents.filter((event) => event.requestId?.endsWith("after")),
+              permissionCalls: runtime.permissionReplyCalls.length,
+            };
+            yield* Fiber.interrupt(eventsFiber);
+            eventQueue.close();
+            return { after, before };
+          }).pipe(
+            Effect.provide(
+              makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+                Layer.provideMerge(
+                  ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+                ),
+                Layer.provideMerge(NodeServices.layer),
+              ),
+            ),
+          ),
+        );
+
+        expect(result.before.events).toHaveLength(0);
+        expect(result.before.permissionCalls).toBe(0);
+        if (runtimeMode === "full-access" && interaction === "permission") {
+          expect(result.after.events).toHaveLength(0);
+          expect(result.after.permissionCalls).toBe(1);
+        } else {
+          expect(result.after.events).toHaveLength(1);
+          expect(result.after.permissionCalls).toBe(0);
+        }
+      });
+    }
+  }
+
+  for (const interaction of ["permission", "question"] as const) {
+    it(`uses ${interaction} tool.messageID to reject stale tool authority`, async () => {
+      const eventQueue = createSubscribedEventQueue();
+      const runtime = createMockOpenCodeRuntime();
+      bindSubscribedEventQueue(runtime, eventQueue);
+
+      const requestIds = await Effect.runPromise(
+        Effect.gen(function* () {
+          const adapter = yield* OpenCodeAdapter;
+          const observedRequestIds: string[] = [];
+          const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+            Effect.sync(() => {
+              if (event.requestId) observedRequestIds.push(event.requestId);
+            }),
+          ).pipe(Effect.forkChild);
+          const threadId = asThreadId(`thread-${interaction}-tool-message-owner`);
+          yield* adapter.startSession({
+            provider: "opencode",
+            threadId,
+            runtimeMode: "approval-required",
+          });
+          yield* adapter.sendTurn({
+            threadId,
+            input: "tool owner",
+            attachments: [],
+            modelSelection: { provider: "opencode", model: "openai/gpt-5.4" },
+          });
+          pushActivePromptEcho(eventQueue, runtime);
+          pushActiveAssistantOwnership(eventQueue, runtime, "msg-current-tool-owner");
+
+          const pushInteraction = (requestId: string, messageID: string) =>
+            eventQueue.push(
+              interaction === "permission"
+                ? {
+                    type: "permission.asked",
+                    properties: {
+                      id: requestId,
+                      sessionID: "opencode-session-1",
+                      permission: "bash",
+                      patterns: ["pwd"],
+                      metadata: {},
+                      always: [],
+                      tool: { messageID, callID: `call-${requestId}` },
+                    },
+                  }
+                : {
+                    type: "question.asked",
+                    properties: {
+                      id: requestId,
+                      sessionID: "opencode-session-1",
+                      questions: [
+                        {
+                          question: "Continue?",
+                          header: "Confirm",
+                          options: [{ label: "Yes", description: "" }],
+                          multiple: false,
+                          custom: false,
+                        },
+                      ],
+                      tool: { messageID, callID: `call-${requestId}` },
+                    },
+                  },
+            );
+
+          pushInteraction(`${interaction}-stale-tool`, "msg-previous-generation");
+          pushInteraction(`${interaction}-current-tool`, "msg-current-tool-owner");
+          yield* Effect.sleep(20);
+          yield* Fiber.interrupt(eventsFiber);
+          eventQueue.close();
+          return observedRequestIds;
+        }).pipe(
+          Effect.provide(
+            makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+        ),
+      );
+
+      expect(requestIds).not.toContain(`${interaction}-stale-tool`);
+      expect(requestIds).toContain(`${interaction}-current-tool`);
+    });
+  }
 
   it("keeps newer OpenCode tool-call steps attached to the active turn", async () => {
     const eventQueue = createSubscribedEventQueue();
@@ -7368,7 +7590,109 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
   }
 
   for (const interaction of ["permission", "question"] as const) {
-    it(`cleans up an interrupted ${interaction} reply so the pending request can be retried`, async () => {
+    it(`single-flights ${interaction} replies through provider settlement and local commit`, async () => {
+      const eventQueue = createSubscribedEventQueue();
+      let settleReply: ((value: unknown) => void) | undefined;
+      const heldReply = () =>
+        new Promise<unknown>((resolve) => {
+          settleReply = resolve;
+        });
+      const runtime = createMockOpenCodeRuntime(
+        interaction === "permission"
+          ? { permissionReply: heldReply }
+          : { questionReply: heldReply },
+      );
+      bindSubscribedEventQueue(runtime, eventQueue);
+
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const adapter = yield* OpenCodeAdapter;
+          const threadId = asThreadId(`thread-${interaction}-single-flight-commit`);
+          const requestId = `${interaction}-single-flight-commit`;
+          yield* adapter.startSession({
+            provider: "opencode",
+            threadId,
+            runtimeMode: "approval-required",
+          });
+          yield* adapter.sendTurn({
+            threadId,
+            input: "single flight",
+            attachments: [],
+            modelSelection: { provider: "opencode", model: "openai/gpt-5.4" },
+          });
+          pushActivePromptEcho(eventQueue, runtime);
+          eventQueue.push(
+            interaction === "permission"
+              ? {
+                  type: "permission.asked",
+                  properties: {
+                    id: requestId,
+                    sessionID: "opencode-session-1",
+                    permission: "bash",
+                    patterns: ["pwd"],
+                    metadata: {},
+                    always: [],
+                  },
+                }
+              : {
+                  type: "question.asked",
+                  properties: {
+                    id: requestId,
+                    sessionID: "opencode-session-1",
+                    questions: [
+                      {
+                        question: "Continue?",
+                        header: "Confirm",
+                        options: [{ label: "Yes", description: "" }],
+                        multiple: false,
+                        custom: false,
+                      },
+                    ],
+                  },
+                },
+          );
+          yield* Effect.sleep(10);
+          const respond = () =>
+            interaction === "permission"
+              ? adapter.respondToRequest(
+                  threadId,
+                  ApprovalRequestId.makeUnsafe(requestId),
+                  "accept",
+                )
+              : adapter.respondToUserInput(threadId, ApprovalRequestId.makeUnsafe(requestId), {});
+          const firstFiber = yield* respond().pipe(Effect.forkChild);
+          yield* Effect.sleep(10);
+          const simultaneousExit = yield* Effect.exit(respond());
+          settleReply?.({ data: null });
+          // The provider promise is settled, but the first fiber has not yet been
+          // rescheduled to commit its local maps/event. The marker must still reject this.
+          const postSettlementExit = yield* Effect.exit(respond());
+          const firstExit = yield* Fiber.await(firstFiber);
+          eventQueue.close();
+          return { firstExit, postSettlementExit, simultaneousExit };
+        }).pipe(
+          Effect.provide(
+            makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+        ),
+      );
+
+      expect(result.firstExit._tag).toBe("Success");
+      expect(result.simultaneousExit._tag).toBe("Failure");
+      expect(result.postSettlementExit._tag).toBe("Failure");
+      expect(
+        interaction === "permission" ? runtime.permissionReplyCalls : runtime.questionReplyCalls,
+      ).toHaveLength(1);
+    });
+  }
+
+  for (const interaction of ["permission", "question"] as const) {
+    it(`fails and closes an ambiguous interrupted ${interaction} reply instead of retrying it`, async () => {
       const eventQueue = createSubscribedEventQueue();
       const requestId = `${interaction}-interrupted-reply`;
       let replyAttemptCount = 0;
@@ -7509,9 +7833,10 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
       );
 
       expect(firstReplySignalAborted).toBe(true);
-      expect(replyAttemptCount).toBe(2);
-      expect(Exit.isSuccess(result.retryExit)).toBe(true);
-      expect(result.settled?.status).toBe("ready");
+      expect(replyAttemptCount).toBe(1);
+      expect(Exit.isFailure(result.retryExit)).toBe(true);
+      expect(result.settled?.status).toBe("error");
+      expect(result.settled?.lastError).toContain("interrupted before its provider outcome");
       const resolutionType =
         interaction === "permission" ? "request.resolved" : "user-input.resolved";
       expect(
@@ -7521,6 +7846,338 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
       ).toHaveLength(1);
     });
   }
+
+  it("quarantines an interrupted ambiguous reply when provider cancellation cannot be confirmed", async () => {
+    const eventQueue = createSubscribedEventQueue();
+    const runtime = createMockOpenCodeRuntime({
+      permissionReply: (_input, requestOptions) =>
+        new Promise<unknown>((_resolve, reject) => {
+          requestOptions?.signal?.addEventListener(
+            "abort",
+            () => reject(new Error("reply interrupted")),
+            { once: true },
+          );
+        }),
+      abort: async () => {
+        throw new Error("abort confirmation unavailable");
+      },
+    });
+    bindSubscribedEventQueue(runtime, eventQueue);
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-ambiguous-reply-abort-failure");
+        const requestId = "permission-ambiguous-reply-abort-failure";
+        yield* adapter.startSession({
+          provider: "opencode",
+          threadId,
+          runtimeMode: "approval-required",
+        });
+        yield* adapter.sendTurn({
+          threadId,
+          input: "ambiguous reply",
+          attachments: [],
+          modelSelection: { provider: "opencode", model: "openai/gpt-5.4" },
+        });
+        pushActivePromptEcho(eventQueue, runtime);
+        eventQueue.push({
+          type: "permission.asked",
+          properties: {
+            id: requestId,
+            sessionID: "opencode-session-1",
+            permission: "bash",
+            patterns: ["pwd"],
+            metadata: {},
+            always: [],
+          },
+        });
+        yield* Effect.sleep(10);
+        const replyFiber = yield* adapter
+          .respondToRequest(threadId, ApprovalRequestId.makeUnsafe(requestId), "accept")
+          .pipe(Effect.forkChild);
+        yield* Effect.sleep(10);
+        yield* Fiber.interrupt(replyFiber);
+        const successorExit = yield* Effect.exit(
+          adapter.sendTurn({
+            threadId,
+            input: "must remain quarantined",
+            attachments: [],
+            modelSelection: { provider: "opencode", model: "openai/gpt-5.4" },
+          }),
+        );
+        const [session] = yield* adapter.listSessions();
+        eventQueue.close();
+        return { session, successorExit };
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({
+            runtime: runtime.runtime,
+            completionSnapshotTimeoutMs: 20,
+          }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(result.successorExit._tag).toBe("Failure");
+    expect(result.session?.status).toBe("error");
+    expect(result.session?.lastError).toContain("cancellation could not be confirmed");
+    expect(result.session?.lastError).toContain("abort confirmation unavailable");
+  });
+
+  for (const interaction of ["permission", "question"] as const) {
+    for (const cancellationSource of ["interruptTurn", "session.error"] as const) {
+      it(`aborts a hanging ${interaction} reply before ${cancellationSource} releases its generation`, async () => {
+        const eventQueue = createSubscribedEventQueue();
+        let replySignalAborted = false;
+        const hangingReply = (
+          _input: Record<string, unknown>,
+          requestOptions?: { readonly signal?: AbortSignal },
+        ) =>
+          new Promise<unknown>((_resolve, reject) => {
+            requestOptions?.signal?.addEventListener(
+              "abort",
+              () => {
+                replySignalAborted = true;
+                reject(new Error("interaction transport aborted"));
+              },
+              { once: true },
+            );
+          });
+        const runtime = createMockOpenCodeRuntime(
+          interaction === "permission"
+            ? { permissionReply: hangingReply }
+            : { questionReply: hangingReply },
+        );
+        bindSubscribedEventQueue(runtime, eventQueue);
+
+        const result = await Effect.runPromise(
+          Effect.gen(function* () {
+            const adapter = yield* OpenCodeAdapter;
+            const observedEvents: Array<{
+              readonly type: string;
+              readonly requestId: string | undefined;
+            }> = [];
+            const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+              Effect.sync(() =>
+                observedEvents.push({ type: event.type, requestId: event.requestId }),
+              ),
+            ).pipe(Effect.forkChild);
+            const threadId = asThreadId(`thread-${interaction}-${cancellationSource}-reply-abort`);
+            const requestId = `${interaction}-${cancellationSource}-reply-abort`;
+            yield* adapter.startSession({
+              provider: "opencode",
+              threadId,
+              runtimeMode: "approval-required",
+            });
+            const turn = yield* adapter.sendTurn({
+              threadId,
+              input: "reply abort",
+              attachments: [],
+              modelSelection: { provider: "opencode", model: "openai/gpt-5.4" },
+            });
+            pushActivePromptEcho(eventQueue, runtime);
+            pushActiveAssistantOwnership(eventQueue, runtime, `msg-${requestId}`);
+            eventQueue.push(
+              interaction === "permission"
+                ? {
+                    type: "permission.asked",
+                    properties: {
+                      id: requestId,
+                      sessionID: "opencode-session-1",
+                      permission: "bash",
+                      patterns: ["pwd"],
+                      metadata: {},
+                      always: [],
+                    },
+                  }
+                : {
+                    type: "question.asked",
+                    properties: {
+                      id: requestId,
+                      sessionID: "opencode-session-1",
+                      questions: [
+                        {
+                          question: "Continue?",
+                          header: "Confirm",
+                          options: [{ label: "Yes", description: "" }],
+                          multiple: false,
+                          custom: false,
+                        },
+                      ],
+                    },
+                  },
+            );
+            yield* Effect.sleep(10);
+            const replyFiber = yield* (
+              interaction === "permission"
+                ? adapter.respondToRequest(
+                    threadId,
+                    ApprovalRequestId.makeUnsafe(requestId),
+                    "accept",
+                  )
+                : adapter.respondToUserInput(threadId, ApprovalRequestId.makeUnsafe(requestId), {})
+            ).pipe(Effect.forkChild);
+            yield* Effect.sleep(10);
+            if (cancellationSource === "interruptTurn") {
+              yield* adapter.interruptTurn(threadId, turn.turnId);
+            } else {
+              eventQueue.push({
+                type: "session.error",
+                properties: {
+                  sessionID: "opencode-session-1",
+                  error: { data: { message: "provider failed during interaction" } },
+                },
+              });
+              yield* Effect.sleep(20);
+            }
+            const replyExit = yield* Fiber.await(replyFiber);
+            const successor = yield* adapter.sendTurn({
+              threadId,
+              input: "successor",
+              attachments: [],
+              modelSelection: { provider: "opencode", model: "openai/gpt-5.4" },
+            });
+            eventQueue.push(
+              interaction === "permission"
+                ? {
+                    type: "permission.replied",
+                    properties: {
+                      sessionID: "opencode-session-1",
+                      requestID: requestId,
+                      reply: "once",
+                    },
+                  }
+                : {
+                    type: "question.replied",
+                    properties: {
+                      sessionID: "opencode-session-1",
+                      requestID: requestId,
+                      answers: [["Yes"]],
+                    },
+                  },
+            );
+            yield* Effect.sleep(20);
+            const [session] = yield* adapter.listSessions();
+            yield* Fiber.interrupt(eventsFiber);
+            eventQueue.close();
+            return { observedEvents, replyExit, session, successor };
+          }).pipe(
+            Effect.provide(
+              makeOpenCodeAdapterLive({
+                runtime: runtime.runtime,
+                cancellationDrainQuietMs: 0,
+                completionSnapshotTimeoutMs: 20,
+              }).pipe(
+                Layer.provideMerge(
+                  ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+                ),
+                Layer.provideMerge(NodeServices.layer),
+              ),
+            ),
+          ),
+        );
+
+        expect(replySignalAborted).toBe(true);
+        expect(result.replyExit._tag).toBe("Failure");
+        expect(result.session).toMatchObject({
+          status: "running",
+          activeTurnId: result.successor.turnId,
+        });
+        const resolutionType =
+          interaction === "permission" ? "request.resolved" : "user-input.resolved";
+        expect(
+          result.observedEvents.filter(
+            (event) =>
+              event.type === resolutionType &&
+              event.requestId === `${interaction}-${cancellationSource}-reply-abort`,
+          ),
+        ).toHaveLength(1);
+      });
+    }
+  }
+
+  it("aborts an in-flight full-access autoapproval before interrupting the session", async () => {
+    const eventQueue = createSubscribedEventQueue();
+    let autoapprovalSignalAborted = false;
+    const runtime = createMockOpenCodeRuntime({
+      permissionReply: (_input, requestOptions) =>
+        new Promise<unknown>((_resolve, reject) => {
+          requestOptions?.signal?.addEventListener(
+            "abort",
+            () => {
+              autoapprovalSignalAborted = true;
+              reject(new Error("autoapproval aborted"));
+            },
+            { once: true },
+          );
+        }),
+    });
+    bindSubscribedEventQueue(runtime, eventQueue);
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const adapter = yield* OpenCodeAdapter;
+        const threadId = asThreadId("thread-full-access-autoapproval-interrupt");
+        yield* adapter.startSession({ provider: "opencode", threadId, runtimeMode: "full-access" });
+        const turn = yield* adapter.sendTurn({
+          threadId,
+          input: "autoapprove",
+          attachments: [],
+          modelSelection: { provider: "opencode", model: "openai/gpt-5.4" },
+        });
+        pushActivePromptEcho(eventQueue, runtime);
+        eventQueue.push({
+          type: "permission.asked",
+          properties: {
+            id: "full-access-autoapproval-interrupt",
+            sessionID: "opencode-session-1",
+            permission: "bash",
+            patterns: ["pwd"],
+            metadata: {},
+            always: [],
+          },
+        });
+        yield* Effect.sleep(10);
+        yield* adapter.interruptTurn(threadId, turn.turnId);
+        const successor = yield* adapter.sendTurn({
+          threadId,
+          input: "successor",
+          attachments: [],
+          modelSelection: { provider: "opencode", model: "openai/gpt-5.4" },
+        });
+        yield* Effect.sleep(10);
+        const [session] = yield* adapter.listSessions();
+        eventQueue.close();
+        return { session, successor };
+      }).pipe(
+        Effect.provide(
+          makeOpenCodeAdapterLive({
+            runtime: runtime.runtime,
+            cancellationDrainQuietMs: 0,
+            completionSnapshotTimeoutMs: 20,
+          }).pipe(
+            Layer.provideMerge(
+              ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+            ),
+            Layer.provideMerge(NodeServices.layer),
+          ),
+        ),
+      ),
+    );
+
+    expect(autoapprovalSignalAborted).toBe(true);
+    expect(runtime.permissionReplyCalls).toHaveLength(1);
+    expect(result.session).toMatchObject({
+      status: "running",
+      activeTurnId: result.successor.turnId,
+    });
+  });
 
   for (const interaction of ["permission", "question"] as const) {
     it(`bounds a hung ${interaction} reply and quarantines its late echo from the successor`, async () => {
