@@ -8,7 +8,7 @@
 
 import { ChangelogAccordion } from "../whatsNew/ChangelogAccordion";
 import { WHATS_NEW_ENTRIES } from "../whatsNew/entries";
-import { sortEntriesByVersionDesc, type WhatsNewEntry } from "../whatsNew/logic";
+import { compareVersions, sortEntriesByVersionDesc, type WhatsNewEntry } from "../whatsNew/logic";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -43,16 +43,18 @@ export default function ReleaseHistoryDialog({
 }: ReleaseHistoryDialogProps) {
   // Sort at render time so the source of truth (`entries.ts`) stays free of
   // ordering rules — authors can prepend, append, or reorder entries freely.
-  const sorted = sortEntriesByVersionDesc(entries);
+  const sorted = sortEntriesByVersionDesc(
+    defaultExpandedVersion === null
+      ? entries
+      : entries.filter((entry) => compareVersions(entry.version, defaultExpandedVersion) <= 0),
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-lg gap-0 p-0">
         <DialogHeader className="gap-1 p-4 pr-12">
           <DialogTitle className="text-base">Release history</DialogTitle>
-          <DialogDescription className="text-xs">
-            Every curated release, newest first.
-          </DialogDescription>
+          <DialogDescription className="text-xs">Scient updates, newest first.</DialogDescription>
         </DialogHeader>
 
         <DialogPanel className="max-h-[min(62vh,520px)] px-4 py-3">

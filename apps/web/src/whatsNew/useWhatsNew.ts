@@ -1,6 +1,6 @@
 // FILE: whatsNew/useWhatsNew.ts
 // Purpose: React hook that drives the two-stage "What's new" surface:
-//   1. A small popout card (bottom-left) advertising the new release.
+//   1. A small inline sidebar card announcing the new release.
 //   2. A dialog with the release notes, opened only when the user taps the card.
 // Persists the "already seen this version" marker in localStorage so the popout
 // doesn't reappear after dismissal.
@@ -27,10 +27,18 @@ const WHATS_NEW_STORAGE_KEY = "scient:whats-new:v1";
 // through JSON; `null` stays faithful across reloads.
 const WhatsNewStorageSchema = Schema.Struct({
   lastSeenVersion: Schema.NullOr(Schema.String),
+  // Optional additions keep existing v1 storage readable. `lastHandledVersion`
+  // drives eligibility; `lastPresentedVersion` is honest presentation evidence.
+  lastHandledVersion: Schema.optional(Schema.NullOr(Schema.String)),
+  lastPresentedVersion: Schema.optional(Schema.NullOr(Schema.String)),
 });
 type WhatsNewStorage = typeof WhatsNewStorageSchema.Type;
 
-const INITIAL_STORAGE: WhatsNewStorage = { lastSeenVersion: null };
+const INITIAL_STORAGE: WhatsNewStorage = {
+  lastSeenVersion: null,
+  lastHandledVersion: null,
+  lastPresentedVersion: null,
+};
 
 export interface UseWhatsNewResult {
   /**
@@ -43,10 +51,12 @@ export interface UseWhatsNewResult {
   readonly allEntries: readonly WhatsNewEntry[];
   /** Version the popout / dialog is announcing (the installed build). */
   readonly currentVersion: string;
-  /** Whether the bottom-left "New: ..." card should be rendered. */
+  /** Whether the inline "New in Scient" card should be rendered. */
   readonly isPopoutVisible: boolean;
   /** Whether the post-update release-notes dialog should be rendered open. */
   readonly isDialogOpen: boolean;
+  /** Record that the card was genuinely visible, not merely mounted offscreen. */
+  readonly markPopoutPresented: () => void;
   /**
    * Open the dialog in response to the user tapping the popout card. We don't
    * mark the update as seen here — acknowledging the card is not the same as
@@ -56,7 +66,7 @@ export interface UseWhatsNewResult {
   /**
    * Dismiss the popout via its ✕ button. This marks the release as seen and
    * never re-prompts — even if the user never opens the dialog. Matches
-   * IndieDevs behaviour: hitting the X is a deliberate "I don't care".
+   * Hitting the X is a deliberate acknowledgement.
    */
   readonly dismissPopout: () => void;
   /**
@@ -79,8 +89,8 @@ export interface UseWhatsNewResult {
  * The dialog is never opened automatically — only via the popout card click.
  */
 export function useWhatsNew(options?: {
-  readonly entries?: readonly WhatsNewEntry[];
-  readonly currentVersion?: string;
+  readonly entries?: readonly WhatsNewEntry[] | undefined;
+  readonly currentVersion?: string | undefined;
 }): UseWhatsNewResult {
   const entries = options?.entries ?? WHATS_NEW_ENTRIES;
   const currentVersion = options?.currentVersion ?? APP_VERSION;
@@ -100,7 +110,8 @@ export function useWhatsNew(options?: {
       resolveWhatsNewState({
         entries,
         currentVersion,
-        lastSeenVersion: initialStorageRef.current.lastSeenVersion,
+        lastHandledVersion:
+          initialStorageRef.current.lastHandledVersion ?? initialStorageRef.current.lastSeenVersion,
       } satisfies WhatsNewInputs),
     [entries, currentVersion],
   );
@@ -114,7 +125,11 @@ export function useWhatsNew(options?: {
   // detected. Done in an effect so we only touch storage once per mount.
   useEffect(() => {
     if (initialState.kind === "silent-bootstrap") {
-      setStorage({ lastSeenVersion: initialState.nextLastSeenVersion });
+      setStorage({
+        lastSeenVersion: initialState.nextLastHandledVersion,
+        lastHandledVersion: initialState.nextLastHandledVersion,
+        lastPresentedVersion: initialStorageRef.current.lastPresentedVersion ?? null,
+      });
     }
   }, [initialState, setStorage]);
 
@@ -128,9 +143,24 @@ export function useWhatsNew(options?: {
     [initialState],
   );
 
+  const markPresented = useCallback(() => {
+    if (initialState.kind === "show") {
+      setStorage((current) => ({
+        ...current,
+        lastSeenVersion: initialState.nextLastHandledVersion,
+        lastHandledVersion: initialState.nextLastHandledVersion,
+        lastPresentedVersion: initialState.nextLastHandledVersion,
+      }));
+    }
+  }, [initialState, setStorage]);
+
   const markSeen = useCallback(() => {
     if (initialState.kind === "show") {
-      setStorage({ lastSeenVersion: initialState.nextLastSeenVersion });
+      setStorage({
+        lastSeenVersion: initialState.nextLastHandledVersion,
+        lastHandledVersion: initialState.nextLastHandledVersion,
+        lastPresentedVersion: initialState.nextLastHandledVersion,
+      });
     }
   }, [initialState, setStorage]);
 
@@ -143,6 +173,7 @@ export function useWhatsNew(options?: {
   const dismissPopout = useCallback(() => {
     // X on the card: treat as "I've acknowledged this update". Mark as seen
     // and hide the popout forever (for this version).
+    focusActivityTrigger();
     setIsPopoutVisible(false);
     markSeen();
   }, [markSeen]);
@@ -167,8 +198,13 @@ export function useWhatsNew(options?: {
     currentVersion,
     isPopoutVisible,
     isDialogOpen,
+    markPopoutPresented: markPresented,
     openDialog,
     dismissPopout,
     onDialogOpenChange,
   };
+}
+
+function focusActivityTrigger() {
+  document.querySelector<HTMLElement>("[data-activity-center-trigger]")?.focus();
 }
