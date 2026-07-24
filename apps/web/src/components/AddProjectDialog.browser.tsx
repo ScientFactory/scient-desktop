@@ -71,6 +71,50 @@ function renderDialog(
   return queryClient;
 }
 
+function installDesktopFilePathResolver(resolvePath: (file: File) => string | null) {
+  const previousDesktopBridge = window.desktopBridge;
+  Object.defineProperty(window, "desktopBridge", {
+    configurable: true,
+    value: {
+      ...previousDesktopBridge,
+      getPathForFile: resolvePath,
+    },
+  });
+  return () => {
+    Object.defineProperty(window, "desktopBridge", {
+      configurable: true,
+      value: previousDesktopBridge,
+    });
+  };
+}
+
+function makeFolderDragTransfer(
+  entries: ReadonlyArray<{ readonly file: File; readonly directory: boolean }>,
+): DataTransfer {
+  return {
+    types: ["Files"],
+    items: entries.map(({ file, directory }) => ({
+      kind: "file",
+      type: file.type,
+      getAsFile: () => file,
+      webkitGetAsEntry: () => ({ isDirectory: directory }),
+    })),
+    files: entries.map(({ file }) => file),
+    dropEffect: "none",
+    effectAllowed: "all",
+  } as unknown as DataTransfer;
+}
+
+function dispatchWindowDrag(
+  type: "dragenter" | "dragover" | "dragleave" | "drop",
+  dataTransfer: DataTransfer,
+) {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperty(event, "dataTransfer", { value: dataTransfer });
+  window.dispatchEvent(event);
+  return event;
+}
+
 describe("AddProjectDialog", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -125,6 +169,210 @@ describe("AddProjectDialog", () => {
     await page.getByRole("button", { name: "Back", exact: true }).click();
     await expect.element(page.getByText("Sources", { exact: true })).toBeVisible();
     restore();
+  });
+
+  it("shows a compact resting folder-drop row with its icon centered in the tile", async () => {
+    const restoreApi = installNativeApi({
+      statuses: vi.fn().mockResolvedValue({ sources: [] }),
+      browse: vi.fn().mockResolvedValue({
+        parentPath: "/Users/tester",
+        entries: [
+          { name: "Documents", fullPath: "/Users/tester/Documents" },
+          ...Array.from({ length: 24 }, (_, index) => ({
+            name: `Project ${String(index + 1).padStart(2, "0")}`,
+            fullPath: `/Users/tester/Project ${String(index + 1).padStart(2, "0")}`,
+          })),
+        ],
+      }),
+    });
+    const restoreBridge = installDesktopFilePathResolver(() => "/Users/tester/Research");
+    renderDialog();
+
+    try {
+      await page.getByText("Local folder", { exact: true }).click();
+      const row = page.getByTestId("folder-drop-affordance");
+      const tile = page.getByTestId("folder-drop-icon-tile");
+      await expect.element(row).toHaveAttribute("data-drop-state", "idle");
+      await expect.element(row).toHaveTextContent("Drop your folder here or browse below");
+
+      const rowRect = (await row.element()).getBoundingClientRect();
+      const tileRect = (await tile.element()).getBoundingClientRect();
+      expect(rowRect.height).toBeLessThanOrEqual(52);
+      expect(
+        Math.abs(tileRect.top + tileRect.height / 2 - (rowRect.top + rowRect.height / 2)),
+      ).toBeLessThanOrEqual(1);
+      await expect.element(page.getByText("Documents", { exact: true })).toBeVisible();
+
+      const listbox = page.getByRole("listbox");
+      const listboxElement = await listbox.element();
+      expect(rowRect.bottom).toBeLessThanOrEqual(listboxElement.getBoundingClientRect().top + 1);
+      expect(listboxElement.querySelector('[role="status"]')).toBeNull();
+      listboxElement.scrollTop = listboxElement.scrollHeight;
+      await expect.element(row).toBeVisible();
+    } finally {
+      restoreBridge();
+      restoreApi();
+    }
+  });
+
+  it("does not advertise folder drop when the desktop path bridge is unavailable", async () => {
+    const restoreApi = installNativeApi({
+      statuses: vi.fn().mockResolvedValue({ sources: [] }),
+      browse: vi.fn().mockResolvedValue({ parentPath: "/Users/tester", entries: [] }),
+    });
+    const previousDesktopBridge = window.desktopBridge;
+    Object.defineProperty(window, "desktopBridge", {
+      configurable: true,
+      value: undefined,
+    });
+    renderDialog();
+
+    try {
+      await page.getByText("Local folder", { exact: true }).click();
+      await expect.element(page.getByTestId("folder-drop-affordance")).not.toBeInTheDocument();
+      await expect.element(page.getByText("Directories", { exact: true })).toBeVisible();
+    } finally {
+      Object.defineProperty(window, "desktopBridge", {
+        configurable: true,
+        value: previousDesktopBridge,
+      });
+      restoreApi();
+    }
+  });
+
+  it("accepts a folder dropped anywhere with copy feedback and synchronous single-flight", async () => {
+    let resolveAdd!: (shouldClose: boolean) => void;
+    const onAddProjectPath = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveAdd = resolve;
+        }),
+    );
+    const restoreApi = installNativeApi({
+      statuses: vi.fn().mockResolvedValue({ sources: [] }),
+      browse: vi.fn().mockResolvedValue({
+        parentPath: "/Users/tester",
+        entries: [{ name: "Documents", fullPath: "/Users/tester/Documents" }],
+      }),
+    });
+    const restoreBridge = installDesktopFilePathResolver(
+      () => "/Users/tester/Research Projects/Study (2)",
+    );
+    renderDialog(onAddProjectPath);
+
+    try {
+      await page.getByText("Local folder", { exact: true }).click();
+      const folder = new File([new Blob([])], "Study (2)");
+      const transfer = makeFolderDragTransfer([{ file: folder, directory: true }]);
+
+      dispatchWindowDrag("dragenter", transfer);
+      await expect
+        .element(page.getByText("Release to add this folder", { exact: true }))
+        .toBeVisible();
+      await expect
+        .element(page.getByTestId("folder-drop-affordance"))
+        .toHaveAttribute("data-drop-state", "active");
+      await expect.element(page.getByText("Documents", { exact: true })).toBeVisible();
+
+      const dragOver = dispatchWindowDrag("dragover", transfer);
+      expect(dragOver.defaultPrevented).toBe(true);
+      expect(transfer.dropEffect).toBe("copy");
+
+      dispatchWindowDrag("drop", transfer);
+      await vi.waitFor(() =>
+        expect(onAddProjectPath).toHaveBeenCalledWith("/Users/tester/Research Projects/Study (2)", {
+          createIfMissing: false,
+        }),
+      );
+      expect(onAddProjectPath).toHaveBeenCalledTimes(1);
+
+      const secondTransfer = makeFolderDragTransfer([{ file: folder, directory: true }]);
+      dispatchWindowDrag("drop", secondTransfer);
+      expect(onAddProjectPath).toHaveBeenCalledTimes(1);
+
+      resolveAdd(false);
+      await expect
+        .element(page.getByPlaceholder("Type or browse a folder path"))
+        .toHaveValue("/Users/tester/Research Projects/Study (2)");
+    } finally {
+      restoreBridge();
+      restoreApi();
+    }
+  });
+
+  it("clears drag feedback on leave and rejects file drops without hiding folders", async () => {
+    const onAddProjectPath = vi.fn().mockResolvedValue(true);
+    const restoreApi = installNativeApi({
+      statuses: vi.fn().mockResolvedValue({ sources: [] }),
+      browse: vi.fn().mockResolvedValue({
+        parentPath: "/Users/tester",
+        entries: [{ name: "Documents", fullPath: "/Users/tester/Documents" }],
+      }),
+    });
+    const restoreBridge = installDesktopFilePathResolver(() => "/Users/tester/notes.md");
+    renderDialog(onAddProjectPath);
+
+    try {
+      await page.getByText("Local folder", { exact: true }).click();
+      const file = new File(["notes"], "notes.md", { type: "text/markdown" });
+      const transfer = makeFolderDragTransfer([{ file, directory: false }]);
+
+      dispatchWindowDrag("dragenter", transfer);
+      await expect
+        .element(page.getByTestId("folder-drop-affordance"))
+        .toHaveAttribute("data-drop-state", "idle");
+      const dragOver = dispatchWindowDrag("dragover", transfer);
+      expect(dragOver.defaultPrevented).toBe(true);
+      expect(transfer.dropEffect).toBe("none");
+      dispatchWindowDrag("dragleave", transfer);
+      await expect
+        .element(page.getByTestId("folder-drop-affordance"))
+        .toHaveTextContent("Drop your folder here or browse below");
+
+      dispatchWindowDrag("drop", transfer);
+      await expect
+        .element(page.getByText("Drop a folder, not a file.", { exact: true }))
+        .toBeVisible();
+      await expect.element(page.getByText("Documents", { exact: true })).toBeVisible();
+      expect(onAddProjectPath).not.toHaveBeenCalled();
+    } finally {
+      restoreBridge();
+      restoreApi();
+    }
+  });
+
+  it("rejects whitespace-ended dropped folders without submitting a different path", async () => {
+    const onAddProjectPath = vi.fn().mockResolvedValue(true);
+    const restoreApi = installNativeApi({
+      statuses: vi.fn().mockResolvedValue({ sources: [] }),
+      browse: vi.fn().mockResolvedValue({
+        parentPath: "/Users/tester",
+        entries: [{ name: "Documents", fullPath: "/Users/tester/Documents" }],
+      }),
+    });
+    const restoreBridge = installDesktopFilePathResolver(() => "/Users/tester/Research ");
+    renderDialog(onAddProjectPath);
+
+    try {
+      await page.getByText("Local folder", { exact: true }).click();
+      const folder = new File([new Blob([])], "Research ");
+      const transfer = makeFolderDragTransfer([{ file: folder, directory: true }]);
+
+      dispatchWindowDrag("drop", transfer);
+      await expect
+        .element(
+          page.getByText(
+            "Folders with names ending in whitespace cannot be dropped. Use browse below instead.",
+            { exact: true },
+          ),
+        )
+        .toBeVisible();
+      await expect.element(page.getByText("Documents", { exact: true })).toBeVisible();
+      expect(onAddProjectPath).not.toHaveBeenCalled();
+    } finally {
+      restoreBridge();
+      restoreApi();
+    }
   });
 
   it("browses through a whitespace-ended folder and selects its child", async () => {

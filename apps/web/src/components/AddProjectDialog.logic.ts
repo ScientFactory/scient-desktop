@@ -1,6 +1,57 @@
 import type { CloneProjectSourceInput, RepositoryProvider } from "@synara/contracts";
 
+import {
+  isDroppedComposerDirectory,
+  resolveDroppedFileAbsolutePath,
+  type ComposerDroppedFileItem,
+} from "~/lib/composerDropPaths";
+
 export type AddProjectSource = "local" | "git-url" | RepositoryProvider;
+
+export type DroppedProjectFolderResult = { readonly path: string } | { readonly error: string };
+
+export interface ProjectFolderDataTransfer {
+  readonly items: Iterable<ComposerDroppedFileItem>;
+  readonly files: Iterable<File>;
+}
+
+export function isProjectFolderDrag(types: Iterable<string>): boolean {
+  return Array.from(types).includes("Files");
+}
+
+export function canAcceptProjectFolderDrop(dataTransfer: ProjectFolderDataTransfer): boolean {
+  const fileItems = Array.from(dataTransfer.items).filter((item) => item.kind === "file");
+  return fileItems.length === 1 && isDroppedComposerDirectory(fileItems[0]);
+}
+
+export function resolveDroppedProjectFolder(
+  dataTransfer: ProjectFolderDataTransfer,
+): DroppedProjectFolderResult {
+  const fileItems = Array.from(dataTransfer.items).filter((item) => item.kind === "file");
+  if (fileItems.length > 1) {
+    return { error: "Drop one folder at a time." };
+  }
+
+  const item = fileItems[0];
+  const file = item?.getAsFile() ?? Array.from(dataTransfer.files)[0] ?? null;
+  if (!item || !file) {
+    return { error: "Could not read the dropped folder. Use browse below instead." };
+  }
+  if (!isDroppedComposerDirectory(item)) {
+    return { error: "Drop a folder, not a file." };
+  }
+
+  const absolutePath = resolveDroppedFileAbsolutePath(file);
+  if (!absolutePath) {
+    return { error: "Could not read the folder's path. Use browse below instead." };
+  }
+  if (absolutePath !== absolutePath.trim()) {
+    return {
+      error: "Folders with names ending in whitespace cannot be dropped. Use browse below instead.",
+    };
+  }
+  return { path: absolutePath };
+}
 
 export function inferCloneDirectoryName(source: AddProjectSource, value: string): string {
   const trimmed = value

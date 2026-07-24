@@ -4,7 +4,7 @@ import type {
   RepositorySourceStatus,
 } from "@synara/contracts";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { SiGithub, SiGitlab } from "react-icons/si";
 import { LuArrowLeft, LuCornerLeftUp, LuFolderPlus, LuLink } from "react-icons/lu";
 
@@ -40,10 +40,13 @@ import {
 import { Kbd, KbdGroup } from "./ui/kbd";
 import {
   buildCloneProjectSourceInput,
+  canAcceptProjectFolderDrop,
   getAvailableNewFolderName,
   type AddProjectSource,
   inferCloneDirectoryName,
+  isProjectFolderDrag,
   joinProjectPath,
+  resolveDroppedProjectFolder,
 } from "./AddProjectDialog.logic";
 
 const BROWSE_STALE_TIME_MS = 10_000;
@@ -65,6 +68,7 @@ interface PathBrowserProps {
   busyLabel: string;
   isBusy: boolean;
   cloneDirectoryName?: string;
+  acceptFolderDrop?: boolean;
   onBack: () => void;
   onSubmit: (path: string, options: { createIfMissing: boolean }) => Promise<void>;
 }
@@ -141,11 +145,15 @@ function DialogBackButton(props: { label: string; onClick: () => void }) {
 }
 
 function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }) {
+  const { isBusy, onSubmit } = props;
   const [query, setQuery] = useState(props.initialQuery);
   const [highlightedValue, setHighlightedValue] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isFolderDragActive, setIsFolderDragActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const submitInFlightRef = useRef(false);
+  const supportsFolderDrop =
+    props.acceptFolderDrop === true && typeof window.desktopBridge?.getPathForFile === "function";
   const pendingNameSelectionRef = useRef<{ query: string; start: number; end: number } | null>(
     null,
   );
@@ -315,6 +323,87 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
     props.onBack();
   };
 
+  const runSubmission = useCallback(
+    async (operation: () => Promise<void>) => {
+      if (isBusy || submitInFlightRef.current) return;
+      submitInFlightRef.current = true;
+      setError(null);
+      try {
+        await operation();
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "Unable to add project.");
+      } finally {
+        submitInFlightRef.current = false;
+      }
+    },
+    [isBusy],
+  );
+
+  useEffect(() => {
+    if (!supportsFolderDrop) {
+      setIsFolderDragActive(false);
+      return;
+    }
+
+    let dragDepth = 0;
+    const resetDragState = () => {
+      dragDepth = 0;
+      setIsFolderDragActive(false);
+    };
+    const handleDragEnter = (event: globalThis.DragEvent) => {
+      if (!event.dataTransfer || !isProjectFolderDrag(event.dataTransfer.types)) return;
+      dragDepth += 1;
+      setIsFolderDragActive(
+        !isBusy && !submitInFlightRef.current && canAcceptProjectFolderDrop(event.dataTransfer),
+      );
+    };
+    const handleDragOver = (event: globalThis.DragEvent) => {
+      if (!event.dataTransfer || !isProjectFolderDrag(event.dataTransfer.types)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect =
+        !isBusy && !submitInFlightRef.current && canAcceptProjectFolderDrop(event.dataTransfer)
+          ? "copy"
+          : "none";
+    };
+    const handleDragLeave = (event: globalThis.DragEvent) => {
+      if (!event.dataTransfer || !isProjectFolderDrag(event.dataTransfer.types)) return;
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) setIsFolderDragActive(false);
+    };
+    const handleDrop = (event: globalThis.DragEvent) => {
+      if (!event.dataTransfer || !isProjectFolderDrag(event.dataTransfer.types)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      resetDragState();
+      if (isBusy || submitInFlightRef.current) return;
+
+      const dropped = resolveDroppedProjectFolder(event.dataTransfer);
+      if ("error" in dropped) {
+        setError(dropped.error);
+        return;
+      }
+
+      setQuery(dropped.path);
+      void runSubmission(() =>
+        onSubmit(dropped.path, {
+          createIfMissing: false,
+        }),
+      );
+    };
+
+    window.addEventListener("dragenter", handleDragEnter, true);
+    window.addEventListener("dragover", handleDragOver, true);
+    window.addEventListener("dragleave", handleDragLeave, true);
+    window.addEventListener("drop", handleDrop, true);
+    return () => {
+      window.removeEventListener("dragenter", handleDragEnter, true);
+      window.removeEventListener("dragover", handleDragOver, true);
+      window.removeEventListener("dragleave", handleDragLeave, true);
+      window.removeEventListener("drop", handleDrop, true);
+      dragDepth = 0;
+    };
+  }, [isBusy, onSubmit, runSubmission, supportsFolderDrop]);
+
   return (
     <Command
       key={expandedBrowsePath}
@@ -322,7 +411,14 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
       mode="none"
       onItemHighlighted={(value) => setHighlightedValue(typeof value === "string" ? value : null)}
     >
-      <CommandPanel className="overflow-hidden">
+      <CommandPanel
+        data-testid={supportsFolderDrop ? "folder-drop-dialog-panel" : undefined}
+        className={cn(
+          "overflow-hidden transition-[background-color,box-shadow] duration-150",
+          isFolderDragActive &&
+            "bg-emerald-500/[0.015] shadow-[inset_0_0_0_1px_rgb(34_197_94/0.18)]",
+        )}
+      >
         <div className="relative">
           <DialogBackButton
             label={canStepBackWithinBrowser ? "Parent folder" : "Back"}
@@ -358,6 +454,34 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
             </KbdGroup>
           </Button>
         </div>
+        {supportsFolderDrop ? (
+          <div
+            role="status"
+            aria-live="polite"
+            data-testid="folder-drop-affordance"
+            data-drop-state={isFolderDragActive ? "active" : "idle"}
+            className="flex min-h-12 items-center gap-3 px-4 py-1.5 text-sm"
+          >
+            <span
+              data-testid="folder-drop-icon-tile"
+              className={cn(
+                "flex size-9 shrink-0 items-center justify-center rounded-xl bg-foreground/[0.035] text-blue-500 shadow-[0_3px_10px_rgb(0_0_0/0.08)] transition-colors duration-150 dark:bg-foreground/[0.07] dark:shadow-[0_3px_12px_rgb(0_0_0/0.24)]",
+                isFolderDragActive &&
+                  "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-400",
+              )}
+            >
+              <LuFolderPlus className="size-4.5" aria-hidden="true" />
+            </span>
+            {isFolderDragActive ? (
+              <span className="font-medium text-foreground">Release to add this folder</span>
+            ) : (
+              <span className="text-foreground">
+                Drop your folder here
+                <span className="text-muted-foreground"> or browse below</span>
+              </span>
+            )}
+          </div>
+        ) : null}
         <CommandList className="max-h-[min(28rem,62vh)] min-h-64 not-empty:px-1.5 not-empty:pb-1.5">
           <CommandGroup>
             <CommandGroupLabel className="py-2 pl-3">
@@ -435,9 +559,7 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
             className="h-auto px-2 text-xs text-muted-foreground/80 hover:bg-transparent hover:text-foreground"
             disabled={props.isBusy}
             onClick={async () => {
-              if (submitInFlightRef.current) return;
-              submitInFlightRef.current = true;
-              try {
+              await runSubmission(async () => {
                 const api = readNativeApi();
                 if (!api) throw new Error("The app server is unavailable.");
                 const picked = await api.dialogs.pickFolder();
@@ -446,11 +568,7 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
                   ? joinProjectPath(picked, props.cloneDirectoryName)
                   : picked;
                 await props.onSubmit(target, { createIfMissing: false });
-              } catch (cause) {
-                setError(cause instanceof Error ? cause.message : "Unable to add project.");
-              } finally {
-                submitInFlightRef.current = false;
-              }
+              });
             }}
           >
             {fileManagerLabel(platform)}
@@ -606,6 +724,7 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
             actionLabel="Open"
             busyLabel="Opening…"
             isBusy={isWorking}
+            acceptFolderDrop
             onBack={returnToSources}
             onSubmit={async (path, options) => {
               const operationGeneration = beginOperation();
