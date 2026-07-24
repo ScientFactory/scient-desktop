@@ -11,6 +11,13 @@ export function normalizeTerminalClipboardText(selection: string): string {
   return selection.replace(/[^\S\r\n]+(?=\r?$)/gm, "");
 }
 
+export function terminalSelectionCopyFailureMessage(error: unknown): string {
+  const recovery =
+    "Unable to copy terminal selection. Check clipboard access or use Cmd/Ctrl+C, then retry.";
+  const reason = error instanceof Error ? error.message.trim() : "";
+  return reason.length > 0 ? `${recovery} (${reason})` : recovery;
+}
+
 export function resolveTerminalSelectionActionPosition(options: {
   bounds: { left: number; top: number; width: number; height: number };
   selectionRect: { right: number; bottom: number } | null;
@@ -57,6 +64,24 @@ export function shouldHandleTerminalSelectionMouseUp(
   return selectionGestureActive && button === 0;
 }
 
+export async function runTerminalSelectionMenuAction<TAction extends string>(input: {
+  showMenu: () => Promise<TAction | null>;
+  releaseMenu: () => void;
+  isCurrent: () => boolean;
+  execute: (action: TAction) => Promise<void>;
+}): Promise<void> {
+  let action: TAction | null;
+  try {
+    action = await input.showMenu();
+  } finally {
+    // The native menu is no longer open once its promise settles. Release this
+    // single-flight guard before clipboard work, which may remain pending.
+    input.releaseMenu();
+  }
+  if (action === null || !input.isCurrent()) return;
+  await input.execute(action);
+}
+
 export async function executeTerminalSelectionAction<T>(input: {
   action: "add-to-chat" | "copy";
   clipboardText: string;
@@ -77,7 +102,11 @@ export async function executeTerminalSelectionAction<T>(input: {
   }
 
   try {
-    await input.copyText(normalizeTerminalClipboardText(input.clipboardText));
+    const normalizedText = normalizeTerminalClipboardText(input.clipboardText);
+    if (normalizedText.trim().length === 0) {
+      throw new Error("The selection contains no copyable text.");
+    }
+    await input.copyText(normalizedText);
   } catch (error) {
     if (!input.isCurrent()) return;
     input.reportCopyError(error);

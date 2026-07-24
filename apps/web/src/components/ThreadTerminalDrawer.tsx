@@ -34,7 +34,9 @@ import { resolveThreadTerminalLayout } from "./terminal/TerminalLayout";
 import {
   executeTerminalSelectionAction,
   resolveTerminalSelectionActionPosition,
+  runTerminalSelectionMenuAction,
   shouldHandleTerminalSelectionMouseUp,
+  terminalSelectionCopyFailureMessage,
   terminalSelectionActionDelayForClickCount,
 } from "./terminal/terminalSelectionActions";
 import {
@@ -368,39 +370,39 @@ function TerminalViewport({
     if (!api) return;
     const requestId = ++selectionActionRequestIdRef.current;
     selectionActionOpenRef.current = true;
-    try {
-      const clicked = await api.contextMenu.show(
-        [
-          { id: "add-to-chat", label: "Add to chat" },
-          { id: "copy", label: "Copy" },
-        ],
-        nextAction.position,
-      );
-      if (requestId !== selectionActionRequestIdRef.current || clicked === null) {
-        return;
-      }
-      await executeTerminalSelectionAction({
-        action: clicked,
-        clipboardText: nextAction.clipboardText,
-        selection: nextAction.selection,
-        copyText: copyTextToClipboard,
-        addToChat: (selection) => onAddTerminalContextRef.current(selection),
-        clearSelection: () => terminalRef.current?.clearSelection(),
-        focusTerminal: () => terminalRuntimeRegistry.focus(runtimeKey),
-        reportCopyError: (error) => {
-          const activeTerminal = terminalRef.current;
-          if (activeTerminal) {
-            writeSystemMessage(
-              activeTerminal,
-              error instanceof Error ? error.message : "Unable to copy terminal selection",
-            );
-          }
-        },
-        isCurrent: () => requestId === selectionActionRequestIdRef.current,
-      });
-    } finally {
-      selectionActionOpenRef.current = false;
-    }
+    await runTerminalSelectionMenuAction({
+      showMenu: async () => {
+        const clicked = await api.contextMenu.show(
+          [
+            { id: "add-to-chat", label: "Add to chat" },
+            { id: "copy", label: "Copy" },
+          ],
+          nextAction.position,
+        );
+        return clicked === "add-to-chat" || clicked === "copy" ? clicked : null;
+      },
+      releaseMenu: () => {
+        selectionActionOpenRef.current = false;
+      },
+      isCurrent: () => requestId === selectionActionRequestIdRef.current,
+      execute: (clicked) =>
+        executeTerminalSelectionAction({
+          action: clicked,
+          clipboardText: nextAction.clipboardText,
+          selection: nextAction.selection,
+          copyText: copyTextToClipboard,
+          addToChat: (selection) => onAddTerminalContextRef.current(selection),
+          clearSelection: () => terminalRef.current?.clearSelection(),
+          focusTerminal: () => terminalRuntimeRegistry.focus(runtimeKey),
+          reportCopyError: (error) => {
+            const activeTerminal = terminalRef.current;
+            if (activeTerminal) {
+              writeSystemMessage(activeTerminal, terminalSelectionCopyFailureMessage(error));
+            }
+          },
+          isCurrent: () => requestId === selectionActionRequestIdRef.current,
+        }),
+    });
   }, [clearSelectionAction, readSelectionAction, runtimeKey]);
 
   useEffect(() => {

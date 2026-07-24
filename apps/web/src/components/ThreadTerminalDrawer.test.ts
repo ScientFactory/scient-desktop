@@ -4,7 +4,9 @@ import {
   executeTerminalSelectionAction,
   normalizeTerminalClipboardText,
   resolveTerminalSelectionActionPosition,
+  runTerminalSelectionMenuAction,
   shouldHandleTerminalSelectionMouseUp,
+  terminalSelectionCopyFailureMessage,
   terminalSelectionActionDelayForClickCount,
 } from "./terminal/terminalSelectionActions";
 
@@ -122,6 +124,30 @@ describe("executeTerminalSelectionAction", () => {
     expect(focusTerminal).toHaveBeenCalledOnce();
   });
 
+  it("reports a whitespace-only selection instead of preserving stale clipboard data", async () => {
+    const copyText = vi.fn(async () => undefined);
+    const reportCopyError = vi.fn();
+    const focusTerminal = vi.fn();
+
+    await executeTerminalSelectionAction({
+      action: "copy",
+      clipboardText: "   \r\n\t  ",
+      selection: { text: "   \n\t  " },
+      copyText,
+      addToChat: vi.fn(),
+      clearSelection: vi.fn(),
+      focusTerminal,
+      reportCopyError,
+      isCurrent: () => true,
+    });
+
+    expect(copyText).not.toHaveBeenCalled();
+    expect(reportCopyError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "The selection contains no copyable text." }),
+    );
+    expect(focusTerminal).toHaveBeenCalledOnce();
+  });
+
   it("keeps Add to chat normalization and selection lifecycle unchanged", async () => {
     const selection = { text: "normalized\nselection" };
     const addToChat = vi.fn();
@@ -186,5 +212,42 @@ describe("executeTerminalSelectionAction", () => {
 
     expect(reportCopyError).toHaveBeenCalledWith(error);
     expect(focusTerminal).toHaveBeenCalledOnce();
+  });
+});
+
+describe("runTerminalSelectionMenuAction", () => {
+  it("releases the menu single-flight guard before awaiting clipboard work", async () => {
+    let resolveCopy: (() => void) | undefined;
+    const releaseMenu = vi.fn();
+    const execute = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCopy = resolve;
+        }),
+    );
+
+    const actionPromise = runTerminalSelectionMenuAction({
+      showMenu: async () => "copy" as const,
+      releaseMenu,
+      isCurrent: () => true,
+      execute,
+    });
+
+    await vi.waitFor(() => {
+      expect(releaseMenu).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledWith("copy");
+    });
+    expect(resolveCopy).toBeTypeOf("function");
+
+    resolveCopy?.();
+    await actionPromise;
+  });
+});
+
+describe("terminalSelectionCopyFailureMessage", () => {
+  it("provides stable recovery guidance while preserving the underlying reason", () => {
+    expect(terminalSelectionCopyFailureMessage(new Error("Document is not focused"))).toBe(
+      "Unable to copy terminal selection. Check clipboard access or use Cmd/Ctrl+C, then retry. (Document is not focused)",
+    );
   });
 });
