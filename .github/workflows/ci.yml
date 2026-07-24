@@ -90,8 +90,11 @@ jobs:
       - name: Electron browser overlay lifecycle
         timeout-minutes: 2
         run: |
-          sudo chown root:root node_modules/electron/dist/chrome-sandbox
-          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+          ELECTRON_BINARY="$(cd apps/desktop && bun -e 'console.log(require("electron"))')"
+          ELECTRON_SANDBOX="$(dirname "$ELECTRON_BINARY")/chrome-sandbox"
+          test -f "$ELECTRON_SANDBOX"
+          sudo chown root:root "$ELECTRON_SANDBOX"
+          sudo chmod 4755 "$ELECTRON_SANDBOX"
           xvfb-run -a bun run test:desktop-browser-overlay-lifecycle
 
       # Blocking product-behavior coverage. Linux-only pixel/font/layout
