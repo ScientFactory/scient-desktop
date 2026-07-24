@@ -10,6 +10,7 @@ import type {
   ThreadHandoffImportedMessage,
 } from "@synara/contracts";
 import { stripEmbeddedAssistantSelections } from "@synara/shared/assistantSelections";
+import { compareProjectionMessageOrderValues } from "@synara/shared/messageOrder";
 
 import { isAssistantTurnTerminal } from "./assistantMessageLifecycle.ts";
 
@@ -27,6 +28,11 @@ export interface ImportedMessageIdValidation {
 }
 
 type MessageForkSourceThread = Pick<OrchestrationThread, "messages" | "latestTurn">;
+
+// The renderer intentionally retains only the newest 2,000 message rows. Fork
+// validation loads uncapped persistence so it can derive that same authoritative
+// window instead of requiring a prefix the production client cannot construct.
+const MESSAGE_FORK_SOURCE_WINDOW_MAX_MESSAGES = 2_000;
 
 function resolveRunningTurnBoundaryIndex(thread: MessageForkSourceThread): number | null {
   if (thread.latestTurn?.state !== "running") {
@@ -150,6 +156,8 @@ export function validateMessageForkImport(input: {
   if (
     sourceMessageIndex < 0 ||
     !sourceMessage ||
+    sourceMessageIndex <
+      Math.max(0, input.sourceThread.messages.length - MESSAGE_FORK_SOURCE_WINDOW_MAX_MESSAGES) ||
     !isCompletedConversationMessage(
       input.sourceThread,
       sourceMessage,
@@ -164,8 +172,12 @@ export function validateMessageForkImport(input: {
     };
   }
 
+  const sourceWindowStartIndex = Math.max(
+    0,
+    input.sourceThread.messages.length - MESSAGE_FORK_SOURCE_WINDOW_MAX_MESSAGES,
+  );
   const conversationPrefix = input.sourceThread.messages
-    .slice(0, sourceMessageIndex + 1)
+    .slice(sourceWindowStartIndex, sourceMessageIndex + 1)
     .filter(
       (message): message is OrchestrationMessage & { readonly role: "user" | "assistant" } =>
         message.role === "user" || message.role === "assistant",
@@ -194,8 +206,12 @@ export function validateMessageForkImport(input: {
       return true;
     }
     return (
-      previous.createdAt < message.createdAt ||
-      (previous.createdAt === message.createdAt && previous.messageId < message.messageId)
+      compareProjectionMessageOrderValues(
+        previous.createdAt,
+        previous.messageId,
+        message.createdAt,
+        message.messageId,
+      ) < 0
     );
   });
   if (!importOrderIsPersistent) {

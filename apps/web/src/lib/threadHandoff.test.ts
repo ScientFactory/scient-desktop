@@ -255,12 +255,12 @@ describe("threadHandoff", () => {
   });
 
   it("assigns equal-timestamp imports ids whose persisted sort preserves source order", () => {
-    const boundaryId = MessageId.makeUnsafe("message-equal-time-assistant");
+    const boundaryId = MessageId.makeUnsafe("message-equal-time-z-assistant");
     const imported = buildThreadForkImportedMessagesThrough(
       {
         messages: [
           {
-            id: MessageId.makeUnsafe("message-equal-time-user"),
+            id: MessageId.makeUnsafe("message-equal-time-a-user"),
             role: "user",
             text: "First",
             createdAt: "2026-07-22T08:00:00.000Z",
@@ -281,6 +281,43 @@ describe("threadHandoff", () => {
 
     expect(imported.map((message) => message.text)).toEqual(["First", "Second"]);
     expect(imported[0]!.messageId < imported[1]!.messageId).toBe(true);
+  });
+
+  it("normalizes hot equal-timestamp source messages to projection order before forking", () => {
+    const createdAt = "2026-07-22T08:00:00.000Z";
+    const assistantId = MessageId.makeUnsafe("same-time-z-assistant");
+    const userId = MessageId.makeUnsafe("same-time-a-user");
+    const thread = {
+      // Live events can arrive in provider order before a projection refresh.
+      messages: [
+        {
+          id: assistantId,
+          role: "assistant" as const,
+          text: "Same-time answer",
+          createdAt,
+          streaming: false,
+        },
+        {
+          id: userId,
+          role: "user" as const,
+          text: "Same-time question",
+          createdAt,
+          streaming: false,
+        },
+      ],
+    };
+
+    expect([...resolveThreadForkableMessageIds(thread)]).toEqual([userId, assistantId]);
+    expect(
+      buildThreadForkImportedMessagesThrough(
+        thread,
+        assistantId,
+        ThreadId.makeUnsafe("thread-fork-hot-equal-time"),
+      ).map(({ role, text }) => ({ role, text })),
+    ).toEqual([
+      { role: "user", text: "Same-time question" },
+      { role: "assistant", text: "Same-time answer" },
+    ]);
   });
 
   it("treats an active-turn assistant as unsafe even before its streaming flag arrives", () => {
@@ -475,7 +512,8 @@ describe("threadHandoff", () => {
       }),
     ).toEqual({
       provider: "codex",
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
+      options: { reasoningEffort: "high" },
     });
   });
 });

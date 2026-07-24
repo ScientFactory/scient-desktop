@@ -228,7 +228,7 @@ function isPathInIgnoredDirectory(relativePath: string): boolean {
   return IGNORED_DIRECTORY_NAMES.has(firstSegment);
 }
 
-type ProjectPackageManager = "bun" | "pnpm" | "yarn" | "npm";
+export type ProjectPackageManager = "bun" | "pnpm" | "yarn" | "npm";
 
 const PROJECT_PACKAGE_MANAGER_LOCKFILES: ReadonlyArray<{
   readonly manager: ProjectPackageManager;
@@ -254,7 +254,9 @@ async function pathExists(absolutePath: string): Promise<boolean> {
   }
 }
 
-async function detectPackageManager(packageDir: string): Promise<ProjectPackageManager> {
+export async function detectProjectPackageManager(
+  packageDir: string,
+): Promise<ProjectPackageManager> {
   for (const candidate of PROJECT_PACKAGE_MANAGER_LOCKFILES) {
     for (const filename of candidate.filenames) {
       if (await pathExists(path.join(packageDir, filename))) {
@@ -265,7 +267,10 @@ async function detectPackageManager(packageDir: string): Promise<ProjectPackageM
   return "npm";
 }
 
-function commandForPackageScript(manager: ProjectPackageManager, scriptName: string): string {
+export function commandForProjectPackageScript(
+  manager: ProjectPackageManager,
+  scriptName: string,
+): string {
   if (manager === "yarn") {
     return `yarn ${scriptName}`;
   }
@@ -366,14 +371,14 @@ async function readDiscoveredPackageTarget(input: {
     return null;
   }
 
-  const manager = await detectPackageManager(input.cwd);
+  const manager = await detectProjectPackageManager(input.cwd);
   const scripts = Object.entries(rawScripts)
     .flatMap(([name, command]) =>
       typeof command === "string" && name.trim().length > 0 && command.trim().length > 0
         ? [
             {
               name: name.trim(),
-              command: commandForPackageScript(manager, name.trim()),
+              command: commandForProjectPackageScript(manager, name.trim()),
             },
           ]
         : [],

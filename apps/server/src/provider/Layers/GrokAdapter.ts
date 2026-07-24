@@ -421,6 +421,12 @@ function parseGrokResume(raw: unknown): { sessionId: string } | undefined {
 }
 
 function formatGrokModelName(slug: string): string {
+  if (slug === "grok-build-latest") {
+    return "Grok Build Latest";
+  }
+  if (slug === "grok-4.5" || slug === "grok-4.5-latest") {
+    return "Grok 4.5";
+  }
   if (slug === "grok-build-0.1") {
     return "Grok Build 0.1";
   }
@@ -431,7 +437,13 @@ function formatGrokModelName(slug: string): string {
 }
 
 function isGrokBuildApiModelSlug(slug: string): boolean {
-  return slug === "grok-build-0.1" || /^grok-code-fast(?:-\d+(?:-\d+)?)?$/u.test(slug);
+  return (
+    slug === "grok-build-latest" ||
+    slug === "grok-4.5" ||
+    slug === "grok-4.5-latest" ||
+    slug === "grok-build-0.1" ||
+    /^grok-code-fast(?:-\d+(?:-\d+)?)?$/u.test(slug)
+  );
 }
 
 function readXaiModelAliases(rawModel: Record<string, unknown>): string[] {

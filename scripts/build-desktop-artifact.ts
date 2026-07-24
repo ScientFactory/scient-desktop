@@ -18,6 +18,7 @@ import {
   MAC_ADHOC_SIGN_HOOK_PATH,
   MAC_APPSNAP_HELPER_STAGE_PATH,
   MAC_SIGNING_POLICY_PATH,
+  WHISPER_RUNTIME_STAGE_PATH,
   validateDesktopNativeBuildHost,
 } from "./lib/desktop-platform-build-config.ts";
 import { isolateDesktopSigningEnvironment } from "./lib/desktop-signing-environment.ts";
@@ -33,6 +34,7 @@ import {
 } from "./lib/release-workspace-manifests.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 import { resolveWindowsSigningProvider } from "./lib/windows-signing.ts";
+import { verifyPackagedWhisperRuntime } from "./stage-whisper-runtime.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -74,6 +76,12 @@ const AppSnapHelperBuildScript = Effect.zipWith(
   Effect.service(Path.Path),
   (repoRoot, path) => path.join(repoRoot, "apps/desktop/scripts/build-appsnap-helper.mjs"),
 );
+const WhisperRuntimeStageScript = Effect.zipWith(
+  RepoRoot,
+  Effect.service(Path.Path),
+  (repoRoot, path) => path.join(repoRoot, "scripts/stage-whisper-runtime.ts"),
+);
+export const WHISPER_RUNTIME_STAGE_RUNNER = "bun";
 const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
 
 interface PlatformConfig {
@@ -677,6 +685,7 @@ const installLockedStageDependencies = Effect.fn("installLockedStageDependencies
 const verifyStagedPatchedDependencies = Effect.fn("verifyStagedPatchedDependencies")(function* (
   repoRoot: string,
   stageAppDir: string,
+  stagedRuntimeDependencies: Readonly<Record<string, unknown>>,
 ) {
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
@@ -685,6 +694,11 @@ const verifyStagedPatchedDependencies = Effect.fn("verifyStagedPatchedDependenci
     rootPackageJson.patchedDependencies ?? {},
   )) {
     const packageName = patchedPackageName(dependency);
+    // Build-tool patches (for example app-builder-lib) are applied in the
+    // repository install but intentionally omitted from the packaged runtime.
+    if (!(packageName in stagedRuntimeDependencies)) {
+      continue;
+    }
     const patchContents = yield* fs.readFileString(path.join(repoRoot, patchRelativePath));
     for (const expectation of parsePatchAddedLines(patchContents)) {
       const stagedFilePath = path.join(stageAppDir, "node_modules", packageName, expectation.file);
@@ -822,6 +836,39 @@ const stageMacAppSnapHelper = Effect.fn("stageMacAppSnapHelper")(function* (
   if (!(yield* fs.exists(outputPath))) {
     return yield* new BuildScriptError({
       message: `AppSnap helper build completed but output was not found at ${outputPath}`,
+    });
+  }
+});
+
+const stageWhisperRuntime = Effect.fn("stageWhisperRuntime")(function* (
+  stageAppDir: string,
+  platform: typeof BuildPlatform.Type,
+  arch: typeof BuildArch.Type,
+  verbose: boolean,
+) {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const stageScript = yield* WhisperRuntimeStageScript;
+  const outputPath = path.join(stageAppDir, WHISPER_RUNTIME_STAGE_PATH);
+
+  yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true });
+  yield* Effect.log(`[desktop-artifact] Staging whisper.cpp runtime (${platform}/${arch})...`);
+  yield* runCommand(
+    ChildProcess.make({
+      cwd: stageAppDir,
+      ...commandOutputOptions(verbose),
+    })`${WHISPER_RUNTIME_STAGE_RUNNER} ${stageScript} --platform ${platform} --arch ${arch} --output ${outputPath} --verbose`,
+  );
+
+  const executableName = platform === "win" ? "whisper-server.exe" : "whisper-server";
+  if (!(yield* fs.exists(path.join(outputPath, executableName)))) {
+    return yield* new BuildScriptError({
+      message: `whisper.cpp runtime staging completed but ${executableName} was not found at ${outputPath}`,
+    });
+  }
+  if (!(yield* fs.exists(path.join(outputPath, "provenance.json")))) {
+    return yield* new BuildScriptError({
+      message: `whisper.cpp runtime staging did not produce provenance at ${outputPath}`,
     });
   }
 });
@@ -970,6 +1017,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
 
   yield* assertPlatformBuildResources(options.platform, stageResourcesDir, options.verbose);
+  yield* stageWhisperRuntime(stageAppDir, options.platform, options.arch, options.verbose);
 
   if (options.platform === "mac") {
     yield* stageMacAppSnapHelper(stageAppDir, options.arch, options.verbose);
@@ -1016,7 +1064,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   const stagePackageJsonString = yield* encodeJsonString(stagePackageJson);
   yield* fs.writeFileString(path.join(stageAppDir, "package.json"), `${stagePackageJsonString}\n`);
 
-  yield* verifyStagedPatchedDependencies(repoRoot, stageAppDir);
+  yield* verifyStagedPatchedDependencies(repoRoot, stageAppDir, stagePackageJson.dependencies);
 
   yield* prepareStagedNodePty(repoRoot, stageAppDir, options.verbose);
   yield* verifyStagedNodePty(stageAppDir, options.verbose);
@@ -1075,6 +1123,24 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       message: `Build completed but dist directory was not found at ${stageDistDir}`,
     });
   }
+  yield* Effect.tryPromise({
+    try: () =>
+      verifyPackagedWhisperRuntime({
+        distDir: stageDistDir,
+        ...(options.platform === "mac"
+          ? { macSignatureMode: options.signed ? "developer-id" : "adhoc" }
+          : {}),
+        platform: options.platform,
+        ...(options.platform === "win"
+          ? { windowsSignatureMode: options.signed ? "authenticode" : "unsigned" }
+          : {}),
+      }),
+    catch: (cause) =>
+      new BuildScriptError({
+        message: "Packaged whisper.cpp runtime verification failed.",
+        cause,
+      }),
+  });
 
   const macUpdateArtifactsEnabled =
     options.platform === "mac" &&

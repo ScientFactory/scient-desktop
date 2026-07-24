@@ -2052,7 +2052,6 @@ export function makeDroidAdapter(
             cwd,
             clientName: "Scient Model Discovery",
           });
-          yield* runtime.start();
           const result = yield* discoverDroidAcpModels(runtime);
           const commands = yield* runtime.getAvailableCommands;
           setDroidDiscoveryCacheEntry(commandDiscoveryCache, cacheKey, {

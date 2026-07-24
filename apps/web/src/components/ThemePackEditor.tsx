@@ -21,9 +21,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Select, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Switch } from "./ui/switch";
 import { Textarea } from "./ui/textarea";
-import { toastManager } from "./ui/toast";
 import { SettingsSelectPopup } from "./settings/SettingsPanelPrimitives";
-import { SettingResetButton } from "./settings/SettingControls";
 import { copyTextToClipboard } from "../hooks/useCopyToClipboard";
 import { type ChromeTheme, type ThemeMode, type ThemeVariant, useTheme } from "../hooks/useTheme";
 import { cn } from "../lib/utils";
@@ -48,6 +46,12 @@ type ThemePackEditorProps = {
 
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 const COLOR_PICKER_COMMIT_DELAY_MS = 220;
+const THEME_FEEDBACK_DURATION_MS = 3_000;
+
+type ThemeFeedback = {
+  readonly message: string;
+  readonly tone: "error" | "success";
+};
 
 export function ThemePackEditor({
   variant,
@@ -81,6 +85,8 @@ export function ThemePackEditor({
   const codeThemeLabel =
     CODE_THEME_OPTIONS.find((option) => option.id === pack.codeThemeId)?.label ?? pack.codeThemeId;
   const isPristine = isDefaultThemePack(variant);
+  const [feedback, setFeedback] = useState<ThemeFeedback | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
   const titleLabel = variant === "dark" ? "Dark theme" : "Light theme";
   const contextLabel = isActive
     ? mode === "system"
@@ -90,25 +96,30 @@ export function ThemePackEditor({
       ? `Used when your system switches to ${variant}.`
       : `Inactive while the app is locked to ${mode}.`;
 
+  useEffect(() => {
+    if (!feedback && copyState === "idle") return;
+    const timeoutId = window.setTimeout(() => {
+      setFeedback(null);
+      setCopyState("idle");
+    }, THEME_FEEDBACK_DURATION_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [copyState, feedback]);
+
   const handleCopy = async () => {
     try {
       await copyTextToClipboard(exportThemeString(variant));
-      toastManager.add({
-        type: "success",
-        title: "Theme copied",
-        description: `Copied the ${variant} theme share string.`,
-      });
+      setCopyState("copied");
+      setFeedback(null);
     } catch {
-      toastManager.add({
-        type: "error",
-        title: "Copy failed",
-        description: "Unable to copy the theme share string.",
-      });
+      setCopyState("idle");
+      setFeedback({ tone: "error", message: "Unable to copy the theme share string." });
     }
   };
 
   const handleImport = (value: string) => {
     importThemeString(value, variant);
+    setCopyState("idle");
+    setFeedback({ tone: "success", message: `${titleLabel} imported.` });
   };
 
   return (
@@ -132,9 +143,11 @@ export function ThemePackEditor({
           <button
             type="button"
             onClick={() => void handleCopy()}
+            aria-label={copyState === "copied" ? `${titleLabel} copied` : `Copy ${titleLabel}`}
+            aria-live="polite"
             className="rounded-md px-2 py-1 text-xs text-[var(--color-text-foreground-secondary)] transition-colors hover:bg-[var(--color-background-elevated-secondary)] hover:text-[var(--color-text-foreground)]"
           >
-            Copy
+            {copyState === "copied" ? "Copied" : "Copy"}
           </button>
           <Select
             value={pack.codeThemeId}
@@ -169,6 +182,23 @@ export function ThemePackEditor({
       </div>
       <div className="border-b border-[color:var(--color-border)] px-4 pb-3 text-[11px] text-[var(--color-text-foreground-secondary)]">
         {contextLabel}
+        <div
+          aria-live="polite"
+          className={cn(
+            "grid transition-[grid-template-rows,opacity] duration-150",
+            feedback ? "mt-1 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+          )}
+        >
+          <p
+            className={cn(
+              "min-h-0 overflow-hidden",
+              feedback?.tone === "error" ? "text-destructive" : "text-foreground",
+            )}
+            role={feedback?.tone === "error" ? "alert" : "status"}
+          >
+            {feedback?.message}
+          </p>
+        </div>
       </div>
 
       <div className="divide-y divide-[color:var(--color-border)]">
@@ -551,15 +581,16 @@ function ImportThemeDialog({
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const errorId = useId();
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    setOpen(nextOpen);
+    setError(null);
+  };
 
   const handleSubmit = () => {
     try {
       onImport(value);
-      toastManager.add({
-        type: "success",
-        title: "Theme imported",
-        description: `Updated the ${variant} theme pack.`,
-      });
       setValue("");
       setError(null);
       setOpen(false);
@@ -569,7 +600,7 @@ function ImportThemeDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogTrigger
         render={
           <button
@@ -602,8 +633,14 @@ function ImportThemeDialog({
             rows={5}
             className="font-chat-code text-[11px]"
             aria-label="Theme share string"
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? errorId : undefined}
           />
-          {error ? <p className="mt-2 text-xs text-destructive">{error}</p> : null}
+          {error ? (
+            <p id={errorId} role="alert" className="mt-2 text-xs text-destructive">
+              {error}
+            </p>
+          ) : null}
         </DialogPanel>
         <DialogFooter>
           <DialogClose

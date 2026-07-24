@@ -17,6 +17,8 @@ import {
   type AuthWebSocketTokenResult,
   type ThreadId,
   type ThreadBrowserState,
+  type BrowserTabKind,
+  type BrowserTabState,
   type GitActionProgressEvent,
   type OrchestrationEvent,
   type OrchestrationShellStreamItem,
@@ -134,10 +136,16 @@ async function requestAuthJson<T>(
   return payload as T;
 }
 
-function createFallbackTab(url = "about:blank") {
+function createFallbackTab(
+  url = "about:blank",
+  kind: BrowserTabKind = "web",
+  displayUrl?: string,
+): BrowserTabState {
   return {
     id: crypto.randomUUID(),
+    kind,
     url,
+    displayUrl: displayUrl?.trim() || null,
     title: defaultBrowserTitle(url),
     status: "live" as const,
     isLoading: false,
@@ -498,6 +506,12 @@ export function createWsNativeApi(): NativeApi {
       readFile: (input) => transport.request(WS_METHODS.projectsReadFile, input),
       createLocalFilePreviewGrant: (input) =>
         transport.request(WS_METHODS.projectsCreateLocalFilePreviewGrant, input),
+      inspectHtmlArtifact: (input) =>
+        transport.request(WS_METHODS.projectsInspectHtmlArtifact, input),
+      prepareHtmlArtifactPreview: (input) =>
+        transport.request(WS_METHODS.projectsPrepareHtmlArtifactPreview, input),
+      revokeHtmlArtifactPreview: (input) =>
+        transport.request(WS_METHODS.projectsRevokeHtmlArtifactPreview, input),
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
       runDevServer: (input) => transport.request(WS_METHODS.projectsRunDevServer, input),
       stopDevServer: (input) => transport.request(WS_METHODS.projectsStopDevServer, input),
@@ -517,6 +531,7 @@ export function createWsNativeApi(): NativeApi {
     },
     filesystem: {
       browse: (input) => transport.request(WS_METHODS.filesystemBrowse, input),
+      createDirectory: (input) => transport.request(WS_METHODS.filesystemCreateDirectory, input),
     },
     studio: {
       listThreadOutputs: (input) => transport.request(WS_METHODS.studioListThreadOutputs, input),
@@ -687,6 +702,8 @@ export function createWsNativeApi(): NativeApi {
         }
         return transport.request(WS_METHODS.serverTranscribeVoice, input);
       },
+      cancelVoiceTranscription: () =>
+        window.desktopBridge?.server?.cancelVoiceTranscription?.() ?? Promise.resolve(),
       upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
     },
     stats: {
@@ -776,9 +793,17 @@ export function createWsNativeApi(): NativeApi {
         const state = ensureFallbackBrowserWorkspace(input.threadId);
         if (input.initialUrl && state.tabs.length > 0) {
           const activeTab = resolveFallbackBrowserTab(state);
-          activeTab.url = input.initialUrl;
-          activeTab.title = defaultBrowserTitle(input.initialUrl);
-          activeTab.lastCommittedUrl = input.initialUrl;
+          const kind = input.kind ?? "web";
+          if (activeTab.kind !== kind) {
+            const tab = createFallbackTab(input.initialUrl, kind, input.displayUrl);
+            state.tabs = [...state.tabs, tab];
+            state.activeTabId = tab.id;
+          } else {
+            activeTab.url = input.initialUrl;
+            activeTab.displayUrl = input.displayUrl?.trim() || null;
+            activeTab.title = defaultBrowserTitle(input.initialUrl);
+            activeTab.lastCommittedUrl = input.initialUrl;
+          }
         }
         markFallbackBrowserStateChanged(state);
         return emitFallbackBrowserState(input.threadId);
@@ -887,7 +912,7 @@ export function createWsNativeApi(): NativeApi {
           return window.desktopBridge.browser.newTab(input);
         }
         const state = ensureFallbackBrowserWorkspace(input.threadId);
-        const tab = createFallbackTab(input.url);
+        const tab = createFallbackTab(input.url, input.kind ?? "web", input.displayUrl);
         state.tabs = [...state.tabs, tab];
         if (input.activate !== false || !state.activeTabId) {
           state.activeTabId = tab.id;
@@ -906,9 +931,8 @@ export function createWsNativeApi(): NativeApi {
         }
         state.tabs = nextTabs;
         if (nextTabs.length === 0) {
-          const replacementTab = createFallbackTab();
-          state.tabs = [replacementTab];
-          state.activeTabId = replacementTab.id;
+          state.open = false;
+          state.activeTabId = null;
           state.lastError = null;
         } else if (!state.tabs.some((tab) => tab.id === state.activeTabId)) {
           state.activeTabId = state.tabs[0]?.id ?? null;

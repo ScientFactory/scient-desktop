@@ -10,9 +10,13 @@ import {
   MAC_INHERITED_ENTITLEMENTS_PATH,
   MAC_NOTARIZATION_HOOK_PATH,
   MAC_SIGNING_POLICY_PATH,
+  MAC_WHISPER_RUNTIME_BUNDLE_PATH,
   MICROPHONE_USAGE_DESCRIPTION,
   NODE_PTY_ASAR_UNPACK_GLOBS,
   validateDesktopNativeBuildHost,
+  WHISPER_RUNTIME_ASAR_EXCLUSION,
+  WHISPER_RUNTIME_RESOURCE_PATH,
+  WHISPER_RUNTIME_STAGE_PATH,
   WINDOWS_INSTALLER_GUID,
 } from "./lib/desktop-platform-build-config.ts";
 import { BRAND_ASSET_PATHS } from "./lib/brand-assets.ts";
@@ -35,8 +39,14 @@ describe("createDesktopPlatformBuildConfig", () => {
     assert.equal(mac.entitlements, MAC_ENTITLEMENTS_PATH);
     assert.equal(mac.entitlementsInherit, MAC_INHERITED_ENTITLEMENTS_PATH);
     assert.equal(MAC_APPSNAP_HELPER_BUNDLE_PATH, "Contents/Helpers/scient-appsnap-helper");
-    assert.deepStrictEqual(mac.binaries, ["Contents/Helpers/scient-appsnap-helper"]);
-    assert.equal(mac.x64ArchFiles, "Contents/Helpers/scient-appsnap-helper");
+    assert.deepStrictEqual(mac.binaries, [
+      "Contents/Helpers/scient-appsnap-helper",
+      MAC_WHISPER_RUNTIME_BUNDLE_PATH,
+    ]);
+    assert.equal(
+      mac.x64ArchFiles,
+      "Contents/{Helpers/scient-appsnap-helper,Resources/whisper-runtime/whisper-server}",
+    );
     assert.equal(
       MAC_APPSNAP_HELPER_STAGE_PATH,
       "apps/desktop/native/appsnap/build/scient-appsnap-helper",
@@ -45,6 +55,7 @@ describe("createDesktopPlatformBuildConfig", () => {
     assert.deepStrictEqual(config.files, [
       "**/*",
       MAC_APPSNAP_HELPER_ASAR_EXCLUSION,
+      WHISPER_RUNTIME_ASAR_EXCLUSION,
       `!${MAC_ADHOC_SIGN_HOOK_PATH}`,
       `!${MAC_SIGNING_POLICY_PATH}`,
     ]);
@@ -52,6 +63,12 @@ describe("createDesktopPlatformBuildConfig", () => {
       {
         from: "apps/desktop/native/appsnap/build/scient-appsnap-helper",
         to: "Helpers/scient-appsnap-helper",
+      },
+    ]);
+    assert.deepStrictEqual(config.extraResources, [
+      {
+        from: WHISPER_RUNTIME_STAGE_PATH,
+        to: WHISPER_RUNTIME_RESOURCE_PATH,
       },
     ]);
     assert.equal(extendInfo.NSMicrophoneUsageDescription, MICROPHONE_USAGE_DESCRIPTION);
@@ -106,10 +123,15 @@ describe("createDesktopPlatformBuildConfig", () => {
 
     assert.equal(linux.mac, undefined);
     assert.equal(linux.extraFiles, undefined);
+    assert.deepStrictEqual(linux.files, ["**/*", WHISPER_RUNTIME_ASAR_EXCLUSION]);
+    assert.deepStrictEqual(linux.extraResources, [
+      { from: WHISPER_RUNTIME_STAGE_PATH, to: WHISPER_RUNTIME_RESOURCE_PATH },
+    ]);
     assert.deepStrictEqual(linux.asarUnpack, ["node_modules/node-pty/**"]);
     assert.deepStrictEqual(linux.linux, {
       target: ["AppImage"],
       executableName: "scient",
+      executableArgs: [],
       syncDesktopName: true,
       icon: "icon.png",
       category: "Development",
@@ -122,6 +144,10 @@ describe("createDesktopPlatformBuildConfig", () => {
 
     assert.equal(win.mac, undefined);
     assert.equal(win.extraFiles, undefined);
+    assert.deepStrictEqual(win.files, ["**/*", WHISPER_RUNTIME_ASAR_EXCLUSION]);
+    assert.deepStrictEqual(win.extraResources, [
+      { from: WHISPER_RUNTIME_STAGE_PATH, to: WHISPER_RUNTIME_RESOURCE_PATH },
+    ]);
     assert.deepStrictEqual(win.asarUnpack, ["node_modules/node-pty/**"]);
     assert.equal(WINDOWS_INSTALLER_GUID, "368107a8-afe6-5db5-ab3b-d4f331684868");
     assert.deepStrictEqual(win.nsis, {

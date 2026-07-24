@@ -2,31 +2,57 @@
 // Purpose: Show explicitly linked HTML/Markdown deliverables beneath a settled assistant reply.
 // Layer: Chat timeline presentation
 
-import type { EditorId } from "@synara/contracts";
+import type { EditorId, ProjectInspectHtmlArtifactResult } from "@synara/contracts";
 import { isLocalAbsolutePath, joinWorkspaceRelativePath } from "@synara/shared/path";
 import { useQuery } from "@tanstack/react-query";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useId, useMemo, useState } from "react";
 
 import { resolveAvailableEditorOptions } from "~/editorMetadata";
 import { extractMessageArtifacts, type MessageArtifactReference } from "~/lib/messageArtifacts";
-import { AppsIcon, ChevronDownIcon, ExternalLinkIcon, EyeIcon, FolderIcon } from "~/lib/icons";
+import {
+  AppsIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  ExternalLinkIcon,
+  EyeIcon,
+  FolderIcon,
+} from "~/lib/icons";
 import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
+import { projectInspectHtmlArtifactQueryOptions } from "~/lib/projectReactQuery";
 import { cn } from "~/lib/utils";
 import { openWorkspaceFileReference, useWorkspaceFileOpener } from "~/lib/workspaceFileOpener";
 import { readNativeApi } from "~/nativeApi";
 import { Button } from "../ui/button";
+import { DisclosureRegion } from "../ui/DisclosureRegion";
 import { Menu, MenuItem, MenuSeparator, MenuTrigger } from "../ui/menu";
-import { toastManager } from "../ui/toast";
 import { ComposerPickerMenuPopup } from "./ComposerPickerMenuPopup";
 import { FileEntryIcon } from "./FileEntryIcon";
+
+const COLLAPSED_FULL_ARTIFACT_COUNT = 2;
+const MIN_ARTIFACT_COUNT_TO_COLLAPSE = 4;
 
 function absoluteArtifactPath(path: string, workspaceRoot: string | undefined): string | null {
   if (isLocalAbsolutePath(path)) return path;
   return workspaceRoot ? joinWorkspaceRelativePath(workspaceRoot, path) : null;
 }
 
-function artifactSubtitle(kind: MessageArtifactReference["kind"]): string {
-  return kind === "html" ? "Web page · HTML" : "Document · MD";
+function artifactSubtitle(
+  kind: MessageArtifactReference["kind"],
+  inspection?: ProjectInspectHtmlArtifactResult,
+): string {
+  if (kind !== "html") return "Document · MD";
+  switch (inspection?.mode) {
+    case "static-document":
+      return "Static web page · HTML";
+    case "interactive-bundle":
+      return "Interactive web page · HTML";
+    case "dev-server-entrypoint":
+      return "Web app source · runs a dev server";
+    case "unsupported":
+      return "HTML · preview unavailable";
+    default:
+      return "Web page · inspecting…";
+  }
 }
 
 function HtmlArtifactThumbnail(props: {
@@ -97,6 +123,7 @@ function HtmlArtifactThumbnail(props: {
 const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
   artifact: MessageArtifactReference;
   workspaceRoot: string | undefined;
+  loadHtmlThumbnail?: boolean;
 }) {
   const opener = useWorkspaceFileOpener();
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
@@ -109,30 +136,43 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
     [serverConfigQuery.data?.availableEditors],
   );
   const absolutePath = absoluteArtifactPath(props.artifact.path, props.workspaceRoot);
+  const inspectionQuery = useQuery(
+    projectInspectHtmlArtifactQueryOptions({
+      cwd: props.workspaceRoot ?? null,
+      path: props.artifact.kind === "html" ? absolutePath : null,
+      enabled: props.artifact.kind === "html" && absolutePath !== null,
+    }),
+  );
+  const [openError, setOpenError] = useState<string | null>(null);
 
   const reportOpenError = (error: unknown) => {
-    toastManager.add({
-      type: "error",
-      title: "Could not open file",
-      description: error instanceof Error ? error.message : "The file could not be opened.",
-    });
+    setOpenError(error instanceof Error ? error.message : "The file could not be opened.");
   };
-  const preview = () => openWorkspaceFileReference(opener, props.artifact.path);
+  const preview = () => {
+    setOpenError(null);
+    openWorkspaceFileReference(opener, props.artifact.path, { onError: reportOpenError });
+  };
   const openInEditor = (editorId: EditorId) => {
+    setOpenError(null);
     const api = readNativeApi();
-    if (!api || !absolutePath) return;
+    if (!api || !absolutePath) {
+      reportOpenError(new Error("The desktop file opener is unavailable."));
+      return;
+    }
     void api.shell.openInEditor(absolutePath, editorId).catch(reportOpenError);
   };
 
   return (
-    <div className="group/artifact-row flex min-w-0 items-center gap-3 px-3 py-2.5">
+    <div className="group/artifact-row flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5">
       <button
         type="button"
         className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
         title={`Preview ${props.artifact.path}`}
         onClick={preview}
       >
-        {props.artifact.kind === "html" ? (
+        {props.artifact.kind === "html" &&
+        props.loadHtmlThumbnail !== false &&
+        inspectionQuery.data?.mode === "static-document" ? (
           <HtmlArtifactThumbnail
             path={props.artifact.path}
             label={props.artifact.label}
@@ -148,12 +188,21 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
             {props.artifact.label}
           </span>
           <span className="mt-0.5 block truncate text-xs text-muted-foreground/75">
-            {artifactSubtitle(props.artifact.kind)}
+            <span
+              title={[
+                inspectionQuery.data?.reason,
+                ...(inspectionQuery.data?.warnings.map((warning) => warning.message) ?? []),
+              ]
+                .filter((message): message is string => Boolean(message))
+                .join("\n")}
+            >
+              {artifactSubtitle(props.artifact.kind, inspectionQuery.data)}
+            </span>
           </span>
         </span>
       </button>
 
-      <div className="flex shrink-0 items-center gap-1.5">
+      <div data-artifact-actions className="flex shrink-0 items-center gap-1.5">
         <Button
           variant="link"
           size="sm"
@@ -183,8 +232,16 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
             </MenuItem>
             {props.artifact.kind === "html" ? (
               <MenuItem
-                disabled={!opener?.openHtmlInExternalBrowser}
-                onClick={() => opener?.openHtmlInExternalBrowser?.(props.artifact.path)}
+                disabled={
+                  !opener?.openHtmlInExternalBrowser ||
+                  inspectionQuery.data?.mode === "interactive-bundle"
+                }
+                onClick={() => {
+                  setOpenError(null);
+                  if (!opener?.openHtmlInExternalBrowser?.(props.artifact.path)) {
+                    reportOpenError(new Error("The browser could not open this preview."));
+                  }
+                }}
               >
                 <ExternalLinkIcon aria-hidden="true" className="size-4 text-muted-foreground" />
                 Default browser
@@ -206,9 +263,12 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
             <MenuItem
               disabled={!absolutePath}
               onClick={() => {
+                setOpenError(null);
                 const api = readNativeApi();
                 if (api && absolutePath) {
                   void api.shell.showInFolder(absolutePath).catch(reportOpenError);
+                } else {
+                  reportOpenError(new Error("The desktop file browser is unavailable."));
                 }
               }}
             >
@@ -218,6 +278,15 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
           </ComposerPickerMenuPopup>
         </Menu>
       </div>
+      <p
+        className={cn(
+          "basis-full pl-[66px] text-destructive text-xs sm:pl-[84px]",
+          !openError && "sr-only",
+        )}
+        aria-live="polite"
+      >
+        {openError ? `Could not open file: ${openError}` : ""}
+      </p>
     </div>
   );
 });
@@ -227,25 +296,99 @@ export const AssistantArtifactShelf = memo(function AssistantArtifactShelf(props
   markdownCwd: string | undefined;
   workspaceRoot: string | undefined;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const disclosureId = useId();
   const artifacts = useMemo(
     () => extractMessageArtifacts(props.markdown, props.markdownCwd),
     [props.markdown, props.markdownCwd],
   );
   if (artifacts.length === 0) return null;
 
+  const canCollapse = artifacts.length >= MIN_ARTIFACT_COUNT_TO_COLLAPSE;
+  const alwaysVisibleArtifacts = canCollapse
+    ? artifacts.slice(0, COLLAPSED_FULL_ARTIFACT_COUNT)
+    : artifacts;
+  const disclosedArtifacts = canCollapse ? artifacts.slice(COLLAPSED_FULL_ARTIFACT_COUNT) : [];
+  const hiddenArtifactCount = disclosedArtifacts.length;
+  const toggleLabel = expanded
+    ? "Show fewer files"
+    : `Show ${hiddenArtifactCount} more ${hiddenArtifactCount === 1 ? "file" : "files"}`;
+
   return (
     <section className="mt-3 font-system-ui" aria-label="Files cited in this response">
       <div className="mb-1.5 px-0.5 text-xs font-medium text-muted-foreground/65">
         {artifacts.length === 1 ? "File" : `${artifacts.length} files`}
       </div>
-      <div className="divide-y divide-border/65 overflow-visible rounded-xl border border-border/75 bg-[var(--color-background-elevated-primary)] shadow-xs">
-        {artifacts.map((artifact) => (
-          <AssistantArtifactRow
-            key={artifact.path}
-            artifact={artifact}
-            workspaceRoot={props.workspaceRoot}
-          />
-        ))}
+      <div className="overflow-visible rounded-xl border border-border/75 bg-[var(--color-background-elevated-primary)] shadow-xs">
+        <div className="divide-y divide-border/65">
+          {alwaysVisibleArtifacts.map((artifact) => (
+            <AssistantArtifactRow
+              key={artifact.path}
+              artifact={artifact}
+              workspaceRoot={props.workspaceRoot}
+            />
+          ))}
+        </div>
+
+        {canCollapse ? (
+          <div className="relative">
+            {!expanded ? (
+              <div className="h-[60px] overflow-hidden border-t border-border/65">
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none select-none opacity-55 [&_[data-artifact-actions]]:opacity-0"
+                  inert
+                >
+                  <AssistantArtifactRow
+                    artifact={disclosedArtifacts[0]!}
+                    workspaceRoot={props.workspaceRoot}
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            <DisclosureRegion open={expanded}>
+              <div
+                id={disclosureId}
+                className="divide-y divide-border/65 border-t border-border/65"
+              >
+                {disclosedArtifacts.map((artifact) => (
+                  <AssistantArtifactRow
+                    key={artifact.path}
+                    artifact={artifact}
+                    workspaceRoot={props.workspaceRoot}
+                    loadHtmlThumbnail={expanded}
+                  />
+                ))}
+              </div>
+            </DisclosureRegion>
+
+            <div
+              className={cn(
+                "relative z-10 flex justify-center bg-[var(--color-background-elevated-primary)] px-3 py-2",
+                expanded
+                  ? "border-t border-border/65"
+                  : "absolute inset-x-0 bottom-0 shadow-[0_-12px_18px_var(--color-background-elevated-primary)]",
+              )}
+            >
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 rounded-full bg-[var(--color-background-elevated-primary)] px-3 text-xs font-medium"
+                aria-controls={disclosureId}
+                aria-expanded={expanded}
+                onClick={() => setExpanded((current) => !current)}
+              >
+                {toggleLabel}
+                {expanded ? (
+                  <ChevronUpIcon aria-hidden="true" className="size-3.5" />
+                ) : (
+                  <ChevronDownIcon aria-hidden="true" className="size-3.5" />
+                )}
+              </Button>
+            </div>
+          </div>
+        ) : null}
       </div>
     </section>
   );

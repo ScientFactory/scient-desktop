@@ -161,7 +161,7 @@ function isInitialMessageForkContextBootstrap(
     return false;
   }
   return !thread.messages.slice(0, currentMessageIndex).some((message) => {
-    return message.role === "assistant" && message.source === "native";
+    return (message.role === "user" || message.role === "assistant") && message.source === "native";
   });
 }
 

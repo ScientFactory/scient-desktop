@@ -1,22 +1,35 @@
 import { Schema } from "effect";
-import { TrimmedNonEmptyString } from "./baseSchemas";
 
 const FILESYSTEM_PATH_MAX_LENGTH = 512;
+const FilesystemBrowsePath = Schema.String.check(Schema.isNonEmpty()).check(
+  Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH),
+);
+const FilesystemEntryValue = Schema.String.check(Schema.isNonEmpty());
 
 export const FilesystemBrowseInput = Schema.Struct({
-  partialPath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
-  cwd: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH))),
+  partialPath: FilesystemBrowsePath,
+  cwd: Schema.optional(FilesystemBrowsePath),
 });
 export type FilesystemBrowseInput = typeof FilesystemBrowseInput.Type;
 
 export const FilesystemBrowseEntry = Schema.Struct({
-  name: TrimmedNonEmptyString,
-  fullPath: TrimmedNonEmptyString,
+  name: FilesystemEntryValue,
+  fullPath: FilesystemEntryValue,
 });
 export type FilesystemBrowseEntry = typeof FilesystemBrowseEntry.Type;
 
 export const FilesystemBrowseResult = Schema.Struct({
-  parentPath: TrimmedNonEmptyString,
+  parentPath: FilesystemEntryValue,
   entries: Schema.Array(FilesystemBrowseEntry),
 });
 export type FilesystemBrowseResult = typeof FilesystemBrowseResult.Type;
+
+export const FilesystemCreateDirectoryInput = Schema.Struct({
+  path: FilesystemBrowsePath,
+});
+export type FilesystemCreateDirectoryInput = typeof FilesystemCreateDirectoryInput.Type;
+
+export const FilesystemCreateDirectoryResult = Schema.Struct({
+  path: FilesystemEntryValue,
+});
+export type FilesystemCreateDirectoryResult = typeof FilesystemCreateDirectoryResult.Type;

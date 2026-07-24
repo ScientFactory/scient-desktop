@@ -5,6 +5,7 @@ import type {
   ThreadId,
 } from "@synara/contracts";
 import { OrchestrationCommand, ORCHESTRATION_WS_METHODS } from "@synara/contracts";
+import { compareProjectionMessageOrderValues } from "@synara/shared/messageOrder";
 import {
   Cause,
   Deferred,
@@ -255,17 +256,25 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const overlayThread = (
     model: OrchestrationReadModel,
     thread: OrchestrationReadModel["threads"][number],
+    options: { readonly persistentMessageOrder?: boolean } = {},
   ): OrchestrationReadModel => {
     const existingThread = model.threads.find((entry) => entry.id === thread.id);
     const hotMessageIds = new Set((existingThread?.messages ?? []).map((message) => message.id));
     // The command model starts with no message bodies after a restart, then
     // accumulates new events in their authoritative order. Keep persisted-only
-    // history first and let the hot model replace matching rows. This also
-    // avoids reordering same-timestamp messages by the projection's id tie-break.
-    const mergedMessages = [
+    // history first and let the hot model replace matching rows.
+    const overlaidMessages = [
       ...thread.messages.filter((message) => !hotMessageIds.has(message.id)),
       ...(existingThread?.messages ?? []),
     ];
+    // Message-boundary fork commands are constructed from the browser projection,
+    // whose stable tie-break is message id. Normalize only that validation surface;
+    // other commands still require authoritative hot event order.
+    const mergedMessages = options.persistentMessageOrder
+      ? overlaidMessages.toSorted((left, right) =>
+          compareProjectionMessageOrderValues(left.createdAt, left.id, right.createdAt, right.id),
+        )
+      : overlaidMessages;
     const mergedThread = {
       ...thread,
       messages: mergedMessages,
@@ -283,12 +292,19 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     command: OrchestrationCommand,
     model: OrchestrationReadModel,
     threadId: ThreadId,
+    options: {
+      readonly fullMessageHistory?: boolean;
+      readonly persistentMessageOrder?: boolean;
+    } = {},
   ): Effect.Effect<OrchestrationReadModel, OrchestrationDispatchError> =>
-    projectionSnapshotQuery.getThreadDetailById(threadId).pipe(
+    (options.fullMessageHistory
+      ? projectionSnapshotQuery.getThreadDetailForExportById(threadId)
+      : projectionSnapshotQuery.getThreadDetailById(threadId)
+    ).pipe(
       Effect.map((threadOption) =>
         Option.match(threadOption, {
           onNone: () => model,
-          onSome: (thread) => overlayThread(model, thread),
+          onSome: (thread) => overlayThread(model, thread, options),
         }),
       ),
       Effect.mapError(
@@ -306,8 +322,15 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   ): Effect.Effect<OrchestrationReadModel, OrchestrationDispatchError> => {
     switch (command.type) {
       case "thread.handoff.create":
-      case "thread.fork.create":
         return loadThreadDetailForDecider(command, commandReadModel, command.sourceThreadId);
+      case "thread.fork.create":
+        // Message-boundary forks promise an exact authoritative prefix. The normal
+        // thread detail query is deliberately capped for UI reads, so validation
+        // must use the existing uncapped export projection instead.
+        return loadThreadDetailForDecider(command, commandReadModel, command.sourceThreadId, {
+          fullMessageHistory: true,
+          persistentMessageOrder: true,
+        });
       case "thread.turn.start":
         return command.sourceProposedPlan
           ? loadThreadDetailForDecider(

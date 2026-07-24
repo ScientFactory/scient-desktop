@@ -594,6 +594,37 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards HTML artifact inspection, preparation, and revocation", async () => {
+    requestMock
+      .mockResolvedValueOnce({ mode: "static-document", warnings: [] })
+      .mockResolvedValueOnce({
+        mode: "static-document",
+        warnings: [],
+        previewUrl: "http://g-test.preview.localhost:5000/",
+        expiresAt: "2026-01-01T00:00:00.000Z",
+      })
+      .mockResolvedValueOnce({ revoked: true });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    const input = { cwd: "/tmp/project", path: "report.html" };
+
+    await api.projects.inspectHtmlArtifact(input);
+    await api.projects.prepareHtmlArtifactPreview(input);
+    await api.projects.revokeHtmlArtifactPreview({
+      previewUrl: "http://g-test.preview.localhost:5000/",
+    });
+
+    expect(requestMock).toHaveBeenNthCalledWith(1, WS_METHODS.projectsInspectHtmlArtifact, input);
+    expect(requestMock).toHaveBeenNthCalledWith(
+      2,
+      WS_METHODS.projectsPrepareHtmlArtifactPreview,
+      input,
+    );
+    expect(requestMock).toHaveBeenNthCalledWith(3, WS_METHODS.projectsRevokeHtmlArtifactPreview, {
+      previewUrl: "http://g-test.preview.localhost:5000/",
+    });
+  });
+
   it("forwards project source status and clone requests", async () => {
     requestMock.mockResolvedValueOnce({ sources: [] }).mockResolvedValueOnce({ path: "/tmp/repo" });
     const { createWsNativeApi } = await import("./wsNativeApi");
@@ -790,7 +821,7 @@ describe("wsNativeApi", () => {
     expect(requestMock).not.toHaveBeenCalled();
   });
 
-  it("keeps a blank fallback browser tab after closing the last tab", async () => {
+  it("closes the fallback browser after closing the last tab", async () => {
     const { createWsNativeApi } = await import("./wsNativeApi");
     const api = createWsNativeApi();
     const threadId = ThreadId.makeUnsafe("thread-1");
@@ -800,10 +831,9 @@ describe("wsNativeApi", () => {
     expect(tabId).toBeTruthy();
     const nextState = await api.browser.closeTab({ threadId, tabId: tabId ?? "" });
 
-    expect(nextState.open).toBe(true);
-    expect(nextState.tabs).toHaveLength(1);
-    expect(nextState.activeTabId).toBe(nextState.tabs[0]?.id);
-    expect(nextState.tabs[0]?.url).toBe("about:blank");
+    expect(nextState.open).toBe(false);
+    expect(nextState.tabs).toEqual([]);
+    expect(nextState.activeTabId).toBeNull();
   });
 
   it("forwards context menu metadata to desktop bridge", async () => {
@@ -854,12 +884,14 @@ describe("wsNativeApi", () => {
 
   it("uses the desktop voice bridge when available", async () => {
     const transcribeVoice = vi.fn().mockResolvedValue({ text: "hello" });
+    const cancelVoiceTranscription = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(getWindowForTest(), "desktopBridge", {
       configurable: true,
       writable: true,
       value: {
         server: {
           transcribeVoice,
+          cancelVoiceTranscription,
         },
       },
     });
@@ -867,16 +899,17 @@ describe("wsNativeApi", () => {
     const { createWsNativeApi } = await import("./wsNativeApi");
     const api = createWsNativeApi();
     await api.server.transcribeVoice({
-      provider: "codex",
+      mode: "offline-only",
       cwd: "/repo",
       audioBase64: "UklGRgAAAAAAAAAAAAAAAAAAAAA=",
       mimeType: "audio/wav",
       sampleRateHz: 24_000,
       durationMs: 1000,
     });
+    await api.server.cancelVoiceTranscription?.();
 
     expect(transcribeVoice).toHaveBeenCalledWith({
-      provider: "codex",
+      mode: "offline-only",
       cwd: "/repo",
       audioBase64: "UklGRgAAAAAAAAAAAAAAAAAAAAA=",
       mimeType: "audio/wav",
@@ -887,5 +920,26 @@ describe("wsNativeApi", () => {
       WS_METHODS.serverTranscribeVoice,
       expect.anything(),
     );
+    expect(cancelVoiceTranscription).toHaveBeenCalledOnce();
+  });
+
+  it("uses the provider-neutral server route when the desktop bridge is unavailable", async () => {
+    Reflect.deleteProperty(getWindowForTest(), "desktopBridge");
+    requestMock.mockResolvedValueOnce({ text: "browser transcript", engine: "chatgpt" });
+    const input = {
+      mode: "automatic" as const,
+      cwd: "/repo",
+      audioBase64: "UklGRgAAAAAAAAAAAAAAAAAAAAA=",
+      mimeType: "audio/wav",
+      sampleRateHz: 24_000,
+      durationMs: 1_000,
+    };
+
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    await api.server.transcribeVoice(input);
+    await expect(api.server.cancelVoiceTranscription?.()).resolves.toBeUndefined();
+
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverTranscribeVoice, input);
   });
 });

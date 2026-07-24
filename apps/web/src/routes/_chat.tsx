@@ -1,7 +1,7 @@
 import type { ResolvedKeybindingsConfig } from "@synara/contracts";
 import { useQuery } from "@tanstack/react-query";
 import { Outlet, createFileRoute, useLocation, useNavigate } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
   goBackInAppHistory,
@@ -37,7 +37,8 @@ import { useWorkspaceStore } from "../workspaceStore";
 import { useProviderStatusesForLocalConfig } from "~/hooks/useProviderStatusesForLocalConfig";
 import { useRefreshProviderStatusesNow } from "~/hooks/useProviderStatusRefresh";
 import { resolveProviderSendAvailabilityWithRefresh } from "~/lib/providerAvailability";
-import { toastManager } from "~/components/ui/toast";
+import { transientAlertManager } from "~/notifications/transientAlert";
+import { activityManager, useActivityStore } from "~/notifications/activityStore";
 import {
   Sidebar,
   SIDEBAR_OFFCANVAS_MOTION_CLASS,
@@ -65,11 +66,9 @@ const THREAD_SIDEBAR_RESIZABLE: SidebarResizableOptions = {
 };
 const MAINTENANCE_EVENT_STALE_MS = 5 * 60 * 1000;
 
-type MaintenanceToastId = ReturnType<typeof toastManager.add>;
+const THREAD_RETENTION_ACTIVITY_KEY = "maintenance:thread-retention";
 
-function ThreadRetentionMaintenanceToast() {
-  const toastIdRef = useRef<MaintenanceToastId | null>(null);
-
+function ThreadRetentionMaintenanceActivity() {
   useEffect(() => {
     return onServerMaintenanceUpdated((event) => {
       if (event.type !== "maintenance" || event.payload.task !== "thread-retention") {
@@ -81,79 +80,68 @@ function ThreadRetentionMaintenanceToast() {
       const isStaleEvent = Number.isFinite(eventMs)
         ? Date.now() - eventMs > MAINTENANCE_EVENT_STALE_MS
         : false;
-      if (isStaleEvent && toastIdRef.current === null) {
+      const existingActivity = useActivityStore
+        .getState()
+        .items.some((item) => item.dedupeKey === THREAD_RETENTION_ACTIVITY_KEY);
+      if (isStaleEvent && !existingActivity) {
         return;
       }
 
       if (state === "started") {
-        toastIdRef.current = toastManager.add({
-          type: "loading",
+        activityManager.publish({
+          dedupeKey: THREAD_RETENTION_ACTIVITY_KEY,
+          source: "maintenance",
+          status: "in_progress",
+          tone: "info",
           title: "Hiding old chats...",
           description: "Preparing background maintenance.",
-          timeout: 0,
-          data: { allowCrossThreadVisibility: true },
+          occurredAt: event.payload.at,
         });
         return;
       }
 
       if (state === "progress") {
-        const toastId =
-          toastIdRef.current ??
-          toastManager.add({
-            type: "loading",
-            title: "Hiding old chats...",
-            timeout: 0,
-            data: { allowCrossThreadVisibility: true },
-          });
-        toastIdRef.current = toastId;
-        toastManager.update(toastId, {
-          type: "loading",
+        activityManager.publish({
+          dedupeKey: THREAD_RETENTION_ACTIVITY_KEY,
+          source: "maintenance",
+          status: "in_progress",
+          tone: "info",
           title: "Hiding old chats...",
           description:
             totalCount && totalCount > 0
               ? `${deletedCount ?? 0} of ${totalCount} chats hidden.`
               : `${deletedCount ?? 0} chats hidden.`,
-          timeout: 0,
-          data: { allowCrossThreadVisibility: true },
+          occurredAt: event.payload.at,
+          preserveRead: true,
         });
         return;
       }
 
       if (state === "failed") {
-        const toastId = toastIdRef.current;
-        toastIdRef.current = null;
-        if (toastId) {
-          toastManager.update(toastId, {
-            type: "warning",
-            title: "Chat maintenance paused",
-            description: error ?? "Old chats will be retried later.",
-            timeout: 6000,
-            data: { allowCrossThreadVisibility: true },
-          });
-          return;
-        }
-        toastManager.add({
-          type: "warning",
+        activityManager.publish({
+          dedupeKey: THREAD_RETENTION_ACTIVITY_KEY,
+          source: "maintenance",
+          status: "needs_attention",
+          tone: "warning",
           title: "Chat maintenance paused",
           description: error ?? "Old chats will be retried later.",
-          timeout: 6000,
-          data: { allowCrossThreadVisibility: true },
+          occurredAt: event.payload.at,
         });
         return;
       }
 
-      const toastId = toastIdRef.current;
-      toastIdRef.current = null;
-      if (!toastId) return;
-      toastManager.update(toastId, {
-        type: "success",
+      if (!existingActivity) return;
+      activityManager.publish({
+        dedupeKey: THREAD_RETENTION_ACTIVITY_KEY,
+        source: "maintenance",
+        status: "recent",
+        tone: "success",
         title: "Old chats hidden",
         description:
           deletedCount && deletedCount > 0
             ? `${deletedCount} old chats hidden from the app.`
             : "No old chats needed hiding.",
-        timeout: 3500,
-        data: { allowCrossThreadVisibility: true },
+        occurredAt: event.payload.at,
       });
     });
   }, []);
@@ -417,7 +405,7 @@ function ChatRouteGlobalShortcuts() {
             refreshStatuses: () => refreshProviderStatuses({ silent: true }),
           });
           if (!providerAvailability.usable) {
-            toastManager.add({
+            transientAlertManager.add({
               type: "error",
               title: providerAvailability.unavailableReason,
             });
@@ -578,7 +566,7 @@ function ChatRouteLayout() {
       className="bg-[var(--app-shell-background)]"
       data-sidebar-side="left"
     >
-      <ThreadRetentionMaintenanceToast />
+      <ThreadRetentionMaintenanceActivity />
       <ChatRouteGlobalShortcuts />
       {sidebarElement}
       {mainContentShell}

@@ -12,7 +12,7 @@ import {
   getProviderOptionDescriptors,
 } from "@synara/shared/model";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { getProviderStartOptions, useAppSettings } from "~/appSettings";
 import {
@@ -41,6 +41,7 @@ import {
   useDesktopTopBarWindowControlsGutterClassName,
 } from "~/hooks/useDesktopTopBarGutter";
 import { CentralIcon } from "~/lib/central-icons";
+import { TriangleAlertIcon } from "~/lib/icons";
 import { cn } from "~/lib/utils";
 import {
   buildModelSelection,
@@ -176,9 +177,16 @@ function AutomationDetailView() {
   const [acknowledgedWarningIds, setAcknowledgedWarningIds] = useState<
     ReadonlySet<AutomationDraftWarningId>
   >(() => new Set());
+  const [runActionErrors, setRunActionErrors] = useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
+  const runActionInFlightRef = useRef(false);
 
   const {
     data,
+    isLoading,
+    error: automationsError,
+    refetch,
     updateMutation,
     deleteMutation,
     runNowMutation,
@@ -223,15 +231,30 @@ function AutomationDetailView() {
             </div>
           </header>
           <main className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
-            Automation not found.
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => void navigate({ to: "/automations" })}
-            >
-              Back to automations
-            </Button>
+            <p role={automationsError ? "alert" : undefined}>
+              {isLoading
+                ? "Loading automation…"
+                : automationsError instanceof Error
+                  ? `Could not load automation: ${automationsError.message}`
+                  : "Automation not found."}
+            </p>
+            {!isLoading ? (
+              <div className="flex items-center gap-2">
+                {automationsError ? (
+                  <Button type="button" size="sm" variant="outline" onClick={() => void refetch()}>
+                    Try again
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={automationsError ? "ghost" : "outline"}
+                  onClick={() => void navigate({ to: "/automations" })}
+                >
+                  Back to automations
+                </Button>
+              </div>
+            ) : null}
           </main>
         </div>
       </RouteInsetSurface>
@@ -277,7 +300,7 @@ function AutomationDetailView() {
     try {
       await approveAutomationRisks();
     } catch {
-      return; // update failed; the mutation already surfaced the error toast
+      return; // The approval error remains visible in this detail panel.
     }
     runNowMutation.mutate(definition);
   };
@@ -298,6 +321,8 @@ function AutomationDetailView() {
   };
 
   const openEditDialog = (overrides: Partial<AutomationFormState> = {}) => {
+    if (updateMutation.isPending) return;
+    updateMutation.reset();
     const nextForm = {
       ...formFromDefinition(definition, project?.id ?? projects[0]?.id ?? ""),
       ...overrides,
@@ -326,6 +351,7 @@ function AutomationDetailView() {
   };
 
   const submitForm = () => {
+    if (updateMutation.isPending) return;
     if (!form || !isFormSubmittable(form)) return;
     if (hasBlockingAutomationDraftWarnings(dialogWarnings, acknowledgedWarningIds)) return;
     const acknowledgedRisks = acknowledgedRiskIdsForFormWarnings(
@@ -355,6 +381,50 @@ function AutomationDetailView() {
     deleteMutation.mutate(definition, {
       onSuccess: () => void navigate({ to: "/automations" }),
     });
+  };
+
+  const panelMutationError = !dialogOpen
+    ? updateMutation.isError
+      ? `Could not update automation: ${updateMutation.error.message}`
+      : deleteMutation.isError
+        ? `Could not delete automation: ${deleteMutation.error.message}`
+        : runNowMutation.isError
+          ? `Could not start automation: ${runNowMutation.error.message}`
+          : null
+    : null;
+  const backgroundQueryError =
+    automationsError instanceof Error
+      ? `Could not refresh automation data: ${automationsError.message}`
+      : null;
+  const clearPanelMutationError = () => {
+    updateMutation.reset();
+    deleteMutation.reset();
+    runNowMutation.reset();
+  };
+  const runMutationError = (run: AutomationRun): string | undefined => runActionErrors.get(run.id);
+  const runActionBusy =
+    cancelRunMutation.isPending || markRunReadMutation.isPending || archiveRunMutation.isPending;
+  const runAction = async (
+    run: AutomationRun,
+    errorPrefix: string,
+    action: () => Promise<unknown>,
+  ) => {
+    if (runActionInFlightRef.current || runActionBusy) return;
+    runActionInFlightRef.current = true;
+    setRunActionErrors((current) => {
+      if (!current.has(run.id)) return current;
+      const next = new Map(current);
+      next.delete(run.id);
+      return next;
+    });
+    try {
+      await action();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The action could not be completed.";
+      setRunActionErrors((current) => new Map(current).set(run.id, `${errorPrefix}: ${message}`));
+    } finally {
+      runActionInFlightRef.current = false;
+    }
   };
 
   return (
@@ -478,11 +548,38 @@ function AutomationDetailView() {
 
           <div className="min-h-0 flex-1 overflow-y-auto border-l border-[var(--app-surface-divider)]">
             <div className="flex flex-col gap-6 px-4 py-8">
+              {panelMutationError ? (
+                <div
+                  role="alert"
+                  className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+                >
+                  <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                  <span className="min-w-0 flex-1">{panelMutationError}</span>
+                  <button
+                    type="button"
+                    onClick={clearPanelMutationError}
+                    className="shrink-0 text-destructive/70 transition-colors hover:text-destructive"
+                    aria-label="Dismiss automation error"
+                  >
+                    <CentralIcon name="cross-small" className="size-3.5" />
+                  </button>
+                </div>
+              ) : null}
+              {backgroundQueryError ? (
+                <div
+                  role="status"
+                  className="flex items-center justify-between gap-3 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-foreground"
+                >
+                  <span>{backgroundQueryError}</span>
+                  <Button type="button" size="xs" variant="ghost" onClick={() => void refetch()}>
+                    Retry
+                  </Button>
+                </div>
+              ) : null}
               <AutomationApprovalBanner
                 warnings={approvalGaps.warnings}
                 busy={approvalBusy}
-                // Swallow the rejection here; the mutation's onError already toasts. Without
-                // this, void-ing the rejected promise would surface an unhandled rejection.
+                // Keep the rejection handled; the mutation error remains visible in this panel.
                 onApprove={() => void approveAutomationRisks().catch(() => undefined)}
                 onApproveAndRun={() => void handleApproveAndRunNow()}
               />
@@ -750,9 +847,23 @@ function AutomationDetailView() {
                         onOpen={(threadId) =>
                           void navigate({ to: "/$threadId", params: { threadId } })
                         }
-                        onCancel={() => cancelRunMutation.mutate(run)}
-                        onMarkRead={(unread) => markRunReadMutation.mutate({ run, unread })}
-                        onArchive={(archived) => archiveRunMutation.mutate({ run, archived })}
+                        onCancel={() =>
+                          void runAction(run, "Could not cancel run", () =>
+                            cancelRunMutation.mutateAsync(run),
+                          )
+                        }
+                        onMarkRead={(unread) =>
+                          void runAction(run, "Could not update read status", () =>
+                            markRunReadMutation.mutateAsync({ run, unread }),
+                          )
+                        }
+                        onArchive={(archived) =>
+                          void runAction(run, "Could not update archive status", () =>
+                            archiveRunMutation.mutateAsync({ run, archived }),
+                          )
+                        }
+                        error={runMutationError(run)}
+                        actionsDisabled={runActionBusy}
                       />
                     ))}
                   </div>
@@ -773,10 +884,23 @@ function AutomationDetailView() {
           warnings={dialogWarnings}
           acknowledgedWarningIds={acknowledgedWarningIds}
           onToggleWarning={toggleWarning}
-          onOpenChange={setDialogOpen}
-          onFormChange={updateDialogForm}
+          onOpenChange={(open) => {
+            if (updateMutation.isPending) return;
+            setDialogOpen(open);
+            if (!open) updateMutation.reset();
+          }}
+          onFormChange={(nextForm) => {
+            if (updateMutation.isPending) return;
+            updateMutation.reset();
+            updateDialogForm(nextForm);
+          }}
           onSubmit={submitForm}
           busy={updateMutation.isPending}
+          error={
+            updateMutation.isError
+              ? `Could not save automation: ${updateMutation.error.message}`
+              : null
+          }
         />
       ) : null}
     </RouteInsetSurface>
@@ -1033,12 +1157,16 @@ function RunRow({
   onCancel,
   onMarkRead,
   onArchive,
+  error,
+  actionsDisabled = false,
 }: {
   readonly run: AutomationRun;
   readonly onOpen: (threadId: NonNullable<AutomationRun["threadId"]>) => void;
   readonly onCancel: () => void;
   readonly onMarkRead: (unread: boolean) => void;
   readonly onArchive: (archived: boolean) => void;
+  readonly error?: string | undefined;
+  readonly actionsDisabled?: boolean;
 }) {
   const active = canCancelAutomationRun(run);
   const archived = run.result?.archivedAt !== null && run.result?.archivedAt !== undefined;
@@ -1074,18 +1202,26 @@ function RunRow({
         "group flex items-center gap-2 rounded-md px-1.5 py-1.5 text-xs transition-colors",
         openable ? "cursor-pointer hover:bg-foreground/[0.03]" : undefined,
       )}
+      aria-invalid={error ? true : undefined}
     >
       <RunStatusIndicator status={run.status} />
       <div className="min-w-0 flex-1 truncate">
         <span className="text-foreground/90">{runStatusLabel(run.status)}</span>
-        <span className="text-muted-foreground"> · {runResultSummary(run)}</span>
+        <span
+          role={error ? "alert" : undefined}
+          className={error ? "text-destructive" : "text-muted-foreground"}
+        >
+          {error ? ` · ${error}` : ` · ${runResultSummary(run)}`}
+        </span>
       </div>
       {triageActionable ? (
         <div className="flex shrink-0 items-center gap-1.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
           <button
             type="button"
+            disabled={actionsDisabled}
             onClick={(event) => {
               event.stopPropagation();
+              if (actionsDisabled) return;
               onMarkRead(!unread);
             }}
             className="text-muted-foreground transition-colors hover:text-foreground"
@@ -1094,8 +1230,10 @@ function RunRow({
           </button>
           <button
             type="button"
+            disabled={actionsDisabled}
             onClick={(event) => {
               event.stopPropagation();
+              if (actionsDisabled) return;
               onArchive(!archived);
             }}
             title={
@@ -1112,11 +1250,13 @@ function RunRow({
       {active ? (
         <Button
           type="button"
+          disabled={actionsDisabled}
           size="icon-chip"
           variant="ghost"
           aria-label="Cancel run"
           onClick={(event) => {
             event.stopPropagation();
+            if (actionsDisabled) return;
             onCancel();
           }}
         >

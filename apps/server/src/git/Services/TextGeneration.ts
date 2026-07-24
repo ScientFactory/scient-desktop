@@ -26,7 +26,7 @@ export interface CommitMessageGenerationInput {
   codexHomePath?: string;
   /** When true, the model also returns a semantic branch name for the change. */
   includeBranch?: boolean;
-  /** Model to use for generation. Defaults to gpt-5.4-mini if not specified. */
+  /** Model to use for generation. Defaults to gpt-5.6-luna if not specified. */
   model?: string;
   /** Optional provider-aware selection for providers that need more than a raw model slug. */
   modelSelection?: ModelSelection;
@@ -49,7 +49,7 @@ export interface PrContentGenerationInput {
   diffSummary: string;
   diffPatch: string;
   codexHomePath?: string;
-  /** Model to use for generation. Defaults to gpt-5.4-mini if not specified. */
+  /** Model to use for generation. Defaults to gpt-5.6-luna if not specified. */
   model?: string;
   /** Optional provider-aware selection for providers that need more than a raw model slug. */
   modelSelection?: ModelSelection;
@@ -66,7 +66,7 @@ export interface DiffSummaryGenerationInput {
   cwd: string;
   patch: string;
   codexHomePath?: string;
-  /** Model to use for generation. Defaults to gpt-5.4-mini if not specified. */
+  /** Model to use for generation. Defaults to gpt-5.6-luna if not specified. */
   model?: string;
   /** Optional provider-aware selection for providers that need more than a raw model slug. */
   modelSelection?: ModelSelection;
@@ -82,7 +82,7 @@ export interface BranchNameGenerationInput {
   cwd: string;
   message: string;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
-  /** Model to use for generation. Defaults to gpt-5.4-mini if not specified. */
+  /** Model to use for generation. Defaults to gpt-5.6-luna if not specified. */
   model?: string;
   /** Optional provider-aware selection for providers that need more than a raw model slug. */
   modelSelection?: ModelSelection;
@@ -98,7 +98,7 @@ export interface ThreadTitleGenerationInput {
   cwd: string;
   message: string;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
-  /** Model to use for generation. Defaults to gpt-5.4-mini if not specified. */
+  /** Model to use for generation. Defaults to gpt-5.6-luna if not specified. */
   model?: string;
   /** Optional provider-aware selection for providers that need more than a raw model slug. */
   modelSelection?: ModelSelection;
@@ -116,7 +116,7 @@ export interface ThreadRecapGenerationInput {
   newMaterial: string;
   currentState?: string | undefined;
   codexHomePath?: string;
-  /** Model to use for generation. Defaults to gpt-5.4-mini if not specified. */
+  /** Model to use for generation. Defaults to gpt-5.6-luna if not specified. */
   model?: string;
   /** Optional provider-aware selection for providers that need more than a raw model slug. */
   modelSelection?: ModelSelection;
@@ -134,7 +134,7 @@ export interface AutomationIntentGenerationInput {
   defaultMode?: AutomationMode;
   nowIso: string;
   codexHomePath?: string;
-  /** Model to use for generation. Defaults to gpt-5.4-mini if not specified. */
+  /** Model to use for generation. Defaults to gpt-5.6-luna if not specified. */
   model?: string;
   /** Optional provider-aware selection for providers that need more than a raw model slug. */
   modelSelection?: ModelSelection;
@@ -153,7 +153,7 @@ export interface AutomationCompletionEvaluationInput {
   runAssistantText: string;
   threadContext?: string | undefined;
   codexHomePath?: string;
-  /** Model to use for generation. Defaults to gpt-5.4-mini if not specified. */
+  /** Model to use for generation. Defaults to gpt-5.6-luna if not specified. */
   model?: string;
   /** Optional provider-aware selection for providers that need more than a raw model slug. */
   modelSelection?: ModelSelection;

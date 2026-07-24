@@ -238,7 +238,7 @@ describe("getComposerProviderState", () => {
   it("preserves a stored runtime Codex effort for dispatch before discovery resolves", () => {
     const state = getComposerProviderState({
       provider: "codex",
-      model: "gpt-5.6-sol",
+      model: "gpt-5.7-sol",
       prompt: "",
       modelOptions: {
         codex: {

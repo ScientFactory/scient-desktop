@@ -53,8 +53,10 @@
         "@pierre/diffs": "^1.2.12",
         "@xterm/headless": "^6.0.0",
         "effect": "catalog:",
+        "es-module-lexer": "^2.0.0",
         "node-pty": "^1.1.0",
         "open": "^10.1.0",
+        "parse5": "^7.3.0",
         "tar": "^7.5.20",
         "tree-kill": "^1.2.2",
         "unzipper": "^0.12.3",
@@ -233,6 +235,7 @@
     },
   },
   "patchedDependencies": {
+    "app-builder-lib@26.15.3": "patches/app-builder-lib@26.15.3.patch",
     "@effect/platform-node-shared@https://pkg.pr.new/Effect-TS/effect-smol/@effect/platform-node-shared@8881a9b606d84a6f5eb6615279138322984f5368": "patches/@effect%2Fplatform-node-shared@8881a9b.patch",
   },
   "overrides": {

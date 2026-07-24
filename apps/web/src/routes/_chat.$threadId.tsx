@@ -16,11 +16,8 @@ import {
   isWorkspaceRelativePathSafe,
   joinWorkspaceRelativePath,
 } from "@synara/shared/path";
-import {
-  LOCAL_HTML_PREVIEW_ROUTE_PATH,
-  isSupportedLocalHtmlPath,
-} from "@synara/shared/localPreviewFiles";
-import { useQueryClient } from "@tanstack/react-query";
+import { isSupportedLocalHtmlPath } from "@synara/shared/localPreviewFiles";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
   Suspense,
@@ -49,6 +46,7 @@ import {
 } from "../components/DiffPanelShell";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useDockPaneRuntimeActivation } from "../hooks/useDockPaneRuntimeActivation";
+import { useDockWorkspaceExplorer } from "../components/chat/useDockWorkspaceExplorer";
 import {
   type ChatRightPanel,
   type DiffRouteSearch,
@@ -116,11 +114,11 @@ import {
   storeDockFileExplorerOpen,
 } from "../lib/dockFileExplorerPreference";
 import { FoldersIcon } from "../lib/icons";
+import { passiveGitStatusQueryOptions } from "../lib/gitReactQuery";
 import {
+  projectInspectHtmlArtifactQueryOptions,
   projectListDirectoriesQueryOptions,
-  projectLocalPreviewGrantQueryOptions,
 } from "../lib/projectReactQuery";
-import { resolveWsHttpUrl } from "../lib/wsHttpUrl";
 import { clearNewThreadLanding, isNewThreadLandingPending } from "../lib/newThreadLanding";
 import {
   WorkspaceFileOpenerContext,
@@ -141,7 +139,7 @@ import {
   splitViewPaneScopeId,
 } from "../lib/chatPaneScope";
 import { getSidechatCreator } from "../lib/sidechatCreatorRegistry";
-import { toastManager } from "../components/ui/toast";
+import { transientAlertManager } from "../notifications/transientAlert";
 import { useAppSettings } from "../appSettings";
 import { useStore } from "../store";
 import { readNativeApi } from "../nativeApi";
@@ -166,6 +164,7 @@ import {
   DialogTitle,
 } from "../components/ui/dialog";
 import {
+  resolveDockDiffAvailable,
   resolveFilePreviewWorkspaceRoot,
   resolveRoutePanelBootstrap,
   resolveSplitPaneCloseDecision,
@@ -1491,8 +1490,8 @@ function SingleChatSurface(props: {
   const draftThread = useComposerDraftStore(
     (store) => store.draftThreadsByThreadId[props.threadId] ?? null,
   );
-  const diffAvailable = useStore(
-    (store) => (store.turnDiffIdsByThreadId?.[props.threadId]?.length ?? 0) > 0,
+  const turnDiffCount = useStore(
+    (store) => store.turnDiffIdsByThreadId?.[props.threadId]?.length ?? 0,
   );
   const newThreadLandingRef = useRef<{ threadId: ThreadIdType; deferMount: boolean } | null>(null);
   if (newThreadLandingRef.current?.threadId !== props.threadId) {
@@ -1514,6 +1513,17 @@ function SingleChatSurface(props: {
     threadEnvMode: threadWorkspaceMetadata.envMode ?? draftThread?.envMode ?? null,
     threadWorktreePath: threadWorkspaceMetadata.worktreePath ?? draftThread?.worktreePath ?? null,
   });
+  const gitStatusQuery = useQuery(passiveGitStatusQueryOptions(workspaceRoot));
+  const diffAvailable = resolveDockDiffAvailable({
+    turnDiffCount,
+    hasWorkingTreeChanges: gitStatusQuery.data?.hasWorkingTreeChanges ?? false,
+  });
+  // Explorer state belongs to the chat surface, not an individual pane. The
+  // standalone explorer is replaced by a file pane on selection and inactive
+  // file panes unmount, so pane-local state would be lost on every transition.
+  const dockWorkspaceExplorer = useDockWorkspaceExplorer(
+    `${props.threadId}\u0000${workspaceRoot ?? ""}`,
+  );
   const projects = useStore((store) => store.projects);
   const { settings: appSettings } = useAppSettings();
   const { handleNewThread } = useHandleNewThread();
@@ -1770,13 +1780,26 @@ function SingleChatSurface(props: {
       if (!absolutePath) {
         return null;
       }
-      const grant = await queryClient.fetchQuery(
-        projectLocalPreviewGrantQueryOptions({ path: absolutePath, staleTime: 15_000 }),
+      if (!workspaceRoot) {
+        return null;
+      }
+      const inspection = await queryClient.fetchQuery(
+        projectInspectHtmlArtifactQueryOptions({ cwd: workspaceRoot, path: absolutePath }),
       );
-      const params = new URLSearchParams({ grant: grant.grant });
-      return resolveWsHttpUrl(`${LOCAL_HTML_PREVIEW_ROUTE_PATH}?${params.toString()}`, {
-        includeLegacyToken: false,
+      // Thumbnails are deliberately inert. Never execute an interactive bundle
+      // merely because its card scrolled into view.
+      if (inspection.mode !== "static-document") {
+        return null;
+      }
+      const api = readNativeApi();
+      if (!api) {
+        return null;
+      }
+      const prepared = await api.projects.prepareHtmlArtifactPreview({
+        cwd: workspaceRoot,
+        path: absolutePath,
       });
+      return prepared.mode === "static-document" ? (prepared.previewUrl ?? null) : null;
     },
     [queryClient, workspaceRoot],
   );
@@ -1786,36 +1809,95 @@ function SingleChatSurface(props: {
       if (!targetPath || !isSupportedLocalHtmlPath(targetPath)) {
         return false;
       }
-      if (destination === "internal") {
-        requestImmediateDockHydration("browser");
-        openPane(props.threadId, { kind: "browser" });
-      }
-      void getHtmlPreviewUrl(path)
-        .then(async (url) => {
-          if (!url) {
-            throw new Error("This HTML file is not available for preview.");
-          }
-          const api = readNativeApi();
-          if (!api) {
-            throw new Error("The file opener is not available.");
-          }
-          if (destination === "external") {
-            await api.shell.openExternal(url);
-          } else {
-            await api.browser.open({ threadId: props.threadId, initialUrl: url });
-          }
-        })
-        .catch((error: unknown) => {
-          toastManager.add({
-            type: "error",
-            title: "Could not preview HTML",
-            description:
-              error instanceof Error ? error.message : "The rendered preview could not be opened.",
-          });
+      void (async () => {
+        const api = readNativeApi();
+        if (!api) {
+          throw new Error("The file opener is not available.");
+        }
+        const absolutePath = isLocalAbsolutePath(targetPath)
+          ? targetPath
+          : workspaceRoot
+            ? joinWorkspaceRelativePath(workspaceRoot, targetPath)
+            : null;
+        if (!absolutePath || !workspaceRoot) {
+          throw new Error("This HTML file is outside the active workspace.");
+        }
+        const prepared = await api.projects.prepareHtmlArtifactPreview({
+          cwd: workspaceRoot,
+          path: absolutePath,
         });
+        let url = prepared.previewUrl ?? null;
+        let browserKind: "artifact" | "local-app" = "artifact";
+
+        if (prepared.mode === "dev-server-entrypoint") {
+          if (!prepared.runTarget || !props.projectId || !activeProject) {
+            throw new Error(prepared.reason ?? "No development command was found for this app.");
+          }
+          const confirmed = await api.dialogs.confirm(
+            `This HTML entrypoint needs its development server. Run this command?\n\n${prepared.runTarget.command}\n\nWorking directory: ${prepared.runTarget.cwd}`,
+          );
+          if (!confirmed) {
+            return;
+          }
+          const { server } = await api.projects.runDevServer({
+            projectId: props.projectId,
+            command: prepared.runTarget.command,
+            cwd: prepared.runTarget.cwd,
+            env: {
+              SYNARA_PROJECT_ROOT: activeProject.cwd,
+              ...(workspaceRoot !== activeProject.cwd
+                ? { SYNARA_WORKTREE_PATH: workspaceRoot }
+                : {}),
+            },
+          });
+          if (server.status !== "running" || !server.url) {
+            throw new Error(server.error ?? "The development server did not become ready.");
+          }
+          url = server.url;
+          browserKind = "local-app";
+        }
+
+        if (prepared.mode === "unsupported") {
+          throw new Error(prepared.reason ?? "This HTML file cannot be previewed safely.");
+        }
+        if (!url) {
+          throw new Error("This HTML file is not available for preview.");
+        }
+        if (destination === "external") {
+          if (prepared.mode === "interactive-bundle") {
+            throw new Error(
+              "Interactive artifact previews are available only inside Scient's isolated browser.",
+            );
+          }
+          await api.shell.openExternal(url);
+        } else {
+          requestImmediateDockHydration("browser");
+          openPane(props.threadId, { kind: "browser" });
+          await api.browser.open({
+            threadId: props.threadId,
+            initialUrl: url,
+            kind: browserKind,
+            displayUrl: absolutePath,
+          });
+        }
+      })().catch((error: unknown) => {
+        transientAlertManager.add({
+          type: "error",
+          title: "Could not preview HTML",
+          description:
+            error instanceof Error ? error.message : "The rendered preview could not be opened.",
+        });
+      });
       return true;
     },
-    [getHtmlPreviewUrl, openPane, props.threadId, requestImmediateDockHydration, workspaceRoot],
+    [
+      activeProject,
+      openPane,
+      props.projectId,
+      props.threadId,
+      requestImmediateDockHydration,
+      workspaceRoot,
+    ],
   );
   // Chat surface: file references open in the right-dock file pane. References
   // outside the workspace report unhandled so chips fall back to the external
@@ -2043,7 +2125,7 @@ function SingleChatSurface(props: {
   const handleSelectEditorProject = useCallback(
     (projectId: ProjectId) => {
       void openEditorProject(projectId).catch((error: unknown) => {
-        toastManager.add({
+        transientAlertManager.add({
           type: "error",
           title: "Unable to open project",
           description: error instanceof Error ? error.message : "The project could not be opened.",
@@ -2123,7 +2205,7 @@ function SingleChatSurface(props: {
         // selection) published via the registry instead of opening an empty pane.
         const createSidechat = getSidechatCreator(props.threadId);
         if (!createSidechat) {
-          toastManager.add({
+          transientAlertManager.add({
             type: "warning",
             title: "Side is unavailable",
             description: "Open a server-backed main thread before starting Side.",
@@ -2131,7 +2213,7 @@ function SingleChatSurface(props: {
           return;
         }
         void createSidechat().catch((error) => {
-          toastManager.add({
+          transientAlertManager.add({
             type: "error",
             title: "Could not start Side",
             description:
@@ -2243,6 +2325,7 @@ function SingleChatSurface(props: {
             <Suspense fallback={<PanelStateMessage>Loading explorer...</PanelStateMessage>}>
               <DockExplorerPane
                 workspaceRoot={workspaceRoot}
+                explorer={dockWorkspaceExplorer}
                 onOpenFile={handleOpenDockFile}
                 onReferenceInChat={handleReferenceInChat}
               />
@@ -2255,6 +2338,7 @@ function SingleChatSurface(props: {
                 workspaceRoot={workspaceRoot}
                 filePath={pane.filePath}
                 explorerOpen={dockFileExplorerOpen}
+                explorer={dockWorkspaceExplorer}
                 onOpenFile={handleOpenDockFile}
                 onReferenceInChat={handleReferenceInChat}
                 onAskWhyInChat={handleAskWhyInChat}
@@ -2296,6 +2380,7 @@ function SingleChatSurface(props: {
       handleOpenDockFile,
       handleReferenceInChat,
       dockFileExplorerOpen,
+      dockWorkspaceExplorer,
       props.projectId,
       props.threadId,
       requestActiveDockPaneLive,

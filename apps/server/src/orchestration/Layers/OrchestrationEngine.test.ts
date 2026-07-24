@@ -376,6 +376,199 @@ describe("OrchestrationEngine", () => {
     }
   });
 
+  it("validates long message-boundary forks against the renderer-retained source window", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const projectId = asProjectId("project-long-fork");
+    const sourceThreadId = ThreadId.makeUnsafe("thread-long-fork-source");
+    const baseTimestamp = Date.parse("2026-07-22T10:00:00.000Z");
+    const sourceMessages = Array.from({ length: 2_002 }, (_, index) => {
+      const sequence = String(index).padStart(4, "0");
+      const createdAt = new Date(baseTimestamp + index).toISOString();
+      return {
+        messageId: asMessageId(`long-source-${sequence}`),
+        role: index % 2 === 0 ? ("user" as const) : ("assistant" as const),
+        text: `Long transcript message ${sequence}`,
+        createdAt,
+        updatedAt: createdAt,
+      };
+    });
+
+    try {
+      await system.run(
+        engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe("cmd-project-long-fork-create"),
+          projectId,
+          title: "Long fork project",
+          workspaceRoot: "/tmp/project-long-fork",
+          defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
+          createdAt: sourceMessages[0]!.createdAt,
+        }),
+      );
+      await system.run(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("cmd-thread-long-fork-source-create"),
+          threadId: sourceThreadId,
+          projectId,
+          title: "Long source",
+          modelSelection: { provider: "codex", model: "gpt-5-codex" },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt: sourceMessages[0]!.createdAt,
+        }),
+      );
+      await system.run(
+        engine.dispatch({
+          type: "thread.messages.import",
+          commandId: CommandId.makeUnsafe("cmd-thread-long-fork-source-import"),
+          threadId: sourceThreadId,
+          messages: sourceMessages,
+          createdAt: sourceMessages.at(-1)!.createdAt,
+        }),
+      );
+
+      await expect(
+        system.run(
+          engine.dispatch({
+            type: "thread.fork.create",
+            commandId: CommandId.makeUnsafe("cmd-thread-long-fork-create"),
+            threadId: ThreadId.makeUnsafe("thread-long-fork-destination"),
+            sourceThreadId,
+            sourceMessageId: sourceMessages.at(-1)!.messageId,
+            projectId,
+            title: "Long fork",
+            modelSelection: { provider: "codex", model: "gpt-5-codex" },
+            runtimeMode: "approval-required",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            envMode: "local",
+            branch: null,
+            worktreePath: null,
+            importedMessages: sourceMessages.slice(-2_000).map((message, index) => ({
+              ...message,
+              messageId: asMessageId(`long-fork-${String(index).padStart(4, "0")}`),
+            })),
+            createdAt: new Date(baseTimestamp + sourceMessages.length).toISOString(),
+          }),
+        ),
+      ).resolves.toEqual(expect.objectContaining({ sequence: expect.any(Number) }));
+
+      const destination = (await system.run(engine.getReadModel())).threads.find(
+        (thread) => thread.id === ThreadId.makeUnsafe("thread-long-fork-destination"),
+      );
+      expect(destination?.messages).toHaveLength(2_000);
+      expect(destination?.messages[0]?.text).toBe("Long transcript message 0002");
+      expect(destination?.messages.at(-1)?.text).toBe("Long transcript message 2001");
+    } finally {
+      await system.dispose();
+    }
+  });
+
+  it("validates hot same-timestamp fork messages in persistent projection order", async () => {
+    const createdAt = "2026-07-22T10:00:00.000Z";
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const projectId = asProjectId("project-same-time-fork");
+    const sourceThreadId = ThreadId.makeUnsafe("thread-same-time-fork-source");
+
+    try {
+      await system.run(
+        engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe("cmd-project-same-time-fork-create"),
+          projectId,
+          title: "Same-time fork project",
+          workspaceRoot: "/tmp/project-same-time-fork",
+          defaultModelSelection: { provider: "codex", model: "gpt-5-codex" },
+          createdAt,
+        }),
+      );
+      await system.run(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("cmd-thread-same-time-fork-source-create"),
+          threadId: sourceThreadId,
+          projectId,
+          title: "Same-time source",
+          modelSelection: { provider: "codex", model: "gpt-5-codex" },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        }),
+      );
+      // Deliberately append in the opposite order from the projection's
+      // created_at/message_id ordering to exercise the hot overlay.
+      await system.run(
+        engine.dispatch({
+          type: "thread.messages.import",
+          commandId: CommandId.makeUnsafe("cmd-thread-same-time-fork-source-import"),
+          threadId: sourceThreadId,
+          messages: [
+            {
+              messageId: asMessageId("same-time-z-assistant"),
+              role: "assistant",
+              text: "Same-time answer",
+              createdAt,
+              updatedAt: createdAt,
+            },
+            {
+              messageId: asMessageId("same-time-a-user"),
+              role: "user",
+              text: "Same-time question",
+              createdAt,
+              updatedAt: createdAt,
+            },
+          ],
+          createdAt,
+        }),
+      );
+
+      await expect(
+        system.run(
+          engine.dispatch({
+            type: "thread.fork.create",
+            commandId: CommandId.makeUnsafe("cmd-thread-same-time-fork-create"),
+            threadId: ThreadId.makeUnsafe("thread-same-time-fork-destination"),
+            sourceThreadId,
+            sourceMessageId: asMessageId("same-time-z-assistant"),
+            projectId,
+            title: "Same-time fork",
+            modelSelection: { provider: "codex", model: "gpt-5-codex" },
+            runtimeMode: "approval-required",
+            interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+            envMode: "local",
+            branch: null,
+            worktreePath: null,
+            importedMessages: [
+              {
+                messageId: asMessageId("same-time-fork-a-user"),
+                role: "user",
+                text: "Same-time question",
+                createdAt,
+                updatedAt: createdAt,
+              },
+              {
+                messageId: asMessageId("same-time-fork-z-assistant"),
+                role: "assistant",
+                text: "Same-time answer",
+                createdAt,
+                updatedAt: createdAt,
+              },
+            ],
+            createdAt,
+          }),
+        ),
+      ).resolves.toEqual(expect.objectContaining({ sequence: expect.any(Number) }));
+    } finally {
+      await system.dispose();
+    }
+  });
+
   it("rejects a fork import that reuses a source message id without moving the source row", async () => {
     const createdAt = now();
     const system = await createOrchestrationSystem();

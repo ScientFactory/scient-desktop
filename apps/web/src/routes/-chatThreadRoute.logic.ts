@@ -63,6 +63,13 @@ export function resolveFilePreviewWorkspaceRoot(input: {
   });
 }
 
+export function resolveDockDiffAvailable(input: {
+  readonly turnDiffCount: number;
+  readonly hasWorkingTreeChanges: boolean;
+}): boolean {
+  return input.turnDiffCount > 0 || input.hasWorkingTreeChanges;
+}
+
 function createRoutePanelSearchKey(input: {
   scopeId: string;
   search: DiffRouteSearch;

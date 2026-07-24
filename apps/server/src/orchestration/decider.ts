@@ -663,7 +663,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         if (!validation.ok) {
           return yield* new OrchestrationCommandInvariantError({
             commandType: command.type,
-            detail: `Message-boundary fork through '${command.sourceMessageId}' must import the exact ${validation.expectedImportedMessageCount} completed conversation messages from the authoritative source prefix.`,
+            detail: `Message-boundary fork through '${command.sourceMessageId}' must import the exact ${validation.expectedImportedMessageCount} completed conversation messages from the authoritative retained source window.`,
           });
         }
       }

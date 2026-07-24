@@ -4,7 +4,7 @@ import type {
   RepositorySourceStatus,
 } from "@synara/contracts";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { SiGithub, SiGitlab } from "react-icons/si";
 import { LuArrowLeft, LuCornerLeftUp, LuFolderPlus, LuLink } from "react-icons/lu";
 
@@ -40,6 +40,7 @@ import {
 import { Kbd, KbdGroup } from "./ui/kbd";
 import {
   buildCloneProjectSourceInput,
+  getAvailableNewFolderName,
   type AddProjectSource,
   inferCloneDirectoryName,
   joinProjectPath,
@@ -53,7 +54,7 @@ type DialogStep = "sources" | "local" | "repository" | "destination";
 interface AddProjectDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAddProjectPath: (path: string, options?: { createIfMissing?: boolean }) => Promise<void>;
+  onAddProjectPath: (path: string, options?: { createIfMissing?: boolean }) => Promise<boolean>;
   homeDir: string | null;
   defaultCloneDirectory: string | null;
 }
@@ -93,26 +94,35 @@ function sourceStatus(
   return statuses?.find((status) => status.provider === provider) ?? null;
 }
 
-function NavigationKeyHints(props: { enterLabel: string }) {
+function NavigationKeyHints(props: {
+  enterLabel: string;
+  browseDirectories?: boolean;
+  compact?: boolean;
+}) {
   return (
     <div className="flex items-center gap-3">
       <KbdGroup className="items-center gap-1.5">
         <Kbd>↑</Kbd>
         <Kbd>↓</Kbd>
+        {props.browseDirectories ? <Kbd>→</Kbd> : null}
         <span className="text-muted-foreground/80">Navigate</span>
       </KbdGroup>
       <KbdGroup className="items-center gap-1.5">
         <Kbd>Enter</Kbd>
         <span className="text-muted-foreground/80">{props.enterLabel}</span>
       </KbdGroup>
-      <KbdGroup className="items-center gap-1.5">
-        <Kbd>Backspace</Kbd>
-        <span className="text-muted-foreground/80">Back</span>
-      </KbdGroup>
-      <KbdGroup className="items-center gap-1.5">
-        <Kbd>Esc</Kbd>
-        <span className="text-muted-foreground/80">Close</span>
-      </KbdGroup>
+      {!props.compact ? (
+        <>
+          <KbdGroup className="items-center gap-1.5">
+            <Kbd>Backspace</Kbd>
+            <span className="text-muted-foreground/80">Back</span>
+          </KbdGroup>
+          <KbdGroup className="items-center gap-1.5">
+            <Kbd>Esc</Kbd>
+            <span className="text-muted-foreground/80">Close</span>
+          </KbdGroup>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -134,6 +144,11 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
   const [query, setQuery] = useState(props.initialQuery);
   const [highlightedValue, setHighlightedValue] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const submitInFlightRef = useRef(false);
+  const pendingNameSelectionRef = useRef<{ query: string; start: number; end: number } | null>(
+    null,
+  );
   const platform = typeof navigator === "undefined" ? "" : navigator.platform;
   const trimmedQuery = query.trim();
   const unsupportedWindowsPath = isUnsupportedWindowsProjectPath(trimmedQuery, platform);
@@ -167,14 +182,11 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
     leafSegment.length > 0
       ? (filteredEntries.find((entry) => entry.name === leafSegment) ?? null)
       : null;
-  const highlightedPath = highlightedValue?.startsWith("folder:")
-    ? highlightedValue.slice("folder:".length)
-    : null;
   const browseParentPath = getBrowseParentPath(query);
   const canBrowseUp = canNavigateUp(query);
+  const canStepBackWithinBrowser = query !== props.initialQuery && browseParentPath !== null;
   const willCreatePath =
     !props.cloneDirectoryName &&
-    !highlightedPath &&
     trimmedQuery.length > 0 &&
     !hasTrailingPathSeparator(query) &&
     exactEntry === null &&
@@ -183,19 +195,21 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
   useEffect(() => {
     setError(null);
     setHighlightedValue(null);
+
+    const pendingSelection = pendingNameSelectionRef.current;
+    if (pendingSelection?.query === query) {
+      pendingNameSelectionRef.current = null;
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(pendingSelection.start, pendingSelection.end);
+    }
   }, [query]);
 
   const resolvePath = (): { path: string; createIfMissing: boolean } => {
-    const selectedDirectory = highlightedPath
-      ? highlightedPath
-      : hasTrailingPathSeparator(query)
-        ? (browseResult?.parentPath ?? expandHome(trimmedQuery, props.homeDir))
-        : (exactEntry?.fullPath ?? expandHome(trimmedQuery, props.homeDir));
+    const selectedDirectory = hasTrailingPathSeparator(query)
+      ? (browseResult?.parentPath ?? expandHome(trimmedQuery, props.homeDir))
+      : (exactEntry?.fullPath ?? expandHome(trimmedQuery, props.homeDir));
     const normalized = normalizeProjectPathForDispatch(selectedDirectory);
-    if (
-      props.cloneDirectoryName &&
-      (highlightedPath || exactEntry || hasTrailingPathSeparator(query))
-    ) {
+    if (props.cloneDirectoryName && (exactEntry || hasTrailingPathSeparator(query))) {
       return {
         path: joinProjectPath(normalized, props.cloneDirectoryName),
         createIfMissing: false,
@@ -205,8 +219,8 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
   };
 
   const submit = async () => {
-    if (props.isBusy) return;
-    if (!trimmedQuery && !highlightedPath) {
+    if (props.isBusy || submitInFlightRef.current) return;
+    if (!trimmedQuery) {
       setError("Enter a folder path.");
       return;
     }
@@ -214,31 +228,54 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
       setError("Windows paths are not supported on this platform.");
       return;
     }
-    if (!highlightedPath && isExplicitRelativeProjectPath(trimmedQuery)) {
+    if (isExplicitRelativeProjectPath(trimmedQuery)) {
       setError("Use an absolute path or start with ~/.");
       return;
     }
+    submitInFlightRef.current = true;
     try {
       const resolved = resolvePath();
-      await props.onSubmit(resolved.path, { createIfMissing: resolved.createIfMissing });
+      if (!resolved.createIfMissing) {
+        await props.onSubmit(resolved.path, { createIfMissing: false });
+        return;
+      }
+
+      const api = readNativeApi();
+      if (!api) throw new Error("The app server is unavailable.");
+      const created = await api.filesystem.createDirectory({ path: resolved.path });
+      await props.onSubmit(created.path, { createIfMissing: true });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to add project.");
+    } finally {
+      submitInFlightRef.current = false;
     }
   };
 
-  const isMac = platform.toLowerCase().includes("mac");
-  const modifier = isMac ? "⌘" : "Ctrl";
-  const hasHighlightedFolder = highlightedPath !== null;
-  const hasHighlightedBrowseItem = hasHighlightedFolder || highlightedValue === "__browse_up__";
+  const browseHighlightedDirectory = (): boolean => {
+    if (highlightedValue === "__browse_up__") {
+      if (!browseParentPath) return false;
+      setQuery(browseParentPath);
+      return true;
+    }
+    if (!highlightedValue?.startsWith("folder:")) return false;
 
-  const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    const modifierPressed = isMac ? event.metaKey : event.ctrlKey;
-    if (
-      event.key === "Enter" &&
-      (!hasHighlightedBrowseItem || (hasHighlightedFolder && modifierPressed))
-    ) {
+    const highlightedPath = highlightedValue.slice("folder:".length);
+    const highlightedEntry = filteredEntries.find((entry) => entry.fullPath === highlightedPath);
+    if (!highlightedEntry) return false;
+    setQuery(appendBrowsePathSegment(query, highlightedEntry.name));
+    return true;
+  };
+
+  const handleInputKeyDownCapture = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
       event.preventDefault();
+      event.stopPropagation();
       void submit();
+      return;
+    }
+    if (event.key === "ArrowRight" && browseHighlightedDirectory()) {
+      event.preventDefault();
+      event.stopPropagation();
       return;
     }
     if (event.key === "Backspace" && query === "") {
@@ -258,25 +295,50 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
     }
   };
 
+  const beginNewFolder = () => {
+    const basePath = getBrowseDirectoryPath(query);
+    const folderName = getAvailableNewFolderName(browseEntries.map((entry) => entry.name));
+    const nextQuery = `${basePath}${folderName}`;
+    pendingNameSelectionRef.current = {
+      query: nextQuery,
+      start: basePath.length,
+      end: nextQuery.length,
+    };
+    setQuery(nextQuery);
+  };
+
+  const goBack = () => {
+    if (canStepBackWithinBrowser) {
+      setQuery(browseParentPath);
+      return;
+    }
+    props.onBack();
+  };
+
   return (
     <Command
+      key={expandedBrowsePath}
       autoHighlight={false}
       mode="none"
       onItemHighlighted={(value) => setHighlightedValue(typeof value === "string" ? value : null)}
     >
       <CommandPanel className="overflow-hidden">
         <div className="relative">
-          <DialogBackButton label="Back" onClick={props.onBack} />
+          <DialogBackButton
+            label={canStepBackWithinBrowser ? "Parent folder" : "Back"}
+            onClick={goBack}
+          />
           <CommandInput
+            ref={inputRef}
             value={query}
             placeholder="Type or browse a folder path"
             startAddon={null}
             onChange={(event) => setQuery(event.currentTarget.value)}
-            onKeyDown={handleInputKeyDown}
-            className="pe-32 ps-8"
+            onKeyDownCapture={handleInputKeyDownCapture}
+            className={cn("ps-8", willCreatePath ? "pe-40" : "pe-32")}
           />
           <Button
-            variant="outline"
+            variant={props.cloneDirectoryName ? "outline" : "info-outline"}
             size="xs"
             tabIndex={-1}
             className="-translate-y-1/2 absolute end-3 top-1/2 gap-1.5 pe-1 ps-2"
@@ -292,7 +354,7 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
                   : props.actionLabel}
             </span>
             <KbdGroup className="pointer-events-none -me-0.5 items-center gap-1">
-              <Kbd>{hasHighlightedFolder ? `${modifier} Enter` : "Enter"}</Kbd>
+              <Kbd>Enter</Kbd>
             </KbdGroup>
           </Button>
         </div>
@@ -341,30 +403,59 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
         </CommandList>
       </CommandPanel>
       <CommandFooter className="gap-3 max-sm:flex-col max-sm:items-start">
-        <NavigationKeyHints enterLabel="Select" />
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          className="h-auto px-2 text-xs text-muted-foreground/80 hover:bg-transparent hover:text-foreground"
-          disabled={props.isBusy}
-          onClick={async () => {
-            try {
-              const api = readNativeApi();
-              if (!api) throw new Error("The app server is unavailable.");
-              const picked = await api.dialogs.pickFolder();
-              if (!picked) return;
-              const target = props.cloneDirectoryName
-                ? joinProjectPath(picked, props.cloneDirectoryName)
-                : picked;
-              await props.onSubmit(target, { createIfMissing: false });
-            } catch (cause) {
-              setError(cause instanceof Error ? cause.message : "Unable to add project.");
-            }
-          }}
-        >
-          {fileManagerLabel(platform)}
-        </Button>
+        <NavigationKeyHints
+          enterLabel={willCreatePath ? "Create" : props.actionLabel}
+          browseDirectories
+          compact
+        />
+        <div className="flex items-center gap-1.5">
+          {!props.cloneDirectoryName ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="xs"
+              className="h-auto gap-1.5 px-2 text-xs"
+              disabled={
+                props.isBusy ||
+                !browseDirectoryPath ||
+                unsupportedWindowsPath ||
+                isFetching ||
+                Boolean(browseError)
+              }
+              onClick={beginNewFolder}
+            >
+              <LuFolderPlus className="size-3.5" />
+              New folder
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="h-auto px-2 text-xs text-muted-foreground/80 hover:bg-transparent hover:text-foreground"
+            disabled={props.isBusy}
+            onClick={async () => {
+              if (submitInFlightRef.current) return;
+              submitInFlightRef.current = true;
+              try {
+                const api = readNativeApi();
+                if (!api) throw new Error("The app server is unavailable.");
+                const picked = await api.dialogs.pickFolder();
+                if (!picked) return;
+                const target = props.cloneDirectoryName
+                  ? joinProjectPath(picked, props.cloneDirectoryName)
+                  : picked;
+                await props.onSubmit(target, { createIfMissing: false });
+              } catch (cause) {
+                setError(cause instanceof Error ? cause.message : "Unable to add project.");
+              } finally {
+                submitInFlightRef.current = false;
+              }
+            }}
+          >
+            {fileManagerLabel(platform)}
+          </Button>
+        </div>
       </CommandFooter>
     </Command>
   );
@@ -378,6 +469,9 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
   const [error, setError] = useState<string | null>(null);
   const [isWorking, setIsWorking] = useState(false);
   const [highlightedSource, setHighlightedSource] = useState<string | null>(null);
+  const openRef = useRef(props.open);
+  const operationGenerationRef = useRef(0);
+  openRef.current = props.open;
   const statusesQuery = useQuery({
     queryKey: ["repository-source-statuses"],
     queryFn: async () => {
@@ -391,6 +485,7 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
 
   useEffect(() => {
     if (!props.open) {
+      operationGenerationRef.current += 1;
       setStep("sources");
       setSource(null);
       setQuery("");
@@ -401,7 +496,41 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
     }
   }, [props.open]);
 
+  const handleOpenChange = (open: boolean) => {
+    if (!open) {
+      // Native clone requests are not cancellable. Invalidate their completion
+      // synchronously so a dismissed request cannot mutate a later dialog session.
+      operationGenerationRef.current += 1;
+    }
+    props.onOpenChange(open);
+  };
+
+  const beginOperation = (): number => {
+    const generation = operationGenerationRef.current + 1;
+    operationGenerationRef.current = generation;
+    setIsWorking(true);
+    return generation;
+  };
+
+  const isCurrentOperation = (generation: number): boolean =>
+    openRef.current && operationGenerationRef.current === generation;
+
+  const finishCurrentOperation = (generation: number): void => {
+    if (isCurrentOperation(generation)) {
+      setIsWorking(false);
+    }
+  };
+
+  const cancelCurrentOperation = (): void => {
+    // Clone and project-initialization requests cannot be cancelled natively.
+    // Invalidate their completion before navigating so an old request cannot
+    // advance or close the dialog from a different step.
+    operationGenerationRef.current += 1;
+    setIsWorking(false);
+  };
+
   const returnToSources = () => {
+    cancelCurrentOperation();
     setStep("sources");
     setSource(null);
     setQuery("");
@@ -468,23 +597,27 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
   };
 
   return (
-    <CommandDialog open={props.open} onOpenChange={props.onOpenChange}>
+    <CommandDialog open={props.open} onOpenChange={handleOpenChange}>
       <CommandDialogPopup className="overflow-hidden" aria-label="Add project">
         {step === "local" ? (
           <ProjectPathBrowser
             homeDir={props.homeDir}
             initialQuery={getInitialBrowseQuery(props.defaultCloneDirectory || props.homeDir)}
-            actionLabel="Add"
-            busyLabel="Adding…"
+            actionLabel="Open"
+            busyLabel="Opening…"
             isBusy={isWorking}
             onBack={returnToSources}
             onSubmit={async (path, options) => {
-              setIsWorking(true);
+              const operationGeneration = beginOperation();
               try {
-                await props.onAddProjectPath(path, options);
-                props.onOpenChange(false);
+                const shouldClose = await props.onAddProjectPath(path, options);
+                if (!isCurrentOperation(operationGeneration)) return;
+                if (shouldClose) {
+                  setIsWorking(false);
+                  handleOpenChange(false);
+                }
               } finally {
-                setIsWorking(false);
+                finishCurrentOperation(operationGeneration);
               }
             }}
           />
@@ -497,13 +630,14 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
             isBusy={isWorking}
             cloneDirectoryName={cloneName}
             onBack={() => {
+              cancelCurrentOperation();
               setQuery(repositoryInput);
               setStep("repository");
             }}
             onSubmit={async (destinationPath) => {
               const api = readNativeApi();
               if (!api) throw new Error("The app server is unavailable.");
-              setIsWorking(true);
+              const operationGeneration = beginOperation();
               try {
                 const result = await api.projects.cloneSource(
                   buildCloneProjectSourceInput({
@@ -512,10 +646,15 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
                     destinationPath,
                   }),
                 );
-                await props.onAddProjectPath(result.path);
-                props.onOpenChange(false);
+                if (!isCurrentOperation(operationGeneration)) return;
+                const shouldClose = await props.onAddProjectPath(result.path);
+                if (!isCurrentOperation(operationGeneration)) return;
+                if (shouldClose) {
+                  setIsWorking(false);
+                  handleOpenChange(false);
+                }
               } finally {
-                setIsWorking(false);
+                finishCurrentOperation(operationGeneration);
               }
             }}
           />
@@ -531,9 +670,7 @@ export function AddProjectDialog(props: AddProjectDialogProps) {
               <div className="relative">
                 <DialogBackButton
                   label={step === "sources" ? "Close" : "Back"}
-                  onClick={() =>
-                    step === "sources" ? props.onOpenChange(false) : returnToSources()
-                  }
+                  onClick={() => (step === "sources" ? handleOpenChange(false) : returnToSources())}
                 />
                 <CommandInput
                   value={query}

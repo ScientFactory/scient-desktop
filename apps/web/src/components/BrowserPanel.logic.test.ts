@@ -2,11 +2,52 @@ import { describe, expect, it } from "vitest";
 
 import {
   browserAddressDisplayValue,
+  browserCopyFeedbackMatches,
   buildBrowserAddressSuggestions,
   normalizeBrowserAddressInput,
   resolveBrowserChromeStatus,
   resolveBrowserAddressSync,
+  shouldCloseBrowserPanelAfterTabClose,
 } from "./BrowserPanel.logic";
+
+describe("shouldCloseBrowserPanelAfterTabClose", () => {
+  it("closes the dock pane only after the browser session has fully closed", () => {
+    expect(shouldCloseBrowserPanelAfterTabClose({ open: false, tabs: [] })).toBe(true);
+    expect(shouldCloseBrowserPanelAfterTabClose({ open: true, tabs: [] })).toBe(false);
+    expect(shouldCloseBrowserPanelAfterTabClose({ open: false, tabs: [{}] })).toBe(false);
+  });
+});
+
+describe("browserCopyFeedbackMatches", () => {
+  const feedback = {
+    item: "link" as const,
+    tabId: "tab-1",
+    url: "https://scientfactory.com/",
+    tone: "success" as const,
+    message: "Link copied",
+  };
+
+  it("keeps feedback scoped to the exact tab and URL that was copied", () => {
+    expect(
+      browserCopyFeedbackMatches(feedback, {
+        tabId: "tab-1",
+        url: "https://scientfactory.com/",
+      }),
+    ).toBe(true);
+    expect(
+      browserCopyFeedbackMatches(feedback, {
+        tabId: "tab-2",
+        url: "https://scientfactory.com/",
+      }),
+    ).toBe(false);
+    expect(
+      browserCopyFeedbackMatches(feedback, {
+        tabId: "tab-1",
+        url: "https://scientfactory.com/docs",
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("browserAddressDisplayValue", () => {
   it("hides about:blank for new tabs", () => {
@@ -15,6 +56,15 @@ describe("browserAddressDisplayValue", () => {
 
   it("keeps real urls visible", () => {
     expect(browserAddressDisplayValue({ url: "https://x.com/" })).toBe("https://x.com/");
+  });
+
+  it("shows an artifact source path instead of its capability URL", () => {
+    expect(
+      browserAddressDisplayValue({
+        url: "http://g-secret.preview.localhost:5000/",
+        displayUrl: "/workspace/report.html",
+      }),
+    ).toBe("/workspace/report.html");
   });
 });
 

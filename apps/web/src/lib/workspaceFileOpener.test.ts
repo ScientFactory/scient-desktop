@@ -1,11 +1,42 @@
-import { describe, expect, it } from "vitest";
+import type { NativeApi } from "@synara/contracts";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { SCRATCH_WORKSPACES_DIRNAME } from "@synara/shared/threadWorkspace";
+
+import * as editorPreferences from "../editorPreferences";
+import * as nativeApi from "../nativeApi";
 
 import {
   resolveDockFileOpenTarget,
+  openWorkspaceFileReference,
   resolveScratchPreviewFileOpenTarget,
   resolveWorkspaceFileOpenTarget,
 } from "./workspaceFileOpener";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("openWorkspaceFileReference", () => {
+  it("reports an external-editor failure to the owning surface", async () => {
+    const failure = new Error("Editor launch failed");
+    vi.spyOn(nativeApi, "readNativeApi").mockReturnValue({} as NativeApi);
+    vi.spyOn(editorPreferences, "openInPreferredEditor").mockRejectedValue(failure);
+    const onError = vi.fn();
+
+    openWorkspaceFileReference({ openFile: () => false }, "/repo/report.md", { onError });
+
+    await vi.waitFor(() => expect(onError).toHaveBeenCalledWith(failure));
+  });
+
+  it("reports a missing desktop opener instead of silently dropping the failure", () => {
+    vi.spyOn(nativeApi, "readNativeApi").mockReturnValue(undefined);
+    const onError = vi.fn();
+
+    openWorkspaceFileReference(null, "/repo/report.md", { onError });
+
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: expect.any(String) }));
+  });
+});
 
 describe("resolveWorkspaceFileOpenTarget", () => {
   it("passes workspace-relative paths through unchanged", () => {

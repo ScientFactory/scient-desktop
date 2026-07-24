@@ -7,8 +7,10 @@ import {
   type AutomationDefinition,
   EventId,
   MessageId,
+  type NativeApi,
   ORCHESTRATION_WS_METHODS,
   type OrchestrationReadModel,
+  type OrchestrationThreadActivity,
   type ProjectId,
   type ServerConfig,
   ThreadId,
@@ -25,6 +27,7 @@ import { page, userEvent } from "vitest/browser";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
+import { CURRENT_APP_SETTINGS_VERSION } from "../appSettings";
 import { type ComposerImageAttachment, useComposerDraftStore } from "../composerDraftStore";
 import {
   AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
@@ -37,6 +40,7 @@ import {
 } from "../lib/terminalContext";
 import { isMacPlatform } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
+import { useProviderConnectionDialogStore } from "../providerConnectionDialogStore";
 import { resetHomeChatProjectPrewarmStateForTests } from "../lib/chatProjects";
 import { resetStudioProjectPrewarmStateForTests } from "../lib/studioProjects";
 import { getRouter } from "../router";
@@ -243,6 +247,116 @@ function createComposerImage(input: {
     previewUrl: input.previewUrl,
     file,
   };
+}
+
+function installFakeMicrophoneCapture(): {
+  emitSamples: () => void;
+  restore: () => void;
+} {
+  const mediaDevicesDescriptor = Object.getOwnPropertyDescriptor(navigator, "mediaDevices");
+  const audioContextDescriptor = Object.getOwnPropertyDescriptor(globalThis, "AudioContext");
+  const trackStop = vi.fn();
+  const processor = {
+    onaudioprocess: null as
+      | ((event: {
+          inputBuffer: {
+            numberOfChannels: number;
+            length: number;
+            getChannelData: (channel: number) => Float32Array;
+          };
+        }) => void)
+      | null,
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  };
+  const source = { connect: vi.fn(), disconnect: vi.fn() };
+  const gain = {
+    gain: { value: 1 },
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  };
+
+  class FakeAudioContext {
+    readonly sampleRate = 48_000;
+    readonly destination = {};
+
+    resume = vi.fn(async () => undefined);
+    close = vi.fn(async () => undefined);
+    createMediaStreamSource = vi.fn(() => source);
+    createScriptProcessor = vi.fn(() => processor);
+    createGain = vi.fn(() => gain);
+  }
+
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: {
+      getUserMedia: vi.fn(async () => ({
+        getTracks: () => [{ stop: trackStop }],
+      })),
+    },
+  });
+  Object.defineProperty(globalThis, "AudioContext", {
+    configurable: true,
+    value: FakeAudioContext,
+  });
+
+  return {
+    emitSamples: () => {
+      const samples = new Float32Array(4_096).fill(0.25);
+      processor.onaudioprocess?.({
+        inputBuffer: {
+          numberOfChannels: 1,
+          length: samples.length,
+          getChannelData: () => samples,
+        },
+      });
+    },
+    restore: () => {
+      if (mediaDevicesDescriptor) {
+        Object.defineProperty(navigator, "mediaDevices", mediaDevicesDescriptor);
+      } else {
+        Reflect.deleteProperty(navigator, "mediaDevices");
+      }
+      if (audioContextDescriptor) {
+        Object.defineProperty(globalThis, "AudioContext", audioContextDescriptor);
+      } else {
+        Reflect.deleteProperty(globalThis, "AudioContext");
+      }
+    },
+  };
+}
+
+function appendActiveThreadActivity(activity: OrchestrationThreadActivity): void {
+  const snapshot: OrchestrationReadModel = {
+    ...fixture.snapshot,
+    snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+    threads: fixture.snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? {
+            ...thread,
+            activities: [...thread.activities, activity],
+            updatedAt: activity.createdAt,
+          }
+        : thread,
+    ),
+    updatedAt: activity.createdAt,
+  };
+  fixture = { ...fixture, snapshot };
+  useStore.getState().syncServerReadModel(snapshot);
+}
+
+function configureSuccessfulVoiceTranscription(transcript: string): (api: NativeApi) => NativeApi {
+  return (api) => ({
+    ...api,
+    server: {
+      ...api.server,
+      transcribeVoice: vi.fn(async () => ({
+        text: transcript,
+        engine: "local" as const,
+      })),
+      cancelVoiceTranscription: vi.fn(async () => undefined),
+    },
+  });
 }
 
 function createSnapshotForTargetUser(options: {
@@ -1242,89 +1356,91 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
   return {};
 }
 
-function installDeterministicActionNativeApi(): () => void {
+function installDeterministicActionNativeApi(
+  configure?: (api: NativeApi) => NativeApi,
+): () => void {
   const previousNativeApi = window.nativeApi;
   const wsNativeApi = readNativeApi();
   if (!wsNativeApi) {
     throw new Error("Expected browser native API fixture.");
   }
 
-  Object.defineProperty(window, "nativeApi", {
-    configurable: true,
-    value: {
-      ...wsNativeApi,
-      shell: {
-        ...wsNativeApi.shell,
-        openInEditor: async (
-          cwd: Parameters<typeof wsNativeApi.shell.openInEditor>[0],
-          editor: Parameters<typeof wsNativeApi.shell.openInEditor>[1],
-        ) => {
-          wsRequests.push({
-            _tag: WS_METHODS.shellOpenInEditor,
-            cwd,
-            editor,
-          });
-        },
-      },
-      git: {
-        ...wsNativeApi.git,
-        createWorktree: async (input: Parameters<typeof wsNativeApi.git.createWorktree>[0]) => {
-          const request: WsRequestEnvelope["body"] = {
-            _tag: WS_METHODS.gitCreateWorktree,
-            ...input,
-          };
-          wsRequests.push(request);
-          return resolveWsRpc(request) as Awaited<
-            ReturnType<typeof wsNativeApi.git.createWorktree>
-          >;
-        },
-      },
-      terminal: {
-        ...wsNativeApi.terminal,
-        open: async (input: Parameters<typeof wsNativeApi.terminal.open>[0]) => {
-          const request: WsRequestEnvelope["body"] = {
-            _tag: WS_METHODS.terminalOpen,
-            ...input,
-          };
-          wsRequests.push(request);
-          return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.terminal.open>>;
-        },
-        write: async (input: Parameters<typeof wsNativeApi.terminal.write>[0]) => {
-          wsRequests.push({
-            _tag: WS_METHODS.terminalWrite,
-            ...input,
-          });
-        },
-      },
-      orchestration: {
-        ...wsNativeApi.orchestration,
-        dispatchCommand: async (
-          command: Parameters<typeof wsNativeApi.orchestration.dispatchCommand>[0],
-        ) => {
-          wsRequests.push({
-            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
-            command,
-          });
-          const recordedFork = recordThreadForkCreateCommand(command);
-          return {
-            sequence: recordedFork
-              ? fixture.snapshot.snapshotSequence
-              : fixture.snapshot.snapshotSequence + 1,
-          };
-        },
-      },
-      automation: {
-        ...wsNativeApi.automation,
-        create: async (input: Parameters<typeof wsNativeApi.automation.create>[0]) => {
-          const request: WsRequestEnvelope["body"] = {
-            _tag: WS_METHODS.automationCreate,
-            ...input,
-          };
-          wsRequests.push(request);
-          return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.automation.create>>;
-        },
+  const deterministicApi: NativeApi = {
+    ...wsNativeApi,
+    shell: {
+      ...wsNativeApi.shell,
+      openInEditor: async (
+        cwd: Parameters<typeof wsNativeApi.shell.openInEditor>[0],
+        editor: Parameters<typeof wsNativeApi.shell.openInEditor>[1],
+      ) => {
+        wsRequests.push({
+          _tag: WS_METHODS.shellOpenInEditor,
+          cwd,
+          editor,
+        });
       },
     },
+    git: {
+      ...wsNativeApi.git,
+      createWorktree: async (input: Parameters<typeof wsNativeApi.git.createWorktree>[0]) => {
+        const request: WsRequestEnvelope["body"] = {
+          _tag: WS_METHODS.gitCreateWorktree,
+          ...input,
+        };
+        wsRequests.push(request);
+        return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.git.createWorktree>>;
+      },
+    },
+    terminal: {
+      ...wsNativeApi.terminal,
+      open: async (input: Parameters<typeof wsNativeApi.terminal.open>[0]) => {
+        const request: WsRequestEnvelope["body"] = {
+          _tag: WS_METHODS.terminalOpen,
+          ...input,
+        };
+        wsRequests.push(request);
+        return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.terminal.open>>;
+      },
+      write: async (input: Parameters<typeof wsNativeApi.terminal.write>[0]) => {
+        wsRequests.push({
+          _tag: WS_METHODS.terminalWrite,
+          ...input,
+        });
+      },
+    },
+    orchestration: {
+      ...wsNativeApi.orchestration,
+      dispatchCommand: async (
+        command: Parameters<typeof wsNativeApi.orchestration.dispatchCommand>[0],
+      ) => {
+        wsRequests.push({
+          _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+          command,
+        });
+        const recordedFork = recordThreadForkCreateCommand(command);
+        return {
+          sequence: recordedFork
+            ? fixture.snapshot.snapshotSequence
+            : fixture.snapshot.snapshotSequence + 1,
+        };
+      },
+    },
+    automation: {
+      ...wsNativeApi.automation,
+      create: async (input: Parameters<typeof wsNativeApi.automation.create>[0]) => {
+        const request: WsRequestEnvelope["body"] = {
+          _tag: WS_METHODS.automationCreate,
+          ...input,
+        };
+        wsRequests.push(request);
+        return resolveWsRpc(request) as Awaited<ReturnType<typeof wsNativeApi.automation.create>>;
+      },
+    },
+  };
+
+  Object.defineProperty(window, "nativeApi", {
+    configurable: true,
+    value: configure ? configure(deterministicApi) : deterministicApi,
   });
 
   return () => {
@@ -1508,10 +1624,11 @@ async function waitForURL(
   return pathname;
 }
 
-async function waitForComposerEditor(): Promise<HTMLElement> {
+async function waitForComposerEditor(timeout = 8_000): Promise<HTMLElement> {
   return waitForElement(
     () => document.querySelector<HTMLElement>('[contenteditable="true"]'),
     "Unable to find composer editor.",
+    timeout,
   );
 }
 
@@ -1802,6 +1919,7 @@ async function mountChatView(options: {
   viewport: ViewportSpec;
   snapshot: OrchestrationReadModel;
   configureFixture?: (fixture: TestFixture) => void;
+  configureNativeApi?: (api: NativeApi) => NativeApi;
   initialEntry?: string;
 }): Promise<MountedChatView> {
   fixture = buildFixture(options.snapshot);
@@ -1810,7 +1928,7 @@ async function mountChatView(options: {
   // transport-level contract. Record mutating native actions synchronously so
   // a slow Linux WebSocket round trip cannot outlive unmount and dispose the
   // next test's Effect runtime.
-  const restoreNativeApi = installDeterministicActionNativeApi();
+  const restoreNativeApi = installDeterministicActionNativeApi(options.configureNativeApi);
   await setViewport(options.viewport);
   await waitForProductionStyles();
 
@@ -1936,6 +2054,102 @@ describe("ChatView timeline estimator parity (full app)", () => {
     resetRetainedThreadDetailSubscriptionsForTests();
     resetWsNativeApiForTest();
     document.body.innerHTML = "";
+  });
+
+  it("keeps unavailable provider setup out of an empty chat until the user tries to send", async () => {
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-empty-provider-health" as MessageId,
+      targetText: "This message is removed to create an empty thread",
+    });
+    const emptyThreadSnapshot: OrchestrationReadModel = {
+      ...snapshot,
+      threads: snapshot.threads.map((thread) => ({
+        ...thread,
+        latestTurn: null,
+        messages: [],
+      })),
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: emptyThreadSnapshot,
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [
+            {
+              provider: "codex",
+              status: "error",
+              available: false,
+              authStatus: "unauthenticated",
+              message: "Codex is not installed.",
+              checkedAt: NOW_ISO,
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForComposerEditor(20_000);
+      expect(document.body.textContent).not.toContain("Codex provider status");
+      expect(document.body.textContent).not.toContain("Codex is not installed.");
+
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "Help me connect Codex");
+      const sendButton = await waitForSendButton();
+      await vi.waitFor(() => expect(sendButton.disabled).toBe(false));
+      sendButton.click();
+
+      await vi.waitFor(() => {
+        expect(useProviderConnectionDialogStore.getState()).toMatchObject({
+          isOpen: true,
+          provider: "codex",
+          source: "send",
+        });
+      });
+    } finally {
+      useProviderConnectionDialogStore.getState().setOpen(false);
+      await mounted.cleanup();
+    }
+  });
+
+  it("still shows provider health when an existing conversation loses its provider", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-provider-health" as MessageId,
+        targetText: "Keep this existing conversation visible",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [
+            {
+              provider: "codex",
+              status: "error",
+              available: false,
+              authStatus: "unauthenticated",
+              message: "Codex is not installed.",
+              checkedAt: NOW_ISO,
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-slot='alert-title']")).find(
+            (element) => element.textContent === "Codex provider status",
+          ) ?? null,
+        "Unable to find provider health for the existing conversation.",
+        20_000,
+      );
+      expect(document.body.textContent).toContain("Codex is not installed.");
+    } finally {
+      await mounted.cleanup();
+    }
   });
 
   it("dispatches a bounded fork command from the message action and navigates to the new task", async () => {
@@ -3265,7 +3479,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         expect(
           useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.modelSelectionByProvider
             .codex,
-        ).toMatchObject({ provider: "codex", model: "gpt-5.5" });
+        ).toMatchObject({ provider: "codex", model: "gpt-5.6-sol" });
       });
       expect(document.querySelector('[data-slot="menu-popup"]')).toBeNull();
 
@@ -3514,6 +3728,36 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       expect(getComputedStyle(stopButton).cursor).toBe("pointer");
+      expect(document.querySelector('button[aria-label="Record voice note"]')).not.toBeNull();
+      expect(document.querySelector('button[aria-label="Queue follow-up"]')).toBeNull();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps slash-command validation feedback inside the composer controls", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/review unsupported-target");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-local-slash-feedback" as MessageId,
+        targetText: "local slash feedback target",
+      }),
+    });
+
+    try {
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find composer form.",
+      );
+      composerForm.requestSubmit();
+
+      const feedback = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-composer-local-feedback="true"]'),
+        "Unable to find composer-local slash feedback.",
+      );
+      expect(feedback.textContent).toContain("Invalid /review command");
+      expect(feedback.closest('[data-chat-composer-footer="true"]')).not.toBeNull();
     } finally {
       await mounted.cleanup();
     }
@@ -3532,11 +3776,18 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const composerForm = await waitForElement(
-        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
-        "Unable to find composer form.",
+      const queueButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Queue follow-up"]'),
+        "Unable to find the running-turn queue button.",
       );
-      composerForm.requestSubmit();
+      expect(queueButton.title).toContain("Enter");
+      expect(queueButton.title).toContain("Cmd/Ctrl+Enter");
+      expect(document.querySelector('button[aria-label="Stop generation"]')).toBeNull();
+      expect(document.querySelector('button[aria-label="Record voice note"]')).not.toBeNull();
+      await mounted.setViewport(TEXT_VIEWPORT_MATRIX[3]);
+      expect(document.querySelector('button[aria-label="Queue follow-up"]')).not.toBeNull();
+      expect(document.querySelector('button[aria-label="Record voice note"]')).not.toBeNull();
+      document.querySelector<HTMLButtonElement>('button[aria-label="Queue follow-up"]')?.click();
 
       await vi.waitFor(
         () => {
@@ -3557,6 +3808,219 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "Unable to find stop generation button.",
       );
       expect(stopButton).not.toBeNull();
+      expect(document.querySelector('button[aria-label="Record voice note"]')).not.toBeNull();
+      expect(hasDispatchedCommandType("thread.turn.interrupt")).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps active recorder controls usable when an approval arrives", async () => {
+    const microphone = installFakeMicrophoneCapture();
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-voice-approval-transition" as MessageId,
+        targetText: "voice approval transition target",
+        sessionStatus: "running",
+      }),
+      configureNativeApi: configureSuccessfulVoiceTranscription("approval-safe transcript"),
+    });
+
+    try {
+      const recordButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Record voice note"]'),
+        "Unable to find voice recording button.",
+      );
+      recordButton.click();
+      await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>('button[aria-label="Cancel voice recording"]'),
+        "Voice recorder did not start.",
+      );
+      microphone.emitSamples();
+
+      appendActiveThreadActivity({
+        id: EventId.makeUnsafe("approval-during-voice"),
+        createdAt: isoAt(1_200),
+        kind: "approval.requested",
+        summary: "Command approval requested",
+        tone: "approval",
+        turnId: null,
+        payload: {
+          requestId: "approval-during-voice",
+          requestKind: "command",
+          detail: "bun run test",
+        },
+      });
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("bun run test");
+          expect(
+            document.querySelector<HTMLButtonElement>(
+              'button[aria-label="Cancel voice recording"]',
+            ),
+          ).not.toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const insertButton = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Stop and insert voice note"]',
+      );
+      const sendButton = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Send voice note"]',
+      );
+      expect(insertButton?.disabled).toBe(false);
+      expect(sendButton?.disabled).toBe(false);
+
+      document
+        .querySelector<HTMLButtonElement>('button[aria-label="Cancel voice recording"]')
+        ?.click();
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-chat-composer-footer="true"]')).toBeNull();
+      });
+    } finally {
+      await mounted.cleanup();
+      microphone.restore();
+    }
+  });
+
+  it("queues voice Send instead of answering a question that arrives mid-recording", async () => {
+    const microphone = installFakeMicrophoneCapture();
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "existing draft");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-voice-question-transition" as MessageId,
+        targetText: "voice question transition target",
+        sessionStatus: "running",
+      }),
+      configureNativeApi: configureSuccessfulVoiceTranscription("spoken follow-up"),
+    });
+
+    try {
+      const recordButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Record voice note"]'),
+        "Unable to find voice recording button.",
+      );
+      recordButton.click();
+      await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>('button[aria-label="Cancel voice recording"]'),
+        "Voice recorder did not start.",
+      );
+      microphone.emitSamples();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 300));
+
+      appendActiveThreadActivity({
+        id: EventId.makeUnsafe("question-during-voice"),
+        createdAt: isoAt(1_210),
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        turnId: null,
+        payload: {
+          requestId: "question-during-voice",
+          questions: [
+            {
+              id: "release_choice",
+              header: "Release",
+              question: "Which release path should be used?",
+              options: [
+                {
+                  label: "safe",
+                  description: "Use the safe release path",
+                },
+              ],
+            },
+          ],
+        },
+      });
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Which release path should be used?");
+          expect(
+            document.querySelector<HTMLButtonElement>('button[aria-label="Send voice note"]'),
+          ).not.toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      document.querySelector<HTMLButtonElement>('button[aria-label="Send voice note"]')?.click();
+
+      await vi.waitFor(
+        () => {
+          const queuedRow = document.querySelector<HTMLElement>(
+            '[data-testid="queued-follow-up-row"]',
+          );
+          const queuedTurn =
+            useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.queuedTurns[0];
+          expect(queuedRow?.textContent).toContain("existing draft");
+          expect(queuedTurn?.kind).toBe("chat");
+          expect(queuedTurn?.kind === "chat" ? queuedTurn.prompt : null).toBe(
+            "existing draft\nspoken follow-up",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            typeof request.command === "object" &&
+            request.command !== null &&
+            "type" in request.command &&
+            request.command.type === "thread.user-input.respond",
+        ),
+      ).toBe(false);
+      expect(document.body.textContent).toContain("Which release path should be used?");
+    } finally {
+      await mounted.cleanup();
+      microphone.restore();
+    }
+  });
+
+  it("keeps Cmd/Ctrl+Enter as the immediate steering shortcut while a turn is running", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "steer this follow-up now");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-running-steer-shortcut" as MessageId,
+        targetText: "running steer shortcut target",
+        sessionStatus: "running",
+      }),
+    });
+
+    try {
+      const composerEditor = await waitForComposerEditor();
+      const useMetaForMod = isMacPlatform(navigator.platform);
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          metaKey: useMetaForMod,
+          ctrlKey: !useMetaForMod,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const steeredTurn = wsRequests
+            .map((request) => readDispatchedCommand(request))
+            .find(
+              (command) =>
+                command?.type === "thread.turn.start" && command.dispatchMode === "steer",
+            );
+          expect(steeredTurn).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(document.querySelector('[data-testid="queued-follow-up-row"]')).toBeNull();
     } finally {
       await mounted.cleanup();
     }
@@ -4042,6 +4506,15 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("coalesces repeated Studio new-chat clicks and stays in Studio after navigation settles", async () => {
+    // Studio is hidden by default; this Studio-specific regression test opts in explicitly.
+    localStorage.setItem(
+      "scient:app-settings:v1",
+      JSON.stringify({
+        appSettingsVersion: CURRENT_APP_SETTINGS_VERSION,
+        showStudioSection: true,
+      }),
+    );
+
     useComposerDraftStore.setState({
       draftThreadsByThreadId: {
         [STUDIO_DRAFT_THREAD_ID]: {

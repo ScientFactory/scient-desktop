@@ -152,6 +152,47 @@ describe("mergeDynamicModelOptions", () => {
       },
     ]);
   });
+
+  it("preserves Claude SDK order and metadata while hiding the generic default row", () => {
+    expect(
+      mergeDynamicModelOptions({
+        provider: "claudeAgent",
+        staticOptions: [],
+        dynamicModels: [
+          {
+            slug: "default",
+            name: "Default (recommended)",
+            resolvedModel: "claude-sonnet-5",
+            isDefault: true,
+          },
+          {
+            slug: "sonnet",
+            name: "Sonnet",
+            resolvedModel: "claude-sonnet-5",
+          },
+          {
+            slug: "opus[1m]",
+            name: "Opus",
+            resolvedModel: "claude-opus-4-8[1m]",
+            supportedReasoningEfforts: [{ value: "low" }, { value: "high" }],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        slug: "claude-sonnet-5",
+        name: "Claude Sonnet 5",
+        resolvedModel: "claude-sonnet-5",
+        isDefault: true,
+      },
+      {
+        slug: "claude-opus-4-8",
+        name: "Opus",
+        resolvedModel: "claude-opus-4-8[1m]",
+        supportedReasoningEfforts: [{ value: "low" }, { value: "high" }],
+      },
+    ]);
+  });
 });
 
 describe("providerModelCostMultiplierLabel", () => {

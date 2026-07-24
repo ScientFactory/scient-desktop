@@ -8,6 +8,10 @@
       "types": "./src/model.ts",
       "import": "./src/model.ts"
     },
+    "./messageOrder": {
+      "types": "./src/messageOrder.ts",
+      "import": "./src/messageOrder.ts"
+    },
     "./git": {
       "types": "./src/git.ts",
       "import": "./src/git.ts"
@@ -183,6 +187,18 @@
     "./formatBytes": {
       "types": "./src/formatBytes.ts",
       "import": "./src/formatBytes.ts"
+    },
+    "./voiceTranscription": {
+      "types": "./src/voiceTranscription.ts",
+      "import": "./src/voiceTranscription.ts"
+    },
+    "./voiceTranscriptionRouter": {
+      "types": "./src/voiceTranscriptionRouter.ts",
+      "import": "./src/voiceTranscriptionRouter.ts"
+    },
+    "./chatGptVoiceAuth": {
+      "types": "./src/chatGptVoiceAuth.ts",
+      "import": "./src/chatGptVoiceAuth.ts"
     }
   },
   "scripts": {

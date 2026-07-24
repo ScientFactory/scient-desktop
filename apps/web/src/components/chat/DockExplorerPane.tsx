@@ -8,28 +8,27 @@ import { memo } from "react";
 
 import type { ChatFileReference } from "~/lib/chatReferences";
 import { WorkspaceExplorerSidebar } from "./workspaceExplorer";
-import { useDockWorkspaceExplorer } from "./useDockWorkspaceExplorer";
+import type { DockWorkspaceExplorerController } from "./useDockWorkspaceExplorer";
 
 const DOCK_EXPLORER_SIDEBAR_CLASS =
   "flex h-full min-h-0 w-full min-w-0 flex-col bg-[var(--color-background-surface)]";
 
 export const DockExplorerPane = memo(function DockExplorerPane(props: {
   workspaceRoot: string | null;
+  explorer: DockWorkspaceExplorerController;
   onOpenFile: (path: string) => void;
   onReferenceInChat?: ((reference: ChatFileReference) => void) | undefined;
 }) {
-  const explorer = useDockWorkspaceExplorer();
-
   return (
     <WorkspaceExplorerSidebar
       workspaceRoot={props.workspaceRoot}
       selectedFilePath={null}
-      expandedDirectories={explorer.expandedDirectories}
-      query={explorer.searchQuery}
-      onQueryChange={explorer.setSearchQuery}
+      expandedDirectories={props.explorer.expandedDirectories}
+      query={props.explorer.searchQuery}
+      onQueryChange={props.explorer.setSearchQuery}
       containerClassName={DOCK_EXPLORER_SIDEBAR_CLASS}
       onSelectFile={props.onOpenFile}
-      onToggleDirectory={explorer.toggleDirectory}
+      onToggleDirectory={props.explorer.toggleDirectory}
       onReferenceInChat={props.onReferenceInChat}
     />
   );
