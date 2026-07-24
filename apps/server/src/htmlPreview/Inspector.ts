@@ -26,6 +26,7 @@ const DEV_SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".jsx"]);
 const BROWSER_SCRIPT_EXTENSIONS = new Set([".js", ".mjs"]);
 const ACTIVE_DOCUMENT_EXTENSIONS = new Set([".html", ".htm", ".xhtml", ".svg"]);
 const SVG_HREF_RESOURCE_ELEMENTS = new Set(["feimage", "image", "mpath", "use"]);
+const SVG_ARBITRARY_ATTRIBUTE_MUTATION_ELEMENTS = new Set(["animate", "set"]);
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
 const JAVASCRIPT_MIME_TYPES = new Set([
   "application/ecmascript",
@@ -245,6 +246,13 @@ function scriptSourcePath(element: Element): string | null {
   return attributeOf(element, "href") ?? attributeOf(element, "xlink:href");
 }
 
+function elementCanMutateSvgAtRuntime(element: Element): boolean {
+  return (
+    element.namespaceURI === SVG_NAMESPACE &&
+    SVG_ARBITRARY_ATTRIBUTE_MUTATION_ELEMENTS.has(element.tagName.toLowerCase())
+  );
+}
+
 function resourceReferencesForElement(element: Element): readonly string[] {
   const tagName = element.tagName.toLowerCase();
   const resources: string[] = [];
@@ -322,6 +330,10 @@ function markupHasExecutableContent(source: string, srcdocDepth = 0): boolean {
       scriptElementIsExecutable(element) &&
       (scriptSourcePath(element) !== null || textContentOf(element).trim().length > 0)
     ) {
+      executable = true;
+      return;
+    }
+    if (elementCanMutateSvgAtRuntime(element)) {
       executable = true;
       return;
     }
@@ -609,6 +621,7 @@ export async function inspectHtmlArtifact(
   visit(document, (element) => {
     const tagName = element.tagName.toLowerCase();
     if (
+      elementCanMutateSvgAtRuntime(element) ||
       element.attrs.some(
         (attribute) =>
           (attribute.name.toLowerCase().startsWith("on") && attribute.value.trim().length > 0) ||

@@ -207,6 +207,59 @@ describe("inspectHtmlArtifact", () => {
     });
   });
 
+  it("fails closed when inline SVG animation can synthesize an executable link", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      [
+        '<svg xmlns="http://www.w3.org/2000/svg">',
+        '<a id="target"><text>Open</text></a>',
+        '<animate href="#target" attributeName="href" values="javascript:alert(1)"/>',
+        "</svg>",
+        '<img src="https://cdn.example/denied.png">',
+      ].join(""),
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+    expect(inspected.result.warnings).toContainEqual({
+      code: "external-resource-blocked",
+      message:
+        "External network resources are blocked for interactive local HTML; bundle them into the same site directory instead.",
+    });
+  });
+
+  it("fails closed when a linked SVG set element can synthesize an executable link", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(
+      path.join(workspace, "active.svg"),
+      [
+        '<svg xmlns="http://www.w3.org/2000/svg">',
+        '<a id="target"><text>Open</text></a>',
+        '<set href="#target" attributeName="href" to="javascript:alert(1)"/>',
+        '<image href="https://cdn.example/denied.png"/>',
+        "</svg>",
+      ].join(""),
+    );
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      '<object data="active.svg" type="image/svg+xml"></object>',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+    expect(inspected.allowedResourcePaths).toContain(
+      await fs.realpath(path.join(workspace, "active.svg")),
+    );
+    expect(inspected.result.warnings).toContainEqual({
+      code: "external-resource-blocked",
+      message:
+        "External network resources are blocked for interactive local HTML; bundle them into the same site directory instead.",
+    });
+  });
+
   it("inspects dependency prefixes for large linked JavaScript and CSS", async () => {
     const workspace = await makeWorkspace();
     await fs.writeFile(path.join(workspace, "chunk.js"), "export const ready = true;");
