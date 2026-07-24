@@ -409,6 +409,35 @@ describe("stagedDraftNavigation", () => {
     expect(exactOwnerCurrent).toBe(false);
   });
 
+  it("allows Back to a committed terminal route while native promotion is still pending", async () => {
+    const slotKey = draftNavigationSlotKey();
+    let committedTerminalRouteToken = "";
+    let releaseTerminalPromotion!: () => void;
+    const terminalNavigation = runDraftNavigationOnce(
+      slotKey,
+      "terminal-first-thread",
+      async (ownership) => {
+        committedTerminalRouteToken = ownership.routeToken;
+        await expect(
+          coordinateExternalRouteNavigation(slotKey, ownership.routeToken),
+        ).resolves.toBe(true);
+        ownership.markRouteCommitted();
+        await new Promise<void>((resolve) => {
+          releaseTerminalPromotion = resolve;
+        });
+      },
+    );
+    await Promise.resolve();
+
+    await expect(coordinateExternalRouteNavigation(slotKey)).resolves.toBe(true);
+    await expect(
+      coordinateExternalRouteNavigation(slotKey, committedTerminalRouteToken),
+    ).resolves.toBe(true);
+
+    releaseTerminalPromotion();
+    await terminalNavigation;
+  });
+
   it("treats a persisted owned route from an earlier renderer session as external", async () => {
     const randomUuid = vi
       .spyOn(crypto, "randomUUID")

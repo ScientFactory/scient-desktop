@@ -51,6 +51,8 @@ export interface NewThreadOptions {
 
 export interface NewThreadNavigationOwnership {
   readonly isCurrent: () => boolean;
+  /** Marks the owned destination as committed while any post-navigation work may continue. */
+  readonly markRouteCommitted: () => void;
   readonly routeToken: string;
 }
 

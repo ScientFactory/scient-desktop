@@ -17,6 +17,7 @@ interface DraftNavigationSlotState {
 
 export interface DraftNavigationOwnership {
   readonly isCurrent: () => boolean;
+  readonly markRouteCommitted: () => void;
   readonly routeToken: string;
 }
 
@@ -24,7 +25,9 @@ const draftNavigationStateBySlot = new Map<string, DraftNavigationSlotState>();
 const DRAFT_NAVIGATION_SURFACE_KEY = "new-thread-navigation";
 const DRAFT_ROUTE_SESSION_PREFIX = `draft-route:${randomUUID()}:`;
 let nextOwnedRouteToken = 0;
-const pendingOwnedRouteTokens = new Set<string>();
+// Route ownership ends when the destination commits, even if post-navigation work (such as
+// native terminal promotion) keeps the surrounding operation alive.
+const uncommittedOwnedRouteTokens = new Set<string>();
 
 /**
  * Every new-thread action ultimately controls the same visible route. Keep one ownership domain
@@ -63,7 +66,7 @@ export async function coordinateExternalRouteNavigation(
     // settles, the token becomes ordinary browser history; revisiting it through Back/Forward is a
     // new external intent that must supersede current work. This survives renderer reloads and an
     // unbounded history because only live requests need to be retained.
-    if (pendingOwnedRouteTokens.has(ownedRouteToken)) return false;
+    if (uncommittedOwnedRouteTokens.has(ownedRouteToken)) return false;
   }
   const routeClaim = Symbol("external-route-navigation");
   const blockingBarrier = state.blockingBarrier;
@@ -111,9 +114,15 @@ export function runDraftNavigationOnce<T>(
 
   const owner = Symbol(requestKey);
   const routeToken = `${DRAFT_ROUTE_SESSION_PREFIX}${(nextOwnedRouteToken += 1)}`;
-  pendingOwnedRouteTokens.add(routeToken);
+  uncommittedOwnedRouteTokens.add(routeToken);
   const ownership: DraftNavigationOwnership = {
     isCurrent: () => state.latestOwner === owner,
+    markRouteCommitted: () => {
+      uncommittedOwnedRouteTokens.delete(routeToken);
+      if (state.ownedRouteToken === routeToken) {
+        state.ownedRouteToken = null;
+      }
+    },
     routeToken,
   };
   state.latestOwner = owner;
@@ -134,12 +143,12 @@ export function runDraftNavigationOnce<T>(
   };
   operation = execution.then(
     (value) => {
-      pendingOwnedRouteTokens.delete(routeToken);
+      uncommittedOwnedRouteTokens.delete(routeToken);
       clearLatestRequest();
       return value;
     },
     (error: unknown) => {
-      pendingOwnedRouteTokens.delete(routeToken);
+      uncommittedOwnedRouteTokens.delete(routeToken);
       clearLatestRequest();
       throw error;
     },

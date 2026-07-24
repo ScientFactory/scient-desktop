@@ -97,4 +97,37 @@ describe("draft navigation route guard", () => {
 
     await expect.poll(() => router?.state.location.href, { timeout: 10_000 }).toBe("/settings");
   });
+
+  it("restores a committed terminal destination while native promotion is still pending", async () => {
+    router = getRouter(createMemoryHistory({ initialEntries: ["/plugins"] }));
+    unsubscribeHistory = router.history.subscribe(() => void router?.load());
+    await router.load();
+
+    const slotKey = draftNavigationSlotKey();
+    let releaseTerminalPromotion!: () => void;
+    const terminalNavigation = runDraftNavigationOnce(
+      slotKey,
+      "terminal-first-thread",
+      async (ownership) => {
+        await router?.navigate({
+          to: "/settings",
+          state: { __scientDraftNavigationToken: ownership.routeToken } as never,
+        });
+        expect(router?.state.location.href).toBe("/settings");
+        ownership.markRouteCommitted();
+        await new Promise<void>((resolve) => {
+          releaseTerminalPromotion = resolve;
+        });
+      },
+    );
+    await expect.poll(() => router?.state.location.href).toBe("/settings");
+
+    await router.navigate({ to: "/plugins" });
+    expect(router.state.location.href).toBe("/plugins");
+    router.history.back();
+    await expect.poll(() => router?.state.location.href).toBe("/settings");
+
+    releaseTerminalPromotion();
+    await terminalNavigation;
+  });
 });

@@ -263,6 +263,7 @@ export function useHandleNewThread() {
             ) {
               return null;
             }
+            ownership.markRouteCommitted();
           }
           if (!ownership.isCurrent()) {
             return null;
@@ -358,6 +359,7 @@ export function useHandleNewThread() {
         if (!committed) {
           return null;
         }
+        ownership.markRouteCommitted();
         if (entryPoint === "terminal" && ownership.isCurrent()) {
           await createTerminalThread(
             threadId,
