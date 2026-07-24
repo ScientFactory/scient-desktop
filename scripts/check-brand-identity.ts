@@ -137,7 +137,7 @@ const requiredScientIdentityText = new Map<string, readonly string[]>([
   ],
   [
     "apps/web/src/whatsNew/entries.ts",
-    ["export const WHATS_NEW_ENTRIES: readonly WhatsNewEntry[] = [];"],
+    ["export const WHATS_NEW_ENTRIES: readonly WhatsNewEntry[]"],
   ],
   [".gitignore", ["/.scient/electron-dev", "/.scient-*/"]],
 ]);
@@ -207,6 +207,8 @@ const scientOnlySurfacePaths = new Set([
   "apps/web/src/components/settings/SkillsSettingsPanel.tsx",
   "apps/web/src/composerSlashCommands.ts",
   "apps/web/src/lib/automationDraft.ts",
+  "apps/web/src/whatsNew/entries.ts",
+  "apps/web/src/whatsNew/entries.json",
   "apps/web/src/lib/projectCreation.ts",
   "apps/web/src/routes/-automations.shared.tsx",
   "apps/web/src/routes/_chat.settings.tsx",

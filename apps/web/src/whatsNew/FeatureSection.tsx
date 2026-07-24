@@ -1,6 +1,6 @@
 // FILE: whatsNew/FeatureSection.tsx
 // Purpose: Render a single "What's new" feature card — title, description,
-// optional screenshot, and an optional longer technical blurb. Matches the
+// optional screenshot, and optional concise supporting context. Matches the
 // IndieDevs card layout so the post-update dialog and the Settings release
 // history share one visual vocabulary.
 // Layer: presentational — no state, no data fetching, no storage.

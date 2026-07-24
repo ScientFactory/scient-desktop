@@ -11,6 +11,7 @@ import {
 const entry = (version: string, overrides?: Partial<WhatsNewEntry>): WhatsNewEntry => ({
   version,
   date: "Jan 1",
+  headline: `What improved in ${version}`,
   features: [
     {
       id: `feature-${version}`,
@@ -51,6 +52,13 @@ describe("compareVersions", () => {
     expect(compareVersions("2.0.0", "1.99.99")).toBeGreaterThan(0);
     expect(compareVersions("1.2.0", "1.1.99")).toBeGreaterThan(0);
   });
+
+  it("orders prereleases before stable releases and compares their identifiers", () => {
+    expect(compareVersions("1.0.0-beta.1", "1.0.0-beta.2")).toBeLessThan(0);
+    expect(compareVersions("1.0.0-beta.2", "1.0.0")).toBeLessThan(0);
+    expect(compareVersions("1.0.0", "1.0.0-rc.1")).toBeGreaterThan(0);
+    expect(compareVersions("1.0.0+build.2", "1.0.0+build.1")).toBe(0);
+  });
 });
 
 describe("sortEntriesByVersionDesc", () => {
@@ -77,17 +85,17 @@ describe("resolveWhatsNewState", () => {
     const state = resolveWhatsNewState({
       entries,
       currentVersion: "0.0.29",
-      lastSeenVersion: null,
+      lastHandledVersion: null,
     });
 
-    expect(state).toEqual({ kind: "silent-bootstrap", nextLastSeenVersion: "0.0.29" });
+    expect(state).toEqual({ kind: "silent-bootstrap", nextLastHandledVersion: "0.0.29" });
   });
 
   it("returns noop when the user is already up to date", () => {
     const state = resolveWhatsNewState({
       entries,
       currentVersion: "0.0.29",
-      lastSeenVersion: "0.0.29",
+      lastHandledVersion: "0.0.29",
     });
 
     expect(state).toEqual({ kind: "noop" });
@@ -97,7 +105,7 @@ describe("resolveWhatsNewState", () => {
     const state = resolveWhatsNewState({
       entries,
       currentVersion: "0.0.28",
-      lastSeenVersion: "0.0.29",
+      lastHandledVersion: "0.0.29",
     });
 
     expect(state).toEqual({ kind: "noop" });
@@ -107,27 +115,36 @@ describe("resolveWhatsNewState", () => {
     const state = resolveWhatsNewState({
       entries,
       currentVersion: "0.0.29",
-      lastSeenVersion: "0.0.27",
+      lastHandledVersion: "0.0.27",
     });
 
     if (state.kind !== "show") {
       throw new Error("expected show state");
     }
     expect(state.currentEntry.version).toBe("0.0.29");
-    expect(state.nextLastSeenVersion).toBe("0.0.29");
+    expect(state.nextLastHandledVersion).toBe("0.0.29");
     // Accordion view shows everything we know about, newest first — including
-    // releases that come *after* the installed build so users can see what's
-    // coming next if the team chose to preview it.
-    expect(state.allEntries.map((e) => e.version)).toEqual(["0.1.0", "0.0.29", "0.0.28", "0.0.27"]);
+    // Staged future notes stay hidden until that version is actually installed.
+    expect(state.allEntries.map((e) => e.version)).toEqual(["0.0.29", "0.0.28", "0.0.27"]);
   });
 
   it("silent-bootstraps when the user upgraded but there's no curated entry", () => {
     const state = resolveWhatsNewState({
       entries: [entry("0.0.10")],
       currentVersion: "0.0.29",
-      lastSeenVersion: "0.0.28",
+      lastHandledVersion: "0.0.28",
     });
 
-    expect(state).toEqual({ kind: "silent-bootstrap", nextLastSeenVersion: "0.0.29" });
+    expect(state).toEqual({ kind: "silent-bootstrap", nextLastHandledVersion: "0.0.29" });
+  });
+
+  it("requires an exact prerelease entry instead of borrowing stable copy", () => {
+    expect(
+      resolveWhatsNewState({
+        entries: [entry("1.0.0")],
+        currentVersion: "1.0.0-beta.2",
+        lastHandledVersion: "1.0.0-beta.1",
+      }),
+    ).toEqual({ kind: "silent-bootstrap", nextLastHandledVersion: "1.0.0-beta.2" });
   });
 });

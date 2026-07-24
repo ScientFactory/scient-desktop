@@ -133,7 +133,7 @@ describe("brand identity guard", () => {
   });
 
   it("keeps upstream release marketing out of the Scient UI", () => {
-    const requirements = new Map([["entries.ts", ["WHATS_NEW_ENTRIES = []"]]]);
+    const requirements = new Map([["entries.ts", ["WHATS_NEW_ENTRIES: readonly WhatsNewEntry[]"]]]);
     expect(
       findScientIdentityViolations(
         [{ path: "entries.ts", contents: "WHATS_NEW_ENTRIES = upstreamEntries" }],
@@ -142,7 +142,12 @@ describe("brand identity guard", () => {
     ).toHaveLength(1);
     expect(
       findScientIdentityViolations(
-        [{ path: "entries.ts", contents: "WHATS_NEW_ENTRIES = []" }],
+        [
+          {
+            path: "entries.ts",
+            contents: "export const WHATS_NEW_ENTRIES: readonly WhatsNewEntry[] = scientEntries",
+          },
+        ],
         requirements,
       ),
     ).toEqual([]);
