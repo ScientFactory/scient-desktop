@@ -124,6 +124,18 @@ describe("verifyReleaseNoteForVersion", () => {
     expect(verify("/release-notes/missing.png")).toContain(
       "asset does not exist in apps/web/public/release-notes/missing.png",
     );
+
+    const blankImageErrors = verifyReleaseNoteForVersion("1.2.3", [
+      entry({
+        features: [
+          { ...entry().features[0]!, image: "", imageAlt: "A release highlight" },
+          ...entry().features.slice(1),
+        ],
+      }),
+    ]).errors;
+    expect(
+      blankImageErrors.filter((error) => error === "Entry 1, highlight 1 image is blank."),
+    ).toHaveLength(1);
   });
 
   it("does not mutate its input", () => {

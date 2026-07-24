@@ -135,7 +135,6 @@ function validateImagePair(
   if ((image === undefined) !== (alt === undefined)) {
     errors.push(`${label} ${kind} and accessible alt text must be provided together.`);
   }
-  if (image !== undefined && image.trim().length === 0) errors.push(`${label} ${kind} is blank.`);
   validateImage(label, kind, image, errors, assetExists);
   if (alt !== undefined && alt.trim().length === 0)
     errors.push(`${label} ${kind} alt text is blank.`);
