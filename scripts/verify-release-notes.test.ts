@@ -243,6 +243,16 @@ describe("verifyReleaseNoteForVersion", () => {
         Array.from({ length: 256 }, () => makePngChunk("vpAg")),
       ),
     );
+    const corruptAncillaryChunk = Buffer.from(makePngChunk("vpAg", Buffer.from("Scient")));
+    const corruptCrcByteIndex = corruptAncillaryChunk.length - 1;
+    corruptAncillaryChunk.writeUInt8(
+      corruptAncillaryChunk.readUInt8(corruptCrcByteIndex) ^ 0xff,
+      corruptCrcByteIndex,
+    );
+    writeFileSync(
+      join(releaseNotesRoot, "corrupt-ancillary-crc.png"),
+      insertBeforeIdat(png, [corruptAncillaryChunk]),
+    );
     mkdirSync(join(releaseNotesRoot, "directory.png"));
 
     expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/1.2.3/hero.png", publicRoot)).toBe(
@@ -269,6 +279,9 @@ describe("verifyReleaseNoteForVersion", () => {
     ).toBe(false);
     expect(
       isSafeBundledReleaseNoteRasterAsset("/release-notes/too-many-chunks.png", publicRoot),
+    ).toBe(false);
+    expect(
+      isSafeBundledReleaseNoteRasterAsset("/release-notes/corrupt-ancillary-crc.png", publicRoot),
     ).toBe(false);
     expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/directory.png", publicRoot)).toBe(
       false,

@@ -353,6 +353,9 @@ function hasBoundedPngChunkTable(contents: Buffer): boolean {
     const chunkType = chunkTypeBytes.toString("ascii");
     const chunkEnd = offset + 12 + chunkLength;
     if (chunkEnd > contents.length) return false;
+    const storedCrc = contents.readUInt32BE(offset + 8 + chunkLength);
+    const computedCrc = crc32(contents.subarray(offset + 4, offset + 8 + chunkLength));
+    if (storedCrc !== computedCrc) return false;
 
     chunkCount += 1;
     if (chunkCount > MAX_RELEASE_NOTE_PNG_CHUNKS) return false;
@@ -383,6 +386,17 @@ function hasBoundedPngChunkTable(contents: Buffer): boolean {
   }
 
   return false;
+}
+
+function crc32(contents: Buffer): number {
+  let crc = 0xffffffff;
+  for (const byte of contents) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }
 
 function formatError(error: unknown): string {
