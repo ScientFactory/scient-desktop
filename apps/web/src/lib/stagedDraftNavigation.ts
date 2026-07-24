@@ -5,18 +5,31 @@
 
 interface DraftNavigationSlotState {
   blockingBarrier: Promise<void> | null;
+  ownedRouteToken: string | null;
   tail: Promise<void>;
   latestOperation: Promise<unknown> | null;
   latestRequestKey: string | null;
   latestOwner: symbol | null;
+  latestRouteClaim: symbol | null;
 }
 
 export interface DraftNavigationOwnership {
   readonly isCurrent: () => boolean;
+  readonly routeToken: string;
 }
 
 const draftNavigationStateBySlot = new Map<string, DraftNavigationSlotState>();
 const DRAFT_NAVIGATION_SURFACE_KEY = "new-thread-navigation";
+let nextOwnedRouteToken = 0;
+const consumedOwnedRouteTokens = new Set<string>();
+const MAX_CONSUMED_OWNED_ROUTE_TOKENS = 128;
+
+function rememberConsumedOwnedRouteToken(routeToken: string): void {
+  consumedOwnedRouteTokens.add(routeToken);
+  if (consumedOwnedRouteTokens.size <= MAX_CONSUMED_OWNED_ROUTE_TOKENS) return;
+  const oldestRouteToken = consumedOwnedRouteTokens.values().next().value;
+  if (typeof oldestRouteToken === "string") consumedOwnedRouteTokens.delete(oldestRouteToken);
+}
 
 /**
  * Every new-thread action ultimately controls the same visible route. Keep one ownership domain
@@ -43,6 +56,49 @@ export function supersedeDraftNavigation(slotKey: string): void {
   state.latestOwner = Symbol("external-navigation");
   state.latestOperation = null;
   state.latestRequestKey = null;
+  state.ownedRouteToken = null;
+  state.latestRouteClaim = null;
+}
+
+/**
+ * Claims the visible route for navigation outside new-thread creation. Ownership changes
+ * immediately so stale read-only preparation cannot commit later. A non-cancellable mutation,
+ * such as preparing a pull-request checkout, remains a barrier and must settle before the newer
+ * route becomes active.
+ */
+export async function coordinateExternalRouteNavigation(
+  slotKey: string,
+  ownedRouteToken?: string,
+): Promise<boolean> {
+  const state = draftNavigationStateBySlot.get(slotKey);
+  if (!state) {
+    // Persisted history state can outlive the in-memory coordinator across reloads. With no live
+    // owner there is nothing to supersede, so the route is safe to restore.
+    return true;
+  }
+  if (ownedRouteToken) {
+    if (state.ownedRouteToken === ownedRouteToken) {
+      rememberConsumedOwnedRouteToken(ownedRouteToken);
+      return true;
+    }
+    // A token that already committed and is revisited through Back/Forward is an external route
+    // intent. An unconsumed mismatched token belongs to a stale in-flight navigation and fails
+    // closed instead of stealing ownership from the newer request.
+    if (!consumedOwnedRouteTokens.has(ownedRouteToken)) return false;
+  }
+  const routeClaim = Symbol("external-route-navigation");
+  const blockingBarrier = state.blockingBarrier;
+  state.latestOwner = routeClaim;
+  state.latestOperation = null;
+  state.latestRequestKey = null;
+  state.ownedRouteToken = null;
+  state.latestRouteClaim = routeClaim;
+  await blockingBarrier;
+  const mayCommit = state.latestRouteClaim === routeClaim && state.latestOwner === routeClaim;
+  if (mayCommit) {
+    state.latestRouteClaim = null;
+  }
+  return mayCommit;
 }
 
 /**
@@ -60,10 +116,12 @@ export function runDraftNavigationOnce<T>(
   if (!state) {
     state = {
       blockingBarrier: null,
+      ownedRouteToken: null,
       tail: Promise.resolve(),
       latestOperation: null,
       latestRequestKey: null,
       latestOwner: null,
+      latestRouteClaim: null,
     };
     draftNavigationStateBySlot.set(slotKey, state);
   }
@@ -73,10 +131,14 @@ export function runDraftNavigationOnce<T>(
   }
 
   const owner = Symbol(requestKey);
+  const routeToken = `draft-route-${(nextOwnedRouteToken += 1)}`;
   const ownership: DraftNavigationOwnership = {
     isCurrent: () => state.latestOwner === owner,
+    routeToken,
   };
   state.latestOwner = owner;
+  state.ownedRouteToken = routeToken;
+  state.latestRouteClaim = null;
   const priorBlockingBarrier = state.blockingBarrier;
   const execution = priorBlockingBarrier
     ? priorBlockingBarrier.then(() => run(ownership))
@@ -87,6 +149,7 @@ export function runDraftNavigationOnce<T>(
       state.latestOperation = null;
       state.latestRequestKey = null;
       state.latestOwner = null;
+      state.ownedRouteToken = null;
     }
   };
   operation = execution.then(
@@ -124,7 +187,8 @@ export function runDraftNavigationOnce<T>(
     if (
       draftNavigationStateBySlot.get(slotKey) === state &&
       state.tail === tail &&
-      state.latestOperation === null
+      state.latestOperation === null &&
+      state.latestRouteClaim === null
     ) {
       draftNavigationStateBySlot.delete(slotKey);
     }
@@ -137,9 +201,10 @@ export function runDraftNavigationOnce<T>(
  * rolls the staged draft back without treating the user's newer navigation as an error.
  */
 export async function stageDraftNavigation(input: {
+  readonly ownedRouteToken?: string;
   readonly isCurrent: () => boolean;
   readonly stage: () => void;
-  readonly navigate: () => Promise<void>;
+  readonly navigate: (ownedRouteToken?: string) => Promise<void>;
   readonly isDestinationActive: () => boolean;
   readonly finalize: () => void;
   readonly rollback: () => void;
@@ -158,7 +223,7 @@ export async function stageDraftNavigation(input: {
       return false;
     }
     input.stage();
-    await input.navigate();
+    await input.navigate(input.ownedRouteToken);
     if (!input.isCurrent() || !input.isDestinationActive()) {
       rollbackOnce();
       return false;

@@ -51,6 +51,7 @@ export interface NewThreadOptions {
 
 export interface NewThreadNavigationOwnership {
   readonly isCurrent: () => boolean;
+  readonly routeToken: string;
 }
 
 export type NewThreadPreparationResult =

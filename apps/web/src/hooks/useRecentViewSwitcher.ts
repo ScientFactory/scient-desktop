@@ -22,6 +22,10 @@ import {
   type RecentViewThreadDraftSummary,
 } from "../recentViews.logic";
 import { resolveRecentThreadSplitActivation } from "../recentViewActivation.logic";
+import {
+  coordinateExternalRouteNavigation,
+  draftNavigationSlotKey,
+} from "../lib/stagedDraftNavigation";
 import { useRecentViewsStore } from "../recentViewsStore";
 import { collectLeaves } from "../splitView.logic";
 import { useSplitViewStore } from "../splitViewStore";
@@ -255,10 +259,17 @@ export function useRecentViewSwitcher(input: UseRecentViewSwitcherInput) {
   }, [buildRecentViewAvailability, pruneRecentViewsStore, threadsHydrated]);
 
   const activateRecentView = useCallback(
-    (view: RecentView) => {
+    async (view: RecentView) => {
       switch (view.kind) {
         case "thread": {
           if (!buildRecentViewAvailability().availableThreadIds.has(view.threadId)) {
+            return;
+          }
+          const mayActivate = await coordinateExternalRouteNavigation(draftNavigationSlotKey());
+          if (
+            !mayActivate ||
+            !buildRecentViewAvailability().availableThreadIds.has(view.threadId)
+          ) {
             return;
           }
           prewarmThreadDetail(view.threadId);

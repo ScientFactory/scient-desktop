@@ -54,7 +54,7 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 - `terminal.close`: close/kill the focused terminal (in focused terminal context by default)
 - `chat.new`: create a new chat thread using the target project's configured workspace default
 - `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
-- `chat.newTerminal`: create a new terminal-first thread using the target project's configured workspace default
+- `chat.newTerminal`: create a new terminal-first thread using the target project's configured workspace default; if a configured worktree has no concrete path, safely fall back to the project's local checkout
 - `composer.focus.toggle`: focus or blur the chat prompt composer
 - `editor.openFavorite`: open current project/worktree in the last-used editor
 - `script.{id}.run`: run a project script by id (for example `script.test.run`)

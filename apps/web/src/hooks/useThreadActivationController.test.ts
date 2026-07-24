@@ -134,16 +134,44 @@ describe("activateThreadFromSidebarIntent", () => {
     await Promise.resolve();
     const input = makeControllerInput();
 
-    activateThreadFromSidebarIntent(input, THREAD_B);
+    const activation = activateThreadFromSidebarIntent(input, THREAD_B);
     releasePreparation();
 
+    await activation;
     await expect(pending).resolves.toBe(false);
     expect(pendingOwnerWasCurrent).toBe(false);
     expect(input.openChatThreadPage).toHaveBeenCalledWith(THREAD_B);
     await waitForDraftNavigationIdle(draftNavigationSlotKey());
   });
 
-  it("focuses a target pane in the active split", () => {
+  it("waits for a blocking preparation before activating an existing thread", async () => {
+    let releaseMutation!: () => void;
+    const pending = runDraftNavigationOnce(
+      draftNavigationSlotKey(),
+      "mutating-pr-preparation",
+      async () =>
+        new Promise<void>((resolve) => {
+          releaseMutation = resolve;
+        }),
+      { blocksFollowingOperations: true },
+    );
+    await Promise.resolve();
+    const input = makeControllerInput();
+
+    const activation = activateThreadFromSidebarIntent(input, THREAD_B);
+    await Promise.resolve();
+    expect(input.openChatThreadPage).not.toHaveBeenCalled();
+    expect(input.navigate).not.toHaveBeenCalled();
+
+    releaseMutation();
+    await activation;
+    await pending;
+
+    expect(input.openChatThreadPage).toHaveBeenCalledWith(THREAD_B);
+    expect(input.navigate).toHaveBeenCalledOnce();
+  });
+
+  it("focuses a target pane in the active split", async () => {
     const activeSplitView = makeSplitViewFixture({
       id: "split-active",
       sourceThreadId: THREAD_A,
@@ -157,7 +185,7 @@ describe("activateThreadFromSidebarIntent", () => {
       selectedThreadCount: 1,
     });
 
-    activateThreadFromSidebarIntent(input, THREAD_B);
+    await activateThreadFromSidebarIntent(input, THREAD_B);
 
     expect(input.prewarmThreadDetailForIntent).toHaveBeenCalledWith(THREAD_B);
     expect(input.clearSelection).toHaveBeenCalledOnce();
@@ -176,7 +204,7 @@ describe("activateThreadFromSidebarIntent", () => {
     expect(input.openChatThreadPage).not.toHaveBeenCalled();
   });
 
-  it("exits an active split when the target thread is outside it", () => {
+  it("exits an active split when the target thread is outside it", async () => {
     const activeSplitView = makeSplitViewFixture({
       id: "split-active",
       sourceThreadId: THREAD_A,
@@ -189,7 +217,7 @@ describe("activateThreadFromSidebarIntent", () => {
       routeSplitViewId: "split-active",
     });
 
-    activateThreadFromSidebarIntent(input, THREAD_C);
+    await activateThreadFromSidebarIntent(input, THREAD_C);
 
     expect(input.openChatThreadPage).toHaveBeenCalledWith(THREAD_C);
     expect(input.setSplitFocusedPane).not.toHaveBeenCalled();
@@ -201,7 +229,7 @@ describe("activateThreadFromSidebarIntent", () => {
     );
   });
 
-  it("restores a persisted split from single-chat mode", () => {
+  it("restores a persisted split from single-chat mode", async () => {
     const splitView = makeSplitViewFixture({
       id: "split-background",
       sourceThreadId: THREAD_A,
@@ -215,7 +243,7 @@ describe("activateThreadFromSidebarIntent", () => {
       splitViewsById: { "split-background": splitView },
     });
 
-    activateThreadFromSidebarIntent(input, THREAD_B);
+    await activateThreadFromSidebarIntent(input, THREAD_B);
 
     expect(input.setSplitFocusedPane).toHaveBeenCalledWith(
       "split-background",
@@ -231,7 +259,7 @@ describe("activateThreadFromSidebarIntent", () => {
     });
   });
 
-  it("switches between two persisted split pairings without separating them", () => {
+  it("switches between two persisted split pairings without separating them", async () => {
     const firstSplit = makeSplitViewFixture({
       id: "split-first",
       sourceThreadId: THREAD_A,
@@ -256,7 +284,7 @@ describe("activateThreadFromSidebarIntent", () => {
       },
     });
 
-    activateThreadFromSidebarIntent(input, THREAD_C);
+    await activateThreadFromSidebarIntent(input, THREAD_C);
 
     expect(input.setSplitFocusedPane).toHaveBeenCalledWith(
       "split-second",
@@ -269,7 +297,7 @@ describe("activateThreadFromSidebarIntent", () => {
     });
   });
 
-  it("does nothing when the current route already targets the same split pane", () => {
+  it("does nothing when the current route already targets the same split pane", async () => {
     const activeSplitView = makeSplitViewFixture({
       id: "split-active",
       sourceThreadId: THREAD_A,
@@ -283,14 +311,14 @@ describe("activateThreadFromSidebarIntent", () => {
       routeThreadId: THREAD_B,
     });
 
-    activateThreadFromSidebarIntent(input, THREAD_B);
+    await activateThreadFromSidebarIntent(input, THREAD_B);
 
     expect(input.navigate).not.toHaveBeenCalled();
     expect(input.setSplitFocusedPane).not.toHaveBeenCalled();
     expect(input.rememberLastThreadRouteNow).not.toHaveBeenCalled();
   });
 
-  it("preserves terminal entry point when opening a single thread", () => {
+  it("preserves terminal entry point when opening a single thread", async () => {
     const terminalStateByThreadId = {
       [THREAD_C]: { entryPoint: "terminal" },
     } as unknown as ThreadActivationControllerInput["terminalStateByThreadId"];
@@ -299,14 +327,14 @@ describe("activateThreadFromSidebarIntent", () => {
       terminalStateByThreadId,
     });
 
-    activateThreadFromSidebarIntent(input, THREAD_C);
+    await activateThreadFromSidebarIntent(input, THREAD_C);
 
     expect(input.openTerminalThreadPage).toHaveBeenCalledWith(THREAD_C);
     expect(input.openChatThreadPage).not.toHaveBeenCalled();
     expect(getFirstNavigateArgs(input).params).toEqual({ threadId: THREAD_C });
   });
 
-  it("opens sidechat rows beside their source thread when no persisted split exists", () => {
+  it("opens sidechat rows beside their source thread when no persisted split exists", async () => {
     const input = makeControllerInput({
       routeThreadId: THREAD_A,
       sidebarThreadSummaryById: {
@@ -315,7 +343,7 @@ describe("activateThreadFromSidebarIntent", () => {
       },
     });
 
-    activateThreadFromSidebarIntent(input, THREAD_B);
+    await activateThreadFromSidebarIntent(input, THREAD_B);
 
     expect(input.openSidechatSplit).toHaveBeenCalledWith({
       sourceThreadId: THREAD_A,
@@ -333,7 +361,7 @@ describe("activateThreadFromSidebarIntent", () => {
     });
   });
 
-  it("opens the active single sidechat as a split when clicked again", () => {
+  it("opens the active single sidechat as a split when clicked again", async () => {
     const input = makeControllerInput({
       routeThreadId: THREAD_B,
       sidebarThreadSummaryById: {
@@ -342,7 +370,7 @@ describe("activateThreadFromSidebarIntent", () => {
       },
     });
 
-    activateThreadFromSidebarIntent(input, THREAD_B);
+    await activateThreadFromSidebarIntent(input, THREAD_B);
 
     expect(input.openSidechatSplit).toHaveBeenCalledWith({
       sourceThreadId: THREAD_A,

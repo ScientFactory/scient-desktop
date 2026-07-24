@@ -239,6 +239,7 @@ export function useHandleNewThread() {
               await navigate({
                 to: "/$threadId",
                 params: { threadId: bootstrapPlan.threadId },
+                state: { __scientDraftNavigationToken: ownership.routeToken } as never,
                 ...(navigation?.search ? { search: navigation.search } : {}),
               });
             } catch (error) {
@@ -293,6 +294,7 @@ export function useHandleNewThread() {
         });
         const committed = await stageDraftNavigation({
           isCurrent: ownership.isCurrent,
+          ownedRouteToken: ownership.routeToken,
           // Keep the previous routed draft alive while the destination loads. Replacing the
           // project's primary slot earlier makes the route guard redirect the old URL to Home.
           stage: () => {
@@ -306,12 +308,15 @@ export function useHandleNewThread() {
           // Mark the draft-landing navigation as a transition so the new route
           // subtree renders interruptibly and the browser can paint the composer
           // skeleton immediately instead of freezing on the synchronous commit.
-          navigate: () =>
+          navigate: (ownedRouteToken) =>
             new Promise<void>((resolve, reject) => {
               startTransition(() => {
                 navigate({
                   to: "/$threadId",
                   params: { threadId },
+                  ...(ownedRouteToken
+                    ? { state: { __scientDraftNavigationToken: ownedRouteToken } as never }
+                    : {}),
                   ...(navigation?.search ? { search: navigation.search } : {}),
                 }).then(resolve, reject);
               });

@@ -9,7 +9,10 @@ import type { LastThreadRoute } from "../chatRouteRestore";
 import { type PaneId, type SplitView, type SplitViewId } from "../splitViewStore";
 import { selectThreadTerminalState } from "../terminalStateStore";
 import type { SidebarThreadSummary } from "../types";
-import { draftNavigationSlotKey, supersedeDraftNavigation } from "../lib/stagedDraftNavigation";
+import {
+  coordinateExternalRouteNavigation,
+  draftNavigationSlotKey,
+} from "../lib/stagedDraftNavigation";
 import {
   resolvePreferredSplitForCommand,
   resolveThreadCommandActivation,
@@ -47,10 +50,10 @@ export type ThreadActivationControllerInput = {
 };
 
 // Runs the complete sidebar activation side-effect chain for one thread intent.
-export function activateThreadFromSidebarIntent(
+export async function activateThreadFromSidebarIntent(
   input: ThreadActivationControllerInput,
   threadId: ThreadId,
-): void {
+): Promise<void> {
   const {
     activeSplitView,
     clearSelection,
@@ -81,8 +84,10 @@ export function activateThreadFromSidebarIntent(
     return;
   }
   // Selecting an existing thread is a route intent on the same visible surface as New Thread.
-  // Revoke any delayed preparation before deciding whether this activation changes the route.
-  supersedeDraftNavigation(draftNavigationSlotKey());
+  // Revoke delayed preparation immediately, then wait for any non-cancellable Git mutation before
+  // activating the target or changing its terminal/chat presentation.
+  const mayActivate = await coordinateExternalRouteNavigation(draftNavigationSlotKey());
+  if (!mayActivate) return;
   const activation = resolveThreadCommandActivation({
     threadId,
     threadExists: true,
@@ -247,7 +252,7 @@ export function useThreadActivationController(input: ThreadActivationControllerI
 
   const activateThread = useCallback(
     (threadId: ThreadId) => {
-      activateThreadFromSidebarIntent(
+      void activateThreadFromSidebarIntent(
         {
           activeSplitView,
           clearSelection,

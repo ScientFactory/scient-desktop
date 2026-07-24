@@ -5818,7 +5818,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("keeps a newer existing-thread click ahead of delayed exact-workspace validation", async () => {
+  it("keeps a newer direct Kanban route ahead of delayed exact-workspace validation", async () => {
     const otherThreadId = ThreadId.makeUnsafe("thread-existing-navigation-wins");
     const contextMenuShow = vi.fn(
       async (_items: Parameters<NativeApi["contextMenu"]["show"]>[0]) => "new-thread-in-workspace",
@@ -5894,14 +5894,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
           ) ?? null,
         "Unable to find the source thread row.",
       );
-      const destinationRow = await waitForElement(
-        () =>
-          Array.from(document.querySelectorAll<HTMLElement>("[data-thread-entry-point]")).find(
-            (row) => row.textContent?.includes("Existing destination thread"),
-          ) ?? null,
-        "Unable to find the destination thread row.",
-      );
-
       sourceRow.dispatchEvent(
         new MouseEvent("contextmenu", {
           bubbles: true,
@@ -5912,16 +5904,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       await vi.waitFor(() => expect(branchLookup).toHaveBeenCalledOnce());
 
-      destinationRow.click();
+      await mounted.router.navigate({ to: "/kanban" });
       await waitForURL(
         mounted.router,
-        (path) => path === `/${otherThreadId}`,
-        "The newer existing-thread click should take control of the route.",
+        (path) => path === "/kanban",
+        "The newer direct Kanban route should take control of the route.",
       );
       resolveValidation(exactWorktreeBranchResult);
       await waitForDraftNavigationIdle(draftNavigationSlotKey());
 
-      expect(mounted.router.state.location.pathname).toBe(`/${otherThreadId}`);
+      expect(mounted.router.state.location.pathname).toBe("/kanban");
       expect(
         Object.values(useComposerDraftStore.getState().draftThreadsByThreadId).some(
           (draft) => draft.worktreePath === "/repo/worktrees/delayed-exact",
