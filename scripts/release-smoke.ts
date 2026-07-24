@@ -230,11 +230,11 @@ function verifyReleaseWorkflowSafety(): void {
     (step) => step.name === "Resolve release policy",
   );
   const releaseNoteIndex = preflightSteps.findIndex(
-    (step) => step.name === "Verify curated release note",
+    (step) => step.name === "Verify release-note catalog structure",
   );
   if (releaseMetaIndex < 0 || releaseNoteIndex !== releaseMetaIndex + 1) {
     throw new Error(
-      "Expected the curated release-note gate immediately after release policy resolution.",
+      "Expected the structural release-note gate immediately after release policy resolution.",
     );
   }
   if (

@@ -54,9 +54,7 @@ export default function ReleaseHistoryDialog({
       <DialogPopup className="max-w-lg gap-0 p-0">
         <DialogHeader className="gap-1 p-4 pr-12">
           <DialogTitle className="text-base">Release history</DialogTitle>
-          <DialogDescription className="text-xs">
-            Earlier Scient updates, newest first.
-          </DialogDescription>
+          <DialogDescription className="text-xs">Scient updates, newest first.</DialogDescription>
         </DialogHeader>
 
         <DialogPanel className="max-h-[min(62vh,520px)] px-4 py-3">

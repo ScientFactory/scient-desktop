@@ -117,6 +117,10 @@ Every release candidate must include one Scient-owned, user-friendly entry in
 `apps/web/src/whatsNew/entries.json` whose version exactly matches the candidate.
 The release workflow fails before native builds when that entry is absent,
 malformed, duplicated, or names a different stable or prerelease version.
+The automated gate verifies the catalog structure, exact version, highlight
+count, and bundled raster assets. It deliberately does not attempt to judge
+tone, technical language, or claim accuracy; the product-owner approval below
+is the mandatory editorial authority.
 
 The release owner prepares and approves the entry before promotion:
 
@@ -150,9 +154,8 @@ Acceptance on a packaged upgrade must prove all of the following:
 - Dismissing or ignoring the visible card prevents it from returning on the next launch.
 - The previous packaged release can update to the candidate and see this exact note.
 
-Release history remains available from the release-note dialog. A permanent
-Settings entry may be added when the settings information architecture has an
-approved location; its absence does not weaken the release gate above.
+Release history remains available from both the release-note dialog and
+Settings.
 
 ## 1) Promote and validate a release candidate
 

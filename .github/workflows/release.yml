@@ -132,7 +132,7 @@ jobs:
           RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
         run: node scripts/resolve-release-update-policy.ts "$RELEASE_VERSION"
 
-      - name: Verify curated release note
+      - name: Verify release-note catalog structure
         run: node scripts/verify-release-notes.ts "${{ steps.release_meta.outputs.version }}"
 
       - name: Verify public updater repository

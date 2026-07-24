@@ -186,9 +186,7 @@ function ChangelogHeader({
         <DialogTitle ref={titleRef} tabIndex={-1} className="text-base outline-none">
           Release history
         </DialogTitle>
-        <DialogDescription className="text-xs">
-          Earlier Scient updates, newest first.
-        </DialogDescription>
+        <DialogDescription className="text-xs">Scient updates, newest first.</DialogDescription>
       </div>
     </div>
   );

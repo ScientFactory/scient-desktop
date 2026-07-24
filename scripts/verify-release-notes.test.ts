@@ -1,6 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { verifyReleaseNoteForVersion, type ReleaseNoteEntry } from "./verify-release-notes";
+import { afterEach, describe, expect, it } from "vitest";
+
+import {
+  isSafeBundledReleaseNoteRasterAsset,
+  parseReleaseNoteCatalog,
+  verifyReleaseNoteForVersion,
+  type ReleaseNoteEntry,
+} from "./verify-release-notes";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(() => {
+  for (const path of temporaryDirectories.splice(0)) {
+    rmSync(path, { recursive: true, force: true });
+  }
+});
 
 const entry = (overrides: Partial<ReleaseNoteEntry> = {}): ReleaseNoteEntry => ({
   version: "1.2.3",
@@ -122,7 +139,7 @@ describe("verifyReleaseNoteForVersion", () => {
       expect(verify(unsafe)).toContain("must be a bundled raster asset");
     }
     expect(verify("/release-notes/missing.png")).toContain(
-      "asset does not exist in apps/web/public/release-notes/missing.png",
+      "must resolve to a regular, non-symlinked raster file",
     );
 
     const blankImageErrors = verifyReleaseNoteForVersion("1.2.3", [
@@ -136,6 +153,76 @@ describe("verifyReleaseNoteForVersion", () => {
     expect(
       blankImageErrors.filter((error) => error === "Entry 1, highlight 1 image is blank."),
     ).toHaveLength(1);
+  });
+
+  it("requires a real, contained raster file instead of accepting names alone", () => {
+    const publicRoot = mkdtempSync(join(tmpdir(), "scient-release-notes-"));
+    temporaryDirectories.push(publicRoot);
+    const releaseNotesRoot = join(publicRoot, "release-notes");
+    mkdirSync(join(releaseNotesRoot, "1.2.3"), { recursive: true });
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2dQAAAABJRU5ErkJggg==",
+      "base64",
+    );
+    writeFileSync(join(releaseNotesRoot, "1.2.3", "hero.png"), png);
+    writeFileSync(
+      join(releaseNotesRoot, "truncated.png"),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    );
+    writeFileSync(join(releaseNotesRoot, "fake.png"), "not an image");
+    mkdirSync(join(releaseNotesRoot, "directory.png"));
+
+    expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/1.2.3/hero.png", publicRoot)).toBe(
+      true,
+    );
+    expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/fake.png", publicRoot)).toBe(false);
+    expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/truncated.png", publicRoot)).toBe(
+      false,
+    );
+    expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/directory.png", publicRoot)).toBe(
+      false,
+    );
+    expect(isSafeBundledReleaseNoteRasterAsset("/release-notes/missing.png", publicRoot)).toBe(
+      false,
+    );
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects in-root and escaping release-note symlinks",
+    () => {
+      const publicRoot = mkdtempSync(join(tmpdir(), "scient-release-notes-links-"));
+      temporaryDirectories.push(publicRoot);
+      const releaseNotesRoot = join(publicRoot, "release-notes");
+      mkdirSync(releaseNotesRoot, { recursive: true });
+      const validTarget = join(releaseNotesRoot, "target.png");
+      const outsideTarget = join(publicRoot, "outside.png");
+      const png = Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2dQAAAABJRU5ErkJggg==",
+        "base64",
+      );
+      writeFileSync(validTarget, png);
+      writeFileSync(outsideTarget, png);
+      symlinkSync(validTarget, join(releaseNotesRoot, "inside-link.png"));
+      symlinkSync(outsideTarget, join(releaseNotesRoot, "outside-link.png"));
+
+      expect(
+        isSafeBundledReleaseNoteRasterAsset("/release-notes/inside-link.png", publicRoot),
+      ).toBe(false);
+      expect(
+        isSafeBundledReleaseNoteRasterAsset("/release-notes/outside-link.png", publicRoot),
+      ).toBe(false);
+    },
+  );
+
+  it("decodes catalog field shapes before semantic validation", () => {
+    expect(parseReleaseNoteCatalog([entry()])).toEqual([entry()]);
+    expect(() => parseReleaseNoteCatalog([{ ...entry(), date: undefined }])).toThrow(
+      "Entry 1 date must be a string.",
+    );
+    expect(() =>
+      parseReleaseNoteCatalog([{ ...entry(), features: [{ ...entry().features[0], title: 4 }] }]),
+    ).toThrow("Entry 1, highlight 1 title must be a string.");
+    expect(() => parseReleaseNoteCatalog([null])).toThrow("Entry 1 must be an object.");
   });
 
   it("does not mutate its input", () => {
