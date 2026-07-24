@@ -23,6 +23,8 @@ import {
   applyAutomationEvent,
   automationAttentionCount,
   automationFastIntervalLimitMessage,
+  automationRowMeta,
+  automationStatusDotClass,
   canCancelAutomationRun,
   createInputFromForm,
   datetimeLocalFromIso,
@@ -192,6 +194,67 @@ describe("automation shared route helpers", () => {
         }),
       ),
     ).toBe("Completed; open the thread for the reply");
+  });
+
+  it("spells out live and last-run automation row states", () => {
+    expect(
+      automationRowMeta(baseDefinition, runWith({ result: null, status: "waiting-for-approval" })),
+    ).toBe("Waiting for approval");
+    expect(automationRowMeta(baseDefinition, runWith({ result: null, status: "failed" }))).toBe(
+      "Last run failed",
+    );
+    expect(automationRowMeta(baseDefinition, runWith({ result: null, status: "cancelled" }))).toBe(
+      "Last run cancelled",
+    );
+    expect(
+      automationRowMeta(baseDefinition, runWith({ result: null, status: "interrupted" })),
+    ).toBe("Last run interrupted");
+  });
+
+  it("keeps live truth ahead of paused state and preserves unread-result triage", () => {
+    const paused = definitionWith({ enabled: false });
+    const archivedUnreadRun = runWith({
+      result: {
+        ...baseRun.result!,
+        unread: true,
+        archivedAt: "2026-06-19T10:05:00.000Z",
+      },
+    });
+    const archivedFailedRun = runWith({
+      status: "failed",
+      result: {
+        ...baseRun.result!,
+        unread: true,
+        archivedAt: "2026-06-19T10:05:00.000Z",
+      },
+    });
+    const resolvedFailedRun = runWith({
+      status: "failed",
+      result: { ...baseRun.result!, unread: false },
+    });
+
+    expect(automationRowMeta(paused, runWith({ result: null, status: "running" }))).toBe("Running");
+    expect(automationRowMeta(paused, null)).toBe("Paused");
+    expect(automationRowMeta(baseDefinition, baseRun)).toBe("New result");
+    expect(automationRowMeta(baseDefinition, archivedUnreadRun)).toBe(
+      formatCadence(baseDefinition.schedule),
+    );
+    expect(automationRowMeta(baseDefinition, archivedFailedRun)).toBe(
+      formatCadence(baseDefinition.schedule),
+    );
+    expect(automationRowMeta(paused, resolvedFailedRun)).toBe("Paused");
+    expect(automationStatusDotClass(baseDefinition, archivedFailedRun)).toBe("text-emerald-500");
+    expect(automationStatusDotClass(paused, resolvedFailedRun)).toBe("text-muted-foreground/40");
+  });
+
+  it("keeps automation status color precedence aligned with row text", () => {
+    const paused = definitionWith({ enabled: false });
+
+    expect(automationStatusDotClass(paused, runWith({ result: null, status: "running" }))).toBe(
+      "text-blue-500",
+    );
+    expect(automationStatusDotClass(paused, baseRun)).toBe("text-destructive");
+    expect(automationStatusDotClass(paused, null)).toBe("text-muted-foreground/40");
   });
 
   it("round-trips one-shot datetimes through datetime-local values", () => {
