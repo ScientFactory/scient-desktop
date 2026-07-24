@@ -3707,18 +3707,22 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
                   ),
                 ),
               );
-              if (context.permissionReplyStateById.get(event.properties.id) === replyState) {
-                context.permissionReplyStateById.delete(event.properties.id);
-              }
+              const clearReplyState = () => {
+                if (context.permissionReplyStateById.get(event.properties.id) === replyState) {
+                  context.permissionReplyStateById.delete(event.properties.id);
+                }
+              };
               if (
                 replyState.cancelled ||
                 !isOpenCodeTurnGenerationActive(context, generation) ||
                 context.autoApprovedPermissionGenerationById.get(event.properties.id) !==
                   generation.id
               ) {
+                clearReplyState();
                 break;
               }
               if (Exit.isSuccess(replyExit) && replyExit.value._tag === "Some") {
+                clearReplyState();
                 break;
               }
               if (Exit.isSuccess(replyExit)) {
@@ -3728,15 +3732,17 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
                   raw: event,
                   errorClass: "transport_error",
                 });
+                clearReplyState();
                 break;
               }
-              // Fall back to a visible approval so the turn cannot hang on a failed reply.
-              context.autoApprovedPermissionIds.delete(event.properties.id);
-              context.autoApprovedPermissionGenerationById.delete(event.properties.id);
-              yield* Effect.logWarning(
-                `${adapterConfig.displayName} full-access auto-approve failed; surfacing approval`,
-                Cause.squash(replyExit.cause),
-              );
+              yield* failOpenCodeTurnWithAbort(context, {
+                generation,
+                message: `${adapterConfig.displayName} full-access permission outcome could not be confirmed: ${openCodeRuntimeErrorDetail(Cause.squash(replyExit.cause))}`,
+                raw: event,
+                errorClass: "transport_error",
+              });
+              clearReplyState();
+              break;
             }
             context.pendingPermissions.set(event.properties.id, event.properties);
             context.pendingPermissionGenerationById.set(event.properties.id, generation.id);
@@ -5322,14 +5328,17 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
               });
             }
             if (Exit.isFailure(outcome)) {
-              if (Cause.hasInterrupts(outcome.cause)) {
-                yield* failOpenCodeTurnWithAbort(context, {
-                  generation,
-                  message: `${adapterConfig.displayName} permission reply was interrupted before its provider outcome could be confirmed.`,
-                  raw: { source: `scient.${provider}.permission-reply-interrupted`, requestId },
-                  errorClass: "transport_error",
-                });
-              }
+              yield* failOpenCodeTurnWithAbort(context, {
+                generation,
+                message: Cause.hasInterrupts(outcome.cause)
+                  ? `${adapterConfig.displayName} permission reply was interrupted before its provider outcome could be confirmed.`
+                  : `${adapterConfig.displayName} permission reply outcome could not be confirmed: ${openCodeRuntimeErrorDetail(Cause.squash(outcome.cause))}`,
+                raw: {
+                  source: `scient.${provider}.permission-reply-outcome-ambiguous`,
+                  requestId,
+                },
+                errorClass: "transport_error",
+              });
               clearReplyState();
               return yield* Effect.failCause(outcome.cause);
             }
@@ -5435,14 +5444,17 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
               });
             }
             if (Exit.isFailure(outcome)) {
-              if (Cause.hasInterrupts(outcome.cause)) {
-                yield* failOpenCodeTurnWithAbort(context, {
-                  generation,
-                  message: `${adapterConfig.displayName} question reply was interrupted before its provider outcome could be confirmed.`,
-                  raw: { source: `scient.${provider}.question-reply-interrupted`, requestId },
-                  errorClass: "transport_error",
-                });
-              }
+              yield* failOpenCodeTurnWithAbort(context, {
+                generation,
+                message: Cause.hasInterrupts(outcome.cause)
+                  ? `${adapterConfig.displayName} question reply was interrupted before its provider outcome could be confirmed.`
+                  : `${adapterConfig.displayName} question reply outcome could not be confirmed: ${openCodeRuntimeErrorDetail(Cause.squash(outcome.cause))}`,
+                raw: {
+                  source: `scient.${provider}.question-reply-outcome-ambiguous`,
+                  requestId,
+                },
+                errorClass: "transport_error",
+              });
               clearReplyState();
               return yield* Effect.failCause(outcome.cause);
             }
