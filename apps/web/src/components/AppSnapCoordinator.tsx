@@ -49,6 +49,10 @@ import { transientAlertManager } from "../notifications/transientAlert";
 import { useSplitViewStore } from "../splitViewStore";
 import { useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
+import {
+  coordinateExternalRouteNavigation,
+  draftNavigationSlotKey,
+} from "../lib/stagedDraftNavigation";
 
 const MAX_REMEMBERED_CAPTURE_IDS = 100;
 const APPSNAP_LISTENER_ACTIVITY_KEY = "appsnap:listener";
@@ -327,6 +331,8 @@ export function AppSnapCoordinator() {
 
   const activateExistingTarget = useCallback(
     async (target: AppSnapThreadTarget) => {
+      const mayActivate = await coordinateExternalRouteNavigation(draftNavigationSlotKey());
+      if (!mayActivate) return;
       openChatThreadPage(target.threadId);
       // Same thread is only "already active" when the split pane matches too;
       // a capture aimed at another pane still needs activation below.

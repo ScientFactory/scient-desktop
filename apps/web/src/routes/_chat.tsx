@@ -24,7 +24,6 @@ import {
   resolveLatestProjectTargetId,
   resolveNewThreadTarget,
 } from "../lib/projectShortcutTargets";
-import { resolveInheritedThreadContext } from "../lib/threadBootstrap";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { startFreshChatForActiveSurface } from "../lib/startContainerChat";
@@ -195,14 +194,8 @@ function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const selectedThreadIdsSize = useThreadSelectionStore((state) => state.selectedThreadIds.size);
   const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
-  const {
-    activeContextThreadId,
-    activeDraftThread,
-    activeProjectId,
-    activeThread,
-    handleNewThread,
-    projects,
-  } = useHandleNewThread();
+  const { activeContextThreadId, activeDraftThread, activeProjectId, handleNewThread, projects } =
+    useHandleNewThread();
   const {
     recentSwitcherState,
     recentViewEntries,
@@ -375,9 +368,6 @@ function ChatRouteGlobalShortcuts() {
         event.preventDefault();
         event.stopPropagation();
         void handleNewThread(target.projectId, {
-          ...(target.inheritContext
-            ? resolveInheritedThreadContext({ activeThread, activeDraftThread })
-            : {}),
           entryPoint: "terminal",
         });
         return;
@@ -398,44 +388,39 @@ function ChatRouteGlobalShortcuts() {
         if (!target) return;
         event.preventDefault();
         event.stopPropagation();
-        void (async () => {
-          const providerAvailability = await resolveProviderSendAvailabilityWithRefresh({
-            provider,
-            statuses: providerStatuses,
-            refreshStatuses: () => refreshProviderStatuses({ silent: true }),
-          });
-          if (!providerAvailability.usable) {
-            transientAlertManager.add({
-              type: "error",
-              title: providerAvailability.unavailableReason,
+        void handleNewThread(target.projectId, {
+          provider,
+          prepareNavigationKey: `provider-shortcut:${provider}`,
+          prepareNavigation: async (ownership) => {
+            const providerAvailability = await resolveProviderSendAvailabilityWithRefresh({
+              provider,
+              statuses: providerStatuses,
+              refreshStatuses: () => refreshProviderStatuses({ silent: true }),
             });
-            return;
-          }
-          await handleNewThread(target.projectId, {
-            provider,
-            ...(target.inheritContext
-              ? resolveInheritedThreadContext({ activeThread, activeDraftThread })
-              : {}),
-          });
-        })();
+            if (!ownership.isCurrent()) {
+              return false;
+            }
+            if (!providerAvailability.usable) {
+              transientAlertManager.add({
+                type: "error",
+                title: providerAvailability.unavailableReason,
+              });
+              return false;
+            }
+          },
+        });
         return;
       }
 
       if (command !== "chat.new") return;
       // Falls back to the most recent project when none is focused (e.g. the landing
-      // view) so the primary "new thread" chord always creates a thread; on that
-      // fallback the active branch/worktree context belongs to the absent project, so
-      // `resolveNewThreadTarget` omits it and we defer to the target's defaults.
+      // view) so the primary "new thread" chord always creates a thread. Every ordinary
+      // new-thread command uses the target project's configured workspace default.
       const target = resolveNewThreadTarget({ currentProjectId, latestUsableProjectId });
       if (!target) return;
       event.preventDefault();
       event.stopPropagation();
-      void handleNewThread(
-        target.projectId,
-        target.inheritContext
-          ? resolveInheritedThreadContext({ activeThread, activeDraftThread })
-          : undefined,
-      );
+      void handleNewThread(target.projectId);
     };
 
     window.addEventListener("keydown", onWindowKeyDown, { capture: true });
@@ -443,8 +428,6 @@ function ChatRouteGlobalShortcuts() {
       window.removeEventListener("keydown", onWindowKeyDown, { capture: true });
     };
   }, [
-    activeDraftThread,
-    activeThread,
     cancelRecentSwitcher,
     clearSelection,
     commitRecentSwitcherSelection,

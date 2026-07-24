@@ -20,6 +20,7 @@ const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const SHOW_IN_FOLDER_CHANNEL = "desktop:show-in-folder";
 const CLIPBOARD_WRITE_IMAGE_CHANNEL = "desktop:clipboard-write-image";
+const CLIPBOARD_WRITE_TEXT_CHANNEL = "desktop:clipboard-write-text";
 const WINDOW_MINIMIZE_CHANNEL = "desktop:window-minimize";
 const WINDOW_TOGGLE_MAXIMIZE_CHANNEL = "desktop:window-toggle-maximize";
 const WINDOW_CLOSE_CHANNEL = "desktop:window-close";
@@ -80,6 +81,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     openLogsDirectory: () => ipcRenderer.invoke(DESKTOP_DIAGNOSTICS_IPC_CHANNELS.openLogsDirectory),
   },
   clipboard: {
+    writeText: (text: string) => ipcRenderer.invoke(CLIPBOARD_WRITE_TEXT_CHANNEL, text),
     writeImagePngDataUrl: (dataUrl: string) =>
       ipcRenderer.invoke(CLIPBOARD_WRITE_IMAGE_CHANNEL, dataUrl),
   },

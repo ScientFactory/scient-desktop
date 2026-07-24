@@ -26,6 +26,7 @@ import {
 } from "@synara/shared/desktopIdentity";
 
 import { createDesktopPlatformBuildConfig } from "./lib/desktop-platform-build-config.ts";
+import { resolvePinnedElectronBuilder } from "./lib/electron-builder-authority.ts";
 import {
   createReleaseInstallManifest,
   RELEASE_LOCKFILE_PATH,
@@ -106,10 +107,39 @@ function assertNotContains(haystack: string, needle: string, message: string): v
   }
 }
 
+function assertNotMatches(haystack: string, pattern: RegExp, message: string): void {
+  if (pattern.test(haystack)) {
+    throw new Error(message);
+  }
+}
+
+function verifyReleaseRepositoryPolicy(): void {
+  const lockfileAttributes = execFileSync(
+    "git",
+    ["check-attr", "text", "eol", "--", RELEASE_LOCKFILE_PATH],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+    },
+  )
+    .replaceAll("\r\n", "\n")
+    .trim();
+  const expectedAttributes = [
+    `${RELEASE_LOCKFILE_PATH}: text: set`,
+    `${RELEASE_LOCKFILE_PATH}: eol: lf`,
+  ].join("\n");
+  if (lockfileAttributes !== expectedAttributes) {
+    throw new Error(
+      `Expected Git to resolve ${RELEASE_LOCKFILE_PATH} as text with LF endings; got:\n${lockfileAttributes}`,
+    );
+  }
+}
+
 interface ReleaseWorkflowStep {
   readonly env?: Record<string, unknown>;
   readonly if?: string;
   readonly name?: string;
+  readonly run?: string;
 }
 
 function assertScopedSigningEnvironment(
@@ -210,9 +240,11 @@ function verifyReleaseWorkflowSafety(): void {
   const parsedWorkflow = parseYaml(workflow) as {
     jobs?: {
       build?: { steps?: Array<ReleaseWorkflowStep> };
+      preflight?: { steps?: Array<ReleaseWorkflowStep> };
     };
   };
   const buildSteps = parsedWorkflow.jobs?.build?.steps ?? [];
+  const preflightSteps = parsedWorkflow.jobs?.preflight?.steps ?? [];
   const requireBuildStep = (name: string) => {
     const step = buildSteps.find((candidate) => candidate.name === name);
     if (!step) {
@@ -223,6 +255,39 @@ function verifyReleaseWorkflowSafety(): void {
   const macBuildStep = requireBuildStep("Build macOS desktop artifact");
   const linuxBuildStep = requireBuildStep("Build Linux desktop artifact");
   const windowsBuildStep = requireBuildStep("Build Windows desktop artifact");
+  const releaseMetaIndex = preflightSteps.findIndex(
+    (step) => step.name === "Resolve release policy",
+  );
+  const publicationSourceIndex = preflightSteps.findIndex(
+    (step) => step.name === "Verify publication source",
+  );
+  const installDependenciesIndex = preflightSteps.findIndex(
+    (step) => step.name === "Install dependencies",
+  );
+  const releaseNoteIndex = preflightSteps.findIndex(
+    (step) => step.name === "Verify release-note catalog structure",
+  );
+  if (
+    publicationSourceIndex < 0 ||
+    installDependenciesIndex <= publicationSourceIndex ||
+    installDependenciesIndex >= releaseMetaIndex
+  ) {
+    throw new Error(
+      "Expected release dependencies to install only after publication-source verification and before release policy resolution.",
+    );
+  }
+  if (releaseMetaIndex < 0 || releaseNoteIndex !== releaseMetaIndex + 1) {
+    throw new Error(
+      "Expected the structural release-note gate immediately after release policy resolution.",
+    );
+  }
+  if (
+    !preflightSteps[releaseNoteIndex]?.run?.includes(
+      'scripts/verify-release-notes.ts "${{ steps.release_meta.outputs.version }}"',
+    )
+  ) {
+    throw new Error("Expected the release-note gate to verify the exact resolved version.");
+  }
   const appleSigningNames = [
     "CSC_LINK",
     "CSC_KEY_PASSWORD",
@@ -491,8 +556,38 @@ function verifyDesktopStageLockAuthority(): void {
   );
   assertContains(
     buildScript,
+    "resolvePinnedElectronBuilder(repoRoot).cliPath",
+    "Expected desktop packaging to resolve electron-builder through the authority guard.",
+  );
+  assertContains(
+    buildScript,
+    "`${process.execPath} ${electronBuilderCli}",
+    "Expected desktop packaging to invoke electron-builder through Node.",
+  );
+  assertContains(
+    buildScript,
+    "Pinned electron-builder CLI could not be resolved within repository dependency authority.",
+    "Expected desktop packaging to fail closed when electron-builder cannot be resolved.",
+  );
+  assertContains(
+    buildScript,
+    "Pinned electron-builder CLI was not found at ${electronBuilderCli}",
+    "Expected desktop packaging to fail closed when the resolved CLI is absent.",
+  );
+  assertNotContains(
+    buildScript,
     'path.join(repoRoot, "node_modules", "electron-builder", "cli.js")',
-    "Expected packaging to invoke the pinned root electron-builder CLI without platform-specific shims.",
+    "Desktop packaging must not assume electron-builder is hoisted to the root node_modules directory.",
+  );
+  assertNotContains(
+    buildScript,
+    "electron-builder.cmd",
+    "Desktop packaging must not depend on a platform-specific Windows bin shim.",
+  );
+  assertNotMatches(
+    buildScript,
+    /const electronBuilder\w* = path\.join\([\s\S]{0,240}?["']\.bin["']/,
+    "Desktop packaging must not depend on a hard-coded electron-builder bin directory.",
   );
   assertContains(
     buildScript,
@@ -526,6 +621,31 @@ function verifyDesktopStageLockAuthority(): void {
     '"node-gyp": "12.4.0"',
     "Expected native compiler tooling to be pinned.",
   );
+
+  const rootPackageJson = JSON.parse(rootPackage) as {
+    devDependencies?: Record<string, unknown>;
+  };
+  const scriptsPackageJson = JSON.parse(
+    readFileSync(resolve(repoRoot, "scripts/package.json"), "utf8"),
+  ) as { devDependencies?: Record<string, unknown> };
+  const rootElectronBuilderPin = rootPackageJson.devDependencies?.["electron-builder"];
+  const scriptsElectronBuilderPin = scriptsPackageJson.devDependencies?.["electron-builder"];
+  if (
+    typeof scriptsElectronBuilderPin !== "string" ||
+    !/^\d+\.\d+\.\d+$/.test(scriptsElectronBuilderPin) ||
+    rootElectronBuilderPin !== scriptsElectronBuilderPin
+  ) {
+    throw new Error(
+      "Expected root and scripts workspaces to use the same exact electron-builder version pin.",
+    );
+  }
+
+  const resolvedElectronBuilder = resolvePinnedElectronBuilder(repoRoot);
+  if (resolvedElectronBuilder.version !== scriptsElectronBuilderPin) {
+    throw new Error(
+      `Expected scripts/package.json to resolve electron-builder ${scriptsElectronBuilderPin}, got ${resolvedElectronBuilder.version} from ${resolvedElectronBuilder.cliPath}.`,
+    );
+  }
 }
 
 function readPackageVersion(root: string, relativePath: string): string {
@@ -611,6 +731,7 @@ function verifyFrozenDesktopStageInstall(targetRoot: string, verifyNative = fals
 const tempRoot = mkdtempSync(join(tmpdir(), "scient-release-smoke-"));
 
 try {
+  verifyReleaseRepositoryPolicy();
   verifyCanonicalIdentity();
   verifyReleaseWorkflowSafety();
   verifyDesktopStageLockAuthority();

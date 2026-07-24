@@ -4,6 +4,7 @@ import {
   isLocalAbsolutePath,
   isWorkspaceRelativePathSafe,
   joinWorkspaceRelativePath,
+  parentDirectoryOfLocalPath,
   workspaceRelativePathOf,
 } from "./path";
 
@@ -83,5 +84,22 @@ describe("joinWorkspaceRelativePath", () => {
   it("round-trips through workspaceRelativePathOf", () => {
     const joined = joinWorkspaceRelativePath("/repo/app", "src/page.tsx");
     expect(workspaceRelativePathOf(joined, "/repo/app")).toBe("src/page.tsx");
+  });
+});
+
+describe("parentDirectoryOfLocalPath", () => {
+  it("returns POSIX and Windows parent directories", () => {
+    expect(parentDirectoryOfLocalPath("/Users/dev/Downloads/report.html")).toBe(
+      "/Users/dev/Downloads",
+    );
+    expect(parentDirectoryOfLocalPath("C:\\Users\\dev\\Downloads\\report.html")).toBe(
+      "C:\\Users\\dev\\Downloads",
+    );
+  });
+
+  it("preserves filesystem roots and rejects relative paths", () => {
+    expect(parentDirectoryOfLocalPath("/report.html")).toBe("/");
+    expect(parentDirectoryOfLocalPath("C:\\report.html")).toBe("C:\\");
+    expect(parentDirectoryOfLocalPath("docs/report.html")).toBeNull();
   });
 });

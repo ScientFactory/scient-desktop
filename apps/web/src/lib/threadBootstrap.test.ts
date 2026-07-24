@@ -2,12 +2,13 @@ import { ProjectId, type ModelSelection, ThreadId } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 import { type ComposerThreadDraftState, type DraftThreadState } from "../composerDraftStore";
 import {
-  buildDraftThreadContextPatch,
+  buildDraftThreadWorkspacePatch,
   createActiveDraftThreadSnapshot,
   createActiveThreadSnapshot,
   createFreshDraftThreadSeed,
-  hasDraftContextOverrides,
-  resolveInheritedThreadContext,
+  newThreadNavigationRequestKey,
+  resolveNewThreadWorkspace,
+  resolveNewThreadWorkspaceForEntryPoint,
   resolveTerminalThreadCreationState,
   resolveThreadBootstrapPlan,
   shouldReuseActiveDraftThread,
@@ -15,6 +16,17 @@ import {
 
 const PROJECT_ID = ProjectId.makeUnsafe("project-bootstrap");
 const THREAD_ID = ThreadId.makeUnsafe("thread-bootstrap");
+const DEFAULT_NAVIGATION_TARGET = { projectId: PROJECT_ID, entryPoint: "chat" as const };
+const FIRST_NAVIGATION_SEARCH = (previous: Record<string, unknown>) => ({
+  ...previous,
+  editor: "first",
+});
+const SECOND_NAVIGATION_SEARCH = (previous: Record<string, unknown>) => ({
+  ...previous,
+  editor: "second",
+});
+const FIRST_NAVIGATION_PREPARATION = async () => undefined;
+const SECOND_NAVIGATION_PREPARATION = async () => undefined;
 
 function modelSelection(
   provider: "codex" | "claudeAgent",
@@ -38,6 +50,7 @@ function makeDraftThread(partial?: Partial<DraftThreadState>): DraftThreadState 
     branch: "feature/terminal-bootstrap",
     worktreePath: "/repo/.worktrees/terminal-bootstrap",
     envMode: "worktree",
+    workspaceOrigin: "default",
     ...partial,
   };
 }
@@ -70,31 +83,236 @@ function makeComposerDraftState(
 }
 
 describe("threadBootstrap", () => {
-  it("detects when a draft context override is present", () => {
-    expect(hasDraftContextOverrides()).toBe(false);
-    expect(hasDraftContextOverrides({ branch: "feature/new-branch" })).toBe(true);
+  it("uses distinct navigation request keys for default and exact workspace intents", () => {
+    const defaultKey = newThreadNavigationRequestKey(DEFAULT_NAVIGATION_TARGET);
+    expect(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        options: { workspace: { kind: "project-default" } },
+      }),
+    ).toBe(defaultKey);
+    expect(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        options: {
+          workspace: {
+            kind: "existing-worktree",
+            branch: "feature/exact",
+            worktreePath: "/repo/worktrees/exact",
+          },
+        },
+      }),
+    ).not.toBe(defaultKey);
+    expect(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        options: { fresh: true },
+      }),
+    ).not.toBe(defaultKey);
   });
 
-  it("builds a draft patch only when overrides are provided", () => {
-    expect(buildDraftThreadContextPatch("terminal")).toBeNull();
+  it("does not coalesce distinct custom-search or preparation callbacks", () => {
     expect(
-      buildDraftThreadContextPatch("terminal", {
-        branch: "feature/new-branch",
-        worktreePath: "/repo/.worktrees/new-branch",
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        customSearch: FIRST_NAVIGATION_SEARCH,
       }),
+    ).toBe(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        customSearch: FIRST_NAVIGATION_SEARCH,
+      }),
+    );
+    expect(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        customSearch: FIRST_NAVIGATION_SEARCH,
+      }),
+    ).not.toBe(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        customSearch: SECOND_NAVIGATION_SEARCH,
+      }),
+    );
+    expect(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        options: { prepareNavigation: FIRST_NAVIGATION_PREPARATION },
+      }),
+    ).toBe(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        options: { prepareNavigation: FIRST_NAVIGATION_PREPARATION },
+      }),
+    );
+    expect(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        options: { prepareNavigation: FIRST_NAVIGATION_PREPARATION },
+      }),
+    ).not.toBe(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        options: { prepareNavigation: SECOND_NAVIGATION_PREPARATION },
+      }),
+    );
+    expect(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        options: {
+          prepareNavigation: FIRST_NAVIGATION_PREPARATION,
+          prepareNavigationKey: "sidebar-exact-workspace",
+        },
+      }),
+    ).toBe(
+      newThreadNavigationRequestKey({
+        ...DEFAULT_NAVIGATION_TARGET,
+        options: {
+          prepareNavigation: SECOND_NAVIGATION_PREPARATION,
+          prepareNavigationKey: "sidebar-exact-workspace",
+        },
+      }),
+    );
+  });
+
+  it("keeps project and entry-point targets distinct on the global navigation surface", () => {
+    const projectChat = newThreadNavigationRequestKey({
+      projectId: "project-a",
+      entryPoint: "chat",
+    });
+    expect(newThreadNavigationRequestKey({ projectId: "project-b", entryPoint: "chat" })).not.toBe(
+      projectChat,
+    );
+    expect(
+      newThreadNavigationRequestKey({ projectId: "project-a", entryPoint: "terminal" }),
+    ).not.toBe(projectChat);
+  });
+
+  it("resolves project defaults and exact existing workspaces without partial states", () => {
+    expect(resolveNewThreadWorkspace({ kind: "project-default" }, "worktree")).toEqual({
+      branch: null,
+      worktreePath: null,
+      envMode: "worktree",
+      workspaceOrigin: "default",
+    });
+    expect(resolveNewThreadWorkspace({ kind: "local-container" }, "worktree")).toEqual({
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+      workspaceOrigin: "intentional",
+    });
+    expect(
+      resolveNewThreadWorkspace(
+        {
+          kind: "existing-worktree",
+          branch: "feature/new-branch",
+          worktreePath: "/repo/.worktrees/new-branch",
+        },
+        "local",
+      ),
     ).toEqual({
       branch: "feature/new-branch",
       worktreePath: "/repo/.worktrees/new-branch",
-      entryPoint: "terminal",
+      envMode: "worktree",
+      workspaceOrigin: "intentional",
     });
     expect(
-      buildDraftThreadContextPatch("terminal", {
-        envMode: "local",
+      resolveNewThreadWorkspace({ kind: "existing-local", branch: "feature/local" }, "worktree"),
+    ).toEqual({
+      branch: "feature/local",
+      worktreePath: null,
+      envMode: "local",
+      workspaceOrigin: "intentional",
+    });
+  });
+
+  it("uses an honest local workspace for immediate terminals without a materialized worktree", () => {
+    expect(
+      resolveNewThreadWorkspaceForEntryPoint({
+        defaultEnvMode: "worktree",
+        entryPoint: "terminal",
+        intent: { kind: "project-default" },
       }),
     ).toEqual({
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+      workspaceOrigin: "default",
+    });
+    expect(
+      resolveNewThreadWorkspaceForEntryPoint({
+        defaultEnvMode: "local",
+        entryPoint: "terminal",
+        intent: { kind: "existing-worktree", branch: "stale", worktreePath: "" },
+      }),
+    ).toEqual({
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+      workspaceOrigin: "intentional",
+    });
+    expect(
+      resolveNewThreadWorkspaceForEntryPoint({
+        defaultEnvMode: "local",
+        entryPoint: "terminal",
+        intent: {
+          kind: "existing-worktree",
+          branch: "feature/exact",
+          worktreePath: "/repo/.worktrees/exact",
+        },
+      }),
+    ).toMatchObject({
+      branch: "feature/exact",
+      worktreePath: "/repo/.worktrees/exact",
+      envMode: "worktree",
+    });
+  });
+
+  it("recomputes inactive default drafts while preserving active and intentional workspaces", () => {
+    expect(
+      buildDraftThreadWorkspacePatch({
+        defaultEnvMode: "local",
+        draftThread: makeDraftThread(),
+        entryPoint: "terminal",
+        reuseKind: "stored",
+      }),
+    ).toEqual({
+      branch: null,
       envMode: "local",
       worktreePath: null,
       entryPoint: "terminal",
+      workspaceOrigin: "default",
+    });
+    expect(
+      buildDraftThreadWorkspacePatch({
+        defaultEnvMode: "local",
+        draftThread: makeDraftThread(),
+        entryPoint: "terminal",
+        reuseKind: "route",
+      }),
+    ).toBeNull();
+    expect(
+      buildDraftThreadWorkspacePatch({
+        defaultEnvMode: "local",
+        draftThread: makeDraftThread({ workspaceOrigin: "intentional" }),
+        entryPoint: "terminal",
+        reuseKind: "stored",
+      }),
+    ).toBeNull();
+    expect(
+      buildDraftThreadWorkspacePatch({
+        defaultEnvMode: "local",
+        draftThread: makeDraftThread({ workspaceOrigin: "intentional" }),
+        entryPoint: "terminal",
+        options: { workspace: { kind: "project-default" } },
+        reuseKind: "stored",
+      }),
+    ).toEqual({
+      branch: null,
+      envMode: "local",
+      worktreePath: null,
+      entryPoint: "terminal",
+      workspaceOrigin: "default",
     });
   });
 
@@ -172,74 +390,18 @@ describe("threadBootstrap", () => {
     });
   });
 
-  it("lets an active draft override inherited branch and worktree context", () => {
-    expect(
-      resolveInheritedThreadContext({
-        activeThread: {
-          branch: "feature/server-thread",
-          worktreePath: "/repo/.worktrees/server-thread",
-          envMode: "worktree",
-        },
-        activeDraftThread: makeDraftThread({
-          branch: "feature/draft-thread",
-          worktreePath: "/repo/.worktrees/draft-thread",
-          envMode: "worktree",
-        }),
-      }),
-    ).toEqual({
-      branch: "feature/draft-thread",
-      worktreePath: "/repo/.worktrees/draft-thread",
-      envMode: "worktree",
-    });
-  });
-
-  it("lets a local active draft clear active thread branch and worktree context", () => {
-    expect(
-      resolveInheritedThreadContext({
-        activeThread: {
-          branch: "feature/server-thread",
-          worktreePath: "/repo/.worktrees/server-thread",
-          envMode: "worktree",
-        },
-        activeDraftThread: makeDraftThread({
-          branch: null,
-          worktreePath: null,
-          envMode: "local",
-        }),
-      }),
-    ).toEqual({
-      branch: null,
-      worktreePath: null,
-      envMode: "local",
-    });
-  });
-
-  it("derives inherited environment mode from the active thread when no draft exists", () => {
-    expect(
-      resolveInheritedThreadContext({
-        activeThread: {
-          branch: "feature/server-thread",
-          worktreePath: "/repo/.worktrees/server-thread",
-          envMode: undefined,
-        },
-        activeDraftThread: null,
-      }),
-    ).toEqual({
-      branch: "feature/server-thread",
-      worktreePath: "/repo/.worktrees/server-thread",
-      envMode: "worktree",
-    });
-  });
-
   it("builds the fresh draft seed from creation inputs", () => {
     expect(
       createFreshDraftThreadSeed({
         createdAt: "2026-04-05T10:00:00.000Z",
+        defaultEnvMode: "local",
         entryPoint: "terminal",
         options: {
-          branch: "feature/new-terminal",
-          worktreePath: "/repo/.worktrees/new-terminal",
-          envMode: "worktree",
+          workspace: {
+            kind: "existing-worktree",
+            branch: "feature/new-terminal",
+            worktreePath: "/repo/.worktrees/new-terminal",
+          },
         },
       }),
     ).toEqual({
@@ -247,6 +409,7 @@ describe("threadBootstrap", () => {
       branch: "feature/new-terminal",
       worktreePath: "/repo/.worktrees/new-terminal",
       envMode: "worktree",
+      workspaceOrigin: "intentional",
       runtimeMode: "full-access",
       entryPoint: "terminal",
     });
@@ -256,6 +419,7 @@ describe("threadBootstrap", () => {
     expect(
       createFreshDraftThreadSeed({
         createdAt: "2026-04-05T10:00:00.000Z",
+        defaultEnvMode: "worktree",
         entryPoint: "chat",
         options: {
           temporary: true,
@@ -265,7 +429,8 @@ describe("threadBootstrap", () => {
       createdAt: "2026-04-05T10:00:00.000Z",
       branch: null,
       worktreePath: null,
-      envMode: "local",
+      envMode: "worktree",
+      workspaceOrigin: "default",
       runtimeMode: "full-access",
       entryPoint: "chat",
       isTemporary: true,
@@ -282,9 +447,9 @@ describe("threadBootstrap", () => {
           runtimeMode: "full-access",
           interactionMode: "default",
         },
+        defaultEnvMode: "local",
         draftComposerState: makeComposerDraftState(),
         draftThread: makeDraftThread(),
-        options: undefined,
         projectDefaultModelSelection: modelSelection("codex", "gpt-5.4"),
         projectId: PROJECT_ID,
       }),
@@ -311,9 +476,9 @@ describe("threadBootstrap", () => {
           runtimeMode: "full-access",
           interactionMode: "plan",
         },
+        defaultEnvMode: "local",
         draftComposerState: makeComposerDraftState(),
         draftThread: null,
-        options: undefined,
         projectDefaultModelSelection: modelSelection("codex", "gpt-5.4"),
         projectId: PROJECT_ID,
       }).interactionMode,
@@ -330,16 +495,16 @@ describe("threadBootstrap", () => {
           runtimeMode: "full-access",
           interactionMode: "default",
         },
+        defaultEnvMode: "local",
         draftComposerState: makeComposerDraftState(),
         draftThread: makeDraftThread({ interactionMode: "plan" }),
-        options: undefined,
         projectDefaultModelSelection: modelSelection("codex", "gpt-5.4"),
         projectId: PROJECT_ID,
       }).interactionMode,
     ).toBe("plan");
   });
 
-  it("clears inherited worktree state when an explicit local env override is requested", () => {
+  it("uses the configured default when no draft workspace exists", () => {
     expect(
       resolveTerminalThreadCreationState({
         activeDraftThread: null,
@@ -350,18 +515,38 @@ describe("threadBootstrap", () => {
           interactionMode: "default",
           envMode: "worktree",
         },
+        defaultEnvMode: "local",
         draftComposerState: makeComposerDraftState(),
-        draftThread: makeDraftThread(),
-        options: {
-          envMode: "local",
-        },
+        draftThread: null,
         projectDefaultModelSelection: modelSelection("codex", "gpt-5.4"),
         projectId: PROJECT_ID,
       }),
     ).toMatchObject({
       envMode: "local",
       worktreePath: null,
-      branch: "feature/terminal-bootstrap",
+      branch: null,
+    });
+  });
+
+  it("fails terminal promotion safely to local when worktree metadata has no concrete path", () => {
+    expect(
+      resolveTerminalThreadCreationState({
+        activeDraftThread: null,
+        activeThread: null,
+        defaultEnvMode: "worktree",
+        draftComposerState: makeComposerDraftState(),
+        draftThread: makeDraftThread({
+          branch: "stale-branch",
+          envMode: "worktree",
+          worktreePath: null,
+        }),
+        projectDefaultModelSelection: modelSelection("codex", "gpt-5.4"),
+        projectId: PROJECT_ID,
+      }),
+    ).toMatchObject({
+      envMode: "local",
+      branch: null,
+      worktreePath: null,
     });
   });
 });

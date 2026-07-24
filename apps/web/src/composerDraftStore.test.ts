@@ -12,6 +12,7 @@ import {
   COMPOSER_DRAFT_STORAGE_KEY,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
+  type DraftThreadState,
   type QueuedComposerTurn,
   captureComposerPromptHistorySavedDraft,
   deriveEffectiveComposerModelState,
@@ -656,7 +657,7 @@ describe("composerDraftStore prompt history saved draft", () => {
     setLocalStorageItem(
       COMPOSER_DRAFT_STORAGE_KEY,
       {
-        version: 5,
+        version: 6,
         state: {
           draftsByThreadId: {
             [threadId]: {
@@ -1303,7 +1304,7 @@ describe("composerDraftStore syncPersistedAttachments", () => {
     setLocalStorageItem(
       COMPOSER_DRAFT_STORAGE_KEY,
       {
-        version: 5,
+        version: 6,
         state: {
           draftsByThreadId: {
             [threadId]: {
@@ -1382,7 +1383,7 @@ describe("composerDraftStore syncPersistedAttachments", () => {
     setLocalStorageItem(
       COMPOSER_DRAFT_STORAGE_KEY,
       {
-        version: 5,
+        version: 6,
         state: {
           draftsByThreadId: {
             [threadId]: {
@@ -1816,6 +1817,7 @@ describe("composerDraftStore project draft thread mapping", () => {
       interactionMode: "default",
       createdAt: "2026-01-01T00:00:00.000Z",
       lastKnownPr: null,
+      workspaceOrigin: "intentional",
     });
     expect(useComposerDraftStore.getState().getDraftThread(threadId)).toEqual({
       projectId,
@@ -1827,6 +1829,7 @@ describe("composerDraftStore project draft thread mapping", () => {
       interactionMode: "default",
       createdAt: "2026-01-01T00:00:00.000Z",
       lastKnownPr: null,
+      workspaceOrigin: "intentional",
     });
   });
 
@@ -1842,6 +1845,36 @@ describe("composerDraftStore project draft thread mapping", () => {
 
     store.setDraftThreadContext(threadId, { isTemporary: false });
     expect(useComposerDraftStore.getState().getDraftThread(threadId)?.isTemporary).toBeUndefined();
+  });
+
+  it("tracks whether a draft workspace came from defaults or an intentional choice", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId);
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)?.workspaceOrigin).toBe(
+      "default",
+    );
+
+    store.setDraftThreadContext(threadId, {
+      branch: "feature/intentional",
+      worktreePath: "/tmp/feature-intentional",
+      envMode: "worktree",
+    });
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)?.workspaceOrigin).toBe(
+      "intentional",
+    );
+
+    store.setDraftThreadContext(threadId, {
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+      workspaceOrigin: "default",
+    });
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toMatchObject({
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+      workspaceOrigin: "default",
+    });
   });
 
   it("registers a mapping-less temporary terminal draft for staged navigation", () => {
@@ -3206,6 +3239,43 @@ describe("composerDraftStore sticky composer settings", () => {
       }),
     );
     expect(migratedState.stickyActiveProvider).toBe("claudeAgent");
+  });
+
+  it("migrates legacy draft workspaces to safe default provenance", () => {
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        migrate: (persistedState: unknown, version: number) => unknown;
+      };
+    };
+    const threadId = ThreadId.makeUnsafe("thread-legacy-workspace-origin");
+    const migratedState = persistApi.getOptions().migrate(
+      {
+        draftsByThreadId: {},
+        draftThreadsByThreadId: {
+          [threadId]: {
+            projectId: "project-a",
+            createdAt: "2026-07-24T00:00:00.000Z",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            entryPoint: "chat",
+            branch: "feature/legacy-inherited",
+            worktreePath: "/tmp/legacy-inherited",
+            envMode: "worktree",
+          },
+        },
+        projectDraftThreadIdByProjectId: { "project-a": threadId },
+      },
+      5,
+    ) as {
+      draftThreadsByThreadId: Record<ThreadId, DraftThreadState>;
+    };
+
+    expect(migratedState.draftThreadsByThreadId[threadId]).toMatchObject({
+      branch: "feature/legacy-inherited",
+      worktreePath: "/tmp/legacy-inherited",
+      envMode: "worktree",
+      workspaceOrigin: "default",
+    });
   });
 
   it("applies sticky activeProvider to new drafts", () => {

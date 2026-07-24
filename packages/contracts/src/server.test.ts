@@ -5,6 +5,7 @@ import {
   ServerProviderConnectionCancelInput,
   ServerProviderConnectionStartInput,
   ServerProviderConnectionSubmitAuthorizationCodeInput,
+  ServerProviderInstallInput,
   ServerProviderStatus,
   ServerVoiceTranscriptionInput,
   ServerVoiceTranscriptionResult,
@@ -16,6 +17,10 @@ describe("provider connection contracts", () => {
     expect(decode({ provider: "codex", method: "codex_browser" })).toEqual({
       provider: "codex",
       method: "codex_browser",
+    });
+    expect(decode({ provider: "codex", method: "codex_device_code" })).toEqual({
+      provider: "codex",
+      method: "codex_device_code",
     });
     expect(decode({ provider: "codex", method: "codex_browser", mode: "reauthenticate" })).toEqual({
       provider: "codex",
@@ -37,6 +42,20 @@ describe("provider connection contracts", () => {
     expect(decode({ provider: "cursor", method: "cursor_browser" })).toEqual({
       provider: "cursor",
       method: "cursor_browser",
+    });
+  });
+
+  it("decodes an explicit install-to-sign-in handoff", () => {
+    expect(
+      Schema.decodeUnknownSync(ServerProviderInstallInput)({
+        provider: "codex",
+        planToken: "plan-1",
+        connectionMethod: "codex_browser",
+      }),
+    ).toEqual({
+      provider: "codex",
+      planToken: "plan-1",
+      connectionMethod: "codex_browser",
     });
   });
 
@@ -119,11 +138,13 @@ describe("provider connection contracts", () => {
         message: "Finish signing in in the browser.",
         authorizationUrl:
           "https://auth.x.ai/oauth2/authorize?response_type=code&state=transient-test-state",
+        userCode: "ABCD-EFGH",
       },
     });
 
     expect(decoded.connectionState?.status).toBe("waiting_for_browser");
     expect(decoded.connectionState?.authorizationUrl).toContain("https://auth.x.ai/");
+    expect(decoded.connectionState?.userCode).toBe("ABCD-EFGH");
     expect(Object.keys(decoded.connectionState ?? {})).not.toContain("token");
     expect(Object.keys(decoded.connectionState ?? {})).not.toContain("output");
   });

@@ -554,13 +554,52 @@ function streamedFileResponse(input: {
   readonly path: string;
   readonly sizeBytes: number;
   readonly headers: Record<string, string>;
+  readonly offsetBytes?: number;
+  readonly status?: number;
 }): HttpServerResponse.HttpServerResponse {
-  return HttpServerResponse.stream(input.fileSystem.stream(input.path), {
-    status: 200,
-    contentType: Mime.getType(input.path) ?? "application/octet-stream",
-    contentLength: input.sizeBytes,
-    headers: input.headers,
-  });
+  return HttpServerResponse.stream(
+    input.fileSystem.stream(input.path, {
+      ...(input.offsetBytes !== undefined ? { offset: input.offsetBytes } : {}),
+      bytesToRead: input.sizeBytes,
+    }),
+    {
+      status: input.status ?? 200,
+      contentType: Mime.getType(input.path) ?? "application/octet-stream",
+      contentLength: input.sizeBytes,
+      headers: input.headers,
+    },
+  );
+}
+
+function parseSingleByteRange(
+  value: string | undefined,
+  sizeBytes: number,
+): { readonly start: number; readonly end: number } | null | "invalid" {
+  if (!value) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(value.trim());
+  if (!match || sizeBytes <= 0) return "invalid";
+  const rawStart = match[1] ?? "";
+  const rawEnd = match[2] ?? "";
+  if (rawStart.length === 0 && rawEnd.length === 0) return "invalid";
+
+  if (rawStart.length === 0) {
+    const suffixLength = Number(rawEnd);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return "invalid";
+    return { start: Math.max(0, sizeBytes - suffixLength), end: sizeBytes - 1 };
+  }
+
+  const start = Number(rawStart);
+  const requestedEnd = rawEnd.length > 0 ? Number(rawEnd) : sizeBytes - 1;
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(requestedEnd) ||
+    start < 0 ||
+    requestedEnd < start ||
+    start >= sizeBytes
+  ) {
+    return "invalid";
+  }
+  return { start, end: Math.min(requestedEnd, sizeBytes - 1) };
 }
 
 export const localImageEffectRouteLayer = HttpRouter.add(
@@ -593,12 +632,28 @@ export const localImageEffectRouteLayer = HttpRouter.add(
     const fileSystem = yield* FileSystem.FileSystem;
     const isDownload = url.searchParams.get("download") === "1";
     const safeFileName = previewFile.fileName.replaceAll('"', "");
+    const range = parseSingleByteRange(request.headers.range, previewFile.sizeBytes);
+    if (range === "invalid") {
+      return HttpServerResponse.text("Requested Range Not Satisfiable", {
+        status: 416,
+        headers: {
+          "Accept-Ranges": "bytes",
+          "Content-Range": `bytes */${previewFile.sizeBytes}`,
+        },
+      });
+    }
+    const responseSize = range ? range.end - range.start + 1 : previewFile.sizeBytes;
     return streamedFileResponse({
       fileSystem,
       path: previewFile.path,
-      sizeBytes: previewFile.sizeBytes,
+      sizeBytes: responseSize,
+      ...(range ? { offsetBytes: range.start, status: 206 } : {}),
       headers: {
         "Cache-Control": "private, max-age=60",
+        "Accept-Ranges": "bytes",
+        ...(range
+          ? { "Content-Range": `bytes ${range.start}-${range.end}/${previewFile.sizeBytes}` }
+          : {}),
         // The PDF viewer fetches bytes from either the desktop app origin or
         // the configured Vite dev origin. Reflect only those trusted origins:
         // auth-token-less local servers must not expose workspace files to any

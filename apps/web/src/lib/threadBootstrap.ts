@@ -14,56 +14,174 @@ import {
   type ThreadEnvironmentMode,
   type ThreadId,
 } from "@synara/contracts";
-import { resolveThreadEnvironmentMode } from "@synara/shared/threadEnvironment";
 import {
   type ComposerThreadDraftState,
   type DraftThreadEnvMode,
   type DraftThreadState,
+  type DraftThreadWorkspaceOrigin,
   resolvePreferredComposerModelSelection,
 } from "../composerDraftStore";
-import { DEFAULT_INTERACTION_MODE, type Thread, type ThreadPrimarySurface } from "../types";
+import { DEFAULT_INTERACTION_MODE, type ThreadPrimarySurface } from "../types";
 
 export interface NewThreadOptions {
-  branch?: string | null;
-  worktreePath?: string | null;
-  envMode?: DraftThreadEnvMode;
+  workspace?: NewThreadWorkspaceIntent;
   entryPoint?: ThreadPrimarySurface;
   temporary?: boolean;
   provider?: ProviderKind;
   fresh?: boolean;
+  /**
+   * Runs after this request owns the shared navigation surface and before any draft lookup or
+   * mutation. Returning false cancels the request; a workspace result supplies an intent that is
+   * only known after asynchronous preparation (for example, PR worktree preparation).
+   */
+  prepareNavigation?: (
+    ownership: NewThreadNavigationOwnership,
+  ) => Promise<NewThreadPreparationResult>;
+  /**
+   * Stable identity for preparations whose callback is recreated by the UI. Adjacent identical
+   * actions coalesce, while the same action after a distinct intent starts a new operation.
+   */
+  prepareNavigationKey?: string;
+  /**
+   * Prevents a later route from becoming active while this preparation performs an explicit
+   * non-cancellable side effect, such as checking out a pull-request branch.
+   */
+  prepareNavigationBlocksFollowing?: boolean;
 }
 
-export interface InheritedThreadContext {
+export interface NewThreadNavigationOwnership {
+  readonly isCurrent: () => boolean;
+  /** Marks the owned destination as committed while any post-navigation work may continue. */
+  readonly markRouteCommitted: () => void;
+  readonly routeToken: string;
+}
+
+export type NewThreadPreparationResult =
+  | void
+  | false
+  | { readonly workspace: NewThreadWorkspaceIntent };
+
+export type NewThreadWorkspaceIntent =
+  | { readonly kind: "project-default" }
+  | { readonly kind: "local-container" }
+  | { readonly kind: "existing-local"; readonly branch: string }
+  | {
+      readonly kind: "existing-worktree";
+      readonly branch: string;
+      readonly worktreePath: string;
+    };
+
+export interface ResolvedNewThreadWorkspace {
   branch: string | null;
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
+  workspaceOrigin: DraftThreadWorkspaceOrigin;
 }
 
-// Carry the active surface's branch/worktree/env into a new thread bootstrap.
-// A pending draft wins outright; otherwise we derive the env mode from the
-// active thread's worktree so a fresh thread inherits the same workspace shape.
-export function resolveInheritedThreadContext(input: {
-  activeThread: Pick<Thread, "branch" | "worktreePath" | "envMode"> | null | undefined;
-  activeDraftThread:
-    | Pick<DraftThreadState, "branch" | "worktreePath" | "envMode">
-    | null
+const navigationCallbackIds = new WeakMap<(...args: never[]) => unknown, number>();
+let nextNavigationCallbackId = 1;
+
+function navigationCallbackKey(callback: ((...args: never[]) => unknown) | undefined): string {
+  if (!callback) {
+    return "none";
+  }
+  const existing = navigationCallbackIds.get(callback);
+  if (existing !== undefined) {
+    return String(existing);
+  }
+  const created = nextNavigationCallbackId;
+  nextNavigationCallbackId += 1;
+  navigationCallbackIds.set(callback, created);
+  return String(created);
+}
+
+export function newThreadNavigationRequestKey(input: {
+  readonly projectId: string;
+  readonly entryPoint: ThreadPrimarySurface;
+  readonly customSearch?:
+    | ((previous: Record<string, unknown>) => Record<string, unknown>)
     | undefined;
-}): InheritedThreadContext {
-  const { activeThread, activeDraftThread } = input;
-  if (activeDraftThread) {
-    return {
-      branch: activeDraftThread.branch,
-      worktreePath: activeDraftThread.worktreePath,
-      envMode: activeDraftThread.envMode,
-    };
+  readonly options?: NewThreadOptions | undefined;
+}): string {
+  const workspace = input.options?.workspace ?? { kind: "project-default" as const };
+  const branch = "branch" in workspace ? workspace.branch : "";
+  const worktreePath = "worktreePath" in workspace ? workspace.worktreePath : "";
+  return [
+    input.projectId,
+    input.entryPoint,
+    workspace.kind,
+    branch,
+    worktreePath,
+    input.options?.provider ?? "",
+    input.options?.temporary === true ? "temporary" : "durable",
+    input.options?.fresh === true ? "fresh" : "reuse-eligible",
+    input.options?.prepareNavigationBlocksFollowing === true
+      ? "blocking-preparation"
+      : "concurrent-preparation",
+    `search:${navigationCallbackKey(input.customSearch)}`,
+    `prepare:${
+      input.options?.prepareNavigationKey ?? navigationCallbackKey(input.options?.prepareNavigation)
+    }`,
+  ].join("\u0000");
+}
+
+export function resolveNewThreadWorkspace(
+  intent: NewThreadWorkspaceIntent,
+  defaultEnvMode: DraftThreadEnvMode,
+): ResolvedNewThreadWorkspace {
+  switch (intent.kind) {
+    case "project-default":
+      return {
+        branch: null,
+        worktreePath: null,
+        envMode: defaultEnvMode,
+        workspaceOrigin: "default",
+      };
+    case "local-container":
+      return {
+        branch: null,
+        worktreePath: null,
+        envMode: "local",
+        workspaceOrigin: "intentional",
+      };
+    case "existing-local":
+      return {
+        branch: intent.branch,
+        worktreePath: null,
+        envMode: "local",
+        workspaceOrigin: "intentional",
+      };
+    case "existing-worktree":
+      return {
+        branch: intent.branch,
+        worktreePath: intent.worktreePath,
+        envMode: "worktree",
+        workspaceOrigin: "intentional",
+      };
+  }
+}
+
+// Terminal-first threads are promoted and opened immediately, before the agent lifecycle can
+// materialize a brand-new worktree. A project-default worktree without a concrete path must
+// therefore become an honest local terminal instead of claiming isolation while running at root.
+export function resolveNewThreadWorkspaceForEntryPoint(input: {
+  readonly defaultEnvMode: DraftThreadEnvMode;
+  readonly entryPoint: ThreadPrimarySurface;
+  readonly intent: NewThreadWorkspaceIntent;
+}): ResolvedNewThreadWorkspace {
+  const workspace = resolveNewThreadWorkspace(input.intent, input.defaultEnvMode);
+  if (
+    input.entryPoint !== "terminal" ||
+    workspace.envMode !== "worktree" ||
+    Boolean(workspace.worktreePath?.trim())
+  ) {
+    return workspace;
   }
   return {
-    branch: activeThread?.branch ?? null,
-    worktreePath: activeThread?.worktreePath ?? null,
-    envMode: resolveThreadEnvironmentMode({
-      envMode: activeThread?.envMode,
-      worktreePath: activeThread?.worktreePath ?? null,
-    }),
+    branch: null,
+    worktreePath: null,
+    envMode: "local",
+    workspaceOrigin: workspace.workspaceOrigin,
   };
 }
 
@@ -97,10 +215,10 @@ export type ThreadBootstrapPlan = DraftReusePlanStored | DraftReusePlanRoute | D
 interface ResolveTerminalThreadCreationStateInput {
   activeDraftThread: DraftThreadState | null;
   activeThread: ActiveThreadSnapshot | null;
+  defaultEnvMode: DraftThreadEnvMode;
   defaultProvider?: ProviderKind | null | undefined;
   draftComposerState: ComposerThreadDraftState | null;
   draftThread: DraftThreadState | null;
-  options: NewThreadOptions | undefined;
   projectDefaultModelSelection: ModelSelection | null;
   projectId: ProjectId;
 }
@@ -162,6 +280,7 @@ export function createActiveDraftThreadSnapshot(
     lastKnownPr: activeDraftThread.lastKnownPr ?? null,
     envMode: activeDraftThread.envMode,
     ...(activeDraftThread.isTemporary ? { isTemporary: true } : {}),
+    workspaceOrigin: activeDraftThread.workspaceOrigin,
   };
 }
 
@@ -200,51 +319,59 @@ export function resolveThreadBootstrapPlan(input: {
 // Build the initial draft-thread metadata for a brand new thread bootstrap.
 export function createFreshDraftThreadSeed(input: {
   createdAt: string;
+  defaultEnvMode: DraftThreadEnvMode;
   entryPoint: ThreadPrimarySurface;
-  options: NewThreadOptions | undefined;
+  options?: NewThreadOptions | undefined;
 }): Omit<DraftThreadState, "projectId" | "interactionMode"> {
+  const workspace = resolveNewThreadWorkspaceForEntryPoint({
+    defaultEnvMode: input.defaultEnvMode,
+    entryPoint: input.entryPoint,
+    intent: input.options?.workspace ?? { kind: "project-default" },
+  });
   return {
     createdAt: input.createdAt,
-    branch: input.options?.branch ?? null,
-    worktreePath: input.options?.worktreePath ?? null,
-    envMode: input.options?.envMode ?? "local",
+    ...workspace,
     runtimeMode: DEFAULT_RUNTIME_MODE,
     entryPoint: input.entryPoint,
     ...(input.options?.temporary ? { isTemporary: true } : {}),
   };
 }
 
-// Detect whether the caller wants to override stored draft context before reuse.
-export function hasDraftContextOverrides(options?: NewThreadOptions): boolean {
-  return (
-    options?.branch !== undefined ||
-    options?.worktreePath !== undefined ||
-    options?.envMode !== undefined
-  );
-}
-
-// Build the exact patch we should apply to an existing draft before reusing it.
-export function buildDraftThreadContextPatch(
-  entryPoint: ThreadPrimarySurface,
-  options?: NewThreadOptions,
-): {
-  branch?: string | null;
+// Reopening an inactive default-derived draft recomputes the current project default so
+// stale inherited branches cannot return. An active route draft and an intentionally chosen
+// workspace are preserved unless a caller explicitly supplies a new workspace intent.
+export function buildDraftThreadWorkspacePatch(input: {
+  defaultEnvMode: DraftThreadEnvMode;
+  draftThread: DraftThreadState;
   entryPoint: ThreadPrimarySurface;
-  envMode?: DraftThreadEnvMode;
-  worktreePath?: string | null;
+  options?: NewThreadOptions | undefined;
+  reuseKind: "route" | "stored";
+}): {
+  branch: string | null;
+  entryPoint: ThreadPrimarySurface;
+  envMode: DraftThreadEnvMode;
+  workspaceOrigin: DraftThreadWorkspaceOrigin;
+  worktreePath: string | null;
 } | null {
-  if (!hasDraftContextOverrides(options)) {
+  const workspaceWasSpecified =
+    input.options !== undefined && Object.hasOwn(input.options, "workspace");
+  if (input.reuseKind === "route" && !workspaceWasSpecified) {
     return null;
   }
-  const shouldClearWorktreeForLocalMode =
-    options?.envMode === "local" && options?.worktreePath === undefined;
+  if (
+    input.reuseKind === "stored" &&
+    !workspaceWasSpecified &&
+    input.draftThread.workspaceOrigin === "intentional"
+  ) {
+    return null;
+  }
   return {
-    ...(options?.branch !== undefined ? { branch: options.branch ?? null } : {}),
-    ...(options?.worktreePath !== undefined || shouldClearWorktreeForLocalMode
-      ? { worktreePath: options?.worktreePath ?? null }
-      : {}),
-    ...(options?.envMode !== undefined ? { envMode: options.envMode } : {}),
-    entryPoint,
+    ...resolveNewThreadWorkspaceForEntryPoint({
+      defaultEnvMode: input.defaultEnvMode,
+      entryPoint: input.entryPoint,
+      intent: input.options?.workspace ?? { kind: "project-default" },
+    }),
+    entryPoint: input.entryPoint,
   };
 }
 
@@ -272,20 +399,9 @@ export function shouldReuseActiveDraftThread(input: {
 export function resolveTerminalThreadCreationState(
   input: ResolveTerminalThreadCreationStateInput,
 ): TerminalThreadCreationState {
-  const hasExplicitEnvModeOverride =
-    input.options !== undefined && Object.hasOwn(input.options, "envMode");
-  const explicitEnvMode: DraftThreadEnvMode | undefined = hasExplicitEnvModeOverride
-    ? (input.options?.envMode ?? "local")
-    : undefined;
-  const inheritedEnvMode =
-    input.draftThread?.envMode !== undefined
-      ? input.draftThread.envMode
-      : input.activeThread?.projectId === input.projectId
-        ? input.activeThread.envMode
-        : input.activeDraftThread?.projectId === input.projectId
-          ? input.activeDraftThread.envMode
-          : undefined;
-
+  const draftEnvMode = input.draftThread?.envMode ?? input.defaultEnvMode;
+  const draftWorktreePath = input.draftThread?.worktreePath ?? null;
+  const hasConcreteWorktree = draftEnvMode === "worktree" && Boolean(draftWorktreePath?.trim());
   return {
     modelSelection: resolvePreferredComposerModelSelection({
       draft: input.draftComposerState,
@@ -316,21 +432,11 @@ export function resolveTerminalThreadCreationState(
         ? (input.activeDraftThread.lastKnownPr ?? null)
         : null) ??
       null,
-    envMode: hasExplicitEnvModeOverride
-      ? (explicitEnvMode ?? "local")
-      : (inheritedEnvMode ?? "local"),
+    envMode: draftEnvMode === "worktree" && !hasConcreteWorktree ? "local" : draftEnvMode,
     branch:
-      input.options?.branch !== undefined
-        ? (input.options.branch ?? null)
+      draftEnvMode === "worktree" && !hasConcreteWorktree
+        ? null
         : (input.draftThread?.branch ?? null),
-    worktreePath: (() => {
-      if (input.options?.worktreePath !== undefined) {
-        return input.options.worktreePath ?? null;
-      }
-      if (explicitEnvMode === "local") {
-        return null;
-      }
-      return input.draftThread?.worktreePath ?? null;
-    })(),
+    worktreePath: hasConcreteWorktree ? draftWorktreePath : null,
   };
 }

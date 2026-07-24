@@ -19,6 +19,7 @@ it(
     try {
       await fs.writeFile(path.join(workspace, "index.html"), "<h1>Resolver smoke</h1>");
       await fs.writeFile(path.join(workspace, "second.html"), "<h1>Second origin</h1>");
+      await fs.writeFile(path.join(workspace, "private.txt"), "must not cross the capability");
       await Effect.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
@@ -40,6 +41,12 @@ it(
             );
             expect(response.status).toBe(200);
             expect(yield* Effect.promise(() => response.text())).toContain("Resolver smoke");
+            const denied = yield* Effect.promise(() =>
+              fetch(new URL("/private.txt", prepared.previewUrl!), {
+                signal: AbortSignal.timeout(5_000),
+              }),
+            );
+            expect(denied.status).toBe(404);
           }).pipe(Effect.provide(HtmlArtifactPreviewLive)),
         ),
       );

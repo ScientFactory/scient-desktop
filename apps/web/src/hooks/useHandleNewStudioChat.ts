@@ -22,6 +22,7 @@ export function useHandleNewStudioChat() {
         ensureProjectId: () =>
           ensureStudioProject({ homeDir, chatWorkspaceRoot, studioWorkspaceRoot }),
         handleNewThread,
+        navigationTargetKey: "studio-chat",
         fresh: options?.fresh,
         errorLabel: "Unable to prepare a new Studio chat.",
       }),

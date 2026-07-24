@@ -79,6 +79,7 @@ import {
 import { waitForBackendStartupReady } from "./backendStartupReadiness";
 import { showDesktopConfirmDialog } from "./confirmDialog";
 import { DESKTOP_CONNECTION_WAKE_CHANNEL } from "./desktopConnectionWake";
+import { normalizeClipboardText } from "./clipboardText";
 import { DESKTOP_DIAGNOSTICS_IPC_CHANNELS, openDesktopLogsDirectory } from "./desktopDiagnostics";
 import {
   LSREGISTER_PATH,
@@ -210,6 +211,7 @@ const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const SHOW_IN_FOLDER_CHANNEL = "desktop:show-in-folder";
 const CLIPBOARD_WRITE_IMAGE_CHANNEL = "desktop:clipboard-write-image";
+const CLIPBOARD_WRITE_TEXT_CHANNEL = "desktop:clipboard-write-text";
 const MAX_CLIPBOARD_IMAGE_DATA_URL_LENGTH = 16 * 1024 * 1024;
 const WINDOW_MINIMIZE_CHANNEL = "desktop:window-minimize";
 const WINDOW_TOGGLE_MAXIMIZE_CHANNEL = "desktop:window-toggle-maximize";
@@ -3223,6 +3225,16 @@ function registerIpcHandlers(): void {
     }
 
     clipboard.writeImage(image);
+    return true;
+  });
+
+  ipcMain.removeHandler(CLIPBOARD_WRITE_TEXT_CHANNEL);
+  ipcMain.handle(CLIPBOARD_WRITE_TEXT_CHANNEL, (_event, rawText: unknown) => {
+    const text = normalizeClipboardText(rawText);
+    if (text === null) {
+      return false;
+    }
+    clipboard.writeText(text);
     return true;
   });
 

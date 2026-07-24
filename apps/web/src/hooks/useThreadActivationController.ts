@@ -10,6 +10,10 @@ import { type PaneId, type SplitView, type SplitViewId } from "../splitViewStore
 import { selectThreadTerminalState } from "../terminalStateStore";
 import type { SidebarThreadSummary } from "../types";
 import {
+  coordinateExternalRouteNavigation,
+  draftNavigationSlotKey,
+} from "../lib/stagedDraftNavigation";
+import {
   resolvePreferredSplitForCommand,
   resolveThreadCommandActivation,
 } from "../threadActivation.logic";
@@ -46,10 +50,10 @@ export type ThreadActivationControllerInput = {
 };
 
 // Runs the complete sidebar activation side-effect chain for one thread intent.
-export function activateThreadFromSidebarIntent(
+export async function activateThreadFromSidebarIntent(
   input: ThreadActivationControllerInput,
   threadId: ThreadId,
-): void {
+): Promise<void> {
   const {
     activeSplitView,
     clearSelection,
@@ -76,9 +80,17 @@ export function activateThreadFromSidebarIntent(
     threadId,
   });
   const targetThread = sidebarThreadSummaryById[threadId];
+  if (!targetThread) {
+    return;
+  }
+  // Selecting an existing thread is a route intent on the same visible surface as New Thread.
+  // Revoke delayed preparation immediately, then wait for any non-cancellable Git mutation before
+  // activating the target or changing its terminal/chat presentation.
+  const mayActivate = await coordinateExternalRouteNavigation(draftNavigationSlotKey());
+  if (!mayActivate) return;
   const activation = resolveThreadCommandActivation({
     threadId,
-    threadExists: targetThread !== undefined,
+    threadExists: true,
     activeSidebarThreadId: routeThreadId,
     preferredSplitViewId: preferredSplit?.splitViewId ?? null,
     splitPaneId: preferredSplit?.paneId ?? null,
@@ -240,7 +252,7 @@ export function useThreadActivationController(input: ThreadActivationControllerI
 
   const activateThread = useCallback(
     (threadId: ThreadId) => {
-      activateThreadFromSidebarIntent(
+      void activateThreadFromSidebarIntent(
         {
           activeSplitView,
           clearSelection,

@@ -87,6 +87,16 @@ jobs:
           cd apps/web
           ./node_modules/.bin/playwright install --with-deps chromium
 
+      - name: Electron browser overlay lifecycle
+        timeout-minutes: 2
+        run: |
+          ELECTRON_BINARY="$(cd apps/desktop && bun -e 'console.log(require("electron"))')"
+          ELECTRON_SANDBOX="$(dirname "$ELECTRON_BINARY")/chrome-sandbox"
+          test -f "$ELECTRON_SANDBOX"
+          sudo chown root:root "$ELECTRON_SANDBOX"
+          sudo chmod 4755 "$ELECTRON_SANDBOX"
+          xvfb-run -a bun run test:desktop-browser-overlay-lifecycle
+
       # Blocking product-behavior coverage. Linux-only pixel/font/layout
       # comparisons run separately below while their rendering is quarantined.
       - name: Browser test (stable)
@@ -175,6 +185,9 @@ jobs:
 
       - name: Test Effect Windows process spawn
         run: bun run --cwd apps/server test src/windowsProcessEffect.test.ts
+
+      - name: Test Windows provider runtime discovery
+        run: bun run --cwd apps/server test src/provider/Layers/ProviderRuntimeManager.test.ts
 
       - name: Test Windows private state initialization
         run: |
