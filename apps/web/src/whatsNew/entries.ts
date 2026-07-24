@@ -3,7 +3,8 @@
 // Layer: Web application release communication.
 
 import type { WhatsNewEntry } from "./logic";
+import entries from "./entries.json";
 
-// Upstream Synara release notes are intentionally not user-facing Scient
-// content. Populate this list only when Scient ships its own reviewed release.
-export const WHATS_NEW_ENTRIES: readonly WhatsNewEntry[] = [];
+// Donor release notes are never user-facing Scient content. Populate this list
+// only with Scient-owned copy approved for the exact release candidate.
+export const WHATS_NEW_ENTRIES: readonly WhatsNewEntry[] = entries;
