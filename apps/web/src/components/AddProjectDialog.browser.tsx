@@ -298,7 +298,7 @@ describe("AddProjectDialog", () => {
     }
   });
 
-  it("accepts folder drag feedback across the dialog card but not on its backdrop", async () => {
+  it("accepts folder drag feedback across the dialog card and safely rejects backdrop drops", async () => {
     const onAddProjectPath = vi.fn().mockResolvedValue(false);
     const restoreApi = installNativeApi({
       statuses: vi.fn().mockResolvedValue({ sources: [] }),
@@ -340,13 +340,21 @@ describe("AddProjectDialog", () => {
       expect(backdrop).not.toBeNull();
       const outsideTransfer = makeFolderDragTransfer([{ file: folder, directory: true }]);
       const outsideOver = dispatchDrag(backdrop!, "dragover", outsideTransfer);
-      expect(outsideOver.defaultPrevented).toBe(false);
+      expect(outsideOver.defaultPrevented).toBe(true);
       expect(outsideTransfer.dropEffect).toBe("none");
       const outsideDrop = dispatchDrag(backdrop!, "drop", outsideTransfer);
-      expect(outsideDrop.defaultPrevented).toBe(false);
+      expect(outsideDrop.defaultPrevented).toBe(true);
       await expect
         .element(page.getByTestId("folder-drop-affordance"))
         .toHaveAttribute("data-drop-state", "idle");
+      expect(onAddProjectPath).not.toHaveBeenCalled();
+
+      await page.getByRole("button", { name: "Back", exact: true }).click();
+      const afterCleanupTransfer = makeFolderDragTransfer([{ file: folder, directory: true }]);
+      const afterCleanupOver = dispatchDrag(backdrop!, "dragover", afterCleanupTransfer);
+      const afterCleanupDrop = dispatchDrag(backdrop!, "drop", afterCleanupTransfer);
+      expect(afterCleanupOver.defaultPrevented).toBe(false);
+      expect(afterCleanupDrop.defaultPrevented).toBe(false);
       expect(onAddProjectPath).not.toHaveBeenCalled();
     } finally {
       restoreBridge();

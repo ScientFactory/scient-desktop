@@ -362,6 +362,7 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
 
     const dropTarget = props.folderDropTarget;
     if (!dropTarget) return;
+    const ownerDocument = dropTarget.ownerDocument;
 
     let dragDepth = 0;
     const resetDragState = () => {
@@ -415,12 +416,40 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
         await onSubmit(dropped.path, { createIfMissing: false });
       });
     };
+    const handleOutsideDragOver = (event: globalThis.DragEvent) => {
+      if (
+        !event.dataTransfer ||
+        !isProjectFolderDrag(event.dataTransfer.types) ||
+        event.composedPath().includes(dropTarget)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "none";
+      resetDragState();
+    };
+    const handleOutsideDrop = (event: globalThis.DragEvent) => {
+      if (
+        !event.dataTransfer ||
+        !isProjectFolderDrag(event.dataTransfer.types) ||
+        event.composedPath().includes(dropTarget)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "none";
+      resetDragState();
+    };
 
+    ownerDocument.addEventListener("dragover", handleOutsideDragOver, true);
+    ownerDocument.addEventListener("drop", handleOutsideDrop, true);
     dropTarget.addEventListener("dragenter", handleDragEnter, true);
     dropTarget.addEventListener("dragover", handleDragOver, true);
     dropTarget.addEventListener("dragleave", handleDragLeave, true);
     dropTarget.addEventListener("drop", handleDrop, true);
     return () => {
+      ownerDocument.removeEventListener("dragover", handleOutsideDragOver, true);
+      ownerDocument.removeEventListener("drop", handleOutsideDrop, true);
       dropTarget.removeEventListener("dragenter", handleDragEnter, true);
       dropTarget.removeEventListener("dragover", handleDragOver, true);
       dropTarget.removeEventListener("dragleave", handleDragLeave, true);
