@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -245,10 +253,11 @@ describe("ProviderRuntimeManager managed integrity", () => {
         );
 
         expect(result.beforeInstall.source).toBe("missing");
-        expect(result.afterInstall).toMatchObject({
-          source: "system",
-          executable: path.join(baseDir, "codex.exe"),
-        });
+        expect(result.afterInstall.source).toBe("system");
+        expect(result.afterInstall.executable).not.toBeNull();
+        expect(realpathSync.native(result.afterInstall.executable!)).toBe(
+          realpathSync.native(path.join(baseDir, "codex.exe")),
+        );
         expect(shellMocks.readWindowsPersistentEnvironmentAsync).toHaveBeenCalledTimes(2);
       } finally {
         nowSpy.mockRestore();
