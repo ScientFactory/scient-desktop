@@ -63,22 +63,24 @@ The new row was compared in both resting and drag-over states. The implementatio
 
 ## Verification
 
-- Exact current-main integration tested product head: `5bc3a84e726abc5327fd25a2d2562ac17bd0dd0a` on base `d399509d1835882c4e13b2b01820e649f31adbfd`.
-- Full repository test suite on `5bc3a84e726abc5327fd25a2d2562ac17bd0dd0a`: 12/12 tasks passed; the server suite reported 2178 passed and 7 skipped.
+- Exact current-main integration tested product head: `9cf26b2b462610335988c2659c25e253a0386f84` on base `0428e693417b031529befc2b7498a2635011becb`.
+- Full repository test suite on `9cf26b2b462610335988c2659c25e253a0386f84`: 12/12 tasks passed; the server suite reported 2207 passed and 7 skipped.
+- Historical current-main integration `5bc3a84e726abc5327fd25a2d2562ac17bd0dd0a` on base `d399509d1835882c4e13b2b01820e649f31adbfd`: 12/12 tasks passed.
 - Historical current-main integration `9dd30f221328510781bc84189e10ea2661138b6f` on base `4144022c2f1d127583b9a3a9a3ddfda635ffb10d`: 12/12 tasks passed.
 - Full repository test suite on the previously certified feature head `e118d0a33ec65890f79a490d56bf1134e8b851e0`: 12/12 tasks passed.
 - Historical context: the full suite on earlier post-merge feature head `3a8d5616cdc984609cc41dc0bd23552fb363f1ca` passed 11/12 tasks. The sole failure was `apps/server/src/localServerMonitor.platform.test.ts`, whose native macOS listener discovery returned no processes. The same isolated test failed identically on exact then-current `origin/main` `fffd9e7797b8df34d19ac2bb4439740fb29f11f6`; neither that test nor its implementation differed in the feature branch. That test passed in the exact `9dd30f221328510781bc84189e10ea2661138b6f` full-suite run.
 - Server project-source tests: 10/10 passed.
 - Folder-drop logic tests: 11/11 passed.
 - Add-project browser tests: 22/22 passed.
-- Stable browser certification on `5bc3a84e726abc5327fd25a2d2562ac17bd0dd0a`: 330 passed, 19 skipped across all four isolated groups.
-- Geometry validation on `5bc3a84e726abc5327fd25a2d2562ac17bd0dd0a`: 19 passed, 330 skipped.
+- Stable browser certification on `9cf26b2b462610335988c2659c25e253a0386f84`: 336 passed, 19 skipped across all four isolated groups.
+- Geometry validation on `9cf26b2b462610335988c2659c25e253a0386f84`: 19 passed, 336 skipped.
 - Repository typecheck: 9/9 packages passed.
 - Repository lint: 0 errors (existing warnings remain outside this feature).
 - Brand and identity check passed.
 - Production web build, desktop bundle, server bundle, and CLI bundle passed (5/5 tasks).
 - Release smoke passed, including a native `node-pty` spawn.
 - Native Electron browser-overlay lifecycle acceptance passed after the current-main merge, including 31.25 seconds held occluded and successful recovery.
+- Current-main universal local-file viewer commit `0428e693417b031529befc2b7498a2635011becb` merged without overlap in the folder-drop implementation or its focused tests.
 - The folder-plus tile opened the native macOS directory picker from the exact isolated build and used the same picker/submission action as the footer control.
 - User visual review approved the row, icon, hierarchy, and drag-active presentation.
 - Real Finder-to-Electron drag remains a manual acceptance gate: automated cross-window pointer
