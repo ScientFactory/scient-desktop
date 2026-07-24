@@ -48,7 +48,7 @@ The new row was compared in both resting and drag-over states. The implementatio
 - A live local folder was added through the complete dialog-to-project-initialization journey.
 - Clone failures remove only the newly reserved destination and do not create or delete unrelated parent folders.
 - The final browser state has no current application errors; historical connection warnings occurred only while the isolated development server was intentionally stopped.
-- The browser harness proves that any part of the open Local folder dialog captures a compatible single-folder drag, sets copy feedback, and changes the row copy to “Release to add this folder.”
+- The browser harness proves that any part of the open Local folder popup card captures a compatible single-folder drag, sets copy feedback, and changes the row copy to “Release to add this folder.” File drops that miss the card are neutrally prevented on the backdrop so Chromium cannot navigate away.
 - When Electron supplies that compatible payload, the handler resolves the item through the native bridge and routes its absolute path through the same existing submission path as browse/manual selection.
 - File drops, multiple-item drops, unreadable native paths, and terminal-whitespace paths fail closed with focused guidance.
 - A synchronous single-flight guard prevents rapid duplicate drops or a simultaneous picker action from submitting the same project twice.
@@ -63,7 +63,9 @@ The new row was compared in both resting and drag-over states. The implementatio
 
 ## Verification
 
-- Exact current-main integration tested product head: `9cf26b2b462610335988c2659c25e253a0386f84` on base `0428e693417b031529befc2b7498a2635011becb`.
+- Exact current-main integration tested product head: `ce42a2f90d97f2603c16c81a3ea8bfed76d97348` on base `ca615ee765e29c46a973ef3dd93543d1cccf7cb5`.
+- The final evidence-only candidate and its complete repository/hosted verification are recorded in PR #115; this file does not attempt to self-reference the commit that contains it.
+- Focused verification on the exact product head: folder-drop logic 11/11, Add Project Chromium behavior 22/22, web typecheck, and `git diff --check` passed.
 - Full repository test suite on `9cf26b2b462610335988c2659c25e253a0386f84`: 12/12 tasks passed; the server suite reported 2207 passed and 7 skipped.
 - Historical current-main integration `5bc3a84e726abc5327fd25a2d2562ac17bd0dd0a` on base `d399509d1835882c4e13b2b01820e649f31adbfd`: 12/12 tasks passed.
 - Historical current-main integration `9dd30f221328510781bc84189e10ea2661138b6f` on base `4144022c2f1d127583b9a3a9a3ddfda635ffb10d`: 12/12 tasks passed.
@@ -83,9 +85,10 @@ The new row was compared in both resting and drag-over states. The implementatio
 - Current-main universal local-file viewer commit `0428e693417b031529befc2b7498a2635011becb` merged without overlap in the folder-drop implementation or its focused tests.
 - The folder-plus tile opened the native macOS directory picker from the exact isolated build and used the same picker/submission action as the footer control.
 - User visual review approved the row, icon, hierarchy, and drag-active presentation.
-- Real Finder-to-Electron drag remains a manual acceptance gate: automated cross-window pointer
-  drags did not produce renderer drag events, so this record does not claim native drop proof.
+- Real Finder-to-Electron drag was explicitly waived by Yaacov as a residual acceptance limitation,
+  not a merge gate. Automated cross-window pointer drags did not produce renderer drag events, so
+  this record does not claim native drop proof.
 - Sanitized evidence scan found no local user names, private paths, or embedded image text.
 - `git diff --check` passed.
 
-final result: affected feature and intake gates passed on the current-main integration; the earlier platform-listener failure is retained only as historical context, and literal Finder drag acceptance remains required
+final result: affected feature and intake gates passed on the current-main integration; the earlier platform-listener failure is retained only as historical context, and literal Finder drag delivery remains an explicitly accepted, unperformed limitation
