@@ -43,6 +43,7 @@ import {
 } from "../session-logic";
 import { localSubagentThreadId } from "./ChatView.selectors";
 import type { ProviderModelOption } from "../providerModelOptions";
+import type { ComposerVoiceCompletionIntent } from "./chat/composerVoiceState";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "scient:last-invoked-script-by-project";
 export const DISMISSED_PROVIDER_HEALTH_BANNERS_KEY = "scient:dismissed-provider-health-banners";
@@ -450,6 +451,27 @@ export function resolveEnvironmentPanelVisible(input: {
   return input.environmentEnabled && input.environmentPanelOpen;
 }
 
+// Normal project toolbars stay stable while repository discovery is pending. Studio folders are
+// casual context, so they opt into Git UI only after a positive repository result.
+export function resolveGitRepoUiState(input: {
+  isStudioContainer: boolean;
+  queriedIsRepo: boolean | undefined;
+}): boolean {
+  return input.queriedIsRepo ?? !input.isStudioContainer;
+}
+
+export function shouldShowGitActions(input: {
+  isStudioContainer: boolean;
+  isContainerLandingProject: boolean;
+  hasResolvedWorktreePath: boolean;
+  isGitRepo: boolean;
+}): boolean {
+  if (input.isStudioContainer) {
+    return input.hasResolvedWorktreePath && input.isGitRepo;
+  }
+  return !input.isContainerLandingProject || input.hasResolvedWorktreePath;
+}
+
 // The composer live strip prefers the turn's computed diff (the
 // `thread.turn-diff-completed` event) so it can show real per-file +/- stats.
 // Before that lands, it falls back to mid-turn file-edit work-log activity so
@@ -627,6 +649,23 @@ export function appendVoiceTranscriptToPrompt(
   return currentPrompt.trim().length === 0
     ? trimmedTranscript
     : `${currentPrompt.replace(/\s+$/, "")}\n${trimmedTranscript}`;
+}
+
+export async function completeComposerVoiceTranscript(input: {
+  intent: ComposerVoiceCompletionIntent;
+  currentPrompt: string;
+  transcript: string;
+  insertTranscript: (transcript: string, completedPrompt: string) => boolean;
+  sendPrompt: (prompt: string) => Promise<boolean>;
+}): Promise<"empty" | "inserted" | "preserved" | "sent"> {
+  const nextPrompt = appendVoiceTranscriptToPrompt(input.currentPrompt, input.transcript);
+  if (!nextPrompt) {
+    return "empty";
+  }
+  if (input.intent === "send" && (await input.sendPrompt(nextPrompt))) {
+    return "sent";
+  }
+  return input.insertTranscript(input.transcript, nextPrompt) ? "inserted" : "preserved";
 }
 
 export function sanitizeVoiceErrorMessage(message: string): string {
@@ -1064,6 +1103,78 @@ export function deriveComposerSendState(options: {
       sendableTerminalContexts.length > 0 ||
       sendablePastedTexts.length > 0,
   };
+}
+
+export type ComposerFooterPrimaryAction =
+  | "none"
+  | "pending-input"
+  | "plan-follow-up"
+  | "stop-generation"
+  | "queue-message"
+  | "send-message";
+
+export function deriveComposerFooterActionPlan(options: {
+  hasLiveTurn: boolean;
+  hasSendableContent: boolean;
+  hasActivePendingProgress: boolean;
+  hasPendingApproval: boolean;
+  hasPendingUserInput: boolean;
+  isVoiceActive: boolean;
+  showPlanFollowUpPrompt: boolean;
+  canShowVoiceNotes: boolean;
+}): {
+  primaryAction: ComposerFooterPrimaryAction;
+  showVoiceButton: boolean;
+} {
+  if (options.isVoiceActive) {
+    return { primaryAction: "none", showVoiceButton: false };
+  }
+
+  if (options.hasActivePendingProgress) {
+    return { primaryAction: "pending-input", showVoiceButton: false };
+  }
+
+  if (options.hasPendingApproval) {
+    return { primaryAction: "none", showVoiceButton: false };
+  }
+
+  if (options.hasLiveTurn) {
+    const composerCanAcceptActions = !options.hasPendingUserInput;
+    return {
+      primaryAction:
+        composerCanAcceptActions && options.hasSendableContent
+          ? "queue-message"
+          : "stop-generation",
+      showVoiceButton: composerCanAcceptActions && options.canShowVoiceNotes,
+    };
+  }
+
+  if (options.hasPendingUserInput) {
+    return { primaryAction: "none", showVoiceButton: false };
+  }
+
+  if (options.showPlanFollowUpPrompt) {
+    return { primaryAction: "plan-follow-up", showVoiceButton: false };
+  }
+
+  return {
+    primaryAction: "send-message",
+    showVoiceButton: options.canShowVoiceNotes,
+  };
+}
+
+export function shouldRouteComposerSendToPendingInput(options: {
+  hasActivePendingProgress: boolean;
+  hasVoicePromptOverride: boolean;
+}): boolean {
+  return options.hasActivePendingProgress && !options.hasVoicePromptOverride;
+}
+
+export function shouldRenderComposerFooter(options: {
+  hasPendingApproval: boolean;
+  isVoiceActive: boolean;
+}): boolean {
+  return !options.hasPendingApproval || options.isVoiceActive;
 }
 
 export function collectUserMessageAssistantSelections(

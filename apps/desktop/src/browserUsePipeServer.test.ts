@@ -107,7 +107,9 @@ function makeFakeBrowserManager() {
     tabs: [
       {
         id: "tab-a",
+        kind: "web",
         url: "https://example.test/a",
+        displayUrl: null,
         title: "Tab A",
         status: "live",
         isLoading: false,
@@ -119,7 +121,9 @@ function makeFakeBrowserManager() {
       },
       {
         id: "tab-b",
+        kind: "web",
         url: "https://example.test/b",
+        displayUrl: null,
         title: "Tab B",
         status: "live",
         isLoading: false,

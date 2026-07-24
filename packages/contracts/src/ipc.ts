@@ -89,11 +89,17 @@ import type {
   ProjectDevServerEvent,
   ProjectDiscoverScriptsInput,
   ProjectDiscoverScriptsResult,
+  ProjectInspectHtmlArtifactInput,
+  ProjectInspectHtmlArtifactResult,
   ProjectListDevServersResult,
   ProjectListDirectoriesInput,
   ProjectListDirectoriesResult,
   ProjectReadFileInput,
   ProjectReadFileResult,
+  ProjectPrepareHtmlArtifactPreviewInput,
+  ProjectPrepareHtmlArtifactPreviewResult,
+  ProjectRevokeHtmlArtifactPreviewInput,
+  ProjectRevokeHtmlArtifactPreviewResult,
   ProjectRunDevServerInput,
   ProjectRunDevServerResult,
   ProjectSearchEntriesInput,
@@ -117,7 +123,12 @@ import type {
   ScientProjectInitializationPreviewResult,
   ScientProjectInitializationRollbackResult,
 } from "./scientProjectInitialization";
-import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem";
+import type {
+  FilesystemBrowseInput,
+  FilesystemBrowseResult,
+  FilesystemCreateDirectoryInput,
+  FilesystemCreateDirectoryResult,
+} from "./filesystem";
 import type { StudioListThreadOutputsInput, StudioListThreadOutputsResult } from "./studio";
 import type {
   ServerConfig,
@@ -287,9 +298,13 @@ export interface DesktopUpdateActionResult {
   state: DesktopUpdateState;
 }
 
+export type BrowserTabKind = "web" | "artifact" | "local-app";
+
 export interface BrowserTabState {
   id: string;
+  kind: BrowserTabKind;
   url: string;
+  displayUrl: string | null;
   title: string;
   status: "live" | "suspended";
   isLoading: boolean;
@@ -312,6 +327,8 @@ export interface ThreadBrowserState {
 export interface BrowserOpenInput {
   threadId: ThreadId;
   initialUrl?: string;
+  kind?: BrowserTabKind;
+  displayUrl?: string;
 }
 
 export interface BrowserThreadInput {
@@ -332,6 +349,8 @@ export interface BrowserNavigateInput {
 export interface BrowserNewTabInput {
   threadId: ThreadId;
   url?: string;
+  kind?: BrowserTabKind;
+  displayUrl?: string;
   activate?: boolean;
 }
 
@@ -579,6 +598,15 @@ export interface NativeApi {
     createLocalFilePreviewGrant: (
       input: ProjectCreateLocalFilePreviewGrantInput,
     ) => Promise<ProjectCreateLocalFilePreviewGrantResult>;
+    inspectHtmlArtifact: (
+      input: ProjectInspectHtmlArtifactInput,
+    ) => Promise<ProjectInspectHtmlArtifactResult>;
+    prepareHtmlArtifactPreview: (
+      input: ProjectPrepareHtmlArtifactPreviewInput,
+    ) => Promise<ProjectPrepareHtmlArtifactPreviewResult>;
+    revokeHtmlArtifactPreview: (
+      input: ProjectRevokeHtmlArtifactPreviewInput,
+    ) => Promise<ProjectRevokeHtmlArtifactPreviewResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
     runDevServer: (input: ProjectRunDevServerInput) => Promise<ProjectRunDevServerResult>;
     stopDevServer: (input: ProjectStopDevServerInput) => Promise<ProjectStopDevServerResult>;
@@ -601,6 +629,9 @@ export interface NativeApi {
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
+    createDirectory: (
+      input: FilesystemCreateDirectoryInput,
+    ) => Promise<FilesystemCreateDirectoryResult>;
   };
   studio: {
     listThreadOutputs: (

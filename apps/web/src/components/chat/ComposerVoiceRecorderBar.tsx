@@ -7,17 +7,19 @@ import { memo, useEffect, useRef, useState } from "react";
 import { FiArrowUp } from "react-icons/fi";
 import { IoStopSharp } from "react-icons/io5";
 
+import { CentralIcon } from "~/lib/central-icons";
 import { Loader2Icon } from "~/lib/icons";
 import { cn } from "~/lib/utils";
+import type { ComposerVoiceCompletionIntent } from "./composerVoiceState";
 
 interface ComposerVoiceRecorderBarProps {
   disabled?: boolean;
   durationLabel: string;
-  isRecording: boolean;
-  isTranscribing: boolean;
+  completionIntent: ComposerVoiceCompletionIntent | null;
   waveformLevels: readonly number[];
   onCancel: () => void;
-  onSubmit: () => void;
+  onInsert: () => void;
+  onSend?: () => void;
 }
 
 const BAR_WIDTH_PX = 2;
@@ -50,6 +52,14 @@ export const ComposerVoiceRecorderBar = memo(function ComposerVoiceRecorderBar(
   }, []);
 
   const visibleLevels = props.waveformLevels.slice(-visibleBarCount);
+  const isTranscribing = props.completionIntent !== null;
+  const insertIsActive = props.completionIntent === "insert";
+  const sendIsActive = props.completionIntent === "send";
+  const cancelLabel = isTranscribing ? "Cancel voice transcription" : "Cancel voice recording";
+  const insertLabel = insertIsActive
+    ? "Transcribing voice note to composer"
+    : "Stop and insert voice note";
+  const sendLabel = sendIsActive ? "Transcribing voice note to send" : "Send voice note";
 
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2.5">
@@ -74,7 +84,7 @@ export const ComposerVoiceRecorderBar = memo(function ComposerVoiceRecorderBar(
                 aria-hidden="true"
                 className={cn(
                   "shrink-0 rounded-[1px] bg-zinc-900 dark:bg-zinc-100",
-                  props.isTranscribing && "opacity-55",
+                  isTranscribing && "opacity-55",
                 )}
                 style={{
                   width: `${BAR_WIDTH_PX}px`,
@@ -92,31 +102,51 @@ export const ComposerVoiceRecorderBar = memo(function ComposerVoiceRecorderBar(
 
       <button
         type="button"
-        className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-zinc-200/80 text-zinc-700 transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white/10 dark:text-zinc-100 dark:hover:bg-white/15 sm:h-7 sm:w-7"
-        aria-label={props.isTranscribing ? "Transcribing voice note" : "Cancel voice note"}
-        disabled={props.disabled || props.isTranscribing}
+        className="flex h-[26px] w-[26px] shrink-0 items-center justify-center text-zinc-700 transition-colors hover:text-zinc-950 disabled:cursor-not-allowed disabled:opacity-50 dark:text-zinc-100 dark:hover:text-white sm:h-7 sm:w-7"
+        aria-label={cancelLabel}
+        title={cancelLabel}
         onClick={props.onCancel}
       >
-        {props.isTranscribing ? (
+        <CentralIcon name="trash-can-simple" className="size-[15px]" />
+      </button>
+
+      <button
+        type="button"
+        className={cn(
+          "flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-zinc-200/80 text-zinc-700 transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed dark:bg-white/10 dark:text-zinc-100 dark:hover:bg-white/15 sm:h-7 sm:w-7",
+          sendIsActive && "opacity-40",
+        )}
+        aria-label={insertLabel}
+        title={insertLabel}
+        disabled={props.disabled || isTranscribing}
+        onClick={props.onInsert}
+      >
+        {insertIsActive ? (
           <Loader2Icon aria-hidden="true" className="size-3 animate-spin" />
         ) : (
           <IoStopSharp aria-hidden="true" className="size-[11px]" />
         )}
       </button>
 
-      <button
-        type="button"
-        className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-foreground text-background transition-transform duration-150 hover:scale-105 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100 sm:h-7 sm:w-7"
-        aria-label={props.isTranscribing ? "Transcribing voice note" : "Send voice note"}
-        disabled={props.disabled || props.isTranscribing}
-        onClick={props.onSubmit}
-      >
-        {props.isTranscribing ? (
-          <Loader2Icon aria-hidden="true" className="size-3 animate-spin" />
-        ) : (
-          <FiArrowUp aria-hidden="true" className="size-[13px]" strokeWidth={2.25} />
-        )}
-      </button>
+      {props.onSend ? (
+        <button
+          type="button"
+          className={cn(
+            "flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-foreground text-background transition-transform duration-150 hover:scale-105 disabled:cursor-not-allowed disabled:hover:scale-100 sm:h-7 sm:w-7",
+            insertIsActive && "opacity-40",
+          )}
+          aria-label={sendLabel}
+          title={sendLabel}
+          disabled={props.disabled || isTranscribing}
+          onClick={props.onSend}
+        >
+          {sendIsActive ? (
+            <Loader2Icon aria-hidden="true" className="size-3 animate-spin" />
+          ) : (
+            <FiArrowUp aria-hidden="true" className="size-[13px]" strokeWidth={2.25} />
+          )}
+        </button>
+      ) : null}
     </div>
   );
 });

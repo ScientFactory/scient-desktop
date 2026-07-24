@@ -6,6 +6,7 @@ import {
   localServerAddressLabel,
   localServerFolderLabel,
   localServerMatchesRun,
+  localServerProcessMatchesRun,
   localServerPrimaryLabel,
 } from "./localServers";
 
@@ -120,5 +121,28 @@ describe("localServerMatchesRun", () => {
         cwd: "/repo/app",
       }),
     ).toBe(false);
+  });
+});
+
+describe("localServerProcessMatchesRun", () => {
+  it("accepts exact and ancestor process ownership", () => {
+    expect(
+      localServerProcessMatchesRun(makeServer({ pid: 200 }), {
+        pid: 200,
+        cwd: "/repo/app",
+      }),
+    ).toBe(true);
+    expect(
+      localServerProcessMatchesRun(makeServer({ pid: 300, ancestorPids: [200, 100] }), {
+        pid: 100,
+        cwd: "/repo/app",
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects cwd-only attribution and runs without a tracked pid", () => {
+    const server = makeServer({ pid: 200, cwd: "/repo/app/packages/web" });
+    expect(localServerProcessMatchesRun(server, { pid: 100, cwd: "/repo/app" })).toBe(false);
+    expect(localServerProcessMatchesRun(server, { pid: null, cwd: "/repo/app" })).toBe(false);
   });
 });

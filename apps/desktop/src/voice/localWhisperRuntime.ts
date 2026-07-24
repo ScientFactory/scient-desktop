@@ -93,7 +93,6 @@ export function buildWhisperServerArguments(input: {
     "--language",
     "auto",
     "--no-timestamps",
-    "--no-context",
   ];
 }
 

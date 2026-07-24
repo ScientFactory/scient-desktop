@@ -15,7 +15,7 @@ const headerButtonDarkBorderClassName =
 // Variant taxonomy (visual treatment) × size axis × content (icon / text / icon+text).
 //
 //   filled      → default (primary) | secondary | destructive | prominent
-//   outlined    → outline | primary-outline | secondary-outline | destructive-outline | chrome-outline
+//   outlined    → outline | primary-outline | info-outline | secondary-outline | destructive-outline | chrome-outline
 //   ghostly     → ghost | chrome | subtle | link
 //
 // Sizes pair text variants (chip/xs/sm/default/lg/xl) with their square
@@ -82,6 +82,8 @@ const buttonVariants = cva(
           "border-[color:var(--color-border)] bg-[var(--color-background-elevated-primary-opaque)] text-destructive [:hover,[data-pressed]]:border-destructive/32 [:hover,[data-pressed]]:bg-destructive/4 [:hover,[data-pressed]]:text-destructive",
         ghost:
           "border-transparent bg-transparent text-[var(--color-text-foreground-secondary)] focus-visible:ring-[color:var(--color-border-focus)]/60 focus-visible:ring-offset-0 [:hover,[data-pressed]]:bg-[var(--color-background-button-secondary-hover)] [:hover,[data-pressed]]:text-[var(--color-text-foreground)] data-pressed:bg-[var(--color-background-button-secondary)] data-pressed:text-[var(--color-text-foreground)]",
+        "info-outline":
+          "border-info/32 bg-info/4 text-info-foreground focus-visible:ring-info/40 [:hover,[data-pressed]]:border-info/45 [:hover,[data-pressed]]:bg-info/8",
         link: "border-transparent underline-offset-4 [:hover,[data-pressed]]:underline",
         outline:
           "border-[color:var(--color-border)] bg-transparent text-[var(--color-text-foreground)] focus-visible:ring-[color:var(--color-border-focus)]/60 [:hover,[data-pressed]]:bg-[var(--color-background-elevated-secondary)] dark:[:hover,[data-pressed]]:bg-[var(--color-background-elevated-secondary)]",

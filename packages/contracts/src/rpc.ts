@@ -19,7 +19,12 @@ import {
   AutomationUpdateInput,
 } from "./automation";
 import { OpenInEditorInput } from "./editor";
-import { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem";
+import {
+  FilesystemBrowseInput,
+  FilesystemBrowseResult,
+  FilesystemCreateDirectoryInput,
+  FilesystemCreateDirectoryResult,
+} from "./filesystem";
 import { StudioListThreadOutputsInput, StudioListThreadOutputsResult } from "./studio";
 import {
   GitCheckoutInput,
@@ -113,11 +118,17 @@ import {
   ProjectDevServerEvent,
   ProjectDiscoverScriptsInput,
   ProjectDiscoverScriptsResult,
+  ProjectInspectHtmlArtifactInput,
+  ProjectInspectHtmlArtifactResult,
   ProjectListDevServersResult,
   ProjectListDirectoriesInput,
   ProjectListDirectoriesResult,
   ProjectReadFileInput,
   ProjectReadFileResult,
+  ProjectPrepareHtmlArtifactPreviewInput,
+  ProjectPrepareHtmlArtifactPreviewResult,
+  ProjectRevokeHtmlArtifactPreviewInput,
+  ProjectRevokeHtmlArtifactPreviewResult,
   ProjectRunDevServerInput,
   ProjectRunDevServerResult,
   ProjectSearchEntriesInput,
@@ -383,6 +394,30 @@ export const WsProjectsCreateLocalFilePreviewGrantRpc = Rpc.make(
   },
 );
 
+export const WsProjectsInspectHtmlArtifactRpc = Rpc.make(WS_METHODS.projectsInspectHtmlArtifact, {
+  payload: ProjectInspectHtmlArtifactInput,
+  success: ProjectInspectHtmlArtifactResult,
+  error: WsRpcError,
+});
+
+export const WsProjectsPrepareHtmlArtifactPreviewRpc = Rpc.make(
+  WS_METHODS.projectsPrepareHtmlArtifactPreview,
+  {
+    payload: ProjectPrepareHtmlArtifactPreviewInput,
+    success: ProjectPrepareHtmlArtifactPreviewResult,
+    error: WsRpcError,
+  },
+);
+
+export const WsProjectsRevokeHtmlArtifactPreviewRpc = Rpc.make(
+  WS_METHODS.projectsRevokeHtmlArtifactPreview,
+  {
+    payload: ProjectRevokeHtmlArtifactPreviewInput,
+    success: ProjectRevokeHtmlArtifactPreviewResult,
+    error: WsRpcError,
+  },
+);
+
 export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
@@ -426,6 +461,12 @@ export const WsStudioListThreadOutputsRpc = Rpc.make(WS_METHODS.studioListThread
 export const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   payload: FilesystemBrowseInput,
   success: FilesystemBrowseResult,
+  error: WsRpcError,
+});
+
+export const WsFilesystemCreateDirectoryRpc = Rpc.make(WS_METHODS.filesystemCreateDirectory, {
+  payload: FilesystemCreateDirectoryInput,
+  success: FilesystemCreateDirectoryResult,
   error: WsRpcError,
 });
 
@@ -1027,6 +1068,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsSearchLocalEntriesRpc,
   WsProjectsReadFileRpc,
   WsProjectsCreateLocalFilePreviewGrantRpc,
+  WsProjectsInspectHtmlArtifactRpc,
+  WsProjectsPrepareHtmlArtifactPreviewRpc,
+  WsProjectsRevokeHtmlArtifactPreviewRpc,
   WsProjectsWriteFileRpc,
   WsProjectsRunDevServerRpc,
   WsProjectsStopDevServerRpc,
@@ -1040,6 +1084,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsScientProjectInitializationRollbackRpc,
   WsStudioListThreadOutputsRpc,
   WsFilesystemBrowseRpc,
+  WsFilesystemCreateDirectoryRpc,
   WsShellOpenInEditorRpc,
   WsGitGithubRepositoryRpc,
   WsGitStatusRpc,

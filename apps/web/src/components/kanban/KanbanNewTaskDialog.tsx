@@ -563,11 +563,10 @@ export function KanbanNewTaskDialog({
             {isVoiceActive ? (
               <ComposerVoiceRecorderBar
                 durationLabel={voice.voiceRecordingDurationLabel}
-                isRecording={voice.isVoiceRecording}
-                isTranscribing={voice.isVoiceTranscribing}
+                completionIntent={voice.voiceCompletionIntent}
                 waveformLevels={voice.voiceWaveformLevels}
                 onCancel={voice.cancelComposerVoiceRecording}
-                onSubmit={() => void voice.submitComposerVoiceRecording()}
+                onInsert={() => void voice.finishComposerVoiceRecording()}
               />
             ) : (
               <div className="flex w-full items-center justify-between gap-2">

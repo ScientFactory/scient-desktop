@@ -7,7 +7,16 @@ import {
   normalizeBrowserAddressInput,
   resolveBrowserChromeStatus,
   resolveBrowserAddressSync,
+  shouldCloseBrowserPanelAfterTabClose,
 } from "./BrowserPanel.logic";
+
+describe("shouldCloseBrowserPanelAfterTabClose", () => {
+  it("closes the dock pane only after the browser session has fully closed", () => {
+    expect(shouldCloseBrowserPanelAfterTabClose({ open: false, tabs: [] })).toBe(true);
+    expect(shouldCloseBrowserPanelAfterTabClose({ open: true, tabs: [] })).toBe(false);
+    expect(shouldCloseBrowserPanelAfterTabClose({ open: false, tabs: [{}] })).toBe(false);
+  });
+});
 
 describe("browserCopyFeedbackMatches", () => {
   const feedback = {
@@ -47,6 +56,15 @@ describe("browserAddressDisplayValue", () => {
 
   it("keeps real urls visible", () => {
     expect(browserAddressDisplayValue({ url: "https://x.com/" })).toBe("https://x.com/");
+  });
+
+  it("shows an artifact source path instead of its capability URL", () => {
+    expect(
+      browserAddressDisplayValue({
+        url: "http://g-secret.preview.localhost:5000/",
+        displayUrl: "/workspace/report.html",
+      }),
+    ).toBe("/workspace/report.html");
   });
 });
 

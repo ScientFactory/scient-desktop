@@ -9,6 +9,23 @@
 const RESERVED_FRAME_NAMES = new Set(["", "_blank", "_self", "_parent", "_top"]);
 export const BROWSER_BLANK_URL = "about:blank";
 export const BROWSER_SEARCH_URL_PREFIX = "https://www.google.com/search?q=";
+export const BROWSER_WEB_SESSION_PARTITION = "persist:scient-browser";
+export const BROWSER_ARTIFACT_SESSION_PARTITION = "scient-artifact-preview";
+
+export function browserSessionPartition(
+  kind: "web" | "artifact" | "local-app",
+  threadId: string,
+  tabId?: string,
+): string {
+  switch (kind) {
+    case "artifact":
+      return `${BROWSER_ARTIFACT_SESSION_PARTITION}-${threadId}-${tabId ?? "pending"}`;
+    case "local-app":
+      return `persist:scient-local-preview-${threadId}`;
+    case "web":
+      return BROWSER_WEB_SESSION_PARTITION;
+  }
+}
 
 // Dedicated auth hosts are safe popup signals. Multi-purpose hosts such as github.com need
 // path checks below so ordinary _blank links still open as tabs.

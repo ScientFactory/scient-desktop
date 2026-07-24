@@ -16,6 +16,7 @@ import { type ThreadId } from "@synara/contracts";
 import { type TerminalActivityState, type TerminalCliKind } from "@synara/shared/terminalThreads";
 import { Terminal } from "@xterm/xterm";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { copyTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import { readNativeApi } from "~/nativeApi";
 import {
@@ -31,14 +32,18 @@ import {
 } from "./terminal/TerminalChrome";
 import { resolveThreadTerminalLayout } from "./terminal/TerminalLayout";
 import {
+  executeTerminalSelectionAction,
   resolveTerminalSelectionActionPosition,
+  runTerminalSelectionMenuAction,
   shouldHandleTerminalSelectionMouseUp,
+  terminalSelectionCopyFailureMessage,
   terminalSelectionActionDelayForClickCount,
 } from "./terminal/terminalSelectionActions";
 import {
   buildTerminalRuntimeKey,
   terminalRuntimeRegistry,
 } from "./terminal/terminalRuntimeRegistry";
+import { writeSystemMessage } from "./terminal/terminalRuntimeAppearance";
 import type {
   TerminalRuntimeConfig,
   TerminalRuntimeStatus,
@@ -312,6 +317,7 @@ function TerminalViewport({
 
   const readSelectionAction = useCallback((): {
     position: { x: number; y: number };
+    clipboardText: string;
     selection: TerminalContextSelection;
   } | null => {
     const activeTerminal = terminalRef.current;
@@ -340,6 +346,7 @@ function TerminalViewport({
     });
     return {
       position,
+      clipboardText: selectionText,
       selection: {
         terminalId,
         terminalLabel: terminalLabelRef.current,
@@ -363,20 +370,39 @@ function TerminalViewport({
     if (!api) return;
     const requestId = ++selectionActionRequestIdRef.current;
     selectionActionOpenRef.current = true;
-    try {
-      const clicked = await api.contextMenu.show(
-        [{ id: "add-to-chat", label: "Add to chat" }],
-        nextAction.position,
-      );
-      if (requestId !== selectionActionRequestIdRef.current || clicked !== "add-to-chat") {
-        return;
-      }
-      onAddTerminalContextRef.current(nextAction.selection);
-      terminalRef.current?.clearSelection();
-      terminalRuntimeRegistry.focus(runtimeKey);
-    } finally {
-      selectionActionOpenRef.current = false;
-    }
+    await runTerminalSelectionMenuAction({
+      showMenu: async () => {
+        const clicked = await api.contextMenu.show(
+          [
+            { id: "add-to-chat", label: "Add to chat" },
+            { id: "copy", label: "Copy" },
+          ],
+          nextAction.position,
+        );
+        return clicked === "add-to-chat" || clicked === "copy" ? clicked : null;
+      },
+      releaseMenu: () => {
+        selectionActionOpenRef.current = false;
+      },
+      isCurrent: () => requestId === selectionActionRequestIdRef.current,
+      execute: (clicked) =>
+        executeTerminalSelectionAction({
+          action: clicked,
+          clipboardText: nextAction.clipboardText,
+          selection: nextAction.selection,
+          copyText: copyTextToClipboard,
+          addToChat: (selection) => onAddTerminalContextRef.current(selection),
+          clearSelection: () => terminalRef.current?.clearSelection(),
+          focusTerminal: () => terminalRuntimeRegistry.focus(runtimeKey),
+          reportCopyError: (error) => {
+            const activeTerminal = terminalRef.current;
+            if (activeTerminal) {
+              writeSystemMessage(activeTerminal, terminalSelectionCopyFailureMessage(error));
+            }
+          },
+          isCurrent: () => requestId === selectionActionRequestIdRef.current,
+        }),
+    });
   }, [clearSelectionAction, readSelectionAction, runtimeKey]);
 
   useEffect(() => {

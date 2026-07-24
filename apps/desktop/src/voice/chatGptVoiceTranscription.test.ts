@@ -1,6 +1,8 @@
 import { Buffer } from "node:buffer";
+import { EventEmitter } from "node:events";
 
 import type { NormalizedVoiceClip } from "@synara/shared/voiceTranscription";
+import { net } from "electron";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("electron", () => ({
@@ -8,7 +10,10 @@ vi.mock("electron", () => ({
   net: { request: vi.fn() },
 }));
 
-import { createDesktopChatGptVoiceTranscriptionBackend } from "./chatGptVoiceTranscription";
+import {
+  createDesktopChatGptVoiceTranscriptionBackend,
+  requestDesktopVoiceTranscription,
+} from "./chatGptVoiceTranscription";
 
 function chatGptToken(accountId: string | null = "account-123"): string {
   const encode = (value: unknown) =>
@@ -132,5 +137,44 @@ describe("createDesktopChatGptVoiceTranscriptionBackend", () => {
 
     await expect(availability).resolves.toMatchObject({ state: "unavailable" });
     expect(observedSignal?.aborted).toBe(true);
+  });
+});
+
+describe("requestDesktopVoiceTranscription", () => {
+  it("lets Electron frame the request body without setting restricted Content-Length", async () => {
+    const response = Object.assign(new EventEmitter(), {
+      statusCode: 200,
+      headers: {},
+    });
+    const setHeader = vi.fn((name: string) => {
+      if (name.toLowerCase() === "content-length") {
+        throw new Error("Electron forbids setting Content-Length");
+      }
+    });
+    const request = Object.assign(new EventEmitter(), {
+      abort: vi.fn(),
+      setHeader,
+      write: vi.fn(),
+      end: vi.fn(() => {
+        queueMicrotask(() => {
+          request.emit("response", response);
+          response.emit("data", Buffer.from('{"text":"hello"}', "utf8"));
+          response.emit("end");
+        });
+      }),
+    });
+    vi.mocked(net.request).mockReturnValue(request as never);
+
+    await expect(
+      requestDesktopVoiceTranscription({
+        clip,
+        token: chatGptToken(),
+        accountId: "account-123",
+        signal: new AbortController().signal,
+        timeoutMs: 1_000,
+      }),
+    ).resolves.toMatchObject({ statusCode: 200, body: '{"text":"hello"}' });
+
+    expect(setHeader).not.toHaveBeenCalledWith("Content-Length", expect.any(String));
   });
 });
