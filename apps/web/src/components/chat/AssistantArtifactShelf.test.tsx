@@ -26,6 +26,8 @@ describe("AssistantArtifactShelf", () => {
     expect(markup).toMatch(
       /<button[^>]*class="[^"]*cursor-pointer[^"]*"[^>]*title="Preview \/study\/topics\/cardiology\/heart-failure\.html"/,
     );
+    expect(markup).toContain('aria-live="polite"');
+    expect(markup).not.toContain("Could not open file:");
   });
 
   it("keeps short shelves fully visible", () => {

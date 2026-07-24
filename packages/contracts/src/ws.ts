@@ -72,7 +72,10 @@ import {
   ProjectCreateLocalFilePreviewGrantInput,
   ProjectDevServerEvent,
   ProjectDiscoverScriptsInput,
+  ProjectInspectHtmlArtifactInput,
   ProjectListDirectoriesInput,
+  ProjectPrepareHtmlArtifactPreviewInput,
+  ProjectRevokeHtmlArtifactPreviewInput,
   ProjectReadFileInput,
   ProjectRunDevServerInput,
   ProjectSearchEntriesInput,
@@ -86,7 +89,7 @@ import {
   ScientProjectInitializationPreviewInput,
 } from "./scientProjectInitialization";
 import { StudioListThreadOutputsInput } from "./studio";
-import { FilesystemBrowseInput } from "./filesystem";
+import { FilesystemBrowseInput, FilesystemCreateDirectoryInput } from "./filesystem";
 import { OpenInEditorInput } from "./editor";
 import {
   ServerConfigUpdatedPayload,
@@ -143,6 +146,9 @@ export const WS_METHODS = {
   projectsSearchLocalEntries: "projects.searchLocalEntries",
   projectsReadFile: "projects.readFile",
   projectsCreateLocalFilePreviewGrant: "projects.createLocalFilePreviewGrant",
+  projectsInspectHtmlArtifact: "projects.inspectHtmlArtifact",
+  projectsPrepareHtmlArtifactPreview: "projects.prepareHtmlArtifactPreview",
+  projectsRevokeHtmlArtifactPreview: "projects.revokeHtmlArtifactPreview",
   projectsWriteFile: "projects.writeFile",
   projectsRunDevServer: "projects.runDevServer",
   projectsStopDevServer: "projects.stopDevServer",
@@ -160,8 +166,9 @@ export const WS_METHODS = {
   // Studio methods
   studioListThreadOutputs: "studio.listThreadOutputs",
 
-  // Filesystem browse methods
+  // Filesystem methods
   filesystemBrowse: "filesystem.browse",
+  filesystemCreateDirectory: "filesystem.createDirectory",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -325,6 +332,15 @@ const WebSocketRequestBody = Schema.Union([
     WS_METHODS.projectsCreateLocalFilePreviewGrant,
     ProjectCreateLocalFilePreviewGrantInput,
   ),
+  tagRequestBody(WS_METHODS.projectsInspectHtmlArtifact, ProjectInspectHtmlArtifactInput),
+  tagRequestBody(
+    WS_METHODS.projectsPrepareHtmlArtifactPreview,
+    ProjectPrepareHtmlArtifactPreviewInput,
+  ),
+  tagRequestBody(
+    WS_METHODS.projectsRevokeHtmlArtifactPreview,
+    ProjectRevokeHtmlArtifactPreviewInput,
+  ),
   tagRequestBody(WS_METHODS.projectsWriteFile, ProjectWriteFileInput),
   tagRequestBody(WS_METHODS.projectsRunDevServer, ProjectRunDevServerInput),
   tagRequestBody(WS_METHODS.projectsStopDevServer, ProjectStopDevServerInput),
@@ -349,11 +365,12 @@ const WebSocketRequestBody = Schema.Union([
     ScientProjectInitializationActionInput,
   ),
 
-  // Filesystem browse
   // Studio
   tagRequestBody(WS_METHODS.studioListThreadOutputs, StudioListThreadOutputsInput),
 
+  // Filesystem
   tagRequestBody(WS_METHODS.filesystemBrowse, FilesystemBrowseInput),
+  tagRequestBody(WS_METHODS.filesystemCreateDirectory, FilesystemCreateDirectoryInput),
 
   // Shell methods
   tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),

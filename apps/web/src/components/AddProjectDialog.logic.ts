@@ -29,6 +29,24 @@ export function joinProjectPath(basePath: string, childName: string): string {
   return `${basePath.replace(/[\\/]+$/, "")}${separator}${childName}`;
 }
 
+export function getAvailableNewFolderName(
+  directoryNames: readonly string[],
+  baseName = "New folder",
+): string {
+  // Avoid a name that collides on case-insensitive filesystems as well as on Linux.
+  const existingNames = new Set(directoryNames.map((name) => name.toLowerCase()));
+  if (!existingNames.has(baseName.toLowerCase())) {
+    return baseName;
+  }
+
+  for (let suffix = 2; ; suffix += 1) {
+    const candidate = `${baseName} ${suffix}`;
+    if (!existingNames.has(candidate.toLowerCase())) {
+      return candidate;
+    }
+  }
+}
+
 export function buildCloneProjectSourceInput(input: {
   source: Exclude<AddProjectSource, "local">;
   repositoryInput: string;

@@ -17,6 +17,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
+import { useActivityStore } from "../notifications/activityStore";
 import { getRouter } from "../router";
 import { useStore } from "../store";
 import {
@@ -310,22 +311,25 @@ async function waitForComposerEditor(): Promise<HTMLElement> {
   );
 }
 
-async function waitForToast(title: string, count = 1): Promise<void> {
-  await vi.waitFor(
-    () => {
-      const matches = queryToastTitles().filter((t) => t === title);
-      expect(matches.length, `Expected ${count} "${title}" toast(s)`).toBeGreaterThanOrEqual(count);
-    },
-    { timeout: 10_000, interval: 16 },
-  );
-}
-
 async function waitForNoToast(title: string): Promise<void> {
   await vi.waitFor(
     () => {
       expect(queryToastTitles().filter((t) => t === title)).toHaveLength(0);
     },
     { timeout: 10_000, interval: 50 },
+  );
+}
+
+async function waitForActivity(title: string, count = 1): Promise<void> {
+  await vi.waitFor(
+    () => {
+      const matches = useActivityStore.getState().items.filter((item) => item.title === title);
+      expect(
+        matches.length,
+        `Expected ${count} "${title}" activity item(s)`,
+      ).toBeGreaterThanOrEqual(count);
+    },
+    { timeout: 10_000, interval: 16 },
   );
 }
 
@@ -358,7 +362,7 @@ async function mountApp(): Promise<{ cleanup: () => Promise<void> }> {
   };
 }
 
-describe("Keybindings update toast", () => {
+describe("Keybindings update notifications", () => {
   beforeAll(async () => {
     fixture = buildFixture();
     await worker.start({
@@ -389,6 +393,7 @@ describe("Keybindings update toast", () => {
       sidebarThreadSummaryById: {},
       threadsHydrated: false,
     });
+    useActivityStore.getState().reset();
   });
 
   afterEach(() => {
@@ -412,14 +417,15 @@ describe("Keybindings update toast", () => {
     }
   });
 
-  it("shows a warning toast when keybinding config has issues", async () => {
+  it("adds a warning to Activity when keybinding config has issues", async () => {
     const mounted = await mountApp();
 
     try {
       await sendServerConfigUpdatedPush([
         { kind: "keybindings.malformed-config", message: "Expected JSON array" },
       ]);
-      await waitForToast("Invalid keybindings configuration");
+      await waitForActivity("Invalid keybindings configuration");
+      await waitForNoToast("Invalid keybindings configuration");
     } finally {
       await mounted.cleanup();
     }

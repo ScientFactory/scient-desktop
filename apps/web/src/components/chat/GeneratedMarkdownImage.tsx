@@ -8,7 +8,7 @@
 //        <button> because it wires into class-based stylesheet selectors
 //        (`chat-generated-image__*`) rather than shadcn Button.
 
-import { type MouseEvent, useCallback } from "react";
+import { type MouseEvent, useCallback, useEffect, useState } from "react";
 
 import { DownloadIcon, Loader2Icon, Maximize2 } from "~/lib/icons";
 
@@ -31,10 +31,13 @@ export function GeneratedMarkdownImage(props: GeneratedMarkdownImageProps) {
   const { previewUrl, downloadUrl, fileName, downloadName, status, imgProps } =
     useLocalImagePreview({ src, cwd });
   const accessibleName = alt?.trim() || "Generated image";
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  useEffect(() => setDownloadError(null), [downloadUrl]);
   const downloadImage = useLocalImageDownloadClick({
     downloadUrl,
     downloadName,
-    errorTitle: "Could not download generated image",
+    onDownloadStart: () => setDownloadError(null),
+    onDownloadError: setDownloadError,
   });
 
   const expandImage = useCallback(
@@ -63,6 +66,7 @@ export function GeneratedMarkdownImage(props: GeneratedMarkdownImageProps) {
         className="local-image-error--prose"
         downloadAriaLabel="Download generated image"
         onDownloadClick={downloadImage}
+        downloadError={downloadError}
       />
     );
   }
@@ -100,6 +104,11 @@ export function GeneratedMarkdownImage(props: GeneratedMarkdownImageProps) {
         <DownloadIcon className="size-3.5" aria-hidden="true" />
         <span>Download</span>
       </a>
+      {downloadError ? (
+        <span className="mt-1 block text-destructive text-xs" role="alert">
+          Could not download image: {downloadError}
+        </span>
+      ) : null}
     </span>
   );
 }

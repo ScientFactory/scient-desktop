@@ -2,114 +2,55 @@
 // Purpose: Surfaces calm, actionable local-service connection recovery status.
 // Layer: Global web application notifications
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 
-import { APP_VERSION } from "../branding";
-import {
-  ConnectionRecoveryNoticeController,
-  formatConnectionRecoveryDiagnostics,
-} from "../connectionRecoveryNotice";
+import { ConnectionRecoveryNoticeController } from "../connectionRecoveryNotice";
+import { activityManager } from "../notifications/activityStore";
 import { addWsTransportStateListener } from "../wsTransportEvents";
-import { toastManager } from "./ui/toast";
 
-type RecoveryToastId = ReturnType<typeof toastManager.add>;
+const CONNECTION_ACTIVITY_KEY = "system:local-service-connection";
 
 export function ConnectionRecoveryNotifications() {
-  const toastIdRef = useRef<RecoveryToastId | null>(null);
-
   useEffect(() => {
-    const clearToast = () => {
-      if (toastIdRef.current !== null) toastManager.close(toastIdRef.current);
-      toastIdRef.current = null;
-    };
-
-    let controller: ConnectionRecoveryNoticeController;
-    controller = new ConnectionRecoveryNoticeController({
-      onClear: clearToast,
+    const controller = new ConnectionRecoveryNoticeController({
+      onClear: () => activityManager.remove(CONNECTION_ACTIVITY_KEY),
       onRecovered: () => {
-        const toastId = toastIdRef.current;
-        if (toastId === null) return;
-        toastManager.update(toastId, {
-          type: "success",
+        activityManager.publish({
+          dedupeKey: CONNECTION_ACTIVITY_KEY,
+          source: "system",
+          status: "recent",
+          tone: "success",
           title: "Reconnected",
           description: "Scient is connected to its local service again.",
-          actionProps: undefined,
-          onClose: undefined,
-          data: {
-            allowCrossThreadVisibility: true,
-            dismissAfterVisibleMs: 3_000,
-            showDescription: true,
-          },
-          timeout: 0,
+          preserveRead: true,
         });
       },
       onShow: () => {
-        toastIdRef.current = toastManager.add({
-          type: "loading",
-          title: "Reconnecting…",
+        activityManager.publish({
+          dedupeKey: CONNECTION_ACTIVITY_KEY,
+          source: "system",
+          status: "in_progress",
+          tone: "info",
+          title: "Reconnecting to Scient",
           description:
             "Scient is restoring its local connection. Open chats remain on this computer.",
-          onClose: () => {
-            controller.dismissCurrentOutage();
-            toastIdRef.current = null;
-          },
-          data: { allowCrossThreadVisibility: true, showDescription: true },
-          timeout: 0,
+          preserveRead: true,
         });
       },
       onShowDetails: (stateStartedAt) => {
-        const openLogs = window.desktopBridge?.diagnostics?.openLogsDirectory;
-        const nextToast = {
-          type: "warning" as const,
+        activityManager.publish({
+          dedupeKey: CONNECTION_ACTIVITY_KEY,
+          source: "system",
+          status: "needs_attention",
+          tone: "warning",
           title: "Scient is still reconnecting",
           description:
-            "Scient keeps trying automatically. Copy the connection summary or open the logs for details.",
-          actionProps: undefined,
-          onClose: () => {
-            controller.dismissCurrentOutage();
-            toastIdRef.current = null;
+            "Scient keeps trying automatically. Open Settings → Advanced if you need diagnostics.",
+          destination: {
+            type: "connection_diagnostics",
+            stateStartedAt: stateStartedAt.toISOString(),
           },
-          data: {
-            allowCrossThreadVisibility: true,
-            copyLabel: "diagnostics",
-            copyText: () =>
-              formatConnectionRecoveryDiagnostics({
-                appVersion: APP_VERSION,
-                desktopApp: Boolean(window.desktopBridge),
-                generatedAt: new Date(),
-                navigatorOnline: typeof navigator.onLine === "boolean" ? navigator.onLine : null,
-                platform: navigator.platform,
-                state: "reconnecting",
-                stateStartedAt,
-                visibility: document.visibilityState,
-              }),
-            ...(openLogs
-              ? {
-                  secondaryActionProps: {
-                    children: "Open logs",
-                    onClick: () => {
-                      void openLogs().catch((error: unknown) => {
-                        toastManager.add({
-                          type: "error",
-                          title: "Could not open logs",
-                          description:
-                            error instanceof Error
-                              ? error.message
-                              : "The logs folder could not be opened.",
-                        });
-                      });
-                    },
-                  },
-                }
-              : {}),
-          },
-          timeout: 0,
-        };
-        if (toastIdRef.current === null) {
-          toastIdRef.current = toastManager.add(nextToast);
-        } else {
-          toastManager.update(toastIdRef.current, nextToast);
-        }
+        });
       },
     });
 

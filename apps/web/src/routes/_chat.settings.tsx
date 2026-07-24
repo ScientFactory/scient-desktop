@@ -7,6 +7,7 @@ import {
   PROVIDER_DISPLAY_NAMES,
   type DesktopAppSnapPermission,
   type DesktopAppSnapState,
+  type DesktopVoiceState,
   type ProviderKind,
   type ServerProviderStatus,
   type ThreadId,
@@ -64,6 +65,7 @@ import { createLatestAppSnapRequestGuard } from "../appSnap.logic";
 import { useProviderConnectionDialogStore } from "../providerConnectionDialogStore";
 import { APP_VERSION } from "../branding";
 import { useDesktopTopBarTrafficLightGutterClassName } from "../hooks/useDesktopTopBarGutter";
+import { copyTextToClipboard } from "../hooks/useCopyToClipboard";
 import { useProviderModelCatalog } from "../hooks/useProviderModelCatalog";
 import { ProviderOptionLabel } from "../components/ProviderIcon";
 import {
@@ -85,7 +87,6 @@ import {
 } from "../components/settings/SettingControls";
 import { Select, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
-import { toastManager } from "../components/ui/toast";
 import { ThemePackEditor } from "../components/ThemePackEditor";
 import { DebouncedSettingTextInput } from "../components/settings/DebouncedSettingTextInput";
 import { SettingNumberInput } from "../components/settings/SettingNumberInput";
@@ -149,6 +150,7 @@ import {
   readBrowserNotificationPermissionState,
   requestBrowserNotificationPermission,
 } from "../notifications/taskCompletion";
+import { activityManager } from "../notifications/activityStore";
 import {
   normalizeSettingsSection,
   SETTINGS_NAV_ITEMS,
@@ -261,6 +263,21 @@ function appSnapStatusText(state: DesktopAppSnapState | null): string {
   if (state.status === "disabled") return "Off";
   if (state.status === "starting") return "Starting the capture listener…";
   return state.message ?? "Permission setup required";
+}
+
+function voiceModelStatusText(state: DesktopVoiceState | null): string {
+  if (!state) return "Available in the Scient desktop app";
+  if (!state.runtimeAvailable) return "Offline runtime missing — reinstall or update Scient";
+  switch (state.model.state) {
+    case "missing":
+      return `Not downloaded · ${Math.ceil(state.modelByteSize / (1024 * 1024))} MB`;
+    case "downloading":
+      return `Downloading · ${Math.floor((state.model.downloadedBytes / state.model.totalBytes) * 100)}%`;
+    case "ready":
+      return `Ready · ${Math.ceil(state.model.byteSize / (1024 * 1024))} MB on this device`;
+    case "error":
+      return state.model.message;
+  }
 }
 
 const APPSNAP_PERMISSION_LABELS: Record<DesktopAppSnapPermission, string> = {
@@ -397,7 +414,7 @@ function SortableProviderVisibilityRow(props: {
       </div>
       <Switch
         checked={!props.isHidden}
-        onCheckedChange={(checked) => props.onHiddenChange(!Boolean(checked))}
+        onCheckedChange={(checked) => props.onHiddenChange(!checked)}
         aria-label={`Show ${props.option.title} in the provider picker`}
       />
     </div>
@@ -662,6 +679,49 @@ function providerUpdateFailureMessage(provider: ServerProviderStatus | undefined
   return state.output?.trim() || state.message || "The provider update did not complete.";
 }
 
+type SettingsFeedbackTone = "error" | "info" | "success" | "warning";
+
+type SettingsFeedback = {
+  readonly message: string;
+  readonly tone: SettingsFeedbackTone;
+};
+
+type ProviderUpdateFeedback = SettingsFeedback & {
+  readonly command?: string | undefined;
+  readonly commandCopyState?: "copied" | "error" | "idle" | undefined;
+};
+
+function SettingsInlineFeedback({
+  feedback,
+  className,
+  children,
+}: {
+  feedback: SettingsFeedback | null;
+  className?: string;
+  children?: ReactNode;
+}) {
+  if (!feedback) return null;
+  const isError = feedback.tone === "error";
+  return (
+    <div
+      className={cn(
+        "text-xs",
+        isError
+          ? "text-destructive"
+          : feedback.tone === "warning"
+            ? "text-foreground"
+            : "text-muted-foreground",
+        className,
+      )}
+      role={isError ? "alert" : "status"}
+      aria-live={isError ? "assertive" : "polite"}
+    >
+      <span>{feedback.message}</span>
+      {children}
+    </div>
+  );
+}
+
 // Keys of AppSettings whose value is a plain boolean — the only ones that can be
 // driven by the shared on/off toggle row below.
 type BooleanSettingKey = {
@@ -713,7 +773,6 @@ function SettingsRouteView() {
   const removeDeletedThreadFromClientState = useStore(
     (store) => store.removeDeletedThreadFromClientState,
   );
-  const syncServerShellSnapshot = useStore((store) => store.syncServerShellSnapshot);
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   // Shell-level subscription on purpose: the full-thread selector invalidates on every
   // streaming message/activity tick, which would re-render this whole route while a
@@ -782,7 +841,25 @@ function SettingsRouteView() {
   const [browserNotificationPermission, setBrowserNotificationPermission] = useState(
     readBrowserNotificationPermissionState(),
   );
+  const [isSendingTestNotification, setIsSendingTestNotification] = useState(false);
+  const [notificationFeedback, setNotificationFeedback] = useState<SettingsFeedback | null>(null);
+  const [providerUpdateFeedbackByProvider, setProviderUpdateFeedbackByProvider] = useState<
+    Partial<Record<ProviderKind, ProviderUpdateFeedback>>
+  >({});
+  const providerCommandCopyRequestIdsRef = useRef<Partial<Record<ProviderKind, number>>>({});
+  const providerCommandCopyTimersRef = useRef<Partial<Record<ProviderKind, number>>>({});
+  const [appSnapFeedback, setAppSnapFeedback] = useState<SettingsFeedback | null>(null);
+  const [recoveryFeedback, setRecoveryFeedback] = useState<SettingsFeedback | null>(null);
+  const [worktreeFeedback, setWorktreeFeedback] = useState<SettingsFeedback | null>(null);
+  const [archivedThreadFeedback, setArchivedThreadFeedback] = useState<SettingsFeedback | null>(
+    null,
+  );
   const [appSnapState, setAppSnapState] = useState<DesktopAppSnapState | null>(null);
+  const [voiceState, setVoiceState] = useState<DesktopVoiceState | null>(null);
+  const [voiceFeedback, setVoiceFeedback] = useState<SettingsFeedback | null>(null);
+  const [voiceModelMutation, setVoiceModelMutation] = useState<
+    "download" | "remove" | "repair" | null
+  >(null);
   const appSnapRequestGuardRef = useRef(createLatestAppSnapRequestGuard());
   const shouldShowFontSmoothing = isMacPlatform(
     typeof navigator === "undefined" ? "" : navigator.platform,
@@ -814,6 +891,29 @@ function SettingsRouteView() {
     return () => {
       disposed = true;
       unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    const voice = window.desktopBridge?.voice;
+    if (!voice) {
+      setVoiceState(null);
+      return;
+    }
+    let disposed = false;
+    const refresh = () => {
+      void voice
+        .getState()
+        .then((state) => {
+          if (!disposed) setVoiceState(state);
+        })
+        .catch(() => undefined);
+    };
+    refresh();
+    const interval = window.setInterval(refresh, 1_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
     };
   }, []);
 
@@ -1081,7 +1181,7 @@ function SettingsRouteView() {
       : []),
     ...(settings.timestampFormat !== defaults.timestampFormat ? ["Time format"] : []),
     ...(settings.enableTaskCompletionToasts !== defaults.enableTaskCompletionToasts
-      ? ["Activity toasts"]
+      ? ["Activity Center alerts"]
       : []),
     ...(settings.enableSystemTaskCompletionNotifications !==
     defaults.enableSystemTaskCompletionNotifications
@@ -1089,6 +1189,9 @@ function SettingsRouteView() {
       : []),
     ...(settings.enableAssistantStreaming !== defaults.enableAssistantStreaming
       ? ["Assistant output"]
+      : []),
+    ...(settings.voiceTranscriptionMode !== defaults.voiceTranscriptionMode
+      ? ["Voice transcription mode"]
       : []),
     ...(settings.enableAppSnap !== defaults.enableAppSnap ? ["AppSnap"] : []),
     ...(settings.appSnapPlaySound !== defaults.appSnapPlaySound ? ["AppSnap capture sound"] : []),
@@ -1148,6 +1251,15 @@ function SettingsRouteView() {
   useEffect(() => {
     setBrowserNotificationPermission(readBrowserNotificationPermissionState());
   }, []);
+
+  useEffect(
+    () => () => {
+      for (const timeoutId of Object.values(providerCommandCopyTimersRef.current)) {
+        if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+      }
+    },
+    [],
+  );
 
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
@@ -1241,6 +1353,18 @@ function SettingsRouteView() {
         useProviderConnectionDialogStore.getState().openDialog(provider, "managed_update");
         return;
       }
+      providerCommandCopyRequestIdsRef.current[provider] =
+        (providerCommandCopyRequestIdsRef.current[provider] ?? 0) + 1;
+      const existingCopyTimer = providerCommandCopyTimersRef.current[provider];
+      if (existingCopyTimer !== undefined) {
+        window.clearTimeout(existingCopyTimer);
+        delete providerCommandCopyTimersRef.current[provider];
+      }
+      const activityKey = `provider:update:${provider}`;
+      setProviderUpdateFeedbackByProvider((current) => ({
+        ...current,
+        [provider]: { tone: "info", message: "Update in progress..." },
+      }));
       setUpdatingProviders((current) => new Set(current).add(provider));
       try {
         const result = await withProviderUpdateTimeout({
@@ -1251,26 +1375,60 @@ function SettingsRouteView() {
         const failureMessage = providerUpdateFailureMessage(refreshedProvider);
         if (failureMessage) {
           const manualCommand = refreshedProvider?.versionAdvisory?.updateCommand?.trim();
-          toastManager.add({
-            type: "error",
+          const message = manualCommand
+            ? `${failureMessage} You can copy the manual update command below.`
+            : failureMessage;
+          setProviderUpdateFeedbackByProvider((current) => ({
+            ...current,
+            [provider]: {
+              tone: "error",
+              message,
+              ...(manualCommand
+                ? { command: manualCommand, commandCopyState: "idle" as const }
+                : {}),
+            },
+          }));
+          activityManager.publish({
+            dedupeKey: activityKey,
+            source: "provider",
+            status: "needs_attention",
+            tone: "error",
             title: `Could not update ${PROVIDER_DISPLAY_NAMES[provider]}`,
-            description: manualCommand
-              ? `${failureMessage}\n\nCopy the command below to update manually in a terminal.`
-              : failureMessage,
-            ...(manualCommand ? { data: { copyText: manualCommand } } : {}),
+            description: message,
+            destination: {
+              type: "settings",
+              section: "providers",
+              target: SETTINGS_TARGETS.providerUpdates,
+            },
           });
           return;
         }
-        toastManager.add({
-          type: "success",
-          title: `${PROVIDER_DISPLAY_NAMES[provider]} update finished`,
-          description: "New sessions will use the refreshed provider.",
-        });
+        setProviderUpdateFeedbackByProvider((current) => ({
+          ...current,
+          [provider]: {
+            tone: "success",
+            message: "Updated. New sessions will use the refreshed provider.",
+          },
+        }));
+        activityManager.remove(activityKey);
       } catch (error) {
-        toastManager.add({
-          type: "error",
+        const message = error instanceof Error ? error.message : "The provider update failed.";
+        setProviderUpdateFeedbackByProvider((current) => ({
+          ...current,
+          [provider]: { tone: "error", message },
+        }));
+        activityManager.publish({
+          dedupeKey: activityKey,
+          source: "provider",
+          status: "needs_attention",
+          tone: "error",
           title: `Could not update ${PROVIDER_DISPLAY_NAMES[provider]}`,
-          description: error instanceof Error ? error.message : "The provider update failed.",
+          description: message,
+          destination: {
+            type: "settings",
+            section: "providers",
+            target: SETTINGS_TARGETS.providerUpdates,
+          },
         });
       } finally {
         await queryClient
@@ -1285,6 +1443,45 @@ function SettingsRouteView() {
     },
     [queryClient, updatingProviders],
   );
+
+  const copyProviderUpdateCommand = useCallback(async (provider: ProviderKind, command: string) => {
+    const requestId = (providerCommandCopyRequestIdsRef.current[provider] ?? 0) + 1;
+    providerCommandCopyRequestIdsRef.current[provider] = requestId;
+    const existingTimer = providerCommandCopyTimersRef.current[provider];
+    if (existingTimer !== undefined) window.clearTimeout(existingTimer);
+    try {
+      await copyTextToClipboard(command);
+      if (providerCommandCopyRequestIdsRef.current[provider] !== requestId) return;
+      setProviderUpdateFeedbackByProvider((current) => ({
+        ...current,
+        [provider]:
+          current[provider]?.command === command
+            ? { ...current[provider], commandCopyState: "copied" }
+            : current[provider],
+      }));
+      providerCommandCopyTimersRef.current[provider] = window.setTimeout(() => {
+        if (providerCommandCopyRequestIdsRef.current[provider] !== requestId) return;
+        delete providerCommandCopyTimersRef.current[provider];
+        setProviderUpdateFeedbackByProvider((current) => ({
+          ...current,
+          [provider]:
+            current[provider]?.command === command &&
+            current[provider]?.commandCopyState === "copied"
+              ? { ...current[provider], commandCopyState: "idle" }
+              : current[provider],
+        }));
+      }, 1600);
+    } catch {
+      if (providerCommandCopyRequestIdsRef.current[provider] !== requestId) return;
+      setProviderUpdateFeedbackByProvider((current) => ({
+        ...current,
+        [provider]:
+          current[provider]?.command === command
+            ? { ...current[provider], commandCopyState: "error" }
+            : current[provider],
+      }));
+    }
+  }, []);
 
   async function restoreDefaults() {
     if (changedSettingLabels.length === 0) return;
@@ -1327,9 +1524,16 @@ function SettingsRouteView() {
     setShowAllCustomModels(false);
     setShowRecoveryTools(false);
     setOpenKeybindingsError(null);
+    setNotificationFeedback(null);
+    setProviderUpdateFeedbackByProvider({});
+    setAppSnapFeedback(null);
+    setRecoveryFeedback(null);
+    setWorktreeFeedback(null);
+    setArchivedThreadFeedback(null);
   }
 
   async function setSystemNotificationsEnabled(nextEnabled: boolean) {
+    setNotificationFeedback(null);
     if (!nextEnabled) {
       updateSettings({ enableSystemTaskCompletionNotifications: false });
       return;
@@ -1349,60 +1553,68 @@ function SettingsRouteView() {
     }
 
     updateSettings({ enableSystemTaskCompletionNotifications: false });
-    toastManager.add({
-      type: permission === "denied" ? "warning" : "error",
-      title: "Desktop notifications unavailable",
-      description: buildNotificationSettingsSupportText(permission),
+    setNotificationFeedback({
+      tone: permission === "denied" ? "warning" : "error",
+      message: buildNotificationSettingsSupportText(permission),
     });
   }
 
   async function sendTestNotification() {
+    if (isSendingTestNotification) return;
     const title = "Activity notification";
     const body = "Notification test for chats and terminal agents.";
+    setIsSendingTestNotification(true);
+    setNotificationFeedback({ tone: "info", message: "Sending a test notification..." });
 
-    if (window.desktopBridge) {
-      const shown = await window.desktopBridge.notifications.show({ title, body, silent: false });
-      toastManager.add({
-        type: shown ? "success" : "warning",
-        title: shown ? "Test notification sent" : "Notifications unavailable",
-        description: shown
-          ? "Your operating system should show the notification."
-          : "Desktop notifications are not supported on this device.",
+    try {
+      if (window.desktopBridge) {
+        const shown = await window.desktopBridge.notifications.show({ title, body, silent: false });
+        setNotificationFeedback({
+          tone: shown ? "success" : "warning",
+          message: shown
+            ? "Test sent. Your operating system should show the notification."
+            : "Desktop notifications are not supported on this device.",
+        });
+        return;
+      }
+
+      const permission = await requestBrowserNotificationPermission();
+      setBrowserNotificationPermission(permission);
+      if (permission !== "granted") {
+        setNotificationFeedback({
+          tone: permission === "denied" ? "warning" : "error",
+          message: buildNotificationSettingsSupportText(permission),
+        });
+        return;
+      }
+
+      const notification = new Notification(title, { body, tag: "scient:test-notification" });
+      notification.addEventListener("click", () => {
+        window.focus();
       });
-      return;
-    }
-
-    const permission = await requestBrowserNotificationPermission();
-    setBrowserNotificationPermission(permission);
-    if (permission !== "granted") {
-      toastManager.add({
-        type: permission === "denied" ? "warning" : "error",
-        title: "Desktop notifications unavailable",
-        description: buildNotificationSettingsSupportText(permission),
+      setNotificationFeedback({
+        tone: "success",
+        message: "Test sent. Your browser should show the notification.",
       });
-      return;
+    } catch (error) {
+      setNotificationFeedback({
+        tone: "error",
+        message: error instanceof Error ? error.message : "Unable to send the test notification.",
+      });
+    } finally {
+      setIsSendingTestNotification(false);
     }
-
-    const notification = new Notification(title, { body, tag: "scient:test-notification" });
-    notification.addEventListener("click", () => {
-      window.focus();
-    });
-    toastManager.add({
-      type: "success",
-      title: "Test notification sent",
-      description: "Your browser should show the notification.",
-    });
   }
 
   async function setAppSnapEnabled(nextEnabled: boolean) {
+    setAppSnapFeedback(null);
     const requestGuard = appSnapRequestGuardRef.current;
     const requestId = requestGuard.begin();
     const bridge = window.desktopBridge?.appSnap;
     if (!bridge) {
-      toastManager.add({
-        type: "warning",
-        title: "AppSnap unavailable",
-        description: "AppSnap requires the Scient desktop app on macOS.",
+      setAppSnapFeedback({
+        tone: "warning",
+        message: "AppSnap requires the Scient desktop app on macOS.",
       });
       return;
     }
@@ -1419,26 +1631,104 @@ function SettingsRouteView() {
       if (!requestGuard.isCurrent(requestId)) return;
       setAppSnapState(state);
       if (nextEnabled && (state.status === "permission-required" || state.status === "error")) {
-        toastManager.add({
-          type: "warning",
-          title: "Finish AppSnap setup",
-          description: state.message ?? "Allow the required macOS permissions, then try again.",
+        setAppSnapFeedback({
+          tone: "warning",
+          message: state.message ?? "Allow the required macOS permissions, then try again.",
+        });
+      } else {
+        setAppSnapFeedback({
+          tone: "success",
+          message: nextEnabled ? "AppSnap enabled." : "AppSnap disabled.",
         });
       }
     } catch (error) {
       if (!requestGuard.isCurrent(requestId)) return;
       updateSettings({ enableAppSnap: false });
-      toastManager.add({
-        type: "error",
-        title: "AppSnap setup failed",
-        description: error instanceof Error ? error.message : "Could not configure AppSnap.",
+      setAppSnapFeedback({
+        tone: "error",
+        message: error instanceof Error ? error.message : "Could not configure AppSnap.",
       });
     }
   }
 
+  async function downloadVoiceModel() {
+    const voice = window.desktopBridge?.voice;
+    if (!voice || voiceModelMutation) return;
+    setVoiceModelMutation("download");
+    setVoiceFeedback({ tone: "info", message: "Downloading and verifying the offline model..." });
+    try {
+      const state = await voice.downloadModel();
+      setVoiceState(state);
+      setVoiceFeedback({ tone: "success", message: "Offline voice is ready." });
+    } catch {
+      setVoiceFeedback({
+        tone: "error",
+        message: "Could not install the offline model. Check your connection and try again.",
+      });
+    } finally {
+      setVoiceModelMutation(null);
+    }
+  }
+
+  async function removeVoiceModel() {
+    const voice = window.desktopBridge?.voice;
+    if (!voice || voiceModelMutation) return;
+    const confirmed = await window.desktopBridge?.confirm(
+      "Remove the offline voice model? Automatic mode can still use ChatGPT, but local fallback and Offline only mode will stop working.",
+    );
+    if (!confirmed) return;
+    setVoiceModelMutation("remove");
+    setVoiceFeedback(null);
+    try {
+      const state = await voice.removeModel();
+      setVoiceState(state);
+      setVoiceFeedback({ tone: "success", message: "Offline voice model removed." });
+    } catch (error) {
+      setVoiceFeedback({
+        tone: "error",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Could not remove the offline voice model right now.",
+      });
+    } finally {
+      setVoiceModelMutation(null);
+    }
+  }
+
+  async function repairVoiceModel() {
+    const voice = window.desktopBridge?.voice;
+    if (!voice || voiceModelMutation) return;
+    setVoiceModelMutation("repair");
+    setVoiceFeedback({
+      tone: "info",
+      message: "Downloading and verifying a fresh model before replacing the current copy...",
+    });
+    try {
+      const state = await voice.repairModel();
+      setVoiceState(state);
+      setVoiceFeedback({ tone: "success", message: "Offline voice model repaired." });
+    } catch (error) {
+      setVoiceFeedback({
+        tone: "error",
+        message:
+          error instanceof Error ? error.message : "Could not repair the offline voice model.",
+      });
+    } finally {
+      setVoiceModelMutation(null);
+    }
+  }
+
   async function recheckAppSnapPermissions() {
+    setAppSnapFeedback({ tone: "info", message: "Checking AppSnap permissions..." });
     const bridge = window.desktopBridge?.appSnap;
-    if (!bridge) return;
+    if (!bridge) {
+      setAppSnapFeedback({
+        tone: "warning",
+        message: "AppSnap requires the Scient desktop app on macOS.",
+      });
+      return;
+    }
     // Same guard as setAppSnapEnabled: a slow recheck must not clobber the
     // panel state written by a newer toggle or recheck.
     const requestGuard = appSnapRequestGuardRef.current;
@@ -1448,12 +1738,22 @@ function SettingsRouteView() {
       const state = await bridge.setEnabled(settings.enableAppSnap);
       if (!requestGuard.isCurrent(requestId)) return;
       setAppSnapState(state);
+      setAppSnapFeedback({
+        tone:
+          state.status === "permission-required" || state.status === "error"
+            ? "warning"
+            : "success",
+        message:
+          state.message ??
+          (state.status === "permission-required" || state.status === "error"
+            ? "AppSnap still needs macOS permissions."
+            : "AppSnap permissions rechecked."),
+      });
     } catch (error) {
       if (!requestGuard.isCurrent(requestId)) return;
-      toastManager.add({
-        type: "error",
-        title: "Could not check AppSnap permissions",
-        description: error instanceof Error ? error.message : "Permission check failed.",
+      setAppSnapFeedback({
+        tone: "error",
+        message: error instanceof Error ? error.message : "Permission check failed.",
       });
     }
   }
@@ -1476,20 +1776,19 @@ function SettingsRouteView() {
       return;
     }
 
+    setRecoveryFeedback({ tone: "info", message: "Repairing local state..." });
     setIsRepairingLocalState(true);
     try {
       const snapshot = await api.orchestration.repairState();
       syncServerReadModel(snapshot);
-      toastManager.add({
-        type: "success",
-        title: "Local state repaired",
-        description: "Project indexes were rebuilt without clearing existing chats.",
+      setRecoveryFeedback({
+        tone: "success",
+        message: "Project indexes were rebuilt without clearing existing chats.",
       });
     } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Repair failed",
-        description: error instanceof Error ? error.message : "Unable to repair local state.",
+      setRecoveryFeedback({
+        tone: "error",
+        message: error instanceof Error ? error.message : "Unable to repair local state.",
       });
     } finally {
       setIsRepairingLocalState(false);
@@ -1502,10 +1801,9 @@ function SettingsRouteView() {
       const displayName = formatWorktreePathForDisplay(input.worktreePath);
       const snapshot = await api.orchestration.getShellSnapshot().catch(() => null);
       if (snapshot === null) {
-        toastManager.add({
-          type: "error",
-          title: "Could not verify linked conversations",
-          description: "Retry once the app reconnects to the server.",
+        setWorktreeFeedback({
+          tone: "error",
+          message: "Could not verify linked conversations. Retry after the app reconnects.",
         });
         return;
       }
@@ -1544,6 +1842,7 @@ function SettingsRouteView() {
         return;
       }
 
+      setWorktreeFeedback({ tone: "info", message: `Deleting ${displayName}...` });
       try {
         await deleteArchivedThreadsFromClient({
           api: api.orchestration,
@@ -1559,19 +1858,17 @@ function SettingsRouteView() {
         await queryClient.invalidateQueries({
           queryKey: serverQueryKeys.worktrees(),
         });
-        toastManager.add({
-          type: "success",
-          title: "Worktree deleted",
-          description:
+        setWorktreeFeedback({
+          tone: "success",
+          message:
             linkedArchivedThreadIds.length > 0
               ? `${displayName} was removed and ${linkedArchivedThreadIds.length} archived ${pluralize(linkedArchivedThreadIds.length, "conversation")} were deleted.`
               : `${displayName} was removed.`,
         });
       } catch (error) {
-        toastManager.add({
-          type: "error",
-          title: "Could not delete worktree",
-          description: error instanceof Error ? error.message : "Unable to delete the worktree.",
+        setWorktreeFeedback({
+          tone: "error",
+          message: error instanceof Error ? error.message : "Unable to delete the worktree.",
         });
       }
     },
@@ -1581,18 +1878,17 @@ function SettingsRouteView() {
   const unarchiveThread = useCallback(async (threadId: ThreadId) => {
     const api = readNativeApi();
     if (!api) return;
+    setArchivedThreadFeedback({ tone: "info", message: "Restoring archived thread..." });
     try {
       await unarchiveThreadFromClient(api.orchestration, threadId);
-      toastManager.add({
-        type: "success",
-        title: "Thread restored",
-        description: "The thread has been moved back to the sidebar.",
+      setArchivedThreadFeedback({
+        tone: "success",
+        message: "The thread was restored to the sidebar.",
       });
     } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Could not restore thread",
-        description: error instanceof Error ? error.message : "Unable to restore the thread.",
+      setArchivedThreadFeedback({
+        tone: "error",
+        message: error instanceof Error ? error.message : "Unable to restore the thread.",
       });
     }
   }, []);
@@ -1607,22 +1903,21 @@ function SettingsRouteView() {
       );
       if (!confirmed) return;
 
+      setArchivedThreadFeedback({ tone: "info", message: `Deleting ${threadTitle}...` });
       try {
         await deleteArchivedThreadFromClient({
           api: api.orchestration,
           threadId,
           removeDeletedThreadFromClientState,
         });
-        toastManager.add({
-          type: "success",
-          title: "Thread deleted",
-          description: "The archived thread has been permanently removed.",
+        setArchivedThreadFeedback({
+          tone: "success",
+          message: "The archived thread was permanently removed.",
         });
       } catch (error) {
-        toastManager.add({
-          type: "error",
-          title: "Could not delete thread",
-          description: error instanceof Error ? error.message : "Unable to delete the thread.",
+        setArchivedThreadFeedback({
+          tone: "error",
+          message: error instanceof Error ? error.message : "Unable to delete the thread.",
         });
       }
     },
@@ -2267,11 +2562,11 @@ function SettingsRouteView() {
       <SettingsSection title="Activity alerts">
         {renderBooleanSettingRow({
           settingKey: "enableTaskCompletionToasts",
-          title: "Activity toasts",
+          title: "Activity Center alerts",
           description:
-            "Show an in-app toast when a chat or managed terminal agent finishes or needs input.",
-          resetLabel: "activity toasts",
-          ariaLabel: "Activity toast notifications",
+            "Keep off-screen chat and managed terminal completions or attention requests in the in-app Activity Center.",
+          resetLabel: "Activity Center alerts",
+          ariaLabel: "Activity Center alerts",
         })}
 
         <SettingsRow
@@ -2294,8 +2589,13 @@ function SettingsRouteView() {
           }
           control={
             <div className="flex w-full items-center gap-2 sm:w-auto sm:justify-end">
-              <Button size="xs" variant="outline" onClick={() => void sendTestNotification()}>
-                Test
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={isSendingTestNotification}
+                onClick={() => void sendTestNotification()}
+              >
+                {isSendingTestNotification ? "Sending..." : "Test"}
               </Button>
               <Switch
                 checked={settings.enableSystemTaskCompletionNotifications}
@@ -2306,7 +2606,9 @@ function SettingsRouteView() {
               />
             </div>
           }
-        />
+        >
+          <SettingsInlineFeedback feedback={notificationFeedback} className="mt-2" />
+        </SettingsRow>
       </SettingsSection>
     </div>
   );
@@ -2361,7 +2663,9 @@ function SettingsRouteView() {
                 aria-label="Enable AppSnap"
               />
             }
-          />
+          >
+            <SettingsInlineFeedback feedback={appSnapFeedback} className="mt-2" />
+          </SettingsRow>
 
           <SettingsRow
             title="Shortcut"
@@ -2464,6 +2768,84 @@ function SettingsRouteView() {
           resetLabel: "diff line wrapping",
           ariaLabel: "Wrap diff lines by default",
         })}
+      </SettingsSection>
+
+      <SettingsSection title="Voice transcription">
+        <SettingsRow
+          title="Transcription mode"
+          description="Automatic prefers your connected ChatGPT subscription, then quietly falls back to private on-device transcription. Offline only never sends audio to ChatGPT."
+          resetAction={
+            settings.voiceTranscriptionMode !== defaults.voiceTranscriptionMode ? (
+              <SettingResetButton
+                label="voice transcription mode"
+                onClick={() =>
+                  updateSettings({ voiceTranscriptionMode: defaults.voiceTranscriptionMode })
+                }
+              />
+            ) : null
+          }
+          control={
+            <SettingsSegmentedControl
+              value={settings.voiceTranscriptionMode}
+              onValueChange={(voiceTranscriptionMode) => updateSettings({ voiceTranscriptionMode })}
+              options={[
+                { value: "automatic", label: "Automatic" },
+                { value: "offline-only", label: "Offline only" },
+              ]}
+              ariaLabel="Voice transcription mode"
+            />
+          }
+        />
+        <SettingsRow
+          title={voiceState?.modelName ?? "Offline multilingual model"}
+          description="A verified Small Q5 Whisper model stored only on this device. It provides voice with no provider connected and catches recoverable ChatGPT failures."
+          status={voiceModelStatusText(voiceState)}
+          control={
+            voiceState ? (
+              voiceState.model.state === "ready" ? (
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={voiceModelMutation !== null}
+                    onClick={() => void repairVoiceModel()}
+                  >
+                    {voiceModelMutation === "repair" ? "Repairing..." : "Repair"}
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={voiceModelMutation !== null}
+                    onClick={() => void removeVoiceModel()}
+                  >
+                    {voiceModelMutation === "remove" ? "Removing..." : "Remove"}
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={
+                    !voiceState.runtimeAvailable ||
+                    voiceModelMutation !== null ||
+                    voiceState.model.state === "downloading"
+                  }
+                  onClick={() => void downloadVoiceModel()}
+                >
+                  {voiceState.model.state === "downloading" || voiceModelMutation === "download"
+                    ? "Downloading..."
+                    : "Download"}
+                </Button>
+              )
+            ) : (
+              <span className="text-xs font-medium text-muted-foreground">
+                Desktop app required
+              </span>
+            )
+          }
+        >
+          <SettingsInlineFeedback feedback={voiceFeedback} className="mt-2" />
+        </SettingsRow>
       </SettingsSection>
 
       <SettingsSection title="Safety confirmations">
@@ -2593,10 +2975,16 @@ function SettingsRouteView() {
     }
     if (worktreesByWorkspaceRoot.length === 0) {
       return (
-        <div
-          className={cn(SETTINGS_EMPTY_STATE_CLASS_NAME, "px-4 py-6 text-sm text-muted-foreground")}
-        >
-          No app-managed worktrees found yet.
+        <div className="space-y-3">
+          <SettingsInlineFeedback feedback={worktreeFeedback} className="px-1" />
+          <div
+            className={cn(
+              SETTINGS_EMPTY_STATE_CLASS_NAME,
+              "px-4 py-6 text-sm text-muted-foreground",
+            )}
+          >
+            No app-managed worktrees found yet.
+          </div>
         </div>
       );
     }
@@ -2606,6 +2994,7 @@ function SettingsRouteView() {
     // from the card's `divide-y`), with their richer body kept top-aligned.
     return (
       <div className="space-y-6">
+        <SettingsInlineFeedback feedback={worktreeFeedback} className="px-1" />
         {worktreesByWorkspaceRoot.map((group) => (
           <SettingsSection key={group.workspaceRoot} title={group.workspaceRoot}>
             {group.worktrees.map((worktree) => {
@@ -2725,13 +3114,16 @@ function SettingsRouteView() {
 
     if (archivedGroups.length === 0) {
       return (
-        <div className={cn(SETTINGS_EMPTY_STATE_CLASS_NAME, "px-5 py-10 text-center")}>
-          <div className="mx-auto mb-3 flex size-11 items-center justify-center rounded-full border border-border/70 bg-background/70 text-muted-foreground">
-            <ArchiveIcon className="size-5" />
-          </div>
-          <div className="text-sm font-medium text-foreground">No archived threads</div>
-          <div className="mt-1 text-sm text-muted-foreground">
-            Archived threads will appear here and can be restored to the sidebar.
+        <div className="space-y-3">
+          <SettingsInlineFeedback feedback={archivedThreadFeedback} className="px-1" />
+          <div className={cn(SETTINGS_EMPTY_STATE_CLASS_NAME, "px-5 py-10 text-center")}>
+            <div className="mx-auto mb-3 flex size-11 items-center justify-center rounded-full border border-border/70 bg-background/70 text-muted-foreground">
+              <ArchiveIcon className="size-5" />
+            </div>
+            <div className="text-sm font-medium text-foreground">No archived threads</div>
+            <div className="mt-1 text-sm text-muted-foreground">
+              Archived threads will appear here and can be restored to the sidebar.
+            </div>
           </div>
         </div>
       );
@@ -2742,6 +3134,7 @@ function SettingsRouteView() {
     // and the card's own `divide-y` draws the separators.
     return (
       <div className="space-y-6">
+        <SettingsInlineFeedback feedback={archivedThreadFeedback} className="px-1" />
         {archivedGroups.map(({ project, threads: projectThreads }) => (
           <SettingsSection
             key={project?.id ?? "unknown-project"}
@@ -3124,6 +3517,39 @@ function SettingsRouteView() {
               })}
             </div>
           ) : null}
+          {PROVIDER_SELECT_OPTIONS.map((provider) => {
+            const feedback = providerUpdateFeedbackByProvider[provider];
+            if (!feedback) return null;
+            return (
+              <SettingsInlineFeedback
+                key={provider}
+                feedback={{
+                  tone: feedback.tone,
+                  message: `${PROVIDER_DISPLAY_NAMES[provider]}: ${feedback.message}`,
+                }}
+                className="mt-2"
+              >
+                {feedback.command ? (
+                  <span className="mt-1 flex flex-wrap items-center gap-2">
+                    <code className="break-all font-mono text-[11px] text-foreground">
+                      {feedback.command}
+                    </code>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      onClick={() => void copyProviderUpdateCommand(provider, feedback.command!)}
+                    >
+                      {feedback.commandCopyState === "copied" ? "Copied" : "Copy command"}
+                    </Button>
+                    {feedback.commandCopyState === "error" ? (
+                      <span className="text-destructive">Could not copy the command.</span>
+                    ) : null}
+                  </span>
+                ) : null}
+              </SettingsInlineFeedback>
+            );
+          })}
         </SettingsRow>
       </SettingsSection>
     </div>
@@ -3686,6 +4112,7 @@ function SettingsRouteView() {
             </Button>
           }
         >
+          <SettingsInlineFeedback feedback={recoveryFeedback} className="mt-2" />
           {shouldOfferRecoveryTools ? (
             <div className="mt-3 border-t border-border/70 pt-3">
               <button

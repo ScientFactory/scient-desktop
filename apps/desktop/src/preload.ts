@@ -6,7 +6,7 @@ import {
   normalizeDesktopWsUrl,
   resolveDesktopWsUrlFromEnv,
 } from "./desktopWsBridge";
-import { SERVER_TRANSCRIBE_VOICE_CHANNEL } from "./voiceTranscription";
+import { DESKTOP_VOICE_IPC_CHANNELS } from "./voice/voiceIpcChannels";
 import { STORAGE_MIGRATION_IPC_CHANNELS } from "./desktopStorageMigration";
 import { APPSNAP_IPC_CHANNELS } from "./appSnapIpc";
 import { DESKTOP_CONNECTION_WAKE_CHANNEL } from "./desktopConnectionWake";
@@ -182,7 +182,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     acknowledgeSnapshot: () => ipcRenderer.invoke(STORAGE_MIGRATION_IPC_CHANNELS.acknowledge),
   },
   server: {
-    transcribeVoice: (input) => ipcRenderer.invoke(SERVER_TRANSCRIBE_VOICE_CHANNEL, input),
+    transcribeVoice: (input) => ipcRenderer.invoke(DESKTOP_VOICE_IPC_CHANNELS.transcribe, input),
+    cancelVoiceTranscription: () =>
+      ipcRenderer.invoke(DESKTOP_VOICE_IPC_CHANNELS.cancelTranscription),
+  },
+  voice: {
+    getState: () => ipcRenderer.invoke(DESKTOP_VOICE_IPC_CHANNELS.getState),
+    downloadModel: () => ipcRenderer.invoke(DESKTOP_VOICE_IPC_CHANNELS.downloadModel),
+    removeModel: () => ipcRenderer.invoke(DESKTOP_VOICE_IPC_CHANNELS.removeModel),
+    repairModel: () => ipcRenderer.invoke(DESKTOP_VOICE_IPC_CHANNELS.repairModel),
   },
   browser: {
     open: (input) => ipcRenderer.invoke(BROWSER_IPC_CHANNELS.open, input),

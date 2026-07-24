@@ -89,11 +89,17 @@ import type {
   ProjectDevServerEvent,
   ProjectDiscoverScriptsInput,
   ProjectDiscoverScriptsResult,
+  ProjectInspectHtmlArtifactInput,
+  ProjectInspectHtmlArtifactResult,
   ProjectListDevServersResult,
   ProjectListDirectoriesInput,
   ProjectListDirectoriesResult,
   ProjectReadFileInput,
   ProjectReadFileResult,
+  ProjectPrepareHtmlArtifactPreviewInput,
+  ProjectPrepareHtmlArtifactPreviewResult,
+  ProjectRevokeHtmlArtifactPreviewInput,
+  ProjectRevokeHtmlArtifactPreviewResult,
   ProjectRunDevServerInput,
   ProjectRunDevServerResult,
   ProjectSearchEntriesInput,
@@ -117,7 +123,12 @@ import type {
   ScientProjectInitializationPreviewResult,
   ScientProjectInitializationRollbackResult,
 } from "./scientProjectInitialization";
-import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem";
+import type {
+  FilesystemBrowseInput,
+  FilesystemBrowseResult,
+  FilesystemCreateDirectoryInput,
+  FilesystemCreateDirectoryResult,
+} from "./filesystem";
 import type { StudioListThreadOutputsInput, StudioListThreadOutputsResult } from "./studio";
 import type {
   ServerConfig,
@@ -218,6 +229,26 @@ export interface ContextMenuItem<T extends string = string> {
   destructive?: boolean;
 }
 
+export type DesktopVoiceModelStatus =
+  | { readonly state: "missing" }
+  | {
+      readonly state: "downloading";
+      readonly downloadedBytes: number;
+      readonly totalBytes: number;
+    }
+  | {
+      readonly state: "ready";
+      readonly byteSize: number;
+    }
+  | { readonly state: "error"; readonly message: string };
+
+export interface DesktopVoiceState {
+  readonly runtimeAvailable: boolean;
+  readonly model: DesktopVoiceModelStatus;
+  readonly modelName: string;
+  readonly modelByteSize: number;
+}
+
 export type DesktopUpdateStatus =
   | "disabled"
   | "idle"
@@ -267,9 +298,13 @@ export interface DesktopUpdateActionResult {
   state: DesktopUpdateState;
 }
 
+export type BrowserTabKind = "web" | "artifact" | "local-app";
+
 export interface BrowserTabState {
   id: string;
+  kind: BrowserTabKind;
   url: string;
+  displayUrl: string | null;
   title: string;
   status: "live" | "suspended";
   isLoading: boolean;
@@ -292,6 +327,8 @@ export interface ThreadBrowserState {
 export interface BrowserOpenInput {
   threadId: ThreadId;
   initialUrl?: string;
+  kind?: BrowserTabKind;
+  displayUrl?: string;
 }
 
 export interface BrowserThreadInput {
@@ -312,6 +349,8 @@ export interface BrowserNavigateInput {
 export interface BrowserNewTabInput {
   threadId: ThreadId;
   url?: string;
+  kind?: BrowserTabKind;
+  displayUrl?: string;
   activate?: boolean;
 }
 
@@ -397,6 +436,7 @@ export interface BrowserExecuteCdpInput extends BrowserTabInput {
 // while the native page (not the React chrome) holds keyboard focus.
 export interface BrowserCopyLinkEvent {
   threadId: ThreadId;
+  tabId: string;
   url: string;
 }
 
@@ -491,6 +531,13 @@ export interface DesktopBridge {
     transcribeVoice: (
       input: ServerVoiceTranscriptionInput,
     ) => Promise<ServerVoiceTranscriptionResult>;
+    cancelVoiceTranscription: () => Promise<void>;
+  };
+  voice?: {
+    getState: () => Promise<DesktopVoiceState>;
+    downloadModel: () => Promise<DesktopVoiceState>;
+    removeModel: () => Promise<DesktopVoiceState>;
+    repairModel: () => Promise<DesktopVoiceState>;
   };
   browser: {
     open: (input: BrowserOpenInput) => Promise<ThreadBrowserState>;
@@ -551,6 +598,15 @@ export interface NativeApi {
     createLocalFilePreviewGrant: (
       input: ProjectCreateLocalFilePreviewGrantInput,
     ) => Promise<ProjectCreateLocalFilePreviewGrantResult>;
+    inspectHtmlArtifact: (
+      input: ProjectInspectHtmlArtifactInput,
+    ) => Promise<ProjectInspectHtmlArtifactResult>;
+    prepareHtmlArtifactPreview: (
+      input: ProjectPrepareHtmlArtifactPreviewInput,
+    ) => Promise<ProjectPrepareHtmlArtifactPreviewResult>;
+    revokeHtmlArtifactPreview: (
+      input: ProjectRevokeHtmlArtifactPreviewInput,
+    ) => Promise<ProjectRevokeHtmlArtifactPreviewResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
     runDevServer: (input: ProjectRunDevServerInput) => Promise<ProjectRunDevServerResult>;
     stopDevServer: (input: ProjectStopDevServerInput) => Promise<ProjectStopDevServerResult>;
@@ -573,6 +629,9 @@ export interface NativeApi {
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
+    createDirectory: (
+      input: FilesystemCreateDirectoryInput,
+    ) => Promise<FilesystemCreateDirectoryResult>;
   };
   studio: {
     listThreadOutputs: (
@@ -702,6 +761,7 @@ export interface NativeApi {
     transcribeVoice: (
       input: ServerVoiceTranscriptionInput,
     ) => Promise<ServerVoiceTranscriptionResult>;
+    cancelVoiceTranscription?: () => Promise<void>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
   };
   stats: {

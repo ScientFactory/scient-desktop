@@ -38,6 +38,7 @@ import {
   groupPullRequestEntriesByInvolvement,
   matchesPullRequestSearchQuery,
   orderPullRequestEntriesPinnedFirst,
+  pullRequestListEntryKey,
   pullRequestPinToggleInputs,
 } from "~/components/pullRequest/pullRequestList.logic";
 import {
@@ -53,7 +54,6 @@ import { Button } from "~/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "~/components/ui/empty";
 import { SearchInput } from "~/components/ui/search-input";
 import { Skeleton } from "~/components/ui/skeleton";
-import { toastManager } from "~/components/ui/toast";
 import {
   useDesktopTopBarTrafficLightGutterClassName,
   useDesktopTopBarWindowControlsGutterClassName,
@@ -270,22 +270,34 @@ function PullRequestsRouteView() {
     search.projectId === undefined ||
     search.selectedProjectId === undefined ||
     search.selectedProjectId === search.projectId;
-  const selectedInput =
-    selectionMatchesScope && search.selectedProjectId && search.selectedRepo && search.number
-      ? {
-          projectId: search.selectedProjectId,
-          repository: search.selectedRepo,
-          number: search.number,
-        }
-      : null;
+  const selectedInput = useMemo(
+    () =>
+      selectionMatchesScope && search.selectedProjectId && search.selectedRepo && search.number
+        ? {
+            projectId: search.selectedProjectId,
+            repository: search.selectedRepo,
+            number: search.number,
+          }
+        : null,
+    [selectionMatchesScope, search.number, search.selectedProjectId, search.selectedRepo],
+  );
   const detailOpen = selectedInput !== null;
   const [renderedInput, setRenderedInput] = useState(selectedInput);
+  const [pinErrors, setPinErrors] = useState<ReadonlyMap<string, string>>(() => new Map());
+  const [manualRefreshError, setManualRefreshError] = useState<string | null>(null);
+  useEffect(() => {
+    setManualRefreshError(null);
+  }, [
+    exactInvolvementQuery.dataUpdatedAt,
+    listInput.projectId,
+    listInput.state,
+    listQuery.dataUpdatedAt,
+    search.involvement,
+    search.q,
+  ]);
   useEffect(() => {
     if (selectedInput) setRenderedInput(selectedInput);
-    // selectedInput is a fresh object literal every render; depend on its primitive
-    // fields instead so this only re-fires when the actual selection changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search.selectedProjectId, search.selectedRepo, search.number]);
+  }, [selectedInput]);
   useEffect(() => {
     if (detailOpen) return;
     const timeout = window.setTimeout(() => setRenderedInput(null), 300);
@@ -340,14 +352,19 @@ function PullRequestsRouteView() {
   );
   const handleTogglePinned = useCallback(
     (entry: PullRequestListEntry) => {
+      const entryKey = pullRequestListEntryKey(entry);
+      setPinErrors((current) => {
+        if (!current.has(entryKey)) return current;
+        const next = new Map(current);
+        next.delete(entryKey);
+        return next;
+      });
       for (const input of pullRequestPinToggleInputs(entry, search.projectId === undefined)) {
         mutatePin(input, {
-          onError: (error) =>
-            toastManager.add({
-              type: "error",
-              title: "Could not update pull request pin",
-              description: error instanceof Error ? error.message : "The pin could not be saved.",
-            }),
+          onError: (error) => {
+            const message = error instanceof Error ? error.message : "The pin could not be saved.";
+            setPinErrors((current) => new Map(current).set(entryKey, message));
+          },
         });
       }
     },
@@ -356,16 +373,13 @@ function PullRequestsRouteView() {
   const refreshBlocked = refreshMutation.isPending || activeActionCount > 0;
   const handleManualRefresh = useCallback(() => {
     if (activeActionCount > 0) return;
+    setManualRefreshError(null);
     mutateRefresh(listInput, {
+      onSuccess: () => setManualRefreshError(null),
       onError: (error) =>
-        toastManager.add({
-          type: "error",
-          title: "Could not refresh pull requests",
-          description:
-            error instanceof Error
-              ? error.message
-              : "The pull request list could not be refreshed.",
-        }),
+        setManualRefreshError(
+          error instanceof Error ? error.message : "The pull request list could not be refreshed.",
+        ),
     });
   }, [activeActionCount, listInput, mutateRefresh]);
 
@@ -497,8 +511,14 @@ function PullRequestsRouteView() {
                   showProjectTitle={search.projectId === undefined}
                   onSelect={handleSelectPullRequest}
                   onTogglePinned={handleTogglePinned}
+                  pinErrors={pinErrors}
                 />
               )}
+              {manualRefreshError ? (
+                <PullRequestWarningNote shape="callout" role="alert">
+                  Could not refresh pull requests: {manualRefreshError}
+                </PullRequestWarningNote>
+              ) : null}
               {!exactInvolvementPending &&
               !initialExactInvolvementError &&
               truncatedRepositoryCount > 0 ? (

@@ -165,6 +165,81 @@ export const ProjectCreateLocalFilePreviewGrantResult = Schema.Struct({
 });
 export type ProjectCreateLocalFilePreviewGrantResult =
   typeof ProjectCreateLocalFilePreviewGrantResult.Type;
+
+// ── HTML Artifact Preview ────────────────────────────────────────────
+//
+// HTML artifacts are inspected before they are opened. Browser-ready
+// documents and bundles use a capability-scoped preview origin; source
+// entrypoints are handed to the dev-server lifecycle instead of being served
+// as if browsers could execute TS/TSX directly.
+
+export const ProjectHtmlArtifactMode = Schema.Literals([
+  "static-document",
+  "interactive-bundle",
+  "dev-server-entrypoint",
+  "unsupported",
+]);
+export type ProjectHtmlArtifactMode = typeof ProjectHtmlArtifactMode.Type;
+
+export const ProjectHtmlArtifactWarningCode = Schema.Literals([
+  "external-resource-blocked",
+  "missing-local-resource",
+  "unsupported-local-resource",
+  "inspection-truncated",
+]);
+export type ProjectHtmlArtifactWarningCode = typeof ProjectHtmlArtifactWarningCode.Type;
+
+export const ProjectHtmlArtifactWarning = Schema.Struct({
+  code: ProjectHtmlArtifactWarningCode,
+  message: TrimmedNonEmptyString.check(Schema.isMaxLength(500)),
+});
+export type ProjectHtmlArtifactWarning = typeof ProjectHtmlArtifactWarning.Type;
+
+export const ProjectHtmlArtifactRunTarget = Schema.Struct({
+  cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
+  command: TrimmedNonEmptyString.check(Schema.isMaxLength(1_000)),
+  scriptName: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+});
+export type ProjectHtmlArtifactRunTarget = typeof ProjectHtmlArtifactRunTarget.Type;
+
+export const ProjectInspectHtmlArtifactInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
+  path: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
+});
+export type ProjectInspectHtmlArtifactInput = typeof ProjectInspectHtmlArtifactInput.Type;
+
+export const ProjectInspectHtmlArtifactResult = Schema.Struct({
+  mode: ProjectHtmlArtifactMode,
+  title: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(500))),
+  reason: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(1_000))),
+  warnings: Schema.Array(ProjectHtmlArtifactWarning),
+  runTarget: Schema.optional(ProjectHtmlArtifactRunTarget),
+});
+export type ProjectInspectHtmlArtifactResult = typeof ProjectInspectHtmlArtifactResult.Type;
+
+export const ProjectPrepareHtmlArtifactPreviewInput = ProjectInspectHtmlArtifactInput;
+export type ProjectPrepareHtmlArtifactPreviewInput =
+  typeof ProjectPrepareHtmlArtifactPreviewInput.Type;
+
+export const ProjectPrepareHtmlArtifactPreviewResult = Schema.Struct({
+  ...ProjectInspectHtmlArtifactResult.fields,
+  previewUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
+  expiresAt: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProjectPrepareHtmlArtifactPreviewResult =
+  typeof ProjectPrepareHtmlArtifactPreviewResult.Type;
+
+export const ProjectRevokeHtmlArtifactPreviewInput = Schema.Struct({
+  previewUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(8_192)),
+});
+export type ProjectRevokeHtmlArtifactPreviewInput =
+  typeof ProjectRevokeHtmlArtifactPreviewInput.Type;
+
+export const ProjectRevokeHtmlArtifactPreviewResult = Schema.Struct({
+  revoked: Schema.Boolean,
+});
+export type ProjectRevokeHtmlArtifactPreviewResult =
+  typeof ProjectRevokeHtmlArtifactPreviewResult.Type;
 // ── Dev Server Process Manager ───────────────────────────────────────
 //
 // Dev servers are first-class background processes owned by the server and
@@ -172,16 +247,20 @@ export type ProjectCreateLocalFilePreviewGrantResult =
 // their lifecycle and broadcasts changes over the `project.devServerEvent`
 // push channel so every client stays in sync across reconnects.
 
-export const ProjectDevServerStatus = Schema.Literals(["starting", "running"]);
+export const ProjectDevServerStatus = Schema.Literals(["starting", "running", "failed"]);
 export type ProjectDevServerStatus = typeof ProjectDevServerStatus.Type;
 
 export const ProjectDevServer = Schema.Struct({
   projectId: ProjectId,
+  runId: TrimmedNonEmptyString,
   command: TrimmedNonEmptyString,
   cwd: TrimmedNonEmptyString,
   pid: Schema.NullOr(PositiveInt),
   startedAt: TrimmedNonEmptyString,
   status: ProjectDevServerStatus,
+  url: Schema.optional(TrimmedNonEmptyString),
+  ports: Schema.optional(Schema.Array(PositiveInt)),
+  error: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProjectDevServer = typeof ProjectDevServer.Type;
 

@@ -17,12 +17,12 @@ import { buildComposerImageAttachmentsFromFiles } from "~/lib/composerSend";
 import { newThreadId } from "~/lib/utils";
 import { useComposerDraftStore, useComposerThreadDraft } from "../../composerDraftStore";
 import { buildModelSelection } from "../../providerModelOptions";
-import { toastManager } from "../ui/toast";
 
 export function useKanbanTaskScratchDraft(input: { readonly defaultProvider: ProviderKind }) {
   // Scratch composer draft backing the dialog: model/effort/speed state lives in
   // the composer draft store under this throwaway thread id, exactly like chat.
   const [scratchThreadId] = useState(() => newThreadId());
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   useEffect(() => {
     useComposerDraftStore.getState().applyStickyState(scratchThreadId);
     return () => {
@@ -114,6 +114,7 @@ export function useKanbanTaskScratchDraft(input: { readonly defaultProvider: Pro
   const addComposerImages = useCallback(
     (files: readonly File[]) => {
       if (files.length === 0) return;
+      setAttachmentError(null);
       const { images, error } = buildComposerImageAttachmentsFromFiles({
         files,
         existingAttachmentCount: composerImages.length + composerAssistantSelections.length,
@@ -122,11 +123,12 @@ export function useKanbanTaskScratchDraft(input: { readonly defaultProvider: Pro
         useComposerDraftStore.getState().addImages(scratchThreadId, images);
       }
       if (error) {
-        toastManager.add({ type: "warning", title: error });
+        setAttachmentError(error);
       }
     },
     [composerAssistantSelections.length, composerImages.length, scratchThreadId],
   );
+  const clearAttachmentError = useCallback(() => setAttachmentError(null), []);
 
   const removeComposerImage = useCallback(
     (imageId: string) => {
@@ -164,6 +166,8 @@ export function useKanbanTaskScratchDraft(input: { readonly defaultProvider: Pro
     selectedProvider,
     selectedModel,
     selectedProviderModelOptions,
+    attachmentError,
+    clearAttachmentError,
     setPrompt,
     handleProviderModelChange,
     addComposerImages,

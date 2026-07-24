@@ -2,7 +2,7 @@
 // Purpose: Show explicitly linked HTML/Markdown deliverables beneath a settled assistant reply.
 // Layer: Chat timeline presentation
 
-import type { EditorId } from "@synara/contracts";
+import type { EditorId, ProjectInspectHtmlArtifactResult } from "@synara/contracts";
 import { isLocalAbsolutePath, joinWorkspaceRelativePath } from "@synara/shared/path";
 import { useQuery } from "@tanstack/react-query";
 import { memo, useEffect, useId, useMemo, useState } from "react";
@@ -18,13 +18,13 @@ import {
   FolderIcon,
 } from "~/lib/icons";
 import { serverConfigQueryOptions } from "~/lib/serverReactQuery";
+import { projectInspectHtmlArtifactQueryOptions } from "~/lib/projectReactQuery";
 import { cn } from "~/lib/utils";
 import { openWorkspaceFileReference, useWorkspaceFileOpener } from "~/lib/workspaceFileOpener";
 import { readNativeApi } from "~/nativeApi";
 import { Button } from "../ui/button";
 import { DisclosureRegion } from "../ui/DisclosureRegion";
 import { Menu, MenuItem, MenuSeparator, MenuTrigger } from "../ui/menu";
-import { toastManager } from "../ui/toast";
 import { ComposerPickerMenuPopup } from "./ComposerPickerMenuPopup";
 import { FileEntryIcon } from "./FileEntryIcon";
 
@@ -36,8 +36,23 @@ function absoluteArtifactPath(path: string, workspaceRoot: string | undefined): 
   return workspaceRoot ? joinWorkspaceRelativePath(workspaceRoot, path) : null;
 }
 
-function artifactSubtitle(kind: MessageArtifactReference["kind"]): string {
-  return kind === "html" ? "Web page · HTML" : "Document · MD";
+function artifactSubtitle(
+  kind: MessageArtifactReference["kind"],
+  inspection?: ProjectInspectHtmlArtifactResult,
+): string {
+  if (kind !== "html") return "Document · MD";
+  switch (inspection?.mode) {
+    case "static-document":
+      return "Static web page · HTML";
+    case "interactive-bundle":
+      return "Interactive web page · HTML";
+    case "dev-server-entrypoint":
+      return "Web app source · runs a dev server";
+    case "unsupported":
+      return "HTML · preview unavailable";
+    default:
+      return "Web page · inspecting…";
+  }
 }
 
 function HtmlArtifactThumbnail(props: {
@@ -121,30 +136,43 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
     [serverConfigQuery.data?.availableEditors],
   );
   const absolutePath = absoluteArtifactPath(props.artifact.path, props.workspaceRoot);
+  const inspectionQuery = useQuery(
+    projectInspectHtmlArtifactQueryOptions({
+      cwd: props.workspaceRoot ?? null,
+      path: props.artifact.kind === "html" ? absolutePath : null,
+      enabled: props.artifact.kind === "html" && absolutePath !== null,
+    }),
+  );
+  const [openError, setOpenError] = useState<string | null>(null);
 
   const reportOpenError = (error: unknown) => {
-    toastManager.add({
-      type: "error",
-      title: "Could not open file",
-      description: error instanceof Error ? error.message : "The file could not be opened.",
-    });
+    setOpenError(error instanceof Error ? error.message : "The file could not be opened.");
   };
-  const preview = () => openWorkspaceFileReference(opener, props.artifact.path);
+  const preview = () => {
+    setOpenError(null);
+    openWorkspaceFileReference(opener, props.artifact.path, { onError: reportOpenError });
+  };
   const openInEditor = (editorId: EditorId) => {
+    setOpenError(null);
     const api = readNativeApi();
-    if (!api || !absolutePath) return;
+    if (!api || !absolutePath) {
+      reportOpenError(new Error("The desktop file opener is unavailable."));
+      return;
+    }
     void api.shell.openInEditor(absolutePath, editorId).catch(reportOpenError);
   };
 
   return (
-    <div className="group/artifact-row flex min-w-0 items-center gap-3 px-3 py-2.5">
+    <div className="group/artifact-row flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5">
       <button
         type="button"
         className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/45"
         title={`Preview ${props.artifact.path}`}
         onClick={preview}
       >
-        {props.artifact.kind === "html" && props.loadHtmlThumbnail !== false ? (
+        {props.artifact.kind === "html" &&
+        props.loadHtmlThumbnail !== false &&
+        inspectionQuery.data?.mode === "static-document" ? (
           <HtmlArtifactThumbnail
             path={props.artifact.path}
             label={props.artifact.label}
@@ -160,7 +188,16 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
             {props.artifact.label}
           </span>
           <span className="mt-0.5 block truncate text-xs text-muted-foreground/75">
-            {artifactSubtitle(props.artifact.kind)}
+            <span
+              title={[
+                inspectionQuery.data?.reason,
+                ...(inspectionQuery.data?.warnings.map((warning) => warning.message) ?? []),
+              ]
+                .filter((message): message is string => Boolean(message))
+                .join("\n")}
+            >
+              {artifactSubtitle(props.artifact.kind, inspectionQuery.data)}
+            </span>
           </span>
         </span>
       </button>
@@ -195,8 +232,16 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
             </MenuItem>
             {props.artifact.kind === "html" ? (
               <MenuItem
-                disabled={!opener?.openHtmlInExternalBrowser}
-                onClick={() => opener?.openHtmlInExternalBrowser?.(props.artifact.path)}
+                disabled={
+                  !opener?.openHtmlInExternalBrowser ||
+                  inspectionQuery.data?.mode === "interactive-bundle"
+                }
+                onClick={() => {
+                  setOpenError(null);
+                  if (!opener?.openHtmlInExternalBrowser?.(props.artifact.path)) {
+                    reportOpenError(new Error("The browser could not open this preview."));
+                  }
+                }}
               >
                 <ExternalLinkIcon aria-hidden="true" className="size-4 text-muted-foreground" />
                 Default browser
@@ -218,9 +263,12 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
             <MenuItem
               disabled={!absolutePath}
               onClick={() => {
+                setOpenError(null);
                 const api = readNativeApi();
                 if (api && absolutePath) {
                   void api.shell.showInFolder(absolutePath).catch(reportOpenError);
+                } else {
+                  reportOpenError(new Error("The desktop file browser is unavailable."));
                 }
               }}
             >
@@ -230,6 +278,15 @@ const AssistantArtifactRow = memo(function AssistantArtifactRow(props: {
           </ComposerPickerMenuPopup>
         </Menu>
       </div>
+      <p
+        className={cn(
+          "basis-full pl-[66px] text-destructive text-xs sm:pl-[84px]",
+          !openError && "sr-only",
+        )}
+        aria-live="polite"
+      >
+        {openError ? `Could not open file: ${openError}` : ""}
+      </p>
     </div>
   );
 });

@@ -6,6 +6,8 @@ import {
   ServerProviderConnectionStartInput,
   ServerProviderConnectionSubmitAuthorizationCodeInput,
   ServerProviderStatus,
+  ServerVoiceTranscriptionInput,
+  ServerVoiceTranscriptionResult,
 } from "./server";
 
 describe("provider connection contracts", () => {
@@ -124,5 +126,29 @@ describe("provider connection contracts", () => {
     expect(decoded.connectionState?.authorizationUrl).toContain("https://auth.x.ai/");
     expect(Object.keys(decoded.connectionState ?? {})).not.toContain("token");
     expect(Object.keys(decoded.connectionState ?? {})).not.toContain("output");
+  });
+});
+
+describe("voice transcription contracts", () => {
+  it("accepts provider-neutral desktop requests and routed metadata", () => {
+    const request = Schema.decodeUnknownSync(ServerVoiceTranscriptionInput)({
+      cwd: "/workspace",
+      mode: "offline-only",
+      mimeType: "audio/wav",
+      sampleRateHz: 24_000,
+      durationMs: 1,
+      audioBase64: "AAAA",
+    });
+    expect(request.provider).toBeUndefined();
+    expect(request.mode).toBe("offline-only");
+
+    expect(
+      Schema.decodeUnknownSync(ServerVoiceTranscriptionResult)({
+        text: "hello",
+        engine: "local",
+        fallbackUsed: true,
+        fallbackReason: "network",
+      }),
+    ).toMatchObject({ engine: "local", fallbackUsed: true });
   });
 });
