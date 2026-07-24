@@ -188,12 +188,14 @@ import {
   resolveEnvironmentPanelPreferenceAfterFirstSend,
   resolveEnvironmentPanelPreferenceUpdate,
   resolveEnvironmentPanelVisible,
+  resolveGitRepoUiState,
   resolveProjectScriptTerminalTarget,
   resolvePromptHistoryNavigation,
   shouldHandlePromptHistoryNavigationKey,
   shouldEnableComposerPastedTextCollapse,
   shouldConsumePendingCustomBinaryConfirmation,
   shouldShowComposerModelBootstrapSkeleton,
+  shouldShowGitActions,
 } from "./ChatView.logic";
 import {
   createRelevantWorkLogThreadsSelector,
@@ -3392,7 +3394,6 @@ export default function ChatView({
       })
     : null;
   const gitCwd = threadWorkspaceCwd;
-  const showGitActions = !isContainerLandingProject || Boolean(resolvedThreadWorktreePath);
   const gitBranchSourceCwd = activeProject
     ? resolveThreadBranchSourceCwd({
         projectCwd: activeProject.cwd,
@@ -3860,8 +3861,16 @@ export default function ChatView({
       worktreePath: activeThreadWorktreePath,
     });
   }, [activeProjectCwd, activeThreadWorktreePath]);
-  // Default true while loading to avoid toolbar flicker.
-  const isGitRepo = branchesQuery.data?.isRepo ?? true;
+  const isGitRepo = resolveGitRepoUiState({
+    isStudioContainer,
+    queriedIsRepo: branchesQuery.data?.isRepo,
+  });
+  const showGitActions = shouldShowGitActions({
+    isStudioContainer,
+    isContainerLandingProject,
+    hasResolvedWorktreePath: Boolean(resolvedThreadWorktreePath),
+    isGitRepo,
+  });
   const repoDiffTotals = useRepoDiffTotals({
     gitCwd: threadWorkspaceCwd,
     isGitRepo,
@@ -10606,6 +10615,7 @@ export default function ChatView({
     activeThreadId: activeThread.id,
     activeProvider: activeThread.session?.provider ?? activeThread.modelSelection.provider,
     isStudioChat: isStudioContainer,
+    studioFolderPath: isStudioContainer ? resolvedThreadWorktreePath : null,
     showGitActions,
     diffOpen: resolvedDiffOpen,
     threadAutomations: threadAutomationItems,
