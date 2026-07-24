@@ -257,7 +257,13 @@ describe("BrowserPanel interactions", () => {
       },
     } as unknown as NativeApi;
     useBrowserStateStore.getState().upsertThreadState(openState);
-    const onClosePanel = vi.fn();
+    const fallback = document.createElement("button");
+    fallback.textContent = "Open Browser";
+    fallback.dataset.browserPanelTestFallback = "true";
+    document.body.append(fallback);
+    const onClosePanel = vi.fn((options?: { restoreFocus?: boolean }) => {
+      if (options?.restoreFocus) fallback.focus();
+    });
 
     await renderLivePanel(onClosePanel);
     const closeButton = await page.getByRole("button", { name: "Close Browser" }).element();
@@ -265,7 +271,38 @@ describe("BrowserPanel interactions", () => {
 
     await vi.waitFor(() => {
       expect(closeTab).toHaveBeenCalledWith({ threadId: THREAD_ID, tabId: "tab-1" });
-      expect(onClosePanel).toHaveBeenCalledOnce();
+      expect(onClosePanel).toHaveBeenCalledWith({ restoreFocus: true });
+      expect(document.activeElement).toBe(fallback);
+    });
+  });
+
+  it("moves focus to the adjacent tab when its visible close button closes the active tab", async () => {
+    const openState = browserState("tab-1");
+    const closeTabState: ThreadBrowserState = {
+      ...openState,
+      version: openState.version + 1,
+      activeTabId: "tab-2",
+      tabs: openState.tabs.slice(1),
+    };
+    const api = liveBrowserApi({ openState, closeTabState });
+    nativeApiTestState.api = api;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+
+    await renderLivePanel(vi.fn());
+    const secondTab = (await page
+      .getByRole("tab", { name: "Example" })
+      .element()) as HTMLButtonElement;
+    const closeButton = (await page
+      .getByRole("button", { name: "Close tab: ScientFactory" })
+      .element()) as HTMLButtonElement;
+    closeButton.click();
+
+    await vi.waitFor(() => {
+      expect(api.browser.closeTab).toHaveBeenCalledWith({
+        threadId: THREAD_ID,
+        tabId: "tab-1",
+      });
+      expect(document.activeElement).toBe(secondTab);
     });
   });
 

@@ -1667,7 +1667,7 @@ export function BrowserPanel({
                     tabIndex={-1}
                     onClick={(event) => {
                       event.stopPropagation();
-                      onCloseTab(tab.id);
+                      onCloseTab(tab.id, { restoreTabFocus: true });
                     }}
                   >
                     <XIcon className="size-3" />
