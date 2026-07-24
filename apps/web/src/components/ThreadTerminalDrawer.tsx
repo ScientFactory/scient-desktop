@@ -16,6 +16,7 @@ import { type ThreadId } from "@synara/contracts";
 import { type TerminalActivityState, type TerminalCliKind } from "@synara/shared/terminalThreads";
 import { Terminal } from "@xterm/xterm";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { copyTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
 import { readNativeApi } from "~/nativeApi";
 import {
@@ -31,6 +32,7 @@ import {
 } from "./terminal/TerminalChrome";
 import { resolveThreadTerminalLayout } from "./terminal/TerminalLayout";
 import {
+  executeTerminalSelectionAction,
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalSelectionMouseUp,
   terminalSelectionActionDelayForClickCount,
@@ -39,6 +41,7 @@ import {
   buildTerminalRuntimeKey,
   terminalRuntimeRegistry,
 } from "./terminal/terminalRuntimeRegistry";
+import { writeSystemMessage } from "./terminal/terminalRuntimeAppearance";
 import type {
   TerminalRuntimeConfig,
   TerminalRuntimeStatus,
@@ -312,6 +315,7 @@ function TerminalViewport({
 
   const readSelectionAction = useCallback((): {
     position: { x: number; y: number };
+    clipboardText: string;
     selection: TerminalContextSelection;
   } | null => {
     const activeTerminal = terminalRef.current;
@@ -340,6 +344,7 @@ function TerminalViewport({
     });
     return {
       position,
+      clipboardText: selectionText,
       selection: {
         terminalId,
         terminalLabel: terminalLabelRef.current,
@@ -365,15 +370,34 @@ function TerminalViewport({
     selectionActionOpenRef.current = true;
     try {
       const clicked = await api.contextMenu.show(
-        [{ id: "add-to-chat", label: "Add to chat" }],
+        [
+          { id: "add-to-chat", label: "Add to chat" },
+          { id: "copy", label: "Copy" },
+        ],
         nextAction.position,
       );
-      if (requestId !== selectionActionRequestIdRef.current || clicked !== "add-to-chat") {
+      if (requestId !== selectionActionRequestIdRef.current || clicked === null) {
         return;
       }
-      onAddTerminalContextRef.current(nextAction.selection);
-      terminalRef.current?.clearSelection();
-      terminalRuntimeRegistry.focus(runtimeKey);
+      await executeTerminalSelectionAction({
+        action: clicked,
+        clipboardText: nextAction.clipboardText,
+        selection: nextAction.selection,
+        copyText: copyTextToClipboard,
+        addToChat: (selection) => onAddTerminalContextRef.current(selection),
+        clearSelection: () => terminalRef.current?.clearSelection(),
+        focusTerminal: () => terminalRuntimeRegistry.focus(runtimeKey),
+        reportCopyError: (error) => {
+          const activeTerminal = terminalRef.current;
+          if (activeTerminal) {
+            writeSystemMessage(
+              activeTerminal,
+              error instanceof Error ? error.message : "Unable to copy terminal selection",
+            );
+          }
+        },
+        isCurrent: () => requestId === selectionActionRequestIdRef.current,
+      });
     } finally {
       selectionActionOpenRef.current = false;
     }

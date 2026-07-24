@@ -4,6 +4,13 @@
 
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
 
+// Xterm selections can include visual cell padding at the end of each line.
+// Keep meaningful leading/internal whitespace and the original line endings,
+// while matching the terminal runtime's established keyboard-copy behavior.
+export function normalizeTerminalClipboardText(selection: string): string {
+  return selection.replace(/[^\S\r\n]+(?=\r?$)/gm, "");
+}
+
 export function resolveTerminalSelectionActionPosition(options: {
   bounds: { left: number; top: number; width: number; height: number };
   selectionRect: { right: number; bottom: number } | null;
@@ -48,4 +55,34 @@ export function shouldHandleTerminalSelectionMouseUp(
   button: number,
 ): boolean {
   return selectionGestureActive && button === 0;
+}
+
+export async function executeTerminalSelectionAction<T>(input: {
+  action: "add-to-chat" | "copy";
+  clipboardText: string;
+  selection: T;
+  copyText: (text: string) => Promise<void>;
+  addToChat: (selection: T) => void;
+  clearSelection: () => void;
+  focusTerminal: () => void;
+  reportCopyError: (error: unknown) => void;
+  isCurrent: () => boolean;
+}): Promise<void> {
+  if (!input.isCurrent()) return;
+  if (input.action === "add-to-chat") {
+    input.addToChat(input.selection);
+    input.clearSelection();
+    input.focusTerminal();
+    return;
+  }
+
+  try {
+    await input.copyText(normalizeTerminalClipboardText(input.clipboardText));
+  } catch (error) {
+    if (!input.isCurrent()) return;
+    input.reportCopyError(error);
+  }
+  if (input.isCurrent()) {
+    input.focusTerminal();
+  }
 }

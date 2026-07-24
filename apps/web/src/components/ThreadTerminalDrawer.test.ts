@@ -1,10 +1,31 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  executeTerminalSelectionAction,
+  normalizeTerminalClipboardText,
   resolveTerminalSelectionActionPosition,
   shouldHandleTerminalSelectionMouseUp,
   terminalSelectionActionDelayForClickCount,
 } from "./terminal/terminalSelectionActions";
+
+describe("normalizeTerminalClipboardText", () => {
+  it("removes per-line terminal padding while preserving CRLF line endings", () => {
+    expect(normalizeTerminalClipboardText("first  \r\nsecond\t \r\nthird   ")).toBe(
+      "first\r\nsecond\r\nthird",
+    );
+  });
+
+  it("preserves leading indentation and internal whitespace", () => {
+    expect(normalizeTerminalClipboardText("  indented  value \t kept   \n\tnext line\t")).toBe(
+      "  indented  value \t kept\n\tnext line",
+    );
+  });
+
+  it("returns already-normalized selections unchanged", () => {
+    const selection = "  leading indentation\r\ninternal  spaces and\ttabs";
+    expect(normalizeTerminalClipboardText(selection)).toBe(selection);
+  });
+});
 
 describe("resolveTerminalSelectionActionPosition", () => {
   it("prefers the selection rect over the last pointer position", () => {
@@ -71,5 +92,99 @@ describe("resolveTerminalSelectionActionPosition", () => {
     expect(shouldHandleTerminalSelectionMouseUp(true, 0)).toBe(true);
     expect(shouldHandleTerminalSelectionMouseUp(false, 0)).toBe(false);
     expect(shouldHandleTerminalSelectionMouseUp(true, 1)).toBe(false);
+  });
+});
+
+describe("executeTerminalSelectionAction", () => {
+  it("copies normalized terminal text, preserves the selection, and restores focus", async () => {
+    const copyText = vi.fn(async () => undefined);
+    const addToChat = vi.fn();
+    const clearSelection = vi.fn();
+    const focusTerminal = vi.fn();
+    const reportCopyError = vi.fn();
+
+    await executeTerminalSelectionAction({
+      action: "copy",
+      clipboardText: "raw\r\nselection  ",
+      selection: { text: "normalized\nselection" },
+      copyText,
+      addToChat,
+      clearSelection,
+      focusTerminal,
+      reportCopyError,
+      isCurrent: () => true,
+    });
+
+    expect(copyText).toHaveBeenCalledWith("raw\r\nselection");
+    expect(addToChat).not.toHaveBeenCalled();
+    expect(clearSelection).not.toHaveBeenCalled();
+    expect(reportCopyError).not.toHaveBeenCalled();
+    expect(focusTerminal).toHaveBeenCalledOnce();
+  });
+
+  it("keeps Add to chat normalization and selection lifecycle unchanged", async () => {
+    const selection = { text: "normalized\nselection" };
+    const addToChat = vi.fn();
+    const clearSelection = vi.fn();
+    const focusTerminal = vi.fn();
+
+    await executeTerminalSelectionAction({
+      action: "add-to-chat",
+      clipboardText: "raw selection  ",
+      selection,
+      copyText: vi.fn(async () => undefined),
+      addToChat,
+      clearSelection,
+      focusTerminal,
+      reportCopyError: vi.fn(),
+      isCurrent: () => true,
+    });
+
+    expect(addToChat).toHaveBeenCalledWith(selection);
+    expect(clearSelection).toHaveBeenCalledOnce();
+    expect(focusTerminal).toHaveBeenCalledOnce();
+  });
+
+  it("reports clipboard rejection and does not apply stale async completions", async () => {
+    let current = true;
+    const error = new Error("clipboard unavailable");
+    const reportCopyError = vi.fn();
+    const focusTerminal = vi.fn();
+
+    await executeTerminalSelectionAction({
+      action: "copy",
+      clipboardText: "selection",
+      selection: { text: "selection" },
+      copyText: async () => {
+        current = false;
+        throw error;
+      },
+      addToChat: vi.fn(),
+      clearSelection: vi.fn(),
+      focusTerminal,
+      reportCopyError,
+      isCurrent: () => current,
+    });
+
+    expect(reportCopyError).not.toHaveBeenCalled();
+    expect(focusTerminal).not.toHaveBeenCalled();
+
+    current = true;
+    await executeTerminalSelectionAction({
+      action: "copy",
+      clipboardText: "selection",
+      selection: { text: "selection" },
+      copyText: async () => {
+        throw error;
+      },
+      addToChat: vi.fn(),
+      clearSelection: vi.fn(),
+      focusTerminal,
+      reportCopyError,
+      isCurrent: () => current,
+    });
+
+    expect(reportCopyError).toHaveBeenCalledWith(error);
+    expect(focusTerminal).toHaveBeenCalledOnce();
   });
 });
