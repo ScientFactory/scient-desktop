@@ -129,8 +129,9 @@ The release owner prepares and approves the entry before promotion:
    pull requests, frameworks, internal components, protocols, migrations, or
    implementation details.
 5. Add only Scient-owned raster artwork under `apps/web/public/release-notes/`.
-   Use its `/release-notes/...` bundled path, pair every image with useful alt
-   text, and verify it at normal, minimum, mobile, and short-height layouts.
+   Use its `/release-notes/...` bundled path. Feature images need useful alt
+   text; the compact card hero is decorative. Verify artwork at normal,
+   minimum, mobile, and short-height layouts.
 6. Have the product owner approve the claims, order, and wording. This human
    review is the authority for tone and accuracy; automated checks cannot infer it.
 7. Run `bun run release:notes:check -- X.Y.Z` and commit the approved entry with

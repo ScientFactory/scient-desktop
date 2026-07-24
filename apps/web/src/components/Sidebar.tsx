@@ -228,8 +228,7 @@ import {
 import { projectScriptRuntimeEnv } from "../projectScripts";
 import { transientAlertManager } from "../notifications/transientAlert";
 import { showUndoSnackbar } from "./ui/undoSnackbar";
-import { ActivityCenter } from "../notifications/ActivityCenter";
-import { WhatsNewSidebarCard } from "../whatsNew/WhatsNewSidebarCard";
+import { SidebarFooterControls } from "./SidebarFooterControls";
 import { activityManager, type PublishActivityInput } from "../notifications/activityStore";
 import {
   normalizeSidebarProjectThreadListCwd,
@@ -278,7 +277,6 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarHeader,
   SidebarMenu,
@@ -7454,73 +7452,69 @@ export default function Sidebar() {
         ) : null}
       </SidebarContent>
 
-      <SidebarFooter className="gap-2 p-2 font-system-ui">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <div className="flex flex-col gap-1">
-              {DebugFeatureFlagsMenu && showDebugFeatureFlagsMenu && !isOnSettings ? (
-                <Suspense fallback={null}>
-                  <DebugFeatureFlagsMenu />
-                </Suspense>
-              ) : null}
-              <WhatsNewSidebarCard />
-              <ActivityCenter />
-              <div className="flex items-center gap-2">
-                {!isOnSettings && (
-                  <SidebarMenuButton
-                    size="sm"
-                    className={cn(
-                      SIDEBAR_HEADER_ROW_CLASS_NAME,
-                      SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME,
-                      SIDEBAR_ROW_HOVER_CLASS_NAME,
-                      "flex-1",
-                    )}
-                    onClick={() => void navigate({ to: "/settings" })}
-                  >
-                    <SidebarLeadingIcon size="sm" tone={SIDEBAR_ROW_LABEL_TEXT_CLASS_NAME}>
-                      <SidebarGlyph icon={SettingsIcon} variant="leading" />
-                    </SidebarLeadingIcon>
-                    <span>Settings</span>
-                  </SidebarMenuButton>
+      <SidebarFooterControls
+        beforeReleaseNote={
+          DebugFeatureFlagsMenu && showDebugFeatureFlagsMenu && !isOnSettings ? (
+            <Suspense fallback={null}>
+              <DebugFeatureFlagsMenu />
+            </Suspense>
+          ) : null
+        }
+        settingsAndUpdate={
+          <div className="flex items-center gap-2">
+            {!isOnSettings && (
+              <SidebarMenuButton
+                size="sm"
+                className={cn(
+                  SIDEBAR_HEADER_ROW_CLASS_NAME,
+                  SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME,
+                  SIDEBAR_ROW_HOVER_CLASS_NAME,
+                  "flex-1",
                 )}
-                {showDesktopUpdateButton ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <button
-                          type="button"
-                          aria-label={desktopUpdateTooltip}
-                          aria-disabled={desktopUpdateButtonDisabled || undefined}
-                          disabled={desktopUpdateButtonDisabled}
-                          className={desktopUpdateRowButtonClasses}
-                          onClick={handleDesktopUpdateButtonClick}
-                        >
-                          <span className="flex min-w-0 flex-1 items-center justify-between gap-1.5 leading-tight">
-                            <span className="min-w-0 truncate text-center">
-                              {desktopUpdateButtonPresentation.label}
-                            </span>
-                            {desktopUpdateButtonPresentation.secondaryLabel ? (
-                              <span className="min-w-0 truncate text-center text-[length:var(--app-font-size-ui-xs,10px)] text-white/80">
-                                {desktopUpdateButtonPresentation.secondaryLabel}
-                              </span>
-                            ) : null}
+                onClick={() => void navigate({ to: "/settings" })}
+              >
+                <SidebarLeadingIcon size="sm" tone={SIDEBAR_ROW_LABEL_TEXT_CLASS_NAME}>
+                  <SidebarGlyph icon={SettingsIcon} variant="leading" />
+                </SidebarLeadingIcon>
+                <span>Settings</span>
+              </SidebarMenuButton>
+            )}
+            {showDesktopUpdateButton ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <button
+                      type="button"
+                      aria-label={desktopUpdateTooltip}
+                      aria-disabled={desktopUpdateButtonDisabled || undefined}
+                      disabled={desktopUpdateButtonDisabled}
+                      className={desktopUpdateRowButtonClasses}
+                      onClick={handleDesktopUpdateButtonClick}
+                    >
+                      <span className="flex min-w-0 flex-1 items-center justify-between gap-1.5 leading-tight">
+                        <span className="min-w-0 truncate text-center">
+                          {desktopUpdateButtonPresentation.label}
+                        </span>
+                        {desktopUpdateButtonPresentation.secondaryLabel ? (
+                          <span className="min-w-0 truncate text-center text-[length:var(--app-font-size-ui-xs,10px)] text-white/80">
+                            {desktopUpdateButtonPresentation.secondaryLabel}
                           </span>
-                          {desktopUpdateDownloadPercent !== null ? (
-                            <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-white/95">
-                              {desktopUpdateDownloadPercent}%
-                            </span>
-                          ) : null}
-                        </button>
-                      }
-                    />
-                    <TooltipPopup side="top">{desktopUpdateTooltip}</TooltipPopup>
-                  </Tooltip>
-                ) : null}
-              </div>
-            </div>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
+                        ) : null}
+                      </span>
+                      {desktopUpdateDownloadPercent !== null ? (
+                        <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[9px] font-semibold tabular-nums text-white/95">
+                          {desktopUpdateDownloadPercent}%
+                        </span>
+                      ) : null}
+                    </button>
+                  }
+                />
+                <TooltipPopup side="top">{desktopUpdateTooltip}</TooltipPopup>
+              </Tooltip>
+            ) : null}
+          </div>
+        }
+      />
 
       {projectContextMenuState && projectContextMenuProject && projectContextMenuAnchor ? (
         <Menu

@@ -21,7 +21,6 @@ export interface ReleaseNoteEntry {
   readonly kind?: "standard" | "hotfix";
   readonly features: readonly ReleaseNoteFeature[];
   readonly heroImage?: string;
-  readonly heroImageAlt?: string;
 }
 
 const SEMVER_PATTERN =
@@ -87,14 +86,7 @@ export function verifyReleaseNoteForVersion(
           : `${label} must contain between 3 and 5 user-facing highlights.`,
       );
     }
-    validateImagePair(
-      label,
-      "hero",
-      entry.heroImage,
-      entry.heroImageAlt,
-      errors,
-      options.assetExists,
-    );
+    validateImage(label, "hero", entry.heroImage, errors, options.assetExists);
 
     const featureIds = new Set<string>();
     for (const [featureIndex, feature] of entry.features.entries()) {
@@ -144,17 +136,30 @@ function validateImagePair(
     errors.push(`${label} ${kind} and accessible alt text must be provided together.`);
   }
   if (image !== undefined && image.trim().length === 0) errors.push(`${label} ${kind} is blank.`);
-  if (image !== undefined && image.trim().length > 0) {
-    if (!RELEASE_NOTE_ASSET_PATTERN.test(image)) {
-      errors.push(
-        `${label} ${kind} must be a bundled raster asset under /release-notes/ with no URL, query, hash, or traversal.`,
-      );
-    } else if (!(assetExists ?? bundledReleaseNoteAssetExists)(image)) {
-      errors.push(`${label} ${kind} asset does not exist in apps/web/public${image}.`);
-    }
-  }
+  validateImage(label, kind, image, errors, assetExists);
   if (alt !== undefined && alt.trim().length === 0)
     errors.push(`${label} ${kind} alt text is blank.`);
+}
+
+function validateImage(
+  label: string,
+  kind: string,
+  image: string | undefined,
+  errors: string[],
+  assetExists: ((publicPath: string) => boolean) | undefined,
+) {
+  if (image === undefined) return;
+  if (image.trim().length === 0) {
+    errors.push(`${label} ${kind} is blank.`);
+    return;
+  }
+  if (!RELEASE_NOTE_ASSET_PATTERN.test(image)) {
+    errors.push(
+      `${label} ${kind} must be a bundled raster asset under /release-notes/ with no URL, query, hash, or traversal.`,
+    );
+  } else if (!(assetExists ?? bundledReleaseNoteAssetExists)(image)) {
+    errors.push(`${label} ${kind} asset does not exist in apps/web/public${image}.`);
+  }
 }
 
 function bundledReleaseNoteAssetExists(publicPath: string): boolean {

@@ -15,18 +15,10 @@ import { render } from "vitest-browser-react";
 
 import { WhatsNewProvider, useWhatsNewContext } from "../whatsNew/WhatsNewProvider";
 import { WhatsNewSidebarCard } from "../whatsNew/WhatsNewSidebarCard";
-import { ActivityCenter } from "../notifications/ActivityCenter";
 import type { WhatsNewEntry } from "../whatsNew/logic";
 import WhatsNewDialog from "./WhatsNewDialog";
-import {
-  Sidebar,
-  SidebarFooter,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarProvider,
-  SidebarTrigger,
-} from "./ui/sidebar";
+import { SidebarFooterControls } from "./SidebarFooterControls";
+import { Sidebar, SidebarMenuButton, SidebarProvider, SidebarTrigger } from "./ui/sidebar";
 
 const STORAGE_KEY = "scient:whats-new:v1";
 const RELEASE: WhatsNewEntry = {
@@ -78,24 +70,18 @@ function Harness({ offscreen = false }: { readonly offscreen?: boolean }) {
 
 function IntegratedFooter() {
   return (
-    <SidebarFooter className="gap-2 p-2">
-      <SidebarMenu>
-        <SidebarMenuItem>
-          <div className="flex flex-col gap-1">
-            <WhatsNewSidebarCard />
-            <ActivityCenter />
-            <div className="flex items-center gap-2">
-              <SidebarMenuButton size="sm" className="flex-1">
-                Settings
-              </SidebarMenuButton>
-              <button type="button" aria-label="Install update" className="size-7">
-                Update
-              </button>
-            </div>
-          </div>
-        </SidebarMenuItem>
-      </SidebarMenu>
-    </SidebarFooter>
+    <SidebarFooterControls
+      settingsAndUpdate={
+        <div className="flex items-center gap-2">
+          <SidebarMenuButton size="sm" className="flex-1">
+            Settings
+          </SidebarMenuButton>
+          <button type="button" aria-label="Install update" className="size-7">
+            Update
+          </button>
+        </div>
+      }
+    />
   );
 }
 

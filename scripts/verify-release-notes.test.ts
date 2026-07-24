@@ -48,9 +48,8 @@ describe("verifyReleaseNoteForVersion", () => {
       version: "01.2.3",
       date: " ",
       headline: " ",
-      heroImage: "/hero.png",
       features: [
-        { id: "same", title: "", description: " " },
+        { id: "same", title: "", description: " ", image: "/release-notes/missing.png" },
         { id: "same", title: "Title", description: "Description", details: " " },
       ],
     });
@@ -101,8 +100,7 @@ describe("verifyReleaseNoteForVersion", () => {
   });
 
   it("allows only existing bundled raster artwork under the release-notes directory", () => {
-    const withHero = (heroImage: string) =>
-      entry({ heroImage, heroImageAlt: "Scient release highlights" });
+    const withHero = (heroImage: string) => entry({ heroImage });
     const verify = (heroImage: string, exists = false) =>
       verifyReleaseNoteForVersion("1.2.3", [withHero(heroImage)], {
         assetExists: () => exists,
