@@ -5156,6 +5156,11 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           cancelled: false,
         };
         context.permissionReplyStateById.set(requestId, replyState);
+        const clearReplyState = () => {
+          if (context.permissionReplyStateById.get(requestId) === replyState) {
+            context.permissionReplyStateById.delete(requestId);
+          }
+        };
         const outcome = yield* runBoundedOpenCodeSdk("permission.reply", (signal) =>
           context.client.permission.reply(
             {
@@ -5168,12 +5173,8 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           Effect.mapError(toAdapterRequestError),
           Effect.map((result) => ({ _tag: "success" as const, result })),
           Effect.catch((error) => Effect.succeed({ _tag: "failure" as const, error })),
+          Effect.ensuring(Effect.sync(clearReplyState)),
         );
-        const clearReplyState = () => {
-          if (context.permissionReplyStateById.get(requestId) === replyState) {
-            context.permissionReplyStateById.delete(requestId);
-          }
-        };
         if (replyState.acknowledged && !replyState.cancelled) {
           // The exact-generation SSE acknowledgement is authoritative even when it wins
           // the race with the HTTP response. Its handler already emitted the resolution.
@@ -5257,6 +5258,11 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           cancelled: false,
         };
         context.questionReplyStateById.set(requestId, replyState);
+        const clearReplyState = () => {
+          if (context.questionReplyStateById.get(requestId) === replyState) {
+            context.questionReplyStateById.delete(requestId);
+          }
+        };
         const outcome = yield* runBoundedOpenCodeSdk("question.reply", (signal) =>
           context.client.question.reply(
             {
@@ -5269,12 +5275,8 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
           Effect.mapError(toAdapterRequestError),
           Effect.map((result) => ({ _tag: "success" as const, result })),
           Effect.catch((error) => Effect.succeed({ _tag: "failure" as const, error })),
+          Effect.ensuring(Effect.sync(clearReplyState)),
         );
-        const clearReplyState = () => {
-          if (context.questionReplyStateById.get(requestId) === replyState) {
-            context.questionReplyStateById.delete(requestId);
-          }
-        };
         if (replyState.acknowledged && !replyState.cancelled) {
           clearReplyState();
           return;

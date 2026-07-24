@@ -7368,6 +7368,161 @@ describe("OpenCodeAdapter runtime lifecycle", () => {
   }
 
   for (const interaction of ["permission", "question"] as const) {
+    it(`cleans up an interrupted ${interaction} reply so the pending request can be retried`, async () => {
+      const eventQueue = createSubscribedEventQueue();
+      const requestId = `${interaction}-interrupted-reply`;
+      let replyAttemptCount = 0;
+      let firstReplySignalAborted = false;
+      const interruptibleReply = (
+        _input: Record<string, unknown>,
+        requestOptions?: { readonly signal?: AbortSignal },
+      ) => {
+        replyAttemptCount += 1;
+        if (replyAttemptCount > 1) {
+          return Promise.resolve({ data: null });
+        }
+        return new Promise<unknown>((_resolve, reject) => {
+          requestOptions?.signal?.addEventListener(
+            "abort",
+            () => {
+              firstReplySignalAborted = true;
+              reject(new Error("reply caller interrupted"));
+            },
+            { once: true },
+          );
+        });
+      };
+      const runtime = createMockOpenCodeRuntime(
+        interaction === "permission"
+          ? { permissionReply: interruptibleReply }
+          : { questionReply: interruptibleReply },
+      );
+      bindSubscribedEventQueue(runtime, eventQueue);
+
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const adapter = yield* OpenCodeAdapter;
+          const observedEvents: Array<{
+            readonly type: string;
+            readonly requestId: string | undefined;
+          }> = [];
+          const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+            Effect.sync(() => {
+              observedEvents.push({ type: event.type, requestId: event.requestId });
+            }),
+          ).pipe(Effect.forkChild);
+          const threadId = asThreadId(`thread-${interaction}-interrupted-reply`);
+          yield* adapter.startSession({
+            provider: "opencode",
+            threadId,
+            runtimeMode: "approval-required",
+          });
+          yield* adapter.sendTurn({
+            threadId,
+            input: `interrupt ${interaction}`,
+            attachments: [],
+            modelSelection: { provider: "opencode", model: "openai/gpt-5.4" },
+          });
+          pushActivePromptEcho(eventQueue, runtime);
+          pushActiveAssistantOwnership(eventQueue, runtime, `msg-${interaction}-interrupted`);
+          eventQueue.push(
+            interaction === "permission"
+              ? {
+                  type: "permission.asked",
+                  properties: {
+                    id: requestId,
+                    sessionID: "opencode-session-1",
+                    permission: "bash",
+                    patterns: ["pwd"],
+                    metadata: {},
+                    always: [],
+                  },
+                }
+              : {
+                  type: "question.asked",
+                  properties: {
+                    id: requestId,
+                    sessionID: "opencode-session-1",
+                    questions: [
+                      {
+                        question: "Continue?",
+                        header: "Confirm",
+                        options: [{ label: "Yes", description: "" }],
+                        multiple: false,
+                        custom: false,
+                      },
+                    ],
+                  },
+                },
+          );
+          yield* Effect.sleep(10);
+          const respond = () =>
+            interaction === "permission"
+              ? adapter.respondToRequest(
+                  threadId,
+                  ApprovalRequestId.makeUnsafe(requestId),
+                  "accept",
+                )
+              : adapter.respondToUserInput(threadId, ApprovalRequestId.makeUnsafe(requestId), {});
+          const interruptedReplyFiber = yield* respond().pipe(Effect.forkChild);
+          yield* Effect.sleep(10);
+          yield* Fiber.interrupt(interruptedReplyFiber);
+          const retryExit = yield* Effect.exit(respond());
+          eventQueue.push({
+            type: "session.next.text.ended",
+            properties: {
+              timestamp: 10,
+              sessionID: "opencode-session-1",
+              text: `${interaction} retry completed`,
+            },
+          });
+          eventQueue.push({
+            type: "session.next.step.ended",
+            properties: {
+              timestamp: 11,
+              sessionID: "opencode-session-1",
+              finish: "stop",
+              cost: 0,
+              tokens: {
+                input: 0,
+                output: 0,
+                reasoning: 0,
+                cache: { read: 0, write: 0 },
+              },
+            },
+          });
+          yield* Effect.sleep(30);
+          const [settled] = yield* adapter.listSessions();
+          yield* Fiber.interrupt(eventsFiber);
+          eventQueue.close();
+          return { observedEvents, retryExit, settled };
+        }).pipe(
+          Effect.provide(
+            makeOpenCodeAdapterLive({ runtime: runtime.runtime }).pipe(
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), { prefix: "opencode-adapter-test-" }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+        ),
+      );
+
+      expect(firstReplySignalAborted).toBe(true);
+      expect(replyAttemptCount).toBe(2);
+      expect(Exit.isSuccess(result.retryExit)).toBe(true);
+      expect(result.settled?.status).toBe("ready");
+      const resolutionType =
+        interaction === "permission" ? "request.resolved" : "user-input.resolved";
+      expect(
+        result.observedEvents.filter(
+          (event) => event.type === resolutionType && event.requestId === requestId,
+        ),
+      ).toHaveLength(1);
+    });
+  }
+
+  for (const interaction of ["permission", "question"] as const) {
     it(`bounds a hung ${interaction} reply and quarantines its late echo from the successor`, async () => {
       const eventQueue = createSubscribedEventQueue();
       let replySignalAborted = false;
