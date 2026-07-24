@@ -202,6 +202,30 @@ describe("ProviderModelPicker", () => {
     }
   });
 
+  it("keeps the provider-switching popup on the shared fixed picker width", async () => {
+    const mounted = await mountPicker({
+      provider: "claudeAgent",
+      model: "claude-opus-4-6",
+      lockedProvider: null,
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      await vi.waitFor(() => {
+        const popup = document.querySelector<HTMLElement>('[data-slot="menu-popup"]');
+        expect(popup).not.toBeNull();
+        expect(popup?.classList.contains("composer-picker-menu-fixed")).toBe(true);
+        const bounds = popup?.getBoundingClientRect();
+        expect(bounds?.width).toBeGreaterThan(0);
+        expect(bounds?.left).toBeGreaterThanOrEqual(0);
+        expect(bounds?.right).toBeLessThanOrEqual(window.innerWidth);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("shows models directly when the provider is locked mid-thread", async () => {
     const mounted = await mountPicker({
       provider: "claudeAgent",

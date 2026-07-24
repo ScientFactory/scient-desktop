@@ -88,6 +88,7 @@ import {
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { buildIsolatedClaudeDiscoveryOptions } from "../claudeDiscoveryIsolation.ts";
 import { buildFileAttachmentsPromptBlock } from "../attachmentProjection.ts";
 import { readProviderPromptImage } from "../promptAttachments.ts";
 import { buildClaudeProcessEnv } from "../claudeProcessEnv.ts";
@@ -4295,14 +4296,12 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       // subprocess handshake). We iterate in the background to unblock it.
       const tempQuery = createQuery({
         prompt: neverResolvingUserMessageStream(),
-        options: {
+        options: buildIsolatedClaudeDiscoveryOptions({
           cwd,
           pathToClaudeCodeExecutable: binaryPath,
-          settingSources: [...CLAUDE_SETTING_SOURCES],
           permissionMode: "plan" as PermissionMode,
-          persistSession: false,
           env: claudeSdkEnvForExecutable(env, binaryPath),
-        },
+        }),
       });
 
       try {
@@ -4329,14 +4328,12 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
     ): Promise<ProviderListModelsResult> {
       const tempQuery = createQuery({
         prompt: neverResolvingUserMessageStream(),
-        options: {
+        options: buildIsolatedClaudeDiscoveryOptions({
           cwd,
           pathToClaudeCodeExecutable: binaryPath,
-          settingSources: [...CLAUDE_SETTING_SOURCES],
           permissionMode: "plan" as PermissionMode,
-          persistSession: false,
           env: claudeSdkEnvForExecutable(env, binaryPath),
-        },
+        }),
       });
 
       try {

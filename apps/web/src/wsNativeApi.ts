@@ -931,9 +931,8 @@ export function createWsNativeApi(): NativeApi {
         }
         state.tabs = nextTabs;
         if (nextTabs.length === 0) {
-          const replacementTab = createFallbackTab();
-          state.tabs = [replacementTab];
-          state.activeTabId = replacementTab.id;
+          state.open = false;
+          state.activeTabId = null;
           state.lastError = null;
         } else if (!state.tabs.some((tab) => tab.id === state.activeTabId)) {
           state.activeTabId = state.tabs[0]?.id ?? null;

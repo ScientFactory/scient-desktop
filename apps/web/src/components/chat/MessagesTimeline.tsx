@@ -77,6 +77,8 @@ import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImage
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ToolCallDetailsContent, ToolCallDetailsDialog } from "./ToolCallDetailsDialog";
 import { DiffStatLabel } from "./DiffStatLabel";
+import { resolveChangedFilesPresentation } from "./changedFilesPresentation";
+import { ChangedFilesCompactPreview } from "./ChangedFilesCompactPreview";
 import { fileDiffStatsByPath, resolveFileDiffStatByChangedPath } from "~/lib/diffRendering";
 import { ReviewChangesButton } from "./ReviewChangesButton";
 import { FileEntryIcon } from "./FileEntryIcon";
@@ -558,6 +560,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [expandedFileChangesByTurnId, setExpandedFileChangesByTurnId] = useState<
     Record<string, boolean>
   >({});
+  const changedFilesDisclosureToggleByTurnIdRef = useRef(new Map<TurnId, HTMLButtonElement>());
   // Tracks which turns have their changed-files list expanded past MAX_VISIBLE_CHANGED_FILES.
   const [expandedFileListByTurnId, setExpandedFileListByTurnId] = useState<Record<string, boolean>>(
     {},
@@ -630,6 +633,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+  const currentChangedFilesTurnId = useMemo(() => {
+    // Only the latest settled answer can own a current change. A newer user
+    // message, a live turn, or a newer answer without changes makes every
+    // existing changed-files card historical and therefore compact by default.
+    if (activeTurnInProgress) return null;
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index]!;
+      if (row.kind !== "message") continue;
+      if (row.message.role !== "assistant") return null;
+      if (!row.showAssistantCopyButton) continue;
+      const summary = row.assistantTurnDiffSummary;
+      return summary && summary.files.length > 0 ? summary.turnId : null;
+    }
+    return null;
+  }, [activeTurnInProgress, rows]);
   const assistantDirectionHintByMessageId = useStableAssistantDirectionHints(rows);
   const settledTurnCollapseTransitions = useSettledTurnCollapseTransitions(rows);
   const enteringMessageRowIds = useMessageSendEnterAnimations(rows, enteringUserMessageIds);
@@ -639,6 +657,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       assistantDirectionHintByMessageId,
       enteringMessageRowIds,
       expandedCollapsedWork,
+      currentChangedFilesTurnId,
       expandedFileChangesByTurnId,
       expandedFileListByTurnId,
       expandedUserMessagesById,
@@ -654,6 +673,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       assistantDirectionHintByMessageId,
       enteringMessageRowIds,
       expandedCollapsedWork,
+      currentChangedFilesTurnId,
       expandedFileChangesByTurnId,
       expandedFileListByTurnId,
       expandedUserMessagesById,
@@ -913,10 +933,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       window.cancelAnimationFrame(frameId);
     };
   }, [emitTrailHighlightsForViewport, onTrailHighlightsChange, resolvedListRef, rows.length]);
-  const toggleFileChangesExpanded = useCallback((turnId: TurnId) => {
+  const setFileChangesExpanded = useCallback((turnId: TurnId, expanded: boolean) => {
     setExpandedFileChangesByTurnId((current) => ({
       ...current,
-      [turnId]: !(current[turnId] ?? true),
+      [turnId]: expanded,
+    }));
+  }, []);
+  const setFileListExpanded = useCallback((turnId: TurnId, expanded: boolean) => {
+    setExpandedFileListByTurnId((current) => ({
+      ...current,
+      [turnId]: expanded,
     }));
   }, []);
   const toggleFileListExpanded = useCallback((turnId: TurnId) => {
@@ -1631,8 +1657,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   if (!turnSummary || row.assistantTurnInProgress) return null;
                   const checkpointFiles = turnSummary.files;
                   if (checkpointFiles.length === 0) return null;
-                  const fileChangesExpanded =
-                    expandedFileChangesByTurnId[turnSummary.turnId] ?? true;
+                  const fileChangesPresentation = resolveChangedFilesPresentation({
+                    files: checkpointFiles,
+                    isCurrentChange: currentChangedFilesTurnId === turnSummary.turnId,
+                    userOverride: expandedFileChangesByTurnId[turnSummary.turnId],
+                  });
+                  const fileChangesExpanded = fileChangesPresentation === "expanded";
                   const fileListExpanded = expandedFileListByTurnId[turnSummary.turnId] ?? false;
                   const checkpointTurnCount = turnSummary.checkpointTurnCount;
                   const checkpointTurnCounts =
@@ -1699,7 +1729,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                     </button>
                   );
                   return (
-                    <div className="mt-1 mb-4 overflow-hidden rounded-[0.65rem] border border-[color:var(--color-border-light)] dark:border-[color:color-mix(in_srgb,var(--color-border-light)_55%,transparent)]">
+                    <div
+                      className="mt-1 mb-4 overflow-hidden rounded-[0.65rem] border border-[color:var(--color-border-light)] dark:border-[color:color-mix(in_srgb,var(--color-border-light)_55%,transparent)]"
+                      data-changed-files-state={fileChangesPresentation}
+                      data-changed-files-turn-id={turnSummary.turnId}
+                    >
                       <div
                         className={cn(
                           "flex items-center justify-between gap-3 bg-[color:color-mix(in_srgb,var(--app-user-message-background)_40%,transparent)] px-3 py-1.5",
@@ -1751,16 +1785,29 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                             aria-expanded={fileChangesExpanded}
                             aria-label={
                               fileChangesExpanded
-                                ? "Collapse changed files list"
-                                : "Expand changed files list"
+                                ? `Collapse changed files list, ${checkpointFiles.length} ${pluralize(checkpointFiles.length, "file")}`
+                                : `Expand changed files list, ${checkpointFiles.length} ${pluralize(checkpointFiles.length, "file")}`
                             }
+                            data-changed-files-disclosure-toggle="true"
+                            ref={(element) => {
+                              if (element) {
+                                changedFilesDisclosureToggleByTurnIdRef.current.set(
+                                  turnSummary.turnId,
+                                  element,
+                                );
+                              } else {
+                                changedFilesDisclosureToggleByTurnIdRef.current.delete(
+                                  turnSummary.turnId,
+                                );
+                              }
+                            }}
                             onClick={(event) => {
                               event.preventDefault();
                               event.stopPropagation();
                               if (!fileChangesExpanded && isTailContentRow) {
                                 scrollTailExpansionToEnd();
                               }
-                              toggleFileChangesExpanded(turnSummary.turnId);
+                              setFileChangesExpanded(turnSummary.turnId, !fileChangesExpanded);
                             }}
                             data-scroll-anchor-ignore={isTailContentRow ? true : undefined}
                           >
@@ -1771,6 +1818,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                           </button>
                         </div>
                       </div>
+                      {fileChangesPresentation === "preview" ? (
+                        <ChangedFilesCompactPreview
+                          files={checkpointFiles}
+                          resolvedTheme={resolvedTheme}
+                          fontSize={chatTypographyStyle.fontSize}
+                          onOpenFile={(filePath) => onOpenTurnDiff(turnSummary.turnId, filePath)}
+                          onShowAll={() => {
+                            changedFilesDisclosureToggleByTurnIdRef.current
+                              .get(turnSummary.turnId)
+                              ?.focus({ preventScroll: true });
+                            if (isTailContentRow) {
+                              scrollTailExpansionToEnd();
+                            }
+                            setFileListExpanded(turnSummary.turnId, true);
+                            setFileChangesExpanded(turnSummary.turnId, true);
+                          }}
+                        />
+                      ) : null}
                       <DisclosureRegion open={fileChangesExpanded}>
                         {firstCheckpointFiles.map((file) => renderCheckpointFileRow(file, true))}
                         {overflowCheckpointFiles.length > 0 ? (

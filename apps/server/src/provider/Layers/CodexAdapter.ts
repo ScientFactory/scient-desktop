@@ -327,11 +327,17 @@ function reasoningSummaryDetail(item: Record<string, unknown>): string | undefin
 }
 
 function itemDetail(
+  itemType: CanonicalItemType,
   item: Record<string, unknown>,
   payload: Record<string, unknown>,
 ): string | undefined {
   const nestedResult = asObject(item.result);
+  const action = asObject(item.action);
+  const actionQueries = Array.isArray(action?.queries) ? action.queries : [];
   const candidates = [
+    ...(itemType === "web_search"
+      ? [item.query, action?.query, ...actionQueries, action?.pattern, action?.url].map(asString)
+      : []),
     asString(item.command),
     asString(item.title),
     asString(item.summary),
@@ -806,7 +812,9 @@ function mapItemLifecycle(
   // Only the provider-authored summary is user-visible reasoning. Raw content
   // may contain model trace data and must not leak into transcript activities.
   const detail =
-    itemType === "reasoning" ? reasoningSummaryDetail(source) : itemDetail(source, payload ?? {});
+    itemType === "reasoning"
+      ? reasoningSummaryDetail(source)
+      : itemDetail(itemType, source, payload ?? {});
   const status = itemStatus(lifecycle, source.status);
 
   return {
@@ -1172,7 +1180,7 @@ function mapToRuntimeEvents(
     }
     const itemType = source ? toCanonicalItemType(source.type ?? source.kind) : "unknown";
     if (itemType === "plan") {
-      const detail = itemDetail(source, payload ?? {});
+      const detail = itemDetail(itemType, source, payload ?? {});
       if (!detail) {
         return [];
       }
