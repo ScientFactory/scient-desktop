@@ -1,7 +1,7 @@
 // Bundles a hermetic Electron fixture, launches it with an isolated profile, and always
 // tears down the detached process group and temporary state on completion or interruption.
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
@@ -21,6 +21,34 @@ const electronOutputPath = join(tempDir, "browser-overlay-lifecycle.cjs");
 const preloadOutputPath = join(tempDir, "browser-overlay-lifecycle.preload.cjs");
 const rendererOutputPath = join(tempDir, "browser-overlay-lifecycle.renderer.js");
 const fixturePath = join(tempDir, "browser-overlay-lifecycle.html");
+const macTestBundleId = `com.scientfactory.scient.browser-overlay-test.${process.pid}`;
+const macSavedStatePath = join(tmpdir(), `${macTestBundleId}.savedState`);
+
+function createMacTestElectronExecutable(originalExecutablePath) {
+  const originalAppPath = dirname(dirname(dirname(originalExecutablePath)));
+  const testAppPath = join(tempDir, "ScientBrowserOverlayTest.app");
+  const testContentsPath = join(testAppPath, "Contents");
+  const clone = spawnSync("cp", ["-cR", originalAppPath, testAppPath], { encoding: "utf8" });
+  if (clone.status !== 0) {
+    rmSync(tempDir, { recursive: true, force: true });
+    throw new Error(
+      `Could not clone the Electron test app: ${clone.stderr || clone.stdout || "unknown error"}`,
+    );
+  }
+
+  const originalInfoPath = join(originalAppPath, "Contents", "Info.plist");
+  const originalInfo = readFileSync(originalInfoPath, "utf8");
+  const info = originalInfo.replace(
+    /(<key>CFBundleIdentifier<\/key>\s*<string>)[^<]+(<\/string>)/,
+    `$1${macTestBundleId}$2`,
+  );
+  if (info === originalInfo) {
+    rmSync(tempDir, { recursive: true, force: true });
+    throw new Error("Could not isolate the Electron test app bundle identifier.");
+  }
+  writeFileSync(join(testContentsPath, "Info.plist"), info, "utf8");
+  return join(testContentsPath, "MacOS", "Electron");
+}
 
 const builds = [
   {
@@ -78,7 +106,11 @@ const electronCommand = resolveElectronLaunchCommand(
   ],
   { development: false },
 );
-const child = spawn(electronCommand.electronPath, electronCommand.args, {
+const electronExecutablePath =
+  process.platform === "darwin"
+    ? createMacTestElectronExecutable(electronCommand.electronPath)
+    : electronCommand.electronPath;
+const child = spawn(electronExecutablePath, electronCommand.args, {
   cwd: workspaceRoot,
   detached: process.platform !== "win32",
   env: {
@@ -121,6 +153,9 @@ function finish(code) {
   finished = true;
   clearTimeout(timeout);
   rmSync(tempDir, { recursive: true, force: true });
+  if (process.platform === "darwin") {
+    rmSync(macSavedStatePath, { recursive: true, force: true });
+  }
   process.exit(code);
 }
 
