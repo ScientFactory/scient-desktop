@@ -318,6 +318,44 @@ describe("provider connection presentation", () => {
     expect(presentation.primaryLabel).toBe("Try again");
   });
 
+  it("retries sign-in when the automatic handoff fails after a managed install", () => {
+    const failureMessage = "Installation succeeded, but sign in could not start.";
+    const presentation = describeProviderConnection("codex", {
+      ...BASE_STATUS,
+      available: false,
+      authStatus: "unknown",
+      runtime: {
+        source: "managed",
+        managedVersion: "0.145.0",
+        canInstall: false,
+        canRepair: true,
+        canRollback: false,
+        canRemove: true,
+        message: null,
+      },
+      installationState: {
+        operationId: "install-codex-1",
+        operation: "install",
+        status: "installed",
+        startedAt: "2026-07-19T10:00:00.000Z",
+        finishedAt: "2026-07-19T10:01:00.000Z",
+        message: "Codex is installed and verified.",
+      },
+      connectionState: {
+        operationId: "handoff-install-codex-1",
+        method: "codex_browser",
+        status: "failed",
+        startedAt: "2026-07-19T10:01:00.000Z",
+        finishedAt: "2026-07-19T10:01:01.000Z",
+        message: failureMessage,
+      },
+    });
+
+    expect(presentation.description).toBe(failureMessage);
+    expect(presentation.primaryAction).toBe("sign_in");
+    expect(presentation.primaryLabel).toBe("Try again");
+  });
+
   it("turns a rejected Grok OAuth operation into a fresh browser retry", () => {
     const presentation = describeProviderConnection("grok", {
       ...BASE_STATUS,

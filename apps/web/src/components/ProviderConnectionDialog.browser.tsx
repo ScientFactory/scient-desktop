@@ -1429,6 +1429,83 @@ describe("ProviderConnectionDialog", () => {
     }
   });
 
+  it("retries sign-in instead of reinstalling after an automatic handoff failure", async () => {
+    const failureMessage = "Installation succeeded, but sign in could not start.";
+    const codex = {
+      provider: "codex",
+      status: "error",
+      available: false,
+      authStatus: "unknown",
+      checkedAt,
+      runtime: {
+        source: "managed",
+        managedVersion: "0.145.0",
+        canInstall: false,
+        canRepair: true,
+        canRollback: false,
+        canRemove: true,
+        message: null,
+      },
+      installationState: {
+        operationId: "install-codex-1",
+        operation: "install",
+        status: "installed",
+        startedAt: checkedAt,
+        finishedAt: "2026-07-19T12:01:00.000Z",
+        message: "Codex is installed and verified.",
+      },
+      connectionState: {
+        operationId: "handoff-install-codex-1",
+        method: "codex_browser",
+        status: "failed",
+        startedAt: "2026-07-19T12:01:00.000Z",
+        finishedAt: "2026-07-19T12:01:01.000Z",
+        message: failureMessage,
+      },
+    } satisfies ServerProviderStatus;
+    const retrying = {
+      ...codex,
+      connectionState: {
+        operationId: "connect-codex-retry",
+        method: "codex_browser",
+        status: "waiting_for_browser",
+        startedAt: "2026-07-19T12:02:00.000Z",
+        finishedAt: null,
+        message: "Finish the provider sign-in in your browser.",
+      },
+    } satisfies ServerProviderStatus;
+    const startProviderConnection = vi.fn().mockResolvedValue({ providers: [retrying] });
+    const refreshProviders = vi.fn().mockResolvedValue({ providers: [codex] });
+    const restoreNativeApi = installNativeApi({ refreshProviders, startProviderConnection });
+    const queryClient = createQueryClient(codex);
+    useProviderConnectionDialogStore.getState().openDialog("codex", "settings");
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <ProviderConnectionDialog />
+      </QueryClientProvider>,
+    );
+
+    try {
+      await expect.element(page.getByText(failureMessage)).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "Try again" })).toBeVisible();
+      await expect
+        .element(page.getByRole("button", { name: "Open installation guide" }))
+        .not.toBeInTheDocument();
+      await page.getByRole("button", { name: "Try again" }).click();
+      await vi.waitFor(() =>
+        expect(startProviderConnection).toHaveBeenCalledWith({
+          provider: "codex",
+          method: "codex_browser",
+        }),
+      );
+    } finally {
+      await screen.unmount();
+      queryClient.clear();
+      restoreNativeApi();
+    }
+  });
+
   it("keeps managed installation available after a complete provider refresh", async () => {
     const antigravity = {
       provider: "antigravity",

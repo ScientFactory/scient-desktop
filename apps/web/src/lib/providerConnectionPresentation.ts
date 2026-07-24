@@ -278,15 +278,21 @@ export function describeProviderConnection(
           canCancel: false,
         };
       case "failed":
-      case "cancelled":
+      case "cancelled": {
+        const canRetrySignIn =
+          providerConnectionMethod(provider) !== null &&
+          (status?.available === true ||
+            installation?.status === "installed" ||
+            status?.runtime?.source === "managed");
         return {
           title,
           description: operation.message,
-          primaryAction: status?.available ? "sign_in" : "open_install_guide",
-          primaryLabel: status?.available ? "Try again" : "Open installation guide",
+          primaryAction: canRetrySignIn ? "sign_in" : "open_install_guide",
+          primaryLabel: canRetrySignIn ? "Try again" : "Open installation guide",
           busy: false,
           canCancel: false,
         };
+      }
     }
   }
 
