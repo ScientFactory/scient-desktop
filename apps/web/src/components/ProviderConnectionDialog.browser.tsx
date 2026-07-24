@@ -1575,7 +1575,6 @@ describe("ProviderConnectionDialog", () => {
     } finally {
       await screen.unmount();
       queryClient.clear();
-      restoreNativeApi();
     }
   });
 

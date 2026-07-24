@@ -22,6 +22,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
     for (const name of [
       "SYNARA_MODE",
       "SYNARA_PORT",
+      "SCIENT_EXECUTABLE_HTML_PREVIEW",
       "SCIENT_HOME",
       "SYNARA_HOME",
       "SYNARA_NO_BROWSER",
