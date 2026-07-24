@@ -1,14 +1,15 @@
 import type { CloneProjectSourceInput, RepositoryProvider } from "@synara/contracts";
 
 import {
-  isDroppedComposerDirectory,
   resolveDroppedFileAbsolutePath,
   type ComposerDroppedFileItem,
 } from "~/lib/composerDropPaths";
 
 export type AddProjectSource = "local" | "git-url" | RepositoryProvider;
 
-export type DroppedProjectFolderResult = { readonly path: string } | { readonly error: string };
+export type DroppedProjectFolderResult =
+  | { readonly path: string; readonly requiresDirectoryValidation?: true }
+  | { readonly error: string };
 
 export interface ProjectFolderDataTransfer {
   readonly items: Iterable<ComposerDroppedFileItem>;
@@ -19,9 +20,30 @@ export function isProjectFolderDrag(types: Iterable<string>): boolean {
   return Array.from(types).includes("Files");
 }
 
+function getDroppedItemKind(
+  item: ComposerDroppedFileItem | undefined,
+): "directory" | "file" | "unknown" {
+  if (!item || typeof item.webkitGetAsEntry !== "function") {
+    return "unknown";
+  }
+  try {
+    const entry = item.webkitGetAsEntry();
+    if (!entry) return "unknown";
+    return entry.isDirectory === true ? "directory" : "file";
+  } catch {
+    return "unknown";
+  }
+}
+
 export function canAcceptProjectFolderDrop(dataTransfer: ProjectFolderDataTransfer): boolean {
   const fileItems = Array.from(dataTransfer.items).filter((item) => item.kind === "file");
-  return fileItems.length === 1 && isDroppedComposerDirectory(fileItems[0]);
+  const files = Array.from(dataTransfer.files);
+  if (fileItems.length > 1 || files.length > 1) return false;
+
+  // Finder and some Electron/Chromium versions withhold both File objects and
+  // webkit entries until `drop`. Keep the surface receptive while the payload
+  // is opaque, then validate the resolved path before opening it.
+  return getDroppedItemKind(fileItems[0]) !== "file";
 }
 
 function getDroppedProjectFile(
@@ -39,16 +61,18 @@ export function resolveDroppedProjectFolder(
   dataTransfer: ProjectFolderDataTransfer,
 ): DroppedProjectFolderResult {
   const fileItems = Array.from(dataTransfer.items).filter((item) => item.kind === "file");
-  if (fileItems.length > 1) {
+  const files = Array.from(dataTransfer.files);
+  if (fileItems.length > 1 || files.length > 1) {
     return { error: "Drop one folder at a time." };
   }
 
   const item = fileItems[0];
-  const file = getDroppedProjectFile(item, dataTransfer.files);
-  if (!item || !file) {
+  const file = getDroppedProjectFile(item, files);
+  if (!file) {
     return { error: "Could not read the dropped folder. Use browse below instead." };
   }
-  if (!isDroppedComposerDirectory(item)) {
+  const itemKind = getDroppedItemKind(item);
+  if (itemKind === "file") {
     return { error: "Drop a folder, not a file." };
   }
 
@@ -62,7 +86,9 @@ export function resolveDroppedProjectFolder(
         "Folders with names ending in whitespace are not supported. Rename the folder and try again.",
     };
   }
-  return { path: absolutePath };
+  return itemKind === "unknown"
+    ? { path: absolutePath, requiresDirectoryValidation: true }
+    : { path: absolutePath };
 }
 
 export function inferCloneDirectoryName(source: AddProjectSource, value: string): string {

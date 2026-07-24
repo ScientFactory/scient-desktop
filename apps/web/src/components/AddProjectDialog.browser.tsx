@@ -17,6 +17,7 @@ function installNativeApi(overrides: {
   cloneSource?: NativeApi["projects"]["cloneSource"];
   browse?: NativeApi["filesystem"]["browse"];
   createDirectory?: NativeApi["filesystem"]["createDirectory"];
+  pickFolder?: NativeApi["dialogs"]["pickFolder"];
 }) {
   const previousNativeApi = window.nativeApi;
   const baseApi = readNativeApi();
@@ -40,7 +41,7 @@ function installNativeApi(overrides: {
       },
       dialogs: {
         ...baseApi.dialogs,
-        pickFolder: vi.fn().mockResolvedValue(null),
+        pickFolder: overrides.pickFolder ?? vi.fn().mockResolvedValue(null),
       },
     } satisfies NativeApi,
   });
@@ -89,7 +90,7 @@ function installDesktopFilePathResolver(resolvePath: (file: File) => string | nu
 }
 
 function makeFolderDragTransfer(
-  entries: ReadonlyArray<{ readonly file: File; readonly directory: boolean }>,
+  entries: ReadonlyArray<{ readonly file: File; readonly directory: boolean | "unknown" }>,
 ): DataTransfer {
   return {
     types: ["Files"],
@@ -97,7 +98,7 @@ function makeFolderDragTransfer(
       kind: "file",
       type: file.type,
       getAsFile: () => file,
-      webkitGetAsEntry: () => ({ isDirectory: directory }),
+      ...(directory === "unknown" ? {} : { webkitGetAsEntry: () => ({ isDirectory: directory }) }),
     })),
     files: entries.map(({ file }) => file),
     dropEffect: "none",
@@ -215,6 +216,47 @@ describe("AddProjectDialog", () => {
     }
   });
 
+  it("opens the native folder picker from the folder-plus tile with synchronous single-flight", async () => {
+    let resolveAdd!: (shouldClose: boolean) => void;
+    const onAddProjectPath = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveAdd = resolve;
+        }),
+    );
+    const pickFolder = vi.fn().mockResolvedValue("/Users/tester/Research");
+    const restoreApi = installNativeApi({
+      statuses: vi.fn().mockResolvedValue({ sources: [] }),
+      browse: vi.fn().mockResolvedValue({ parentPath: "/Users/tester", entries: [] }),
+      pickFolder,
+    });
+    const restoreBridge = installDesktopFilePathResolver(() => "/Users/tester/Research");
+    renderDialog(onAddProjectPath);
+
+    try {
+      await page.getByText("Local folder", { exact: true }).click();
+      const tile = page.getByTestId("folder-drop-icon-tile");
+      await expect.element(tile).toHaveAccessibleName("Open in Finder");
+      const tileElement = (await tile.element()) as HTMLButtonElement;
+      tileElement.click();
+      tileElement.click();
+
+      await vi.waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(1));
+      expect(onAddProjectPath).toHaveBeenCalledTimes(1);
+      expect(onAddProjectPath).toHaveBeenCalledWith("/Users/tester/Research", {
+        createIfMissing: false,
+      });
+
+      resolveAdd(false);
+      await expect
+        .element(page.getByPlaceholder("Type or browse a folder path"))
+        .toHaveValue("/Users/tester/Research");
+    } finally {
+      restoreBridge();
+      restoreApi();
+    }
+  });
+
   it("does not advertise folder drop when the desktop path bridge is unavailable", async () => {
     const restoreApi = installNativeApi({
       statuses: vi.fn().mockResolvedValue({ sources: [] }),
@@ -248,12 +290,17 @@ describe("AddProjectDialog", () => {
           resolveAdd = resolve;
         }),
     );
+    const browse = vi.fn(async ({ partialPath }: { partialPath: string }) =>
+      partialPath === "/Users/tester/Research Projects/Study (2)/"
+        ? { parentPath: "/Users/tester/Research Projects/Study (2)", entries: [] }
+        : {
+            parentPath: "/Users/tester",
+            entries: [{ name: "Documents", fullPath: "/Users/tester/Documents" }],
+          },
+    );
     const restoreApi = installNativeApi({
       statuses: vi.fn().mockResolvedValue({ sources: [] }),
-      browse: vi.fn().mockResolvedValue({
-        parentPath: "/Users/tester",
-        entries: [{ name: "Documents", fullPath: "/Users/tester/Documents" }],
-      }),
+      browse,
     });
     const restoreBridge = installDesktopFilePathResolver(
       () => "/Users/tester/Research Projects/Study (2)",
@@ -263,7 +310,7 @@ describe("AddProjectDialog", () => {
     try {
       await page.getByText("Local folder", { exact: true }).click();
       const folder = new File([new Blob([])], "Study (2)");
-      const transfer = makeFolderDragTransfer([{ file: folder, directory: true }]);
+      const transfer = makeFolderDragTransfer([{ file: folder, directory: "unknown" }]);
 
       dispatchWindowDrag("dragenter", transfer);
       await expect
@@ -284,6 +331,9 @@ describe("AddProjectDialog", () => {
           createIfMissing: false,
         }),
       );
+      expect(browse).toHaveBeenCalledWith({
+        partialPath: "/Users/tester/Research Projects/Study (2)/",
+      });
       expect(onAddProjectPath).toHaveBeenCalledTimes(1);
 
       const secondTransfer = makeFolderDragTransfer([{ file: folder, directory: true }]);
@@ -364,6 +414,43 @@ describe("AddProjectDialog", () => {
       expect(onAddProjectPath).not.toHaveBeenCalled();
     } finally {
       await page.viewport(1_280, 720);
+      restoreBridge();
+      restoreApi();
+    }
+  });
+
+  it("validates an opaque Finder item before submitting it as a project folder", async () => {
+    const onAddProjectPath = vi.fn().mockResolvedValue(true);
+    const browse = vi.fn(async ({ partialPath }: { partialPath: string }) => {
+      if (partialPath === "/Users/tester/notes.md/") {
+        throw new Error("ENOTDIR");
+      }
+      return { parentPath: "/Users/tester", entries: [] };
+    });
+    const restoreApi = installNativeApi({
+      statuses: vi.fn().mockResolvedValue({ sources: [] }),
+      browse,
+    });
+    const restoreBridge = installDesktopFilePathResolver(() => "/Users/tester/notes.md");
+    renderDialog(onAddProjectPath);
+
+    try {
+      await page.getByText("Local folder", { exact: true }).click();
+      const file = new File(["notes"], "notes.md", { type: "text/markdown" });
+      const transfer = makeFolderDragTransfer([{ file, directory: "unknown" }]);
+
+      dispatchWindowDrag("dragenter", transfer);
+      await expect
+        .element(page.getByTestId("folder-drop-affordance"))
+        .toHaveAttribute("data-drop-state", "active");
+      dispatchWindowDrag("drop", transfer);
+
+      await expect
+        .element(page.getByRole("alert"))
+        .toHaveTextContent("Drop an accessible folder, not a file.");
+      expect(browse).toHaveBeenCalledWith({ partialPath: "/Users/tester/notes.md/" });
+      expect(onAddProjectPath).not.toHaveBeenCalled();
+    } finally {
       restoreBridge();
       restoreApi();
     }

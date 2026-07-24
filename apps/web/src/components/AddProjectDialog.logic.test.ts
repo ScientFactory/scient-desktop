@@ -52,6 +52,13 @@ describe("AddProjectDialog logic", () => {
         files: [folder],
       }),
     ).toBe(false);
+    expect(
+      canAcceptProjectFolderDrop({
+        items: [{ kind: "file", getAsFile: () => folder }],
+        files: [],
+      }),
+    ).toBe(true);
+    expect(canAcceptProjectFolderDrop({ items: [], files: [] })).toBe(true);
   });
 
   it("resolves one dropped directory through the Electron path bridge", () => {
@@ -94,6 +101,22 @@ describe("AddProjectDialog logic", () => {
     ).toEqual({ path: "/Users/tester/Research" });
   });
 
+  it("resolves an opaque Finder item for native directory validation", () => {
+    const folder = makeFile("Research");
+    vi.stubGlobal("window", {
+      desktopBridge: {
+        getPathForFile: () => "/Users/tester/Research",
+      },
+    });
+
+    expect(
+      resolveDroppedProjectFolder({
+        items: [{ kind: "file", getAsFile: () => folder }],
+        files: [folder],
+      }),
+    ).toEqual({ path: "/Users/tester/Research", requiresDirectoryValidation: true });
+  });
+
   it("rejects files, ambiguous multi-folder drops, and unavailable absolute paths", () => {
     const file = makeFile("notes.md");
     const folder = makeFile("Research");
@@ -109,6 +132,12 @@ describe("AddProjectDialog logic", () => {
           makeDropItem(makeFile("Second"), { directory: true }),
         ],
         files: [folder],
+      }),
+    ).toEqual({ error: "Drop one folder at a time." });
+    expect(
+      resolveDroppedProjectFolder({
+        items: [],
+        files: [folder, makeFile("Second")],
       }),
     ).toEqual({ error: "Drop one folder at a time." });
     expect(

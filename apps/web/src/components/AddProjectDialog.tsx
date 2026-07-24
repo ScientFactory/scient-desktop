@@ -339,6 +339,20 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
     [isBusy],
   );
 
+  const pickAndSubmitFolder = useCallback(() => {
+    void runSubmission(async () => {
+      const api = readNativeApi();
+      if (!api) throw new Error("The app server is unavailable.");
+      const picked = await api.dialogs.pickFolder();
+      if (!picked) return;
+      const target = props.cloneDirectoryName
+        ? joinProjectPath(picked, props.cloneDirectoryName)
+        : picked;
+      setQuery(target);
+      await onSubmit(target, { createIfMissing: false });
+    });
+  }, [onSubmit, props.cloneDirectoryName, runSubmission]);
+
   useEffect(() => {
     if (!supportsFolderDrop) {
       setIsFolderDragActive(false);
@@ -384,11 +398,18 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
       }
 
       setQuery(dropped.path);
-      void runSubmission(() =>
-        onSubmit(dropped.path, {
-          createIfMissing: false,
-        }),
-      );
+      void runSubmission(async () => {
+        if (dropped.requiresDirectoryValidation) {
+          const api = readNativeApi();
+          if (!api) throw new Error("The app server is unavailable.");
+          try {
+            await api.filesystem.browse({ partialPath: getInitialBrowseQuery(dropped.path) });
+          } catch {
+            throw new Error("Drop an accessible folder, not a file.");
+          }
+        }
+        await onSubmit(dropped.path, { createIfMissing: false });
+      });
     };
 
     window.addEventListener("dragenter", handleDragEnter, true);
@@ -462,16 +483,21 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
             data-drop-state={isFolderDragActive ? "active" : "idle"}
             className="flex min-h-12 items-center gap-3 px-4 py-1.5 text-sm"
           >
-            <span
+            <button
+              type="button"
+              aria-label={fileManagerLabel(platform)}
+              title={fileManagerLabel(platform)}
+              disabled={isBusy || submitInFlightRef.current}
+              onClick={pickAndSubmitFolder}
               data-testid="folder-drop-icon-tile"
               className={cn(
-                "flex size-9 shrink-0 items-center justify-center rounded-xl bg-foreground/[0.035] text-blue-500 shadow-[0_3px_10px_rgb(0_0_0/0.08)] transition-colors duration-150 dark:bg-foreground/[0.07] dark:shadow-[0_3px_12px_rgb(0_0_0/0.24)]",
+                "flex size-9 shrink-0 cursor-pointer items-center justify-center rounded-xl bg-foreground/[0.035] text-blue-500 shadow-[0_3px_10px_rgb(0_0_0/0.08)] transition-[color,background-color,box-shadow] duration-150 hover:bg-foreground/[0.065] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 disabled:cursor-default disabled:opacity-50 dark:bg-foreground/[0.07] dark:shadow-[0_3px_12px_rgb(0_0_0/0.24)] dark:hover:bg-foreground/[0.1]",
                 isFolderDragActive &&
                   "bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-400",
               )}
             >
               <LuFolderPlus className="size-4.5" aria-hidden="true" />
-            </span>
+            </button>
             {isFolderDragActive ? (
               <span className="font-medium text-foreground">Release to add this folder</span>
             ) : (
@@ -566,18 +592,7 @@ function ProjectPathBrowser(props: PathBrowserProps & { homeDir: string | null }
             size="xs"
             className="h-auto px-2 text-xs text-muted-foreground/80 hover:bg-transparent hover:text-foreground"
             disabled={props.isBusy}
-            onClick={async () => {
-              await runSubmission(async () => {
-                const api = readNativeApi();
-                if (!api) throw new Error("The app server is unavailable.");
-                const picked = await api.dialogs.pickFolder();
-                if (!picked) return;
-                const target = props.cloneDirectoryName
-                  ? joinProjectPath(picked, props.cloneDirectoryName)
-                  : picked;
-                await props.onSubmit(target, { createIfMissing: false });
-              });
-            }}
+            onClick={pickAndSubmitFolder}
           >
             {fileManagerLabel(platform)}
           </Button>
