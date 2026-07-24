@@ -52,6 +52,7 @@ interface ChatTranscriptPaneProps {
   listRef: RefObject<LegendListRef | null>;
   timelineControllerRef?: RefObject<MessagesTimelineController | null>;
   pinnedMessageIds?: ReadonlySet<MessageId>;
+  pinLimitMessageId?: MessageId | null;
   canPinMessage?: (messageId: MessageId) => boolean;
   onTogglePinMessage?: (messageId: MessageId) => void;
   threadMarkers?: readonly ThreadMarker[];
@@ -111,6 +112,7 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
   listRef,
   timelineControllerRef,
   pinnedMessageIds,
+  pinLimitMessageId,
   canPinMessage,
   onTogglePinMessage,
   threadMarkers,
@@ -209,6 +211,7 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
             listRef={listRef}
             {...(timelineControllerRef ? { controllerRef: timelineControllerRef } : {})}
             {...(pinnedMessageIds ? { pinnedMessageIds } : {})}
+            {...(pinLimitMessageId ? { pinLimitMessageId } : {})}
             {...(canPinMessage ? { canPinMessage } : {})}
             {...(onTogglePinMessage ? { onTogglePinMessage } : {})}
             {...(threadMarkers ? { threadMarkers } : {})}

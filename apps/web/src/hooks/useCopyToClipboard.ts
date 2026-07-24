@@ -1,6 +1,6 @@
 import * as React from "react";
 
-import { toastManager } from "../components/ui/toast";
+import { transientAlertManager } from "../notifications/transientAlert";
 
 function fallbackCopyTextToClipboard(value: string): boolean {
   if (typeof document === "undefined" || typeof document.execCommand !== "function") {
@@ -134,16 +134,11 @@ export function useCopyToClipboard<TContext = void>({
   return { copyToClipboard, isCopied };
 }
 
-/**
- * Copy a filesystem path and surface the shared success/error toast. Single source
- * of truth for the "Path copied" affordance used by the sidebar and the kanban board.
- */
+/** Copy a filesystem path. Successful copy is intentionally quiet; failure remains actionable. */
 export function useCopyPathToClipboard(): (path: string) => void {
   const { copyToClipboard } = useCopyToClipboard<{ path: string }>({
-    onCopy: (ctx) =>
-      toastManager.add({ type: "success", title: "Path copied", description: ctx.path }),
     onError: (error) =>
-      toastManager.add({
+      transientAlertManager.add({
         type: "error",
         title: "Failed to copy path",
         description: error instanceof Error ? error.message : "An error occurred.",
@@ -152,13 +147,11 @@ export function useCopyPathToClipboard(): (path: string) => void {
   return React.useCallback((path: string) => copyToClipboard(path, { path }), [copyToClipboard]);
 }
 
-/** Copy a thread id and surface the shared "Thread ID copied" toast. */
+/** Copy a thread id. Successful copy is intentionally quiet; failure remains actionable. */
 export function useCopyThreadIdToClipboard(): (threadId: string) => void {
   const { copyToClipboard } = useCopyToClipboard<{ threadId: string }>({
-    onCopy: (ctx) =>
-      toastManager.add({ type: "success", title: "Thread ID copied", description: ctx.threadId }),
     onError: (error) =>
-      toastManager.add({
+      transientAlertManager.add({
         type: "error",
         title: "Failed to copy thread ID",
         description: error instanceof Error ? error.message : "An error occurred.",

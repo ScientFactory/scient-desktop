@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   appendVoiceTranscriptToPrompt,
+  completeComposerVoiceTranscript,
   buildComposerMenuSelectionKey,
   createLocalDispatchSnapshot,
   createWorktreeSetupSnapshot,
+  deriveComposerFooterActionPlan,
   derivePromptHistoryFromMessages,
   failWorktreeSetupSnapshot,
   filterSidechatTranscriptMessages,
@@ -42,6 +44,8 @@ import {
   shouldEnableComposerPastedTextCollapse,
   shouldHandlePromptHistoryNavigationKey,
   shouldRenderProviderHealthBanner,
+  shouldRenderComposerFooter,
+  shouldRouteComposerSendToPendingInput,
   shouldShowComposerModelBootstrapSkeleton,
   shouldStartActiveTurnLayoutGrace,
   shouldRenderTerminalWorkspace,
@@ -631,6 +635,94 @@ describe("voice helpers", () => {
     expect(appendVoiceTranscriptToPrompt("Hello", "   ")).toBeNull();
   });
 
+  it("inserts a completed voice transcript without sending", async () => {
+    const inserted: string[] = [];
+    const sent: string[] = [];
+
+    await expect(
+      completeComposerVoiceTranscript({
+        intent: "insert",
+        currentPrompt: "Existing draft",
+        transcript: "Voice text",
+        insertTranscript: (transcript) => {
+          inserted.push(transcript);
+          return true;
+        },
+        sendPrompt: async (prompt) => {
+          sent.push(prompt);
+          return true;
+        },
+      }),
+    ).resolves.toBe("inserted");
+    expect(inserted).toEqual(["Voice text"]);
+    expect(sent).toEqual([]);
+  });
+
+  it("sends the existing draft and transcript as one completed voice message", async () => {
+    const inserted: string[] = [];
+    const sent: string[] = [];
+
+    await expect(
+      completeComposerVoiceTranscript({
+        intent: "send",
+        currentPrompt: "Existing draft   ",
+        transcript: "  Voice text  ",
+        insertTranscript: (transcript) => {
+          inserted.push(transcript);
+          return true;
+        },
+        sendPrompt: async (prompt) => {
+          sent.push(prompt);
+          return true;
+        },
+      }),
+    ).resolves.toBe("sent");
+    expect(sent).toEqual(["Existing draft\nVoice text"]);
+    expect(inserted).toEqual([]);
+  });
+
+  it("keeps the transcript in the composer when direct send cannot start", async () => {
+    const inserted: string[] = [];
+
+    await expect(
+      completeComposerVoiceTranscript({
+        intent: "send",
+        currentPrompt: "Existing draft",
+        transcript: "Voice text",
+        insertTranscript: (transcript) => {
+          inserted.push(transcript);
+          return true;
+        },
+        sendPrompt: async () => false,
+      }),
+    ).resolves.toBe("inserted");
+    expect(inserted).toEqual(["Voice text"]);
+  });
+
+  it("does not duplicate a transcript already restored by the send pipeline", async () => {
+    let composerPrompt = "Existing draft";
+
+    await expect(
+      completeComposerVoiceTranscript({
+        intent: "send",
+        currentPrompt: composerPrompt,
+        transcript: "Voice text",
+        insertTranscript: (_transcript, completedPrompt) => {
+          if (composerPrompt === completedPrompt) {
+            return false;
+          }
+          composerPrompt = completedPrompt;
+          return true;
+        },
+        sendPrompt: async (completedPrompt) => {
+          composerPrompt = completedPrompt;
+          return false;
+        },
+      }),
+    ).resolves.toBe("preserved");
+    expect(composerPrompt).toBe("Existing draft\nVoice text");
+  });
+
   it("sanitizes inline stack traces from voice errors", () => {
     expect(
       sanitizeVoiceErrorMessage(
@@ -683,6 +775,20 @@ describe("voice helpers", () => {
     ).toEqual({
       canRenderVoiceNotes: false,
       canStartVoiceNotes: false,
+      showVoiceNotesControl: true,
+    });
+
+    expect(
+      deriveComposerVoiceState({
+        authStatus: "unauthenticated",
+        voiceTranscriptionAvailable: false,
+        desktopVoiceAvailable: true,
+        isRecording: false,
+        isTranscribing: false,
+      }),
+    ).toEqual({
+      canRenderVoiceNotes: true,
+      canStartVoiceNotes: true,
       showVoiceNotesControl: true,
     });
   });
@@ -1316,6 +1422,149 @@ describe("deriveComposerSendState", () => {
   });
 });
 
+describe("deriveComposerFooterActionPlan", () => {
+  const baseOptions = {
+    hasLiveTurn: false,
+    hasSendableContent: false,
+    hasActivePendingProgress: false,
+    hasPendingApproval: false,
+    hasPendingUserInput: false,
+    isVoiceActive: false,
+    showPlanFollowUpPrompt: false,
+    canShowVoiceNotes: true,
+  };
+
+  it("keeps Stop and the microphone available for an empty active-turn composer", () => {
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        hasLiveTurn: true,
+      }),
+    ).toEqual({ primaryAction: "stop-generation", showVoiceButton: true });
+  });
+
+  it("morphs Stop into Queue when active-turn content becomes sendable", () => {
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        hasLiveTurn: true,
+        hasSendableContent: true,
+      }),
+    ).toEqual({ primaryAction: "queue-message", showVoiceButton: true });
+  });
+
+  it("morphs to Queue after a finalized voice transcript is inserted", () => {
+    const prompt = appendVoiceTranscriptToPrompt("", "voice follow-up") ?? "";
+    const sendState = deriveComposerSendState({
+      prompt,
+      imageCount: 0,
+      fileCount: 0,
+      assistantSelectionCount: 0,
+      fileCommentCount: 0,
+      terminalContexts: [],
+      pastedTexts: [],
+    });
+
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        hasLiveTurn: true,
+        hasSendableContent: sendState.hasSendableContent,
+      }),
+    ).toEqual({ primaryAction: "queue-message", showVoiceButton: true });
+  });
+
+  it("leaves the dedicated recorder controls exclusive during active-turn voice capture", () => {
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        hasLiveTurn: true,
+        hasSendableContent: true,
+        isVoiceActive: true,
+      }),
+    ).toEqual({ primaryAction: "none", showVoiceButton: false });
+  });
+
+  it("keeps an active recorder exclusive when a question or approval arrives", () => {
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        hasLiveTurn: true,
+        hasActivePendingProgress: true,
+        isVoiceActive: true,
+      }),
+    ).toEqual({ primaryAction: "none", showVoiceButton: false });
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        hasLiveTurn: true,
+        hasPendingApproval: true,
+        isVoiceActive: true,
+      }),
+    ).toEqual({ primaryAction: "none", showVoiceButton: false });
+  });
+
+  it("keeps approval, pending-input, and plan-follow-up controls exclusive", () => {
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        hasLiveTurn: true,
+        hasSendableContent: true,
+        hasActivePendingProgress: true,
+      }),
+    ).toEqual({ primaryAction: "pending-input", showVoiceButton: false });
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        hasLiveTurn: true,
+        hasSendableContent: true,
+        hasPendingApproval: true,
+      }),
+    ).toEqual({ primaryAction: "none", showVoiceButton: false });
+    expect(
+      deriveComposerFooterActionPlan({
+        ...baseOptions,
+        showPlanFollowUpPrompt: true,
+      }),
+    ).toEqual({ primaryAction: "plan-follow-up", showVoiceButton: false });
+  });
+});
+
+describe("composer voice transition invariants", () => {
+  it("routes ordinary pending-question submits to the question flow", () => {
+    expect(
+      shouldRouteComposerSendToPendingInput({
+        hasActivePendingProgress: true,
+        hasVoicePromptOverride: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps a completed voice prompt on the message path when a question arrives", () => {
+    expect(
+      shouldRouteComposerSendToPendingInput({
+        hasActivePendingProgress: true,
+        hasVoicePromptOverride: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps the footer mounted for active voice and hides it after voice settles", () => {
+    expect(
+      shouldRenderComposerFooter({
+        hasPendingApproval: true,
+        isVoiceActive: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRenderComposerFooter({
+        hasPendingApproval: true,
+        isVoiceActive: false,
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("buildExpiredTerminalContextToastCopy", () => {
   it("formats clear empty-state guidance", () => {
     expect(buildExpiredTerminalContextToastCopy(1, "empty")).toEqual({
@@ -1416,11 +1665,22 @@ describe("resolveProjectScriptTerminalTarget", () => {
 });
 
 describe("shouldRenderProviderHealthBanner", () => {
+  it("does not show provider setup health on a new empty chat", () => {
+    expect(
+      shouldRenderProviderHealthBanner({
+        threadEntryPoint: "chat",
+        terminalWorkspaceTerminalTabActive: false,
+        hasConversationActivity: false,
+      }),
+    ).toBe(false);
+  });
+
   it("does not show chat provider health while a terminal thread is active", () => {
     expect(
       shouldRenderProviderHealthBanner({
         threadEntryPoint: "terminal",
         terminalWorkspaceTerminalTabActive: false,
+        hasConversationActivity: true,
       }),
     ).toBe(false);
   });
@@ -1430,15 +1690,17 @@ describe("shouldRenderProviderHealthBanner", () => {
       shouldRenderProviderHealthBanner({
         threadEntryPoint: "chat",
         terminalWorkspaceTerminalTabActive: true,
+        hasConversationActivity: true,
       }),
     ).toBe(false);
   });
 
-  it("shows chat provider health only on the chat surface", () => {
+  it("shows provider health for a started conversation on the chat surface", () => {
     expect(
       shouldRenderProviderHealthBanner({
         threadEntryPoint: "chat",
         terminalWorkspaceTerminalTabActive: false,
+        hasConversationActivity: true,
       }),
     ).toBe(true);
   });

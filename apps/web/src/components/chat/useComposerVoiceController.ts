@@ -7,15 +7,30 @@ import { type ProviderKind, type ServerProviderStatus, type ThreadId } from "@sy
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Project } from "../../types";
+import { useAppSettings } from "../../appSettings";
+import { ensureDesktopVoiceReady, hasDesktopVoiceRuntime } from "../../lib/desktopVoiceSetup";
 import { formatVoiceRecordingDuration, useVoiceRecorder } from "../../lib/voiceRecorder";
 import { readNativeApi } from "../../nativeApi";
-import { toastManager } from "../ui/toast";
+import { transientAlertManager } from "../../notifications/transientAlert";
 import {
   deriveComposerVoiceState,
   describeVoiceRecordingStartError,
   isVoiceAuthExpiredMessage,
   sanitizeVoiceErrorMessage,
 } from "../ChatView.logic";
+import type { ComposerVoiceCompletionIntent } from "./composerVoiceState";
+
+export interface ComposerLocalFeedback {
+  type: "error" | "info" | "success" | "warning";
+  title: string;
+  description?: string;
+  actionProps?: {
+    children: string;
+    onClick: () => void;
+  };
+}
+
+export type ReportComposerLocalFeedback = (feedback: ComposerLocalFeedback) => void;
 
 interface UseComposerVoiceControllerOptions {
   activeProject: Project | undefined;
@@ -26,16 +41,18 @@ interface UseComposerVoiceControllerOptions {
   pendingUserInputCount: number;
   onTranscriptReady: (transcript: string) => void;
   refreshVoiceStatus: () => void;
+  onFeedback?: ReportComposerLocalFeedback;
 }
 
 interface UseComposerVoiceControllerResult {
   isVoiceRecording: boolean;
   isVoiceTranscribing: boolean;
+  voiceCompletionIntent: ComposerVoiceCompletionIntent | null;
   voiceWaveformLevels: readonly number[];
   voiceRecordingDurationLabel: string;
   showVoiceNotesControl: boolean;
   startComposerVoiceRecording: () => Promise<void>;
-  submitComposerVoiceRecording: () => Promise<void>;
+  finishComposerVoiceRecording: () => Promise<void>;
   cancelComposerVoiceRecording: () => void;
 }
 
@@ -52,7 +69,10 @@ export function useComposerVoiceController(
     pendingUserInputCount,
     onTranscriptReady,
     refreshVoiceStatus,
+    onFeedback,
   } = options;
+  const { settings } = useAppSettings();
+  const desktopVoiceAvailable = hasDesktopVoiceRuntime();
   const {
     isRecording: isVoiceRecording,
     durationMs: voiceRecordingDurationMs,
@@ -61,8 +81,11 @@ export function useComposerVoiceController(
     stopRecording: stopVoiceRecording,
     cancelRecording: cancelVoiceRecording,
   } = useVoiceRecorder();
-  const [isVoiceTranscribing, setIsVoiceTranscribing] = useState(false);
+  const [voiceCompletionIntent, setVoiceCompletionIntent] =
+    useState<ComposerVoiceCompletionIntent | null>(null);
+  const isVoiceTranscribing = voiceCompletionIntent !== null;
   const voiceTranscriptionRequestIdRef = useRef(0);
+  const voiceCompletionInFlightRef = useRef(false);
   const voiceThreadIdRef = useRef(threadId);
   const voiceProviderRef = useRef<ProviderKind>(selectedProvider);
   voiceThreadIdRef.current = threadId;
@@ -77,21 +100,41 @@ export function useComposerVoiceController(
       deriveComposerVoiceState({
         authStatus: activeProviderStatus?.authStatus,
         voiceTranscriptionAvailable: activeProviderStatus?.voiceTranscriptionAvailable,
+        desktopVoiceAvailable,
         isRecording: isVoiceRecording,
         isTranscribing: isVoiceTranscribing,
       }),
     [
       activeProviderStatus?.authStatus,
       activeProviderStatus?.voiceTranscriptionAvailable,
+      desktopVoiceAvailable,
       isVoiceRecording,
       isVoiceTranscribing,
     ],
   );
+  // This hook is also used by the Kanban task dialog. Composer callers provide
+  // an owning-control reporter; the legacy toast is retained only as a fallback
+  // for that out-of-scope non-composer consumer until it gains local feedback.
+  const reportFeedback = useCallback<ReportComposerLocalFeedback>(
+    (feedback) => {
+      if (onFeedback) {
+        onFeedback(feedback);
+        return;
+      }
+      transientAlertManager.add({
+        ...feedback,
+        type: feedback.type === "warning" ? "warning" : "error",
+      });
+    },
+    [onFeedback],
+  );
 
   useEffect(() => {
     voiceTranscriptionRequestIdRef.current += 1;
+    voiceCompletionInFlightRef.current = false;
+    void readNativeApi()?.server.cancelVoiceTranscription?.();
     void cancelVoiceRecording();
-    setIsVoiceTranscribing(false);
+    setVoiceCompletionIntent(null);
   }, [cancelVoiceRecording, threadId]);
 
   useEffect(() => {
@@ -99,40 +142,43 @@ export function useComposerVoiceController(
       return;
     }
     voiceTranscriptionRequestIdRef.current += 1;
+    voiceCompletionInFlightRef.current = false;
     void cancelVoiceRecording();
-    setIsVoiceTranscribing(false);
+    setVoiceCompletionIntent(null);
   }, [canStartVoiceNotes, cancelVoiceRecording, isVoiceRecording]);
 
   const startComposerVoiceRecording = useCallback(async () => {
     if (!activeProject) {
       return;
     }
-    if (activeProviderStatus?.authStatus === "unauthenticated") {
-      toastManager.add({
+    if (!desktopVoiceAvailable && activeProviderStatus?.authStatus === "unauthenticated") {
+      reportFeedback({
         type: "error",
-        title: "Sign in to ChatGPT in Codex before using voice notes.",
+        title: "Sign in to ChatGPT before using voice notes in the browser.",
       });
       return;
     }
     if (!canStartVoiceNotes) {
-      toastManager.add({
+      reportFeedback({
         type: "error",
-        title: "Voice notes require a ChatGPT-authenticated Codex session.",
+        title: "Voice transcription is unavailable in this browser session.",
       });
       return;
     }
     if (pendingUserInputCount > 0) {
-      toastManager.add({
+      reportFeedback({
         type: "error",
         title: "Answer plan questions before recording a voice note.",
       });
       return;
     }
 
+    if (!(await ensureDesktopVoiceReady(settings.voiceTranscriptionMode, reportFeedback))) return;
+
     try {
       await startVoiceRecording();
     } catch (error) {
-      toastManager.add({
+      reportFeedback({
         type: "error",
         title: "Could not start recording",
         description: describeVoiceRecordingStartError(error),
@@ -142,18 +188,21 @@ export function useComposerVoiceController(
     activeProject,
     activeProviderStatus?.authStatus,
     canStartVoiceNotes,
+    desktopVoiceAvailable,
     pendingUserInputCount,
+    reportFeedback,
+    settings.voiceTranscriptionMode,
     startVoiceRecording,
   ]);
 
-  const submitComposerVoiceRecording = useCallback(async () => {
-    if (!activeProject || !isVoiceRecording) {
+  const finishComposerVoiceRecording = useCallback(async () => {
+    if (!activeProject || !isVoiceRecording || voiceCompletionInFlightRef.current) {
       return;
     }
 
     const api = readNativeApi();
     if (!api) {
-      toastManager.add({
+      reportFeedback({
         type: "error",
         title: "Voice transcription is unavailable right now.",
       });
@@ -161,7 +210,8 @@ export function useComposerVoiceController(
       return;
     }
 
-    setIsVoiceTranscribing(true);
+    setVoiceCompletionIntent("insert");
+    voiceCompletionInFlightRef.current = true;
     const requestId = voiceTranscriptionRequestIdRef.current + 1;
     voiceTranscriptionRequestIdRef.current = requestId;
     const requestThreadId = threadId;
@@ -177,14 +227,14 @@ export function useComposerVoiceController(
         return;
       }
       if (!payload) {
-        toastManager.add({
+        reportFeedback({
           type: "warning",
           title: "No audio was captured.",
         });
         return;
       }
       const result = await api.server.transcribeVoice({
-        provider: "codex",
+        mode: settings.voiceTranscriptionMode,
         cwd: activeProject.cwd,
         ...(activeThreadId ? { threadId: activeThreadId } : {}),
         ...payload,
@@ -202,15 +252,15 @@ export function useComposerVoiceController(
         error instanceof Error
           ? sanitizeVoiceErrorMessage(error.message)
           : "The voice note could not be transcribed.";
-      const authExpired = isVoiceAuthExpiredMessage(description);
+      const authExpired = !desktopVoiceAvailable && isVoiceAuthExpiredMessage(description);
       if (authExpired) {
         refreshVoiceStatus();
       }
-      toastManager.add({
+      reportFeedback({
         type: "error",
         title: authExpired ? "Sign in to ChatGPT again" : "Voice transcription failed",
         description: authExpired
-          ? "Voice transcription uses your ChatGPT session in Codex. That session was rejected, so sign in again there and retry."
+          ? "Your ChatGPT session was rejected. Sign in again and retry."
           : description,
         ...(authExpired
           ? {
@@ -223,35 +273,42 @@ export function useComposerVoiceController(
       });
     } finally {
       if (isCurrentVoiceRequest()) {
-        setIsVoiceTranscribing(false);
+        voiceCompletionInFlightRef.current = false;
+        setVoiceCompletionIntent(null);
       }
     }
   }, [
     activeProject,
     activeThreadId,
     cancelVoiceRecording,
+    desktopVoiceAvailable,
     isVoiceRecording,
     onTranscriptReady,
+    reportFeedback,
     refreshVoiceStatus,
     selectedProvider,
+    settings.voiceTranscriptionMode,
     stopVoiceRecording,
     threadId,
   ]);
 
   const cancelComposerVoiceRecording = useCallback(() => {
     voiceTranscriptionRequestIdRef.current += 1;
-    setIsVoiceTranscribing(false);
+    voiceCompletionInFlightRef.current = false;
+    setVoiceCompletionIntent(null);
+    void readNativeApi()?.server.cancelVoiceTranscription?.();
     void cancelVoiceRecording();
   }, [cancelVoiceRecording]);
 
   return {
     isVoiceRecording,
     isVoiceTranscribing,
+    voiceCompletionIntent,
     voiceWaveformLevels,
     voiceRecordingDurationLabel,
     showVoiceNotesControl,
     startComposerVoiceRecording,
-    submitComposerVoiceRecording,
+    finishComposerVoiceRecording,
     cancelComposerVoiceRecording,
   };
 }

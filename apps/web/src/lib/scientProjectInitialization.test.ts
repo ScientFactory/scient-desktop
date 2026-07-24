@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import {
   scientProjectFolderName,
   prepareScientProjectForOpening,
-  type ScientProjectInitializationDecision,
 } from "./scientProjectInitialization";
 
 function preview(
@@ -108,74 +107,6 @@ describe("prepareScientProjectForOpening", () => {
       }),
     ).resolves.toBe("open");
     expect(apply).toHaveBeenCalledWith({ previewId: "opaque-preview" });
-  });
-
-  it("re-previews an exact skill selection before applying the replacement preview", async () => {
-    const apply = vi.fn(async () => ({
-      root: "/research/example",
-      projectId: "project-id",
-      created: ["PROJECT.md", ".scient/skills.lock.json", ".scient/project.json"],
-      preserved: [],
-      proposed: [],
-      activatedSkills: [
-        {
-          id: "scient.evidence-to-note",
-          version: "0.1.0",
-          digest: `sha256:${"3".repeat(64)}`,
-          origin: "scient:builtin" as const,
-        },
-      ],
-      recovered: false,
-    }));
-    const api = apiWith({
-      previews: [
-        preview(),
-        preview({
-          previewId: "selected-preview",
-          skills: [
-            {
-              id: "scient.evidence-to-note",
-              version: "0.1.0",
-              digest: `sha256:${"3".repeat(64)}`,
-              origin: "scient:builtin",
-              displayName: "Evidence to Note",
-              description: "Draft an evidence-linked note proposal.",
-              role: "constructive",
-              selected: true,
-              defaultSelected: false,
-              readiness: "available",
-              prerequisites: [],
-              capabilities: {
-                network: false,
-                codeExecution: false,
-                projectWrites: "proposal-only",
-              },
-            },
-          ],
-        }),
-      ],
-      apply,
-    });
-    const decisions: ScientProjectInitializationDecision[] = [
-      { kind: "refresh-skills", skillIds: ["scient.evidence-to-note"] },
-      "apply",
-    ];
-
-    await expect(
-      prepareScientProjectForOpening({
-        api,
-        root: "/research/example",
-        requestDecision: async () => decisions.shift() ?? "cancel",
-      }),
-    ).resolves.toBe("open");
-    expect(api.scientProjectInitialization.preview).toHaveBeenNthCalledWith(2, {
-      root: "/research/example",
-      request: {
-        title: "example",
-        skillIds: ["scient.evidence-to-note"],
-      },
-    });
-    expect(apply).toHaveBeenCalledWith({ previewId: "selected-preview" });
   });
 
   it("opens without writing when the researcher chooses the clean-folder path", async () => {

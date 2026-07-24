@@ -48,7 +48,6 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { Skeleton } from "~/components/ui/skeleton";
-import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { appendComposerPromptText } from "~/lib/chatReferences";
 import {
@@ -62,6 +61,7 @@ import {
   HammerIcon,
   LoaderIcon,
   LinkIcon,
+  TriangleAlertIcon,
   XIcon,
 } from "~/lib/icons";
 import { gitPreparePullRequestThreadMutationOptions } from "~/lib/gitReactQuery";
@@ -80,14 +80,6 @@ import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import { PullRequestWarningNote } from "./PullRequestWarningNote";
 
 type DetailTab = "summary" | "timeline" | "code";
-
-const ACTION_SUCCESS_LABELS: Record<PullRequestAction, string> = {
-  merge: "Pull request merged",
-  ready: "Marked ready for review",
-  draft: "Converted to draft",
-  close: "Pull request closed",
-  reopen: "Pull request reopened",
-};
 
 const TABS: ReadonlyArray<{ value: DetailTab; label: string }> = [
   { value: "summary", label: "Summary" },
@@ -145,6 +137,9 @@ export function PullRequestDetailPanel({
   const [mergeMethod, setMergeMethod] = useState<PullRequestMergeMethod>("merge");
   const [confirmAction, setConfirmAction] = useState<"merge" | "close" | null>(null);
   const [preparingThread, setPreparingThread] = useState<"findings" | "conflicts" | null>(null);
+  const [operationError, setOperationError] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const copyResetTimerRef = useRef<number | null>(null);
   const actionInFlightRef = useRef(false);
   const detailQuery = useQuery(pullRequestDetailQueryOptions(input, { pollingEnabled }));
   const actionMutation = useMutation(pullRequestActionMutationOptions(queryClient));
@@ -163,24 +158,32 @@ export function PullRequestDetailPanel({
     setTab(initialTab);
     setMergeMethod("merge");
     setConfirmAction(null);
+    setOperationError(null);
+    setLinkCopied(false);
   }, [initialTab, input.number, input.projectId, input.repository]);
+  useEffect(
+    () => () => {
+      if (copyResetTimerRef.current !== null) window.clearTimeout(copyResetTimerRef.current);
+    },
+    [],
+  );
 
   const runAction = async (action: PullRequestAction, method?: PullRequestMergeMethod) => {
     if (actionInFlightRef.current) return;
     actionInFlightRef.current = true;
+    setOperationError(null);
     try {
       await actionMutation.mutateAsync({
         ...input,
         action,
         ...(method ? { mergeMethod: method } : {}),
       });
-      toastManager.add({ type: "success", title: ACTION_SUCCESS_LABELS[action] });
     } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Pull request action failed",
-        description: error instanceof Error ? error.message : "GitHub CLI action failed.",
-      });
+      setOperationError(
+        `Pull request action failed: ${
+          error instanceof Error ? error.message : "GitHub CLI action failed."
+        }`,
+      );
     } finally {
       actionInFlightRef.current = false;
     }
@@ -196,6 +199,7 @@ export function PullRequestDetailPanel({
   ) => {
     if (!detail || preparingThread !== null) return;
     setPreparingThread(kind);
+    setOperationError(null);
     try {
       const mode = settings.defaultThreadEnvMode;
       const prepared = await prepareThreadMutation.mutateAsync({ reference: detail.url, mode });
@@ -211,12 +215,11 @@ export function PullRequestDetailPanel({
       if (!threadId) throw new Error("Could not create a draft thread for this pull request.");
       appendComposerPromptText(threadId, prompt);
     } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: errorTitle,
-        description:
-          error instanceof Error ? error.message : "The PR thread could not be prepared.",
-      });
+      setOperationError(
+        `${errorTitle}: ${
+          error instanceof Error ? error.message : "The PR thread could not be prepared."
+        }`,
+      );
     } finally {
       setPreparingThread(null);
     }
@@ -257,15 +260,21 @@ export function PullRequestDetailPanel({
 
   const copyPullRequestLink = async () => {
     if (!detail) return;
+    setOperationError(null);
     try {
       await copyTextToClipboard(detail.url);
-      toastManager.add({ type: "success", title: "Pull request link copied" });
+      setLinkCopied(true);
+      if (copyResetTimerRef.current !== null) window.clearTimeout(copyResetTimerRef.current);
+      copyResetTimerRef.current = window.setTimeout(() => {
+        copyResetTimerRef.current = null;
+        setLinkCopied(false);
+      }, 1500);
     } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Could not copy pull request link",
-        description: error instanceof Error ? error.message : "Clipboard access failed.",
-      });
+      setOperationError(
+        `Could not copy pull request link: ${
+          error instanceof Error ? error.message : "Clipboard access failed."
+        }`,
+      );
     }
   };
 
@@ -310,6 +319,9 @@ export function PullRequestDetailPanel({
           ))}
         </nav>
         <div className="ml-auto flex shrink-0 items-center gap-1">
+          <span aria-live="polite" className="mr-1 text-xs text-muted-foreground">
+            {linkCopied ? "Link copied" : null}
+          </span>
           {detail ? (
             <>
               <IconButton
@@ -498,6 +510,24 @@ export function PullRequestDetailPanel({
           ) : null}
         </div>
       </header>
+
+      {operationError ? (
+        <div
+          role="alert"
+          className="flex shrink-0 items-start gap-2 border-y border-destructive/25 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+        >
+          <TriangleAlertIcon className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+          <span className="min-w-0 flex-1">{operationError}</span>
+          <button
+            type="button"
+            onClick={() => setOperationError(null)}
+            className="shrink-0 text-destructive/70 transition-colors hover:text-destructive"
+            aria-label="Dismiss pull request error"
+          >
+            <XIcon className="size-3.5" />
+          </button>
+        </div>
+      ) : null}
 
       <div className="min-h-0 flex-1 overflow-hidden">
         {detailQuery.isPending ? (

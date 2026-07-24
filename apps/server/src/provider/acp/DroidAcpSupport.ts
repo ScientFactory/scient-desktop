@@ -400,13 +400,18 @@ function droidModelDescriptor(
 }
 
 /**
- * Reads the model catalog from ACP and reselects each model so Droid returns that
- * model's current reasoning choices. Discovery runs in a disposable session.
+ * Starts the disposable ACP session, reads its model catalog, and reselects each
+ * model so Droid returns that model's current reasoning choices.
+ *
+ * Owning startup here keeps every discovery caller on the same lifecycle path;
+ * reading configuration before `session/new` completes always produces an empty
+ * inventory.
  */
 export function discoverDroidAcpModels(
-  runtime: Pick<AcpSessionRuntimeShape, "getConfigOptions" | "setConfigOption">,
+  runtime: Pick<AcpSessionRuntimeShape, "start" | "getConfigOptions" | "setConfigOption">,
 ): Effect.Effect<ProviderListModelsResult, EffectAcpErrors.AcpError> {
   return Effect.gen(function* () {
+    yield* runtime.start();
     const initialOptions = yield* runtime.getConfigOptions;
     const modelConfig = findDroidSelectConfig(initialOptions, {
       id: DROID_MODEL_CONFIG_ID,

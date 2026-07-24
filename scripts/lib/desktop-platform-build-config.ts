@@ -15,6 +15,10 @@ export const MAC_SIGNING_POLICY_PATH = "scripts/lib/mac-signing-policy.cjs";
 export const MAC_NOTARIZATION_HOOK_PATH = "scripts/notarize-mac-app.cjs";
 export const MAC_APPSNAP_HELPER_ASAR_EXCLUSION = "!apps/desktop/native/appsnap/build/**";
 export const MAC_APPSNAP_HELPER_BUNDLE_PATH = "Contents/Helpers/scient-appsnap-helper";
+export const WHISPER_RUNTIME_STAGE_PATH = "apps/desktop/native/whisper-runtime";
+export const WHISPER_RUNTIME_ASAR_EXCLUSION = `!${WHISPER_RUNTIME_STAGE_PATH}/**`;
+export const WHISPER_RUNTIME_RESOURCE_PATH = "whisper-runtime";
+export const MAC_WHISPER_RUNTIME_BUNDLE_PATH = "Contents/Resources/whisper-runtime/whisper-server";
 export const WINDOWS_INSTALLER_GUID = "368107a8-afe6-5db5-ab3b-d4f331684868";
 const MAC_DMG_ICON_PATH = "icon.icns";
 export const NODE_PTY_ASAR_UNPACK_GLOBS = ["node_modules/node-pty/**"] as const;
@@ -24,6 +28,7 @@ export interface DesktopPlatformBuildConfig {
   readonly afterPack?: string;
   readonly asarUnpack?: ReadonlyArray<string>;
   readonly extraFiles?: ReadonlyArray<Record<string, string>>;
+  readonly extraResources?: ReadonlyArray<Record<string, string>>;
   readonly files?: ReadonlyArray<string>;
   readonly linux?: Record<string, unknown>;
   readonly mac?: Record<string, unknown>;
@@ -55,6 +60,9 @@ export function validateDesktopNativeBuildHost(input: DesktopNativeBuildHostInpu
       `Current host is ${input.hostPlatform}/${input.hostArch}.`,
     ].join(" ");
   }
+  if (input.platform === "win" && input.arch !== "x64") {
+    return "Windows desktop voice runtime packaging currently supports x64 builds only.";
+  }
   if (input.platform !== "linux") return null;
   if (input.arch === "universal") {
     return "Linux desktop artifacts support x64 or arm64 builds, not universal builds.";
@@ -71,7 +79,16 @@ export function validateDesktopNativeBuildHost(input: DesktopNativeBuildHostInpu
 export function createDesktopPlatformBuildConfig(
   input: CreateDesktopPlatformBuildConfigInput,
 ): DesktopPlatformBuildConfig {
-  const nativePackaging = { asarUnpack: [...NODE_PTY_ASAR_UNPACK_GLOBS] };
+  const nativePackaging = {
+    asarUnpack: [...NODE_PTY_ASAR_UNPACK_GLOBS],
+    extraResources: [
+      {
+        from: WHISPER_RUNTIME_STAGE_PATH,
+        to: WHISPER_RUNTIME_RESOURCE_PATH,
+      },
+    ],
+    files: ["**/*", WHISPER_RUNTIME_ASAR_EXCLUSION],
+  };
 
   if (input.platform === "mac") {
     if (input.signed === true && (!input.macSignHookPath || !input.macNotarizeHookPath)) {
@@ -84,16 +101,17 @@ export function createDesktopPlatformBuildConfig(
       hardenedRuntime: true,
       entitlements: MAC_ENTITLEMENTS_PATH,
       entitlementsInherit: MAC_INHERITED_ENTITLEMENTS_PATH,
-      binaries: [MAC_APPSNAP_HELPER_BUNDLE_PATH],
+      binaries: [MAC_APPSNAP_HELPER_BUNDLE_PATH, MAC_WHISPER_RUNTIME_BUNDLE_PATH],
       ...(input.signed === true
         ? {
             notarize: false,
             sign: input.macSignHookPath,
           }
         : {}),
-      // The universal build stages the same pre-lipo'd helper in both app trees.
-      // @electron/universal needs this pattern to preserve that existing fat binary.
-      x64ArchFiles: MAC_APPSNAP_HELPER_BUNDLE_PATH,
+      // The universal build stages the same pre-lipo'd native executables in both app trees.
+      // @electron/universal needs this pattern to preserve those existing fat binaries.
+      x64ArchFiles:
+        "Contents/{Helpers/scient-appsnap-helper,Resources/whisper-runtime/whisper-server}",
       extendInfo: {
         NSMicrophoneUsageDescription: MICROPHONE_USAGE_DESCRIPTION,
       },
@@ -106,6 +124,7 @@ export function createDesktopPlatformBuildConfig(
       files: [
         "**/*",
         MAC_APPSNAP_HELPER_ASAR_EXCLUSION,
+        WHISPER_RUNTIME_ASAR_EXCLUSION,
         `!${MAC_ADHOC_SIGN_HOOK_PATH}`,
         `!${MAC_SIGNING_POLICY_PATH}`,
       ],

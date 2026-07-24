@@ -4,6 +4,7 @@ import type {
   ProjectListDirectoriesResult,
   ProjectReadFileResult,
   ProjectDiscoverScriptsResult,
+  ProjectInspectHtmlArtifactResult,
   ProjectSearchEntriesResult,
   ProjectSearchLocalEntriesResult,
 } from "@synara/contracts";
@@ -18,6 +19,8 @@ export const projectQueryKeys = {
   readFile: (cwd: string | null, relativePath: string | null) =>
     ["projects", "read-file", cwd, relativePath] as const,
   localPreviewGrant: (path: string | null) => ["projects", "local-preview-grant", path] as const,
+  inspectHtmlArtifact: (cwd: string | null, path: string | null) =>
+    ["projects", "inspect-html-artifact", cwd, path] as const,
   discoverScripts: (cwd: string | null, depth: number) =>
     ["projects", "discover-scripts", cwd, depth] as const,
   searchEntries: (
@@ -54,6 +57,7 @@ const DEFAULT_DISCOVER_SCRIPTS_STALE_TIME = 30_000;
 const DEFAULT_SEARCH_LOCAL_ENTRIES_LIMIT = 50;
 const DEFAULT_SEARCH_LOCAL_ENTRIES_STALE_TIME = 10_000;
 const DEFAULT_READ_FILE_STALE_TIME = 5_000;
+const DEFAULT_HTML_ARTIFACT_INSPECTION_STALE_TIME = 5_000;
 const LOCAL_PREVIEW_GRANT_REFRESH_SAFETY_MS = 15_000;
 const LOCAL_PREVIEW_GRANT_MIN_REFETCH_INTERVAL_MS = 1_000;
 export const LOCAL_PREVIEW_GRANT_MAX_REFETCH_INTERVAL_MS = 30_000;
@@ -176,6 +180,26 @@ export function projectLocalPreviewGrantQueryOptions(input: {
     enabled: (input.enabled ?? true) && input.path !== null,
     staleTime: input.staleTime ?? 60_000,
     refetchInterval: (query) => localPreviewGrantRefetchIntervalMs(query.state.data),
+  });
+}
+
+export function projectInspectHtmlArtifactQueryOptions(input: {
+  cwd: string | null;
+  path: string | null;
+  enabled?: boolean;
+  staleTime?: number;
+}) {
+  return queryOptions<ProjectInspectHtmlArtifactResult>({
+    queryKey: projectQueryKeys.inspectHtmlArtifact(input.cwd, input.path),
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      if (!input.cwd || !input.path) {
+        throw new Error("HTML artifact inspection is unavailable.");
+      }
+      return api.projects.inspectHtmlArtifact({ cwd: input.cwd, path: input.path });
+    },
+    enabled: (input.enabled ?? true) && input.cwd !== null && input.path !== null,
+    staleTime: input.staleTime ?? DEFAULT_HTML_ARTIFACT_INSPECTION_STALE_TIME,
   });
 }
 

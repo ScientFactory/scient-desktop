@@ -13,6 +13,7 @@ import {
   isLikelyDevServerProcess,
   parseLsofCwdOutput,
   parseLsofTcpListenOutput,
+  parseWindowsTcpListenOutput,
   type LocalServerProcessInfo,
 } from "./localServerMonitor";
 
@@ -57,6 +58,41 @@ describe("localServerMonitor", () => {
       { pid: 123, command: "node", protocol: "tcp", host: "::1", port: 5173, family: "tcp6" },
       { pid: 456, command: "Python", protocol: "tcp", host: "*", port: 8000, family: "tcp" },
     ]);
+  });
+
+  it("parses PowerShell listener rows with command lineage for Windows", () => {
+    const commandLine = Buffer.from(
+      "node.exe C:\\repo\\node_modules\\vite\\bin\\vite.js || bun.exe run dev",
+      "utf8",
+    ).toString("base64");
+    const snapshot = parseWindowsTcpListenOutput(
+      `127.0.0.1\t5173\t4321\tnode.exe\t4000\t${commandLine}\t4000,3900`,
+    );
+
+    expect(snapshot.listeners).toEqual([
+      {
+        pid: 4321,
+        command: "node.exe",
+        protocol: "tcp",
+        host: "127.0.0.1",
+        port: 5173,
+        family: "tcp4",
+      },
+    ]);
+    expect(snapshot.processInfoByPid.get(4321)).toEqual({
+      ppid: 4000,
+      commandLine: "node.exe C:\\repo\\node_modules\\vite\\bin\\vite.js || bun.exe run dev",
+      ancestorPids: [4000, 3900],
+    });
+    expect(
+      buildLocalServerProcesses(snapshot.listeners, snapshot.processInfoByPid)[0],
+    ).toMatchObject({
+      pid: 4321,
+      ppid: 4000,
+      ancestorPids: [4000, 3900],
+      displayName: "Vite",
+      ports: [5173],
+    });
   });
 
   it("extracts a readable title from local server HTML", () => {

@@ -226,7 +226,10 @@ import {
   upsertProjectRunCommandScripts,
 } from "../projectRunTargets";
 import { projectScriptRuntimeEnv } from "../projectScripts";
-import { toastManager } from "./ui/toast";
+import { transientAlertManager } from "../notifications/transientAlert";
+import { showUndoSnackbar } from "./ui/undoSnackbar";
+import { ActivityCenter } from "../notifications/ActivityCenter";
+import { activityManager, type PublishActivityInput } from "../notifications/activityStore";
 import {
   normalizeSidebarProjectThreadListCwd,
   persistSidebarUiState,
@@ -242,6 +245,7 @@ import {
   getDesktopUpdateErrorSignature,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
+  shouldClearDesktopUpdateActivity,
   shouldRecommendManualDesktopDownload,
   shouldShowArm64IntelBuildWarning,
   shouldShowDesktopUpdateButton,
@@ -332,7 +336,7 @@ import {
 } from "./Sidebar.logic";
 import type { LastThreadRoute } from "../chatRouteRestore";
 import { resolveSubagentPresentationForThread } from "../lib/subagentPresentation";
-import { useCopyPathToClipboard, useCopyThreadIdToClipboard } from "~/hooks/useCopyToClipboard";
+import { copyTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { DESKTOP_TOP_BAR_TRAFFIC_LIGHT_GUTTER_CLASS } from "~/hooks/useDesktopTopBarGutter";
 import { cn } from "~/lib/utils";
 import {
@@ -396,9 +400,115 @@ const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 5;
 // Each "Show more" click reveals this many extra rows; "Show less" hides them again page by page.
 const THREAD_PREVIEW_PAGE_SIZE = 5;
-// How long the "Undo archive" toast lingers (visible time only — it pauses while
+// How long the archive snackbar lingers (visible time only — it pauses while
 // the tab is hidden) before auto-dismissing.
-const ARCHIVE_UNDO_TOAST_DURATION_MS = 8000;
+const ARCHIVE_UNDO_SNACKBAR_DURATION_MS = 8000;
+
+type SidebarBulkThreadOperation = "archive" | "delete";
+
+interface SidebarBulkThreadActivityInput {
+  operation: SidebarBulkThreadOperation;
+  projectId: ProjectId;
+  projectName: string;
+  completedCount: number;
+  failureCount: number;
+  skippedRunningCount?: number;
+}
+
+/**
+ * Sidebar menus disappear as soon as an action is chosen, so exceptional failures
+ * do not have a stable inline owner. Keep those rare errors transient and route
+ * every reviewable/background outcome through Activity instead.
+ */
+export function showSidebarTransientError(input: {
+  title: string;
+  description?: string | undefined;
+}): void {
+  transientAlertManager.add({
+    type: "error",
+    title: input.title,
+    ...(input.description ? { description: input.description } : {}),
+  });
+}
+
+export function createSidebarBulkThreadActivity(
+  input: SidebarBulkThreadActivityInput,
+): PublishActivityInput | null {
+  const skippedRunningCount = input.skippedRunningCount ?? 0;
+  if (input.completedCount === 0 && input.failureCount === 0 && skippedRunningCount === 0) {
+    return null;
+  }
+
+  const operationPastTense = input.operation === "archive" ? "archived" : "deleted";
+  const operationTitle = input.operation === "archive" ? "Archived" : "Deleted";
+  const incomplete = input.failureCount > 0 || skippedRunningCount > 0;
+  const details: string[] = [];
+  if (input.completedCount > 0) {
+    details.push(
+      `${input.completedCount} ${pluralize(input.completedCount, "thread")} ${operationPastTense}.`,
+    );
+  }
+  if (input.failureCount > 0) {
+    details.push(
+      `${input.failureCount} ${pluralize(input.failureCount, "thread")} could not be ${operationPastTense}.`,
+    );
+  }
+  if (skippedRunningCount > 0) {
+    details.push(
+      `${skippedRunningCount} running ${pluralize(skippedRunningCount, "thread was", "threads were")} skipped.`,
+    );
+  }
+
+  return {
+    dedupeKey: `sidebar:${input.operation}:project:${input.projectId}`,
+    source: "system",
+    status: incomplete ? "needs_attention" : "recent",
+    tone:
+      input.failureCount > 0
+        ? input.completedCount > 0
+          ? "warning"
+          : "error"
+        : skippedRunningCount > 0
+          ? "warning"
+          : "success",
+    title:
+      input.completedCount > 0
+        ? `${operationTitle} ${input.completedCount} ${pluralize(input.completedCount, "thread")}`
+        : `Could not ${input.operation} threads`,
+    description: `${input.projectName}: ${details.join(" ")}`,
+  };
+}
+
+export function createProjectInitializationActivity(
+  root: string,
+  completion: ScientProjectInitializationCompletion,
+): PublishActivityInput {
+  const base = {
+    dedupeKey: `sidebar:project-setup:${root}`,
+    source: "system" as const,
+  };
+  if (completion.kind === "rolled-back") {
+    return {
+      ...base,
+      status: completion.result.complete ? "recent" : "needs_attention",
+      tone: completion.result.complete ? "info" : "warning",
+      title: completion.result.complete
+        ? "Initialization rolled back"
+        : "Some changed files were preserved",
+      description: completion.result.complete
+        ? "The folder is back to its state before this initialization attempt."
+        : completion.result.preserved.join(", "),
+    };
+  }
+  return {
+    ...base,
+    status: "recent",
+    tone: "success",
+    title:
+      completion.kind === "recovered" ? "Scient project recovered" : "Scient project initialized",
+    description: "The portable project foundation is ready.",
+  };
+}
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -1651,9 +1761,10 @@ export default function Sidebar() {
   const [optimisticPinnedStateByProjectId, setOptimisticPinnedStateByProjectId] = useState<
     ReadonlyMap<ProjectId, boolean>
   >(() => new Map());
-  // Dedupes the manual-download fallback toast so a single failure surfaced by
-  // both the click handler and the install-watchdog push only notifies once.
-  const lastDesktopUpdateErrorToastSignatureRef = useRef<string | null>(null);
+  // Dedupes a single update failure when both the click handler and install
+  // watchdog observe the same state transition.
+  const lastDesktopUpdateErrorSignatureRef = useRef<string | null>(null);
+  const lastDesktopUpdateActivitySignatureRef = useRef<string | null>(null);
   const selectedThreadIds = useThreadSelectionStore((s) => s.selectedThreadIds);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
@@ -1906,8 +2017,7 @@ export default function Sidebar() {
           threadId,
           error,
         });
-        toastManager.add({
-          type: "error",
+        showSidebarTransientError({
           title: isPinned ? "Unable to unpin thread" : "Unable to pin thread",
         });
       });
@@ -1948,16 +2058,14 @@ export default function Sidebar() {
 
     const api = readNativeApi();
     if (!api) {
-      toastManager.add({
-        type: "error",
+      showSidebarTransientError({
         title: "Link opening is unavailable.",
       });
       return;
     }
 
     void api.shell.openExternal(prUrl).catch((error) => {
-      toastManager.add({
-        type: "error",
+      showSidebarTransientError({
         title: "Unable to open PR link",
         description: error instanceof Error ? error.message : "An error occurred.",
       });
@@ -2029,8 +2137,7 @@ export default function Sidebar() {
         const accepted = pinProjectLocally(projectId);
         if (!accepted) {
           clearOptimisticProjectPinned(projectId);
-          toastManager.add({
-            type: "warning",
+          showSidebarTransientError({
             title: "Project pin limit reached",
             description: `You can pin up to ${MAX_PINNED_PROJECTS} projects.`,
           });
@@ -2082,8 +2189,7 @@ export default function Sidebar() {
           projectId,
           error,
         });
-        toastManager.add({
-          type: "error",
+        showSidebarTransientError({
           title: isPinned ? "Unable to unpin project" : "Unable to pin project",
           description: error instanceof Error ? error.message : undefined,
         });
@@ -2672,27 +2778,8 @@ export default function Sidebar() {
   );
 
   const notifyProjectInitializationCompletion = useCallback(
-    (completion: ScientProjectInitializationCompletion) => {
-      if (completion.kind === "rolled-back") {
-        toastManager.add({
-          type: completion.result.complete ? "info" : "warning",
-          title: completion.result.complete
-            ? "Initialization rolled back"
-            : "Some changed files were preserved",
-          description: completion.result.complete
-            ? "The folder is back to its state before this initialization attempt."
-            : completion.result.preserved.join(", "),
-        });
-        return;
-      }
-      toastManager.add({
-        type: "success",
-        title:
-          completion.kind === "recovered"
-            ? "Scient project recovered"
-            : "Scient project initialized",
-        description: "The portable project foundation is ready.",
-      });
+    (root: string, completion: ScientProjectInitializationCompletion) => {
+      activityManager.publish(createProjectInitializationActivity(root, completion));
     },
     [],
   );
@@ -2718,7 +2805,7 @@ export default function Sidebar() {
           api,
           root: cwd,
           requestDecision: requestProjectInitializationDecision,
-          onCompletion: notifyProjectInitializationCompletion,
+          onCompletion: (completion) => notifyProjectInitializationCompletion(cwd, completion),
         });
         if (preparation === "cancel") {
           return false;
@@ -2984,24 +3071,19 @@ export default function Sidebar() {
 
   const commitRename = useCallback(
     async (threadId: ThreadId, newTitle: string, originalTitle: string) => {
-      const outcome = await dispatchThreadRename({
-        threadId,
-        newTitle,
-        unchangedTitles: [originalTitle],
-      }).catch((error) => {
-        toastManager.add({
-          type: "error",
+      try {
+        await dispatchThreadRename({
+          threadId,
+          newTitle,
+          unchangedTitles: [originalTitle],
+        });
+      } catch (error) {
+        showSidebarTransientError({
           title: "Failed to rename thread",
           description: error instanceof Error ? error.message : "An error occurred.",
         });
-        return null;
-      });
-
-      if (outcome === "empty") {
-        toastManager.add({
-          type: "warning",
-          title: "Thread title cannot be empty",
-        });
+        // Keep the owning rename dialog open so the user can retry.
+        throw error;
       }
     },
     [],
@@ -3217,8 +3299,11 @@ export default function Sidebar() {
           worktreePath: orphanedWorktreePath,
           error,
         });
-        toastManager.add({
-          type: "error",
+        activityManager.publish({
+          dedupeKey: `sidebar:worktree-cleanup:thread:${threadId}`,
+          source: "system",
+          status: "needs_attention",
+          tone: "error",
           title: "Thread deleted, but worktree removal failed",
           description: `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`,
         });
@@ -3244,20 +3329,40 @@ export default function Sidebar() {
     ],
   );
 
-  const copyThreadIdToClipboard = useCopyThreadIdToClipboard();
-  const copyPathToClipboard = useCopyPathToClipboard();
+  const copySidebarValueToClipboard = useCallback((value: string, label: string) => {
+    void copyTextToClipboard(value).catch((error) => {
+      showSidebarTransientError({
+        title: `Failed to copy ${label}`,
+        description: error instanceof Error ? error.message : "Clipboard access is unavailable.",
+      });
+    });
+  }, []);
+  const copyThreadIdToClipboard = useCallback(
+    (threadId: ThreadId) => copySidebarValueToClipboard(threadId, "thread ID"),
+    [copySidebarValueToClipboard],
+  );
+  const copyPathToClipboard = useCallback(
+    (path: string) => copySidebarValueToClipboard(path, "path"),
+    [copySidebarValueToClipboard],
+  );
   const handoffThread = useCallback(
     async (thread: Thread, targetProvider: ProviderKind) => {
+      const activityKey = `sidebar:handoff:thread:${thread.id}:provider:${targetProvider}`;
       try {
         await createThreadHandoff(thread, targetProvider);
+        activityManager.remove(activityKey);
       } catch (error) {
-        toastManager.add({
-          type: "error",
+        activityManager.publish({
+          dedupeKey: activityKey,
+          source: "thread",
+          status: "needs_attention",
+          tone: "error",
           title: "Could not create handoff thread",
           description:
             error instanceof Error
               ? error.message
               : "An error occurred while creating the handoff thread.",
+          destination: { type: "thread", threadId: thread.id },
         });
       }
     },
@@ -3298,8 +3403,7 @@ export default function Sidebar() {
 
       // Cannot archive a running thread
       if (isThreadRunningTurn(thread)) {
-        toastManager.add({
-          type: "error",
+        showSidebarTransientError({
           title: "Cannot archive",
           description: "Stop the running session before archiving this thread.",
         });
@@ -3352,8 +3456,9 @@ export default function Sidebar() {
 
   // Serializes restore attempts per thread so repeated Undo clicks do not race
   // into duplicate unarchive commands.
-  const restoreArchivedThreadFromToast = useCallback(
+  const restoreArchivedThreadFromSnackbar = useCallback(
     async (input: { threadId: ThreadId; returnToThreadOnUndo: boolean }): Promise<boolean> => {
+      const activityKey = `sidebar:archive-restore:thread:${input.threadId}`;
       const pendingThreadIds = archiveUndoPendingThreadIdsRef.current;
       if (pendingThreadIds.has(input.threadId)) return false;
 
@@ -3361,10 +3466,14 @@ export default function Sidebar() {
       try {
         const currentThread = getThreadFromState(useStore.getState(), input.threadId);
         if (!currentThread) {
-          toastManager.add({
-            type: "error",
+          activityManager.publish({
+            dedupeKey: activityKey,
+            source: "thread",
+            status: "needs_attention",
+            tone: "error",
             title: "Could not restore thread",
             description: "The thread no longer exists.",
+            destination: { type: "settings", section: "archived" },
           });
           return false;
         }
@@ -3377,6 +3486,7 @@ export default function Sidebar() {
             throw error;
           }
         }
+        activityManager.remove(activityKey);
         if (input.returnToThreadOnUndo) {
           void navigate({
             to: "/$threadId",
@@ -3386,10 +3496,14 @@ export default function Sidebar() {
         }
         return true;
       } catch (error) {
-        toastManager.add({
-          type: "error",
+        activityManager.publish({
+          dedupeKey: activityKey,
+          source: "thread",
+          status: "needs_attention",
+          tone: "error",
           title: "Could not restore thread",
           description: error instanceof Error ? error.message : "Unable to restore the thread.",
+          destination: { type: "settings", section: "archived" },
         });
         return false;
       } finally {
@@ -3399,36 +3513,27 @@ export default function Sidebar() {
     [navigate, unarchiveArchivedThread],
   );
 
-  // Surface the "Undo or view archived chats in Settings" toast after an archive.
-  // The toast is global (cross-thread) since archiving navigates away from the row.
-  const showArchiveUndoToast = useCallback(
+  // Archiving navigates away from its row, so the dedicated bottom snackbar owns Undo.
+  const showArchiveUndoSnackbar = useCallback(
     (threadId: ThreadId, options?: { returnToThreadOnUndo?: boolean }) => {
       // Use a fresh instance id so Base UI never revives a closing toast with
       // stale local state such as a pending Undo button.
       const toastId = `archive-undo:${threadId}:${randomUUID()}`;
-      toastManager.add({
+      showUndoSnackbar({
         id: toastId,
-        timeout: 0,
-        data: {
-          allowCrossThreadVisibility: true,
-          dismissAfterVisibleMs: ARCHIVE_UNDO_TOAST_DURATION_MS,
-          archiveUndo: {
-            onUndo: () =>
-              restoreArchivedThreadFromToast({
-                threadId,
-                returnToThreadOnUndo: options?.returnToThreadOnUndo === true,
-              }),
-            onViewArchived: () => {
-              void navigate({ to: "/settings", search: { section: "archived" } });
-            },
-          },
-        },
+        title: "Thread archived",
+        timeout: ARCHIVE_UNDO_SNACKBAR_DURATION_MS,
+        onUndo: () =>
+          restoreArchivedThreadFromSnackbar({
+            threadId,
+            returnToThreadOnUndo: options?.returnToThreadOnUndo === true,
+          }),
       });
     },
-    [navigate, restoreArchivedThreadFromToast],
+    [restoreArchivedThreadFromSnackbar],
   );
 
-  // Archive immediately and surface the Undo toast. The toast is the safety net,
+  // Archive immediately and surface the Undo snackbar. The snackbar is the safety net,
   // so the inline row affordance archives instantly without a confirmation step.
   const archiveThreadWithUndo = useCallback(
     async (threadId: ThreadId) => {
@@ -3436,21 +3541,20 @@ export default function Sidebar() {
         const returnToThreadOnUndo = routeThreadId === threadId;
         const archived = await archiveThread(threadId);
         if (archived) {
-          showArchiveUndoToast(threadId, { returnToThreadOnUndo });
+          showArchiveUndoSnackbar(threadId, { returnToThreadOnUndo });
         }
       } catch (error) {
-        toastManager.add({
-          type: "error",
+        showSidebarTransientError({
           title: "Could not archive thread",
           description: error instanceof Error ? error.message : "Unable to archive the thread.",
         });
       }
     },
-    [archiveThread, routeThreadId, showArchiveUndoToast],
+    [archiveThread, routeThreadId, showArchiveUndoSnackbar],
   );
 
   // Context-menu archive still honors the opt-in `confirmThreadArchive` dialog
-  // before archiving; the undo toast follows either way.
+  // before archiving; the Undo snackbar follows either way.
   const confirmAndArchiveThread = useCallback(
     async (threadId: ThreadId) => {
       const thread = sidebarThreadSummaryById[threadId];
@@ -3490,11 +3594,6 @@ export default function Sidebar() {
         (thread) => thread.projectId === projectId && thread.archivedAt == null,
       );
       if (projectThreads.length === 0) {
-        toastManager.add({
-          type: "info",
-          title: "Nothing to archive",
-          description: `"${project.name}" has no threads to archive.`,
-        });
         return;
       }
 
@@ -3502,8 +3601,7 @@ export default function Sidebar() {
       const runningCount = projectThreads.length - archivableThreads.length;
 
       if (archivableThreads.length === 0) {
-        toastManager.add({
-          type: "error",
+        showSidebarTransientError({
           title: "Cannot archive threads",
           description:
             runningCount === 1
@@ -3554,28 +3652,15 @@ export default function Sidebar() {
       // Clear any transient selection that pointed at just-archived rows.
       removeFromSelection(archivableThreads.map((thread) => thread.id));
 
-      if (archivedCount > 0) {
-        const skippedDescription =
-          runningCount > 0
-            ? ` Skipped ${runningCount} running ${pluralize(runningCount, "thread")}.`
-            : "";
-        toastManager.add({
-          type: failureCount > 0 ? "warning" : "success",
-          title: archivedCount === 1 ? "Thread archived" : `Archived ${archivedCount} threads`,
-          description:
-            failureCount > 0
-              ? `Failed to archive ${failureCount} ${pluralize(failureCount, "thread")}.${skippedDescription}`
-              : runningCount > 0
-                ? skippedDescription.trim()
-                : `"${project.name}" cleared.`,
-        });
-      } else if (failureCount > 0) {
-        toastManager.add({
-          type: "error",
-          title: "Failed to archive threads",
-          description: `Could not archive ${failureCount} ${pluralize(failureCount, "thread")} in "${project.name}".`,
-        });
-      }
+      const activity = createSidebarBulkThreadActivity({
+        operation: "archive",
+        projectId,
+        projectName: project.name,
+        completedCount: archivedCount,
+        failureCount,
+        skippedRunningCount: runningCount,
+      });
+      if (activity) activityManager.publish(activity);
     },
     [archiveThread, projectById, removeFromSelection, sidebarThreads],
   );
@@ -3592,8 +3677,7 @@ export default function Sidebar() {
       projectId: ProjectId,
       options?: {
         confirmMessage?: string | null;
-        showEmptyToast?: boolean;
-        showResultToast?: boolean;
+        publishResultActivity?: boolean;
         worktreeCleanupMode?: "prompt" | "skip";
       },
     ): Promise<{
@@ -3609,13 +3693,6 @@ export default function Sidebar() {
 
       const projectThreads = sidebarThreads.filter((thread) => thread.projectId === projectId);
       if (projectThreads.length === 0) {
-        if (options?.showEmptyToast ?? true) {
-          toastManager.add({
-            type: "info",
-            title: "Nothing to delete",
-            description: `"${project.name}" has no threads to delete.`,
-          });
-        }
         return {
           deletedCount: 0,
           failureCount: 0,
@@ -3668,23 +3745,15 @@ export default function Sidebar() {
       });
       removeFromSelection([...deletedIds]);
 
-      if (options?.showResultToast ?? true) {
-        if (deletedCount > 0) {
-          toastManager.add({
-            type: failureCount > 0 ? "warning" : "success",
-            title: deletedCount === 1 ? "Thread deleted" : `Deleted ${deletedCount} threads`,
-            description:
-              failureCount > 0
-                ? `Failed to delete ${failureCount} ${pluralize(failureCount, "thread")}.`
-                : `"${project.name}" cleared.`,
-          });
-        } else if (failureCount > 0) {
-          toastManager.add({
-            type: "error",
-            title: "Failed to delete threads",
-            description: `Could not delete ${failureCount} ${pluralize(failureCount, "thread")} in "${project.name}".`,
-          });
-        }
+      if (options?.publishResultActivity ?? true) {
+        const activity = createSidebarBulkThreadActivity({
+          operation: "delete",
+          projectId,
+          projectName: project.name,
+          completedCount: deletedCount,
+          failureCount,
+        });
+        if (activity) activityManager.publish(activity);
       }
 
       return {
@@ -3793,8 +3862,7 @@ export default function Sidebar() {
       }
       if (clicked === "copy-path") {
         if (!threadWorkspacePath) {
-          toastManager.add({
-            type: "error",
+          showSidebarTransientError({
             title: "Path unavailable",
             description: "This thread does not have a workspace path to copy.",
           });
@@ -3805,8 +3873,7 @@ export default function Sidebar() {
       }
       if (clicked === "open-path-in-terminal") {
         if (!threadWorkspacePath) {
-          toastManager.add({
-            type: "error",
+          showSidebarTransientError({
             title: "Path unavailable",
             description: "This thread does not have a workspace path to open.",
           });
@@ -3879,8 +3946,7 @@ export default function Sidebar() {
           if (previousActiveTerminalId) {
             terminalStore.setActiveTerminal(threadId, previousActiveTerminalId);
           }
-          toastManager.add({
-            type: "error",
+          showSidebarTransientError({
             title: "Unable to open terminal",
             description:
               error instanceof Error ? error.message : "The terminal could not be opened.",
@@ -4061,7 +4127,7 @@ export default function Sidebar() {
       if (!api || !project || !runCommand) {
         return;
       }
-      if (projectRunsByProjectId[projectId]) {
+      if (projectRunsByProjectId[projectId]?.status !== "failed") {
         return;
       }
       // The dialog lets the user edit the default command before launching, so an
@@ -4078,6 +4144,7 @@ export default function Sidebar() {
       // immediately; the server's authoritative snapshot replaces this on success.
       storeUpsertProjectRun({
         projectId,
+        runId: `client-starting:${Date.now()}`,
         command,
         cwd: runCommand.cwd,
         pid: null,
@@ -4092,11 +4159,26 @@ export default function Sidebar() {
           env,
         });
         storeUpsertProjectRun(server);
+        if (server.status === "failed") {
+          activityManager.publish({
+            dedupeKey: `sidebar:run:project:${projectId}`,
+            source: "terminal",
+            status: "needs_attention",
+            tone: "error",
+            title: `Failed to run "${project.name}"`,
+            description: server.error ?? "The development server did not become ready.",
+          });
+          return;
+        }
+        activityManager.remove(`sidebar:run:project:${projectId}`);
         void queryClient.invalidateQueries({ queryKey: serverQueryKeys.localServers() });
       } catch (error) {
         storeRemoveProjectRun(projectId);
-        toastManager.add({
-          type: "error",
+        activityManager.publish({
+          dedupeKey: `sidebar:run:project:${projectId}`,
+          source: "terminal",
+          status: "needs_attention",
+          tone: "error",
           title: `Failed to run "${project.name}"`,
           description: error instanceof Error ? error.message : "Unable to start the run command.",
         });
@@ -4123,6 +4205,7 @@ export default function Sidebar() {
       storeRemoveProjectRun(projectId);
       try {
         await api.projects.stopDevServer({ projectId });
+        activityManager.remove(`sidebar:run:project:${projectId}`);
       } catch (error) {
         // The optimistic removal may have been wrong (e.g. the stop failed), so
         // resync from the authoritative server registry before surfacing the error.
@@ -4132,8 +4215,11 @@ export default function Sidebar() {
         } catch {
           // Ignore resync failures; the dev-server event stream will reconcile.
         }
-        toastManager.add({
-          type: "error",
+        activityManager.publish({
+          dedupeKey: `sidebar:run:project:${projectId}`,
+          source: "terminal",
+          status: "needs_attention",
+          tone: "error",
           title: "Failed to stop run",
           description: error instanceof Error ? error.message : "Unable to stop the dev server.",
         });
@@ -4154,8 +4240,7 @@ export default function Sidebar() {
     try {
       await api.shell.openExternal(url);
     } catch (error) {
-      toastManager.add({
-        type: "error",
+      showSidebarTransientError({
         title: `Unable to open ${localServerAddressLabel(server)}`,
         description: error instanceof Error ? error.message : "Unable to open the local server.",
       });
@@ -4174,8 +4259,7 @@ export default function Sidebar() {
         try {
           await api.shell.showInFolder(project.cwd);
         } catch (error) {
-          toastManager.add({
-            type: "error",
+          showSidebarTransientError({
             title: "Unable to open in Finder",
             description:
               error instanceof Error
@@ -4211,18 +4295,16 @@ export default function Sidebar() {
             api,
             root: project.cwd,
             requestDecision: requestProjectInitializationDecision,
-            onCompletion: notifyProjectInitializationCompletion,
+            onCompletion: (completion) =>
+              notifyProjectInitializationCompletion(project.cwd, completion),
           });
-          if (result === "already-initialized") {
-            toastManager.add({
-              type: "info",
-              title: "Scient project is ready",
-              description: "This folder already has a compatible Scient project foundation.",
-            });
-          }
+          if (result === "already-initialized") return;
         } catch (error) {
-          toastManager.add({
-            type: "error",
+          activityManager.publish({
+            dedupeKey: `sidebar:project-setup:${project.cwd}`,
+            source: "system",
+            status: "needs_attention",
+            tone: "error",
             title: "Unable to inspect Scient project setup",
             description: error instanceof Error ? error.message : "The setup check failed.",
           });
@@ -4262,16 +4344,18 @@ export default function Sidebar() {
         // `project.delete` refuses non-empty folders, so `Remove` clears threads first.
         const deletionResult = await deleteProjectThreads(projectId, {
           confirmMessage: null,
-          showEmptyToast: false,
-          showResultToast: false,
+          publishResultActivity: false,
           worktreeCleanupMode: "skip",
         });
         if (deletionResult === null) {
           return;
         }
         if (deletionResult.failureCount > 0) {
-          toastManager.add({
-            type: "error",
+          activityManager.publish({
+            dedupeKey: `sidebar:remove-project:${projectId}`,
+            source: "system",
+            status: "needs_attention",
+            tone: "error",
             title: `Failed to remove "${project.name}"`,
             description: `Could not delete ${deletionResult.failureCount} ${pluralize(deletionResult.failureCount, "thread")} in "${project.name}".`,
           });
@@ -4284,19 +4368,15 @@ export default function Sidebar() {
           removeDeletedProjectFromClientState,
         });
         clearProjectDraftThreads(projectId);
-        toastManager.add({
-          type: "success",
-          title: `Removed "${project.name}"`,
-          description:
-            deletionResult.deletedCount > 0
-              ? `Deleted ${deletionResult.deletedCount} ${pluralize(deletionResult.deletedCount, "thread")} and removed the project.`
-              : "Project removed.",
-        });
+        activityManager.remove(`sidebar:remove-project:${projectId}`);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error removing project.";
         console.error("Failed to remove project", { projectId, error });
-        toastManager.add({
-          type: "error",
+        activityManager.publish({
+          dedupeKey: `sidebar:remove-project:${projectId}`,
+          source: "system",
+          status: "needs_attention",
+          tone: "error",
           title: `Failed to remove "${project.name}"`,
           description: message,
         });
@@ -4588,7 +4668,7 @@ export default function Sidebar() {
   // Keep manual server attribution alive without repeating the expensive
   // port/process scan while no Synara-owned run needs near-real-time status.
   const hasActiveProjectRun = useMemo(
-    () => Object.keys(projectRunsByProjectId).length > 0,
+    () => Object.values(projectRunsByProjectId).some((run) => run.status !== "failed"),
     [projectRunsByProjectId],
   );
   const projectRunLocalServersQuery = useQuery(
@@ -5896,7 +5976,8 @@ export default function Sidebar() {
     const projectRunServer = projectRunServerByProjectId.get(project.id) ?? null;
     // A project reads as "running" when Synara tracks a run for it or when a
     // local server (possibly started outside Synara) is attributed by cwd.
-    const isProjectRunning = projectRun !== null || projectRunServer !== null;
+    const isProjectRunning =
+      (projectRun !== null && projectRun.status !== "failed") || projectRunServer !== null;
     const collapsedProjectStatus = project.expanded ? null : projectStatus;
     // The "open dev server" affordance now lives in the project context menu, so
     // the hover toolbar always reserves space for the three thread actions. The
@@ -6395,36 +6476,25 @@ export default function Sidebar() {
     };
   }, []);
 
-  // Single entry point for update error toasts. Attaches the manual-download
-  // fallback (copy link + "Download manually") whenever a release URL is known,
-  // and dedupes by error signature so the same failure is not toasted twice.
+  // Desktop updates are owned by the sidebar Update control. Activity keeps a
+  // reviewable failure record without spawning a detached toast over the chat.
   const surfaceDesktopUpdateError = useCallback(
     (input: { title: string; description: string; state: DesktopUpdateState | null }) => {
       const signature = getDesktopUpdateErrorSignature(input.state) ?? `adhoc:${input.description}`;
-      if (lastDesktopUpdateErrorToastSignatureRef.current === signature) {
+      if (lastDesktopUpdateErrorSignatureRef.current === signature) {
         return;
       }
-      lastDesktopUpdateErrorToastSignatureRef.current = signature;
-      const releaseUrl = input.state?.releaseUrl ?? null;
+      lastDesktopUpdateErrorSignatureRef.current = signature;
       const recommendManualDownload = shouldRecommendManualDesktopDownload(input.state);
-      const fallbackProps = releaseUrl
-        ? {
-            data: { copyText: releaseUrl },
-            actionProps: {
-              children: "Download manually",
-              onClick: () => {
-                void window.desktopBridge?.openExternal(releaseUrl);
-              },
-            },
-          }
-        : {};
-      toastManager.add({
-        type: "error",
+      activityManager.publish({
+        dedupeKey: "update:desktop",
+        source: "update",
+        status: "needs_attention",
+        tone: "error",
         title: recommendManualDownload ? "Download the update manually" : input.title,
         description: recommendManualDownload
           ? `Automatic installation has failed ${input.state?.installFailureCount ?? 0} times. Download ${input.state?.availableVersion ?? "the update"} manually to finish updating.`
           : input.description,
-        ...fallbackProps,
       });
     },
     [],
@@ -6438,7 +6508,7 @@ export default function Sidebar() {
     if (!getDesktopUpdateErrorSignature(desktopUpdateState)) {
       // Returning to any non-error state (new download, success, up-to-date)
       // clears the dedup key so the next distinct failure notifies again.
-      lastDesktopUpdateErrorToastSignatureRef.current = null;
+      lastDesktopUpdateErrorSignatureRef.current = null;
       return;
     }
     if (!desktopUpdateState?.releaseUrl) {
@@ -6455,6 +6525,57 @@ export default function Sidebar() {
       state: desktopUpdateState,
     });
   }, [desktopUpdateState, surfaceDesktopUpdateError]);
+
+  useEffect(() => {
+    if (!desktopUpdateState) return;
+    const signature = [
+      desktopUpdateState.status,
+      desktopUpdateState.availableVersion ?? "",
+      desktopUpdateState.message ?? "",
+    ].join(":");
+    if (lastDesktopUpdateActivitySignatureRef.current === signature) return;
+    lastDesktopUpdateActivitySignatureRef.current = signature;
+
+    if (shouldClearDesktopUpdateActivity(desktopUpdateState)) {
+      activityManager.remove("update:desktop");
+      return;
+    }
+
+    if (desktopUpdateState.status === "available") {
+      activityManager.publish({
+        dedupeKey: "update:desktop",
+        source: "update",
+        status: "needs_attention",
+        tone: "info",
+        title: `Scient ${desktopUpdateState.availableVersion ?? "update"} is available`,
+        description: "Use the Update button in the lower-left sidebar when you are ready.",
+        preserveRead: true,
+      });
+      return;
+    }
+    if (desktopUpdateState.status === "downloading") {
+      activityManager.publish({
+        dedupeKey: "update:desktop",
+        source: "update",
+        status: "in_progress",
+        tone: "info",
+        title: "Downloading Scient update",
+        description: desktopUpdateState.message ?? "The update is downloading in the background.",
+        preserveRead: true,
+      });
+      return;
+    }
+    if (desktopUpdateState.status === "downloaded") {
+      activityManager.publish({
+        dedupeKey: "update:desktop",
+        source: "update",
+        status: "needs_attention",
+        tone: "success",
+        title: "Scient update ready",
+        description: "Use the Update button to restart and install it.",
+      });
+    }
+  }, [desktopUpdateState]);
 
   const showDesktopUpdateButton = isElectron && shouldShowDesktopUpdateButton(desktopUpdateState);
 
@@ -6600,39 +6721,8 @@ export default function Sidebar() {
         .then((nextState) => {
           setInstallingDesktopUpdate(false);
           setDesktopUpdateState(nextState);
-          if (nextState.status === "available") {
-            toastManager.add({
-              type: "info",
-              title: "Preparing update",
-              description: `Scient is preparing version ${nextState.availableVersion ?? "available"} in the background.`,
-            });
-            return;
-          }
-
-          if (nextState.status === "downloading") {
-            toastManager.add({
-              type: "info",
-              title: "Preparing update",
-              description: "Scient is downloading the update in the background.",
-            });
-            return;
-          }
-
-          if (nextState.status === "downloaded") {
-            toastManager.add({
-              type: "success",
-              title: "Update ready",
-              description: "Click Update when you’re ready to restart and install it.",
-            });
-            return;
-          }
-
           if (nextState.status === "up-to-date") {
-            toastManager.add({
-              type: "info",
-              title: "You're up to date",
-              description: `Scient ${nextState.currentVersion} is already the newest version.`,
-            });
+            activityManager.remove("update:desktop");
             return;
           }
 
@@ -6660,20 +6750,9 @@ export default function Sidebar() {
         .then((result) => {
           setInstallingDesktopUpdate(false);
           setDesktopUpdateState(result.state);
-          if (result.completed) {
-            toastManager.add({
-              type: "success",
-              title: "Update ready",
-              description: "Click Update when you’re ready to restart and install it.",
-            });
-          }
           const alreadyCurrentNotice = getDesktopUpdateAlreadyCurrentNotice(result);
           if (alreadyCurrentNotice) {
-            toastManager.add({
-              type: "info",
-              title: "Already up to date",
-              description: alreadyCurrentNotice,
-            });
+            activityManager.remove("update:desktop");
             return;
           }
           if (!shouldToastDesktopUpdateActionResult(result)) return;
@@ -6704,8 +6783,11 @@ export default function Sidebar() {
           setDesktopUpdateState(result.state);
           setInstallingDesktopUpdate(false);
           if (result.completed && result.state.installMode === "manual") {
-            toastManager.add({
-              type: "info",
+            activityManager.publish({
+              dedupeKey: "update:desktop",
+              source: "update",
+              status: "needs_attention",
+              tone: "warning",
               title: "Finish updating in Finder",
               description:
                 result.state.message ??
@@ -6715,11 +6797,7 @@ export default function Sidebar() {
           }
           const alreadyCurrentNotice = getDesktopUpdateAlreadyCurrentNotice(result);
           if (alreadyCurrentNotice) {
-            toastManager.add({
-              type: "info",
-              title: "Already up to date",
-              description: alreadyCurrentNotice,
-            });
+            activityManager.remove("update:desktop");
             return;
           }
           if (!shouldToastDesktopUpdateActionResult(result)) return;
@@ -6837,7 +6915,10 @@ export default function Sidebar() {
     ? pinnedProjectIdSet.has(projectContextMenuProject.id)
     : false;
   const projectContextMenuIsRunning = projectContextMenuProject
-    ? Boolean(projectRunsByProjectId[projectContextMenuProject.id])
+    ? Boolean(
+        projectRunsByProjectId[projectContextMenuProject.id] &&
+        projectRunsByProjectId[projectContextMenuProject.id]?.status !== "failed",
+      )
     : false;
   const projectContextMenuServer = projectContextMenuProject
     ? (projectRunServerByProjectId.get(projectContextMenuProject.id) ?? null)
@@ -7381,6 +7462,7 @@ export default function Sidebar() {
                   <DebugFeatureFlagsMenu />
                 </Suspense>
               ) : null}
+              <ActivityCenter />
               <div className="flex items-center gap-2">
                 {!isOnSettings && (
                   <SidebarMenuButton

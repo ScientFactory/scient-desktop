@@ -283,6 +283,7 @@ export const ServerLocalServerProcess = Schema.Struct({
   id: TrimmedNonEmptyString,
   pid: PositiveInt,
   ppid: Schema.optional(PositiveInt),
+  ancestorPids: Schema.optional(Schema.Array(PositiveInt)),
   command: TrimmedNonEmptyString,
   displayName: TrimmedNonEmptyString,
   pageTitle: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
@@ -352,8 +353,14 @@ export const ServerDiagnosticsResult = Schema.Struct({
 });
 export type ServerDiagnosticsResult = typeof ServerDiagnosticsResult.Type;
 
+export const VoiceTranscriptionMode = Schema.Literals(["automatic", "offline-only"]);
+export type VoiceTranscriptionMode = typeof VoiceTranscriptionMode.Type;
+
 export const ServerVoiceTranscriptionInput = Schema.Struct({
-  provider: ProviderKind,
+  // Kept optional during the provider-neutral migration so older clients and
+  // servers can interoperate. Voice routing no longer follows the text provider.
+  provider: Schema.optionalKey(ProviderKind),
+  mode: Schema.optionalKey(VoiceTranscriptionMode),
   cwd: TrimmedNonEmptyString,
   threadId: Schema.optional(ThreadId),
   mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100)),
@@ -367,6 +374,9 @@ export type ServerVoiceTranscriptionInput = typeof ServerVoiceTranscriptionInput
 
 export const ServerVoiceTranscriptionResult = Schema.Struct({
   text: TrimmedNonEmptyString,
+  engine: Schema.optionalKey(Schema.Literals(["chatgpt", "local"])),
+  fallbackUsed: Schema.optionalKey(Schema.Boolean),
+  fallbackReason: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerVoiceTranscriptionResult = typeof ServerVoiceTranscriptionResult.Type;
 

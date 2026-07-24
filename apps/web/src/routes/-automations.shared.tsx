@@ -40,7 +40,6 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { TimePicker } from "~/components/ui/time-picker";
-import { toastManager } from "~/components/ui/toast";
 import {
   useApplyProviderSelectionAfterConnection,
   useProviderConnectionSelectionIntent,
@@ -506,7 +505,6 @@ export function useAutomations(onRunStarted?: (threadId: ThreadId) => void) {
   const createMutation = useMutation({
     mutationFn: (input: AutomationCreateInput) => ensureNativeApi().automation.create(input),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: automationQueryKey }),
-    onError: (error) => toastManager.add({ type: "error", title: error.message }),
   });
   const updateMutation = useMutation({
     mutationFn: (input: AutomationUpdateInput) => ensureNativeApi().automation.update(input),
@@ -528,20 +526,18 @@ export function useAutomations(onRunStarted?: (threadId: ThreadId) => void) {
       return { previous };
     },
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: automationQueryKey }),
-    onError: (error, _input, context) => {
+    onError: (_error, _input, context) => {
       // A failed update would otherwise leave the incomplete optimistic merge in the cache
       // until the next stream tick; restore the pre-edit snapshot so the UI reflects reality.
       if (context?.previous) {
         queryClient.setQueryData<AutomationListResult>(automationQueryKey, context.previous);
       }
-      toastManager.add({ type: "error", title: error.message });
     },
   });
   const deleteMutation = useMutation({
     mutationFn: (definition: AutomationDefinition) =>
       ensureNativeApi().automation.delete({ id: definition.id }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: automationQueryKey }),
-    onError: (error) => toastManager.add({ type: "error", title: error.message }),
   });
   const runNowMutation = useMutation({
     mutationFn: (definition: AutomationDefinition) =>
@@ -550,24 +546,20 @@ export function useAutomations(onRunStarted?: (threadId: ThreadId) => void) {
       void queryClient.invalidateQueries({ queryKey: automationQueryKey });
       if (result.run.threadId) onRunStarted?.(result.run.threadId);
     },
-    onError: (error) => toastManager.add({ type: "error", title: error.message }),
   });
   const cancelRunMutation = useMutation({
     mutationFn: (run: AutomationRun) => ensureNativeApi().automation.cancelRun({ runId: run.id }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: automationQueryKey }),
-    onError: (error) => toastManager.add({ type: "error", title: error.message }),
   });
   const markRunReadMutation = useMutation({
     mutationFn: (input: { readonly run: AutomationRun; readonly unread: boolean }) =>
       ensureNativeApi().automation.markRunRead({ runId: input.run.id, unread: input.unread }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: automationQueryKey }),
-    onError: (error) => toastManager.add({ type: "error", title: error.message }),
   });
   const archiveRunMutation = useMutation({
     mutationFn: (input: { readonly run: AutomationRun; readonly archived: boolean }) =>
       ensureNativeApi().automation.archiveRun({ runId: input.run.id, archived: input.archived }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: automationQueryKey }),
-    onError: (error) => toastManager.add({ type: "error", title: error.message }),
   });
 
   const runsByAutomationId = useMemo(() => {
@@ -586,6 +578,8 @@ export function useAutomations(onRunStarted?: (threadId: ThreadId) => void) {
   return {
     data,
     isLoading: automationsQuery.isLoading,
+    isFetching: automationsQuery.isFetching,
+    error: automationsQuery.error,
     refetch: automationsQuery.refetch,
     createMutation,
     updateMutation,
@@ -778,6 +772,7 @@ export function AutomationDialog({
   onToggleWarning,
   onSubmit,
   busy,
+  error = null,
 }: {
   readonly open: boolean;
   readonly editing: boolean;
@@ -791,6 +786,7 @@ export function AutomationDialog({
   readonly onToggleWarning?: (id: AutomationDraftWarningId, checked: boolean) => void;
   readonly onSubmit: () => void;
   readonly busy: boolean;
+  readonly error?: string | null;
 }) {
   const setField = <K extends keyof AutomationFormState>(key: K, value: AutomationFormState[K]) =>
     onFormChange({ ...form, [key]: value });
@@ -854,424 +850,434 @@ export function AutomationDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogPopup surface="solid" showCloseButton={false} className="max-w-3xl">
-        <DialogTitle className="sr-only">
-          {editing ? "Edit automation" : "New automation"}
-        </DialogTitle>
+        <fieldset disabled={busy} className="contents">
+          <DialogTitle className="sr-only">
+            {editing ? "Edit automation" : "New automation"}
+          </DialogTitle>
 
-        <div className="flex items-start gap-3 px-5 pt-5">
-          <input
-            value={form.name}
-            onChange={(event) => setField("name", event.target.value)}
-            placeholder="Automation title"
-            aria-label="Automation title"
-            autoFocus
-            className="min-w-0 flex-1 bg-transparent py-1 font-system-ui text-lg font-medium text-foreground outline-none placeholder:text-muted-foreground/50"
-          />
-          <div className="flex shrink-0 items-center gap-1.5">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label="About automations"
-              title="Automations run this prompt on a schedule and open the result as a thread."
-            >
-              <CentralIcon name="info-simple" className="size-4" />
-            </Button>
-            <Menu>
-              <MenuTrigger render={<Button variant="outline" size="sm" />}>
-                Use template
-              </MenuTrigger>
-              <ComposerPickerMenuPopup align="end" className="w-52">
-                {AUTOMATION_TEMPLATES.map((template) => (
-                  <MenuItem key={template.label} onClick={() => applyTemplate(template)}>
-                    {template.label}
-                  </MenuItem>
-                ))}
-              </ComposerPickerMenuPopup>
-            </Menu>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Close"
-              disabled={busy}
-              onClick={() => onOpenChange(false)}
-            >
-              <CentralIcon name="cross-small" className="size-4" />
-            </Button>
+          <div className="flex items-start gap-3 px-5 pt-5">
+            <input
+              value={form.name}
+              onChange={(event) => setField("name", event.target.value)}
+              placeholder="Automation title"
+              aria-label="Automation title"
+              autoFocus
+              className="min-w-0 flex-1 bg-transparent py-1 font-system-ui text-lg font-medium text-foreground outline-none placeholder:text-muted-foreground/50"
+            />
+            <div className="flex shrink-0 items-center gap-1.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="About automations"
+                title="Automations run this prompt on a schedule and open the result as a thread."
+              >
+                <CentralIcon name="info-simple" className="size-4" />
+              </Button>
+              <Menu>
+                <MenuTrigger render={<Button variant="outline" size="sm" />}>
+                  Use template
+                </MenuTrigger>
+                <ComposerPickerMenuPopup align="end" className="w-52">
+                  {AUTOMATION_TEMPLATES.map((template) => (
+                    <MenuItem key={template.label} onClick={() => applyTemplate(template)}>
+                      {template.label}
+                    </MenuItem>
+                  ))}
+                </ComposerPickerMenuPopup>
+              </Menu>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Close"
+                disabled={busy}
+                onClick={() => onOpenChange(false)}
+              >
+                <CentralIcon name="cross-small" className="size-4" />
+              </Button>
+            </div>
           </div>
-        </div>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-3">
-          <textarea
-            value={form.prompt}
-            onChange={(event) => setField("prompt", event.target.value)}
-            onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-                event.preventDefault();
-                submit();
-              }
-            }}
-            placeholder="Add prompt e.g. look for crashes in $sentry"
-            aria-label="Automation prompt"
-            className="min-h-[15rem] w-full flex-1 resize-none overflow-y-auto bg-transparent font-system-ui text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/50"
-          />
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 py-3">
+            <textarea
+              value={form.prompt}
+              onChange={(event) => setField("prompt", event.target.value)}
+              onKeyDown={(event) => {
+                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                  event.preventDefault();
+                  submit();
+                }
+              }}
+              placeholder="Add prompt e.g. look for crashes in $sentry"
+              aria-label="Automation prompt"
+              className="min-h-[15rem] w-full flex-1 resize-none overflow-y-auto bg-transparent font-system-ui text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/50"
+            />
 
-          {warnings.length > 0 ? (
-            <div className="mt-2 flex flex-col gap-1.5 border-t border-border/50 pt-3">
-              {warnings.map((warning) => (
-                <label
-                  key={warning.id}
-                  className="flex items-start gap-2 text-xs text-muted-foreground"
-                >
-                  {warning.requiresAcknowledgement ? (
-                    <input
-                      type="checkbox"
-                      checked={acknowledgedWarningIds.has(warning.id)}
-                      onChange={(event) => onToggleWarning?.(warning.id, event.target.checked)}
-                      className="mt-0.5"
-                    />
-                  ) : (
-                    <span className="mt-1 size-1.5 shrink-0 rounded-full bg-amber-500" />
-                  )}
-                  <span className="min-w-0">
-                    <span className="font-medium text-foreground">{warning.title}</span>
-                    <span className="block">{warning.detail}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
-          ) : null}
-          {fastIntervalLimitMessage ? (
-            <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-700 dark:text-amber-300">
-              {fastIntervalLimitMessage}
-            </div>
-          ) : null}
-        </div>
+            {warnings.length > 0 ? (
+              <div className="mt-2 flex flex-col gap-1.5 border-t border-border/50 pt-3">
+                {warnings.map((warning) => (
+                  <label
+                    key={warning.id}
+                    className="flex items-start gap-2 text-xs text-muted-foreground"
+                  >
+                    {warning.requiresAcknowledgement ? (
+                      <input
+                        type="checkbox"
+                        checked={acknowledgedWarningIds.has(warning.id)}
+                        onChange={(event) => onToggleWarning?.(warning.id, event.target.checked)}
+                        className="mt-0.5"
+                      />
+                    ) : (
+                      <span className="mt-1 size-1.5 shrink-0 rounded-full bg-amber-500" />
+                    )}
+                    <span className="min-w-0">
+                      <span className="font-medium text-foreground">{warning.title}</span>
+                      <span className="block">{warning.detail}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ) : null}
+            {fastIntervalLimitMessage ? (
+              <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-700 dark:text-amber-300">
+                {fastIntervalLimitMessage}
+              </div>
+            ) : null}
+            {error ? (
+              <p
+                role="alert"
+                className="mt-2 rounded-md border border-destructive/30 bg-destructive/5 px-2.5 py-2 text-xs text-destructive"
+              >
+                {error}
+              </p>
+            ) : null}
+          </div>
 
-        <div className="flex flex-wrap items-center gap-2 px-4 pb-4 pt-1">
-          <div className="flex flex-1 flex-wrap items-center gap-0.5">
-            {form.mode === "standalone" ? (
+          <div className="flex flex-wrap items-center gap-2 px-4 pb-4 pt-1">
+            <div className="flex flex-1 flex-wrap items-center gap-0.5">
+              {form.mode === "standalone" ? (
+                <Menu>
+                  <MenuTrigger render={<Button variant="ghost" size="sm" className={CHIP_CLASS} />}>
+                    <WorktreeIcon className="size-4" />
+                    <span className="capitalize">{form.worktreeMode}</span>
+                    <CentralIcon name="chevron-down-small" className="size-3.5 opacity-60" />
+                  </MenuTrigger>
+                  <ComposerPickerMenuPopup align="start" className="w-40">
+                    <MenuRadioGroup
+                      value={form.worktreeMode}
+                      onValueChange={(value) =>
+                        setField("worktreeMode", value as AutomationWorktreeMode)
+                      }
+                    >
+                      {(["auto", "worktree", "local"] as const).map((value) => (
+                        <MenuRadioItem key={value} value={value}>
+                          <span className="capitalize">{value}</span>
+                        </MenuRadioItem>
+                      ))}
+                    </MenuRadioGroup>
+                  </ComposerPickerMenuPopup>
+                </Menu>
+              ) : null}
+
               <Menu>
                 <MenuTrigger render={<Button variant="ghost" size="sm" className={CHIP_CLASS} />}>
-                  <WorktreeIcon className="size-4" />
-                  <span className="capitalize">{form.worktreeMode}</span>
+                  <CentralIcon name="folder-2" className="size-4" />
+                  <span className="max-w-[10rem] truncate">
+                    {selectedProject?.name ?? "Select project"}
+                  </span>
                   <CentralIcon name="chevron-down-small" className="size-3.5 opacity-60" />
                 </MenuTrigger>
-                <ComposerPickerMenuPopup align="start" className="w-40">
-                  <MenuRadioGroup
-                    value={form.worktreeMode}
-                    onValueChange={(value) =>
-                      setField("worktreeMode", value as AutomationWorktreeMode)
-                    }
-                  >
-                    {(["auto", "worktree", "local"] as const).map((value) => (
-                      <MenuRadioItem key={value} value={value}>
-                        <span className="capitalize">{value}</span>
+                <ComposerPickerMenuPopup align="start" className="w-56">
+                  <MenuRadioGroup value={form.projectId} onValueChange={chooseProject}>
+                    {projects.map((project) => (
+                      <MenuRadioItem key={project.id} value={project.id}>
+                        <span className="truncate">{project.name}</span>
                       </MenuRadioItem>
                     ))}
                   </MenuRadioGroup>
                 </ComposerPickerMenuPopup>
               </Menu>
-            ) : null}
 
-            <Menu>
-              <MenuTrigger render={<Button variant="ghost" size="sm" className={CHIP_CLASS} />}>
-                <CentralIcon name="folder-2" className="size-4" />
-                <span className="max-w-[10rem] truncate">
-                  {selectedProject?.name ?? "Select project"}
-                </span>
-                <CentralIcon name="chevron-down-small" className="size-3.5 opacity-60" />
-              </MenuTrigger>
-              <ComposerPickerMenuPopup align="start" className="w-56">
-                <MenuRadioGroup value={form.projectId} onValueChange={chooseProject}>
-                  {projects.map((project) => (
-                    <MenuRadioItem key={project.id} value={project.id}>
-                      <span className="truncate">{project.name}</span>
-                    </MenuRadioItem>
-                  ))}
-                </MenuRadioGroup>
-              </ComposerPickerMenuPopup>
-            </Menu>
+              <AutomationModelPicker
+                value={form.modelSelection}
+                projectCwd={selectedProject?.cwd ?? null}
+                onChange={(value) => setField("modelSelection", value)}
+              />
 
-            <AutomationModelPicker
-              value={form.modelSelection}
-              projectCwd={selectedProject?.cwd ?? null}
-              onChange={(value) => setField("modelSelection", value)}
-            />
-
-            <Menu>
-              <MenuTrigger render={<Button variant="ghost" size="sm" className={CHIP_CLASS} />}>
-                <CentralIcon name="clock" className="size-4" />
-                <span>{formatCadence(schedule)}</span>
-                <CentralIcon name="chevron-down-small" className="size-3.5 opacity-60" />
-              </MenuTrigger>
-              <ComposerPickerMenuPopup align="start" className="w-56">
-                <MenuGroup>
-                  <MenuGroupLabel>Schedule</MenuGroupLabel>
-                  <MenuRadioGroup
-                    value={form.scheduleKind}
-                    onValueChange={(value) => setField("scheduleKind", value as ScheduleKind)}
-                  >
-                    {SCHEDULE_KIND_OPTIONS.map((option) => (
-                      <MenuRadioItem key={option.value} value={option.value}>
-                        {option.label}
-                      </MenuRadioItem>
-                    ))}
-                  </MenuRadioGroup>
-                </MenuGroup>
-                {form.scheduleKind === "custom" ? (
-                  <>
-                    <MenuSeparator />
-                    <MenuGroup>
-                      <MenuGroupLabel>Every</MenuGroupLabel>
-                      <MenuRadioGroup
-                        value={intervalValue}
-                        onValueChange={(value) => {
-                          const [unit, amount] = value.split(":");
-                          if (unit === "seconds" || unit === "minutes") {
-                            onFormChange({
-                              ...form,
-                              intervalUnit: unit,
-                              intervalAmount: amount ?? "1",
-                            });
-                          }
-                        }}
-                      >
-                        {intervalPresets.map((preset) => (
-                          <MenuRadioItem
-                            key={intervalOptionValue(preset)}
-                            value={intervalOptionValue(preset)}
-                          >
-                            {preset.label}
-                          </MenuRadioItem>
-                        ))}
-                      </MenuRadioGroup>
-                    </MenuGroup>
-                  </>
-                ) : null}
-                {form.scheduleKind === "once" ? (
-                  <>
-                    <MenuSeparator />
-                    <MenuGroup>
-                      <MenuGroupLabel>Run at</MenuGroupLabel>
-                      <div className="px-2 py-1">
-                        <input
-                          type="datetime-local"
-                          step={1}
-                          value={form.onceRunAt}
-                          onChange={(event) => setField("onceRunAt", event.target.value)}
-                          className="w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                        />
-                      </div>
-                    </MenuGroup>
-                  </>
-                ) : null}
-                {form.scheduleKind === "cron" ? (
-                  <>
-                    <MenuSeparator />
-                    <MenuGroup>
-                      <MenuGroupLabel>Cron</MenuGroupLabel>
-                      <div className="px-2 py-1">
-                        <input
-                          value={form.cronExpression}
-                          onChange={(event) => setField("cronExpression", event.target.value)}
-                          placeholder="0 9 * * *"
-                          className="w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                        />
-                      </div>
-                    </MenuGroup>
-                  </>
-                ) : null}
-                {form.scheduleKind === "weekly" ? (
-                  <>
-                    <MenuSeparator />
-                    <MenuGroup>
-                      <MenuGroupLabel>Day</MenuGroupLabel>
-                      <MenuRadioGroup
-                        value={form.dayOfWeek}
-                        onValueChange={(value) => setField("dayOfWeek", value)}
-                      >
-                        {[0, 1, 2, 3, 4, 5, 6].map((value) => (
-                          <MenuRadioItem key={value} value={String(value)}>
-                            {weekdayLabel(value)}
-                          </MenuRadioItem>
-                        ))}
-                      </MenuRadioGroup>
-                    </MenuGroup>
-                  </>
-                ) : null}
-                {form.scheduleKind === "daily" ||
-                form.scheduleKind === "weekdays" ||
-                form.scheduleKind === "weekly" ? (
-                  <>
-                    <MenuSeparator />
-                    <MenuSub>
-                      <MenuSubTrigger>
-                        Time
-                        <span className="ml-auto pr-1 tabular-nums text-muted-foreground">
-                          {form.timeOfDay}
-                        </span>
-                      </MenuSubTrigger>
-                      <ComposerPickerMenuSubPopup>
-                        <div className="p-1">
-                          <TimePicker
-                            className="w-44"
-                            value={form.timeOfDay}
-                            onChange={(value) => setField("timeOfDay", value)}
-                          />
-                        </div>
-                      </ComposerPickerMenuSubPopup>
-                    </MenuSub>
-                  </>
-                ) : null}
-                {form.scheduleKind === "daily" ||
-                form.scheduleKind === "weekdays" ||
-                form.scheduleKind === "weekly" ||
-                form.scheduleKind === "cron" ? (
-                  <>
-                    <MenuSeparator />
-                    <MenuGroup>
-                      <MenuGroupLabel>Timezone</MenuGroupLabel>
-                      <div className="px-2 py-1">
-                        <input
-                          value={form.timezone}
-                          onChange={(event) => setField("timezone", event.target.value)}
-                          placeholder="Europe/Rome"
-                          className="w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                        />
-                      </div>
-                    </MenuGroup>
-                  </>
-                ) : null}
-              </ComposerPickerMenuPopup>
-            </Menu>
-
-            <Menu>
-              <MenuTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Run mode"
-                    title="Run mode"
-                    className="rounded-lg text-[var(--color-text-foreground-secondary)]"
-                  />
-                }
-              >
-                <SkillCubeIcon className="size-4" />
-              </MenuTrigger>
-              <ComposerPickerMenuPopup align="start" className="w-56">
-                <MenuGroup>
-                  <MenuGroupLabel>Mode</MenuGroupLabel>
-                  <MenuRadioGroup
-                    value={form.mode}
-                    onValueChange={(value) => setField("mode", value as AutomationMode)}
-                  >
-                    <MenuRadioItem value="standalone">Standalone</MenuRadioItem>
-                    <MenuRadioItem value="heartbeat">Heartbeat</MenuRadioItem>
-                  </MenuRadioGroup>
-                </MenuGroup>
-                {form.mode === "heartbeat" ? (
-                  <>
-                    <MenuSeparator />
-                    <MenuGroup>
-                      <MenuGroupLabel>Target thread</MenuGroupLabel>
-                      {projectThreads.length === 0 ? (
-                        <MenuItem disabled>No threads in this project</MenuItem>
-                      ) : (
+              <Menu>
+                <MenuTrigger render={<Button variant="ghost" size="sm" className={CHIP_CLASS} />}>
+                  <CentralIcon name="clock" className="size-4" />
+                  <span>{formatCadence(schedule)}</span>
+                  <CentralIcon name="chevron-down-small" className="size-3.5 opacity-60" />
+                </MenuTrigger>
+                <ComposerPickerMenuPopup align="start" className="w-56">
+                  <MenuGroup>
+                    <MenuGroupLabel>Schedule</MenuGroupLabel>
+                    <MenuRadioGroup
+                      value={form.scheduleKind}
+                      onValueChange={(value) => setField("scheduleKind", value as ScheduleKind)}
+                    >
+                      {SCHEDULE_KIND_OPTIONS.map((option) => (
+                        <MenuRadioItem key={option.value} value={option.value}>
+                          {option.label}
+                        </MenuRadioItem>
+                      ))}
+                    </MenuRadioGroup>
+                  </MenuGroup>
+                  {form.scheduleKind === "custom" ? (
+                    <>
+                      <MenuSeparator />
+                      <MenuGroup>
+                        <MenuGroupLabel>Every</MenuGroupLabel>
                         <MenuRadioGroup
-                          value={form.targetThreadId}
-                          onValueChange={(value) => setField("targetThreadId", value)}
+                          value={intervalValue}
+                          onValueChange={(value) => {
+                            const [unit, amount] = value.split(":");
+                            if (unit === "seconds" || unit === "minutes") {
+                              onFormChange({
+                                ...form,
+                                intervalUnit: unit,
+                                intervalAmount: amount ?? "1",
+                              });
+                            }
+                          }}
                         >
-                          {projectThreads.map((thread) => (
-                            <MenuRadioItem key={thread.id} value={thread.id}>
-                              <span className="truncate">
-                                {resolveThreadPickerTitle(thread.title)}
-                              </span>
+                          {intervalPresets.map((preset) => (
+                            <MenuRadioItem
+                              key={intervalOptionValue(preset)}
+                              value={intervalOptionValue(preset)}
+                            >
+                              {preset.label}
                             </MenuRadioItem>
                           ))}
                         </MenuRadioGroup>
-                      )}
-                    </MenuGroup>
-                    <MenuSeparator />
-                    <MenuGroup>
-                      <MenuGroupLabel>Stop when</MenuGroupLabel>
-                      <div className="px-2 py-1">
-                        <input
-                          value={form.stopWhen}
-                          onChange={(event) => setField("stopWhen", event.target.value)}
-                          placeholder="PR is ready to merge"
-                          className="w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                        />
-                      </div>
-                    </MenuGroup>
-                    <MenuSeparator />
-                    <MenuCheckboxItem
-                      checked={form.stopOnError}
-                      onCheckedChange={(checked) => setField("stopOnError", checked)}
-                    >
-                      Stop on error
-                    </MenuCheckboxItem>
-                  </>
-                ) : null}
-                <MenuSeparator />
-                <MenuGroup>
-                  <MenuGroupLabel>Max iterations</MenuGroupLabel>
-                  <MenuRadioGroup
-                    value={form.maxIterations}
-                    onValueChange={(value) => setField("maxIterations", value)}
-                  >
-                    {maxIterationPresets.map((preset) => (
-                      <MenuRadioItem key={preset.value || "unlimited"} value={preset.value}>
-                        {preset.label}
-                      </MenuRadioItem>
-                    ))}
-                  </MenuRadioGroup>
-                </MenuGroup>
-              </ComposerPickerMenuPopup>
-            </Menu>
+                      </MenuGroup>
+                    </>
+                  ) : null}
+                  {form.scheduleKind === "once" ? (
+                    <>
+                      <MenuSeparator />
+                      <MenuGroup>
+                        <MenuGroupLabel>Run at</MenuGroupLabel>
+                        <div className="px-2 py-1">
+                          <input
+                            type="datetime-local"
+                            step={1}
+                            value={form.onceRunAt}
+                            onChange={(event) => setField("onceRunAt", event.target.value)}
+                            className="w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          />
+                        </div>
+                      </MenuGroup>
+                    </>
+                  ) : null}
+                  {form.scheduleKind === "cron" ? (
+                    <>
+                      <MenuSeparator />
+                      <MenuGroup>
+                        <MenuGroupLabel>Cron</MenuGroupLabel>
+                        <div className="px-2 py-1">
+                          <input
+                            value={form.cronExpression}
+                            onChange={(event) => setField("cronExpression", event.target.value)}
+                            placeholder="0 9 * * *"
+                            className="w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          />
+                        </div>
+                      </MenuGroup>
+                    </>
+                  ) : null}
+                  {form.scheduleKind === "weekly" ? (
+                    <>
+                      <MenuSeparator />
+                      <MenuGroup>
+                        <MenuGroupLabel>Day</MenuGroupLabel>
+                        <MenuRadioGroup
+                          value={form.dayOfWeek}
+                          onValueChange={(value) => setField("dayOfWeek", value)}
+                        >
+                          {[0, 1, 2, 3, 4, 5, 6].map((value) => (
+                            <MenuRadioItem key={value} value={String(value)}>
+                              {weekdayLabel(value)}
+                            </MenuRadioItem>
+                          ))}
+                        </MenuRadioGroup>
+                      </MenuGroup>
+                    </>
+                  ) : null}
+                  {form.scheduleKind === "daily" ||
+                  form.scheduleKind === "weekdays" ||
+                  form.scheduleKind === "weekly" ? (
+                    <>
+                      <MenuSeparator />
+                      <MenuSub>
+                        <MenuSubTrigger>
+                          Time
+                          <span className="ml-auto pr-1 tabular-nums text-muted-foreground">
+                            {form.timeOfDay}
+                          </span>
+                        </MenuSubTrigger>
+                        <ComposerPickerMenuSubPopup>
+                          <div className="p-1">
+                            <TimePicker
+                              className="w-44"
+                              value={form.timeOfDay}
+                              onChange={(value) => setField("timeOfDay", value)}
+                            />
+                          </div>
+                        </ComposerPickerMenuSubPopup>
+                      </MenuSub>
+                    </>
+                  ) : null}
+                  {form.scheduleKind === "daily" ||
+                  form.scheduleKind === "weekdays" ||
+                  form.scheduleKind === "weekly" ||
+                  form.scheduleKind === "cron" ? (
+                    <>
+                      <MenuSeparator />
+                      <MenuGroup>
+                        <MenuGroupLabel>Timezone</MenuGroupLabel>
+                        <div className="px-2 py-1">
+                          <input
+                            value={form.timezone}
+                            onChange={(event) => setField("timezone", event.target.value)}
+                            placeholder="Europe/Rome"
+                            className="w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          />
+                        </div>
+                      </MenuGroup>
+                    </>
+                  ) : null}
+                </ComposerPickerMenuPopup>
+              </Menu>
 
-            <Menu>
-              <MenuTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Agent access"
-                    title="Agent access"
-                    className="rounded-lg text-[var(--color-text-foreground-secondary)]"
-                  />
-                }
-              >
-                <CentralIcon name="brain" className="size-4" />
-              </MenuTrigger>
-              <ComposerPickerMenuPopup align="start" className="w-48">
-                <MenuRadioGroup
-                  value={form.runtimeMode}
-                  onValueChange={(value) => setField("runtimeMode", value as RuntimeMode)}
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Run mode"
+                      title="Run mode"
+                      className="rounded-lg text-[var(--color-text-foreground-secondary)]"
+                    />
+                  }
                 >
-                  <MenuRadioItem value="approval-required">Ask before changes</MenuRadioItem>
-                  <MenuRadioItem value="full-access">Unrestricted agent</MenuRadioItem>
-                </MenuRadioGroup>
-              </ComposerPickerMenuPopup>
-            </Menu>
-          </div>
+                  <SkillCubeIcon className="size-4" />
+                </MenuTrigger>
+                <ComposerPickerMenuPopup align="start" className="w-56">
+                  <MenuGroup>
+                    <MenuGroupLabel>Mode</MenuGroupLabel>
+                    <MenuRadioGroup
+                      value={form.mode}
+                      onValueChange={(value) => setField("mode", value as AutomationMode)}
+                    >
+                      <MenuRadioItem value="standalone">Standalone</MenuRadioItem>
+                      <MenuRadioItem value="heartbeat">Heartbeat</MenuRadioItem>
+                    </MenuRadioGroup>
+                  </MenuGroup>
+                  {form.mode === "heartbeat" ? (
+                    <>
+                      <MenuSeparator />
+                      <MenuGroup>
+                        <MenuGroupLabel>Target thread</MenuGroupLabel>
+                        {projectThreads.length === 0 ? (
+                          <MenuItem disabled>No threads in this project</MenuItem>
+                        ) : (
+                          <MenuRadioGroup
+                            value={form.targetThreadId}
+                            onValueChange={(value) => setField("targetThreadId", value)}
+                          >
+                            {projectThreads.map((thread) => (
+                              <MenuRadioItem key={thread.id} value={thread.id}>
+                                <span className="truncate">
+                                  {resolveThreadPickerTitle(thread.title)}
+                                </span>
+                              </MenuRadioItem>
+                            ))}
+                          </MenuRadioGroup>
+                        )}
+                      </MenuGroup>
+                      <MenuSeparator />
+                      <MenuGroup>
+                        <MenuGroupLabel>Stop when</MenuGroupLabel>
+                        <div className="px-2 py-1">
+                          <input
+                            value={form.stopWhen}
+                            onChange={(event) => setField("stopWhen", event.target.value)}
+                            placeholder="PR is ready to merge"
+                            className="w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                          />
+                        </div>
+                      </MenuGroup>
+                      <MenuSeparator />
+                      <MenuCheckboxItem
+                        checked={form.stopOnError}
+                        onCheckedChange={(checked) => setField("stopOnError", checked)}
+                      >
+                        Stop on error
+                      </MenuCheckboxItem>
+                    </>
+                  ) : null}
+                  <MenuSeparator />
+                  <MenuGroup>
+                    <MenuGroupLabel>Max iterations</MenuGroupLabel>
+                    <MenuRadioGroup
+                      value={form.maxIterations}
+                      onValueChange={(value) => setField("maxIterations", value)}
+                    >
+                      {maxIterationPresets.map((preset) => (
+                        <MenuRadioItem key={preset.value || "unlimited"} value={preset.value}>
+                          {preset.label}
+                        </MenuRadioItem>
+                      ))}
+                    </MenuRadioGroup>
+                  </MenuGroup>
+                </ComposerPickerMenuPopup>
+              </Menu>
 
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => onOpenChange(false)}
-            >
-              Cancel
-            </Button>
-            <Button type="button" onClick={submit} disabled={busy || !submittable}>
-              {editing ? "Save" : "Create"}
-            </Button>
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Agent access"
+                      title="Agent access"
+                      className="rounded-lg text-[var(--color-text-foreground-secondary)]"
+                    />
+                  }
+                >
+                  <CentralIcon name="brain" className="size-4" />
+                </MenuTrigger>
+                <ComposerPickerMenuPopup align="start" className="w-48">
+                  <MenuRadioGroup
+                    value={form.runtimeMode}
+                    onValueChange={(value) => setField("runtimeMode", value as RuntimeMode)}
+                  >
+                    <MenuRadioItem value="approval-required">Ask before changes</MenuRadioItem>
+                    <MenuRadioItem value="full-access">Unrestricted agent</MenuRadioItem>
+                  </MenuRadioGroup>
+                </ComposerPickerMenuPopup>
+              </Menu>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => onOpenChange(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="button" onClick={submit} disabled={busy || !submittable}>
+                {editing ? "Save" : "Create"}
+              </Button>
+            </div>
           </div>
-        </div>
+        </fieldset>
       </DialogPopup>
     </Dialog>
   );

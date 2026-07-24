@@ -15,6 +15,7 @@ import {
   resolveDesktopUpdateButtonAction,
   shouldHighlightDesktopUpdateError,
   shouldRecommendManualDesktopDownload,
+  shouldClearDesktopUpdateActivity,
   shouldShowArm64IntelBuildWarning,
   shouldShowDesktopUpdateButton,
   shouldToastDesktopUpdateActionResult,
@@ -40,6 +41,23 @@ const baseState: DesktopUpdateState = {
 };
 
 describe("desktop update button state", () => {
+  it("clears durable update Activity only after the updater reaches a resolved state", () => {
+    expect(shouldClearDesktopUpdateActivity(baseState)).toBe(true);
+    expect(shouldClearDesktopUpdateActivity({ ...baseState, status: "up-to-date" })).toBe(true);
+    expect(
+      shouldClearDesktopUpdateActivity({ ...baseState, enabled: false, status: "disabled" }),
+    ).toBe(true);
+    expect(shouldClearDesktopUpdateActivity({ ...baseState, status: "checking" })).toBe(false);
+    expect(
+      shouldClearDesktopUpdateActivity({
+        ...baseState,
+        status: "available",
+        availableVersion: "1.1.0",
+      }),
+    ).toBe(false);
+    expect(shouldClearDesktopUpdateActivity(null)).toBe(false);
+  });
+
   it("hides the button when idle (no update available)", () => {
     expect(shouldShowDesktopUpdateButton(baseState)).toBe(false);
     expect(resolveDesktopUpdateButtonAction(baseState)).toBe("check");

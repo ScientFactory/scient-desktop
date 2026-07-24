@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import path from "node:path";
-import { DEFAULT_MODEL_BY_PROVIDER } from "@synara/contracts";
+import { DEFAULT_GIT_TEXT_GENERATION_MODEL, DEFAULT_MODEL_BY_PROVIDER } from "@synara/contracts";
 import { Effect, FileSystem, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 import { ServerConfig } from "./config";
@@ -31,6 +31,10 @@ describe("ServerSettingsService", () => {
     expect(settings.defaultThreadEnvMode).toBe("local");
     expect(settings.enableProviderUpdateChecks).toBe(true);
     expect(settings.telemetryPrivacyLevel).toBe("essential");
+    expect(settings.textGenerationModelSelection).toEqual({
+      provider: "codex",
+      model: DEFAULT_GIT_TEXT_GENERATION_MODEL,
+    });
   });
 
   it("persists updates and reloads them", async () => {

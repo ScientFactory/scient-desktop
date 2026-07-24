@@ -20,7 +20,7 @@ import {
 } from "./ui/menu";
 import { ComposerPickerMenuPopup } from "./chat/ComposerPickerMenuPopup";
 import { SidebarMenuButton } from "./ui/sidebar";
-import { toastManager } from "./ui/toast";
+import { transientAlertManager } from "../notifications/transientAlert";
 
 // Triggers local-only toast scenarios that are awkward to reproduce through real Git failures.
 function triggerActionFailedToasts(values: Record<ToggleFeatureFlagId, boolean>): void {
@@ -33,13 +33,13 @@ function triggerActionFailedToasts(values: Record<ToggleFeatureFlagId, boolean>)
     ...(values["persist-action-failed-debug-toasts"] ? {} : { dismissAfterVisibleMs: 30_000 }),
   };
 
-  toastManager.add({
+  transientAlertManager.add({
     type: "error",
     title: "Action failed",
     description: "Error: Git command failed in /Users/ibrahime/Documents/Projects/synara",
     data: toastData,
   });
-  toastManager.add({
+  transientAlertManager.add({
     type: "error",
     title: "Action failed",
     description: "Error: Git command failed in /Users/ibrahime/Documents/Projects/synara",

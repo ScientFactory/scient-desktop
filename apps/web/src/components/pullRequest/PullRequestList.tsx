@@ -23,6 +23,7 @@ export const PullRequestList = memo(function PullRequestList({
   showProjectTitle = false,
   onSelect,
   onTogglePinned,
+  pinErrors,
 }: {
   entries: PullRequestListEntry[];
   grouped: PullRequestListGroup[] | null;
@@ -32,6 +33,7 @@ export const PullRequestList = memo(function PullRequestList({
   showProjectTitle?: boolean;
   onSelect: (entry: PullRequestListEntry) => void;
   onTogglePinned: (entry: PullRequestListEntry) => void;
+  pinErrors?: ReadonlyMap<string, string>;
 }) {
   const renderEntry = (entry: PullRequestListEntry) => (
     <PullRequestRow
@@ -45,6 +47,7 @@ export const PullRequestList = memo(function PullRequestList({
       }
       onClick={onSelect}
       onTogglePinned={onTogglePinned}
+      pinError={pinErrors?.get(pullRequestListEntryKey(entry))}
     />
   );
   if (grouped) {
