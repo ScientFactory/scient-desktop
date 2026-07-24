@@ -92,7 +92,7 @@ export function browserHistoryAfterThreadState(
     : state.tabs;
   return orderedTabs.reduce(
     (entries, tab) =>
-      tab.kind === "artifact"
+      tab.kind === "artifact" || tab.kind === "local-html"
         ? entries
         : upsertRecentHistoryEntry(entries, {
             url: tab.lastCommittedUrl ?? tab.url,
