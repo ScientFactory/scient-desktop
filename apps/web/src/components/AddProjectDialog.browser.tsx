@@ -246,7 +246,13 @@ describe("AddProjectDialog", () => {
     try {
       await page.getByText("Local folder", { exact: true }).click();
       const tile = page.getByTestId("folder-drop-icon-tile");
-      await expect.element(tile).toHaveAccessibleName("Open in Finder");
+      const normalizedPlatform = navigator.platform.toLowerCase();
+      const expectedFileManagerLabel = normalizedPlatform.includes("mac")
+        ? "Open in Finder"
+        : normalizedPlatform.includes("win")
+          ? "Open in File Explorer"
+          : "Open in file manager";
+      await expect.element(tile).toHaveAccessibleName(expectedFileManagerLabel);
       const tileElement = (await tile.element()) as HTMLButtonElement;
       tileElement.click();
       tileElement.click();
