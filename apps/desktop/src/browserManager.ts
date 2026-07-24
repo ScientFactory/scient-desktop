@@ -320,6 +320,7 @@ export class DesktopBrowserManager {
   private sessionConfigured = false;
   private readonly previewSessionsConfigured = new Set<string>();
   private readonly previewSessionReady = new Map<string, Promise<Error | null>>();
+  private readonly previewSessionRetries = new Set<string>();
   private readonly tabSuspendTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly suspendTimers = new Map<ThreadId, ReturnType<typeof setTimeout>>();
   private runtimeSyncFlushScheduled = false;
@@ -550,6 +551,7 @@ export class DesktopBrowserManager {
     const previewSession = session.fromPartition(partition);
     this.previewSessionsConfigured.delete(partition);
     this.previewSessionReady.delete(partition);
+    this.previewSessionRetries.delete(partition);
     void Promise.all([previewSession.clearStorageData(), previewSession.clearCache()]).catch(
       () => undefined,
     );
@@ -760,6 +762,7 @@ export class DesktopBrowserManager {
     this.runtimeLastActiveAtByKey.clear();
     this.previewSessionsConfigured.clear();
     this.previewSessionReady.clear();
+    this.previewSessionRetries.clear();
     this.listeners.clear();
     this.copyLinkListeners.clear();
     this.states.clear();
@@ -1106,16 +1109,28 @@ export class DesktopBrowserManager {
     const tab = this.resolveTab(state, input.tabId);
     const runtime = this.runtimes.get(buildRuntimeKey(input.threadId, tab.id));
     if (runtime && tab.kind === "local-html") {
+      let retryPartition: string | null = null;
       if (tab.allowedExternalUrls === undefined) {
         const previewOrigin = safeUrlOrigin(tab.url);
         if (previewOrigin) {
-          this.configureInteractiveLocalHtmlProxy(
-            browserSessionPartition(tab.kind, input.threadId, tab.id),
-            previewOrigin,
-          );
+          retryPartition = browserSessionPartition(tab.kind, input.threadId, tab.id);
+          if (this.previewSessionRetries.has(retryPartition)) {
+            return this.snapshotThreadState(input.threadId, state);
+          }
+          this.previewSessionRetries.add(retryPartition);
+          this.configureInteractiveLocalHtmlProxy(retryPartition, previewOrigin);
         }
       }
-      void this.loadTab(input.threadId, tab.id, { force: true, runtime });
+      tab.isLoading = true;
+      tab.lastError = null;
+      syncThreadLastError(state);
+      this.markThreadStateChanged(input.threadId);
+      this.emitState(input.threadId);
+      void this.loadTab(input.threadId, tab.id, { force: true, runtime }).finally(() => {
+        if (retryPartition) {
+          this.previewSessionRetries.delete(retryPartition);
+        }
+      });
     } else if (runtime) {
       runtime.webContents.reload();
     } else if (this.activeThreadId === input.threadId) {

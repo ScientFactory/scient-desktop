@@ -448,13 +448,18 @@ describe("DesktopBrowserManager reliability", () => {
     manager.dispose();
   });
 
-  it("retries interactive preview network setup before reloading the original URL", async () => {
+  it("deduplicates interactive preview retries before reloading the original URL", async () => {
     let proxyAttempts = 0;
-    electron.setProxyImplementation(async () => {
+    let releaseRetry: () => void = () => undefined;
+    const retryReady = new Promise<void>((resolve) => {
+      releaseRetry = resolve;
+    });
+    electron.setProxyImplementation(() => {
       proxyAttempts += 1;
       if (proxyAttempts === 1) {
-        throw new Error("proxy setup failed");
+        return Promise.reject(new Error("proxy setup failed"));
       }
+      return retryReady;
     });
     const manager = new DesktopBrowserManager();
     const previewUrl = "http://g-12345678-1234-4123-8123-123456789abc.preview.localhost:43123/";
@@ -475,7 +480,13 @@ describe("DesktopBrowserManager reliability", () => {
     expect(manager.getState({ threadId: THREAD_ID }).lastError).toBe("Couldn't open this page.");
 
     manager.reload({ threadId: THREAD_ID, tabId: tabId ?? "" });
-    await vi.waitFor(() => expect(proxyAttempts).toBe(2));
+    const pending = manager.reload({ threadId: THREAD_ID, tabId: tabId ?? "" });
+    expect(pending.lastError).toBeNull();
+    expect(pending.tabs.find((tab) => tab.id === tabId)?.isLoading).toBe(true);
+    expect(proxyAttempts).toBe(2);
+    expect(contents?.loadURL).not.toHaveBeenCalled();
+
+    releaseRetry();
     await vi.waitFor(() => expect(contents?.loadURL).toHaveBeenCalledWith(previewUrl));
     expect(manager.getState({ threadId: THREAD_ID }).lastError).toBeNull();
     expect(contents?.reload).not.toHaveBeenCalled();
