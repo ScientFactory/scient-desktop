@@ -223,6 +223,7 @@
         "@synara/contracts": "workspace:*",
         "@synara/shared": "workspace:*",
         "effect": "catalog:",
+        "pngjs": "7.0.0",
       },
       "devDependencies": {
         "@effect/language-service": "catalog:",
