@@ -492,6 +492,16 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     workflow,
+    "Verify current Linux packaging lane",
+    "Expected the Debian release workflow to reject historical compatibility-lane publication.",
+  );
+  assertContains(
+    workflow,
+    'if [[ "$RELEASE_LANE" != "clean" ]]',
+    "Expected current Linux publication to fail closed outside the clean Debian lane.",
+  );
+  assertContains(
+    workflow,
     '"Scient-${RELEASE_VERSION}-amd64.deb"',
     "Expected the public contract to validate the Linux Debian filename.",
   );
@@ -612,6 +622,11 @@ function verifyReleaseWorkflowSafety(): void {
     resolve(repoRoot, "apps/web/scripts/linux-deb-smoke.mjs"),
     "utf8",
   ).replaceAll("\r\n", "\n");
+  assertContains(
+    packagedLinuxLifecycleSmoke,
+    "  chmod,\n",
+    "Expected deep packaged Linux verification to import the chmod operation used for isolated runtime and workspace permissions.",
+  );
   assertContains(
     packagedLinuxLifecycleSmoke,
     "...sanitizePackagedDesktopInheritedEnvironment(process.env)",

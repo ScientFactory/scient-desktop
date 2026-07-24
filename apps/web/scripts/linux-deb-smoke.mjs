@@ -2,6 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { constants as FS_CONSTANTS } from "node:fs";
 import {
   access,
+  chmod,
   copyFile,
   mkdtemp,
   mkdir,

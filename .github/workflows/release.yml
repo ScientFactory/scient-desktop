@@ -132,6 +132,17 @@ jobs:
           RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
         run: node scripts/resolve-release-update-policy.ts "$RELEASE_VERSION"
 
+      - name: Verify current Linux packaging lane
+        env:
+          RELEASE_LANE: ${{ steps.release_meta.outputs.release_lane }}
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_LANE" != "clean" ]]; then
+            echo "The current release workflow supports only the clean Debian-package lane." >&2
+            echo "Historical compatibility releases must use their original tagged workflow and artifacts." >&2
+            exit 1
+          fi
+
       - name: Verify public updater repository
         env:
           GH_TOKEN: ${{ github.token }}
