@@ -12,6 +12,7 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 const desktopDir = resolve(scriptDir, "..");
 const workspaceRoot = resolve(desktopDir, "../..");
 const tempDir = mkdtempSync(join(tmpdir(), "scient-browser-overlay-lifecycle-"));
+let child = null;
 
 function cleanupTempDir() {
   rmSync(tempDir, { recursive: true, force: true });
@@ -48,6 +49,17 @@ function cleanupTemporaryState() {
 // generation, and process spawning can all fail before the child handlers are installed.
 process.removeListener("exit", cleanupTempDir);
 process.once("exit", cleanupTemporaryState);
+
+function interruptSetup(signal, code) {
+  process.stderr.write(`Electron browser overlay lifecycle test interrupted by ${signal}.\n`);
+  killChildTree();
+  cleanupTemporaryState();
+  process.exit(code);
+}
+
+let handleInterrupt = interruptSetup;
+process.once("SIGINT", () => handleInterrupt("SIGINT", 130));
+process.once("SIGTERM", () => handleInterrupt("SIGTERM", 143));
 
 function createMacTestElectronExecutable(originalExecutablePath) {
   const originalAppPath = dirname(dirname(dirname(originalExecutablePath)));
@@ -131,7 +143,7 @@ const electronArgs = [
   electronOutputPath,
   ...(process.platform === "darwin" ? ["-ApplePersistenceIgnoreState", "YES"] : []),
 ];
-const child = spawn(electronExecutablePath, electronArgs, {
+child = spawn(electronExecutablePath, electronArgs, {
   cwd: workspaceRoot,
   detached: process.platform !== "win32",
   env: {
@@ -157,7 +169,7 @@ child.stderr.on("data", (chunk) => {
 });
 
 function killChildTree() {
-  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return true;
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return true;
   if (process.platform === "win32") {
     const result = spawnSync("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
       encoding: "utf8",
@@ -195,11 +207,13 @@ function interrupt(signal, code) {
   requestedExitCode = code;
   process.stderr.write(`Electron browser overlay lifecycle test interrupted by ${signal}.\n`);
   killChildTree();
+  // Do not defer filesystem cleanup until child exit: interruption can also
+  // occur before child listeners are installed, and the wrapper may be exiting.
+  cleanupTemporaryState();
   setTimeout(() => finish(code), 2_000).unref();
 }
 
-process.once("SIGINT", () => interrupt("SIGINT", 130));
-process.once("SIGTERM", () => interrupt("SIGTERM", 143));
+handleInterrupt = interrupt;
 process.once("uncaughtException", (error) => {
   process.stderr.write(`${error instanceof Error ? error.stack : String(error)}\n`);
   interrupt("uncaughtException", 1);
