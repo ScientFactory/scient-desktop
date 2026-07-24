@@ -152,6 +152,42 @@ describe("provider connection presentation", () => {
     expect(presentation.description).toContain("no Homebrew");
   });
 
+  it.each(["failed", "cancelled"] as const)(
+    "preserves a managed installation %s diagnosis after restart",
+    (status) => {
+      const message =
+        status === "failed"
+          ? "Installation failed while downloading the provider."
+          : "Provider runtime operation was cancelled.";
+      const presentation = describeProviderConnection("codex", {
+        ...BASE_STATUS,
+        available: false,
+        authStatus: "unknown",
+        runtime: {
+          source: "missing",
+          managedVersion: null,
+          canInstall: true,
+          canRepair: false,
+          canRollback: false,
+          canRemove: false,
+          message: "No usable provider runtime was found.",
+        },
+        installationState: {
+          operationId: `install-codex-${status}`,
+          operation: "install",
+          status,
+          startedAt: "2026-07-19T10:00:00.000Z",
+          finishedAt: "2026-07-19T10:01:00.000Z",
+          message,
+        },
+      });
+
+      expect(presentation.description).toBe(message);
+      expect(presentation.primaryAction).toBe("install");
+      expect(presentation.primaryLabel).toBe("Try installation again");
+    },
+  );
+
   it("offers browser login without asking for credentials", () => {
     const presentation = describeProviderConnection("codex", BASE_STATUS);
     expect(presentation.primaryAction).toBe("sign_in");
@@ -278,6 +314,44 @@ describe("provider connection presentation", () => {
         message: "Sign in was not completed.",
       },
     });
+    expect(presentation.primaryAction).toBe("sign_in");
+    expect(presentation.primaryLabel).toBe("Try again");
+  });
+
+  it("retries sign-in when the automatic handoff fails after a managed install", () => {
+    const failureMessage = "Installation succeeded, but sign in could not start.";
+    const presentation = describeProviderConnection("codex", {
+      ...BASE_STATUS,
+      available: false,
+      authStatus: "unknown",
+      runtime: {
+        source: "managed",
+        managedVersion: "0.145.0",
+        canInstall: false,
+        canRepair: true,
+        canRollback: false,
+        canRemove: true,
+        message: null,
+      },
+      installationState: {
+        operationId: "install-codex-1",
+        operation: "install",
+        status: "installed",
+        startedAt: "2026-07-19T10:00:00.000Z",
+        finishedAt: "2026-07-19T10:01:00.000Z",
+        message: "Codex is installed and verified.",
+      },
+      connectionState: {
+        operationId: "handoff-install-codex-1",
+        method: "codex_browser",
+        status: "failed",
+        startedAt: "2026-07-19T10:01:00.000Z",
+        finishedAt: "2026-07-19T10:01:01.000Z",
+        message: failureMessage,
+      },
+    });
+
+    expect(presentation.description).toBe(failureMessage);
     expect(presentation.primaryAction).toBe("sign_in");
     expect(presentation.primaryLabel).toBe("Try again");
   });
