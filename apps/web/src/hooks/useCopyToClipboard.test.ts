@@ -73,6 +73,38 @@ afterEach(() => {
 });
 
 describe("copyTextToClipboard", () => {
+  it("prefers the native desktop clipboard when the bridge is available", async () => {
+    const writeText = vi.fn().mockResolvedValue(true);
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: { desktopBridge: { clipboard: { writeText } } },
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { clipboard: { writeText: vi.fn() } },
+    });
+
+    await expect(copyTextToClipboard("feature/native-copy")).resolves.toBeUndefined();
+    expect(writeText).toHaveBeenCalledWith("feature/native-copy");
+    expect(globalThis.navigator.clipboard.writeText).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the renderer clipboard when native text copying rejects", async () => {
+    const nativeWriteText = vi.fn().mockRejectedValue(new Error("IPC unavailable"));
+    const rendererWriteText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: { desktopBridge: { clipboard: { writeText: nativeWriteText } } },
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      value: { clipboard: { writeText: rendererWriteText } },
+    });
+
+    await expect(copyTextToClipboard("feature/fallback")).resolves.toBeUndefined();
+    expect(rendererWriteText).toHaveBeenCalledWith("feature/fallback");
+  });
+
   it("falls back to execCommand when navigator.clipboard.writeText rejects", async () => {
     const { documentMock } = installMockDocument(true);
 
