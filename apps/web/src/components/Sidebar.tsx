@@ -1709,7 +1709,7 @@ export default function Sidebar() {
   );
   const [projectRunDialogCommandDraft, setProjectRunDialogCommandDraft] = useState("");
   const isAddingProjectRef = useRef(false);
-  const newThreadInWorkspaceInFlightRef = useRef(false);
+  const newThreadInWorkspaceInFlightThreadIdsRef = useRef(new Set<ThreadId>());
   const [projectInitializationPreview, setProjectInitializationPreview] =
     useState<ScientProjectInitializationPreviewResult | null>(null);
   const [projectInitializationError, setProjectInitializationError] = useState<string | null>(null);
@@ -3824,7 +3824,12 @@ export default function Sidebar() {
       );
 
       if (clicked === "new-thread-in-workspace") {
-        if (!newThreadInWorkspaceAction || newThreadInWorkspaceInFlightRef.current) return;
+        if (
+          !newThreadInWorkspaceAction ||
+          newThreadInWorkspaceInFlightThreadIdsRef.current.has(threadId)
+        ) {
+          return;
+        }
         const projectCwd = projectCwdById.get(thread.projectId) ?? null;
         if (!projectCwd) {
           showSidebarTransientError({
@@ -3833,24 +3838,31 @@ export default function Sidebar() {
           });
           return;
         }
-        newThreadInWorkspaceInFlightRef.current = true;
+        newThreadInWorkspaceInFlightThreadIdsRef.current.add(threadId);
+        let workspaceValidationFailure: string | null = null;
         try {
-          const branchResult = await api.git.listBranches({ cwd: projectCwd });
-          const validation = validateNewThreadInWorkspaceAction({
-            action: newThreadInWorkspaceAction,
-            branches: branchResult.branches,
-            isRepo: branchResult.isRepo,
-            projectCwd,
-          });
-          if (!validation.ok) {
-            showSidebarTransientError({
-              title: "Workspace changed",
-              description: validation.description,
-            });
-            return;
-          }
           const createdThreadId = await handleNewThread(thread.projectId, {
             fresh: true,
+            prepareFreshCreate: async () => {
+              const currentProjectCwd =
+                useStore.getState().projects.find((project) => project.id === thread.projectId)
+                  ?.cwd ?? null;
+              if (!currentProjectCwd || currentProjectCwd !== projectCwd) {
+                workspaceValidationFailure = "The project folder changed before the thread opened.";
+                throw new Error(workspaceValidationFailure);
+              }
+              const branchResult = await api.git.listBranches({ cwd: currentProjectCwd });
+              const validation = validateNewThreadInWorkspaceAction({
+                action: newThreadInWorkspaceAction,
+                branches: branchResult.branches,
+                isRepo: branchResult.isRepo,
+                projectCwd: currentProjectCwd,
+              });
+              if (!validation.ok) {
+                workspaceValidationFailure = validation.description;
+                throw new Error(validation.description);
+              }
+            },
             workspace: newThreadInWorkspaceAction.workspace,
           });
           if (!createdThreadId) {
@@ -3861,12 +3873,12 @@ export default function Sidebar() {
           }
         } catch (error) {
           showSidebarTransientError({
-            title: "Unable to start thread",
+            title: workspaceValidationFailure ? "Workspace changed" : "Unable to start thread",
             description:
               error instanceof Error ? error.message : "The workspace could not be verified.",
           });
         } finally {
-          newThreadInWorkspaceInFlightRef.current = false;
+          newThreadInWorkspaceInFlightThreadIdsRef.current.delete(threadId);
         }
         return;
       }

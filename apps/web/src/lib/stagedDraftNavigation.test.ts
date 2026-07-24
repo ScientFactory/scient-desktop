@@ -62,7 +62,7 @@ describe("stagedDraftNavigation", () => {
     expect(rollback).toHaveBeenCalledOnce();
   });
 
-  it("coalesces concurrent creation attempts for the same project slot", async () => {
+  it("coalesces identical requests and serializes different requests for the same slot", async () => {
     let finishFirst!: (value: string) => void;
     const firstRun = vi.fn(
       () =>
@@ -73,17 +73,45 @@ describe("stagedDraftNavigation", () => {
     const secondRun = vi.fn(async () => "second");
     const slotKey = draftNavigationSlotKey("project-studio", "chat");
 
-    const first = runDraftNavigationOnce(slotKey, firstRun);
-    const second = runDraftNavigationOnce(slotKey, secondRun);
+    const first = runDraftNavigationOnce(slotKey, "project-default", firstRun);
+    const duplicateFirst = runDraftNavigationOnce(slotKey, "project-default", secondRun);
+    const second = runDraftNavigationOnce(slotKey, "exact-worktree", secondRun);
     await Promise.resolve();
+    expect(secondRun).not.toHaveBeenCalled();
     finishFirst("first");
 
     await expect(first).resolves.toBe("first");
-    await expect(second).resolves.toBe("first");
+    await expect(duplicateFirst).resolves.toBe("first");
+    await expect(second).resolves.toBe("second");
     expect(firstRun).toHaveBeenCalledOnce();
-    expect(secondRun).not.toHaveBeenCalled();
-
-    await expect(runDraftNavigationOnce(slotKey, secondRun)).resolves.toBe("second");
     expect(secondRun).toHaveBeenCalledOnce();
+
+    await expect(runDraftNavigationOnce(slotKey, "exact-worktree", secondRun)).resolves.toBe(
+      "second",
+    );
+    expect(secondRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("serializes a later project-default request behind an exact-workspace request", async () => {
+    let finishExact!: (value: string) => void;
+    const exactRun = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finishExact = resolve;
+        }),
+    );
+    const defaultRun = vi.fn(async () => "default");
+    const slotKey = draftNavigationSlotKey("project-reverse", "chat");
+
+    const exact = runDraftNavigationOnce(slotKey, "exact-worktree", exactRun);
+    const projectDefault = runDraftNavigationOnce(slotKey, "project-default", defaultRun);
+    await Promise.resolve();
+    expect(defaultRun).not.toHaveBeenCalled();
+    finishExact("exact");
+
+    await expect(exact).resolves.toBe("exact");
+    await expect(projectDefault).resolves.toBe("default");
+    expect(exactRun).toHaveBeenCalledOnce();
+    expect(defaultRun).toHaveBeenCalledOnce();
   });
 });

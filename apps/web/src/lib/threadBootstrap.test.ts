@@ -6,6 +6,7 @@ import {
   createActiveDraftThreadSnapshot,
   createActiveThreadSnapshot,
   createFreshDraftThreadSeed,
+  newThreadNavigationRequestKey,
   resolveNewThreadWorkspace,
   resolveTerminalThreadCreationState,
   resolveThreadBootstrapPlan,
@@ -70,6 +71,28 @@ function makeComposerDraftState(
 }
 
 describe("threadBootstrap", () => {
+  it("uses distinct navigation request keys for default and exact workspace intents", () => {
+    const defaultKey = newThreadNavigationRequestKey({ hasCustomSearch: false });
+    expect(
+      newThreadNavigationRequestKey({
+        hasCustomSearch: false,
+        options: { workspace: { kind: "project-default" } },
+      }),
+    ).toBe(defaultKey);
+    expect(
+      newThreadNavigationRequestKey({
+        hasCustomSearch: false,
+        options: {
+          workspace: {
+            kind: "existing-worktree",
+            branch: "feature/exact",
+            worktreePath: "/repo/worktrees/exact",
+          },
+        },
+      }),
+    ).not.toBe(defaultKey);
+  });
+
   it("resolves project defaults and exact existing workspaces without partial states", () => {
     expect(resolveNewThreadWorkspace({ kind: "project-default" }, "worktree")).toEqual({
       branch: null,

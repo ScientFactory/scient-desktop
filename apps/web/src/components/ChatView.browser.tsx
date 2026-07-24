@@ -43,7 +43,9 @@ import { isMacPlatform } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { useProviderConnectionDialogStore } from "../providerConnectionDialogStore";
 import { resetHomeChatProjectPrewarmStateForTests } from "../lib/chatProjects";
+import { draftNavigationSlotKey, runDraftNavigationOnce } from "../lib/stagedDraftNavigation";
 import { resetStudioProjectPrewarmStateForTests } from "../lib/studioProjects";
+import { newThreadNavigationRequestKey } from "../lib/threadBootstrap";
 import { getRouter } from "../router";
 import { useSplitViewStore } from "../splitViewStore";
 import { useStore } from "../store";
@@ -5619,11 +5621,26 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
       }),
     });
+    const defaultNavigationBlocker = (() => {
+      let resolve!: () => void;
+      const promise = new Promise<void>((nextResolve) => {
+        resolve = nextResolve;
+      });
+      return { promise, resolve };
+    })();
+    let defaultNavigationOperation: Promise<void> | null = null;
 
     try {
-      await vi.waitFor(() => expect(branchLookup).toHaveBeenCalled());
+      await waitForLayout();
       branchLookup.mockClear();
       branchLookup.mockImplementation(() => branchLookupDeferred.promise);
+      const projectValidationCallCount = () =>
+        branchLookup.mock.calls.filter(([input]) => input.cwd === "/repo/project").length;
+      defaultNavigationOperation = runDraftNavigationOnce(
+        draftNavigationSlotKey(PROJECT_ID, "chat"),
+        newThreadNavigationRequestKey({ hasCustomSearch: false }),
+        () => defaultNavigationBlocker.promise,
+      );
       const threadRow = await waitForElement(
         () =>
           Array.from(document.querySelectorAll<HTMLElement>("[data-thread-entry-point]")).find(
@@ -5642,7 +5659,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         );
 
       openContextMenu();
-      await vi.waitFor(() => expect(branchLookup).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(contextMenuShow).toHaveBeenCalledTimes(1));
+      await Promise.resolve();
+      expect(projectValidationCallCount()).toBe(0);
       openContextMenu();
       await vi.waitFor(() => expect(contextMenuShow).toHaveBeenCalledTimes(2));
       expect(contextMenuShow.mock.calls[0]?.[0]?.[0]).toMatchObject({
@@ -5650,6 +5669,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         label: "New thread in worktree (feature/exact-worktree)",
       });
 
+      defaultNavigationBlocker.resolve();
+      await defaultNavigationOperation;
+      await vi.waitFor(() => expect(projectValidationCallCount()).toBe(1));
       branchLookupDeferred.resolve(exactWorktreeBranchResult);
       const newThreadPath = await waitForURL(
         mounted.router,
@@ -5657,7 +5679,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "The explicit worktree action should open a fresh draft.",
       );
       const newThreadId = newThreadPath.slice(1) as ThreadId;
-      expect(branchLookup).toHaveBeenCalledTimes(1);
+      expect(projectValidationCallCount()).toBe(1);
       expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
         branch: "feature/exact-worktree",
         worktreePath: "/repo/worktrees/exact-worktree",
@@ -5665,7 +5687,104 @@ describe("ChatView timeline estimator parity (full app)", () => {
         workspaceOrigin: "intentional",
       });
     } finally {
+      defaultNavigationBlocker.resolve();
       branchLookupDeferred.resolve(exactWorktreeBranchResult);
+      await defaultNavigationOperation;
+      await mounted.cleanup();
+    }
+  });
+
+  it("fails closed with a visible error when an exact worktree moved", async () => {
+    const contextMenuShow = vi.fn(
+      async (_items: Parameters<NativeApi["contextMenu"]["show"]>[0]) => "new-thread-in-workspace",
+    );
+    const exactWorktreeBranchResult: Awaited<ReturnType<NativeApi["git"]["listBranches"]>> = {
+      isRepo: true,
+      hasOriginRemote: true,
+      branches: [
+        {
+          name: "feature/exact-worktree",
+          current: false,
+          isDefault: false,
+          worktreePath: "/repo/worktrees/exact-worktree",
+        },
+      ],
+    };
+    const movedWorktreeBranchResult: Awaited<ReturnType<NativeApi["git"]["listBranches"]>> = {
+      ...exactWorktreeBranchResult,
+      branches: [
+        {
+          ...exactWorktreeBranchResult.branches[0]!,
+          worktreePath: "/repo/worktrees/moved-worktree",
+        },
+      ],
+    };
+    const branchLookup = vi.fn(async () => exactWorktreeBranchResult);
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-context-worktree-moved" as MessageId,
+      targetText: "context worktree moved",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...baseSnapshot,
+        threads: baseSnapshot.threads.map((thread) => ({
+          ...thread,
+          envMode: "worktree" as const,
+          branch: "feature/exact-worktree",
+          worktreePath: "/repo/worktrees/exact-worktree",
+        })),
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        contextMenu: {
+          ...api.contextMenu,
+          show: contextMenuShow as NativeApi["contextMenu"]["show"],
+        },
+        git: {
+          ...api.git,
+          listBranches: branchLookup,
+        },
+      }),
+    });
+
+    try {
+      await vi.waitFor(() => expect(branchLookup).toHaveBeenCalled());
+      branchLookup.mockClear();
+      branchLookup.mockResolvedValue(movedWorktreeBranchResult);
+      const startingPath = mounted.router.state.location.pathname;
+      const startingDraftIds = Object.keys(
+        useComposerDraftStore.getState().draftThreadsByThreadId,
+      ).toSorted();
+      const threadRow = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-thread-entry-point]")).find(
+            (row) => row.textContent?.includes(THREAD_TITLE),
+          ) ?? null,
+        "Unable to find the current thread row.",
+      );
+
+      threadRow.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 24,
+          clientY: 24,
+        }),
+      );
+
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="toast-title"]')).find(
+            (element) => element.textContent === "Workspace changed",
+          ) ?? null,
+        "A moved exact worktree should show a visible Workspace changed error.",
+      );
+      expect(mounted.router.state.location.pathname).toBe(startingPath);
+      expect(
+        Object.keys(useComposerDraftStore.getState().draftThreadsByThreadId).toSorted(),
+      ).toEqual(startingDraftIds);
+    } finally {
       await mounted.cleanup();
     }
   });

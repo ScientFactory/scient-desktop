@@ -29,6 +29,8 @@ export interface NewThreadOptions {
   temporary?: boolean;
   provider?: ProviderKind;
   fresh?: boolean;
+  /** Runs after this fresh request owns its project navigation slot and before draft staging. */
+  prepareFreshCreate?: () => Promise<void>;
 }
 
 export type NewThreadWorkspaceIntent =
@@ -46,6 +48,23 @@ export interface ResolvedNewThreadWorkspace {
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
   workspaceOrigin: DraftThreadWorkspaceOrigin;
+}
+
+export function newThreadNavigationRequestKey(input: {
+  readonly hasCustomSearch: boolean;
+  readonly options?: NewThreadOptions | undefined;
+}): string {
+  const workspace = input.options?.workspace ?? { kind: "project-default" as const };
+  const branch = "branch" in workspace ? workspace.branch : "";
+  const worktreePath = "worktreePath" in workspace ? workspace.worktreePath : "";
+  return [
+    workspace.kind,
+    branch,
+    worktreePath,
+    input.options?.provider ?? "",
+    input.options?.temporary === true ? "temporary" : "durable",
+    input.hasCustomSearch ? "custom-search" : "default-search",
+  ].join("\u0000");
 }
 
 export function resolveNewThreadWorkspace(
