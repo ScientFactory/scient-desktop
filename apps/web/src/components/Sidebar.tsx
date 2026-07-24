@@ -229,6 +229,7 @@ import { projectScriptRuntimeEnv } from "../projectScripts";
 import { transientAlertManager } from "../notifications/transientAlert";
 import { showUndoSnackbar } from "./ui/undoSnackbar";
 import { ActivityCenter } from "../notifications/ActivityCenter";
+import { WhatsNewSidebarCard } from "../whatsNew/WhatsNewSidebarCard";
 import { activityManager, type PublishActivityInput } from "../notifications/activityStore";
 import {
   normalizeSidebarProjectThreadListCwd,
@@ -7462,6 +7463,7 @@ export default function Sidebar() {
                   <DebugFeatureFlagsMenu />
                 </Suspense>
               ) : null}
+              <WhatsNewSidebarCard />
               <ActivityCenter />
               <div className="flex items-center gap-2">
                 {!isOnSettings && (

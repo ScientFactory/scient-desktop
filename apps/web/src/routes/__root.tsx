@@ -27,8 +27,7 @@ import { ProviderConnectionDialog } from "../components/ProviderConnectionDialog
 import { ConnectionRecoveryNotifications } from "../components/ConnectionRecoveryNotifications";
 import ShortcutsDialog from "../components/ShortcutsDialog";
 import WhatsNewDialog from "../components/WhatsNewDialog";
-import { useWhatsNew } from "../whatsNew/useWhatsNew";
-import { WhatsNewPopoutCard } from "../whatsNew/WhatsNewPopoutCard";
+import { WhatsNewProvider, useWhatsNewContext } from "../whatsNew/WhatsNewProvider";
 import { shouldRenderTerminalWorkspace } from "../components/ChatView.logic";
 import { Button, dialogActionButtonClassName } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider } from "../components/ui/toast";
@@ -189,19 +188,21 @@ function RootRouteView() {
       <ToastProvider position="top-right">
         <UndoSnackbarProvider>
           <AnchoredToastProvider>
-            <GitProgressToastPreviewDev />
-            <EventRouter />
-            <ProviderStatusRefreshCoordinator />
-            <GlobalShortcutsDialog />
-            <GlobalFeedbackDialog />
-            <ProviderConnectionDialog />
-            <ConnectionRecoveryNotifications />
-            <GlobalWhatsNewSurface />
-            <TaskCompletionNotifications />
-            <AppSnapCoordinator />
-            <ProviderUpdateNotifications />
-            <DesktopProjectBootstrap />
-            <Outlet />
+            <WhatsNewProvider>
+              <GitProgressToastPreviewDev />
+              <EventRouter />
+              <ProviderStatusRefreshCoordinator />
+              <GlobalShortcutsDialog />
+              <GlobalFeedbackDialog />
+              <ProviderConnectionDialog />
+              <ConnectionRecoveryNotifications />
+              <GlobalWhatsNewDialog />
+              <TaskCompletionNotifications />
+              <AppSnapCoordinator />
+              <ProviderUpdateNotifications />
+              <DesktopProjectBootstrap />
+              <Outlet />
+            </WhatsNewProvider>
           </AnchoredToastProvider>
         </UndoSnackbarProvider>
       </ToastProvider>
@@ -383,44 +384,29 @@ function GlobalFeedbackDialog() {
   return <FeedbackDialog open={isOpen} context={context} onOpenChange={setOpen} />;
 }
 
-function GlobalWhatsNewSurface() {
-  // Single mount point per app session. The hook owns the "popout visible" and
-  // "dialog open" booleans and the seen-marker persistence; this component is
-  // just the plumbing that renders them together so they share one entry.
+function GlobalWhatsNewDialog() {
   const {
     currentEntry,
     allEntries,
     currentVersion,
-    isPopoutVisible,
     isDialogOpen,
-    openDialog,
-    dismissPopout,
     onDialogOpenChange,
-  } = useWhatsNew();
+    dialogHandle,
+  } = useWhatsNewContext();
 
   if (!currentEntry) {
-    // Silent-bootstrap or noop — nothing to render on either surface.
     return null;
   }
 
   return (
-    <>
-      {isPopoutVisible && (
-        <WhatsNewPopoutCard
-          entry={currentEntry}
-          currentVersion={currentVersion}
-          onOpen={openDialog}
-          onDismiss={dismissPopout}
-        />
-      )}
-      <WhatsNewDialog
-        open={isDialogOpen}
-        onOpenChange={onDialogOpenChange}
-        currentEntry={currentEntry}
-        allEntries={allEntries}
-        currentVersion={currentVersion}
-      />
-    </>
+    <WhatsNewDialog
+      open={isDialogOpen}
+      onOpenChange={onDialogOpenChange}
+      currentEntry={currentEntry}
+      allEntries={allEntries}
+      currentVersion={currentVersion}
+      dialogHandle={dialogHandle}
+    />
   );
 }
 

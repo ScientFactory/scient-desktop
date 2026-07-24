@@ -111,6 +111,46 @@ Checklist:
   - `SCIENT_PUBLISH_CLI=1`
   - `SCIENT_FINALIZE_RELEASE=1`
 
+## Prepare the in-app release note
+
+Every release candidate must include one Scient-owned, user-friendly entry in
+`apps/web/src/whatsNew/entries.json` whose version exactly matches the candidate.
+The release workflow fails before native builds when that entry is absent,
+malformed, duplicated, or names a different stable or prerelease version.
+
+The release owner prepares and approves the entry before promotion:
+
+1. List only improvements that are present and verified in the exact candidate.
+2. Write a short, benefit-led headline for the small sidebar card.
+3. Add normally three to five highlights (one is acceptable for a focused hotfix).
+   Explain what became easier, clearer, safer, or more reliable for the user.
+4. Keep the language warm, concise, and nontechnical. Do not mention commits,
+   pull requests, frameworks, internal components, protocols, migrations, or
+   implementation details.
+5. Add only Scient-owned artwork. Pair every image with useful alt text, and
+   verify the image at normal, minimum, mobile, and short-height layouts.
+6. Have the product owner approve the claims, order, and wording. This human
+   review is the authority for tone and accuracy; automated checks cannot infer it.
+7. Run `bun run release:notes:check -- X.Y.Z` and commit the approved entry with
+   the candidate before opening the promotion PR.
+
+Acceptance on a packaged upgrade must prove all of the following:
+
+- A clean first installation stays quiet.
+- After upgrading, the small branded card appears inline above Activity and
+  Settings only once for that release; it never opens the larger dialog by itself.
+- A hidden desktop sidebar or closed mobile drawer does not consume the one-time
+  presentation. The marker advances only when the card is genuinely visible.
+- The card never overlaps or blocks Activity, Settings, or the update control.
+- Opening it shows the matching version, date, approved highlights, and release
+  history. Keyboard focus, Escape, close, reduced motion, and screen-reader labels work.
+- Dismissing or ignoring the visible card prevents it from returning on the next launch.
+- The previous packaged release can update to the candidate and see this exact note.
+
+Release history remains available from the release-note dialog. A permanent
+Settings entry may be added when the settings information architecture has an
+approved location; its absence does not weaken the release gate above.
+
 ## 1) Promote and validate a release candidate
 
 Use this before publication to validate the exact protected-branch commit on the

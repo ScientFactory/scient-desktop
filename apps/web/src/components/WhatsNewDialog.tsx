@@ -1,12 +1,12 @@
 // FILE: WhatsNewDialog.tsx
 // Purpose: Render the one-time "What's new" release-notes dialog shown after
 // an update. Two views: a default "What's new?" card stack anchored on the
-// installed release, and a secondary "Complete changelog" accordion spanning
+// installed release, and a secondary "Release history" accordion spanning
 // every curated release. Open/close state and the underlying data are owned
 // by `useWhatsNew`; this component is pure presentation.
 // Layer: Chat shell overlay (mounted once from the root route).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ArrowLeftIcon, ArrowRightIcon } from "~/lib/icons";
 import { ScientLogo } from "~/components/ScientLogo";
@@ -14,6 +14,7 @@ import { ScientLogo } from "~/components/ScientLogo";
 import { ChangelogAccordion } from "../whatsNew/ChangelogAccordion";
 import { FeatureSection } from "../whatsNew/FeatureSection";
 import type { WhatsNewEntry } from "../whatsNew/logic";
+import type { WhatsNewDialogHandle } from "../whatsNew/WhatsNewProvider";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -40,6 +41,7 @@ export interface WhatsNewDialogProps {
   /** Full curated history, newest-first, for the changelog accordion. */
   readonly allEntries: readonly WhatsNewEntry[];
   readonly currentVersion: string;
+  readonly dialogHandle: WhatsNewDialogHandle;
 }
 
 export default function WhatsNewDialog({
@@ -48,11 +50,13 @@ export default function WhatsNewDialog({
   currentEntry,
   allEntries,
   currentVersion,
+  dialogHandle,
 }: WhatsNewDialogProps) {
   const [view, setView] = useState<View>("current");
+  const titleRef = useRef<HTMLHeadingElement>(null);
 
   // Reset back to the primary view whenever the dialog re-opens so the next
-  // release doesn't boot into the secondary "Complete changelog" screen just
+  // release doesn't boot into the secondary "Release history" screen just
   // because the user left it there on a previous open.
   useEffect(() => {
     if (open) {
@@ -65,18 +69,28 @@ export default function WhatsNewDialog({
   // confusing empty state.
   if (!currentEntry) {
     return (
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog handle={dialogHandle} open={open} onOpenChange={onOpenChange}>
         <DialogPopup className="max-w-md" />
       </Dialog>
     );
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogPopup className="max-w-lg gap-0 p-0" showCloseButton={false}>
+    <Dialog handle={dialogHandle} open={open} onOpenChange={onOpenChange}>
+      <DialogPopup
+        className="max-w-lg gap-0 p-0"
+        initialFocus={titleRef}
+        finalFocus={() =>
+          document.querySelector<HTMLElement>("[data-activity-center-trigger]") ?? false
+        }
+      >
         <DialogHeader className="gap-1 p-4 pr-12">
           {view === "current" ? (
-            <CurrentHeader entry={currentEntry} currentVersion={currentVersion} />
+            <CurrentHeader
+              entry={currentEntry}
+              currentVersion={currentVersion}
+              titleRef={titleRef}
+            />
           ) : (
             <ChangelogHeader onBack={() => setView("current")} />
           )}
@@ -97,22 +111,24 @@ export default function WhatsNewDialog({
           )}
         </DialogPanel>
 
-        {view === "current" && (
-          <DialogFooter className="sm:justify-between">
+        <DialogFooter className="sm:justify-between">
+          {view === "current" ? (
             <Button
               variant="ghost"
               size="sm"
               className="gap-1 text-muted-foreground"
               onClick={() => setView("changelog")}
             >
-              View changelog
+              Release history
               <ArrowRightIcon className="size-3" />
             </Button>
-            <Button size="sm" onClick={() => onOpenChange(false)}>
-              Got it
-            </Button>
-          </DialogFooter>
-        )}
+          ) : (
+            <span aria-hidden />
+          )}
+          <Button size="sm" onClick={() => onOpenChange(false)}>
+            Done
+          </Button>
+        </DialogFooter>
       </DialogPopup>
     </Dialog>
   );
@@ -121,15 +137,19 @@ export default function WhatsNewDialog({
 function CurrentHeader({
   entry,
   currentVersion,
+  titleRef,
 }: {
   readonly entry: WhatsNewEntry;
   readonly currentVersion: string;
+  readonly titleRef: React.Ref<HTMLHeadingElement>;
 }) {
   return (
     <div className="flex items-center gap-3">
       <ScientLogo aria-hidden className="size-8 shrink-0" />
       <div className="flex min-w-0 flex-col">
-        <DialogTitle className="text-base">What&rsquo;s new?</DialogTitle>
+        <DialogTitle ref={titleRef} tabIndex={-1} className="text-base outline-none">
+          What&rsquo;s new in Scient
+        </DialogTitle>
         <DialogDescription className="text-xs">
           v{currentVersion}
           <span aria-hidden="true"> · </span>
@@ -147,9 +167,9 @@ function ChangelogHeader({ onBack }: { readonly onBack: () => void }) {
         <ArrowLeftIcon className="size-4" />
       </Button>
       <div className="flex min-w-0 flex-col">
-        <DialogTitle className="text-base">Complete changelog</DialogTitle>
+        <DialogTitle className="text-base">Release history</DialogTitle>
         <DialogDescription className="text-xs">
-          Every curated release, newest first.
+          Earlier Scient updates, newest first.
         </DialogDescription>
       </div>
     </div>

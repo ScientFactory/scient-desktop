@@ -1,108 +1,121 @@
 // FILE: whatsNew/WhatsNewPopoutCard.tsx
-// Purpose: Post-update "popout" card that lives in the bottom-left corner of
-// the app after an upgrade. Clicking the card body opens the release-notes
-// dialog; clicking the ✕ dismisses the update silently. Matches the
-// IndieDevs `UpdateCard` pattern but themed for our dark-first surface.
-// Layer: overlay — rendered once from the root route next to the dialog.
+// Purpose: Render the once-per-release Scient card inside the sidebar footer.
 
-import { type KeyboardEvent } from "react";
+import { useEffect, useRef } from "react";
 
-import { XIcon } from "~/lib/icons";
-import { cn } from "~/lib/utils";
 import { ScientLogo } from "~/components/ScientLogo";
+import { DialogTrigger } from "~/components/ui/dialog";
+import { ArrowRightIcon, XIcon } from "~/lib/icons";
+import { cn } from "~/lib/utils";
 
 import type { WhatsNewEntry } from "./logic";
+import type { WhatsNewDialogHandle } from "./WhatsNewProvider";
 
 export interface WhatsNewPopoutCardProps {
   readonly entry: WhatsNewEntry;
   readonly currentVersion: string;
   readonly onOpen: () => void;
   readonly onDismiss: () => void;
+  readonly onPresented: () => void;
+  readonly dialogHandle: WhatsNewDialogHandle;
   readonly className?: string;
 }
 
-/**
- * A small attention-grabber card. Clicking the body acts as a "open release
- * notes" affordance; the ✕ in the corner is a deliberate "not interested" —
- * both paths mark the release as seen, so the card never nags twice.
- *
- * The card is keyboard-reachable (tab-stop with Enter/Space activating) to
- * match the mouse affordance, since base-ui's Dialog otherwise owns the only
- * trigger in the IndieDevs implementation (their `<DialogTrigger>` wraps the
- * whole card).
- */
 export function WhatsNewPopoutCard({
   entry,
   currentVersion,
   onOpen,
   onDismiss,
+  onPresented,
+  dialogHandle,
   className,
 }: WhatsNewPopoutCardProps) {
-  const heroAlt = entry.heroImageAlt ?? `What's new in v${currentVersion}`;
-  const primaryFeatureTitle = entry.features[0]?.title;
+  const shellRef = useRef<HTMLDivElement>(null);
+  const didPresentRef = useRef(false);
 
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      onOpen();
-    }
-  };
+  useEffect(() => {
+    const shell = shellRef.current;
+    if (!shell) return;
+
+    const markWhenVisible = (visible: boolean) => {
+      const isPerceivable =
+        shell.isConnected &&
+        !shell.closest("[inert]") &&
+        (typeof shell.checkVisibility !== "function" ||
+          shell.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));
+      if (
+        !visible ||
+        !isPerceivable ||
+        didPresentRef.current ||
+        document.visibilityState !== "visible" ||
+        !document.hasFocus()
+      )
+        return;
+      didPresentRef.current = true;
+      onPresented();
+    };
+
+    const checkGeometry = () => {
+      const rect = shell.getBoundingClientRect();
+      const visibleWidth = Math.max(0, Math.min(rect.right, innerWidth) - Math.max(rect.left, 0));
+      const visibleHeight = Math.max(0, Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0));
+      const area = rect.width * rect.height;
+      markWhenVisible(area > 0 && (visibleWidth * visibleHeight) / area >= 0.95);
+    };
+
+    const observer =
+      "IntersectionObserver" in window
+        ? new IntersectionObserver(
+            ([entry]) => markWhenVisible((entry?.intersectionRatio ?? 0) >= 0.95),
+            { threshold: 0.95 },
+          )
+        : null;
+    observer?.observe(shell);
+
+    const frame = requestAnimationFrame(checkGeometry);
+    document.addEventListener("visibilitychange", checkGeometry);
+    window.addEventListener("focus", checkGeometry);
+    window.addEventListener("resize", checkGeometry);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+      document.removeEventListener("visibilitychange", checkGeometry);
+      window.removeEventListener("focus", checkGeometry);
+      window.removeEventListener("resize", checkGeometry);
+    };
+  }, [onPresented]);
+
+  const heroAlt = entry.heroImageAlt ?? `Highlights from Scient v${currentVersion}`;
 
   return (
     <div
+      ref={shellRef}
+      data-testid="whats-new-sidebar-card"
       className={cn(
-        "fixed bottom-3 left-3 z-50 w-56 max-w-[calc(100vw-1.5rem)] select-none",
-        "animate-[popout-in_200ms_ease-out]",
+        "relative w-full min-w-0 overflow-hidden rounded-xl border border-primary/20",
+        "bg-[linear-gradient(145deg,color-mix(in_srgb,var(--color-primary)_12%,var(--sidebar))_0%,var(--sidebar)_72%)]",
+        "shadow-[0_10px_28px_-18px_color-mix(in_srgb,var(--color-primary)_70%,transparent)]",
         className,
       )}
-      style={{
-        // Inline @keyframes so the popout doesn't need a tailwind plugin or
-        // global stylesheet just for one 200ms fade-in.
-        animationName: "whats-new-popout-in",
-      }}
     >
-      <style>{`@keyframes whats-new-popout-in {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
-}`}</style>
-      <div
-        role="button"
-        tabIndex={0}
-        aria-label={`Open What's new in v${currentVersion}`}
-        onClick={onOpen}
-        onKeyDown={onKeyDown}
-        className={cn(
-          "group relative flex cursor-pointer flex-col overflow-hidden rounded-xl",
-          "border border-white/[0.08] bg-popover/90 text-popover-foreground shadow-xl backdrop-blur-xl",
-          "transition-[transform,box-shadow,border-color] duration-150",
-          "hover:border-primary/40 hover:shadow-2xl hover:[transform:translateY(-1px)]",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-        )}
+      <DialogTrigger
+        handle={dialogHandle}
+        render={
+          <button
+            type="button"
+            data-whats-new-trigger
+            aria-label={`Read what improved in Scient v${currentVersion}`}
+            onClick={onOpen}
+            className={cn(
+              "group flex w-full min-w-0 flex-col overflow-hidden text-start",
+              "outline-hidden transition-[border-color,background-color]",
+              "hover:bg-primary/[0.04] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+            )}
+          />
+        }
       >
-        {/* Close button. `stopPropagation` so dismissing doesn't also fire
-            the card's onOpen handler. */}
-        <button
-          type="button"
-          aria-label="Dismiss What's new"
-          onClick={(event) => {
-            event.stopPropagation();
-            onDismiss();
-          }}
-          className={cn(
-            "absolute end-1.5 top-1.5 z-10 inline-flex size-6 items-center justify-center rounded-full",
-            "text-muted-foreground/80 transition-colors",
-            "hover:bg-[var(--sidebar-accent)] hover:text-foreground",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-          )}
-        >
-          <XIcon className="size-3.5" />
-        </button>
-
-        {/* Hero band: screenshot when the entry supplies one, otherwise a
-            branded gradient + icon so every release still gets a polished
-            visual. */}
-        <div className="relative h-24 w-full overflow-hidden">
-          {entry.heroImage !== undefined ? (
+        <div className="relative flex h-16 w-full items-center justify-center overflow-hidden">
+          {entry.heroImage ? (
             <img
               src={entry.heroImage}
               alt={heroAlt}
@@ -113,28 +126,44 @@ export function WhatsNewPopoutCard({
           ) : (
             <div
               aria-hidden="true"
-              className="flex h-full w-full items-center justify-center bg-[radial-gradient(120%_140%_at_10%_0%,color-mix(in_srgb,var(--color-primary)_38%,transparent)_0%,transparent_60%),radial-gradient(100%_120%_at_100%_100%,color-mix(in_srgb,var(--color-primary)_22%,transparent)_0%,transparent_70%)]"
+              className="flex h-full w-full items-center justify-center bg-[radial-gradient(100%_140%_at_8%_0%,color-mix(in_srgb,var(--color-primary)_35%,transparent)_0%,transparent_62%),radial-gradient(85%_120%_at_100%_100%,color-mix(in_srgb,var(--color-primary)_22%,transparent)_0%,transparent_72%)]"
             >
-              <ScientLogo aria-hidden className="size-9" />
+              <ScientLogo className="size-8" />
             </div>
           )}
-          {/* Subtle bottom gradient so text below the band always reads. */}
           <div
             aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-gradient-to-b from-transparent to-popover/90"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-5 bg-gradient-to-b from-transparent to-sidebar/80"
           />
         </div>
 
-        <div className="flex flex-col gap-0.5 px-3 pb-3 pt-2">
-          <p className="text-[11px] font-medium text-primary">New · v{currentVersion}</p>
-          <p className="truncate text-sm font-semibold text-foreground">
-            {primaryFeatureTitle ?? `What's new in v${currentVersion}`}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Find out what&rsquo;s new <span aria-hidden="true">→</span>
-          </p>
-        </div>
-      </div>
+        <span className="flex min-w-0 w-full flex-col gap-1 px-3 pb-3 pt-2.5 pe-9">
+          <span className="text-[10px] font-semibold tracking-[0.08em] text-primary uppercase">
+            New in Scient · v{currentVersion}
+          </span>
+          <span className="line-clamp-2 text-xs font-semibold leading-snug text-sidebar-foreground">
+            {entry.headline}
+          </span>
+          <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground group-hover:text-sidebar-foreground">
+            See what improved
+            <ArrowRightIcon aria-hidden className="size-3" />
+          </span>
+        </span>
+      </DialogTrigger>
+
+      <button
+        type="button"
+        aria-label={`Dismiss Scient v${currentVersion} release note`}
+        onClick={onDismiss}
+        className={cn(
+          "absolute end-1.5 top-1.5 z-10 inline-flex size-6 items-center justify-center rounded-full",
+          "bg-sidebar/65 text-muted-foreground backdrop-blur-sm transition-colors",
+          "hover:bg-sidebar-accent hover:text-sidebar-foreground",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/70",
+        )}
+      >
+        <XIcon aria-hidden className="size-3.5" />
+      </button>
     </div>
   );
 }

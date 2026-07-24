@@ -110,6 +110,7 @@ interface ReleaseWorkflowStep {
   readonly env?: Record<string, unknown>;
   readonly if?: string;
   readonly name?: string;
+  readonly run?: string;
 }
 
 function assertScopedSigningEnvironment(
@@ -210,9 +211,11 @@ function verifyReleaseWorkflowSafety(): void {
   const parsedWorkflow = parseYaml(workflow) as {
     jobs?: {
       build?: { steps?: Array<ReleaseWorkflowStep> };
+      preflight?: { steps?: Array<ReleaseWorkflowStep> };
     };
   };
   const buildSteps = parsedWorkflow.jobs?.build?.steps ?? [];
+  const preflightSteps = parsedWorkflow.jobs?.preflight?.steps ?? [];
   const requireBuildStep = (name: string) => {
     const step = buildSteps.find((candidate) => candidate.name === name);
     if (!step) {
@@ -223,6 +226,24 @@ function verifyReleaseWorkflowSafety(): void {
   const macBuildStep = requireBuildStep("Build macOS desktop artifact");
   const linuxBuildStep = requireBuildStep("Build Linux desktop artifact");
   const windowsBuildStep = requireBuildStep("Build Windows desktop artifact");
+  const releaseMetaIndex = preflightSteps.findIndex(
+    (step) => step.name === "Resolve release policy",
+  );
+  const releaseNoteIndex = preflightSteps.findIndex(
+    (step) => step.name === "Verify curated release note",
+  );
+  if (releaseMetaIndex < 0 || releaseNoteIndex !== releaseMetaIndex + 1) {
+    throw new Error(
+      "Expected the curated release-note gate immediately after release policy resolution.",
+    );
+  }
+  if (
+    !preflightSteps[releaseNoteIndex]?.run?.includes(
+      'scripts/verify-release-notes.ts "${{ steps.release_meta.outputs.version }}"',
+    )
+  ) {
+    throw new Error("Expected the release-note gate to verify the exact resolved version.");
+  }
   const appleSigningNames = [
     "CSC_LINK",
     "CSC_KEY_PASSWORD",
