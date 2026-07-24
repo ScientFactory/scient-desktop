@@ -39,6 +39,27 @@ const RELEASE_NOTE_ASSET_PATTERN =
   /^\/release-notes\/(?:[A-Za-z0-9][A-Za-z0-9._-]*\/)*[A-Za-z0-9][A-Za-z0-9._-]*\.(?:avif|jpe?g|png|webp)$/i;
 const WEB_PUBLIC_ROOT = fileURLToPath(new URL("../apps/web/public/", import.meta.url));
 
+const FORBIDDEN_RELEASE_NOTE_COPY: ReadonlyArray<{
+  readonly label: string;
+  readonly pattern: RegExp;
+}> = [
+  { label: "commit references", pattern: /\bcommits?\b/i },
+  { label: "pull request references", pattern: /\bpull requests?\b|\bpr\s*#?\d+\b/i },
+  { label: "framework references", pattern: /\bframeworks?\b/i },
+  { label: "protocol references", pattern: /\bprotocols?\b/i },
+  { label: "migration references", pattern: /\bmigrations?\b/i },
+  { label: "implementation details", pattern: /\bimplementation(?:s| details?)?\b/i },
+  {
+    label: "developer terminology",
+    pattern:
+      /\b(?:backend|codebase|dependencies|dependency|developer|developers|frontend|refactor|refactored|refactoring|renderer|runtime|schema)\b/i,
+  },
+  {
+    label: "internal framework or protocol names",
+    pattern: /\b(?:bun|electron|ipc|react|tailwind|typescript|vite|vitest|webcontents(?:view)?)\b/i,
+  },
+];
+
 export function normalizeReleaseVersion(rawVersion: string): string {
   const version = rawVersion.trim().replace(/^v/, "");
   if (!SEMVER_PATTERN.test(version)) {
@@ -73,6 +94,7 @@ export function verifyReleaseNoteForVersion(
 
     if (entry.date.trim().length === 0) errors.push(`${label} needs a release date.`);
     if (entry.headline.trim().length === 0) errors.push(`${label} needs a benefit-led headline.`);
+    validateUserFacingCopy(label, "headline", entry.headline, errors);
     const isHotfix = entry.kind === "hotfix";
     if (entry.kind !== undefined && entry.kind !== "standard" && !isHotfix) {
       errors.push(`${label} kind must be standard or hotfix.`);
@@ -95,11 +117,16 @@ export function verifyReleaseNoteForVersion(
       if (featureIds.has(feature.id)) errors.push(`${featureLabel} reuses id ${feature.id}.`);
       featureIds.add(feature.id);
       if (feature.title.trim().length === 0) errors.push(`${featureLabel} needs a title.`);
+      validateUserFacingCopy(featureLabel, "title", feature.title, errors);
       if (feature.description.trim().length === 0) {
         errors.push(`${featureLabel} needs a description.`);
       }
+      validateUserFacingCopy(featureLabel, "description", feature.description, errors);
       if (feature.details !== undefined && feature.details.trim().length === 0) {
         errors.push(`${featureLabel} details cannot be blank.`);
+      }
+      if (feature.details !== undefined) {
+        validateUserFacingCopy(featureLabel, "details", feature.details, errors);
       }
       validateImagePair(
         featureLabel,
@@ -109,6 +136,9 @@ export function verifyReleaseNoteForVersion(
         errors,
         options.assetExists,
       );
+      if (feature.imageAlt !== undefined) {
+        validateUserFacingCopy(featureLabel, "image alt text", feature.imageAlt, errors);
+      }
     }
   }
 
@@ -122,6 +152,19 @@ export function verifyReleaseNoteForVersion(
   }
 
   return { version, errors };
+}
+
+function validateUserFacingCopy(
+  label: string,
+  field: string,
+  value: string,
+  errors: string[],
+): void {
+  const forbidden = FORBIDDEN_RELEASE_NOTE_COPY.find(({ pattern }) => pattern.test(value));
+  if (!forbidden) return;
+  errors.push(
+    `${label} ${field} contains ${forbidden.label}; rewrite it as a plain-language user benefit.`,
+  );
 }
 
 function validateImagePair(

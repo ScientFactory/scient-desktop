@@ -138,6 +138,53 @@ describe("verifyReleaseNoteForVersion", () => {
     ).toHaveLength(1);
   });
 
+  it("rejects explicit developer-facing language in every visible copy field", () => {
+    const technical = entry({
+      headline: "Developer refactor",
+      features: [
+        {
+          id: "internal-cleanup",
+          title: "React framework cleanup",
+          description: "Refactor IPC protocol migration in a component.",
+          details: "Implementation details for the renderer runtime.",
+          image: "/release-notes/1.2.3/internal.png",
+          imageAlt: "Electron codebase diagram",
+        },
+        ...entry().features.slice(1),
+      ],
+    });
+
+    const errors = verifyReleaseNoteForVersion("1.2.3", [technical], {
+      assetExists: () => true,
+    }).errors.join("\n");
+
+    expect(errors).toContain("headline contains developer terminology");
+    expect(errors).toContain("title contains framework references");
+    expect(errors).toContain("description contains protocol references");
+    expect(errors).toContain("details contains implementation details");
+    expect(errors).toContain("image alt text contains developer terminology");
+  });
+
+  it("rejects release-process references while preserving ordinary user-facing copy", () => {
+    const processCopy = entry({
+      headline: "Highlights from PR #112",
+      features: [
+        {
+          ...entry().features[0]!,
+          title: "Six commits of improvements",
+          description: "This pull request updates the experience.",
+        },
+        ...entry().features.slice(1),
+      ],
+    });
+    const errors = verifyReleaseNoteForVersion("1.2.3", [processCopy]).errors.join("\n");
+
+    expect(errors).toContain("headline contains pull request references");
+    expect(errors).toContain("title contains commit references");
+    expect(errors).toContain("description contains pull request references");
+    expect(verifyReleaseNoteForVersion("1.2.3", [entry()]).errors).toEqual([]);
+  });
+
   it("does not mutate its input", () => {
     const entries = [entry()];
     const before = structuredClone(entries);
