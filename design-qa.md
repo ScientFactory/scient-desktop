@@ -65,8 +65,8 @@ The new row was compared in both resting and drag-over states. The implementatio
 
 - Full repository test suite: 12/12 tasks passed.
 - Server project-source tests: 10/10 passed.
-- Folder-drop logic tests: 9/9 passed.
-- Add-project browser tests: 19/19 passed.
+- Folder-drop logic tests: 11/11 passed.
+- Add-project browser tests: 21/21 passed.
 - Stable browser certification: 271 passed, 11 skipped across all four isolated groups.
 - Repository typecheck: 9/9 packages passed.
 - Repository lint: 0 errors (existing warnings remain outside this feature).
