@@ -11,6 +11,7 @@ describe("stagedDraftNavigation", () => {
     const calls: string[] = [];
 
     const committed = await stageDraftNavigation({
+      isCurrent: () => true,
       stage: () => calls.push("stage"),
       navigate: async () => {
         calls.push("navigate");
@@ -32,6 +33,7 @@ describe("stagedDraftNavigation", () => {
     const rollback = vi.fn();
 
     const committed = await stageDraftNavigation({
+      isCurrent: () => true,
       stage: vi.fn(),
       navigate: async () => undefined,
       isDestinationActive: () => false,
@@ -50,6 +52,7 @@ describe("stagedDraftNavigation", () => {
 
     await expect(
       stageDraftNavigation({
+        isCurrent: () => true,
         stage: vi.fn(),
         navigate: async () => {
           throw error;
@@ -59,6 +62,65 @@ describe("stagedDraftNavigation", () => {
         rollback,
       }),
     ).rejects.toBe(error);
+    expect(rollback).toHaveBeenCalledOnce();
+  });
+
+  it("does not stage work after its ownership was superseded", async () => {
+    const stage = vi.fn();
+    const rollback = vi.fn();
+
+    await expect(
+      stageDraftNavigation({
+        isCurrent: () => false,
+        stage,
+        navigate: vi.fn(async () => undefined),
+        isDestinationActive: () => true,
+        finalize: vi.fn(),
+        rollback,
+      }),
+    ).resolves.toBe(false);
+    expect(stage).not.toHaveBeenCalled();
+    expect(rollback).not.toHaveBeenCalled();
+  });
+
+  it("rolls back staged work when ownership changes during navigation", async () => {
+    let current = true;
+    const finalize = vi.fn();
+    const rollback = vi.fn();
+
+    await expect(
+      stageDraftNavigation({
+        isCurrent: () => current,
+        stage: vi.fn(),
+        navigate: async () => {
+          current = false;
+        },
+        isDestinationActive: () => true,
+        finalize,
+        rollback,
+      }),
+    ).resolves.toBe(false);
+    expect(finalize).not.toHaveBeenCalled();
+    expect(rollback).toHaveBeenCalledOnce();
+  });
+
+  it("suppresses a stale navigation failure after ownership changes", async () => {
+    let current = true;
+    const rollback = vi.fn();
+
+    await expect(
+      stageDraftNavigation({
+        isCurrent: () => current,
+        stage: vi.fn(),
+        navigate: async () => {
+          current = false;
+          throw new Error("superseded navigation");
+        },
+        isDestinationActive: () => false,
+        finalize: vi.fn(),
+        rollback,
+      }),
+    ).resolves.toBe(false);
     expect(rollback).toHaveBeenCalledOnce();
   });
 
@@ -113,6 +175,34 @@ describe("stagedDraftNavigation", () => {
     await expect(projectDefault).resolves.toBe("default");
     expect(exactRun).toHaveBeenCalledOnce();
     expect(defaultRun).toHaveBeenCalledOnce();
+  });
+
+  it("supersedes an awaited owner as soon as a distinct later intent arrives", async () => {
+    let releaseFirst!: () => void;
+    const firstOwnership: Array<{ readonly isCurrent: () => boolean }> = [];
+    let secondWasCurrent = false;
+    const slotKey = draftNavigationSlotKey("project-supersession", "chat");
+
+    const first = runDraftNavigationOnce(slotKey, "exact-worktree", async (ownership) => {
+      firstOwnership.push(ownership);
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      return ownership.isCurrent() ? "stale-commit" : "superseded";
+    });
+    await Promise.resolve();
+    expect(firstOwnership[0]?.isCurrent()).toBe(true);
+
+    const second = runDraftNavigationOnce(slotKey, "project-default", async (ownership) => {
+      secondWasCurrent = ownership.isCurrent();
+      return ownership.isCurrent() ? "latest" : "superseded";
+    });
+    expect(firstOwnership[0]?.isCurrent()).toBe(false);
+    releaseFirst();
+
+    await expect(first).resolves.toBe("superseded");
+    await expect(second).resolves.toBe("latest");
+    expect(secondWasCurrent).toBe(true);
   });
 
   it("preserves default-exact-default ordering instead of rejoining the first request", async () => {

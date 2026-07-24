@@ -43,7 +43,11 @@ import { isMacPlatform } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
 import { useProviderConnectionDialogStore } from "../providerConnectionDialogStore";
 import { resetHomeChatProjectPrewarmStateForTests } from "../lib/chatProjects";
-import { draftNavigationSlotKey, runDraftNavigationOnce } from "../lib/stagedDraftNavigation";
+import {
+  draftNavigationSlotKey,
+  runDraftNavigationOnce,
+  waitForDraftNavigationIdle,
+} from "../lib/stagedDraftNavigation";
 import { resetStudioProjectPrewarmStateForTests } from "../lib/studioProjects";
 import { newThreadNavigationRequestKey } from "../lib/threadBootstrap";
 import { getRouter } from "../router";
@@ -5633,6 +5637,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
     let defaultNavigationOperation: Promise<void> | null = null;
 
     try {
+      await waitForServerConfigToApply();
+      await waitForComposerEditor();
+      useStore.getState().setProjectExpanded(PROJECT_ID, true);
       await waitForLayout();
       branchLookup.mockClear();
       branchLookup.mockImplementation(() => branchLookupDeferred.promise);
@@ -5692,6 +5699,141 @@ describe("ChatView timeline estimator parity (full app)", () => {
       defaultNavigationBlocker.resolve();
       branchLookupDeferred.resolve(exactWorktreeBranchResult);
       await defaultNavigationOperation;
+      await mounted.cleanup();
+    }
+  });
+
+  it("preserves a reused draft when it supersedes a waiting exact-workspace request", async () => {
+    const reusableDraftThreadId = ThreadId.makeUnsafe("thread-reused-draft-race");
+    const contextMenuShow = vi.fn(
+      async (_items: Parameters<NativeApi["contextMenu"]["show"]>[0]) => "new-thread-in-workspace",
+    );
+    const exactWorktreeBranchResult: Awaited<ReturnType<NativeApi["git"]["listBranches"]>> = {
+      isRepo: true,
+      hasOriginRemote: true,
+      branches: [
+        {
+          name: "feature/exact-worktree",
+          current: false,
+          isDefault: false,
+          worktreePath: "/repo/worktrees/exact-worktree",
+        },
+      ],
+    };
+    let resolveExactValidation!: (
+      value: Awaited<ReturnType<NativeApi["git"]["listBranches"]>>,
+    ) => void;
+    const exactValidation = new Promise<Awaited<ReturnType<NativeApi["git"]["listBranches"]>>>(
+      (resolve) => {
+        resolveExactValidation = resolve;
+      },
+    );
+    const branchLookup = vi.fn<NativeApi["git"]["listBranches"]>(
+      async () => exactWorktreeBranchResult,
+    );
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-reused-draft-race" as MessageId,
+      targetText: "reused draft race",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...baseSnapshot,
+        threads: baseSnapshot.threads.map((thread) => ({
+          ...thread,
+          envMode: "worktree" as const,
+          branch: "feature/exact-worktree",
+          worktreePath: "/repo/worktrees/exact-worktree",
+        })),
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        contextMenu: {
+          ...api.contextMenu,
+          show: contextMenuShow as NativeApi["contextMenu"]["show"],
+        },
+        git: {
+          ...api.git,
+          listBranches: branchLookup,
+        },
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForComposerEditor();
+      useStore.getState().setProjectExpanded(PROJECT_ID, true);
+      await waitForLayout();
+      const threadRow = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-thread-entry-point]")).find(
+            (row) => row.textContent?.includes(THREAD_TITLE),
+          ) ?? null,
+        "Unable to find the current thread row.",
+      );
+      useComposerDraftStore.getState().setProjectDraftThreadId(PROJECT_ID, reusableDraftThreadId, {
+        entryPoint: "chat",
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        workspaceOrigin: "default",
+      });
+      useComposerDraftStore.getState().setPrompt(reusableDraftThreadId, "preserve this draft");
+      branchLookup.mockClear();
+      branchLookup.mockImplementation(() => exactValidation);
+
+      threadRow.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 24,
+          clientY: 24,
+        }),
+      );
+      await vi.waitFor(() => expect(branchLookup).toHaveBeenCalledTimes(1));
+
+      await page.getByTestId("new-thread-button").click();
+      useComposerDraftStore
+        .getState()
+        .setPrompt(reusableDraftThreadId, "newer prompt with attachment");
+      useComposerDraftStore.getState().addFiles(reusableDraftThreadId, [
+        {
+          type: "file",
+          id: "reused-draft-notes",
+          name: "notes.txt",
+          mimeType: "text/plain",
+          sizeBytes: 5,
+          file: new File(["notes"], "notes.txt", { type: "text/plain" }),
+        },
+      ]);
+
+      resolveExactValidation(exactWorktreeBranchResult);
+      await waitForDraftNavigationIdle(draftNavigationSlotKey(PROJECT_ID, "chat"));
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${reusableDraftThreadId}`,
+        "The later ordinary New Thread action should keep the reusable draft selected.",
+      );
+
+      expect(useComposerDraftStore.getState().getDraftThread(reusableDraftThreadId)).toMatchObject({
+        branch: null,
+        worktreePath: null,
+        envMode: "local",
+        workspaceOrigin: "default",
+      });
+      expect(
+        useComposerDraftStore.getState().draftsByThreadId[reusableDraftThreadId],
+      ).toMatchObject({
+        prompt: "newer prompt with attachment",
+        files: [expect.objectContaining({ id: "reused-draft-notes", name: "notes.txt" })],
+      });
+      expect(
+        useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID, "chat")?.threadId,
+      ).toBe(reusableDraftThreadId);
+      expect(document.body.textContent).not.toContain("Unable to start thread");
+    } finally {
+      resolveExactValidation(exactWorktreeBranchResult);
+      await waitForDraftNavigationIdle(draftNavigationSlotKey(PROJECT_ID, "chat"));
       await mounted.cleanup();
     }
   });

@@ -3841,7 +3841,9 @@ export default function Sidebar() {
         newThreadInWorkspaceInFlightThreadIdsRef.current.add(threadId);
         let workspaceValidationFailure: string | null = null;
         try {
-          const createdThreadId = await handleNewThread(thread.projectId, {
+          // A null result means a newer New Thread intent superseded this one;
+          // the newer owner is responsible for the visible destination.
+          await handleNewThread(thread.projectId, {
             fresh: true,
             prepareFreshCreate: async () => {
               const currentProjectCwd =
@@ -3865,12 +3867,6 @@ export default function Sidebar() {
             },
             workspace: newThreadInWorkspaceAction.workspace,
           });
-          if (!createdThreadId) {
-            showSidebarTransientError({
-              title: "Unable to start thread",
-              description: "The new thread could not be opened. Try again.",
-            });
-          }
         } catch (error) {
           showSidebarTransientError({
             title: workspaceValidationFailure ? "Workspace changed" : "Unable to start thread",

@@ -91,6 +91,12 @@ describe("threadBootstrap", () => {
         },
       }),
     ).not.toBe(defaultKey);
+    expect(
+      newThreadNavigationRequestKey({
+        hasCustomSearch: false,
+        options: { fresh: true },
+      }),
+    ).not.toBe(defaultKey);
   });
 
   it("resolves project defaults and exact existing workspaces without partial states", () => {

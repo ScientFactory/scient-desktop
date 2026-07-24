@@ -63,6 +63,7 @@ export function newThreadNavigationRequestKey(input: {
     worktreePath,
     input.options?.provider ?? "",
     input.options?.temporary === true ? "temporary" : "durable",
+    input.options?.fresh === true ? "fresh" : "reuse-eligible",
     input.hasCustomSearch ? "custom-search" : "default-search",
   ].join("\u0000");
 }
