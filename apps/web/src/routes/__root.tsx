@@ -93,10 +93,6 @@ import {
 } from "../providerUpdates";
 import { activityManager } from "../notifications/activityStore";
 import {
-  coordinateExternalRouteNavigation,
-  draftNavigationSlotKey,
-} from "../lib/stagedDraftNavigation";
-import {
   getGitInvalidationThreadIdForEvent,
   getProjectFileInvalidationThreadIdForEvent,
   getStudioOutputInvalidationThreadIdForEvent,
@@ -140,19 +136,6 @@ function reconcilePromotedDraftFromThreadDetail(thread: OrchestrationThread): vo
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
 }>()({
-  beforeLoad: async ({ abortController, location, preload }) => {
-    if (preload) return;
-    const ownedRouteToken = (
-      location.state as unknown as { readonly __scientDraftNavigationToken?: unknown }
-    ).__scientDraftNavigationToken;
-    const mayCommit = await coordinateExternalRouteNavigation(
-      draftNavigationSlotKey(),
-      typeof ownedRouteToken === "string" ? ownedRouteToken : undefined,
-    );
-    if (!mayCommit) {
-      abortController.abort();
-    }
-  },
   component: RootRouteView,
   errorComponent: RootRouteErrorView,
   head: () => ({

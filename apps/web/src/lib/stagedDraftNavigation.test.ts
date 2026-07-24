@@ -350,11 +350,15 @@ describe("stagedDraftNavigation", () => {
 
   it("rejects an unconsumed stale route token while a newer operation owns the surface", async () => {
     const slotKey = draftNavigationSlotKey();
-    let routeToken = "";
-    await runDraftNavigationOnce(slotKey, "fresh-thread", async (ownership) => {
-      routeToken = ownership.routeToken;
+    let staleRouteToken = "";
+    let releaseStaleOperation!: () => void;
+    const staleOperation = runDraftNavigationOnce(slotKey, "stale-thread", async (ownership) => {
+      staleRouteToken = ownership.routeToken;
+      await new Promise<void>((resolve) => {
+        releaseStaleOperation = resolve;
+      });
     });
-    await waitForDraftNavigationIdle(slotKey);
+    await Promise.resolve();
 
     let releaseNewerOperation!: () => void;
     const newerOperation = runDraftNavigationOnce(slotKey, "newer-thread", async () => {
@@ -364,8 +368,10 @@ describe("stagedDraftNavigation", () => {
     });
     await Promise.resolve();
 
-    await expect(coordinateExternalRouteNavigation(slotKey, routeToken)).resolves.toBe(false);
+    await expect(coordinateExternalRouteNavigation(slotKey, staleRouteToken)).resolves.toBe(false);
+    releaseStaleOperation();
     releaseNewerOperation();
+    await staleOperation;
     await newerOperation;
   });
 
@@ -401,6 +407,98 @@ describe("stagedDraftNavigation", () => {
     await exactPreparation;
 
     expect(exactOwnerCurrent).toBe(false);
+  });
+
+  it("treats a persisted owned route from an earlier renderer session as external", async () => {
+    const randomUuid = vi
+      .spyOn(crypto, "randomUUID")
+      .mockReturnValueOnce("11111111-1111-4111-8111-111111111111")
+      .mockReturnValueOnce("22222222-2222-4222-8222-222222222222");
+
+    try {
+      vi.resetModules();
+      const earlierSession = await import("./stagedDraftNavigation");
+      const earlierSlotKey = earlierSession.draftNavigationSlotKey();
+      let persistedRouteToken = "";
+      await earlierSession.runDraftNavigationOnce(
+        earlierSlotKey,
+        "earlier-session-thread",
+        async (ownership) => {
+          persistedRouteToken = ownership.routeToken;
+          await expect(
+            earlierSession.coordinateExternalRouteNavigation(earlierSlotKey, ownership.routeToken),
+          ).resolves.toBe(true);
+        },
+      );
+      await earlierSession.waitForDraftNavigationIdle(earlierSlotKey);
+
+      vi.resetModules();
+      const reloadedSession = await import("./stagedDraftNavigation");
+      const reloadedSlotKey = reloadedSession.draftNavigationSlotKey();
+      let releaseFreshPreparation!: () => void;
+      let freshOwnerCurrent = true;
+      let freshRouteToken = "";
+      const freshPreparation = reloadedSession.runDraftNavigationOnce(
+        reloadedSlotKey,
+        "fresh-session-thread",
+        async (ownership) => {
+          freshRouteToken = ownership.routeToken;
+          await new Promise<void>((resolve) => {
+            releaseFreshPreparation = resolve;
+          });
+          freshOwnerCurrent = ownership.isCurrent();
+        },
+      );
+      await Promise.resolve();
+
+      expect(freshRouteToken).not.toBe(persistedRouteToken);
+      await expect(
+        reloadedSession.coordinateExternalRouteNavigation(reloadedSlotKey, persistedRouteToken),
+      ).resolves.toBe(true);
+      releaseFreshPreparation();
+      await freshPreparation;
+
+      expect(freshOwnerCurrent).toBe(false);
+    } finally {
+      randomUuid.mockRestore();
+      vi.resetModules();
+    }
+  });
+
+  it("keeps old committed history external after more than 128 owned navigations", async () => {
+    const slotKey = draftNavigationSlotKey();
+    let oldestCommittedRouteToken = "";
+    for (let index = 0; index < 129; index += 1) {
+      await runDraftNavigationOnce(slotKey, `committed-thread-${index}`, async (ownership) => {
+        if (index === 0) oldestCommittedRouteToken = ownership.routeToken;
+        await expect(
+          coordinateExternalRouteNavigation(slotKey, ownership.routeToken),
+        ).resolves.toBe(true);
+      });
+    }
+    await waitForDraftNavigationIdle(slotKey);
+
+    let releaseFreshPreparation!: () => void;
+    let freshOwnerCurrent = true;
+    const freshPreparation = runDraftNavigationOnce(
+      slotKey,
+      "fresh-after-long-history",
+      async (ownership) => {
+        await new Promise<void>((resolve) => {
+          releaseFreshPreparation = resolve;
+        });
+        freshOwnerCurrent = ownership.isCurrent();
+      },
+    );
+    await Promise.resolve();
+
+    await expect(
+      coordinateExternalRouteNavigation(slotKey, oldestCommittedRouteToken),
+    ).resolves.toBe(true);
+    releaseFreshPreparation();
+    await freshPreparation;
+
+    expect(freshOwnerCurrent).toBe(false);
   });
 
   it("supersedes delayed work across projects and chat or terminal entry points", async () => {

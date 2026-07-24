@@ -79,6 +79,30 @@ describe("startFreshChatForActiveSurface", () => {
 });
 
 describe("startContainerChat", () => {
+  it("keeps reuse-eligible container chats in the local container workspace", async () => {
+    const projectId = ProjectId.makeUnsafe("project-container");
+    const threadId = ThreadId.makeUnsafe("thread-container");
+    const handleNewThread = vi.fn(async () => threadId);
+
+    await expect(
+      startContainerChat({
+        ensureProjectId: async () => projectId,
+        handleNewThread,
+        navigationTargetKey: "studio-chat",
+        errorLabel: "failed",
+      }),
+    ).resolves.toEqual({ ok: true, threadId });
+    expect(handleNewThread).toHaveBeenCalledWith(
+      projectId,
+      { workspace: { kind: "local-container" } },
+      undefined,
+      expect.objectContaining({
+        isCurrent: expect.any(Function),
+        routeToken: expect.any(String),
+      }),
+    );
+  });
+
   it("returns the created thread so callers can attach context deterministically", async () => {
     const projectId = ProjectId.makeUnsafe("project-1");
     const threadId = ThreadId.makeUnsafe("thread-1");

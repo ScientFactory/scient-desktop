@@ -28,6 +28,7 @@ import {
 } from "../lib/threadBootstrap";
 import { promoteThreadCreate } from "../lib/threadCreatePromotion";
 import {
+  coordinateExternalRouteNavigation,
   draftNavigationSlotKey,
   runDraftNavigationOnce,
   stageDraftNavigation,
@@ -236,7 +237,15 @@ export function useHandleNewThread() {
             currentFocusedThreadId !== bootstrapPlan.threadId
           ) {
             try {
+              const mayCommit = await coordinateExternalRouteNavigation(
+                draftNavigationSlotKey(),
+                ownership.routeToken,
+              );
+              if (!mayCommit || !ownership.isCurrent()) {
+                return null;
+              }
               await navigate({
+                ignoreBlocker: true,
                 to: "/$threadId",
                 params: { threadId: bootstrapPlan.threadId },
                 state: { __scientDraftNavigationToken: ownership.routeToken } as never,
@@ -308,10 +317,17 @@ export function useHandleNewThread() {
           // Mark the draft-landing navigation as a transition so the new route
           // subtree renders interruptibly and the browser can paint the composer
           // skeleton immediately instead of freezing on the synchronous commit.
-          navigate: (ownedRouteToken) =>
-            new Promise<void>((resolve, reject) => {
+          navigate: async (ownedRouteToken) => {
+            if (!ownedRouteToken || !ownership.isCurrent()) return;
+            const mayCommit = await coordinateExternalRouteNavigation(
+              draftNavigationSlotKey(),
+              ownedRouteToken,
+            );
+            if (!mayCommit || !ownership.isCurrent()) return;
+            return new Promise<void>((resolve, reject) => {
               startTransition(() => {
                 navigate({
+                  ignoreBlocker: true,
                   to: "/$threadId",
                   params: { threadId },
                   ...(ownedRouteToken
@@ -320,7 +336,8 @@ export function useHandleNewThread() {
                   ...(navigation?.search ? { search: navigation.search } : {}),
                 }).then(resolve, reject);
               });
-            }),
+            });
+          },
           // TanStack resolves an older navigate() promise when a newer navigation supersedes it.
           // Verify the committed route before deleting the previous project draft.
           isDestinationActive: () => router.state.location.pathname === `/${threadId}`,

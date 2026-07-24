@@ -3,6 +3,8 @@
 //          staged drafts only after their destination route actually commits.
 // Layer: Web navigation orchestration
 
+import { randomUUID } from "./utils";
+
 interface DraftNavigationSlotState {
   blockingBarrier: Promise<void> | null;
   ownedRouteToken: string | null;
@@ -20,16 +22,9 @@ export interface DraftNavigationOwnership {
 
 const draftNavigationStateBySlot = new Map<string, DraftNavigationSlotState>();
 const DRAFT_NAVIGATION_SURFACE_KEY = "new-thread-navigation";
+const DRAFT_ROUTE_SESSION_PREFIX = `draft-route:${randomUUID()}:`;
 let nextOwnedRouteToken = 0;
-const consumedOwnedRouteTokens = new Set<string>();
-const MAX_CONSUMED_OWNED_ROUTE_TOKENS = 128;
-
-function rememberConsumedOwnedRouteToken(routeToken: string): void {
-  consumedOwnedRouteTokens.add(routeToken);
-  if (consumedOwnedRouteTokens.size <= MAX_CONSUMED_OWNED_ROUTE_TOKENS) return;
-  const oldestRouteToken = consumedOwnedRouteTokens.values().next().value;
-  if (typeof oldestRouteToken === "string") consumedOwnedRouteTokens.delete(oldestRouteToken);
-}
+const pendingOwnedRouteTokens = new Set<string>();
 
 /**
  * Every new-thread action ultimately controls the same visible route. Keep one ownership domain
@@ -42,22 +37,6 @@ export function draftNavigationSlotKey(): string {
 /** Resolves after the operations currently running on the shared navigation surface have drained. */
 export function waitForDraftNavigationIdle(slotKey: string): Promise<void> {
   return draftNavigationStateBySlot.get(slotKey)?.tail ?? Promise.resolve();
-}
-
-/**
- * Transfers visible-route ownership to a navigation that is not creating a new thread. Pending
- * preparations may finish their read-only work, but they can no longer stage or commit a route.
- */
-export function supersedeDraftNavigation(slotKey: string): void {
-  const state = draftNavigationStateBySlot.get(slotKey);
-  if (!state) {
-    return;
-  }
-  state.latestOwner = Symbol("external-navigation");
-  state.latestOperation = null;
-  state.latestRequestKey = null;
-  state.ownedRouteToken = null;
-  state.latestRouteClaim = null;
 }
 
 /**
@@ -78,13 +57,13 @@ export async function coordinateExternalRouteNavigation(
   }
   if (ownedRouteToken) {
     if (state.ownedRouteToken === ownedRouteToken) {
-      rememberConsumedOwnedRouteToken(ownedRouteToken);
       return true;
     }
-    // A token that already committed and is revisited through Back/Forward is an external route
-    // intent. An unconsumed mismatched token belongs to a stale in-flight navigation and fails
-    // closed instead of stealing ownership from the newer request.
-    if (!consumedOwnedRouteTokens.has(ownedRouteToken)) return false;
+    // A token still owned by another in-flight request is stale and fails closed. Once its request
+    // settles, the token becomes ordinary browser history; revisiting it through Back/Forward is a
+    // new external intent that must supersede current work. This survives renderer reloads and an
+    // unbounded history because only live requests need to be retained.
+    if (pendingOwnedRouteTokens.has(ownedRouteToken)) return false;
   }
   const routeClaim = Symbol("external-route-navigation");
   const blockingBarrier = state.blockingBarrier;
@@ -131,7 +110,8 @@ export function runDraftNavigationOnce<T>(
   }
 
   const owner = Symbol(requestKey);
-  const routeToken = `draft-route-${(nextOwnedRouteToken += 1)}`;
+  const routeToken = `${DRAFT_ROUTE_SESSION_PREFIX}${(nextOwnedRouteToken += 1)}`;
+  pendingOwnedRouteTokens.add(routeToken);
   const ownership: DraftNavigationOwnership = {
     isCurrent: () => state.latestOwner === owner,
     routeToken,
@@ -154,10 +134,12 @@ export function runDraftNavigationOnce<T>(
   };
   operation = execution.then(
     (value) => {
+      pendingOwnedRouteTokens.delete(routeToken);
       clearLatestRequest();
       return value;
     },
     (error: unknown) => {
+      pendingOwnedRouteTokens.delete(routeToken);
       clearLatestRequest();
       throw error;
     },
