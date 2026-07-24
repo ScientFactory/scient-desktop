@@ -3,11 +3,17 @@
 // Depends on: git React Query helpers, native API mutations, and toolbar selection rules.
 // Note: the "Create branch" footer row uses raw <button> because it is a
 // menu-item-style affordance inside a ComboboxPopup, not a generic action.
-import type { GitBranch, GitStashInfoResult, GitStatusResult, NativeApi } from "@synara/contracts";
+import type {
+  ContextMenuItem,
+  GitBranch,
+  GitStashInfoResult,
+  GitStatusResult,
+  NativeApi,
+} from "@synara/contracts";
 import { pluralize } from "@synara/shared/text";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ChevronDownIcon, PlusIcon } from "~/lib/icons";
+import { ChevronDownIcon, CopyIcon, PlusIcon } from "~/lib/icons";
 import { CentralIcon } from "~/lib/central-icons";
 import {
   type CSSProperties,
@@ -19,6 +25,7 @@ import {
   useRef,
   useState,
   useTransition,
+  type MouseEvent as ReactMouseEvent,
 } from "react";
 
 import {
@@ -66,6 +73,7 @@ import {
 } from "./chat/environment/EnvironmentRow";
 import { COMPOSER_TOOLBAR_PICKER_TRIGGER_CLASS_NAME } from "./chat/composerPickerStyles";
 import type { ThreadWorkspacePatch } from "../types";
+import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 
 /**
  * Where the selector is rendered. `toolbar` keeps the compact composer-footer pill;
@@ -380,6 +388,7 @@ export function BranchToolbarBranchSelector({
   const isPanel = variant === "panel";
   const queryClient = useQueryClient();
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
+  const [highlightedBranchName, setHighlightedBranchName] = useState<string | null>(null);
   const [isCreateBranchDialogOpen, setIsCreateBranchDialogOpen] = useState(false);
   const [createBranchName, setCreateBranchName] = useState("");
   const [createBranchError, setCreateBranchError] = useState<string | null>(null);
@@ -442,6 +451,50 @@ export function BranchToolbarBranchSelector({
   );
   const [isDroppingStash, setIsDroppingStash] = useState(false);
   const shouldVirtualizeBranchList = filteredBranchPickerItems.length > 40;
+  const branchActionsDisabled = branchesQuery.isLoading || isBranchActionPending;
+
+  const { copyToClipboard: copyBranchName, isCopied: isBranchNameCopied } = useCopyToClipboard<{
+    branchName: string;
+  }>({
+    onError: (error, { branchName }) => {
+      transientAlertManager.add({
+        type: "error",
+        title: "Failed to copy branch name",
+        description: `${branchName}: ${toBranchActionErrorMessage(error)}`,
+      });
+    },
+  });
+
+  const copyBranchTarget =
+    branchByName.get(trimmedBranchQuery)?.name ?? highlightedBranchName ?? resolvedActiveBranch;
+
+  const handleBranchContextMenu = useCallback(
+    (event: ReactMouseEvent, branchName: string | null) => {
+      if (!branchName) return;
+      const api = readNativeApi();
+      if (!api) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const items: ContextMenuItem<"copy-branch-name">[] = [
+        { id: "copy-branch-name", label: "Copy branch name" },
+      ];
+      void api.contextMenu
+        .show(items, { x: event.clientX, y: event.clientY })
+        .then((action) => {
+          if (action === "copy-branch-name") {
+            copyBranchName(branchName, { branchName });
+          }
+        })
+        .catch((error) => {
+          transientAlertManager.add({
+            type: "error",
+            title: "Could not open branch actions",
+            description: toBranchActionErrorMessage(error),
+          });
+        });
+    },
+    [copyBranchName],
+  );
 
   useEffect(() => {
     if (
@@ -696,6 +749,7 @@ export function BranchToolbarBranchSelector({
     (open: boolean) => {
       setIsBranchMenuOpen(open);
       if (!open) {
+        setHighlightedBranchName(null);
         setBranchQuery("");
         return;
       }
@@ -812,6 +866,9 @@ export function BranchToolbarBranchSelector({
         }
         style={style}
         onClick={() => selectBranch(branch)}
+        onContextMenu={(event) =>
+          handleBranchContextMenu(event, branchActionsDisabled ? null : branch.name)
+        }
       >
         <div className="flex w-full items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
@@ -847,36 +904,47 @@ export function BranchToolbarBranchSelector({
       filteredItems={filteredBranchPickerItems}
       autoHighlight
       virtualized={shouldVirtualizeBranchList}
-      onItemHighlighted={(_value, eventDetails) => {
-        if (!isBranchMenuOpen || eventDetails.index < 0) return;
+      onItemHighlighted={(value, eventDetails) => {
+        if (eventDetails.index < 0) {
+          setHighlightedBranchName(null);
+          return;
+        }
+        setHighlightedBranchName(value ? (branchByName.get(value)?.name ?? null) : null);
         branchListVirtualizer.scrollToIndex(eventDetails.index, { align: "auto" });
       }}
       onOpenChange={handleOpenChange}
       open={isBranchMenuOpen}
       value={resolvedActiveBranch}
     >
-      <ComboboxTrigger
-        className={
-          isPanel
-            ? ENVIRONMENT_ROW_CLASS_NAME
-            : `${COMPOSER_TOOLBAR_PICKER_TRIGGER_CLASS_NAME} disabled:cursor-not-allowed disabled:opacity-50`
+      <span
+        className={isPanel ? "flex w-full min-w-0" : "flex min-w-0"}
+        onContextMenu={(event) =>
+          handleBranchContextMenu(event, branchActionsDisabled ? null : resolvedActiveBranch)
         }
-        disabled={(branchesQuery.isLoading && branches.length === 0) || isBranchActionPending}
       >
-        {isPanel ? (
-          <EnvironmentRowBody
-            icon={<CentralIcon name="branch" className={ENVIRONMENT_ROW_ICON_CLASS_NAME} />}
-            label={triggerLabel}
-            trailing={<EnvironmentRowChevron />}
-          />
-        ) : (
-          <>
-            <CentralIcon name="branch" className="size-3.5 shrink-0" />
-            <span className="max-w-[240px] truncate">{triggerLabel}</span>
-            <ChevronDownIcon className="size-3 opacity-60" />
-          </>
-        )}
-      </ComboboxTrigger>
+        <ComboboxTrigger
+          className={
+            isPanel
+              ? ENVIRONMENT_ROW_CLASS_NAME
+              : `${COMPOSER_TOOLBAR_PICKER_TRIGGER_CLASS_NAME} disabled:cursor-not-allowed disabled:opacity-50`
+          }
+          disabled={(branchesQuery.isLoading && branches.length === 0) || isBranchActionPending}
+        >
+          {isPanel ? (
+            <EnvironmentRowBody
+              icon={<CentralIcon name="branch" className={ENVIRONMENT_ROW_ICON_CLASS_NAME} />}
+              label={triggerLabel}
+              trailing={<EnvironmentRowChevron />}
+            />
+          ) : (
+            <>
+              <CentralIcon name="branch" className="size-3.5 shrink-0" />
+              <span className="max-w-[240px] truncate">{triggerLabel}</span>
+              <ChevronDownIcon className="size-3 opacity-60" />
+            </>
+          )}
+        </ComboboxTrigger>
+      </span>
       <ComboboxPopup align="end" side={isPanel ? "bottom" : "top"} className="w-80">
         <div className="border-b p-1">
           <ComboboxInput
@@ -915,6 +983,30 @@ export function BranchToolbarBranchSelector({
             filteredBranchPickerItems.map((itemValue, index) => renderPickerItem(itemValue, index))
           )}
         </ComboboxList>
+        <div className="border-t border-[color:var(--color-border-light)] p-1">
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-[var(--color-text-foreground)] transition-colors hover:bg-[var(--color-background-elevated-secondary)] disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={!copyBranchTarget || branchActionsDisabled}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (!copyBranchTarget) return;
+              copyBranchName(copyBranchTarget, { branchName: copyBranchTarget });
+            }}
+          >
+            <CopyIcon className="size-3.5 shrink-0" />
+            <span className="min-w-0 truncate">
+              {isBranchNameCopied
+                ? "Branch name copied"
+                : copyBranchTarget
+                  ? `Copy branch name: ${copyBranchTarget}`
+                  : "Copy branch name"}
+            </span>
+          </button>
+        </div>
         {!isSelectingWorktreeBase ? (
           <div className="border-t border-[color:var(--color-border-light)] p-1">
             <button
