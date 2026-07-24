@@ -1,5 +1,5 @@
 // FILE: stagedDraftNavigation.ts
-// Purpose: Serializes draft-route creation per project slot and finalizes staged drafts only
+// Purpose: Serializes draft-route creation across the shared navigation surface and finalizes staged drafts only
 //          after their destination route actually commits.
 // Layer: Web navigation orchestration
 
@@ -15,18 +15,23 @@ export interface DraftNavigationOwnership {
 }
 
 const draftNavigationStateBySlot = new Map<string, DraftNavigationSlotState>();
+const DRAFT_NAVIGATION_SURFACE_KEY = "new-thread-navigation";
 
-export function draftNavigationSlotKey(projectId: string, entryPoint: string): string {
-  return `${projectId}\u0000${entryPoint}`;
+/**
+ * Every new-thread action ultimately controls the same visible route. Keep one ownership domain
+ * across projects and entry points so a delayed earlier action cannot navigate after a newer one.
+ */
+export function draftNavigationSlotKey(): string {
+  return DRAFT_NAVIGATION_SURFACE_KEY;
 }
 
-/** Resolves after the operations currently queued for a project slot have drained. */
+/** Resolves after the operations currently queued for the shared navigation surface have drained. */
 export function waitForDraftNavigationIdle(slotKey: string): Promise<void> {
   return draftNavigationStateBySlot.get(slotKey)?.tail ?? Promise.resolve();
 }
 
 /**
- * Coalesces adjacent identical requests while serializing distinct requests for one project slot.
+ * Coalesces adjacent identical requests while serializing distinct requests for the shared route.
  * A distinct later request becomes the owner immediately, allowing awaited work to stop before a
  * stale navigation or draft-mapping commit can overwrite the user's latest intent.
  */

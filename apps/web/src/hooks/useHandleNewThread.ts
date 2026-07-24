@@ -118,14 +118,29 @@ export function useHandleNewThread() {
         );
       };
       return runDraftNavigationOnce(
-        draftNavigationSlotKey(projectId, entryPoint),
+        draftNavigationSlotKey(),
         newThreadNavigationRequestKey({
-          hasCustomSearch: navigation?.search !== undefined,
+          customSearch: navigation?.search,
           options,
         }),
         async (ownership) => {
           if (!ownership.isCurrent()) {
             return null;
+          }
+          let effectiveOptions = options;
+          try {
+            const preparation = await options?.prepareNavigation?.(ownership);
+            if (!ownership.isCurrent() || preparation === false) {
+              return null;
+            }
+            if (preparation?.workspace) {
+              effectiveOptions = { ...options, workspace: preparation.workspace };
+            }
+          } catch (error) {
+            if (!ownership.isCurrent()) {
+              return null;
+            }
+            throw error;
           }
           const {
             getDraftThread,
@@ -138,10 +153,12 @@ export function useHandleNewThread() {
             setModelSelection,
           } = useComposerDraftStore.getState();
           const applyProviderOverride = (threadId: ThreadId) => {
-            if (!options?.provider) {
+            if (!effectiveOptions?.provider) {
               return;
             }
-            const defaultModelSelection = getRecommendedDefaultModelSelection(options.provider);
+            const defaultModelSelection = getRecommendedDefaultModelSelection(
+              effectiveOptions.provider,
+            );
             if (defaultModelSelection) {
               setModelSelection(threadId, defaultModelSelection);
             }
@@ -152,7 +169,7 @@ export function useHandleNewThread() {
             : null;
           const currentFocusedThreadId =
             focusedThreadId === routeThreadId ? currentRouteThreadId : focusedThreadId;
-          const shouldForceFreshThread = options?.fresh === true;
+          const shouldForceFreshThread = effectiveOptions?.fresh === true;
           const storedDraftThreadCandidate = getDraftThreadByProjectId(projectId, entryPoint);
           const latestActiveDraftThreadCandidate: DraftThreadState | null = currentFocusedThreadId
             ? getDraftThread(currentFocusedThreadId)
@@ -198,7 +215,7 @@ export function useHandleNewThread() {
               activeDraftThread: activeDraftThreadSnapshot,
               activeThread: activeThreadSnapshot,
               defaultEnvMode: settings.defaultThreadEnvMode,
-              defaultProvider: options?.provider ?? settings.defaultProvider,
+              defaultProvider: effectiveOptions?.provider ?? settings.defaultProvider,
               draftComposerState:
                 useComposerDraftStore.getState().draftsByThreadId[targetThreadId] ?? null,
               draftThread,
@@ -239,7 +256,7 @@ export function useHandleNewThread() {
               defaultEnvMode: settings.defaultThreadEnvMode,
               draftThread: bootstrapPlan.draftThread,
               entryPoint,
-              options,
+              options: effectiveOptions,
               reuseKind: bootstrapPlan.kind,
             });
             if (draftContextPatch) {
@@ -261,17 +278,6 @@ export function useHandleNewThread() {
             return bootstrapPlan.threadId;
           }
 
-          try {
-            await options?.prepareFreshCreate?.();
-          } catch (error) {
-            if (!ownership.isCurrent()) {
-              return null;
-            }
-            throw error;
-          }
-          if (!ownership.isCurrent()) {
-            return null;
-          }
           const threadId = newThreadId();
           if (wantsTemporaryThread) {
             markTemporaryThread(threadId);
@@ -281,7 +287,7 @@ export function useHandleNewThread() {
             createdAt,
             defaultEnvMode: settings.defaultThreadEnvMode,
             entryPoint,
-            options,
+            options: effectiveOptions,
           });
           const committed = await stageDraftNavigation({
             isCurrent: ownership.isCurrent,

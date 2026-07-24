@@ -133,7 +133,7 @@ describe("stagedDraftNavigation", () => {
         }),
     );
     const secondRun = vi.fn(async () => "second");
-    const slotKey = draftNavigationSlotKey("project-studio", "chat");
+    const slotKey = draftNavigationSlotKey();
 
     const first = runDraftNavigationOnce(slotKey, "project-default", firstRun);
     const duplicateFirst = runDraftNavigationOnce(slotKey, "project-default", secondRun);
@@ -163,7 +163,7 @@ describe("stagedDraftNavigation", () => {
         }),
     );
     const defaultRun = vi.fn(async () => "default");
-    const slotKey = draftNavigationSlotKey("project-reverse", "chat");
+    const slotKey = draftNavigationSlotKey();
 
     const exact = runDraftNavigationOnce(slotKey, "exact-worktree", exactRun);
     const projectDefault = runDraftNavigationOnce(slotKey, "project-default", defaultRun);
@@ -181,7 +181,7 @@ describe("stagedDraftNavigation", () => {
     let releaseFirst!: () => void;
     const firstOwnership: Array<{ readonly isCurrent: () => boolean }> = [];
     let secondWasCurrent = false;
-    const slotKey = draftNavigationSlotKey("project-supersession", "chat");
+    const slotKey = draftNavigationSlotKey();
 
     const first = runDraftNavigationOnce(slotKey, "exact-worktree", async (ownership) => {
       firstOwnership.push(ownership);
@@ -205,6 +205,36 @@ describe("stagedDraftNavigation", () => {
     expect(secondWasCurrent).toBe(true);
   });
 
+  it("supersedes delayed work across projects and chat or terminal entry points", async () => {
+    let releaseProjectChat!: () => void;
+    let projectChatWasCurrentAfterRelease = true;
+    const navigationSurface = draftNavigationSlotKey();
+
+    const projectChat = runDraftNavigationOnce(
+      navigationSurface,
+      "project-a-chat-exact",
+      async (ownership) => {
+        await new Promise<void>((resolve) => {
+          releaseProjectChat = resolve;
+        });
+        projectChatWasCurrentAfterRelease = ownership.isCurrent();
+        return ownership.isCurrent() ? "stale-navigation" : "superseded";
+      },
+    );
+    await Promise.resolve();
+
+    const otherProjectTerminal = runDraftNavigationOnce(
+      navigationSurface,
+      "project-b-terminal-default",
+      async (ownership) => (ownership.isCurrent() ? "latest-navigation" : "superseded"),
+    );
+    releaseProjectChat();
+
+    await expect(projectChat).resolves.toBe("superseded");
+    await expect(otherProjectTerminal).resolves.toBe("latest-navigation");
+    expect(projectChatWasCurrentAfterRelease).toBe(false);
+  });
+
   it("preserves default-exact-default ordering instead of rejoining the first request", async () => {
     let finishFirstDefault!: (value: string) => void;
     const calls: string[] = [];
@@ -223,7 +253,7 @@ describe("stagedDraftNavigation", () => {
       calls.push("default:last");
       return "default:last";
     });
-    const slotKey = draftNavigationSlotKey("project-three-actions", "chat");
+    const slotKey = draftNavigationSlotKey();
 
     const firstDefault = runDraftNavigationOnce(slotKey, "project-default", firstDefaultRun);
     const exact = runDraftNavigationOnce(slotKey, "exact-worktree", exactRun);

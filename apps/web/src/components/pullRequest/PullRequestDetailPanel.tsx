@@ -200,30 +200,44 @@ export function PullRequestDetailPanel({
     if (!detail || preparingThread !== null) return;
     setPreparingThread(kind);
     setOperationError(null);
+    let superseded = false;
     try {
       const mode = settings.defaultThreadEnvMode;
-      const prepared = await prepareThreadMutation.mutateAsync({ reference: detail.url, mode });
-      const workspace = (() => {
-        if (mode === "worktree") {
-          if (!prepared.worktreePath) {
-            throw new Error("The pull request worktree was not created.");
-          }
-          return {
-            kind: "existing-worktree" as const,
-            branch: prepared.branch,
-            worktreePath: prepared.worktreePath,
-          };
-        }
-        return { kind: "existing-local" as const, branch: prepared.branch };
-      })();
       const threadId = await handleNewThread(detail.projectId, {
-        workspace,
         // This action is an explicit handoff from the PR browser. Reusing the project's
         // existing draft can leave the user on the PR route and insert the prompt into a
         // hidden composer, making the button appear inert.
         fresh: true,
+        prepareNavigation: async (ownership) => {
+          const prepared = await prepareThreadMutation.mutateAsync({
+            reference: detail.url,
+            mode,
+          });
+          if (!ownership.isCurrent()) {
+            superseded = true;
+            return false;
+          }
+          if (mode === "worktree") {
+            if (!prepared.worktreePath) {
+              throw new Error("The pull request worktree was not created.");
+            }
+            return {
+              workspace: {
+                kind: "existing-worktree" as const,
+                branch: prepared.branch,
+                worktreePath: prepared.worktreePath,
+              },
+            };
+          }
+          return {
+            workspace: { kind: "existing-local" as const, branch: prepared.branch },
+          };
+        },
       });
-      if (!threadId) throw new Error("Could not create a draft thread for this pull request.");
+      if (!threadId) {
+        if (superseded) return;
+        throw new Error("Could not create a draft thread for this pull request.");
+      }
       appendComposerPromptText(threadId, prompt);
     } catch (error) {
       setOperationError(

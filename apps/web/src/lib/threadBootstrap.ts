@@ -29,9 +29,24 @@ export interface NewThreadOptions {
   temporary?: boolean;
   provider?: ProviderKind;
   fresh?: boolean;
-  /** Runs after this fresh request owns its project navigation slot and before draft staging. */
-  prepareFreshCreate?: () => Promise<void>;
+  /**
+   * Runs after this request owns the shared navigation surface and before any draft lookup or
+   * mutation. Returning false cancels the request; a workspace result supplies an intent that is
+   * only known after asynchronous preparation (for example, PR worktree preparation).
+   */
+  prepareNavigation?: (
+    ownership: NewThreadNavigationOwnership,
+  ) => Promise<NewThreadPreparationResult>;
 }
+
+export interface NewThreadNavigationOwnership {
+  readonly isCurrent: () => boolean;
+}
+
+export type NewThreadPreparationResult =
+  | void
+  | false
+  | { readonly workspace: NewThreadWorkspaceIntent };
 
 export type NewThreadWorkspaceIntent =
   | { readonly kind: "project-default" }
@@ -50,8 +65,27 @@ export interface ResolvedNewThreadWorkspace {
   workspaceOrigin: DraftThreadWorkspaceOrigin;
 }
 
+const navigationCallbackIds = new WeakMap<(...args: never[]) => unknown, number>();
+let nextNavigationCallbackId = 1;
+
+function navigationCallbackKey(callback: ((...args: never[]) => unknown) | undefined): string {
+  if (!callback) {
+    return "none";
+  }
+  const existing = navigationCallbackIds.get(callback);
+  if (existing !== undefined) {
+    return String(existing);
+  }
+  const created = nextNavigationCallbackId;
+  nextNavigationCallbackId += 1;
+  navigationCallbackIds.set(callback, created);
+  return String(created);
+}
+
 export function newThreadNavigationRequestKey(input: {
-  readonly hasCustomSearch: boolean;
+  readonly customSearch?:
+    | ((previous: Record<string, unknown>) => Record<string, unknown>)
+    | undefined;
   readonly options?: NewThreadOptions | undefined;
 }): string {
   const workspace = input.options?.workspace ?? { kind: "project-default" as const };
@@ -64,7 +98,8 @@ export function newThreadNavigationRequestKey(input: {
     input.options?.provider ?? "",
     input.options?.temporary === true ? "temporary" : "durable",
     input.options?.fresh === true ? "fresh" : "reuse-eligible",
-    input.hasCustomSearch ? "custom-search" : "default-search",
+    `search:${navigationCallbackKey(input.customSearch)}`,
+    `prepare:${navigationCallbackKey(input.options?.prepareNavigation)}`,
   ].join("\u0000");
 }
 

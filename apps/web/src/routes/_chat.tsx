@@ -388,23 +388,26 @@ function ChatRouteGlobalShortcuts() {
         if (!target) return;
         event.preventDefault();
         event.stopPropagation();
-        void (async () => {
-          const providerAvailability = await resolveProviderSendAvailabilityWithRefresh({
-            provider,
-            statuses: providerStatuses,
-            refreshStatuses: () => refreshProviderStatuses({ silent: true }),
-          });
-          if (!providerAvailability.usable) {
-            transientAlertManager.add({
-              type: "error",
-              title: providerAvailability.unavailableReason,
+        void handleNewThread(target.projectId, {
+          provider,
+          prepareNavigation: async (ownership) => {
+            const providerAvailability = await resolveProviderSendAvailabilityWithRefresh({
+              provider,
+              statuses: providerStatuses,
+              refreshStatuses: () => refreshProviderStatuses({ silent: true }),
             });
-            return;
-          }
-          await handleNewThread(target.projectId, {
-            provider,
-          });
-        })();
+            if (!ownership.isCurrent()) {
+              return false;
+            }
+            if (!providerAvailability.usable) {
+              transientAlertManager.add({
+                type: "error",
+                title: providerAvailability.unavailableReason,
+              });
+              return false;
+            }
+          },
+        });
         return;
       }
 

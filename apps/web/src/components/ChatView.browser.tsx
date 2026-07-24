@@ -5572,6 +5572,123 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("does not let a delayed provider preflight replace a later reused draft", async () => {
+    const reusableDraftThreadId = ThreadId.makeUnsafe("thread-provider-preflight-race");
+    const unavailableProvider = {
+      provider: "codex" as const,
+      status: "error" as const,
+      available: false,
+      authStatus: "unauthenticated" as const,
+      message: "Codex is temporarily unavailable.",
+      checkedAt: NOW_ISO,
+    };
+    const availableProvider = {
+      provider: "codex" as const,
+      status: "ready" as const,
+      available: true,
+      authStatus: "authenticated" as const,
+      checkedAt: NOW_ISO,
+      runtime: {
+        source: "system" as const,
+        managedVersion: null,
+        canInstall: false,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: null,
+      },
+    };
+    let resolveProviderRefresh!: (value: { providers: [typeof availableProvider] }) => void;
+    const providerRefresh = new Promise<{ providers: [typeof availableProvider] }>((resolve) => {
+      resolveProviderRefresh = resolve;
+    });
+    const refreshProviders = vi.fn<NativeApi["server"]["refreshProviders"]>(() => providerRefresh);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-provider-preflight-race" as MessageId,
+        targetText: "provider preflight race",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [unavailableProvider],
+          keybindings: [
+            {
+              command: "chat.newCodex",
+              shortcut: {
+                key: "c",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        server: {
+          ...api.server,
+          refreshProviders,
+        },
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      await waitForLayout();
+      useComposerDraftStore.getState().setProjectDraftThreadId(PROJECT_ID, reusableDraftThreadId, {
+        entryPoint: "chat",
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        workspaceOrigin: "default",
+      });
+      useComposerDraftStore.getState().setPrompt(reusableDraftThreadId, "later draft prompt");
+
+      await dispatchThreadShortcut("c");
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalled());
+
+      await page.getByTestId("new-thread-button").click();
+      useComposerDraftStore.getState().addFiles(reusableDraftThreadId, [
+        {
+          type: "file",
+          id: "provider-race-file",
+          name: "provider-race.txt",
+          mimeType: "text/plain",
+          sizeBytes: 5,
+          file: new File(["notes"], "provider-race.txt", { type: "text/plain" }),
+        },
+      ]);
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await waitForDraftNavigationIdle(draftNavigationSlotKey());
+
+      expect(mounted.router.state.location.pathname).toBe(`/${reusableDraftThreadId}`);
+      expect(
+        useComposerDraftStore.getState().draftsByThreadId[reusableDraftThreadId],
+      ).toMatchObject({
+        prompt: "later draft prompt",
+        files: [expect.objectContaining({ id: "provider-race-file" })],
+      });
+      expect(
+        useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID, "chat")?.threadId,
+      ).toBe(reusableDraftThreadId);
+    } finally {
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await waitForDraftNavigationIdle(draftNavigationSlotKey());
+      await mounted.cleanup();
+    }
+  });
+
   it("starts one fresh thread in the exact worktree from repeated context-menu actions", async () => {
     const contextMenuShow = vi.fn(
       async (_items: Parameters<NativeApi["contextMenu"]["show"]>[0]) => "new-thread-in-workspace",
@@ -5646,8 +5763,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const projectValidationCallCount = () =>
         branchLookup.mock.calls.filter(([input]) => input.cwd === "/repo/project").length;
       defaultNavigationOperation = runDraftNavigationOnce(
-        draftNavigationSlotKey(PROJECT_ID, "chat"),
-        newThreadNavigationRequestKey({ hasCustomSearch: false }),
+        draftNavigationSlotKey(),
+        newThreadNavigationRequestKey({}),
         () => defaultNavigationBlocker.promise,
       );
       const threadRow = await waitForElement(
@@ -5808,7 +5925,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       ]);
 
       resolveExactValidation(exactWorktreeBranchResult);
-      await waitForDraftNavigationIdle(draftNavigationSlotKey(PROJECT_ID, "chat"));
+      await waitForDraftNavigationIdle(draftNavigationSlotKey());
       await waitForURL(
         mounted.router,
         (path) => path === `/${reusableDraftThreadId}`,
@@ -5833,7 +5950,168 @@ describe("ChatView timeline estimator parity (full app)", () => {
       expect(document.body.textContent).not.toContain("Unable to start thread");
     } finally {
       resolveExactValidation(exactWorktreeBranchResult);
-      await waitForDraftNavigationIdle(draftNavigationSlotKey(PROJECT_ID, "chat"));
+      await waitForDraftNavigationIdle(draftNavigationSlotKey());
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps a later terminal intent and preserves chat attachments across entry points", async () => {
+    const reusableChatDraftId = ThreadId.makeUnsafe("thread-cross-entry-chat-draft");
+    const reusableTerminalDraftId = ThreadId.makeUnsafe("thread-cross-entry-terminal-draft");
+    const contextMenuShow = vi.fn(
+      async (_items: Parameters<NativeApi["contextMenu"]["show"]>[0]) => "new-thread-in-workspace",
+    );
+    const exactWorktreeBranchResult: Awaited<ReturnType<NativeApi["git"]["listBranches"]>> = {
+      isRepo: true,
+      hasOriginRemote: true,
+      branches: [
+        {
+          name: "feature/exact-worktree",
+          current: false,
+          isDefault: false,
+          worktreePath: "/repo/worktrees/exact-worktree",
+        },
+      ],
+    };
+    let resolveExactValidation!: (
+      value: Awaited<ReturnType<NativeApi["git"]["listBranches"]>>,
+    ) => void;
+    const exactValidation = new Promise<Awaited<ReturnType<NativeApi["git"]["listBranches"]>>>(
+      (resolve) => {
+        resolveExactValidation = resolve;
+      },
+    );
+    const branchLookup = vi.fn<NativeApi["git"]["listBranches"]>(
+      async () => exactWorktreeBranchResult,
+    );
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-cross-entry-race" as MessageId,
+      targetText: "cross entry race",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...baseSnapshot,
+        threads: baseSnapshot.threads.map((thread) =>
+          Object.assign({}, thread, {
+            envMode: "worktree" as const,
+            branch: "feature/exact-worktree",
+            worktreePath: "/repo/worktrees/exact-worktree",
+          }),
+        ),
+      },
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "chat.newTerminal",
+              shortcut: {
+                key: "t",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        contextMenu: {
+          ...api.contextMenu,
+          show: contextMenuShow as NativeApi["contextMenu"]["show"],
+        },
+        git: {
+          ...api.git,
+          listBranches: branchLookup,
+        },
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      useStore.getState().setProjectExpanded(PROJECT_ID, true);
+      await waitForLayout();
+      const threadRow = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-thread-entry-point]")).find(
+            (row) => row.textContent?.includes(THREAD_TITLE),
+          ) ?? null,
+        "Unable to find the current thread row.",
+      );
+      useComposerDraftStore.getState().setProjectDraftThreadId(PROJECT_ID, reusableChatDraftId, {
+        entryPoint: "chat",
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        workspaceOrigin: "default",
+      });
+      useComposerDraftStore.getState().setPrompt(reusableChatDraftId, "cross-entry prompt");
+      useComposerDraftStore.getState().addFiles(reusableChatDraftId, [
+        {
+          type: "file",
+          id: "cross-entry-notes",
+          name: "cross-entry.txt",
+          mimeType: "text/plain",
+          sizeBytes: 5,
+          file: new File(["notes"], "cross-entry.txt", { type: "text/plain" }),
+        },
+      ]);
+      useComposerDraftStore
+        .getState()
+        .setProjectDraftThreadId(PROJECT_ID, reusableTerminalDraftId, {
+          entryPoint: "terminal",
+          envMode: "local",
+          branch: null,
+          worktreePath: null,
+          workspaceOrigin: "default",
+        });
+      branchLookup.mockClear();
+      branchLookup.mockImplementation(() => exactValidation);
+
+      threadRow.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 24,
+          clientY: 24,
+        }),
+      );
+      await vi.waitFor(() => expect(branchLookup).toHaveBeenCalledTimes(1));
+
+      await dispatchTerminalThreadShortcut();
+      resolveExactValidation(exactWorktreeBranchResult);
+      await waitForDraftNavigationIdle(draftNavigationSlotKey());
+
+      expect(
+        useComposerDraftStore.getState().projectDraftThreadIdByProjectId[`${PROJECT_ID}::terminal`],
+      ).toBe(reusableTerminalDraftId);
+      expect(
+        useComposerDraftStore.getState().getDraftThread(reusableTerminalDraftId),
+      ).toMatchObject({
+        entryPoint: "terminal",
+        promotedTo: reusableTerminalDraftId,
+      });
+      expect(mounted.router.state.location.pathname).toBe(`/${reusableTerminalDraftId}`);
+      expect(
+        useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID, "chat")?.threadId,
+      ).toBe(reusableChatDraftId);
+      expect(useComposerDraftStore.getState().draftsByThreadId[reusableChatDraftId]).toMatchObject({
+        prompt: "cross-entry prompt",
+        files: [expect.objectContaining({ id: "cross-entry-notes", name: "cross-entry.txt" })],
+      });
+    } finally {
+      resolveExactValidation(exactWorktreeBranchResult);
+      await waitForDraftNavigationIdle(draftNavigationSlotKey());
       await mounted.cleanup();
     }
   });

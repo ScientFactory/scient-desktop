@@ -3845,7 +3845,7 @@ export default function Sidebar() {
           // the newer owner is responsible for the visible destination.
           await handleNewThread(thread.projectId, {
             fresh: true,
-            prepareFreshCreate: async () => {
+            prepareNavigation: async () => {
               const currentProjectCwd =
                 useStore.getState().projects.find((project) => project.id === thread.projectId)
                   ?.cwd ?? null;

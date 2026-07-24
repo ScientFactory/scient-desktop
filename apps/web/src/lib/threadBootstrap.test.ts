@@ -15,6 +15,16 @@ import {
 
 const PROJECT_ID = ProjectId.makeUnsafe("project-bootstrap");
 const THREAD_ID = ThreadId.makeUnsafe("thread-bootstrap");
+const FIRST_NAVIGATION_SEARCH = (previous: Record<string, unknown>) => ({
+  ...previous,
+  editor: "first",
+});
+const SECOND_NAVIGATION_SEARCH = (previous: Record<string, unknown>) => ({
+  ...previous,
+  editor: "second",
+});
+const FIRST_NAVIGATION_PREPARATION = async () => undefined;
+const SECOND_NAVIGATION_PREPARATION = async () => undefined;
 
 function modelSelection(
   provider: "codex" | "claudeAgent",
@@ -72,16 +82,14 @@ function makeComposerDraftState(
 
 describe("threadBootstrap", () => {
   it("uses distinct navigation request keys for default and exact workspace intents", () => {
-    const defaultKey = newThreadNavigationRequestKey({ hasCustomSearch: false });
+    const defaultKey = newThreadNavigationRequestKey({});
     expect(
       newThreadNavigationRequestKey({
-        hasCustomSearch: false,
         options: { workspace: { kind: "project-default" } },
       }),
     ).toBe(defaultKey);
     expect(
       newThreadNavigationRequestKey({
-        hasCustomSearch: false,
         options: {
           workspace: {
             kind: "existing-worktree",
@@ -93,10 +101,36 @@ describe("threadBootstrap", () => {
     ).not.toBe(defaultKey);
     expect(
       newThreadNavigationRequestKey({
-        hasCustomSearch: false,
         options: { fresh: true },
       }),
     ).not.toBe(defaultKey);
+  });
+
+  it("does not coalesce distinct custom-search or preparation callbacks", () => {
+    expect(newThreadNavigationRequestKey({ customSearch: FIRST_NAVIGATION_SEARCH })).toBe(
+      newThreadNavigationRequestKey({ customSearch: FIRST_NAVIGATION_SEARCH }),
+    );
+    expect(newThreadNavigationRequestKey({ customSearch: FIRST_NAVIGATION_SEARCH })).not.toBe(
+      newThreadNavigationRequestKey({ customSearch: SECOND_NAVIGATION_SEARCH }),
+    );
+    expect(
+      newThreadNavigationRequestKey({
+        options: { prepareNavigation: FIRST_NAVIGATION_PREPARATION },
+      }),
+    ).toBe(
+      newThreadNavigationRequestKey({
+        options: { prepareNavigation: FIRST_NAVIGATION_PREPARATION },
+      }),
+    );
+    expect(
+      newThreadNavigationRequestKey({
+        options: { prepareNavigation: FIRST_NAVIGATION_PREPARATION },
+      }),
+    ).not.toBe(
+      newThreadNavigationRequestKey({
+        options: { prepareNavigation: SECOND_NAVIGATION_PREPARATION },
+      }),
+    );
   });
 
   it("resolves project defaults and exact existing workspaces without partial states", () => {
