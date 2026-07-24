@@ -821,7 +821,7 @@ describe("wsNativeApi", () => {
     expect(requestMock).not.toHaveBeenCalled();
   });
 
-  it("keeps a blank fallback browser tab after closing the last tab", async () => {
+  it("closes the fallback browser after closing the last tab", async () => {
     const { createWsNativeApi } = await import("./wsNativeApi");
     const api = createWsNativeApi();
     const threadId = ThreadId.makeUnsafe("thread-1");
@@ -831,10 +831,9 @@ describe("wsNativeApi", () => {
     expect(tabId).toBeTruthy();
     const nextState = await api.browser.closeTab({ threadId, tabId: tabId ?? "" });
 
-    expect(nextState.open).toBe(true);
-    expect(nextState.tabs).toHaveLength(1);
-    expect(nextState.activeTabId).toBe(nextState.tabs[0]?.id);
-    expect(nextState.tabs[0]?.url).toBe("about:blank");
+    expect(nextState.open).toBe(false);
+    expect(nextState.tabs).toEqual([]);
+    expect(nextState.activeTabId).toBeNull();
   });
 
   it("forwards context menu metadata to desktop bridge", async () => {
