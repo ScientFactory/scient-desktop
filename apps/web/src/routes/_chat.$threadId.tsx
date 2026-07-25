@@ -2622,6 +2622,7 @@ function SingleChatSurface(props: {
                 tooltip={dockFileExplorerOpen ? "Hide file explorer" : "Show file explorer"}
                 tooltipSide="bottom"
                 aria-pressed={dockFileExplorerOpen}
+                data-pressed={dockFileExplorerOpen ? "" : undefined}
                 className={DOCK_HEADER_ICON_BUTTON_CLASS}
                 onClick={handleToggleDockFileExplorer}
               >
