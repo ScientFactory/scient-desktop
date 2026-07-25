@@ -9324,14 +9324,19 @@ export default function ChatView({
     [moveDraftThreadToProject, scheduleComposerFocus, threadId],
   );
 
-  useEffect(
-    () => () => {
+  useLayoutEffect(() => {
+    // ChatView is keyed by pane scope and remains mounted when that pane changes
+    // threads. Invalidate requests during the commit boundary so an operation
+    // started for the previous draft cannot mutate it after route navigation.
+    emptyDraftProjectRequestRef.current += 1;
+    return () => {
       emptyDraftProjectRequestRef.current += 1;
-    },
-    [],
-  );
+    };
+  }, [threadId]);
 
   const handleResetWorkspaceToHome = useCallback(() => {
+    const requestId = emptyDraftProjectRequestRef.current + 1;
+    emptyDraftProjectRequestRef.current = requestId;
     if (isLocalDraftThread) {
       if (isStudioContainer) {
         return (async () => {
@@ -9343,6 +9348,7 @@ export default function ChatView({
           if (!studioProjectId) {
             throw new Error("Unable to prepare Studio.");
           }
+          if (requestId !== emptyDraftProjectRequestRef.current) return;
           const api = readNativeApi();
           if (!api) {
             throw new Error("App is still connecting. Try again in a moment.");
@@ -9355,8 +9361,10 @@ export default function ChatView({
             if (!project || !snapshot) {
               throw new Error(PROJECT_CREATE_SYNC_ERROR);
             }
+            if (requestId !== emptyDraftProjectRequestRef.current) return;
             syncServerShellSnapshot(snapshot);
           }
+          if (requestId !== emptyDraftProjectRequestRef.current) return;
           moveEmptyDraftToLocalProject(studioProjectId);
         })();
       }
@@ -9369,6 +9377,7 @@ export default function ChatView({
           if (!homeProjectId) {
             throw new Error("Unable to prepare a normal chat.");
           }
+          if (requestId !== emptyDraftProjectRequestRef.current) return;
           const api = readNativeApi();
           if (!api) {
             throw new Error("App is still connecting. Try again in a moment.");
@@ -9381,8 +9390,10 @@ export default function ChatView({
             if (!project || !snapshot) {
               throw new Error(PROJECT_CREATE_SYNC_ERROR);
             }
+            if (requestId !== emptyDraftProjectRequestRef.current) return;
             syncServerShellSnapshot(snapshot);
           }
+          if (requestId !== emptyDraftProjectRequestRef.current) return;
           moveEmptyDraftToLocalProject(homeProjectId);
         })();
       }
@@ -9432,6 +9443,7 @@ export default function ChatView({
 
   const handleSelectWorkspaceRoot = useCallback(
     (workspaceRoot: string) => {
+      emptyDraftProjectRequestRef.current += 1;
       if (isLocalDraftThread) {
         setDraftThreadContext(threadId, {
           envMode: "worktree",

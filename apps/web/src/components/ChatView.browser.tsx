@@ -4719,7 +4719,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       const newThreadId = newThreadPath.slice(1) as ThreadId;
 
-      const projectPickerTrigger = page.getByTestId("project-picker-trigger");
+      const projectPickerTrigger = page.getByTestId("empty-landing-heading-project-trigger");
       await expect.element(projectPickerTrigger).toBeInTheDocument();
       await projectPickerTrigger.click();
       await page.getByText("Don't work in a project").click();
@@ -4812,7 +4812,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
-      await expect.element(page.getByTestId("project-picker-trigger")).toBeInTheDocument();
+      await expect
+        .element(page.getByTestId("empty-landing-heading-project-trigger"))
+        .toBeInTheDocument();
       await expect.element(page.getByRole("button", { name: "Local" })).toBeInTheDocument();
       await new Promise<void>((resolve) => {
         requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
@@ -4936,6 +4938,99 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       expect(mounted.router.state.location.pathname).toBe(newThreadPath);
     } finally {
+      if (previousNativeApi) {
+        Object.defineProperty(window, "nativeApi", {
+          configurable: true,
+          value: previousNativeApi,
+        });
+      } else {
+        Reflect.deleteProperty(window, "nativeApi");
+      }
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not let late project creation mutate a draft after same-pane navigation", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-project-picker-navigation-race" as MessageId,
+        targetText: "project picker navigation race",
+      }),
+    });
+    const previousNativeApi = window.nativeApi;
+    const wsNativeApi = readNativeApi();
+    expect(wsNativeApi).toBeDefined();
+    const pickFolder = vi.fn(async () => "/repo/slow-navigation-project");
+    let createdProjectId: ProjectId | null = null;
+    let slowCreateSettled = false;
+    let releaseSlowCreate!: () => void;
+    const slowCreateGate = new Promise<void>((resolve) => {
+      releaseSlowCreate = resolve;
+    });
+    const dispatchCommand = vi.fn(async (command: unknown) => {
+      wsRequests.push({
+        _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+        command,
+      });
+      if (recordProjectCreateCommand(command)) {
+        if (command && typeof command === "object" && "projectId" in command) {
+          createdProjectId = command.projectId as ProjectId;
+        }
+        await slowCreateGate;
+        slowCreateSettled = true;
+        return { sequence: fixture.snapshot.snapshotSequence };
+      }
+      return { sequence: fixture.snapshot.snapshotSequence + 1 };
+    });
+    Object.defineProperty(window, "nativeApi", {
+      configurable: true,
+      value: {
+        ...wsNativeApi,
+        dialogs: { ...wsNativeApi?.dialogs, pickFolder },
+        orchestration: {
+          ...wsNativeApi?.orchestration,
+          dispatchCommand,
+          getShellSnapshot: vi.fn(async () => createShellSnapshotFromReadModel(fixture.snapshot)),
+        },
+      },
+    });
+
+    try {
+      await page.getByLabelText("Create new thread in Project").click();
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      await page.getByTestId("empty-landing-heading-project-trigger").click();
+      await page.getByText("New project").click();
+      await vi.waitFor(() => expect(createdProjectId).not.toBeNull());
+
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: THREAD_ID },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${THREAD_ID}`,
+        "Existing thread should be selected before project creation settles.",
+      );
+
+      releaseSlowCreate();
+      await vi.waitFor(() => {
+        expect(slowCreateSettled).toBe(true);
+      });
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        projectId: PROJECT_ID,
+      });
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)?.projectId).not.toBe(
+        createdProjectId,
+      );
+    } finally {
+      releaseSlowCreate();
       if (previousNativeApi) {
         Object.defineProperty(window, "nativeApi", {
           configurable: true,
