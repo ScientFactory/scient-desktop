@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  attachMacDiskImageForInspection,
   assertPackagedLaunchCommandSafety,
   assertWindowsReleaseSignatureDetails,
   createPackagedDesktopSmokeEnvironment,
@@ -375,24 +376,64 @@ describe("packaged desktop startup verification", () => {
     const spawnProcess = vi.fn((_command, _args, options) => {
       const child = new EventEmitter() as ChildProcess;
       Object.assign(child, {
+        exitCode: null,
+        pid: 42,
+        signalCode: null,
         stdout: new EventEmitter(),
         stderr: new EventEmitter(),
       });
-      options.signal?.addEventListener("abort", () => child.emit("error", options.signal?.reason), {
-        once: true,
-      });
       return child;
     }) as unknown as typeof import("node:child_process").spawn;
+    const terminateProcess = vi.fn(async (child: ChildProcess) => {
+      Object.assign(child, { exitCode: null, signalCode: "SIGTERM" });
+      child.emit("exit", null, "SIGTERM");
+      child.emit("close", null, "SIGTERM");
+    });
 
     const command = runPackagedPreparationCommand("ditto", ["hung.zip"], {
       signal: termination.abortSignal,
       spawnProcess,
+      terminateProcess,
     });
     source.emit("SIGTERM");
 
     await expect(command).rejects.toThrow("interrupted by SIGTERM");
+    expect(terminateProcess).toHaveBeenCalledOnce();
     expect(termination.abortSignal.aborted).toBe(true);
     termination.dispose();
+  });
+
+  it("attempts to detach a partially mounted DMG after attach fails", async () => {
+    const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+    const attachError = new Error("attach interrupted");
+    const runCommand = vi.fn(async (command: string, args: ReadonlyArray<string>) => {
+      calls.push({ command, args });
+      if (args[0] === "attach") throw attachError;
+      return "";
+    }) as unknown as typeof runPackagedPreparationCommand;
+
+    await expect(
+      attachMacDiskImageForInspection(
+        "/tmp/Scient.dmg",
+        "/tmp/scient-mount",
+        new AbortController().signal,
+        runCommand,
+      ),
+    ).rejects.toBe(attachError);
+    expect(calls).toEqual([
+      {
+        command: "hdiutil",
+        args: [
+          "attach",
+          "-readonly",
+          "-nobrowse",
+          "-mountpoint",
+          "/tmp/scient-mount",
+          "/tmp/Scient.dmg",
+        ],
+      },
+      { command: "hdiutil", args: ["detach", "-force", "/tmp/scient-mount"] },
+    ]);
   });
 
   it("rejects startup proof when the process handle closes before the exit event arrives", async () => {
@@ -465,7 +506,7 @@ describe("packaged desktop startup verification", () => {
       signalCode: null,
     } as unknown as ChildProcess;
     const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({
-      status: 1,
+      status: 0,
     }));
     await expect(
       terminateProcessTree(
@@ -481,6 +522,22 @@ describe("packaged desktop startup verification", () => {
     ).rejects.toThrow("survived Windows cleanup");
     expect(runTaskkill.mock.calls.map(([pid]) => pid)).toEqual([42]);
     expect(runTaskkill.mock.calls.map(([, timeoutMs]) => timeoutMs)).toEqual([5_000]);
+  });
+
+  it("fails Windows cleanup when taskkill fails even if observed targets disappear", async () => {
+    const child = {
+      exitCode: null,
+      pid: 42,
+      signalCode: null,
+    } as unknown as ChildProcess;
+    await expect(
+      terminateProcessTree(child, {
+        platform: "win32",
+        childIsAlive: () => true,
+        runTaskkill: () => ({ status: 1 }),
+        waitForTargetsExit: async () => true,
+      }),
+    ).rejects.toThrow("lost authoritative tree termination");
   });
 
   it("waits for recorded Windows backends without signaling reused PIDs after root exit", async () => {

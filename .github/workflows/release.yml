@@ -387,6 +387,7 @@ jobs:
         shell: bash
         env:
           SCIENT_PACKAGED_STARTUP_DIAGNOSTICS_DIR: ${{ github.workspace }}/packaged-startup-diagnostics
+          SCIENT_WINDOWS_PUBLISHER_SUBJECT: ${{ vars.SCIENT_WINDOWS_PUBLISHER_SUBJECT }}
         run: |
           node scripts/verify-packaged-desktop-startup.ts \
             --assets-dir release-publish \
@@ -395,7 +396,7 @@ jobs:
             --version "${{ needs.preflight.outputs.version }}" \
             --commit "${{ github.sha }}" \
             --allow-unsigned-windows "${{ needs.preflight.outputs.publish_release != 'true' || needs.preflight.outputs.unsigned_release == 'true' }}" \
-            --windows-publisher-subject "${{ vars.SCIENT_WINDOWS_PUBLISHER_SUBJECT }}"
+            --windows-publisher-subject "$SCIENT_WINDOWS_PUBLISHER_SUBJECT"
 
       - name: Upload packaged startup failure diagnostics
         if: ${{ failure() && matrix.platform != 'linux' }}

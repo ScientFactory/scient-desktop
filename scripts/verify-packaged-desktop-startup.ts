@@ -150,6 +150,11 @@ export function parsePackagedDesktopStartupArgs(
 }
 
 const PREPARATION_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024;
+const PREPARATION_CLOSE_TIMEOUT_MS = 2_000;
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+}
 
 export async function runPackagedPreparationCommand(
   command: string,
@@ -158,13 +163,14 @@ export async function runPackagedPreparationCommand(
     readonly cwd?: string;
     readonly signal: AbortSignal;
     readonly spawnProcess?: typeof spawn;
+    readonly terminateProcess?: (child: ChildProcess) => Promise<void>;
   },
 ): Promise<string> {
   if (options.signal.aborted) throw options.signal.reason;
   const child = (options.spawnProcess ?? spawn)(command, [...args], {
     cwd: options.cwd,
+    detached: process.platform !== "win32",
     shell: false,
-    signal: options.signal,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
@@ -178,28 +184,67 @@ export async function runPackagedPreparationCommand(
   child.stderr?.on("data", (chunk) => {
     stderr = append(stderr, chunk);
   });
-  await new Promise<void>((resolveCommand, rejectCommand) => {
-    let settled = false;
-    const settle = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      if (error) rejectCommand(error);
-      else resolveCommand();
-    };
-    child.once("error", (error) => settle(error));
-    child.once("exit", (code, signal) => {
-      if (code === 0) {
-        settle();
-        return;
-      }
-      const detail = [stdout, stderr].filter(Boolean).join("\n").trim();
-      settle(
-        new Error(
-          `${command} ${args.join(" ")} failed with exit ${code ?? "unknown"}${signal ? ` signal ${signal}` : ""}.${detail ? `\n${detail}` : ""}`,
-        ),
-      );
+  let spawnError: Error | null = null;
+  const closed = new Promise<{
+    readonly code: number | null;
+    readonly signal: NodeJS.Signals | null;
+  }>((resolveClosed) => {
+    child.once("error", (error) => {
+      spawnError = error;
+    });
+    child.once("close", (code, signal) => {
+      resolveClosed({ code, signal });
     });
   });
+  let abortReason: unknown = null;
+  let abortCleanup: Promise<void> | null = null;
+  let resolveAbortStarted!: () => void;
+  const abortStarted = new Promise<void>((resolveAbort) => {
+    resolveAbortStarted = resolveAbort;
+  });
+  const handleAbort = () => {
+    abortReason = options.signal.reason ?? new Error(`${command} preparation was aborted.`);
+    abortCleanup ??= Promise.resolve().then(() =>
+      (options.terminateProcess ?? terminateProcessTree)(child),
+    );
+    resolveAbortStarted();
+  };
+  options.signal.addEventListener("abort", handleAbort, { once: true });
+  if (options.signal.aborted) handleAbort();
+  let exitOutcome: { readonly code: number | null; readonly signal: NodeJS.Signals | null } | null =
+    null;
+  try {
+    exitOutcome = await Promise.race([closed, abortStarted.then(() => null)]);
+    if (abortCleanup) {
+      try {
+        await abortCleanup;
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [abortReason, cleanupError],
+          `${command} preparation was interrupted and cleanup failed.`,
+        );
+      }
+      exitOutcome = await Promise.race([
+        closed,
+        delay(PREPARATION_CLOSE_TIMEOUT_MS).then(() => {
+          throw new Error(
+            `${command} did not close its stdio within ${PREPARATION_CLOSE_TIMEOUT_MS}ms after cleanup.`,
+          );
+        }),
+      ]);
+      throw abortReason;
+    }
+    exitOutcome ??= await closed;
+  } finally {
+    options.signal.removeEventListener("abort", handleAbort);
+  }
+  if (spawnError) throw spawnError;
+  if (exitOutcome.code !== 0) {
+    const detail = [stdout, stderr].filter(Boolean).join("\n").trim();
+    throw new Error(
+      `${command} ${args.join(" ")} failed with exit ${exitOutcome.code ?? "unknown"}${exitOutcome.signal ? ` signal ${exitOutcome.signal}` : ""}.${detail ? `\n${detail}` : ""}`,
+    );
+  }
   return stdout.trim();
 }
 
@@ -267,6 +312,41 @@ export interface PackagedDesktopLaunchCommand {
   readonly cleanup?: () => Promise<void>;
 }
 
+type PackagedPreparationCommandRunner = typeof runPackagedPreparationCommand;
+
+export async function attachMacDiskImageForInspection(
+  archive: string,
+  mountPoint: string,
+  signal: AbortSignal,
+  runCommand: PackagedPreparationCommandRunner = runPackagedPreparationCommand,
+): Promise<() => Promise<void>> {
+  try {
+    await runCommand(
+      "hdiutil",
+      ["attach", "-readonly", "-nobrowse", "-mountpoint", mountPoint, archive],
+      { signal },
+    );
+  } catch (attachError) {
+    // An interrupted attach can mount the image before reporting failure. The
+    // command runner fully reaps the helper before rejection, so this detach
+    // cannot race a still-running attach.
+    try {
+      await runCommand("hdiutil", ["detach", "-force", mountPoint], {
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch {
+      // A detach failure is expected when the image never mounted. Preserve
+      // the authoritative attach/cancellation error.
+    }
+    throw attachError;
+  }
+  return async () => {
+    await runCommand("hdiutil", ["detach", mountPoint], {
+      signal: AbortSignal.timeout(30_000),
+    });
+  };
+}
+
 export function assertPackagedLaunchCommandSafety(launch: PackagedDesktopLaunchCommand): void {
   const forbiddenArgument = launch.args.find(
     (argument) => argument === "--no-sandbox" || argument.startsWith("--no-sandbox="),
@@ -287,22 +367,12 @@ async function prepareMacLaunch(
 ): Promise<PackagedDesktopLaunchCommand> {
   const archive = resolveExactPackagedDesktopStartupAsset(assetsDirectory, expectedAssetName);
   const isDiskImage = expectedAssetName.endsWith(".dmg");
-  if (isDiskImage) {
-    await runPackagedPreparationCommand(
-      "hdiutil",
-      ["attach", "-readonly", "-nobrowse", "-mountpoint", extractionRoot, archive],
-      { signal },
-    );
-  } else {
+  const cleanup = isDiskImage
+    ? await attachMacDiskImageForInspection(archive, extractionRoot, signal)
+    : undefined;
+  if (!isDiskImage) {
     await runPackagedPreparationCommand("ditto", ["-x", "-k", archive, extractionRoot], { signal });
   }
-  const cleanup = isDiskImage
-    ? async () => {
-        await runPackagedPreparationCommand("hdiutil", ["detach", extractionRoot], {
-          signal: AbortSignal.timeout(30_000),
-        });
-      }
-    : undefined;
   try {
     const appBundles = readdirSync(extractionRoot).filter((entry) => entry.endsWith(".app"));
     if (appBundles.length !== 1 || appBundles[0] !== "Scient.app") {
@@ -809,10 +879,15 @@ export async function terminateProcessTree(
         timeout: WINDOWS_TASKKILL_TIMEOUT_MS,
         windowsHide: true,
       });
-    if (await awaitTargetsExit(targets, 5_000)) return;
     const taskkillDetail = taskkillResult.error
       ? `could not start (${taskkillResult.error.message})`
       : `status ${taskkillResult.status ?? "unknown"}`;
+    if (taskkillResult.error || taskkillResult.status !== 0) {
+      throw new Error(
+        `Packaged Windows cleanup lost authoritative tree termination; root ${rootTarget.pid} taskkill ${taskkillDetail}.`,
+      );
+    }
+    if (await awaitTargetsExit(targets, 5_000)) return;
     throw new Error(
       `Packaged process trees survived Windows cleanup; root ${rootTarget.pid} taskkill ${taskkillDetail}.`,
     );
@@ -1173,9 +1248,9 @@ async function verifyPackagedDesktopPayload(
         failures.push({ phase: "failure-diagnostic export failed", error });
       }
     }
-    throw new Error(formatPackagedStartupFailures(failures, output, logTail), {
-      cause: failures[0]?.error,
-    });
+    throw new Error(
+      redactPackagedStartupDiagnostic(formatPackagedStartupFailures(failures, output, logTail)),
+    );
   }
   console.log(
     `Packaged ${options.platform}/${options.arch} startup smoke passed for ${expectedAssetName} from isolated Scient state.`,

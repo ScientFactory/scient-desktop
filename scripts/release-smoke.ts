@@ -331,7 +331,12 @@ function verifyReleaseWorkflowSafety(): void {
     !packagedStartupStep.run.includes("--assets-dir release-publish") ||
     !packagedStartupStep.run.includes('--commit "${{ github.sha }}"') ||
     !packagedStartupStep.run.includes("--allow-unsigned-windows") ||
-    !packagedStartupStep.run.includes("--windows-publisher-subject")
+    !packagedStartupStep.run.includes(
+      '--windows-publisher-subject "$SCIENT_WINDOWS_PUBLISHER_SUBJECT"',
+    ) ||
+    packagedStartupStep.env?.SCIENT_WINDOWS_PUBLISHER_SUBJECT !==
+      "${{ vars.SCIENT_WINDOWS_PUBLISHER_SUBJECT }}" ||
+    packagedStartupStep.run.includes("${{ vars.SCIENT_WINDOWS_PUBLISHER_SUBJECT }}")
   ) {
     throw new Error(
       "Expected exact macOS and Windows packaged-startup proof after collection and before upload.",
