@@ -393,7 +393,15 @@ export async function terminateProcessTree(
   if (targets.length === 0) return;
   const awaitTargetsExit = dependencies.waitForTargetsExit ?? waitForProcessTerminationTargets;
   if (platform === "win32") {
-    const taskkillResults = targets.map((target) => ({
+    // taskkill /T already owns every descendant of a live packaged root. Do
+    // not target recorded backend PIDs again after killing that tree: Windows
+    // could reuse one between calls. When the root has already exited, the
+    // recorded active backend PIDs are the only remaining cleanup authority.
+    const liveRootProcessId = child.pid && childCanStillOwnProcesses ? child.pid : null;
+    const taskkillTargets = liveRootProcessId
+      ? targets.filter((target) => target.pid === liveRootProcessId)
+      : targets;
+    const taskkillResults = taskkillTargets.map((target) => ({
       pid: target.pid,
       result:
         dependencies.runTaskkill?.(target.pid) ??

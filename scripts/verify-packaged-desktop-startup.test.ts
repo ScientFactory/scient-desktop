@@ -228,7 +228,7 @@ describe("packaged desktop startup verification", () => {
     expect(now).toBeGreaterThanOrEqual(1_000);
   });
 
-  it("fails when Windows process-tree cleanup cannot prove exit", async () => {
+  it("targets a live Windows root once and fails when its complete tree survives", async () => {
     const child = {
       exitCode: null,
       pid: 42,
@@ -246,7 +246,7 @@ describe("packaged desktop startup verification", () => {
         [84],
       ),
     ).rejects.toThrow("survived Windows cleanup");
-    expect(runTaskkill.mock.calls.map(([pid]) => pid)).toEqual([42, 84]);
+    expect(runTaskkill.mock.calls.map(([pid]) => pid)).toEqual([42]);
   });
 
   it("still cleans a detached Windows backend after the packaged root exits", async () => {
