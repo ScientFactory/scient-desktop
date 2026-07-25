@@ -61,6 +61,7 @@ import { ensureStaticSnapshot, findAsarArchivePath } from "@synara/shared/static
 import { isBackendReadinessAborted, waitForHttpReady } from "./backendReadiness";
 import {
   buildBackendRestartRecoveryDialog,
+  handleBackendRestartRecoveryAction,
   resolveBackendRestartRecoveryAction,
 } from "./backendRestartRecovery";
 import { resolveBackendNodeArgs } from "./backendNodeOptions";
@@ -2915,23 +2916,16 @@ async function showBackendRestartRecovery(input: {
       }),
     );
     const action = resolveBackendRestartRecoveryAction(response);
-    if (action === "retry") {
-      startBackend();
-      return;
-    }
-    if (action === "open-logs") {
-      try {
-        await openDesktopLogsDirectory(LOG_DIR, (path) => shell.openPath(path));
-      } catch (error: unknown) {
+    await handleBackendRestartRecoveryAction({
+      action,
+      retry: startBackend,
+      openLogs: () => openDesktopLogsDirectory(LOG_DIR, (path) => shell.openPath(path)),
+      onOpenLogsError: (error) => {
         safeConsoleError(`[desktop] unable to open backend logs: ${formatErrorMessage(error)}`);
-      } finally {
-        // Opening diagnostics is optional recovery assistance. Preserve the
-        // retry choices even when the OS cannot reveal the logs directory.
-        if (!isQuitting) {
-          void showBackendRestartRecovery(input);
-        }
-      }
-    }
+      },
+      isQuitting: () => isQuitting,
+      reopen: () => void showBackendRestartRecovery(input),
+    });
   } catch (error: unknown) {
     safeConsoleError(`[desktop] backend recovery dialog failed: ${formatErrorMessage(error)}`);
   }

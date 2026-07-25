@@ -198,6 +198,22 @@ describe("DesktopBackendSupervisor", () => {
     ]);
   });
 
+  it("does not postpone stability forgiveness when readiness repeats for one generation", async () => {
+    const harness = makeHarness({ restartStabilityThresholdMs: 100 });
+    await harness.supervisor.start();
+    harness.children[0]!.exit(1);
+    await vi.advanceTimersByTimeAsync(500);
+
+    harness.supervisor.markReady(2);
+    await vi.advanceTimersByTimeAsync(75);
+    harness.supervisor.markReady(2);
+    await vi.advanceTimersByTimeAsync(25);
+    harness.children[1]!.exit(1);
+    await settleLifecycle();
+
+    expect(harness.restarts.map(({ attempt }) => attempt)).toEqual([0, 0]);
+  });
+
   it("fails closed after rapid crashes reach the rolling-window limit", async () => {
     const onError = vi.fn();
     const harness = makeHarness({ onError });

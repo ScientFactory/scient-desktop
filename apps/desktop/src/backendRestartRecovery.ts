@@ -44,3 +44,28 @@ export function resolveBackendRestartRecoveryAction(
   if (response === 1) return "open-logs";
   return "dismiss";
 }
+
+export async function handleBackendRestartRecoveryAction(input: {
+  action: BackendRestartRecoveryAction;
+  openLogs: () => Promise<void>;
+  retry: () => void;
+  reopen: () => void;
+  isQuitting: () => boolean;
+  onOpenLogsError: (error: unknown) => void;
+}): Promise<void> {
+  if (input.action === "retry") {
+    input.retry();
+    return;
+  }
+  if (input.action !== "open-logs") return;
+
+  try {
+    await input.openLogs();
+  } catch (error: unknown) {
+    input.onOpenLogsError(error);
+  } finally {
+    // Opening diagnostics is optional recovery assistance. Preserve the retry choices even when
+    // the OS cannot reveal the logs directory, unless the app is already shutting down.
+    if (!input.isQuitting()) input.reopen();
+  }
+}

@@ -190,6 +190,12 @@ export class DesktopBackendSupervisor {
     ) {
       return;
     }
+    // Readiness may be observed again when a window is recreated for the same healthy process.
+    // Preserve the original stability deadline so duplicate observations cannot postpone failure
+    // forgiveness and turn a stable generation into a false crash-loop stop.
+    if (this.#stabilityGeneration === generation && this.#stabilityTimer !== null) {
+      return;
+    }
     this.#clearStabilityTimer();
     const thresholdMs =
       this.#options.restartStabilityThresholdMs ?? DEFAULT_RESTART_STABILITY_THRESHOLD_MS;

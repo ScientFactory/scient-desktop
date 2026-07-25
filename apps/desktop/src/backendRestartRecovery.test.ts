@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildBackendRestartRecoveryDialog,
+  handleBackendRestartRecoveryAction,
   resolveBackendRestartRecoveryAction,
 } from "./backendRestartRecovery";
 
@@ -19,6 +20,62 @@ describe("backend restart recovery", () => {
     expect(options.cancelId).toBe(2);
     expect(options.detail).toContain("5 failures in 60 seconds");
     expect(options.detail).toContain("/tmp/scient/server-child.log");
+  });
+
+  it("reopens recovery choices after logs open successfully", async () => {
+    const retry = vi.fn();
+    const reopen = vi.fn();
+    const onOpenLogsError = vi.fn();
+
+    await handleBackendRestartRecoveryAction({
+      action: "open-logs",
+      openLogs: vi.fn(async () => undefined),
+      retry,
+      reopen,
+      isQuitting: () => false,
+      onOpenLogsError,
+    });
+
+    expect(reopen).toHaveBeenCalledOnce();
+    expect(onOpenLogsError).not.toHaveBeenCalled();
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("reports log-open failure and still reopens recovery choices", async () => {
+    const failure = new Error("logs unavailable");
+    const reopen = vi.fn();
+    const onOpenLogsError = vi.fn();
+
+    await handleBackendRestartRecoveryAction({
+      action: "open-logs",
+      openLogs: vi.fn(async () => {
+        throw failure;
+      }),
+      retry: vi.fn(),
+      reopen,
+      isQuitting: () => false,
+      onOpenLogsError,
+    });
+
+    expect(onOpenLogsError).toHaveBeenCalledWith(failure);
+    expect(reopen).toHaveBeenCalledOnce();
+  });
+
+  it("does not reopen recovery choices once quitting begins", async () => {
+    const reopen = vi.fn();
+
+    await handleBackendRestartRecoveryAction({
+      action: "open-logs",
+      openLogs: vi.fn(async () => {
+        throw new Error("logs unavailable");
+      }),
+      retry: vi.fn(),
+      reopen,
+      isQuitting: () => true,
+      onOpenLogsError: vi.fn(),
+    });
+
+    expect(reopen).not.toHaveBeenCalled();
   });
 
   it("maps only explicit actionable buttons to native effects", () => {
