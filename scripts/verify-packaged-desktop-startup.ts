@@ -243,6 +243,7 @@ export function createPackagedDesktopSmokeEnvironment(
     XDG_DATA_HOME: join(root, "xdg-data"),
     XDG_RUNTIME_DIR: join(root, "xdg-runtime"),
     SCIENT_HOME: scientHome,
+    SCIENT_DISABLE_SHELL_ENV_SYNC: "1",
     SYNARA_DISABLE_AUTO_UPDATE: "1",
     SYNARA_TELEMETRY_ENABLED: "false",
     ELECTRON_ENABLE_LOGGING: "1",
@@ -445,26 +446,52 @@ export function readPackagedBackendProcessIds(environment: NodeJS.ProcessEnv | n
   const scientHome = environment?.SCIENT_HOME;
   if (!scientHome) return [];
   const processIds = new Set<number>();
+  let runtimeProcessId: number | null = null;
   try {
     const state = JSON.parse(
       readFileSync(join(scientHome, "userdata", "server-runtime.json"), "utf8"),
     ) as { readonly pid?: unknown };
     if (Number.isInteger(state.pid) && Number(state.pid) > 0) {
-      processIds.add(Number(state.pid));
+      runtimeProcessId = Number(state.pid);
     }
   } catch {
     // Startup may fail before the runtime-state file is durable. The desktop
     // main log records every backend PID immediately after spawn as a fallback.
   }
+  const observedProcessIds = new Set<number>();
+  const activeSpawnedProcessIds = new Set<number>();
   try {
     const log = readFileSync(resolvePackagedDesktopLogPath(environment), "utf8");
-    for (const match of log.matchAll(/backend process spawned generation=\d+ pid=(\d+)/gu)) {
-      const processId = Number(match[1]);
-      if (Number.isInteger(processId) && processId > 0) processIds.add(processId);
+    for (const line of log.split(/\r?\n/gu)) {
+      const spawned = line.match(/backend process spawned generation=\d+ pid=(\d+)/u)?.[1];
+      const exited = line.match(/backend process exited generation=\d+ pid=(\d+)/u)?.[1];
+      if (spawned !== undefined) {
+        const processId = Number(spawned);
+        if (Number.isInteger(processId) && processId > 0) {
+          observedProcessIds.add(processId);
+          activeSpawnedProcessIds.add(processId);
+        }
+      }
+      if (exited !== undefined) {
+        const processId = Number(exited);
+        if (Number.isInteger(processId) && processId > 0) {
+          observedProcessIds.add(processId);
+          activeSpawnedProcessIds.delete(processId);
+        }
+      }
     }
   } catch {
     // No backend was observed yet.
   }
+  // Never signal a PID that the same fresh-run log proves already exited: the
+  // OS may have reused it for an unrelated process by the time cleanup runs.
+  if (
+    runtimeProcessId !== null &&
+    (!observedProcessIds.has(runtimeProcessId) || activeSpawnedProcessIds.has(runtimeProcessId))
+  ) {
+    processIds.add(runtimeProcessId);
+  }
+  for (const processId of activeSpawnedProcessIds) processIds.add(processId);
   return [...processIds];
 }
 

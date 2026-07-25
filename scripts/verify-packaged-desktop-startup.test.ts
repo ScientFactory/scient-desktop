@@ -100,6 +100,7 @@ describe("packaged desktop startup verification", () => {
     expect(env.PROVIDER_AUTH_TOKEN).toBeUndefined();
     expect(env.SCIENT_DEV_ALLOW_NO_SANDBOX).toBeUndefined();
     expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+    expect(env.SCIENT_DISABLE_SHELL_ENV_SYNC).toBe("1");
     expect(env.SYNARA_TELEMETRY_ENABLED).toBe("false");
     expect(env.DISPLAY).toBe(":99");
     for (const name of [
@@ -311,6 +312,29 @@ describe("packaged desktop startup verification", () => {
     );
 
     expect(readPackagedBackendProcessIds(env)).toEqual([126, 42]);
+  });
+
+  it("does not signal a backend PID that the startup log proves already exited", () => {
+    const root = mkdtempSync(join(tmpdir(), "scient-packaged-smoke-pids-test-"));
+    temporaryRoots.push(root);
+    const env = createPackagedDesktopSmokeEnvironment(
+      root,
+      { platform: "mac", version: "1.2.3" },
+      { PATH: process.env.PATH },
+    );
+    const userDataPath = join(env.SCIENT_HOME!, "userdata");
+    mkdirSync(join(userDataPath, "logs"), { recursive: true });
+    writeFileSync(join(userDataPath, "server-runtime.json"), JSON.stringify({ pid: 42 }));
+    writeFileSync(
+      resolvePackagedDesktopLogPath(env),
+      [
+        "backend process spawned generation=1 pid=42",
+        "backend process exited generation=1 pid=42 reason=code=1",
+        "backend process spawned generation=2 pid=84",
+      ].join("\n"),
+    );
+
+    expect(readPackagedBackendProcessIds(env)).toEqual([84]);
   });
 
   it("fails when a POSIX process tree survives TERM and KILL", async () => {

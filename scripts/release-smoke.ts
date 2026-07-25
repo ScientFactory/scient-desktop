@@ -324,6 +324,11 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     packagedStartupVerifier,
+    'SCIENT_DISABLE_SHELL_ENV_SYNC: "1"',
+    "Expected packaged startup verification to prevent host environment rehydration.",
+  );
+  assertContains(
+    packagedStartupVerifier,
     "PACKAGED_SMOKE_INHERITED_ENVIRONMENT_ALLOWLIST",
     "Expected packaged startup verification to inherit only explicit host variables.",
   );

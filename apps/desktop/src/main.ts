@@ -98,7 +98,7 @@ import {
 } from "./resumableUpdateDownload";
 import { hardenElectronUpdater } from "./electronUpdaterSecurity";
 import { ServerListeningDetector } from "./serverListeningDetector";
-import { syncShellEnvironment } from "./syncShellEnvironment";
+import { shouldSynchronizeShellEnvironment, syncShellEnvironment } from "./syncShellEnvironment";
 import {
   type DownloadProgressSample,
   getAutoUpdateDisabledReason,
@@ -201,7 +201,7 @@ import {
 // baseline, so a replacement during startup cannot silently become "normal."
 const startupBundleIdentity = captureStartupBundleIdentity();
 
-syncShellEnvironment();
+if (shouldSynchronizeShellEnvironment()) syncShellEnvironment();
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const SAVE_FILE_CHANNEL = "desktop:save-file";
