@@ -38,6 +38,13 @@ export interface DesktopBackendSupervisorOptions {
     readonly delayMs: number;
     readonly reason: string;
   }) => void;
+  readonly onRestartLimitReached?: (input: {
+    readonly error: DesktopBackendRestartLimitError;
+    readonly failures: number;
+    readonly maxFailures: number;
+    readonly reason: string;
+    readonly windowMs: number;
+  }) => void;
   readonly classifyStartFailure?: (error: unknown) => "fatal" | "retry";
   readonly onFatalStartFailure?: (error: unknown) => void;
   readonly onUnrecoverableGeneration?: (input: {
@@ -50,8 +57,12 @@ export interface DesktopBackendSupervisorOptions {
   readonly clearTimer?: typeof clearTimeout;
   readonly restartBaseDelayMs?: number;
   readonly restartMaxDelayMs?: number;
+  readonly restartMaxFailures?: number;
+  readonly restartFailureWindowMs?: number;
+  readonly restartStabilityThresholdMs?: number;
   readonly gracefulShutdownTimeoutMs?: number;
   readonly forcedExitTimeoutMs?: number;
+  readonly now?: () => number;
 }
 
 interface ActiveGeneration extends DesktopBackendGeneration {
@@ -60,6 +71,13 @@ interface ActiveGeneration extends DesktopBackendGeneration {
 
 const DEFAULT_RESTART_BASE_DELAY_MS = 500;
 const DEFAULT_RESTART_MAX_DELAY_MS = 10_000;
+// Four automatic retries are enough to absorb transient startup races; the fifth
+// failure pauses supervision before a deterministic crash can churn disk or CPU.
+const DEFAULT_RESTART_MAX_FAILURES = 5;
+const DEFAULT_RESTART_FAILURE_WINDOW_MS = 60_000;
+// Readiness proves that startup completed, but not that the process is healthy.
+// Require a short continuous healthy interval before forgiving earlier failures.
+const DEFAULT_RESTART_STABILITY_THRESHOLD_MS = 30_000;
 const DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 8_000;
 const DEFAULT_FORCED_EXIT_TIMEOUT_MS = 2_000;
 
@@ -85,6 +103,30 @@ export class DesktopBackendTerminationError extends Error {
   }
 }
 
+export class DesktopBackendRestartLimitError extends Error {
+  readonly failures: number;
+  readonly maxFailures: number;
+  readonly reason: string;
+  readonly windowMs: number;
+
+  constructor(input: {
+    readonly failures: number;
+    readonly maxFailures: number;
+    readonly reason: string;
+    readonly windowMs: number;
+  }) {
+    super(
+      `Backend stopped ${input.failures} times within ${input.windowMs}ms; ` +
+        `automatic restarts are paused (last failure: ${input.reason}).`,
+    );
+    this.name = "DesktopBackendRestartLimitError";
+    this.failures = input.failures;
+    this.maxFailures = input.maxFailures;
+    this.reason = input.reason;
+    this.windowMs = input.windowMs;
+  }
+}
+
 /**
  * Owns exactly one desired desktop backend process. Every mutation is serialized,
  * and generation checks prevent late events from an old child changing current state.
@@ -93,12 +135,15 @@ export class DesktopBackendSupervisor {
   readonly #options: DesktopBackendSupervisorOptions;
   readonly #setTimer: typeof setTimeout;
   readonly #clearTimer: typeof clearTimeout;
+  readonly #now: () => number;
 
   #desiredRunning = false;
   #active: ActiveGeneration | null = null;
   #generation = 0;
-  #restartAttempt = 0;
+  #restartFailures: number[] = [];
   #restartTimer: ReturnType<typeof setTimeout> | null = null;
+  #stabilityTimer: ReturnType<typeof setTimeout> | null = null;
+  #stabilityGeneration: number | null = null;
   #transition: Promise<void> = Promise.resolve();
   readonly #stoppingGenerations = new Set<number>();
 
@@ -106,6 +151,7 @@ export class DesktopBackendSupervisor {
     this.#options = options;
     this.#setTimer = options.setTimer ?? setTimeout;
     this.#clearTimer = options.clearTimer ?? clearTimeout;
+    this.#now = options.now ?? Date.now;
   }
 
   get desiredRunning(): boolean {
@@ -117,7 +163,9 @@ export class DesktopBackendSupervisor {
   }
 
   start(): Promise<void> {
+    const deliberateStart = !this.#desiredRunning;
     this.#desiredRunning = true;
+    if (deliberateStart) this.#resetRestartState();
     return this.#enqueue(() => this.#ensureStarted());
   }
 
@@ -125,6 +173,7 @@ export class DesktopBackendSupervisor {
     this.#desiredRunning = false;
     if (this.#active) this.#stoppingGenerations.add(this.#active.number);
     this.#clearRestartTimer();
+    this.#clearStabilityTimer();
     return this.#enqueue(async () => {
       const active = this.#active;
       if (await this.#stopActive(reason)) return;
@@ -141,7 +190,28 @@ export class DesktopBackendSupervisor {
     ) {
       return;
     }
-    this.#restartAttempt = 0;
+    this.#clearStabilityTimer();
+    const thresholdMs =
+      this.#options.restartStabilityThresholdMs ?? DEFAULT_RESTART_STABILITY_THRESHOLD_MS;
+    if (thresholdMs <= 0) {
+      this.#resetRestartState();
+      return;
+    }
+    this.#stabilityGeneration = generation;
+    this.#stabilityTimer = this.#setTimer(() => {
+      this.#stabilityTimer = null;
+      const stableGeneration = this.#stabilityGeneration;
+      this.#stabilityGeneration = null;
+      if (
+        stableGeneration === generation &&
+        this.#desiredRunning &&
+        this.#active?.number === generation &&
+        !this.#active.closed
+      ) {
+        this.#restartFailures = [];
+      }
+    }, thresholdMs);
+    this.#stabilityTimer.unref?.();
   }
 
   restartGeneration(generation: number, reason: string): Promise<void> {
@@ -165,6 +235,7 @@ export class DesktopBackendSupervisor {
       const error = new DesktopBackendTerminationError(target, reason);
       this.#desiredRunning = false;
       this.#clearRestartTimer();
+      this.#clearStabilityTimer();
       this.#options.onError?.(error, `generation ${generation} restart blocked`);
       this.#options.onUnrecoverableGeneration?.({
         error,
@@ -231,6 +302,7 @@ export class DesktopBackendSupervisor {
       reason,
       expected,
     });
+    if (this.#stabilityGeneration === active.number) this.#clearStabilityTimer();
     if (wasCurrent && !expected) {
       void this.#enqueue(() => this.#cleanupExitedGenerationAndRestart(active, reason));
     }
@@ -249,6 +321,7 @@ export class DesktopBackendSupervisor {
           : new Error("Failed to clean up the exited backend process tree.", { cause });
       this.#desiredRunning = false;
       this.#clearRestartTimer();
+      this.#clearStabilityTimer();
       this.#options.onError?.(error, `generation ${active.number} descendant cleanup`);
       this.#options.onUnrecoverableGeneration?.({
         error,
@@ -264,9 +337,33 @@ export class DesktopBackendSupervisor {
     if (!this.#desiredRunning || this.#restartTimer) return;
     const baseDelay = this.#options.restartBaseDelayMs ?? DEFAULT_RESTART_BASE_DELAY_MS;
     const maxDelay = this.#options.restartMaxDelayMs ?? DEFAULT_RESTART_MAX_DELAY_MS;
-    const attempt = this.#restartAttempt;
+    const maxFailures = Math.max(
+      1,
+      Math.floor(this.#options.restartMaxFailures ?? DEFAULT_RESTART_MAX_FAILURES),
+    );
+    const windowMs = Math.max(
+      1,
+      this.#options.restartFailureWindowMs ?? DEFAULT_RESTART_FAILURE_WINDOW_MS,
+    );
+    const now = this.#now();
+    this.#restartFailures = this.#restartFailures.filter((failureAt) => failureAt > now - windowMs);
+    this.#restartFailures.push(now);
+    const failures = this.#restartFailures.length;
+    if (failures >= maxFailures) {
+      const error = new DesktopBackendRestartLimitError({
+        failures,
+        maxFailures,
+        reason,
+        windowMs,
+      });
+      this.#desiredRunning = false;
+      this.#clearStabilityTimer();
+      this.#options.onError?.(error, "backend restart limit reached");
+      this.#options.onRestartLimitReached?.({ error, failures, maxFailures, reason, windowMs });
+      return;
+    }
+    const attempt = failures - 1;
     const delayMs = Math.min(baseDelay * 2 ** attempt, maxDelay);
-    this.#restartAttempt += 1;
     this.#options.onRestartScheduled?.({ attempt, delayMs, reason });
     this.#restartTimer = this.#setTimer(() => {
       this.#restartTimer = null;
@@ -279,6 +376,17 @@ export class DesktopBackendSupervisor {
     if (!this.#restartTimer) return;
     this.#clearTimer(this.#restartTimer);
     this.#restartTimer = null;
+  }
+
+  #clearStabilityTimer(): void {
+    if (this.#stabilityTimer) this.#clearTimer(this.#stabilityTimer);
+    this.#stabilityTimer = null;
+    this.#stabilityGeneration = null;
+  }
+
+  #resetRestartState(): void {
+    this.#restartFailures = [];
+    this.#clearStabilityTimer();
   }
 
   async #stopActive(reason: string): Promise<boolean> {

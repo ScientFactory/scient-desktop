@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  DesktopBackendRestartLimitError,
   DesktopBackendTerminationError,
   DesktopBackendSupervisor,
   type DesktopBackendChild,
@@ -53,6 +54,13 @@ function makeHarness(overrides: Partial<DesktopBackendSupervisorOptions> = {}) {
   const prepared: number[] = [];
   const exits: Array<{ generation: number; reason: string; expected: boolean }> = [];
   const restarts: Array<{ attempt: number; delayMs: number; reason: string }> = [];
+  const restartLimits: Array<{
+    error: DesktopBackendRestartLimitError;
+    failures: number;
+    maxFailures: number;
+    reason: string;
+    windowMs: number;
+  }> = [];
   const forceTerminateTree = vi.fn(async (child: DesktopBackendChild) => {
     (child as FakeBackendChild).exit(null, "SIGKILL");
   });
@@ -80,9 +88,18 @@ function makeHarness(overrides: Partial<DesktopBackendSupervisorOptions> = {}) {
     forceTerminateTree,
     onGenerationExited: (event) => exits.push(event),
     onRestartScheduled: (event) => restarts.push(event),
+    onRestartLimitReached: (event) => restartLimits.push(event),
     ...overrides,
   });
-  return { children, exits, forceTerminateTree, prepared, restarts, supervisor };
+  return {
+    children,
+    exits,
+    forceTerminateTree,
+    prepared,
+    restartLimits,
+    restarts,
+    supervisor,
+  };
 }
 
 async function settleLifecycle(): Promise<void> {
@@ -156,7 +173,7 @@ describe("DesktopBackendSupervisor", () => {
     ]);
   });
 
-  it("backs off across unstable generations and resets only after readiness", async () => {
+  it("backs off across ready-but-unstable generations and resets only after stability", async () => {
     const harness = makeHarness();
     await harness.supervisor.start();
 
@@ -165,14 +182,105 @@ describe("DesktopBackendSupervisor", () => {
     harness.children[1]!.exit(1);
     await vi.advanceTimersByTimeAsync(1_000);
     harness.supervisor.markReady(3);
+    await vi.advanceTimersByTimeAsync(29_999);
     harness.children[2]!.exit(1);
+    await vi.advanceTimersByTimeAsync(2_000);
+    harness.supervisor.markReady(4);
+    await vi.advanceTimersByTimeAsync(30_000);
+    harness.children[3]!.exit(1);
     await settleLifecycle();
 
     expect(harness.restarts.map(({ attempt, delayMs }) => ({ attempt, delayMs }))).toEqual([
       { attempt: 0, delayMs: 500 },
       { attempt: 1, delayMs: 1_000 },
+      { attempt: 2, delayMs: 2_000 },
       { attempt: 0, delayMs: 500 },
     ]);
+  });
+
+  it("fails closed after rapid crashes reach the rolling-window limit", async () => {
+    const onError = vi.fn();
+    const harness = makeHarness({ onError });
+    await harness.supervisor.start();
+
+    for (const delayMs of [500, 1_000, 2_000, 4_000]) {
+      harness.children.at(-1)!.exit(1);
+      await vi.advanceTimersByTimeAsync(delayMs);
+    }
+    harness.children.at(-1)!.exit(1);
+    await settleLifecycle();
+
+    expect(harness.children).toHaveLength(5);
+    expect(harness.restarts.map(({ delayMs }) => delayMs)).toEqual([500, 1_000, 2_000, 4_000]);
+    expect(harness.supervisor.desiredRunning).toBe(false);
+    expect(harness.supervisor.currentGeneration).toBeNull();
+    expect(harness.restartLimits).toEqual([
+      {
+        error: expect.objectContaining({
+          message:
+            "Backend stopped 5 times within 60000ms; automatic restarts are paused (last failure: code=1 signal=null).",
+        }),
+        failures: 5,
+        maxFailures: 5,
+        reason: "code=1 signal=null",
+        windowMs: 60_000,
+      },
+    ]);
+    expect(onError).toHaveBeenCalledWith(
+      expect.any(DesktopBackendRestartLimitError),
+      "backend restart limit reached",
+    );
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("expires old failures outside the rolling restart window", async () => {
+    const harness = makeHarness({
+      restartBaseDelayMs: 1,
+      restartFailureWindowMs: 1_000,
+      restartMaxFailures: 3,
+    });
+    await harness.supervisor.start();
+
+    harness.children[0]!.exit(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    harness.children[1]!.exit(1);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    harness.children[2]!.exit(1);
+    await settleLifecycle();
+
+    expect(harness.restartLimits).toHaveLength(0);
+    expect(harness.restarts.map(({ attempt }) => attempt)).toEqual([0, 0, 0]);
+    expect(harness.supervisor.desiredRunning).toBe(true);
+  });
+
+  it("ignores stale readiness from an earlier generation", async () => {
+    const harness = makeHarness({ restartStabilityThresholdMs: 100 });
+    await harness.supervisor.start();
+    harness.children[0]!.exit(1);
+    await vi.advanceTimersByTimeAsync(500);
+
+    harness.supervisor.markReady(1);
+    await vi.advanceTimersByTimeAsync(100);
+    harness.children[1]!.exit(1);
+    await settleLifecycle();
+
+    expect(harness.restarts.map(({ attempt }) => attempt)).toEqual([0, 1]);
+  });
+
+  it("cancels a pending automatic restart when shutdown begins", async () => {
+    const harness = makeHarness();
+    await harness.supervisor.start();
+    harness.children[0]!.exit(1);
+    await settleLifecycle();
+
+    await harness.supervisor.stop("app quit during restart backoff");
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(harness.children).toHaveLength(1);
+    expect(harness.supervisor.desiredRunning).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("fails closed when descendants of an exited generation cannot be cleaned up", async () => {

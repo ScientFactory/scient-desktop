@@ -2920,9 +2920,23 @@ function getBackendSupervisor(): DesktopBackendSupervisor {
     forceTerminateTree: (child) => forceTerminateBackendProcessTree(child),
     onGenerationStarted: handleBackendGenerationStarted,
     onGenerationExited: handleBackendGenerationExited,
-    onRestartScheduled: ({ delayMs, reason }) => {
+    onRestartScheduled: ({ attempt, delayMs, reason }) => {
       safeConsoleError(
-        `[desktop] backend exited unexpectedly (${reason}); restarting in ${delayMs}ms`,
+        `[desktop] backend exited unexpectedly (${reason}); restarting in ${delayMs}ms ` +
+          `(failure ${attempt + 1})`,
+      );
+    },
+    onRestartLimitReached: ({ error, failures, maxFailures, reason, windowMs }) => {
+      cancelBackendReadinessWait();
+      writeDesktopLogHeader(
+        `backend automatic restart paused failures=${failures}/${maxFailures} ` +
+          `windowMs=${windowMs} reason=${reason} message=${formatErrorMessage(error)}`,
+      );
+      dialog.showErrorBox(
+        `${SCIENT_APP_NAME} backend stopped repeatedly`,
+        `Scient paused automatic backend restarts after ${failures} failures in ` +
+          `${Math.ceil(windowMs / 1_000)} seconds to prevent a crash loop. ` +
+          `Restart Scient to try again. If the problem continues, inspect the logs in:\n\n${LOG_DIR}`,
       );
     },
     onError: (error, context) => {
