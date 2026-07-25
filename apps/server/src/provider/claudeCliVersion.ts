@@ -26,6 +26,7 @@ export function resolveClaudeCliVersion(input: {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const prepared = prepareWindowsSafeProcess(input.executable, ["--version"], {
       env: input.env,
+      cwd: input.cwd,
     });
     const command = ChildProcess.make(prepared.command, prepared.args, {
       shell: prepared.shell,

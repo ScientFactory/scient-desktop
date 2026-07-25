@@ -2685,7 +2685,7 @@ describe("composerDraftStore modelSelection", () => {
     });
 
     expect(state).toEqual({
-      selectedModel: "opus[1m]",
+      selectedModel: "claude-opus-4-8",
       modelOptions: { claudeAgent: { effort: "high" } },
     });
   });

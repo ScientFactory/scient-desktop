@@ -251,7 +251,7 @@ describe("mergeDynamicModelOptions", () => {
     },
   );
 
-  it("includes the Opus 5 fallback at the minimum Claude Code version", () => {
+  it("does not invent Opus 5 when the exact Claude catalog omits it", () => {
     expect(
       mergeDynamicModelOptions({
         provider: "claudeAgent",
@@ -265,8 +265,16 @@ describe("mergeDynamicModelOptions", () => {
         name: "Claude Sonnet 5",
         resolvedModel: "claude-sonnet-5",
       },
-      { slug: "claude-opus-5", name: "Claude Opus 5" },
     ]);
+
+    expect(
+      mergeDynamicModelOptions({
+        provider: "claudeAgent",
+        providerVersion: "2.1.219",
+        staticOptions: [{ slug: "claude-opus-5", name: "Claude Opus 5" }],
+        dynamicModels: [],
+      }),
+    ).toEqual([]);
   });
 });
 

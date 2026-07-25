@@ -240,9 +240,12 @@ interface ClaudeSessionContext {
   firstTurnSpawnModeAuthoritative: boolean;
   lastInteractionMode: "default" | "plan" | undefined;
   currentApiModelId: string | undefined;
+  pendingExactModelSelection: Extract<ModelSelection, { provider: "claudeAgent" }> | undefined;
   readonly claudeExecutable: string;
   readonly claudeCwd: string;
   claudeVersion: string | null | undefined;
+  readonly claudeVersionReady: Deferred.Deferred<string | null>;
+  claudeOpus5Available: boolean | undefined;
   resumeSessionId: string | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
   readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
@@ -360,6 +363,22 @@ function mapClaudeModelInfo(model: ModelInfo): ProviderModelDescriptor {
     ...(supportedReasoningEfforts?.length ? { supportedReasoningEfforts } : {}),
     ...(model.supportsFastMode !== undefined ? { supportsFastMode: model.supportsFastMode } : {}),
   };
+}
+
+function claudeRuntimeVersionFromMessage(message: SDKMessage): string | null | undefined {
+  if (message.type !== "system" || message.subtype !== "init") return undefined;
+  const version = message.claude_code_version.trim();
+  return version.length > 0 ? version : null;
+}
+
+function claudeCatalogAdvertisesOpus5(models: ReadonlyArray<ModelInfo>): boolean {
+  return models.some((model) => {
+    const exactIdentity = (model.resolvedModel?.trim() || model.value.trim()).replace(
+      /\[[^\]]+\]$/u,
+      "",
+    );
+    return exactIdentity === "claude-opus-5";
+  });
 }
 
 function neverResolvingUserMessageStream(): AsyncIterable<SDKUserMessage> {
@@ -2976,6 +2995,8 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
 
         switch (message.subtype) {
           case "init":
+            context.claudeVersion = claudeRuntimeVersionFromMessage(message);
+            yield* Deferred.succeed(context.claudeVersionReady, context.claudeVersion ?? null);
             yield* offerRuntimeEvent({
               ...base,
               type: "session.configured",
@@ -3351,6 +3372,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         }
 
         yield* Queue.shutdown(context.promptQueue);
+        yield* Deferred.succeed(context.claudeVersionReady, null);
 
         const streamFiber = context.streamFiber;
         context.streamFiber = undefined;
@@ -3447,6 +3469,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
 
         const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
         const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
+        const claudeVersionReady = yield* Deferred.make<string | null>();
         const inFlightTools = new Map<number, ToolInFlight>();
         const trackedTasks = new Map<string, ClaudeTrackedTask>(
           (resumeState?.trackedTasks ?? []).map((task) => [task.id, task]),
@@ -3743,24 +3766,30 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         const providerOptions = input.providerOptions?.claudeAgent;
         const requestedModelSelection =
           input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
+        const requestedOpus5 =
+          requestedModelSelection !== undefined &&
+          normalizeModelSlug(requestedModelSelection.model, "claudeAgent") === "claude-opus-5";
         const claudeExecutable = providerOptions?.binaryPath ?? "claude";
         const claudeCwd = input.cwd ?? serverConfig.cwd;
         const claudeSdkEnv = claudeSdkEnvForExecutable(
           yield* resolveClaudeSdkEnv,
           claudeExecutable,
         );
-        // Snapshot the executable version at the session spawn boundary. Never
-        // re-probe the file on disk to authorize a live model switch: an updater
-        // may replace it while this query still runs the old process.
-        const claudeVersion = yield* resolveClaudeVersion({
-          executable: claudeExecutable,
-          env: claudeSdkEnv,
-          cwd: claudeCwd,
-        });
+        // The external probe is only a conservative early rejection. It cannot
+        // authorize the later lazy SDK process because the executable may be
+        // replaced between these operations; sendTurn confirms that exact
+        // process from its init message before applying the Opus 5 model id.
+        const preflightClaudeVersion = requestedOpus5
+          ? yield* resolveClaudeVersion({
+              executable: claudeExecutable,
+              env: claudeSdkEnv,
+              cwd: claudeCwd,
+            })
+          : null;
         if (requestedModelSelection) {
           const unsupportedModel = unsupportedClaudeModelError(
             requestedModelSelection,
-            claudeVersion,
+            preflightClaudeVersion,
             "startSession",
           );
           if (unsupportedModel) return yield* unsupportedModel;
@@ -3781,6 +3810,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           requestedAutoCompactWindow,
         );
         const requestedApiModelId = modelSelection ? resolveApiModelId(modelSelection) : undefined;
+        const requiresExactRuntimeConfirmation = requestedOpus5;
         const resumeRerouteOriginalApiModelId = resumeState?.rerouteOriginalApiModelId;
         const resumeRerouteFallbackApiModelId = resumeState?.rerouteFallbackApiModelId;
         const resumedRerouteMatchesSelection =
@@ -3796,6 +3826,10 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           ? stripClaudeContextWindowSuffix(resumeRerouteFallbackApiModelId)
           : undefined;
         const apiModelId = resumedRerouteFallbackApiModelId ?? requestedApiModelId;
+        const spawnApiModelId =
+          requiresExactRuntimeConfirmation && resumedRerouteFallbackApiModelId === undefined
+            ? undefined
+            : apiModelId;
         const effort =
           requestedEffort && hasEffortLevel(caps, requestedEffort) ? requestedEffort : null;
         const fastMode = modelSelection?.options?.fastMode === true && caps.supportsFastMode;
@@ -3828,7 +3862,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           cwd: claudeCwd,
           // Keep Claude context-window selection model-driven so session start
           // and in-session switches both use the same API model contract.
-          ...(apiModelId ? { model: apiModelId } : {}),
+          ...(spawnApiModelId ? { model: spawnApiModelId } : {}),
           pathToClaudeCodeExecutable: claudeExecutable,
           settingSources: [...CLAUDE_SETTING_SOURCES],
           systemPrompt: {
@@ -3910,10 +3944,16 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             spawnPermissionMode: permissionMode ?? "default",
             firstTurnSpawnModeAuthoritative: true,
             lastInteractionMode: undefined,
-            currentApiModelId: apiModelId,
+            currentApiModelId: spawnApiModelId,
+            pendingExactModelSelection:
+              requiresExactRuntimeConfirmation && spawnApiModelId === undefined
+                ? modelSelection
+                : undefined,
             claudeExecutable,
             claudeCwd,
-            claudeVersion,
+            claudeVersion: undefined,
+            claudeVersionReady,
+            claudeOpus5Available: undefined,
             resumeSessionId: sessionId,
             pendingApprovals,
             pendingUserInputs,
@@ -4058,16 +4098,46 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
     const sendTurn: ClaudeAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
         const context = yield* requireSession(input.threadId);
-        const requestedModelSelection =
+        const inputModelSelection =
           input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
-        const claudeVersion = context.claudeVersion;
+        const requestedModelSelection = inputModelSelection ?? context.pendingExactModelSelection;
+        if (inputModelSelection && context.pendingExactModelSelection) {
+          context.pendingExactModelSelection = undefined;
+        }
         if (requestedModelSelection) {
+          const needsExactRuntimeVersion =
+            normalizeModelSlug(requestedModelSelection.model, "claudeAgent") === "claude-opus-5";
+          const claudeVersion = needsExactRuntimeVersion
+            ? context.claudeVersion !== undefined
+              ? context.claudeVersion
+              : yield* Deferred.await(context.claudeVersionReady).pipe(
+                  Effect.timeoutOption(discoveryTimeoutMs),
+                  Effect.map(Option.getOrElse((): string | null => null)),
+                )
+            : context.claudeVersion;
           const unsupportedModel = unsupportedClaudeModelError(
             requestedModelSelection,
             claudeVersion,
             "sendTurn",
           );
           if (unsupportedModel) return yield* unsupportedModel;
+          if (needsExactRuntimeVersion) {
+            const opus5Available =
+              context.claudeOpus5Available ??
+              (yield* Effect.tryPromise({
+                try: () => context.query.supportedModels(),
+                catch: (cause) => toRequestError(input.threadId, "turn/supportedModels", cause),
+              }).pipe(Effect.map(claudeCatalogAdvertisesOpus5)));
+            context.claudeOpus5Available = opus5Available;
+            if (!opus5Available) {
+              return yield* new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "sendTurn",
+                detail:
+                  "Claude Opus 5 is not available in this account and project runtime. Select a model advertised by Claude Code.",
+              });
+            }
+          }
         }
         const modelSelection = requestedModelSelection
           ? normalizeClaudeModelSelectionForRuntime(requestedModelSelection)
@@ -4119,6 +4189,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
               });
             }
             context.currentApiModelId = apiModelId;
+            context.pendingExactModelSelection = undefined;
             context.rerouteOriginalApiModelId = undefined;
             context.lastKnownContextWindow =
               resolveClaudeApiModelIdContextWindowMaxTokens(apiModelId);
@@ -4411,7 +4482,6 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       cwd: string,
       env: NodeJS.ProcessEnv,
       binaryPath: string,
-      runtimeVersion: string | null,
     ): Promise<ProviderListModelsResult> {
       const tempQuery = createQuery({
         prompt: neverResolvingUserMessageStream(),
@@ -4423,13 +4493,21 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         }),
       });
 
+      let resolveRuntimeVersion!: (version: string | null) => void;
+      const runtimeVersionPromise = new Promise<string | null>((resolve) => {
+        resolveRuntimeVersion = resolve;
+      });
       void (async () => {
         for await (const message of tempQuery) {
-          void message;
+          const version = claudeRuntimeVersionFromMessage(message);
+          if (version !== undefined) resolveRuntimeVersion(version);
         }
       })().catch(() => undefined);
-      const models = await runTemporaryClaudeDiscovery(tempQuery, "model", discoveryTimeoutMs, () =>
-        tempQuery.supportedModels(),
+      const [models, runtimeVersion] = await runTemporaryClaudeDiscovery(
+        tempQuery,
+        "model",
+        discoveryTimeoutMs,
+        () => Promise.all([tempQuery.supportedModels(), runtimeVersionPromise]),
       );
       return {
         models: models.map(mapClaudeModelInfo),
@@ -4579,19 +4657,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         const cacheKey = JSON.stringify({ cwd, binaryPath });
         const claudeSdkEnv = yield* resolveClaudeSdkEnv;
         const discovery = getOrCreatePendingDiscovery(pendingModelDiscoveries, cacheKey, () =>
-          Effect.runPromise(
-            resolveClaudeVersion({
-              executable: binaryPath,
-              env: claudeSdkEnvForExecutable(claudeSdkEnv, binaryPath),
-              cwd,
-            }).pipe(
-              Effect.flatMap((runtimeVersion) =>
-                Effect.promise(() =>
-                  discoverModelsViaTemporaryProcess(cwd, claudeSdkEnv, binaryPath, runtimeVersion),
-                ),
-              ),
-            ),
-          ),
+          discoverModelsViaTemporaryProcess(cwd, claudeSdkEnv, binaryPath),
         );
         const result = yield* Effect.tryPromise({
           try: () => discovery,

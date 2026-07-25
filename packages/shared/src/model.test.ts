@@ -258,7 +258,7 @@ describe("recommended provider defaults", () => {
       ]),
     ).toEqual({
       provider: "claudeAgent",
-      model: "opus[1m]",
+      model: "claude-opus-4-8",
       options: { effort: "high" },
     });
   });

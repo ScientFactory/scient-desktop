@@ -138,9 +138,15 @@ function recommendedModelSelection(
         ...(highEffort ? { options: { reasoningEffort: "high" } } : {}),
       };
     case "claudeAgent":
+      // Claude's short aliases (for example `opus`) move across releases. A
+      // runtime recommendation must persist the exact resolved model so a fresh
+      // composer cannot silently change identity when Scient's alias table moves.
+      const exactClaudeModel =
+        normalizeModelSlug(candidate.resolvedModel ?? candidate.slug, "claudeAgent") ??
+        candidate.slug;
       return {
         provider,
-        model: candidate.slug,
+        model: exactClaudeModel,
         ...(highEffort ? { options: { effort: "high" } } : {}),
       };
     case "cursor":

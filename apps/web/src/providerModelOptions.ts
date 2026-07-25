@@ -262,15 +262,18 @@ export function mergeDynamicModelOptions(input: {
   const staticBuiltInModels = eligibleStaticOptions.filter(
     (model) => !("isCustom" in model) || model.isCustom !== true,
   );
-  const missingStaticBuiltIns =
-    (input.provider === "antigravity" ||
-      input.provider === "kilo" ||
-      input.provider === "opencode" ||
-      input.provider === "cursor" ||
-      input.provider === "droid") &&
-    normalizedDynamicOptions.length > 0
-      ? []
-      : staticBuiltInModels.filter((model) => !dynamicNormalizedSlugs.has(model.slug));
+  const runtimeCatalogOwnsBuiltIns =
+    input.provider === "claudeAgent"
+      ? input.providerVersion != null
+      : (input.provider === "antigravity" ||
+          input.provider === "kilo" ||
+          input.provider === "opencode" ||
+          input.provider === "cursor" ||
+          input.provider === "droid") &&
+        normalizedDynamicOptions.length > 0;
+  const missingStaticBuiltIns = runtimeCatalogOwnsBuiltIns
+    ? []
+    : staticBuiltInModels.filter((model) => !dynamicNormalizedSlugs.has(model.slug));
 
   return [...normalizedDynamicOptions, ...missingStaticBuiltIns, ...customOnlyModels];
 }

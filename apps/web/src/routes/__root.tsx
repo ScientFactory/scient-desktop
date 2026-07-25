@@ -1239,6 +1239,9 @@ function EventRouter() {
         // Model and agent discovery can depend on auth, availability, and installed versions,
         // but not on every provider-status timestamp replay.
         void queryClient.invalidateQueries({
+          queryKey: ["provider-discovery", "models", "claudeAgent"],
+        });
+        void queryClient.invalidateQueries({
           queryKey: ["provider-discovery", "models", "kilo"],
         });
         void queryClient.invalidateQueries({

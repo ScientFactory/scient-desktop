@@ -125,8 +125,20 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
     return [];
   };
 
-  readonly supportedModels = async (): Promise<[]> => {
-    return [];
+  readonly supportedModels = async (): Promise<ModelInfo[]> => {
+    return [
+      {
+        value: "claude-opus-5",
+        resolvedModel: "claude-opus-5",
+        displayName: "Claude Opus 5",
+        description: "Complex agentic coding",
+        supportsEffort: true,
+        supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+        supportsAdaptiveThinking: true,
+        supportsFastMode: true,
+        supportsAutoMode: false,
+      },
+    ];
   };
 
   readonly supportedAgents = async (): Promise<[]> => {
@@ -170,6 +182,14 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
       },
     };
   }
+}
+
+function claudeInitMessage(version: string): SDKMessage {
+  return {
+    type: "system",
+    subtype: "init",
+    claude_code_version: version,
+  } as unknown as SDKMessage;
 }
 
 function makeHarness(config?: {
@@ -538,6 +558,37 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("bounds exact-process model catalog and version discovery together", () => {
+    const harness = makeHarness();
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => harness.query,
+      discoveryTimeoutMs: 10,
+    }).pipe(
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-model-timeout", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listModels) {
+        return assert.fail("Claude adapter should support model discovery.");
+      }
+
+      const result = yield* Effect.exit(
+        adapter.listModels({
+          provider: "claudeAgent",
+          cwd: "/tmp/claude-model-timeout",
+        }),
+      );
+
+      assert.ok(Exit.isFailure(result));
+      assert.equal(harness.query.closeCalls, 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
   it.effect("uses the configured Claude executable for pre-session model discovery", () => {
     const versionProbeInputs: Array<{ executable: string; cwd: string }> = [];
     const harness = makeHarness({
@@ -566,6 +617,7 @@ describe("ClaudeAdapterLive", () => {
         return assert.fail("Claude adapter should support model discovery.");
       }
 
+      harness.query.emit(claudeInitMessage("2.1.219"));
       const result = yield* adapter.listModels({
         provider: "claudeAgent",
         cwd: "/tmp/claude-model-discovery",
@@ -586,9 +638,7 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(harness.getLastCreateQueryInput()?.options.persistSession, false);
       assert.equal(harness.query.closeCalls, 1);
       assert.equal(result.runtimeVersion, "2.1.219");
-      assert.deepEqual(versionProbeInputs, [
-        { executable: "/managed/claude-models", cwd: "/tmp/claude-model-discovery" },
-      ]);
+      assert.deepEqual(versionProbeInputs, []);
       assert.deepEqual(result.models, [
         {
           slug: "opus[1m]",
@@ -1007,10 +1057,19 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.model, "claude-opus-5[1m]");
+      assert.equal(createInput?.options.model, undefined);
       assert.equal(autoCompactWindowFromOptions(createInput?.options), 1_000_000);
       assert.equal(effortLevelFromOptions(createInput?.options), "xhigh");
       assert.equal(fastModeFromOptions(createInput?.options), true);
+
+      harness.query.emit(claudeInitMessage("2.1.219"));
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "hello",
+        attachments: [],
+      });
+      assert.deepEqual(harness.query.setModelCalls, ["claude-opus-5[1m]"]);
+      assert.deepEqual(harness.query.applyFlagSettingsCalls, []);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -1101,6 +1160,82 @@ describe("ClaudeAdapterLive", () => {
         assert.match(result.failure.message, /version could not be confirmed/u);
       }
       assert.equal(harness.getLastCreateQueryInput(), undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not authorize Opus 5 when the exact SDK process is older than preflight", () => {
+    const harness = makeHarness({ claudeVersion: "2.1.219" });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: { provider: "claudeAgent", model: "claude-opus-5" },
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(harness.getLastCreateQueryInput()?.options.model, undefined);
+      harness.query.emit(claudeInitMessage("2.1.218"));
+      const result = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          modelSelection: { provider: "claudeAgent", model: "claude-opus-5" },
+          attachments: [],
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      assert.deepEqual(harness.query.setModelCalls, []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not authorize Opus 5 when the exact SDK catalog omits it", () => {
+    const harness = makeHarness({ claudeVersion: "2.1.219" });
+    (harness.query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels =
+      async () => [
+        {
+          value: "sonnet",
+          resolvedModel: "claude-sonnet-5",
+          displayName: "Claude Sonnet 5",
+          description: "General coding",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "high"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: false,
+          supportsAutoMode: false,
+        },
+      ];
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: { provider: "claudeAgent", model: "claude-opus-5" },
+        runtimeMode: "full-access",
+      });
+
+      harness.query.emit(claudeInitMessage("2.1.219"));
+      const result = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          modelSelection: { provider: "claudeAgent", model: "claude-opus-5" },
+          attachments: [],
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.match(result.failure.message, /not available in this account and project runtime/u);
+      }
+      assert.deepEqual(harness.query.setModelCalls, []);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -4683,6 +4818,7 @@ describe("ClaudeAdapterLive", () => {
         provider: "claudeAgent",
         runtimeMode: "full-access",
       });
+      harness.query.emit(claudeInitMessage("2.1.219"));
       yield* adapter.sendTurn({
         threadId: session.threadId,
         input: "hello",
@@ -4710,6 +4846,7 @@ describe("ClaudeAdapterLive", () => {
         provider: "claudeAgent",
         runtimeMode: "full-access",
       });
+      harness.query.emit(claudeInitMessage("2.1.218"));
       const result = yield* adapter
         .sendTurn({
           threadId: session.threadId,
@@ -4746,6 +4883,7 @@ describe("ClaudeAdapterLive", () => {
         provider: "claudeAgent",
         runtimeMode: "full-access",
       });
+      harness.query.emit(claudeInitMessage("2.1.218"));
       const input = {
         threadId: session.threadId,
         input: "hello",
@@ -4759,7 +4897,7 @@ describe("ClaudeAdapterLive", () => {
       const result = yield* adapter.sendTurn(input).pipe(Effect.result);
 
       assert.equal(result._tag, "Failure");
-      assert.equal(probes, 1);
+      assert.equal(probes, 0);
       assert.deepEqual(harness.query.setModelCalls, []);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -5207,7 +5345,7 @@ describe("ClaudeAdapterLive", () => {
 
   it.effect("does not probe discovery metadata while starting a real session", () => {
     const query = new FakeClaudeQuery();
-    (query as { supportedModels: () => Promise<[]> }).supportedModels = () => {
+    (query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels = () => {
       throw new Error("session start must not probe model discovery");
     };
     (query as { supportedAgents: () => Promise<[]> }).supportedAgents = () => {
