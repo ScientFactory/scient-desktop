@@ -401,12 +401,29 @@ function namedBarrelExportFingerprint(
     if (!ts.isStringLiteralLike(statement.moduleSpecifier)) continue;
     const specifier = statement.moduleSpecifier.text;
     if (statement.exportClause && ts.isNamedExports(statement.exportClause)) {
-      if (
-        statement.exportClause.elements.some(
-          (element) => !element.isTypeOnly && element.name.text === exportName,
-        )
-      ) {
-        sources.push(specifier);
+      for (const element of statement.exportClause.elements) {
+        if (element.isTypeOnly || element.name.text !== exportName) continue;
+        const sourceBinding = element.propertyName?.text ?? element.name.text;
+        const resolved = resolveLocalDependency(
+          path,
+          { specifier, bindingKey: `export:${sourceBinding}` },
+          readFile,
+          new Map(),
+        );
+        const targetPath = resolved.dependencies?.[0]?.path;
+        const targetSource = targetPath ? readFile(targetPath) : undefined;
+        if (resolved.problem) throw new Error(resolved.problem);
+        if (
+          !targetPath ||
+          !targetSource ||
+          !declaresRuntimeExport(targetSource, targetPath, sourceBinding)
+        ) {
+          throw new Error(
+            `${path} export ${exportName} from ${JSON.stringify(specifier)} ` +
+              `does not resolve runtime source binding ${sourceBinding}.`,
+          );
+        }
+        sources.push(`${sourceBinding}:${specifier}`);
       }
       continue;
     }
@@ -421,7 +438,7 @@ function namedBarrelExportFingerprint(
     const targetPath = resolved.dependencies?.[0]?.path;
     const targetSource = targetPath ? readFile(targetPath) : undefined;
     if (targetPath && targetSource && declaresRuntimeExport(targetSource, targetPath, exportName)) {
-      sources.push(specifier);
+      sources.push(`${exportName}:${specifier}`);
     }
   }
   if (sources.length === 0) {
@@ -472,7 +489,10 @@ function resolveLocalDependency(
           };
         }
       }
-      dependencies.push({ path: pinnedWorkspaceImport.runtimeSourcePath, traverse: true });
+      dependencies.push({
+        path: pinnedWorkspaceImport.runtimeSourcePath,
+        traverse: true,
+      });
       return { dependencies };
     }
     if (
@@ -528,7 +548,10 @@ export function buildLocalDependencyClosure(
     if (!readCache.has(path)) readCache.set(path, sourceReader(path));
     return readCache.get(path);
   };
-  const pending: ResolvedDependency[] = entryPaths.map((path) => ({ path, traverse: true }));
+  const pending: ResolvedDependency[] = entryPaths.map((path) => ({
+    path,
+    traverse: true,
+  }));
   const traversed = new Set<string>();
 
   while (pending.length > 0) {
@@ -748,7 +771,10 @@ function main(): void {
       ),
       {
         resolutionEvidence: [
-          { kind: "package-root-import", path: "packages/contracts/package.json" },
+          {
+            kind: "package-root-import",
+            path: "packages/contracts/package.json",
+          },
           {
             kind: "named-barrel-export",
             path: "packages/contracts/src/index.ts",

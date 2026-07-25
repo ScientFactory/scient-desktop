@@ -183,7 +183,10 @@ describe("Scient migration lineage guard", () => {
         ),
         {
           resolutionEvidence: [
-            { kind: "package-root-import", path: "packages/contracts/package.json" },
+            {
+              kind: "package-root-import",
+              path: "packages/contracts/package.json",
+            },
             {
               kind: "named-barrel-export",
               path: "packages/contracts/src/index.ts",
@@ -295,6 +298,7 @@ describe("Scient migration lineage guard", () => {
       "contracts/index.ts",
       'export { MODEL_OPTIONS_BY_PROVIDER } from "./redirect.ts";\n',
     );
+    currentFiles.set("contracts/redirect.ts", "export const MODEL_OPTIONS_BY_PROVIDER = {};\n");
     const pins = new Map<string, PinnedWorkspaceImport>([
       [
         pinnedWorkspaceImportKey(
@@ -331,6 +335,62 @@ describe("Scient migration lineage guard", () => {
     assert.deepEqual(findReleasedDependencyViolations(released.contents, current.contents), [
       "Released migration dependency contracts/index.ts was modified.",
       "Released migration dependency contracts/package.json was modified.",
+    ]);
+  });
+
+  it("detects a same-module alias redirect of a pinned runtime export", () => {
+    const releasedFiles = new Map([
+      [
+        "persistence/modelSelectionCompatibility.ts",
+        'import { MODEL_OPTIONS_BY_PROVIDER } from "@synara/contracts";\n',
+      ],
+      ["contracts/package.json", '{"exports":{".":{"import":"./index.ts"}}}\n'],
+      ["contracts/index.ts", 'export { MODEL_OPTIONS_BY_PROVIDER } from "./model.ts";\n'],
+      [
+        "contracts/model.ts",
+        "export const MODEL_OPTIONS_BY_PROVIDER = {};\nexport const ALTERNATE_MODEL_OPTIONS = {};\n",
+      ],
+    ]);
+    const currentFiles = new Map(releasedFiles);
+    currentFiles.set(
+      "contracts/index.ts",
+      'export { ALTERNATE_MODEL_OPTIONS as MODEL_OPTIONS_BY_PROVIDER } from "./model.ts";\n',
+    );
+    const pins = new Map<string, PinnedWorkspaceImport>([
+      [
+        pinnedWorkspaceImportKey(
+          "persistence/modelSelectionCompatibility.ts",
+          "@synara/contracts",
+          "import:MODEL_OPTIONS_BY_PROVIDER",
+        ),
+        {
+          resolutionEvidence: [
+            { kind: "package-root-import", path: "contracts/package.json" },
+            {
+              kind: "named-barrel-export",
+              path: "contracts/index.ts",
+              exportName: "MODEL_OPTIONS_BY_PROVIDER",
+            },
+          ],
+          runtimeSourcePath: "contracts/model.ts",
+        },
+      ],
+    ]);
+    const released = buildLocalDependencyClosure(
+      ["persistence/modelSelectionCompatibility.ts"],
+      (path) => releasedFiles.get(path),
+      pins,
+    );
+    const current = buildLocalDependencyClosure(
+      ["persistence/modelSelectionCompatibility.ts"],
+      (path) => currentFiles.get(path),
+      pins,
+    );
+
+    assert.deepEqual(released.problems, []);
+    assert.deepEqual(current.problems, []);
+    assert.deepEqual(findReleasedDependencyViolations(released.contents, current.contents), [
+      "Released migration dependency contracts/index.ts was modified.",
     ]);
   });
 
