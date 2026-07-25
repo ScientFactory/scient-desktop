@@ -86,9 +86,11 @@ import {
 } from "./lib/storage";
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "scient:composer-drafts:v1";
-const COMPOSER_DRAFT_STORAGE_VERSION = 5;
+const COMPOSER_DRAFT_STORAGE_VERSION = 6;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
+const DraftThreadWorkspaceOriginSchema = Schema.Literals(["default", "intentional"]);
+export type DraftThreadWorkspaceOrigin = typeof DraftThreadWorkspaceOriginSchema.Type;
 const DraftThreadEntryPointSchema = Schema.Literals(["chat", "terminal"]);
 const COMPOSER_PROVIDER_KINDS = [
   "codex",
@@ -467,6 +469,9 @@ const PersistedDraftThreadState = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   lastKnownPr: Schema.optionalKey(Schema.NullOr(OrchestrationThreadPullRequest)),
   envMode: DraftThreadEnvModeSchema,
+  workspaceOrigin: DraftThreadWorkspaceOriginSchema.pipe(
+    Schema.withDecodingDefault(() => "default"),
+  ),
   isTemporary: Schema.optionalKey(Schema.Boolean),
   promotedTo: Schema.optionalKey(ThreadId),
 });
@@ -518,6 +523,7 @@ export interface DraftThreadState {
   worktreePath: string | null;
   lastKnownPr?: OrchestrationThreadPullRequest | null;
   envMode: DraftThreadEnvMode;
+  workspaceOrigin: DraftThreadWorkspaceOrigin;
   isTemporary?: boolean;
   promotedTo?: ThreadId;
 }
@@ -528,6 +534,7 @@ interface DraftThreadMutationOptions {
   lastKnownPr?: OrchestrationThreadPullRequest | null;
   createdAt?: string;
   envMode?: DraftThreadEnvMode;
+  workspaceOrigin?: DraftThreadWorkspaceOrigin;
   runtimeMode?: RuntimeMode;
   interactionMode?: ProviderInteractionMode;
   entryPoint?: ThreadPrimarySurface;
@@ -571,6 +578,7 @@ export interface ComposerDraftStoreState {
       branch?: string | null;
       worktreePath?: string | null;
       envMode?: DraftThreadEnvMode;
+      workspaceOrigin?: DraftThreadWorkspaceOrigin;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
       entryPoint?: ThreadPrimarySurface;
@@ -802,6 +810,10 @@ function buildDraftThreadState(input: {
         ? false
         : existingThread?.isTemporary === true;
   const nextPromotedTo = existingThread?.promotedTo;
+  const hasWorkspaceMutation =
+    options?.branch !== undefined ||
+    options?.worktreePath !== undefined ||
+    options?.envMode !== undefined;
 
   return {
     projectId: input.projectId,
@@ -823,6 +835,9 @@ function buildDraftThreadState(input: {
         : (options.lastKnownPr ?? null),
     envMode:
       options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
+    workspaceOrigin:
+      options?.workspaceOrigin ??
+      (hasWorkspaceMutation ? "intentional" : (existingThread?.workspaceOrigin ?? "default")),
     ...(nextIsTemporary ? { isTemporary: true } : {}),
     ...(nextPromotedTo ? { promotedTo: nextPromotedTo } : {}),
   };
@@ -846,6 +861,7 @@ function draftThreadStatesEqual(
     left.worktreePath === right.worktreePath &&
     Equal.equals(left.lastKnownPr ?? null, right.lastKnownPr ?? null) &&
     left.envMode === right.envMode &&
+    left.workspaceOrigin === right.workspaceOrigin &&
     (left.isTemporary === true) === (right.isTemporary === true) &&
     left.promotedTo === right.promotedTo
   );
@@ -2573,6 +2589,8 @@ function normalizePersistedDraftThreads(
         worktreePath: normalizedWorktreePath,
         ...(lastKnownPr ? { lastKnownPr } : {}),
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
+        workspaceOrigin:
+          candidateDraftThread.workspaceOrigin === "intentional" ? "intentional" : "default",
         ...(isTemporary ? { isTemporary: true } : {}),
         ...(promotedTo ? { promotedTo } : {}),
       };
@@ -2606,6 +2624,7 @@ function normalizePersistedDraftThreads(
             branch: null,
             worktreePath: null,
             envMode: "local",
+            workspaceOrigin: "default",
           };
         } else if (draftThreadsByThreadId[threadId as ThreadId]?.projectId !== projectId) {
           draftThreadsByThreadId[threadId as ThreadId] = {
@@ -3623,6 +3642,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             worktreePath,
             lastKnownPr: null,
             envMode: options.envMode ?? (worktreePath ? "worktree" : "local"),
+            workspaceOrigin: options.workspaceOrigin ?? "default",
             ...(options.isTemporary ? { isTemporary: true } : {}),
           };
           return {

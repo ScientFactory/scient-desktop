@@ -35,13 +35,13 @@ import { showUndoSnackbar, UndoSnackbarProvider } from "./ui/undoSnackbar";
 
 const THREAD_ID = "thread-browser-copy" as ThreadId;
 
-function browserState(activeTabId: string): ThreadBrowserState {
+function browserState(activeTabId: string, lastError: string | null = null): ThreadBrowserState {
   return {
     threadId: THREAD_ID,
     version: activeTabId === "tab-1" ? 1 : 2,
     open: true,
     activeTabId,
-    lastError: null,
+    lastError,
     tabs: [
       {
         id: "tab-1",
@@ -55,7 +55,7 @@ function browserState(activeTabId: string): ThreadBrowserState {
         canGoForward: false,
         faviconUrl: null,
         lastCommittedUrl: "https://scientfactory.com/",
-        lastError: null,
+        lastError: activeTabId === "tab-1" ? lastError : null,
       },
       {
         id: "tab-2",
@@ -229,6 +229,23 @@ describe("BrowserPanel interactions", () => {
 
     await expect.element(page.getByRole("button", { name: "Copy link" })).toBeVisible();
     expect(page.getByText("Link copied").query()).toBeNull();
+  });
+
+  it("shows a full recoverable error instead of an empty dark viewport", async () => {
+    useBrowserStateStore.getState().removeThreadState(THREAD_ID);
+    useBrowserStateStore
+      .getState()
+      .upsertThreadState(browserState("tab-1", "The local page is unavailable."));
+
+    await renderPanel();
+
+    await expect
+      .element(page.getByRole("alert"))
+      .toHaveTextContent("This page could not be opened");
+    await expect
+      .element(page.getByRole("alert"))
+      .toHaveTextContent("The local page is unavailable.");
+    await expect.element(page.getByRole("button", { name: "Retry" })).toBeVisible();
   });
 
   it("closes the browser pane when its final tab closes", async () => {
@@ -657,6 +674,67 @@ describe("BrowserPanel interactions", () => {
     });
   });
 
+  it("transiently occludes a native local HTML view while an app menu is open", async () => {
+    const previewUrl = "http://g-12345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const openState = browserState("tab-1");
+    openState.tabs = [
+      {
+        ...openState.tabs[0]!,
+        kind: "local-html",
+        url: previewUrl,
+        displayUrl: "/tmp/report.html",
+      },
+    ];
+    const api = liveBrowserApi({ openState });
+    nativeApiTestState.api = api;
+    useBrowserStateStore.getState().removeThreadState(THREAD_ID);
+
+    await renderLivePanel(vi.fn());
+    await vi.waitFor(() => {
+      expect(document.querySelector("webview")).toBeNull();
+      expect(api.browser.setPanelBounds).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: THREAD_ID,
+          surface: "native",
+          occluded: false,
+          bounds: expect.objectContaining({ width: expect.any(Number) }),
+        }),
+      );
+    });
+
+    (
+      (await page.getByRole("button", { name: "Browser actions" }).element()) as HTMLButtonElement
+    ).click();
+    await expect.element(page.getByRole("menuitem", { name: "New tab" })).toBeVisible();
+    await vi.waitFor(() => {
+      expect(api.browser.setPanelBounds).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: THREAD_ID,
+          surface: "native",
+          occluded: true,
+          bounds: expect.objectContaining({ width: expect.any(Number) }),
+        }),
+      );
+      expect(vi.mocked(api.browser.setPanelBounds).mock.calls).not.toContainEqual([
+        { threadId: THREAD_ID, bounds: null, surface: "native", occluded: true },
+      ]);
+    });
+
+    await userEvent.keyboard("{Escape}");
+    await vi.waitFor(() => {
+      expect(page.getByRole("menuitem", { name: "New tab" }).query()).toBeNull();
+      const latestNativeCall = vi
+        .mocked(api.browser.setPanelBounds)
+        .mock.calls.findLast(([input]) => input.surface === "native")?.[0];
+      expect(latestNativeCall).toMatchObject({
+        threadId: THREAD_ID,
+        surface: "native",
+        occluded: false,
+        bounds: { width: expect.any(Number) },
+      });
+    });
+  });
+
   it("reserves null bounds for the local home that genuinely hides the page surface", async () => {
     const openState = browserState("tab-1");
     openState.version = 50;
@@ -680,6 +758,55 @@ describe("BrowserPanel interactions", () => {
         bounds: null,
         surface: "renderer",
       });
+    });
+  });
+
+  it("reconciles a local HTML grant returned by initial hydration before close", async () => {
+    const previewUrl = "http://g-12345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const openState = browserState("tab-1");
+    openState.version = 20;
+    openState.tabs = [
+      {
+        ...openState.tabs[0]!,
+        kind: "local-html",
+        url: previewUrl,
+        displayUrl: "/tmp/report.html",
+      },
+    ];
+    const closedState: ThreadBrowserState = {
+      ...openState,
+      version: openState.version + 1,
+      open: false,
+      activeTabId: null,
+      tabs: [],
+    };
+    const revokeHtmlArtifactPreview = vi.fn(async () => ({ revoked: true }));
+    const setPanelBounds = vi.fn(async () => undefined);
+    nativeApiTestState.api = {
+      browser: {
+        open: vi.fn(async () => openState),
+        hide: vi.fn(async () => undefined),
+        setPanelBounds,
+        closeTab: vi.fn(async () => closedState),
+        onState: vi.fn(() => () => undefined),
+        onCopyLink: vi.fn(() => () => undefined),
+      },
+      projects: { revokeHtmlArtifactPreview },
+    } as unknown as NativeApi;
+    useBrowserStateStore.getState().removeThreadState(THREAD_ID);
+
+    await renderLivePanel(() => undefined);
+    await vi.waitFor(() => {
+      expect(setPanelBounds).toHaveBeenCalledWith(
+        expect.objectContaining({ threadId: THREAD_ID, surface: "native" }),
+      );
+      expect(document.querySelector("webview")).toBeNull();
+    });
+    const closeButton = await page.getByRole("button", { name: "Close Browser" }).element();
+    (closeButton as HTMLButtonElement).click();
+
+    await vi.waitFor(() => {
+      expect(revokeHtmlArtifactPreview).toHaveBeenCalledWith({ previewUrl });
     });
   });
 });

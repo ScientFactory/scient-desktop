@@ -1,5 +1,5 @@
 // FILE: localImageFiles.ts
-// Purpose: Resolves local preview-file (image/PDF) requests without exposing arbitrary files.
+// Purpose: Resolves streamed local preview-file (image/PDF/media) requests.
 // Layer: Server HTTP utility
 // Exports: local image route constants and allowlisted path resolver
 // Depends on: fs realpath/stat, Codex generated image roots, safe preview extensions
@@ -34,11 +34,15 @@ export interface LocalPreviewGrantResult {
 
 const LOCAL_PREVIEW_GRANT_TTL_MS = 2 * 60 * 1000;
 const localPreviewGrantByToken = new Map<string, { realFilePath: string; expiresAtMs: number }>();
+const localPreviewGrantTokenByPath = new Map<string, string>();
 
 function pruneExpiredPreviewGrants(nowMs = Date.now()): void {
   for (const [token, grant] of localPreviewGrantByToken) {
     if (grant.expiresAtMs <= nowMs) {
       localPreviewGrantByToken.delete(token);
+      if (localPreviewGrantTokenByPath.get(grant.realFilePath) === token) {
+        localPreviewGrantTokenByPath.delete(grant.realFilePath);
+      }
     }
   }
 }
@@ -216,8 +220,9 @@ export async function createLocalPreviewGrant(input: {
   }
 
   const expiresAtMs = Date.now() + LOCAL_PREVIEW_GRANT_TTL_MS;
-  const grant = crypto.randomUUID();
-  localPreviewGrantByToken.set(grant, { realFilePath, expiresAtMs });
   pruneExpiredPreviewGrants();
+  const grant = localPreviewGrantTokenByPath.get(realFilePath) ?? crypto.randomUUID();
+  localPreviewGrantByToken.set(grant, { realFilePath, expiresAtMs });
+  localPreviewGrantTokenByPath.set(realFilePath, grant);
   return { grant, expiresAt: new Date(expiresAtMs).toISOString() };
 }

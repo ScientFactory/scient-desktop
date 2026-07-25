@@ -4,13 +4,31 @@ import { createRouter } from "@tanstack/react-router";
 
 import { routeTree } from "./routeTree.gen";
 import { StoreProvider } from "./store";
+import {
+  coordinateExternalRouteNavigation,
+  draftNavigationSlotKey,
+} from "./lib/stagedDraftNavigation";
 
 type RouterHistory = NonNullable<Parameters<typeof createRouter>[0]["history"]>;
 
 export function getRouter(history: RouterHistory) {
   const queryClient = new QueryClient();
 
-  return createRouter({
+  history.block({
+    enableBeforeUnload: false,
+    blockerFn: async ({ nextLocation }) => {
+      const ownedRouteToken = (
+        nextLocation.state as unknown as { readonly __scientDraftNavigationToken?: unknown }
+      ).__scientDraftNavigationToken;
+      const mayCommit = await coordinateExternalRouteNavigation(
+        draftNavigationSlotKey(),
+        typeof ownedRouteToken === "string" ? ownedRouteToken : undefined,
+      );
+      return !mayCommit;
+    },
+  });
+
+  const router = createRouter({
     routeTree,
     history,
     // Routes are auto-code-split and have no loaders, so intent preloading only
@@ -27,6 +45,7 @@ export function getRouter(history: RouterHistory) {
         createElement(StoreProvider, null, children),
       ),
   });
+  return router;
 }
 
 export type AppRouter = ReturnType<typeof getRouter>;

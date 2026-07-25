@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  coordinateExternalRouteNavigation,
   draftNavigationSlotKey,
   runDraftNavigationOnce,
   stageDraftNavigation,
+  waitForDraftNavigationIdle,
 } from "./stagedDraftNavigation";
 
 describe("stagedDraftNavigation", () => {
@@ -11,6 +13,7 @@ describe("stagedDraftNavigation", () => {
     const calls: string[] = [];
 
     const committed = await stageDraftNavigation({
+      isCurrent: () => true,
       stage: () => calls.push("stage"),
       navigate: async () => {
         calls.push("navigate");
@@ -32,6 +35,7 @@ describe("stagedDraftNavigation", () => {
     const rollback = vi.fn();
 
     const committed = await stageDraftNavigation({
+      isCurrent: () => true,
       stage: vi.fn(),
       navigate: async () => undefined,
       isDestinationActive: () => false,
@@ -50,6 +54,7 @@ describe("stagedDraftNavigation", () => {
 
     await expect(
       stageDraftNavigation({
+        isCurrent: () => true,
         stage: vi.fn(),
         navigate: async () => {
           throw error;
@@ -62,7 +67,66 @@ describe("stagedDraftNavigation", () => {
     expect(rollback).toHaveBeenCalledOnce();
   });
 
-  it("coalesces concurrent creation attempts for the same project slot", async () => {
+  it("does not stage work after its ownership was superseded", async () => {
+    const stage = vi.fn();
+    const rollback = vi.fn();
+
+    await expect(
+      stageDraftNavigation({
+        isCurrent: () => false,
+        stage,
+        navigate: vi.fn(async () => undefined),
+        isDestinationActive: () => true,
+        finalize: vi.fn(),
+        rollback,
+      }),
+    ).resolves.toBe(false);
+    expect(stage).not.toHaveBeenCalled();
+    expect(rollback).not.toHaveBeenCalled();
+  });
+
+  it("rolls back staged work when ownership changes during navigation", async () => {
+    let current = true;
+    const finalize = vi.fn();
+    const rollback = vi.fn();
+
+    await expect(
+      stageDraftNavigation({
+        isCurrent: () => current,
+        stage: vi.fn(),
+        navigate: async () => {
+          current = false;
+        },
+        isDestinationActive: () => true,
+        finalize,
+        rollback,
+      }),
+    ).resolves.toBe(false);
+    expect(finalize).not.toHaveBeenCalled();
+    expect(rollback).toHaveBeenCalledOnce();
+  });
+
+  it("suppresses a stale navigation failure after ownership changes", async () => {
+    let current = true;
+    const rollback = vi.fn();
+
+    await expect(
+      stageDraftNavigation({
+        isCurrent: () => current,
+        stage: vi.fn(),
+        navigate: async () => {
+          current = false;
+          throw new Error("superseded navigation");
+        },
+        isDestinationActive: () => false,
+        finalize: vi.fn(),
+        rollback,
+      }),
+    ).resolves.toBe(false);
+    expect(rollback).toHaveBeenCalledOnce();
+  });
+
+  it("coalesces identical requests without blocking a distinct later request", async () => {
     let finishFirst!: (value: string) => void;
     const firstRun = vi.fn(
       () =>
@@ -71,19 +135,464 @@ describe("stagedDraftNavigation", () => {
         }),
     );
     const secondRun = vi.fn(async () => "second");
-    const slotKey = draftNavigationSlotKey("project-studio", "chat");
+    const slotKey = draftNavigationSlotKey();
 
-    const first = runDraftNavigationOnce(slotKey, firstRun);
-    const second = runDraftNavigationOnce(slotKey, secondRun);
+    const first = runDraftNavigationOnce(slotKey, "project-default", firstRun);
+    const duplicateFirst = runDraftNavigationOnce(slotKey, "project-default", secondRun);
+    const second = runDraftNavigationOnce(slotKey, "exact-worktree", secondRun);
     await Promise.resolve();
+    expect(secondRun).toHaveBeenCalledOnce();
+    await expect(second).resolves.toBe("second");
     finishFirst("first");
 
     await expect(first).resolves.toBe("first");
-    await expect(second).resolves.toBe("first");
+    await expect(duplicateFirst).resolves.toBe("first");
     expect(firstRun).toHaveBeenCalledOnce();
-    expect(secondRun).not.toHaveBeenCalled();
-
-    await expect(runDraftNavigationOnce(slotKey, secondRun)).resolves.toBe("second");
     expect(secondRun).toHaveBeenCalledOnce();
+
+    await expect(runDraftNavigationOnce(slotKey, "exact-worktree", secondRun)).resolves.toBe(
+      "second",
+    );
+    expect(secondRun).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets a later project-default request progress during exact-workspace preparation", async () => {
+    let finishExact!: (value: string) => void;
+    const exactRun = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          finishExact = resolve;
+        }),
+    );
+    const defaultRun = vi.fn(async () => "default");
+    const slotKey = draftNavigationSlotKey();
+
+    const exact = runDraftNavigationOnce(slotKey, "exact-worktree", exactRun);
+    const projectDefault = runDraftNavigationOnce(slotKey, "project-default", defaultRun);
+    await Promise.resolve();
+    expect(defaultRun).toHaveBeenCalledOnce();
+    await expect(projectDefault).resolves.toBe("default");
+    finishExact("exact");
+
+    await expect(exact).resolves.toBe("exact");
+    expect(exactRun).toHaveBeenCalledOnce();
+    expect(defaultRun).toHaveBeenCalledOnce();
+  });
+
+  it("keeps later navigation behind an explicit blocking preparation", async () => {
+    let releasePreparation!: () => void;
+    const firstOwnership: Array<{ readonly isCurrent: () => boolean }> = [];
+    const laterRun = vi.fn(async (ownership: { readonly isCurrent: () => boolean }) =>
+      ownership.isCurrent() ? "latest" : "superseded",
+    );
+    const slotKey = draftNavigationSlotKey();
+
+    const preparation = runDraftNavigationOnce(
+      slotKey,
+      "mutating-pr-preparation",
+      async (ownership) => {
+        firstOwnership.push(ownership);
+        await new Promise<void>((resolve) => {
+          releasePreparation = resolve;
+        });
+        return ownership.isCurrent() ? "stale-commit" : "superseded";
+      },
+      { blocksFollowingOperations: true },
+    );
+    await Promise.resolve();
+    expect(firstOwnership[0]?.isCurrent()).toBe(true);
+
+    const later = runDraftNavigationOnce(slotKey, "project-default", laterRun);
+    await Promise.resolve();
+    expect(firstOwnership[0]?.isCurrent()).toBe(false);
+    expect(laterRun).not.toHaveBeenCalled();
+
+    releasePreparation();
+    await expect(preparation).resolves.toBe("superseded");
+    await expect(later).resolves.toBe("latest");
+    expect(laterRun).toHaveBeenCalledOnce();
+  });
+
+  it("supersedes an awaited owner as soon as a distinct later intent arrives", async () => {
+    let releaseFirst!: () => void;
+    const firstOwnership: Array<{ readonly isCurrent: () => boolean }> = [];
+    let secondWasCurrent = false;
+    const slotKey = draftNavigationSlotKey();
+
+    const first = runDraftNavigationOnce(slotKey, "exact-worktree", async (ownership) => {
+      firstOwnership.push(ownership);
+      await new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      return ownership.isCurrent() ? "stale-commit" : "superseded";
+    });
+    await Promise.resolve();
+    expect(firstOwnership[0]?.isCurrent()).toBe(true);
+
+    const second = runDraftNavigationOnce(slotKey, "project-default", async (ownership) => {
+      secondWasCurrent = ownership.isCurrent();
+      return ownership.isCurrent() ? "latest" : "superseded";
+    });
+    expect(firstOwnership[0]?.isCurrent()).toBe(false);
+    releaseFirst();
+
+    await expect(first).resolves.toBe("superseded");
+    await expect(second).resolves.toBe("latest");
+    expect(secondWasCurrent).toBe(true);
+  });
+
+  it("revokes an awaited owner when an existing-route navigation takes control", async () => {
+    let releasePreparation!: () => void;
+    let wasCurrentAfterRelease = true;
+    const slotKey = draftNavigationSlotKey();
+    const pending = runDraftNavigationOnce(slotKey, "exact-worktree", async (ownership) => {
+      await new Promise<void>((resolve) => {
+        releasePreparation = resolve;
+      });
+      wasCurrentAfterRelease = ownership.isCurrent();
+      return ownership.isCurrent() ? "stale-navigation" : "superseded";
+    });
+    await Promise.resolve();
+
+    await coordinateExternalRouteNavigation(slotKey);
+    releasePreparation();
+
+    await expect(pending).resolves.toBe("superseded");
+    expect(wasCurrentAfterRelease).toBe(false);
+    await expect(waitForDraftNavigationIdle(slotKey)).resolves.toBeUndefined();
+  });
+
+  it("revokes immediately but holds an external route behind a non-cancellable mutation", async () => {
+    let releaseMutation!: () => void;
+    let mutationOwnerCurrent = true;
+    const slotKey = draftNavigationSlotKey();
+    const mutation = runDraftNavigationOnce(
+      slotKey,
+      "mutating-pr-preparation",
+      async (ownership) => {
+        await new Promise<void>((resolve) => {
+          releaseMutation = resolve;
+        });
+        mutationOwnerCurrent = ownership.isCurrent();
+        return ownership.isCurrent();
+      },
+      { blocksFollowingOperations: true },
+    );
+    await Promise.resolve();
+
+    let externalRouteReleased = false;
+    const externalRoute = coordinateExternalRouteNavigation(slotKey).then(() => {
+      externalRouteReleased = true;
+    });
+    await Promise.resolve();
+
+    expect(mutationOwnerCurrent).toBe(true);
+    expect(externalRouteReleased).toBe(false);
+    releaseMutation();
+
+    await externalRoute;
+    await expect(mutation).resolves.toBe(false);
+    expect(mutationOwnerCurrent).toBe(false);
+  });
+
+  it("allows only the latest external route claim after a blocking mutation", async () => {
+    let releaseMutation!: () => void;
+    const slotKey = draftNavigationSlotKey();
+    const mutation = runDraftNavigationOnce(
+      slotKey,
+      "mutating-pr-preparation",
+      async () =>
+        new Promise<void>((resolve) => {
+          releaseMutation = resolve;
+        }),
+      { blocksFollowingOperations: true },
+    );
+    await Promise.resolve();
+
+    const firstRoute = coordinateExternalRouteNavigation(slotKey);
+    const secondRoute = coordinateExternalRouteNavigation(slotKey);
+    releaseMutation();
+
+    await expect(firstRoute).resolves.toBe(false);
+    await expect(secondRoute).resolves.toBe(true);
+    await mutation;
+  });
+
+  it("allows an owned staged destination through the shared route guard", async () => {
+    let allowNavigate!: () => void;
+    let ownerRemainedCurrent = false;
+    const slotKey = draftNavigationSlotKey();
+    const operation = runDraftNavigationOnce(slotKey, "fresh-thread", async (ownership) => {
+      const committed = await stageDraftNavigation({
+        ownedRouteToken: ownership.routeToken,
+        isCurrent: ownership.isCurrent,
+        stage: vi.fn(),
+        navigate: async (ownedRouteToken) => {
+          await coordinateExternalRouteNavigation(slotKey, ownedRouteToken);
+          await new Promise<void>((resolve) => {
+            allowNavigate = resolve;
+          });
+        },
+        isDestinationActive: () => true,
+        finalize: vi.fn(),
+        rollback: vi.fn(),
+      });
+      ownerRemainedCurrent = ownership.isCurrent();
+      return committed;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    allowNavigate();
+
+    await expect(operation).resolves.toBe(true);
+    expect(ownerRemainedCurrent).toBe(true);
+  });
+
+  it("rejects an unconsumed stale route token while a newer operation owns the surface", async () => {
+    const slotKey = draftNavigationSlotKey();
+    let staleRouteToken = "";
+    let releaseStaleOperation!: () => void;
+    const staleOperation = runDraftNavigationOnce(slotKey, "stale-thread", async (ownership) => {
+      staleRouteToken = ownership.routeToken;
+      await new Promise<void>((resolve) => {
+        releaseStaleOperation = resolve;
+      });
+    });
+    await Promise.resolve();
+
+    let releaseNewerOperation!: () => void;
+    const newerOperation = runDraftNavigationOnce(slotKey, "newer-thread", async () => {
+      await new Promise<void>((resolve) => {
+        releaseNewerOperation = resolve;
+      });
+    });
+    await Promise.resolve();
+
+    await expect(coordinateExternalRouteNavigation(slotKey, staleRouteToken)).resolves.toBe(false);
+    releaseStaleOperation();
+    releaseNewerOperation();
+    await staleOperation;
+    await newerOperation;
+  });
+
+  it("treats Back to a previously committed owned route as a newer external intent", async () => {
+    const slotKey = draftNavigationSlotKey();
+    let committedRouteToken = "";
+    await runDraftNavigationOnce(slotKey, "first-fresh-thread", async (ownership) => {
+      committedRouteToken = ownership.routeToken;
+      await expect(coordinateExternalRouteNavigation(slotKey, ownership.routeToken)).resolves.toBe(
+        true,
+      );
+    });
+    await waitForDraftNavigationIdle(slotKey);
+
+    let releaseExactPreparation!: () => void;
+    let exactOwnerCurrent = true;
+    const exactPreparation = runDraftNavigationOnce(
+      slotKey,
+      "delayed-exact-workspace",
+      async (ownership) => {
+        await new Promise<void>((resolve) => {
+          releaseExactPreparation = resolve;
+        });
+        exactOwnerCurrent = ownership.isCurrent();
+      },
+    );
+    await Promise.resolve();
+
+    await expect(coordinateExternalRouteNavigation(slotKey, committedRouteToken)).resolves.toBe(
+      true,
+    );
+    releaseExactPreparation();
+    await exactPreparation;
+
+    expect(exactOwnerCurrent).toBe(false);
+  });
+
+  it("allows Back to a committed terminal route while native promotion is still pending", async () => {
+    const slotKey = draftNavigationSlotKey();
+    let committedTerminalRouteToken = "";
+    let releaseTerminalPromotion!: () => void;
+    const terminalNavigation = runDraftNavigationOnce(
+      slotKey,
+      "terminal-first-thread",
+      async (ownership) => {
+        committedTerminalRouteToken = ownership.routeToken;
+        await expect(
+          coordinateExternalRouteNavigation(slotKey, ownership.routeToken),
+        ).resolves.toBe(true);
+        ownership.markRouteCommitted();
+        await new Promise<void>((resolve) => {
+          releaseTerminalPromotion = resolve;
+        });
+      },
+    );
+    await Promise.resolve();
+
+    await expect(coordinateExternalRouteNavigation(slotKey)).resolves.toBe(true);
+    await expect(
+      coordinateExternalRouteNavigation(slotKey, committedTerminalRouteToken),
+    ).resolves.toBe(true);
+
+    releaseTerminalPromotion();
+    await terminalNavigation;
+  });
+
+  it("treats a persisted owned route from an earlier renderer session as external", async () => {
+    const randomUuid = vi
+      .spyOn(crypto, "randomUUID")
+      .mockReturnValueOnce("11111111-1111-4111-8111-111111111111")
+      .mockReturnValueOnce("22222222-2222-4222-8222-222222222222");
+
+    try {
+      vi.resetModules();
+      const earlierSession = await import("./stagedDraftNavigation");
+      const earlierSlotKey = earlierSession.draftNavigationSlotKey();
+      let persistedRouteToken = "";
+      await earlierSession.runDraftNavigationOnce(
+        earlierSlotKey,
+        "earlier-session-thread",
+        async (ownership) => {
+          persistedRouteToken = ownership.routeToken;
+          await expect(
+            earlierSession.coordinateExternalRouteNavigation(earlierSlotKey, ownership.routeToken),
+          ).resolves.toBe(true);
+        },
+      );
+      await earlierSession.waitForDraftNavigationIdle(earlierSlotKey);
+
+      vi.resetModules();
+      const reloadedSession = await import("./stagedDraftNavigation");
+      const reloadedSlotKey = reloadedSession.draftNavigationSlotKey();
+      let releaseFreshPreparation!: () => void;
+      let freshOwnerCurrent = true;
+      let freshRouteToken = "";
+      const freshPreparation = reloadedSession.runDraftNavigationOnce(
+        reloadedSlotKey,
+        "fresh-session-thread",
+        async (ownership) => {
+          freshRouteToken = ownership.routeToken;
+          await new Promise<void>((resolve) => {
+            releaseFreshPreparation = resolve;
+          });
+          freshOwnerCurrent = ownership.isCurrent();
+        },
+      );
+      await Promise.resolve();
+
+      expect(freshRouteToken).not.toBe(persistedRouteToken);
+      await expect(
+        reloadedSession.coordinateExternalRouteNavigation(reloadedSlotKey, persistedRouteToken),
+      ).resolves.toBe(true);
+      releaseFreshPreparation();
+      await freshPreparation;
+
+      expect(freshOwnerCurrent).toBe(false);
+    } finally {
+      randomUuid.mockRestore();
+      vi.resetModules();
+    }
+  });
+
+  it("keeps old committed history external after more than 128 owned navigations", async () => {
+    const slotKey = draftNavigationSlotKey();
+    let oldestCommittedRouteToken = "";
+    for (let index = 0; index < 129; index += 1) {
+      await runDraftNavigationOnce(slotKey, `committed-thread-${index}`, async (ownership) => {
+        if (index === 0) oldestCommittedRouteToken = ownership.routeToken;
+        await expect(
+          coordinateExternalRouteNavigation(slotKey, ownership.routeToken),
+        ).resolves.toBe(true);
+      });
+    }
+    await waitForDraftNavigationIdle(slotKey);
+
+    let releaseFreshPreparation!: () => void;
+    let freshOwnerCurrent = true;
+    const freshPreparation = runDraftNavigationOnce(
+      slotKey,
+      "fresh-after-long-history",
+      async (ownership) => {
+        await new Promise<void>((resolve) => {
+          releaseFreshPreparation = resolve;
+        });
+        freshOwnerCurrent = ownership.isCurrent();
+      },
+    );
+    await Promise.resolve();
+
+    await expect(
+      coordinateExternalRouteNavigation(slotKey, oldestCommittedRouteToken),
+    ).resolves.toBe(true);
+    releaseFreshPreparation();
+    await freshPreparation;
+
+    expect(freshOwnerCurrent).toBe(false);
+  });
+
+  it("supersedes delayed work across projects and chat or terminal entry points", async () => {
+    let releaseProjectChat!: () => void;
+    let projectChatWasCurrentAfterRelease = true;
+    const navigationSurface = draftNavigationSlotKey();
+
+    const projectChat = runDraftNavigationOnce(
+      navigationSurface,
+      "project-a-chat-exact",
+      async (ownership) => {
+        await new Promise<void>((resolve) => {
+          releaseProjectChat = resolve;
+        });
+        projectChatWasCurrentAfterRelease = ownership.isCurrent();
+        return ownership.isCurrent() ? "stale-navigation" : "superseded";
+      },
+    );
+    await Promise.resolve();
+
+    const otherProjectTerminal = runDraftNavigationOnce(
+      navigationSurface,
+      "project-b-terminal-default",
+      async (ownership) => (ownership.isCurrent() ? "latest-navigation" : "superseded"),
+    );
+    await expect(otherProjectTerminal).resolves.toBe("latest-navigation");
+    releaseProjectChat();
+
+    await expect(projectChat).resolves.toBe("superseded");
+    expect(projectChatWasCurrentAfterRelease).toBe(false);
+  });
+
+  it("preserves default-exact-default ordering instead of rejoining the first request", async () => {
+    let finishFirstDefault!: (value: string) => void;
+    const calls: string[] = [];
+    const firstDefaultRun = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          calls.push("default:first");
+          finishFirstDefault = resolve;
+        }),
+    );
+    const exactRun = vi.fn(async () => {
+      calls.push("exact");
+      return "exact";
+    });
+    const lastDefaultRun = vi.fn(async () => {
+      calls.push("default:last");
+      return "default:last";
+    });
+    const slotKey = draftNavigationSlotKey();
+
+    const firstDefault = runDraftNavigationOnce(slotKey, "project-default", firstDefaultRun);
+    const exact = runDraftNavigationOnce(slotKey, "exact-worktree", exactRun);
+    const lastDefault = runDraftNavigationOnce(slotKey, "project-default", lastDefaultRun);
+    await Promise.resolve();
+    expect(calls).toEqual(["default:first", "exact", "default:last"]);
+    finishFirstDefault("default:first");
+
+    await expect(firstDefault).resolves.toBe("default:first");
+    await expect(exact).resolves.toBe("exact");
+    await expect(lastDefault).resolves.toBe("default:last");
+    expect(calls).toEqual(["default:first", "exact", "default:last"]);
+    expect(firstDefaultRun).toHaveBeenCalledOnce();
+    expect(exactRun).toHaveBeenCalledOnce();
+    expect(lastDefaultRun).toHaveBeenCalledOnce();
   });
 });

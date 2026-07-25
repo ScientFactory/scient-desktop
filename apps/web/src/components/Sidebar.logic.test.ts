@@ -36,12 +36,14 @@ import {
   resolveSidebarThreadListPaging,
   resolveProjectEmptyState,
   resolvePendingSidebarViewSelection,
+  resolveNewThreadInWorkspaceAction,
   resolveSettingsBackTarget,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
   resolveThreadHoverCardMetadata,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  validateNewThreadInWorkspaceAction,
   shouldShowDebugFeatureFlagsMenu,
   shouldPrunePinnedThreads,
   shouldClearThreadSelectionOnMouseDown,
@@ -100,6 +102,149 @@ describe("resolvePullRequestReviewBadge", () => {
     expect(resolvePullRequestReviewBadge({ count: 1, incomplete: false })?.accessibleLabel).toBe(
       "1 pull request is waiting for your review",
     );
+  });
+});
+
+describe("new thread in workspace actions", () => {
+  it("names exact local and worktree destinations and hides incomplete targets", () => {
+    expect(
+      resolveNewThreadInWorkspaceAction({
+        branch: "feature/safe-new-thread",
+        envMode: "local",
+        worktreePath: null,
+      }),
+    ).toEqual({
+      id: "new-thread-in-workspace",
+      label: "New thread on branch (feature/safe-new-thread)",
+      workspace: { kind: "existing-local", branch: "feature/safe-new-thread" },
+    });
+    expect(
+      resolveNewThreadInWorkspaceAction({
+        branch: "feature/worktree",
+        envMode: "worktree",
+        worktreePath: "/repo/.scient/worktrees/feature-worktree",
+      }),
+    ).toEqual({
+      id: "new-thread-in-workspace",
+      label: "New thread in worktree (feature/worktree)",
+      workspace: {
+        kind: "existing-worktree",
+        branch: "feature/worktree",
+        worktreePath: "/repo/.scient/worktrees/feature-worktree",
+      },
+    });
+    expect(
+      resolveNewThreadInWorkspaceAction({
+        branch: null,
+        envMode: "local",
+        worktreePath: null,
+      }),
+    ).toBeNull();
+    expect(
+      resolveNewThreadInWorkspaceAction({
+        branch: "feature/pending",
+        envMode: "worktree",
+        worktreePath: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("fails closed when the local branch is missing or no longer checked out", () => {
+    const action = resolveNewThreadInWorkspaceAction({
+      branch: "feature/local",
+      envMode: "local",
+      worktreePath: null,
+    });
+    expect(action).not.toBeNull();
+    if (!action) return;
+
+    expect(
+      validateNewThreadInWorkspaceAction({
+        action,
+        branches: [],
+        isRepo: false,
+        projectCwd: "/repo/project",
+      }),
+    ).toEqual({
+      ok: false,
+      description: "This project folder is no longer a Git repository.",
+    });
+    expect(
+      validateNewThreadInWorkspaceAction({
+        action,
+        branches: [],
+        isRepo: true,
+        projectCwd: "/repo/project",
+      }),
+    ).toEqual({
+      ok: false,
+      description: "Branch feature/local no longer exists locally.",
+    });
+    expect(
+      validateNewThreadInWorkspaceAction({
+        action,
+        branches: [
+          {
+            name: "feature/local",
+            current: false,
+            isDefault: false,
+            worktreePath: null,
+          },
+        ],
+        isRepo: true,
+        projectCwd: "/repo/project",
+      }),
+    ).toEqual({
+      ok: false,
+      description: "Branch feature/local is no longer checked out in the project folder.",
+    });
+  });
+
+  it("accepts exact workspace mappings and normalizes Windows path differences", () => {
+    const localAction = resolveNewThreadInWorkspaceAction({
+      branch: "main",
+      envMode: "local",
+      worktreePath: null,
+    });
+    const worktreeAction = resolveNewThreadInWorkspaceAction({
+      branch: "feature/windows",
+      envMode: "worktree",
+      worktreePath: "C:\\Repo\\Worktrees\\Windows\\",
+    });
+    expect(localAction).not.toBeNull();
+    expect(worktreeAction).not.toBeNull();
+    if (!localAction || !worktreeAction) return;
+
+    expect(
+      validateNewThreadInWorkspaceAction({
+        action: localAction,
+        branches: [
+          {
+            name: "main",
+            current: true,
+            isDefault: true,
+            worktreePath: "/repo/project",
+          },
+        ],
+        isRepo: true,
+        projectCwd: "/repo/project/",
+      }),
+    ).toEqual({ ok: true });
+    expect(
+      validateNewThreadInWorkspaceAction({
+        action: worktreeAction,
+        branches: [
+          {
+            name: "feature/windows",
+            current: false,
+            isDefault: false,
+            worktreePath: "c:/repo/worktrees/windows",
+          },
+        ],
+        isRepo: true,
+        projectCwd: "C:\\Repo",
+      }),
+    ).toEqual({ ok: true });
   });
 });
 

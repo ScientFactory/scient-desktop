@@ -90,7 +90,10 @@ interface BranchToolbarBranchSelectorProps {
   effectiveEnvMode: EnvMode;
   envLocked: boolean;
   hasServerThread: boolean;
-  onSetThreadWorkspace: (patch: ThreadWorkspacePatch) => void;
+  onSetThreadWorkspace: (
+    patch: ThreadWorkspacePatch,
+    options?: { preserveDraftWorkspaceOrigin?: boolean },
+  ) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
   variant?: BranchSelectorVariant;
@@ -510,7 +513,10 @@ export function BranchToolbarBranchSelector({
       return;
     }
 
-    onSetThreadWorkspace({ branch: currentGitBranch, worktreePath: null });
+    onSetThreadWorkspace(
+      { branch: currentGitBranch, worktreePath: null },
+      { preserveDraftWorkspaceOrigin: true },
+    );
   }, [
     activeThreadBranch,
     activeWorktreePath,
@@ -736,7 +742,10 @@ export function BranchToolbarBranchSelector({
     ) {
       return;
     }
-    onSetThreadWorkspace({ branch: currentGitBranch, worktreePath: null });
+    onSetThreadWorkspace(
+      { branch: currentGitBranch, worktreePath: null },
+      { preserveDraftWorkspaceOrigin: true },
+    );
   }, [
     activeThreadBranch,
     activeWorktreePath,

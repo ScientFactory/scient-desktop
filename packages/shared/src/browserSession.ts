@@ -13,7 +13,7 @@ export const BROWSER_WEB_SESSION_PARTITION = "persist:scient-browser";
 export const BROWSER_ARTIFACT_SESSION_PARTITION = "scient-artifact-preview";
 
 export function browserSessionPartition(
-  kind: "web" | "artifact" | "local-app",
+  kind: "web" | "artifact" | "local-app" | "local-html",
   threadId: string,
   tabId?: string,
 ): string {
@@ -22,6 +22,8 @@ export function browserSessionPartition(
       return `${BROWSER_ARTIFACT_SESSION_PARTITION}-${threadId}-${tabId ?? "pending"}`;
     case "local-app":
       return `persist:scient-local-preview-${threadId}`;
+    case "local-html":
+      return `scient-local-html-preview-${threadId}-${tabId ?? "pending"}`;
     case "web":
       return BROWSER_WEB_SESSION_PARTITION;
   }

@@ -11,6 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  type BrowserTabState,
   type ServerLocalServerProcess,
   type ThreadId,
 } from "@synara/contracts";
@@ -27,6 +28,7 @@ import {
   type LucideIcon,
   PlusIcon,
   RefreshCwIcon,
+  TriangleAlertIcon,
   XIcon,
 } from "~/lib/icons";
 
@@ -62,6 +64,7 @@ import {
   browserCopyFeedbackMatches,
   buildBrowserAddressSuggestions,
   normalizeBrowserAddressInput,
+  reconcileHtmlPreviewGrants,
   resolveBrowserChromeStatus,
   resolveBrowserAddressSync,
   shouldCloseBrowserPanelAfterTabClose,
@@ -385,9 +388,11 @@ export function BrowserPanel({
   const previousActiveTabIdRef = useRef<string | null>(null);
   const pendingCreateTabRef = useRef(false);
   const createTabInFlightRef = useRef(false);
-  const artifactPreviewUrlsRef = useRef(
-    new Set(
-      threadBrowserState?.tabs.filter((tab) => tab.kind === "artifact").map((tab) => tab.url) ?? [],
+  const htmlPreviewGrantsRef = useRef(
+    new Map(
+      threadBrowserState?.tabs
+        .filter((tab) => tab.kind === "artifact" || tab.kind === "local-html")
+        .map((tab) => [tab.id, tab.url] as const) ?? [],
     ),
   );
   const lastSentBoundsRef = useRef<string | null>(null);
@@ -449,7 +454,10 @@ export function BrowserPanel({
   const browserAddressSuggestions = buildBrowserAddressSuggestions({
     query: addressValue,
     activeTabId: activeTab?.id ?? null,
-    tabs: threadBrowserState?.tabs.filter((tab) => tab.kind !== "artifact") ?? [],
+    tabs:
+      threadBrowserState?.tabs.filter(
+        (tab) => tab.kind !== "artifact" && tab.kind !== "local-html",
+      ) ?? [],
     recentHistory,
   });
   const showBrowserAddressSuggestions =
@@ -481,6 +489,20 @@ export function BrowserPanel({
       return null;
     }
   }, []);
+
+  const syncHtmlPreviewGrants = useCallback(
+    (tabs: readonly BrowserTabState[]) => {
+      if (!api) return;
+      const grants = reconcileHtmlPreviewGrants(htmlPreviewGrantsRef.current, tabs);
+      for (const previewUrl of grants.revoked) {
+        void api.projects
+          .revokeHtmlArtifactPreview({ previewUrl })
+          .catch(() => ({ revoked: false }));
+      }
+      htmlPreviewGrantsRef.current = grants.active;
+    },
+    [api],
+  );
 
   // Renderer-owned <webview>s are adopted by the desktop manager. Always detach before
   // removing the DOM node so main never keeps a stale webContents runtime.
@@ -515,21 +537,11 @@ export function BrowserPanel({
 
     return api.browser.onState((state) => {
       if (state.threadId === threadId) {
-        const nextArtifactUrls = new Set(
-          state.tabs.filter((tab) => tab.kind === "artifact").map((tab) => tab.url),
-        );
-        for (const previewUrl of artifactPreviewUrlsRef.current) {
-          if (!nextArtifactUrls.has(previewUrl)) {
-            void api.projects
-              .revokeHtmlArtifactPreview({ previewUrl })
-              .catch(() => ({ revoked: false }));
-          }
-        }
-        artifactPreviewUrlsRef.current = nextArtifactUrls;
+        syncHtmlPreviewGrants(state.tabs);
       }
       upsertThreadState(state);
     });
-  }, [api, isLiveRuntime, threadId, upsertThreadState]);
+  }, [api, isLiveRuntime, syncHtmlPreviewGrants, threadId, upsertThreadState]);
 
   useEffect(() => {
     if (!api || !isLiveRuntime) {
@@ -548,6 +560,7 @@ export function BrowserPanel({
         setWorkspaceReady(true);
         return;
       }
+      syncHtmlPreviewGrants(state.tabs);
       upsertThreadState(state);
       setWorkspaceReady(true);
     });
@@ -556,7 +569,7 @@ export function BrowserPanel({
       cancelled = true;
       void api.browser.hide({ threadId });
     };
-  }, [api, isLiveRuntime, runBrowserAction, threadId, upsertThreadState]);
+  }, [api, isLiveRuntime, runBrowserAction, syncHtmlPreviewGrants, threadId, upsertThreadState]);
 
   useEffect(() => {
     const activeTabId = activeTab?.id ?? null;
@@ -591,6 +604,14 @@ export function BrowserPanel({
     }
 
     if (showLocalServersHome) {
+      detachRendererBrowserWebview();
+      return;
+    }
+
+    // Capability-backed local HTML always uses a main-process-owned view. Its
+    // network policy must be established before the first authored script can
+    // run; a renderer-created <webview> begins loading before adoption.
+    if (activeTab.kind === "local-html") {
       detachRendererBrowserWebview();
       return;
     }
@@ -730,6 +751,7 @@ export function BrowserPanel({
     if (!element) {
       return;
     }
+    const surface = activeTab?.kind === "local-html" ? "native" : "renderer";
 
     const syncBounds = () => {
       perfCountersRef.current.syncAttempts += 1;
@@ -745,12 +767,10 @@ export function BrowserPanel({
         obscuredByOverlay,
         paneIsActuallyHidden,
       });
-      // App-owned menus, dialogs, and other transient overlays only occlude the renderer
-      // surface. Sending null bounds here tells main that the pane itself is hidden, which
-      // starts the 30-second runtime suspension timer and can destroy the adopted webview
-      // while its DOM node remains mounted. Keep the last native geometry/lifecycle active;
-      // a close mutation or resize will send the current real bounds when the overlay leaves.
-      if (boundsSyncMode === "suppress") {
+      // Renderer-owned webviews can be hidden locally while bounds updates are suppressed.
+      // Main-owned local HTML views instead receive an explicit transient occlusion signal;
+      // sending null bounds would incorrectly start the pane's suspension lifecycle.
+      if (boundsSyncMode === "suppress" && surface === "renderer") {
         lastMeasuredBoundsKeyRef.current = "renderer:overlay-occluded";
         perfCountersRef.current.syncSkips += 1;
         return;
@@ -764,9 +784,10 @@ export function BrowserPanel({
               width: rect.width,
               height: rect.height,
             };
+      const nativeOccluded = surface === "native" && obscuredByOverlay;
       const nextKey = bounds
-        ? `renderer:${Math.round(bounds.x)}:${Math.round(bounds.y)}:${Math.round(bounds.width)}:${Math.round(bounds.height)}`
-        : "renderer:hidden";
+        ? `${surface}:${nativeOccluded ? "occluded" : "visible"}:${Math.round(bounds.x)}:${Math.round(bounds.y)}:${Math.round(bounds.width)}:${Math.round(bounds.height)}`
+        : `${surface}:hidden`;
       lastMeasuredBoundsKeyRef.current = nextKey;
       if (lastSentBoundsRef.current === nextKey) {
         perfCountersRef.current.syncSkips += 1;
@@ -775,7 +796,12 @@ export function BrowserPanel({
       lastSentBoundsRef.current = nextKey;
       perfCountersRef.current.syncSends += 1;
       void api.browser
-        .setPanelBounds({ threadId, bounds, surface: "renderer" })
+        .setPanelBounds({
+          threadId,
+          bounds,
+          surface,
+          ...(surface === "native" ? { occluded: nativeOccluded } : {}),
+        })
         .catch(ignoreBrowserBoundsSyncError);
     };
 
@@ -901,7 +927,7 @@ export function BrowserPanel({
       burstFramesRemainingRef.current = 0;
       burstStableFramesRef.current = 0;
     };
-  }, [api, isLiveRuntime, showLocalServersHome, threadId]);
+  }, [activeTab?.kind, api, isLiveRuntime, showLocalServersHome, threadId]);
 
   const onSubmitAddress = useCallback(() => {
     if (!ensureLiveRuntime()) {
@@ -1270,18 +1296,11 @@ export function BrowserPanel({
         return;
       }
       const focusOrigin = document.activeElement;
-      const closingTab = threadBrowserState?.tabs.find((tab) => tab.id === tabId);
-      void runBrowserAction(async () => {
-        if (closingTab?.kind === "artifact") {
-          await api.projects
-            .revokeHtmlArtifactPreview({ previewUrl: closingTab.url })
-            .catch(() => ({ revoked: false }));
-        }
-        return api.browser.closeTab({ threadId, tabId });
-      }).then((state) => {
+      void runBrowserAction(() => api.browser.closeTab({ threadId, tabId })).then((state) => {
         if (!state) {
           return;
         }
+        syncHtmlPreviewGrants(state.tabs);
         upsertThreadState(state);
         const activeElement = document.activeElement;
         const shouldRestoreTabFocus =
@@ -1308,7 +1327,7 @@ export function BrowserPanel({
       ensureLiveRuntime,
       onClosePanel,
       runBrowserAction,
-      threadBrowserState?.tabs,
+      syncHtmlPreviewGrants,
       threadId,
       upsertThreadState,
     ],
@@ -1506,7 +1525,7 @@ export function BrowserPanel({
           variant="ghost"
           size="icon-sm"
           className="size-7"
-          disabled={!activeTab || activeTab.kind === "artifact"}
+          disabled={!activeTab || activeTab.kind === "artifact" || activeTab.kind === "local-html"}
           aria-label={copiedBrowserItem === "link" ? "Link copied" : "Copy link"}
           title={copiedBrowserItem === "link" ? "Copied" : "Copy link"}
           onClick={copyActiveTabLink}
@@ -1557,15 +1576,27 @@ export function BrowserPanel({
             </MenuItem>
             <MenuItem
               className={BROWSER_ACTION_MENU_ITEM_CLASS_NAME}
-              disabled={!activeTab}
+              disabled={
+                !activeTab ||
+                activeTab.kind === "artifact" ||
+                (activeTab.kind === "local-html" && !activeTab.displayUrl)
+              }
               onClick={() => {
                 if (!ensureLiveRuntime()) return;
                 if (!api || !activeTab) return;
-                void api.shell.openExternal(activeTab.url);
+                if (activeTab.kind === "local-html" && activeTab.displayUrl) {
+                  void api.shell.openInEditor(activeTab.displayUrl, "system-default");
+                  return;
+                }
+                if (activeTab.kind !== "artifact") void api.shell.openExternal(activeTab.url);
               }}
             >
               <BrowserActionMenuIcon icon={ExternalLinkIcon} />
-              <span>Open externally</span>
+              <span>
+                {activeTab?.kind === "local-html"
+                  ? "Open original in default app"
+                  : "Open externally"}
+              </span>
             </MenuItem>
             <MenuSeparator />
             <MenuItem
@@ -1732,8 +1763,66 @@ export function BrowserPanel({
               <DiffPanelLoadingState label="Starting browser..." />
             </div>
           ) : null}
+          {/* Native pages can leave their canvas transparent. A white host matches
+              normal Chromium instead of Scient's dark backing surface. */}
           {isLiveRuntime ? (
-            <div ref={browserViewportRef} className="absolute inset-0 bg-[#0d0d0d]" />
+            <div ref={browserViewportRef} className="absolute inset-0 bg-white" />
+          ) : null}
+          {(isLiveRuntime ? workspaceReady : true) && activeTab?.lastError ? (
+            <div
+              data-browser-error-overlay="true"
+              className="absolute inset-0 z-20 flex items-center justify-center bg-[var(--color-background-surface)] p-6"
+              role="alert"
+            >
+              <div className="w-full max-w-md rounded-xl border border-border/70 bg-[var(--color-background-elevated-secondary)] p-6 text-center shadow-sm">
+                <span className="mx-auto flex size-10 items-center justify-center rounded-full bg-destructive/10 text-destructive">
+                  <TriangleAlertIcon className="size-5" aria-hidden="true" />
+                </span>
+                <h2 className="mt-4 text-base font-medium text-foreground">
+                  This page could not be opened
+                </h2>
+                <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">
+                  {activeTab.lastError}
+                </p>
+                <p
+                  className="mt-2 truncate text-xs text-muted-foreground/75"
+                  title={activeTab.displayUrl ?? activeTab.url}
+                >
+                  {activeTab.displayUrl ?? activeTab.url}
+                </p>
+                <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="sm"
+                    onClick={() => {
+                      if (!api) return;
+                      void runBrowserAction(() =>
+                        api.browser.reload({ threadId, tabId: activeTab.id }),
+                      ).then((state) => {
+                        if (state) upsertThreadState(state);
+                      });
+                    }}
+                  >
+                    <RefreshCwIcon className="size-3.5" aria-hidden="true" />
+                    Retry
+                  </Button>
+                  {activeTab.kind === "local-html" && activeTab.displayUrl ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        if (!api || !activeTab.displayUrl) return;
+                        void api.shell.showInFolder(activeTab.displayUrl);
+                      }}
+                    >
+                      Show in folder
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            </div>
           ) : null}
           {showLocalServersHome ? (
             <BrowserLocalServersHome
