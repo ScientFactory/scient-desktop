@@ -4513,6 +4513,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       expect(mounted.router.state.location.pathname).toBe(newThreadPath);
       const headingProjectTrigger = page.getByTestId("empty-landing-heading-project-trigger");
+      const emptyLandingHeading = page.getByTestId("empty-landing-heading");
+      await expect
+        .element(emptyLandingHeading)
+        .toHaveAccessibleName("What should we do in Other Project?");
       await expect.element(headingProjectTrigger).toHaveTextContent("Other Project");
       await expect
         .element(headingProjectTrigger)
@@ -4532,6 +4536,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
       expect(mounted.router.state.location.pathname).toBe(newThreadPath);
+      await expect
+        .element(emptyLandingHeading)
+        .toHaveAccessibleName("What should we do in Project?");
       await expect.element(headingProjectTrigger).toHaveTextContent("Project");
       await expect
         .element(headingProjectTrigger)

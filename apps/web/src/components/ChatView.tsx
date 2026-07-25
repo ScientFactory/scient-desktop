@@ -11415,6 +11415,11 @@ export default function ChatView({
                     <ScientLogo aria-label="Scient logo" className="size-10" />
                     <h2
                       data-testid="empty-landing-heading"
+                      aria-label={
+                        isEmptyChatLanding
+                          ? "What should we work on?"
+                          : `What should we do in ${activeProjectDisplayName ?? "this folder"}?`
+                      }
                       className="text-[26px] font-normal leading-[1.15] tracking-[-0.015em] text-foreground/95 sm:text-[30px]"
                     >
                       {isEmptyChatLanding ? (
