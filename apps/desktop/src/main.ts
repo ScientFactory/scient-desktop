@@ -59,6 +59,10 @@ import { NetService } from "@synara/shared/Net";
 import { RotatingFileSink } from "@synara/shared/logging";
 import { ensureStaticSnapshot, findAsarArchivePath } from "@synara/shared/staticSnapshot";
 import { isBackendReadinessAborted, waitForHttpReady } from "./backendReadiness";
+import {
+  buildBackendRestartRecoveryDialog,
+  resolveBackendRestartRecoveryAction,
+} from "./backendRestartRecovery";
 import { resolveBackendNodeArgs } from "./backendNodeOptions";
 import {
   backendProcessContainmentOptions,
@@ -2897,6 +2901,35 @@ function handleBackendGenerationExited(exit: DesktopBackendExit): void {
   }
 }
 
+async function showBackendRestartRecovery(input: {
+  failures: number;
+  windowMs: number;
+}): Promise<void> {
+  try {
+    const { response } = await dialog.showMessageBox(
+      buildBackendRestartRecoveryDialog({
+        appName: SCIENT_APP_NAME,
+        failures: input.failures,
+        windowMs: input.windowMs,
+        logFilePath: Path.join(LOG_DIR, "server-child.log"),
+      }),
+    );
+    const action = resolveBackendRestartRecoveryAction(response);
+    if (action === "retry") {
+      startBackend();
+      return;
+    }
+    if (action === "open-logs") {
+      await openDesktopLogsDirectory(LOG_DIR, (path) => shell.openPath(path));
+      if (!isQuitting) {
+        void showBackendRestartRecovery(input);
+      }
+    }
+  } catch (error: unknown) {
+    safeConsoleError(`[desktop] backend recovery dialog failed: ${formatErrorMessage(error)}`);
+  }
+}
+
 function getBackendSupervisor(): DesktopBackendSupervisor {
   if (backendSupervisor) return backendSupervisor;
   backendSupervisor = new DesktopBackendSupervisor({
@@ -2932,12 +2965,7 @@ function getBackendSupervisor(): DesktopBackendSupervisor {
         `backend automatic restart paused failures=${failures}/${maxFailures} ` +
           `windowMs=${windowMs} reason=${reason} message=${formatErrorMessage(error)}`,
       );
-      dialog.showErrorBox(
-        `${SCIENT_APP_NAME} backend stopped repeatedly`,
-        `Scient paused automatic backend restarts after ${failures} failures in ` +
-          `${Math.ceil(windowMs / 1_000)} seconds to prevent a crash loop. ` +
-          `Restart Scient to try again. If the problem continues, inspect the logs in:\n\n${LOG_DIR}`,
-      );
+      void showBackendRestartRecovery({ failures, windowMs });
     },
     onError: (error, context) => {
       safeConsoleError(`[desktop] ${context}: ${formatErrorMessage(error)}`);
