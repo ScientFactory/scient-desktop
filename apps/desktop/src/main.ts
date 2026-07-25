@@ -65,6 +65,7 @@ import {
   resolveBackendRestartRecoveryAction,
   shouldShowBackendRestartRecovery,
 } from "./backendRestartRecovery";
+import { UpdateBackendRecoveryLatch } from "./updateBackendRecovery";
 import { resolveBackendNodeArgs } from "./backendNodeOptions";
 import {
   backendProcessContainmentOptions,
@@ -316,6 +317,7 @@ let backendListeningDetector: ServerListeningDetector | null = null;
 let isQuitting = false;
 let isUpdaterInstallPreparing = false;
 let isUpdaterQuitAndInstallInFlight = false;
+const updateBackendRecovery = new UpdateBackendRecoveryLatch();
 let desktopShutdownPromise: Promise<void> | null = null;
 let desktopShutdownComplete = false;
 let desktopProtocolRegistered = false;
@@ -778,6 +780,10 @@ function clearUpdaterInstallInFlightAfterError(): void {
   isQuitting = false;
 }
 
+function restoreBackendAfterUpdaterFailure(): void {
+  if (updateBackendRecovery.consume()) startBackend();
+}
+
 function clearUpdateInstallWatchdogTimer(): void {
   if (updateInstallWatchdogTimer) {
     clearTimeout(updateInstallWatchdogTimer);
@@ -858,7 +864,7 @@ function armInstallWatchdog(): void {
     // The backend was already stopped before quitAndInstall(); since the app is
     // not actually quitting, bring it back so the recovered app is functional
     // (renderer reconnects) instead of a zombie window with a dead backend.
-    startBackend();
+    restoreBackendAfterUpdaterFailure();
     // Polling was stopped before the install attempt; resume it so background
     // update checks keep running after this recovery.
     scheduleUpdatePoll();
@@ -2553,6 +2559,7 @@ async function installDownloadedUpdate(): Promise<{
     markerWritten = true;
     isQuitting = true;
     isUpdaterInstallPreparing = true;
+    updateBackendRecovery.capture(backendSupervisor?.desiredRunning ?? false);
     clearUpdatePollTimer();
     await stopBackendAndWaitForExit("updater install handoff");
     await logMacUpdateDiagnostics("before install handoff");
@@ -2568,7 +2575,7 @@ async function installDownloadedUpdate(): Promise<{
     const consecutiveFailures = markerWritten
       ? recordInstallMarkerFailure(new Date().toISOString())
       : updateState.installFailureCount;
-    startBackend();
+    restoreBackendAfterUpdaterFailure();
     scheduleUpdatePoll();
     setUpdateState({
       ...reduceDesktopUpdateStateOnInstallFailure(updateState, message),
@@ -2695,7 +2702,7 @@ function configureAutoUpdater(): void {
         ? recordInstallMarkerFailure(new Date().toISOString())
         : updateState.installFailureCount;
     if (errorContext === "install") {
-      startBackend();
+      restoreBackendAfterUpdaterFailure();
       scheduleUpdatePoll();
     }
     if (!updateCheckInFlight && !updateDownloadInFlight) {
