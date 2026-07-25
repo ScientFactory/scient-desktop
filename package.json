@@ -38,6 +38,7 @@
     "test": "turbo run test",
     "brand:check": "node scripts/check-brand-identity.ts",
     "workflow:check": "bun scripts/check-workflow-actions.ts",
+    "migration:check": "bun scripts/check-migration-lineage.ts",
     "test:desktop-smoke": "turbo run smoke-test --filter=@synara/desktop",
     "test:desktop-browser-overlay-lifecycle": "bun run --cwd apps/desktop test:browser-overlay-lifecycle",
     "fmt": "oxfmt",
