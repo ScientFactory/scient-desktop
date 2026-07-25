@@ -559,6 +559,7 @@ export function BrowserPanel({
         return existing;
       }
       setRefreshingLocalHtmlSources((current) => new Set(current).add(sourceKey));
+      let failedRevisionUrl = sourceTab.url;
 
       const task = (async () => {
         do {
@@ -576,6 +577,7 @@ export function BrowserPanel({
           if (!latestTab || !displayUrl || !previewCwd) {
             return;
           }
+          failedRevisionUrl = latestTab.url;
 
           const prepared = await api.projects.prepareHtmlArtifactPreview({
             cwd: previewCwd,
@@ -642,9 +644,19 @@ export function BrowserPanel({
             error instanceof Error
               ? error.message
               : "The local HTML preview could not be refreshed.";
-          setLocalHtmlRefreshErrors((current) =>
-            new Map(current).set(sourceKey, { message, revisionUrl: sourceTab.url }),
+          const currentSourceTab = (
+            useBrowserStateStore.getState().threadStatesByThreadId[threadId]?.tabs ?? []
+          ).find(
+            (tab) =>
+              tab.kind === "local-html" &&
+              tab.displayUrl === sourceTab.displayUrl &&
+              tab.previewCwd === sourceTab.previewCwd,
           );
+          if (currentSourceTab?.url === failedRevisionUrl) {
+            setLocalHtmlRefreshErrors((current) =>
+              new Map(current).set(sourceKey, { message, revisionUrl: failedRevisionUrl }),
+            );
+          }
           throw error;
         })
         .finally(() => {

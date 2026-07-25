@@ -1013,7 +1013,94 @@ describe("BrowserPanel interactions", () => {
     });
   });
 
-  it("forgets a local HTML refresh error after its source is closed", async () => {
+  it("shows a queued refresh failure against the revision left visible", async () => {
+    const previousUrl = "http://g-e2345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const firstReplacementUrl =
+      "http://g-f2345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const secondReplacementUrl =
+      "http://g-02345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const openState = browserState("tab-source");
+    openState.version = 30;
+    openState.tabs = [
+      {
+        ...openState.tabs[0]!,
+        id: "tab-source",
+        kind: "local-html",
+        url: previousUrl,
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        lastCommittedUrl: previousUrl,
+        sourceChanged: true,
+      },
+    ];
+    const firstReplacementState: ThreadBrowserState = {
+      ...openState,
+      version: openState.version + 1,
+      activeTabId: "tab-revision",
+      tabs: [
+        {
+          ...openState.tabs[0]!,
+          id: "tab-revision",
+          url: firstReplacementUrl,
+          lastCommittedUrl: firstReplacementUrl,
+          sourceChanged: false,
+        },
+      ],
+    };
+    let resolveFirstReplacement: (state: ThreadBrowserState) => void = () => undefined;
+    const firstReplacement = new Promise<ThreadBrowserState>((resolve) => {
+      resolveFirstReplacement = resolve;
+    });
+    const prepareHtmlArtifactPreview = vi
+      .fn()
+      .mockResolvedValueOnce({
+        mode: "static-document" as const,
+        warnings: [],
+        previewUrl: firstReplacementUrl,
+        watchedPaths: ["/workspace/report.html"],
+      })
+      .mockResolvedValueOnce({
+        mode: "static-document" as const,
+        warnings: [],
+        previewUrl: secondReplacementUrl,
+        watchedPaths: ["/workspace/report.html"],
+      });
+    const replaceLocalHtmlPreview = vi
+      .fn()
+      .mockImplementationOnce(() => firstReplacement)
+      .mockRejectedValueOnce(new Error("The newest local HTML revision could not be loaded."));
+    nativeApiTestState.api = {
+      browser: {
+        open: vi.fn(async () => openState),
+        hide: vi.fn(async () => undefined),
+        setPanelBounds: vi.fn(async () => undefined),
+        replaceLocalHtmlPreview,
+        onState: vi.fn(() => () => undefined),
+        onCopyLink: vi.fn(() => () => undefined),
+      },
+      projects: {
+        prepareHtmlArtifactPreview,
+        revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
+      },
+    } as unknown as NativeApi;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+
+    await renderLivePanel(() => undefined);
+    await vi.waitFor(() => expect(replaceLocalHtmlPreview).toHaveBeenCalledOnce());
+    ((await page.getByRole("button", { name: "Reload" }).element()) as HTMLButtonElement).click();
+    resolveFirstReplacement(firstReplacementState);
+
+    await vi.waitFor(() => expect(replaceLocalHtmlPreview).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => {
+      const status = page
+        .getByRole("status")
+        .elements()
+        .find((element) => element.textContent?.includes("newest local HTML"));
+      expect(status?.textContent).toContain("could not be loaded");
+    });
+  });
+
+  it("does not retain a refresh failure that finishes after its source is closed", async () => {
     const previewUrl = "http://g-b2345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
     const reopenedUrl = "http://g-c2345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
     const openState = browserState("tab-source");
@@ -1030,14 +1117,17 @@ describe("BrowserPanel interactions", () => {
         sourceChanged: true,
       },
     ];
+    let rejectReplacement: (error: Error) => void = () => undefined;
+    const replacement = new Promise<ThreadBrowserState>((_resolve, reject) => {
+      rejectReplacement = reject;
+    });
+    const revokeHtmlArtifactPreview = vi.fn(async () => ({ revoked: true }));
     nativeApiTestState.api = {
       browser: {
         open: vi.fn(async () => openState),
         hide: vi.fn(async () => undefined),
         setPanelBounds: vi.fn(async () => undefined),
-        replaceLocalHtmlPreview: vi.fn(async () => {
-          throw new Error("The refreshed local HTML page could not be loaded.");
-        }),
+        replaceLocalHtmlPreview: vi.fn(() => replacement),
         onState: vi.fn(() => () => undefined),
         onCopyLink: vi.fn(() => () => undefined),
       },
@@ -1048,19 +1138,15 @@ describe("BrowserPanel interactions", () => {
           previewUrl: "http://g-d2345678-1234-4123-8123-123456789abc.preview.localhost:5000/",
           watchedPaths: ["/workspace/report.html"],
         })),
-        revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
+        revokeHtmlArtifactPreview,
       },
     } as unknown as NativeApi;
     useBrowserStateStore.getState().upsertThreadState(openState);
 
     await renderLivePanel(() => undefined);
-    await vi.waitFor(() => {
-      const status = page
-        .getByRole("status")
-        .elements()
-        .find((element) => element.textContent?.includes("refreshed"));
-      expect(status?.textContent).toContain("could not be loaded");
-    });
+    await vi.waitFor(() =>
+      expect(nativeApiTestState.api?.browser.replaceLocalHtmlPreview).toHaveBeenCalledOnce(),
+    );
 
     useBrowserStateStore.getState().upsertThreadState({
       ...openState,
@@ -1068,6 +1154,9 @@ describe("BrowserPanel interactions", () => {
       activeTabId: null,
       tabs: [],
     });
+    rejectReplacement(new Error("The refreshed local HTML page could not be loaded."));
+    await vi.waitFor(() => expect(revokeHtmlArtifactPreview).toHaveBeenCalledOnce());
+
     useBrowserStateStore.getState().upsertThreadState({
       ...openState,
       version: openState.version + 2,
