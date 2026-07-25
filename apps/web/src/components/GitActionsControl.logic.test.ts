@@ -1387,6 +1387,15 @@ describe("resolveLiveThreadBranchUpdate", () => {
 
     assert.deepEqual(update, { branch: "feature/new" });
   });
+
+  it("waits for branch discovery before comparing status", () => {
+    const update = resolveLiveThreadBranchUpdate({
+      threadBranch: null,
+      gitStatus: status({ branch: "main" }),
+    });
+
+    assert.equal(update, null);
+  });
 });
 
 describe("shouldOfferCreateBranchPrompt", () => {

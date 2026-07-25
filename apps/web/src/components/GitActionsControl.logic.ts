@@ -536,6 +536,13 @@ export function resolveLiveThreadBranchUpdate(input: {
     return null;
   }
 
+  // Branch discovery and status are separate queries. Status can resolve first
+  // (or remain cached while branches refresh), so null is not yet evidence of
+  // a real branch mismatch and must not start an invalidation loop.
+  if (input.threadBranch === null) {
+    return null;
+  }
+
   if (input.gitStatus.branch === null && input.threadBranch !== null) {
     return null;
   }

@@ -89,7 +89,7 @@ export function invalidateGitQueriesForCwds(queryClient: QueryClient, cwds: Iter
   );
 }
 
-export function gitStatusQueryOptions(cwd: string | null) {
+export function gitStatusQueryOptions(cwd: string | null, enabled = true) {
   return queryOptions({
     queryKey: gitQueryKeys.status(cwd),
     queryFn: async () => {
@@ -97,7 +97,7 @@ export function gitStatusQueryOptions(cwd: string | null) {
       if (!cwd) throw new Error("Git status is unavailable.");
       return api.git.status({ cwd });
     },
-    enabled: cwd !== null,
+    enabled: enabled && cwd !== null,
     staleTime: GIT_STATUS_STALE_TIME_MS,
     refetchOnWindowFocus: true,
     refetchOnReconnect: "always",
