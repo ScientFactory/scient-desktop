@@ -7,7 +7,17 @@ import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, PlatformError, Schema, Scope } from "effect";
+import {
+  Deferred,
+  Effect,
+  Fiber,
+  FileSystem,
+  Layer,
+  PlatformError,
+  Ref,
+  Schema,
+  Scope,
+} from "effect";
 import { describe, expect, vi } from "vitest";
 
 import { GitCoreLive, makeGitCore } from "./GitCore.ts";
@@ -175,6 +185,39 @@ function commitWithDate(
 // ── Tests ──
 
 it.layer(TestLayer)("git integration", (it) => {
+  describe("repository action lock", () => {
+    it.effect("serializes canonical aliases of the same repository", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const core = yield* GitCore;
+        const events = yield* Ref.make<string[]>([]);
+        const firstEntered = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const append = (event: string) => Ref.update(events, (current) => [...current, event]);
+
+        const first = core.withActionLock(
+          tmp,
+          append("first:start").pipe(
+            Effect.andThen(Deferred.succeed(firstEntered, undefined)),
+            Effect.andThen(Deferred.await(releaseFirst)),
+            Effect.andThen(append("first:end")),
+          ),
+        );
+        const firstFiber = yield* Effect.forkChild(first);
+        yield* Deferred.await(firstEntered);
+        const secondFiber = yield* Effect.forkChild(
+          core.withActionLock(path.join(tmp, "."), append("second:start")),
+        );
+
+        expect(yield* Ref.get(events)).toEqual(["first:start"]);
+        yield* Deferred.succeed(releaseFirst, undefined);
+        yield* Fiber.join(firstFiber);
+        yield* Fiber.join(secondFiber);
+        expect(yield* Ref.get(events)).toEqual(["first:start", "first:end", "second:start"]);
+      }),
+    );
+  });
+
   describe("shell process execution", () => {
     it.effect("caps captured output when maxOutputBytes is exceeded", () =>
       Effect.gen(function* () {
@@ -2236,11 +2279,11 @@ it.layer(TestLayer)("git integration", (it) => {
         yield* git(clone, ["push", "origin", initialBranch]);
 
         const core = yield* GitCore;
-        const pulled = yield* core.pullCurrentBranch(source);
+        const pulled = yield* core.pullCurrentBranch(source, initialBranch);
         expect(pulled.status).toBe("pulled");
         expect((yield* core.statusDetails(source)).behindCount).toBe(0);
 
-        const skipped = yield* core.pullCurrentBranch(source);
+        const skipped = yield* core.pullCurrentBranch(source, initialBranch);
         expect(skipped.status).toBe("skipped_up_to_date");
       }),
     );
@@ -2249,7 +2292,8 @@ it.layer(TestLayer)("git integration", (it) => {
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
-        const result = yield* Effect.result((yield* GitCore).pullCurrentBranch(tmp));
+        const currentBranch = yield* git(tmp, ["branch", "--show-current"]);
+        const result = yield* Effect.result((yield* GitCore).pullCurrentBranch(tmp, currentBranch));
         expect(result._tag).toBe("Failure");
         if (result._tag === "Failure") {
           expect(result.failure.message.toLowerCase()).toContain("no upstream");
@@ -2281,7 +2325,9 @@ it.layer(TestLayer)("git integration", (it) => {
 
         yield* writeTextFile(path.join(source, "README.md"), "local change\n");
 
-        const result = yield* Effect.result((yield* GitCore).pullCurrentBranch(source));
+        const result = yield* Effect.result(
+          (yield* GitCore).pullCurrentBranch(source, initialBranch),
+        );
         expect(result._tag).toBe("Failure");
         if (result._tag === "Failure") {
           expect(result.failure.detail).toContain("Local changes block pull");

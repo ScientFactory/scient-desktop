@@ -660,6 +660,8 @@ export default function GitActionsControl({
   }, [gitStatusForActions]);
 
   const runSyncWithRemote = useCallback(() => {
+    const expectedBranch = gitStatusForActions?.branch;
+    if (!expectedBranch) return;
     const activityKey = `git:${gitActivityScope}:pull`;
     activityManager.publish({
       dedupeKey: activityKey,
@@ -669,7 +671,7 @@ export default function GitActionsControl({
       title: "Syncing with remote...",
       destination: threadActivityDestination,
     });
-    void pullMutation.mutateAsync().then(
+    void pullMutation.mutateAsync({ expectedBranch }).then(
       (result) => {
         activityManager.publish({
           dedupeKey: activityKey,
@@ -696,7 +698,7 @@ export default function GitActionsControl({
         });
       },
     );
-  }, [gitActivityScope, pullMutation, threadActivityDestination]);
+  }, [gitActivityScope, gitStatusForActions?.branch, pullMutation, threadActivityDestination]);
 
   const runGitAction = useCallback(
     async function runGitAction({

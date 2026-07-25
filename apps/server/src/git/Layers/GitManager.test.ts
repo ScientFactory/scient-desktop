@@ -307,13 +307,19 @@ function runStackedAction(
   },
   options?: Parameters<GitManagerShape["runStackedAction"]>[1],
 ) {
-  return manager.runStackedAction(
-    {
-      ...input,
-      actionId: input.actionId ?? "test-action-id",
-    },
-    options,
-  );
+  return Effect.gen(function* () {
+    const expectedBranch =
+      input.expectedBranch ??
+      (yield* runGit(input.cwd, ["branch", "--show-current"])).stdout.trim();
+    return yield* manager.runStackedAction(
+      {
+        ...input,
+        actionId: input.actionId ?? "test-action-id",
+        expectedBranch,
+      },
+      options,
+    );
+  });
 }
 
 function resolvePullRequest(manager: GitManagerShape, input: { cwd: string; reference: string }) {

@@ -571,15 +571,18 @@ export function resolveGitStatusForActions(input: {
   gitStatus: GitStatusResult | null;
 }): GitStatusResult | null {
   // Branch discovery is the action-safety authority. Cached status from a
-  // previous branch must not enable mutations on the newly discovered branch;
-  // detached HEAD intentionally exposes no branch actions.
-  if (
-    !input.repositoryConfirmed ||
-    input.currentBranch === null ||
-    input.gitStatus?.branch !== input.currentBranch
-  ) {
+  // previous branch must not enable mutations on the newly discovered branch. A confirmed
+  // detached status remains visible so the existing recovery controls can offer branch creation;
+  // the mutation path separately requires a named branch.
+  if (!input.repositoryConfirmed || !input.gitStatus) {
     return null;
   }
+
+  if (input.currentBranch === null) {
+    return input.gitStatus.branch === null ? input.gitStatus : null;
+  }
+
+  if (input.gitStatus.branch !== input.currentBranch) return null;
 
   return input.gitStatus;
 }

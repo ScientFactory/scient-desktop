@@ -857,7 +857,12 @@ export const makeWsRpcLayer = () =>
           rpcEffect(gitManager.summarizeDiff(input), "Failed to summarize diff"),
         [WS_METHODS.gitPull]: (input) =>
           rpcEffect(
-            git.pullCurrentBranch(input.cwd).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              git
+                .pullCurrentBranch(input.cwd, input.expectedBranch)
+                .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to pull branch",
           ),
         [WS_METHODS.gitRunStackedAction]: (input) =>
@@ -890,9 +895,12 @@ export const makeWsRpcLayer = () =>
           ),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           rpcEffect(
-            gitManager
-              .preparePullRequestThread(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              gitManager
+                .preparePullRequestThread(input)
+                .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to prepare pull request thread",
           ),
         [WS_METHODS.pullRequestsList]: (input) =>
@@ -916,71 +924,107 @@ export const makeWsRpcLayer = () =>
           rpcEffect(git.listBranches(input), "Failed to list branches"),
         [WS_METHODS.gitCreateWorktree]: (input) =>
           rpcEffect(
-            git.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              git.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to create worktree",
           ),
         [WS_METHODS.gitCreateDetachedWorktree]: (input) =>
           rpcEffect(
-            git.createDetachedWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              git.createDetachedWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to create detached worktree",
           ),
         [WS_METHODS.gitRemoveWorktree]: (input) =>
           rpcEffect(
-            git.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              git.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to remove worktree",
           ),
         [WS_METHODS.gitCreateBranch]: (input) =>
           rpcEffect(
-            git.createBranch(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              git.createBranch(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to create branch",
           ),
         [WS_METHODS.gitCheckout]: (input) =>
           rpcEffect(
-            Effect.scoped(git.checkoutBranch(input)).pipe(
-              Effect.tap(() => refreshGitStatus(input.cwd)),
+            git.withActionLock(
+              input.cwd,
+              Effect.scoped(git.checkoutBranch(input)).pipe(
+                Effect.tap(() => refreshGitStatus(input.cwd)),
+              ),
             ),
             "Failed to checkout branch",
           ),
         [WS_METHODS.gitStashAndCheckout]: (input) =>
           rpcEffect(
-            Effect.scoped(git.stashAndCheckout(input)).pipe(
-              Effect.tap(() => refreshGitStatus(input.cwd)),
+            git.withActionLock(
+              input.cwd,
+              Effect.scoped(git.stashAndCheckout(input)).pipe(
+                Effect.tap(() => refreshGitStatus(input.cwd)),
+              ),
             ),
             "Failed to stash and checkout",
           ),
         [WS_METHODS.gitStashDrop]: (input) =>
           rpcEffect(
-            git.stashDrop(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              git.stashDrop(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to drop stash",
           ),
         [WS_METHODS.gitStashInfo]: (input) =>
           rpcEffect(git.stashInfo(input), "Failed to read stash"),
         [WS_METHODS.gitRemoveIndexLock]: (input) =>
-          rpcEffect(git.removeIndexLock(input), "Failed to remove Git index lock"),
+          rpcEffect(
+            git.withActionLock(input.cwd, git.removeIndexLock(input)),
+            "Failed to remove Git index lock",
+          ),
         [WS_METHODS.gitInit]: (input) =>
           rpcEffect(
-            git.initRepo(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              git.initRepo(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to initialize repository",
           ),
         [WS_METHODS.gitStageFiles]: (input) =>
           rpcEffect(
-            git.stageFiles(input.cwd, input.paths).pipe(
-              Effect.tap(() => refreshGitStatus(input.cwd)),
-              Effect.as({ ok: true }),
+            git.withActionLock(
+              input.cwd,
+              git.stageFiles(input.cwd, input.paths).pipe(
+                Effect.tap(() => refreshGitStatus(input.cwd)),
+                Effect.as({ ok: true }),
+              ),
             ),
             "Failed to stage files",
           ),
         [WS_METHODS.gitUnstageFiles]: (input) =>
           rpcEffect(
-            git.unstageFiles(input.cwd, input.paths).pipe(
-              Effect.tap(() => refreshGitStatus(input.cwd)),
-              Effect.as({ ok: true }),
+            git.withActionLock(
+              input.cwd,
+              git.unstageFiles(input.cwd, input.paths).pipe(
+                Effect.tap(() => refreshGitStatus(input.cwd)),
+                Effect.as({ ok: true }),
+              ),
             ),
             "Failed to unstage files",
           ),
         [WS_METHODS.gitHandoffThread]: (input) =>
           rpcEffect(
-            gitManager.handoffThread(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              gitManager.handoffThread(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to hand off thread",
           ),
 

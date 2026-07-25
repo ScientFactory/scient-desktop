@@ -431,12 +431,15 @@ export function gitRunStackedActionMutationOptions(input: {
 }
 
 export function gitPullMutationOptions(input: { cwd: string | null; queryClient: QueryClient }) {
-  return makeGitMutationOptions<void, Awaited<ReturnType<NativeApi["git"]["pull"]>>>({
+  return makeGitMutationOptions<
+    { expectedBranch: string },
+    Awaited<ReturnType<NativeApi["git"]["pull"]>>
+  >({
     cwd: input.cwd,
     queryClient: input.queryClient,
     mutationKey: gitMutationKeys.pull(input.cwd),
     unavailableMessage: "Git pull is unavailable.",
-    run: (api, cwd) => api.git.pull({ cwd }),
+    run: (api, cwd, { expectedBranch }) => api.git.pull({ cwd, expectedBranch }),
   });
 }
 

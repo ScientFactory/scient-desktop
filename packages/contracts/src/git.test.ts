@@ -75,6 +75,7 @@ describe("GitRunStackedActionInput", () => {
       actionId: "action-1",
       cwd: "/repo",
       action: "commit",
+      expectedBranch: "main",
     });
 
     expect(parsed.actionId).toBe("action-1");
@@ -97,6 +98,7 @@ describe("GitRunStackedActionInput", () => {
       actionId: "action-2",
       cwd: "/repo",
       action: "commit_push",
+      expectedBranch: "main",
       codexHomePath: "/tmp/custom-codex-home",
     });
 
@@ -108,6 +110,7 @@ describe("GitRunStackedActionInput", () => {
       actionId: "action-3",
       cwd: "/repo",
       action: "commit",
+      expectedBranch: "main",
       textGenerationModelSelection: {
         provider: "opencode",
         model: "openrouter/gpt-oss-120b",

@@ -22,6 +22,7 @@ import {
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import * as nodeFs from "node:fs/promises";
 import * as nodePath from "node:path";
 
@@ -669,6 +670,21 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const { worktreesDir } = yield* ServerConfig;
+    const actionLocks = new Map<string, Semaphore.Semaphore>();
+    const withActionLock: GitCoreShape["withActionLock"] = (cwd, effect) => {
+      let key: string;
+      try {
+        key = realpathSync.native(cwd);
+      } catch {
+        key = nodePath.resolve(cwd);
+      }
+      let lock = actionLocks.get(key);
+      if (!lock) {
+        lock = Semaphore.makeUnsafe(1);
+        actionLocks.set(key, lock);
+      }
+      return lock.withPermits(1)(effect);
+    };
 
     const buildGeneratedDetachedWorktreePath = (cwd: string) =>
       Effect.gen(function* () {
@@ -1838,7 +1854,7 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
         };
       });
 
-    const pullCurrentBranch: GitCoreShape["pullCurrentBranch"] = (cwd) =>
+    const pullCurrentBranch: GitCoreShape["pullCurrentBranch"] = (cwd, expectedBranch) =>
       Effect.gen(function* () {
         const details = yield* statusDetails(cwd);
         const branch = details.branch;
@@ -1848,6 +1864,14 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
             cwd,
             ["pull", "--ff-only"],
             "Cannot pull from detached HEAD.",
+          );
+        }
+        if (branch !== expectedBranch) {
+          return yield* createGitCommandError(
+            "GitCore.pullCurrentBranch",
+            cwd,
+            ["pull", "--ff-only"],
+            `The current branch changed from '${expectedBranch}' to '${branch}'. Review the current branch and try again.`,
           );
         }
         if (!details.hasUpstream) {
@@ -1864,6 +1888,19 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
           ["rev-parse", "HEAD"],
           true,
         ).pipe(Effect.map((stdout) => stdout.trim()));
+        const branchBeforePull = yield* runGitStdout(
+          "GitCore.pullCurrentBranch.revalidateBranch",
+          cwd,
+          ["branch", "--show-current"],
+        ).pipe(Effect.map((stdout) => stdout.trim()));
+        if (branchBeforePull !== expectedBranch) {
+          return yield* createGitCommandError(
+            "GitCore.pullCurrentBranch",
+            cwd,
+            ["pull", "--ff-only"],
+            `The current branch changed from '${expectedBranch}' to '${branchBeforePull || "detached HEAD"}'. Review the current branch and try again.`,
+          );
+        }
         yield* executeGit("GitCore.pullCurrentBranch.pull", cwd, ["pull", "--ff-only"], {
           timeoutMs: 30_000,
           fallbackErrorMessage: "git pull failed",
@@ -2692,6 +2729,7 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
       });
 
     return {
+      withActionLock,
       execute,
       status,
       statusDetails,

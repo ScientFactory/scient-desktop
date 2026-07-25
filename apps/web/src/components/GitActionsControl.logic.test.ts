@@ -1444,6 +1444,19 @@ describe("resolveGitStatusForActions", () => {
       }),
     );
   });
+
+  it("preserves confirmed detached status for branch recovery controls", () => {
+    const detachedStatus = status({ branch: null });
+
+    assert.strictEqual(
+      resolveGitStatusForActions({
+        repositoryConfirmed: true,
+        currentBranch: null,
+        gitStatus: detachedStatus,
+      }),
+      detachedStatus,
+    );
+  });
 });
 
 describe("shouldOfferCreateBranchPrompt", () => {
