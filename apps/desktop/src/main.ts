@@ -576,6 +576,9 @@ async function waitForBackendWindowReady(baseUrl: string): Promise<"listening" |
       }),
     onHttpReady: () => {
       if (generation !== null) backendSupervisor?.markReady(generation);
+      writeDesktopLogHeader(
+        `backend semantic ready generation=${generation === null ? "unknown" : generation}`,
+      );
     },
     onHttpFailure: (error) => {
       if (generation === null) return;
@@ -2820,6 +2823,9 @@ function spawnBackendGeneration(generation: number): ChildProcess.ChildProcess {
     // uses taskkill /T after the same graceful IPC deadline.
     ...backendProcessContainmentOptions(captureBackendLogs),
   });
+  writeDesktopLogHeader(
+    `backend process spawned generation=${generation} pid=${child.pid ?? "unknown"}`,
+  );
   const listeningDetector = new ServerListeningDetector();
   backendListeningDetector = listeningDetector;
   let backendSessionClosed = false;
@@ -2881,6 +2887,9 @@ function handleBackendGenerationStarted(generation: DesktopBackendGeneration): v
 }
 
 function handleBackendGenerationExited(exit: DesktopBackendExit): void {
+  writeDesktopLogHeader(
+    `backend process exited generation=${exit.generation} pid=${exit.pid ?? "unknown"} reason=${exit.reason}`,
+  );
   cancelBackendReadinessWait();
   const runtime = backendGenerationRuntimes.get(exit.generation);
   backendGenerationRuntimes.delete(exit.generation);
@@ -3527,6 +3536,14 @@ function createWindow(): BrowserWindow {
       );
     },
   );
+  window.webContents.on("render-process-gone", (_event, details) => {
+    writeDesktopLogHeader(
+      `renderer main process gone reason=${details.reason} exitCode=${details.exitCode}`,
+    );
+  });
+  window.on("unresponsive", () => {
+    writeDesktopLogHeader("renderer main window unresponsive");
+  });
   window.once("ready-to-show", () => {
     // Preserve the original first-launch behavior, then respect the state saved
     // by subsequent closes. Normal bounds are restored before maximizing so the

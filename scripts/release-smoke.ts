@@ -319,6 +319,11 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     packagedStartupVerifier,
+    'SYNARA_TELEMETRY_ENABLED: "false"',
+    "Expected packaged startup verification to disable production telemetry.",
+  );
+  assertContains(
+    packagedStartupVerifier,
     "PACKAGED_SMOKE_INHERITED_ENVIRONMENT_ALLOWLIST",
     "Expected packaged startup verification to inherit only explicit host variables.",
   );
@@ -326,6 +331,16 @@ function verifyReleaseWorkflowSafety(): void {
     packagedStartupVerifier,
     'log.includes("renderer main frame loaded")',
     "Expected packaged startup proof to require successful renderer loading.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    'log.includes("backend semantic ready generation=")',
+    "Expected packaged startup proof to require semantic backend readiness.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    '!log.includes("renderer main window unresponsive")',
+    "Expected packaged startup proof to reject an unresponsive renderer process.",
   );
   assertNotContains(
     packagedStartupVerifier,

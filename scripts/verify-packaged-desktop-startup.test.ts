@@ -1,5 +1,13 @@
 import type { ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -12,6 +20,7 @@ import {
   hasPackagedStartupProof,
   isScientWindowsExecutable,
   parsePackagedDesktopStartupArgs,
+  readPackagedBackendProcessIds,
   resolveExactPackagedDesktopStartupAsset,
   resolveNativePackagedDesktopPlatform,
   resolvePackagedDesktopLogPath,
@@ -91,6 +100,7 @@ describe("packaged desktop startup verification", () => {
     expect(env.PROVIDER_AUTH_TOKEN).toBeUndefined();
     expect(env.SCIENT_DEV_ALLOW_NO_SANDBOX).toBeUndefined();
     expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+    expect(env.SYNARA_TELEMETRY_ENABLED).toBe("false");
     expect(env.DISPLAY).toBe(":99");
     for (const name of [
       "HOME",
@@ -175,7 +185,7 @@ describe("packaged desktop startup verification", () => {
     const requiredMarkers = [
       "app ready",
       "bootstrap main window created",
-      "bootstrap backend ready source=packaged",
+      "backend semantic ready generation=1",
       "renderer main frame loaded",
     ];
 
@@ -189,6 +199,16 @@ describe("packaged desktop startup verification", () => {
 
     writeFileSync(logPath, requiredMarkers.join("\n"));
     expect(hasPackagedStartupProof(logPath)).toBe(true);
+
+    for (const failureMarker of [
+      "renderer main frame load failed code=-2 message=failed",
+      "renderer main process gone reason=crashed exitCode=1",
+      "renderer main window unresponsive",
+      "backend process exited generation=1 pid=42 reason=unexpected exit",
+    ]) {
+      writeFileSync(logPath, [...requiredMarkers, failureMarker].join("\n"));
+      expect(hasPackagedStartupProof(logPath)).toBe(false);
+    }
   });
 
   it("accepts startup proof only after the process remains alive for the stability window", async () => {
@@ -247,6 +267,50 @@ describe("packaged desktop startup verification", () => {
     );
 
     expect(runTaskkill.mock.calls.map(([pid]) => pid)).toEqual([84]);
+  });
+
+  it("recovers every spawned backend PID before runtime state is durable", () => {
+    const root = mkdtempSync(join(tmpdir(), "scient-packaged-smoke-pids-test-"));
+    temporaryRoots.push(root);
+    const env = createPackagedDesktopSmokeEnvironment(
+      root,
+      { platform: "mac", version: "1.2.3" },
+      { PATH: process.env.PATH },
+    );
+    const logPath = resolvePackagedDesktopLogPath(env);
+    mkdirSync(join(env.SCIENT_HOME!, "userdata", "logs"), { recursive: true });
+    writeFileSync(
+      logPath,
+      [
+        "backend process spawned generation=1 pid=42",
+        "backend process spawned generation=2 pid=84",
+        "backend process spawned generation=2 pid=84",
+      ].join("\n"),
+    );
+
+    expect(readPackagedBackendProcessIds(env)).toEqual([42, 84]);
+  });
+
+  it("combines the durable runtime PID with every PID observed during startup", () => {
+    const root = mkdtempSync(join(tmpdir(), "scient-packaged-smoke-pids-test-"));
+    temporaryRoots.push(root);
+    const env = createPackagedDesktopSmokeEnvironment(
+      root,
+      { platform: "mac", version: "1.2.3" },
+      { PATH: process.env.PATH },
+    );
+    const userDataPath = join(env.SCIENT_HOME!, "userdata");
+    mkdirSync(join(userDataPath, "logs"), { recursive: true });
+    writeFileSync(join(userDataPath, "server-runtime.json"), JSON.stringify({ pid: 126 }));
+    writeFileSync(
+      resolvePackagedDesktopLogPath(env),
+      [
+        "backend process spawned generation=1 pid=42",
+        "backend process spawned generation=2 pid=126",
+      ].join("\n"),
+    );
+
+    expect(readPackagedBackendProcessIds(env)).toEqual([126, 42]);
   });
 
   it("fails when a POSIX process tree survives TERM and KILL", async () => {

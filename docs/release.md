@@ -16,8 +16,9 @@ This document covers build-only native validation, promotion through the protect
   - Linux `x64` AppImage
   - Windows `x64` NSIS installer
 - Before upload, launches the exact collected macOS and Windows payloads from
-  isolated Scient state and requires stable app readiness, backend readiness,
-  and successful renderer main-frame loading.
+  isolated Scient state and requires stable app readiness, semantic backend
+  readiness, successful renderer main-frame loading, and no intervening native
+  renderer or backend process failure or renderer unresponsiveness.
 - Publishes one versioned GitHub Release with all produced files.
   - Versions with a suffix after `X.Y.Z` (for example `1.2.3-alpha.1`) are published as GitHub prereleases.
   - Stable 0.5.x releases are GitHub Latest; the 0.4.x compatibility release remains historical.

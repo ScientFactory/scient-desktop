@@ -244,6 +244,7 @@ export function createPackagedDesktopSmokeEnvironment(
     XDG_RUNTIME_DIR: join(root, "xdg-runtime"),
     SCIENT_HOME: scientHome,
     SYNARA_DISABLE_AUTO_UPDATE: "1",
+    SYNARA_TELEMETRY_ENABLED: "false",
     ELECTRON_ENABLE_LOGGING: "1",
   });
   for (const path of [
@@ -429,24 +430,42 @@ export function hasPackagedStartupProof(logPath: string): boolean {
       log.includes("app ready") &&
       log.includes("bootstrap main window created") &&
       log.includes("renderer main frame loaded") &&
-      log.includes("bootstrap backend ready source=")
+      log.includes("backend semantic ready generation=") &&
+      !log.includes("renderer main frame load failed") &&
+      !log.includes("renderer main process gone") &&
+      !log.includes("renderer main window unresponsive") &&
+      !log.includes("backend process exited generation=")
     );
   } catch {
     return false;
   }
 }
 
-function readPackagedBackendProcessId(environment: NodeJS.ProcessEnv | null): number | null {
+export function readPackagedBackendProcessIds(environment: NodeJS.ProcessEnv | null): number[] {
   const scientHome = environment?.SCIENT_HOME;
-  if (!scientHome) return null;
+  if (!scientHome) return [];
+  const processIds = new Set<number>();
   try {
     const state = JSON.parse(
       readFileSync(join(scientHome, "userdata", "server-runtime.json"), "utf8"),
     ) as { readonly pid?: unknown };
-    return Number.isInteger(state.pid) && Number(state.pid) > 0 ? Number(state.pid) : null;
+    if (Number.isInteger(state.pid) && Number(state.pid) > 0) {
+      processIds.add(Number(state.pid));
+    }
   } catch {
-    return null;
+    // Startup may fail before the runtime-state file is durable. The desktop
+    // main log records every backend PID immediately after spawn as a fallback.
   }
+  try {
+    const log = readFileSync(resolvePackagedDesktopLogPath(environment), "utf8");
+    for (const match of log.matchAll(/backend process spawned generation=\d+ pid=(\d+)/gu)) {
+      const processId = Number(match[1]);
+      if (Number.isInteger(processId) && processId > 0) processIds.add(processId);
+    }
+  } catch {
+    // No backend was observed yet.
+  }
+  return [...processIds];
 }
 
 export interface PackagedDesktopChildOutcome {
@@ -564,8 +583,7 @@ export async function verifyPackagedDesktopStartup(
   } finally {
     try {
       if (child) {
-        const backendProcessId = readPackagedBackendProcessId(environment);
-        await terminateProcessTree(child, {}, backendProcessId === null ? [] : [backendProcessId]);
+        await terminateProcessTree(child, {}, readPackagedBackendProcessIds(environment));
       }
     } finally {
       rmSync(temporaryRoot, { recursive: true, force: true });
