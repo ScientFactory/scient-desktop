@@ -474,7 +474,10 @@ export interface ProcessTerminationTarget {
 export interface ProcessTerminationDependencies {
   readonly platform?: NodeJS.Platform;
   readonly childIsAlive?: (child: ChildProcess) => boolean;
-  readonly runTaskkill?: (pid: number) => {
+  readonly runTaskkill?: (
+    pid: number,
+    timeoutMs: number,
+  ) => {
     readonly error?: Error;
     readonly status: number | null;
   };
@@ -487,6 +490,7 @@ export interface ProcessTerminationDependencies {
 }
 
 const POSIX_DESKTOP_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 12_000;
+const WINDOWS_TASKKILL_TIMEOUT_MS = 5_000;
 
 function childProcessHandleIsAlive(child: ChildProcess): boolean {
   if (!child.pid || child.exitCode !== null || child.signalCode !== null) return false;
@@ -551,6 +555,13 @@ export async function terminateProcessTree(
     child.pid && childCanStillOwnProcesses
       ? { pid: child.pid, processGroup: platform !== "win32" }
       : null;
+  // A POSIX process group can outlive its leader. Once the ChildProcess reports
+  // exit we no longer have durable signal authority, but we must still observe
+  // that original group before declaring cleanup complete and deleting evidence.
+  const exitedRootGroupTarget =
+    platform !== "win32" && child.pid && !rootTarget
+      ? { pid: child.pid, processGroup: true }
+      : null;
   // Backend PIDs recovered from logs/runtime state are observation-only. They
   // prove cleanup completion, but a bare PID is not durable signal authority:
   // the OS may reuse it after an unlogged exit.
@@ -563,23 +574,27 @@ export async function terminateProcessTree(
     );
   const targets = [
     ...(rootTarget ? [rootTarget] : []),
-    ...observedTargets.filter((target) => target.pid !== rootTarget?.pid),
+    ...(exitedRootGroupTarget ? [exitedRootGroupTarget] : []),
+    ...observedTargets.filter(
+      (target) => target.pid !== (rootTarget?.pid ?? exitedRootGroupTarget?.pid),
+    ),
   ];
   if (targets.length === 0) return;
   const awaitTargetsExit = dependencies.waitForTargetsExit ?? waitForProcessTerminationTargets;
   if (!rootTarget) {
-    if (await awaitTargetsExit(observedTargets, 5_000)) return;
+    if (await awaitTargetsExit(targets, 5_000)) return;
     throw new Error(
-      `Recorded backend process candidates ${observedTargets.map(({ pid }) => pid).join(", ")} remained after their parent exited; refusing to signal unverified PIDs.`,
+      `Recorded process candidates ${targets.map(({ pid }) => pid).join(", ")} remained after their parent exited; refusing to signal unverified PIDs or process groups.`,
     );
   }
   if (platform === "win32") {
     // The live ChildProcess handle establishes root ownership; taskkill /T
     // derives descendants from that root. Never signal observation-only PIDs.
     const taskkillResult =
-      dependencies.runTaskkill?.(rootTarget.pid) ??
+      dependencies.runTaskkill?.(rootTarget.pid, WINDOWS_TASKKILL_TIMEOUT_MS) ??
       spawnSync("taskkill", ["/pid", String(rootTarget.pid), "/t", "/f"], {
         stdio: "ignore",
+        timeout: WINDOWS_TASKKILL_TIMEOUT_MS,
         windowsHide: true,
       });
     if (await awaitTargetsExit(targets, 5_000)) return;
@@ -596,6 +611,16 @@ export async function terminateProcessTree(
   // to ten seconds. Preserve its supervisor until that bound has elapsed so it
   // can terminate the backend's separate process group itself.
   if (await awaitTargetsExit(targets, POSIX_DESKTOP_GRACEFUL_SHUTDOWN_TIMEOUT_MS)) return;
+  const childStillOwnsRoot =
+    child.pid === rootTarget.pid &&
+    child.exitCode === null &&
+    child.signalCode === null &&
+    (dependencies.childIsAlive ?? childProcessHandleIsAlive)(child);
+  if (!childStillOwnsRoot) {
+    throw new Error(
+      `Packaged root ${rootTarget.pid} exited before POSIX escalation; refusing to signal a potentially reused process group.`,
+    );
+  }
   const targetIsAlive = dependencies.targetIsAlive ?? processTerminationTargetIsAlive;
   if (targetIsAlive(rootTarget)) sendSignal(rootTarget, "SIGKILL");
   if (await awaitTargetsExit(targets, 2_000)) return;

@@ -369,7 +369,7 @@ describe("packaged desktop startup verification", () => {
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
-    const runTaskkill = vi.fn((_pid: number) => ({ status: 1 }));
+    const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({ status: 1 }));
     await expect(
       terminateProcessTree(
         child,
@@ -383,6 +383,7 @@ describe("packaged desktop startup verification", () => {
       ),
     ).rejects.toThrow("survived Windows cleanup");
     expect(runTaskkill.mock.calls.map(([pid]) => pid)).toEqual([42]);
+    expect(runTaskkill.mock.calls.map(([, timeoutMs]) => timeoutMs)).toEqual([5_000]);
   });
 
   it("waits for recorded Windows backends without signaling reused PIDs after root exit", async () => {
@@ -391,7 +392,7 @@ describe("packaged desktop startup verification", () => {
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
-    const runTaskkill = vi.fn((_pid: number) => ({ status: 0 }));
+    const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({ status: 0 }));
 
     await terminateProcessTree(
       child,
@@ -413,7 +414,7 @@ describe("packaged desktop startup verification", () => {
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
-    const runTaskkill = vi.fn((_pid: number) => ({ status: 0 }));
+    const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({ status: 0 }));
 
     await terminateProcessTree(
       child,
@@ -549,9 +550,57 @@ describe("packaged desktop startup verification", () => {
     expect(exitWaits).toEqual([12_000]);
   });
 
+  it("fails closed when the POSIX root exits before escalation", async () => {
+    const childState: { exitCode: number | null; pid: number; signalCode: NodeJS.Signals | null } =
+      {
+        exitCode: null,
+        pid: 42,
+        signalCode: null,
+      };
+    const child = childState as unknown as ChildProcess;
+    const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+
+    await expect(
+      terminateProcessTree(
+        child,
+        {
+          platform: "darwin",
+          childIsAlive: () => true,
+          sendSignal: (target, signal) => {
+            signals.push({ pid: target.pid, signal });
+            if (signal === "SIGTERM") childState.exitCode = 0;
+          },
+          targetIsAlive: () => true,
+          waitForTargetsExit: async () => false,
+        },
+        [84],
+      ),
+    ).rejects.toThrow("refusing to signal a potentially reused process group");
+    expect(signals).toEqual([{ pid: 42, signal: "SIGTERM" }]);
+  });
+
+  it("observes an orphaned POSIX process group without signaling it", async () => {
+    const child = { exitCode: 0, pid: 42, signalCode: null } as unknown as ChildProcess;
+    const observed: Array<ReadonlyArray<{ pid: number; processGroup: boolean }>> = [];
+    const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+
+    await expect(
+      terminateProcessTree(child, {
+        platform: "darwin",
+        sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
+        waitForTargetsExit: async (targets) => {
+          observed.push(targets);
+          return false;
+        },
+      }),
+    ).rejects.toThrow("refusing to signal unverified PIDs or process groups");
+    expect(observed).toEqual([[{ pid: 42, processGroup: true }]]);
+    expect(signals).toEqual([]);
+  });
+
   it("fails closed without signaling a recorded PID when the root is already gone", async () => {
     const child = { exitCode: 0, pid: 42, signalCode: null } as unknown as ChildProcess;
-    const runTaskkill = vi.fn((_pid: number) => ({ status: 0 }));
+    const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({ status: 0 }));
 
     await expect(
       terminateProcessTree(
