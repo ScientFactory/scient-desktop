@@ -313,6 +313,38 @@ function verifyReleaseWorkflowSafety(): void {
     resolve(repoRoot, "scripts/verify-packaged-desktop-startup.ts"),
     "utf8",
   ).replaceAll("\r\n", "\n");
+  const desktopMain = readFileSync(
+    resolve(repoRoot, "apps/desktop/src/main.ts"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  const webMain = readFileSync(resolve(repoRoot, "apps/web/src/main.tsx"), "utf8").replaceAll(
+    "\r\n",
+    "\n",
+  );
+  const rendererReadiness = readFileSync(
+    resolve(repoRoot, "apps/desktop/src/packagedStartupRendererReadiness.ts"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  assertContains(
+    desktopMain,
+    "const FULL_COMMIT_HASH_PATTERN = /^[0-9a-f]{40}$/i;",
+    "Expected packaged startup identity to accept only a complete embedded commit.",
+  );
+  assertContains(
+    desktopMain,
+    "packaged identity name=${app.getName()} version=${app.getVersion()} commit=${commit}",
+    "Expected the running packaged app to expose its exact embedded identity to the verifier.",
+  );
+  assertContains(
+    webMain,
+    'document.documentElement.dataset.scientRendererReady = "true"',
+    "Expected packaged startup proof to depend on a renderer-owned React commit marker.",
+  );
+  assertContains(
+    rendererReadiness,
+    "document.documentElement.dataset.scientRendererReady === 'true'",
+    "Expected packaged startup proof to reject a renderer that never committed React.",
+  );
   assertContains(
     packagedStartupVerifier,
     "SCIENT_HOME: scientHome",
@@ -604,6 +636,21 @@ function verifyDesktopStageLockAuthority(): void {
     resolve(repoRoot, "scripts/build-desktop-artifact.ts"),
     "utf8",
   ).replaceAll("\r\n", "\n");
+  assertContains(
+    buildScript,
+    'spawnSync("git", ["rev-parse", "HEAD"]',
+    "Expected packaged release metadata to embed the complete source commit.",
+  );
+  assertContains(
+    buildScript,
+    "scientCommitHash: commitHash",
+    "Expected the complete source commit to cross the desktop staging boundary.",
+  );
+  assertNotContains(
+    buildScript,
+    '"--short=12"',
+    "Packaged release metadata must not truncate the commit required by exact-payload proof.",
+  );
   assertContains(
     buildScript,
     "bun install --omit dev --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",

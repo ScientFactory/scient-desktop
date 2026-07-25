@@ -1,4 +1,5 @@
 import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 import {
   existsSync,
   mkdirSync,
@@ -20,6 +21,7 @@ import {
   formatPackagedStartupFailures,
   hasPackagedStartupProof,
   isScientWindowsExecutable,
+  monitorPackagedStartupTermination,
   parsePackagedDesktopStartupArgs,
   readWindowsExecutableArchitecture,
   readPackagedDesktopLogTail,
@@ -302,6 +304,22 @@ describe("packaged desktop startup verification", () => {
     expect(now).toBeGreaterThanOrEqual(1_000);
   });
 
+  it("turns interrupt signals into an observable cleanup request and removes its listeners", async () => {
+    const source = new EventEmitter();
+    const termination = monitorPackagedStartupTermination(source);
+
+    source.emit("SIGTERM");
+
+    await expect(termination.signal).resolves.toBe("SIGTERM");
+    expect(termination.readSignal()).toBe("SIGTERM");
+    expect(source.listenerCount("SIGINT")).toBe(1);
+    expect(source.listenerCount("SIGTERM")).toBe(0);
+
+    termination.dispose();
+    expect(source.listenerCount("SIGINT")).toBe(0);
+    expect(source.listenerCount("SIGTERM")).toBe(0);
+  });
+
   it("rejects startup proof when the process handle closes before the exit event arrives", async () => {
     let now = 0;
     await expect(
@@ -510,6 +528,7 @@ describe("packaged desktop startup verification", () => {
       signalCode: null,
     } as unknown as ChildProcess;
     const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+    const exitWaits: number[] = [];
 
     await terminateProcessTree(
       child,
@@ -518,12 +537,16 @@ describe("packaged desktop startup verification", () => {
         childIsAlive: () => true,
         sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
         targetIsAlive: () => false,
-        waitForTargetsExit: async () => true,
+        waitForTargetsExit: async (_targets, timeoutMs) => {
+          exitWaits.push(timeoutMs);
+          return true;
+        },
       },
       [84],
     );
 
     expect(signals).toEqual([{ pid: 42, signal: "SIGTERM" }]);
+    expect(exitWaits).toEqual([12_000]);
   });
 
   it("fails closed without signaling a recorded PID when the root is already gone", async () => {

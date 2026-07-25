@@ -29,6 +29,45 @@ export interface PackagedDesktopStartupOptions {
   readonly timeoutMs: number;
 }
 
+interface TerminationSignalSource {
+  once(signal: NodeJS.Signals, listener: () => void): unknown;
+  removeListener(signal: NodeJS.Signals, listener: () => void): unknown;
+}
+
+export function monitorPackagedStartupTermination(source: TerminationSignalSource = process): {
+  readonly signal: Promise<NodeJS.Signals>;
+  readonly readSignal: () => NodeJS.Signals | null;
+  readonly dispose: () => void;
+} {
+  let observedSignal: NodeJS.Signals | null = null;
+  let resolveSignal!: (signal: NodeJS.Signals) => void;
+  const signal = new Promise<NodeJS.Signals>((resolve) => {
+    resolveSignal = resolve;
+  });
+  const listeners = new Map<NodeJS.Signals, () => void>();
+
+  for (const name of ["SIGINT", "SIGTERM"] as const) {
+    const listener = () => {
+      if (observedSignal !== null) return;
+      observedSignal = name;
+      resolveSignal(name);
+    };
+    listeners.set(name, listener);
+    source.once(name, listener);
+  }
+
+  return {
+    signal,
+    readSignal: () => observedSignal,
+    dispose: () => {
+      for (const [name, listener] of listeners) {
+        source.removeListener(name, listener);
+      }
+      listeners.clear();
+    },
+  };
+}
+
 export function parsePackagedDesktopStartupArgs(
   argv: ReadonlyArray<string>,
 ): PackagedDesktopStartupOptions {
@@ -447,6 +486,8 @@ export interface ProcessTerminationDependencies {
   ) => Promise<boolean>;
 }
 
+const POSIX_DESKTOP_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 12_000;
+
 function childProcessHandleIsAlive(child: ChildProcess): boolean {
   if (!child.pid || child.exitCode !== null || child.signalCode !== null) return false;
   try {
@@ -551,7 +592,10 @@ export async function terminateProcessTree(
   }
   const sendSignal = dependencies.sendSignal ?? sendProcessTreeSignal;
   sendSignal(rootTarget, "SIGTERM");
-  if (await awaitTargetsExit(targets, 5_000)) return;
+  // The desktop owns a bounded backend shutdown that can legitimately take up
+  // to ten seconds. Preserve its supervisor until that bound has elapsed so it
+  // can terminate the backend's separate process group itself.
+  if (await awaitTargetsExit(targets, POSIX_DESKTOP_GRACEFUL_SHUTDOWN_TIMEOUT_MS)) return;
   const targetIsAlive = dependencies.targetIsAlive ?? processTerminationTargetIsAlive;
   if (targetIsAlive(rootTarget)) sendSignal(rootTarget, "SIGKILL");
   if (await awaitTargetsExit(targets, 2_000)) return;
@@ -753,6 +797,7 @@ export async function verifyPackagedDesktopStartup(
   let logPath: string | null = null;
   let output = "";
   const failures: Array<{ phase: string; error: unknown }> = [];
+  const termination = monitorPackagedStartupTermination();
   try {
     const launch = prepareLaunch(options, extractionRoot);
     environment = createPackagedDesktopSmokeEnvironment(join(temporaryRoot, "state"), options);
@@ -782,30 +827,56 @@ export async function verifyPackagedDesktopStartup(
     child.stdout?.on("data", recordOutput);
     child.stderr?.on("data", recordOutput);
 
-    await waitForPackagedStartupProof({
-      timeoutMs: options.timeoutMs,
-      hasProof: () => hasPackagedStartupProof(launchLogPath, options),
-      readOutcome: () => childOutcome,
-      isProcessAlive: () => childProcessHandleIsAlive(child!),
-    });
+    await Promise.race([
+      waitForPackagedStartupProof({
+        timeoutMs: options.timeoutMs,
+        hasProof: () => hasPackagedStartupProof(launchLogPath, options),
+        readOutcome: () => childOutcome,
+        isProcessAlive: () => childProcessHandleIsAlive(child!),
+      }),
+      termination.signal.then((signal) => {
+        throw new Error(`Packaged startup verification interrupted by ${signal}.`);
+      }),
+    ]);
   } catch (error) {
     failures.push({ phase: "startup verification failed", error });
   }
 
+  let processCleanupFailed = false;
   try {
     if (child) {
       await terminateProcessTree(child, {}, readPackagedBackendProcessIds(environment));
     }
   } catch (error) {
+    processCleanupFailed = true;
     failures.push({ phase: "process cleanup failed", error });
+  }
+
+  const interruptedBy = termination.readSignal();
+  termination.dispose();
+  if (
+    interruptedBy !== null &&
+    failures.every((failure) => failure.phase !== "startup verification failed")
+  ) {
+    failures.push({
+      phase: "startup verification failed",
+      error: new Error(`Packaged startup verification interrupted by ${interruptedBy}.`),
+    });
   }
 
   // Capture diagnostics after cleanup attempts but before deleting isolated state.
   const logTail = logPath ? readPackagedDesktopLogTail(logPath) : "";
-  try {
-    rmSync(temporaryRoot, { recursive: true, force: true });
-  } catch (error) {
-    failures.push({ phase: `temporary-state cleanup failed at ${temporaryRoot}`, error });
+  if (processCleanupFailed) {
+    failures.push({
+      phase: "temporary-state cleanup skipped",
+      error: new Error(`Preserved failed process evidence at ${temporaryRoot}.`),
+    });
+  } else {
+    try {
+      rmSync(temporaryRoot, { recursive: true, force: true });
+    } catch (error) {
+      failures.push({ phase: `temporary-state cleanup failed at ${temporaryRoot}`, error });
+    }
   }
 
   if (failures.length > 0) {

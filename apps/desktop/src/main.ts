@@ -92,6 +92,7 @@ import {
 import { collectMacUpdateDiagnostics } from "./macUpdateDiagnostics";
 import { openInitialBackendWindow } from "./initialBackendWindowOpen";
 import { shouldAllowMediaPermissionRequest } from "./mediaPermissions";
+import { PACKAGED_RENDERER_READINESS_EXPRESSION } from "./packagedStartupRendererReadiness";
 import {
   installResumableUpdateDownloader,
   type ResumableDownloaderTarget,
@@ -263,6 +264,7 @@ const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const APP_DISPLAY_NAME = isDevelopment ? `${SCIENT_APP_NAME} (Dev)` : SCIENT_APP_NAME;
 const APP_USER_MODEL_ID = scientBundleId(isDevelopment);
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
+const FULL_COMMIT_HASH_PATTERN = /^[0-9a-f]{40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
 const LOG_DIR = SCIENT_DATA_DIRECTORIES.logsDir;
 const LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
@@ -940,7 +942,11 @@ function parseAppUpdateYml(): Record<string, string> | null {
 }
 
 function normalizeCommitHash(value: unknown): string | null {
-  return normalizeFullCommitHash(value)?.slice(0, COMMIT_HASH_DISPLAY_LENGTH) ?? null;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return COMMIT_HASH_PATTERN.test(trimmed)
+    ? trimmed.slice(0, COMMIT_HASH_DISPLAY_LENGTH).toLowerCase()
+    : null;
 }
 
 function normalizeFullCommitHash(value: unknown): string | null {
@@ -948,7 +954,7 @@ function normalizeFullCommitHash(value: unknown): string | null {
     return null;
   }
   const trimmed = value.trim();
-  if (!COMMIT_HASH_PATTERN.test(trimmed)) {
+  if (!FULL_COMMIT_HASH_PATTERN.test(trimmed)) {
     return null;
   }
   return trimmed.toLowerCase();
@@ -3549,7 +3555,7 @@ function createWindow(): BrowserWindow {
         const generation = getBackendSupervisor().currentGeneration;
         void Promise.all([
           window.webContents.executeJavaScript(
-            "new Promise((resolve) => requestAnimationFrame(() => resolve(document.readyState === 'complete')))",
+            `new Promise((resolve) => requestAnimationFrame(() => resolve(${PACKAGED_RENDERER_READINESS_EXPRESSION})))`,
             true,
           ),
           fetch(`${backendHttpUrl}/health`, { signal: AbortSignal.timeout(5_000) }).then(
