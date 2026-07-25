@@ -33,6 +33,7 @@ import {
   type DefaultBranchConfirmableAction,
   requiresFeatureBranchForDefaultBranchAction,
   requiresDefaultBranchConfirmation,
+  resolveGitStatusForActions,
   resolveLiveThreadBranchUpdate,
   resolveDefaultCreateBranchName,
   resolveDefaultBranchActionDialogCopy,
@@ -364,13 +365,14 @@ export default function GitActionsControl({
   );
   // Default to true while loading so we don't flash init controls.
   const isRepo = branchList?.isRepo ?? true;
+  const repositoryConfirmed = branchListReady && branchList?.isRepo === true;
   const hasOriginRemote = branchList?.hasOriginRemote ?? false;
   const currentBranch = branchList?.branches.find((branch) => branch.current)?.name ?? null;
   // Do not poll status until branch discovery confirms this cwd is a repo.
   // Besides avoiding unnecessary failures for non-repo projects, this keeps a
   // status response from racing ahead and starting a permanent refresh loop.
   const { data: gitStatus = null, error: gitStatusError } = useQuery(
-    gitStatusQueryOptions(gitCwd, branchListReady && branchList?.isRepo === true),
+    gitStatusQueryOptions(gitCwd, repositoryConfirmed),
   );
   const liveThreadBranchUpdate = useMemo(
     () =>
@@ -387,7 +389,11 @@ export default function GitActionsControl({
     void invalidateGitQueries(queryClient);
   }, [isGitStatusOutOfSync, queryClient]);
 
-  const gitStatusForActions = isGitStatusOutOfSync ? null : gitStatus;
+  const gitStatusForActions = resolveGitStatusForActions({
+    repositoryConfirmed,
+    isGitStatusOutOfSync,
+    gitStatus,
+  });
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));

@@ -565,5 +565,17 @@ export function resolveLiveThreadBranchUpdate(input: {
   };
 }
 
+export function resolveGitStatusForActions(input: {
+  repositoryConfirmed: boolean;
+  isGitStatusOutOfSync: boolean;
+  gitStatus: GitStatusResult | null;
+}): GitStatusResult | null {
+  if (!input.repositoryConfirmed || input.isGitStatusOutOfSync) {
+    return null;
+  }
+
+  return input.gitStatus;
+}
+
 // Re-export from shared for backwards compatibility in this module's exports
 export { resolveAutoFeatureBranchName } from "@synara/shared/git";

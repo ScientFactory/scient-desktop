@@ -9,6 +9,7 @@ import {
   resolveCreatePrActionAvailability,
   resolveDefaultCreateBranchName,
   resolveDefaultBranchActionDialogCopy,
+  resolveGitStatusForActions,
   resolveLiveThreadBranchUpdate,
   resolvePullActionAvailability,
   resolveQuickAction,
@@ -1395,6 +1396,40 @@ describe("resolveLiveThreadBranchUpdate", () => {
     });
 
     assert.equal(update, null);
+  });
+});
+
+describe("resolveGitStatusForActions", () => {
+  it("ignores cached status until branch discovery confirms a repository", () => {
+    const cachedStatus = status({ branch: "main" });
+
+    assert.isNull(
+      resolveGitStatusForActions({
+        repositoryConfirmed: false,
+        isGitStatusOutOfSync: false,
+        gitStatus: cachedStatus,
+      }),
+    );
+  });
+
+  it("exposes status only after repository confirmation and branch agreement", () => {
+    const currentStatus = status({ branch: "main" });
+
+    assert.strictEqual(
+      resolveGitStatusForActions({
+        repositoryConfirmed: true,
+        isGitStatusOutOfSync: false,
+        gitStatus: currentStatus,
+      }),
+      currentStatus,
+    );
+    assert.isNull(
+      resolveGitStatusForActions({
+        repositoryConfirmed: true,
+        isGitStatusOutOfSync: true,
+        gitStatus: currentStatus,
+      }),
+    );
   });
 });
 
