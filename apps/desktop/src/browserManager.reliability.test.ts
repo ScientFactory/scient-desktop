@@ -30,6 +30,7 @@ const electron = vi.hoisted(() => {
       setPermissionCheckHandler: ReturnType<typeof vi.fn>;
       setPermissionRequestHandler: ReturnType<typeof vi.fn>;
       on: ReturnType<typeof vi.fn>;
+      removeAllListeners: ReturnType<typeof vi.fn>;
       clearStorageData: ReturnType<typeof vi.fn>;
       clearCache: ReturnType<typeof vi.fn>;
       setProxy: ReturnType<typeof vi.fn>;
@@ -105,6 +106,7 @@ const electron = vi.hoisted(() => {
       setPermissionCheckHandler: vi.fn(),
       setPermissionRequestHandler: vi.fn(),
       on: vi.fn(),
+      removeAllListeners: vi.fn(),
       clearStorageData: vi.fn(async () => undefined),
       clearCache: vi.fn(async () => undefined),
       setProxy: vi.fn(() => setProxyImplementation()),
@@ -461,7 +463,13 @@ describe("DesktopBrowserManager reliability", () => {
     await vi.waitFor(() => {
       expect(previewSession?.clearStorageData).toHaveBeenCalledOnce();
       expect(previewSession?.clearCache).toHaveBeenCalledOnce();
+      expect(previewSession?.setProxy).toHaveBeenCalledWith({ mode: "direct" });
     });
+    expect(previewSession?.webRequest.onBeforeRequest).toHaveBeenLastCalledWith(null);
+    expect(previewSession?.webRequest.onCompleted).toHaveBeenLastCalledWith(null);
+    expect(previewSession?.setPermissionCheckHandler).toHaveBeenLastCalledWith(null);
+    expect(previewSession?.setPermissionRequestHandler).toHaveBeenLastCalledWith(null);
+    expect(previewSession?.removeAllListeners).toHaveBeenCalledWith("will-download");
     manager.dispose();
   });
 
@@ -507,9 +515,16 @@ describe("DesktopBrowserManager reliability", () => {
     expect(electron.createdWebContents.at(-1)?.loadURL).toHaveBeenCalledWith(nextUrl);
     expect(previousContents?.close).toHaveBeenCalledOnce();
     const previousPartition = `scient-local-html-preview-${THREAD_ID}-${previousTabId}`;
-    await vi.waitFor(() =>
-      expect(electron.sessions.get(previousPartition)?.clearStorageData).toHaveBeenCalledOnce(),
-    );
+    const previousSession = electron.sessions.get(previousPartition);
+    await vi.waitFor(() => {
+      expect(previousSession?.clearStorageData).toHaveBeenCalledOnce();
+      expect(previousSession?.setProxy).toHaveBeenCalledWith({ mode: "direct" });
+    });
+    expect(previousSession?.webRequest.onBeforeRequest).toHaveBeenLastCalledWith(null);
+    expect(previousSession?.webRequest.onCompleted).toHaveBeenLastCalledWith(null);
+    expect(previousSession?.setPermissionCheckHandler).toHaveBeenLastCalledWith(null);
+    expect(previousSession?.setPermissionRequestHandler).toHaveBeenLastCalledWith(null);
+    expect(previousSession?.removeAllListeners).toHaveBeenCalledWith("will-download");
     manager.dispose();
   });
 

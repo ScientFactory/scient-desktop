@@ -592,9 +592,22 @@ export class DesktopBrowserManager {
     this.previewSessionsConfigured.delete(partition);
     this.previewSessionReady.delete(partition);
     this.previewSessionRetries.delete(partition);
-    void Promise.all([previewSession.clearStorageData(), previewSession.clearCache()]).catch(
-      () => undefined,
-    );
+    // A local HTML refresh intentionally uses a fresh partition so the new
+    // capability can load before the last working page is replaced. Electron
+    // retains in-memory partition sessions until app exit, so leaving these
+    // handlers attached would also retain one policy closure per source save.
+    // The runtime is already gone at every call site, making it safe to detach
+    // the old trust boundary before clearing its transient state.
+    previewSession.webRequest.onBeforeRequest(null);
+    previewSession.webRequest.onCompleted(null);
+    previewSession.setPermissionCheckHandler(null);
+    previewSession.setPermissionRequestHandler(null);
+    previewSession.removeAllListeners("will-download");
+    void Promise.all([
+      previewSession.clearStorageData(),
+      previewSession.clearCache(),
+      previewSession.setProxy({ mode: "direct" }),
+    ]).catch(() => undefined);
   }
 
   private clearLocalHtmlSourceWatch(threadId: ThreadId, tabId: string): void {
