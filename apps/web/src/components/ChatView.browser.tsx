@@ -5062,6 +5062,22 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await page.getByText("New project").click();
       await vi.waitFor(() => expect(createdProjectId).not.toBeNull());
       await expect.element(page.getByText("New project")).not.toBeInTheDocument();
+      useComposerDraftStore.getState().setPrompt(newThreadId, "keep this in the chosen project");
+      const sendRequestStart = wsRequests.length;
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find composer form.",
+      );
+      composerForm.requestSubmit();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
+      expect(
+        wsRequests
+          .slice(sendRequestStart)
+          .some((request) => readDispatchedCommand(request)?.type === "thread.create"),
+      ).toBe(false);
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt).toBe(
+        "keep this in the chosen project",
+      );
       useComposerDraftStore.getState().markDraftThreadPromoting(newThreadId);
 
       releaseSlowCreate();

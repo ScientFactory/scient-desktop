@@ -1321,6 +1321,7 @@ export default function ChatView({
   );
   const promptRef = useRef(prompt);
   const emptyDraftProjectRequestRef = useRef(0);
+  const emptyDraftProjectRequestInFlightRef = useRef<number | null>(null);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -7308,6 +7309,7 @@ export default function ChatView({
       isSendBusy ||
       isConnecting ||
       (isVoiceTranscribing && voicePromptOverride === undefined) ||
+      emptyDraftProjectRequestInFlightRef.current !== null ||
       sendPreflightInFlightRef.current ||
       sendInFlightRef.current
     ) {
@@ -9387,6 +9389,12 @@ export default function ChatView({
   const handleResetWorkspaceToHome = useCallback(() => {
     const requestId = emptyDraftProjectRequestRef.current + 1;
     emptyDraftProjectRequestRef.current = requestId;
+    emptyDraftProjectRequestInFlightRef.current = requestId;
+    const finishRequest = () => {
+      if (emptyDraftProjectRequestInFlightRef.current === requestId) {
+        emptyDraftProjectRequestInFlightRef.current = null;
+      }
+    };
     if (isLocalDraftThread) {
       if (isStudioContainer) {
         return (async () => {
@@ -9416,7 +9424,7 @@ export default function ChatView({
           }
           if (requestId !== emptyDraftProjectRequestRef.current) return;
           await openOrMoveEmptyDraftToLocalProject(studioProjectId, requestId);
-        })();
+        })().finally(finishRequest);
       }
       if (!isHomeChatContainer) {
         return (async () => {
@@ -9445,7 +9453,7 @@ export default function ChatView({
           }
           if (requestId !== emptyDraftProjectRequestRef.current) return;
           await openOrMoveEmptyDraftToLocalProject(homeProjectId, requestId);
-        })();
+        })().finally(finishRequest);
       }
       setDraftThreadContext(threadId, {
         envMode: "local",
@@ -9454,6 +9462,7 @@ export default function ChatView({
         lastKnownPr: null,
       });
       scheduleComposerFocus();
+      finishRequest();
       return;
     }
 
@@ -9474,6 +9483,7 @@ export default function ChatView({
       }
     }
     scheduleComposerFocus();
+    finishRequest();
   }, [
     activeThread,
     chatWorkspaceRoot,
@@ -9551,7 +9561,12 @@ export default function ChatView({
     (projectId: ProjectId) => {
       const requestId = emptyDraftProjectRequestRef.current + 1;
       emptyDraftProjectRequestRef.current = requestId;
-      return selectProjectForEmptyDraftRequest(projectId, requestId);
+      emptyDraftProjectRequestInFlightRef.current = requestId;
+      return selectProjectForEmptyDraftRequest(projectId, requestId).finally(() => {
+        if (emptyDraftProjectRequestInFlightRef.current === requestId) {
+          emptyDraftProjectRequestInFlightRef.current = null;
+        }
+      });
     },
     [selectProjectForEmptyDraftRequest],
   );
@@ -9562,42 +9577,50 @@ export default function ChatView({
     }
     const requestId = emptyDraftProjectRequestRef.current + 1;
     emptyDraftProjectRequestRef.current = requestId;
-    const api = readNativeApi();
-    if (!api) {
-      throw new Error("App is still connecting. Try again in a moment.");
-    }
-    const workspaceRoot = await api.dialogs.pickFolder();
-    if (!workspaceRoot || !isEmptyDraftProjectRequestCurrent(requestId)) {
-      return;
-    }
+    emptyDraftProjectRequestInFlightRef.current = requestId;
+    try {
+      const api = readNativeApi();
+      if (!api) {
+        throw new Error("App is still connecting. Try again in a moment.");
+      }
+      const workspaceRoot = await api.dialogs.pickFolder();
+      if (!workspaceRoot || !isEmptyDraftProjectRequestCurrent(requestId)) {
+        return;
+      }
 
-    const existingProject = useStore
-      .getState()
-      .projects.find(
-        (project) => project.kind === "project" && workspaceRootsEqual(project.cwd, workspaceRoot),
-      );
-    if (existingProject) {
-      await selectProjectForEmptyDraftRequest(existingProject.id, requestId);
-      return;
-    }
+      const existingProject = useStore
+        .getState()
+        .projects.find(
+          (project) =>
+            project.kind === "project" && workspaceRootsEqual(project.cwd, workspaceRoot),
+        );
+      if (existingProject) {
+        await selectProjectForEmptyDraftRequest(existingProject.id, requestId);
+        return;
+      }
 
-    const creationResult = await createOrRecoverProjectFromPath({
-      api,
-      workspaceRoot,
-      createIfMissing: false,
-      loadSnapshot: () => api.orchestration.getShellSnapshot().catch(() => null),
-    });
-    if (!isEmptyDraftProjectRequestCurrent(requestId)) return;
-    if (creationResult.snapshot) {
-      syncServerShellSnapshot(creationResult.snapshot);
+      const creationResult = await createOrRecoverProjectFromPath({
+        api,
+        workspaceRoot,
+        createIfMissing: false,
+        loadSnapshot: () => api.orchestration.getShellSnapshot().catch(() => null),
+      });
+      if (!isEmptyDraftProjectRequestCurrent(requestId)) return;
+      if (creationResult.snapshot) {
+        syncServerShellSnapshot(creationResult.snapshot);
+      }
+      if (!creationResult.created && !creationResult.project) {
+        throw new Error(PROJECT_CREATE_EXISTING_SYNC_ERROR);
+      }
+      if (!creationResult.project) {
+        throw new Error(PROJECT_CREATE_SYNC_ERROR);
+      }
+      await selectProjectForEmptyDraftRequest(creationResult.project.id, requestId);
+    } finally {
+      if (emptyDraftProjectRequestInFlightRef.current === requestId) {
+        emptyDraftProjectRequestInFlightRef.current = null;
+      }
     }
-    if (!creationResult.created && !creationResult.project) {
-      throw new Error(PROJECT_CREATE_EXISTING_SYNC_ERROR);
-    }
-    if (!creationResult.project) {
-      throw new Error(PROJECT_CREATE_SYNC_ERROR);
-    }
-    await selectProjectForEmptyDraftRequest(creationResult.project.id, requestId);
   }, [
     isEmptyDraftProjectRequestCurrent,
     isLocalDraftThread,
