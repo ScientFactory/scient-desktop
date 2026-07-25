@@ -10,6 +10,7 @@ import {
   useEffect,
   useMemo,
   useState,
+  type KeyboardEvent,
   type ReactElement,
 } from "react";
 import { type ProjectDirectoryEntry, type ProjectId } from "@synara/contracts";
@@ -27,6 +28,7 @@ import {
   ComboboxEmpty,
   ComboboxGroup,
   ComboboxGroupLabel,
+  ComboboxInput,
   ComboboxItem,
   ComboboxList,
   ComboboxPopup,
@@ -402,6 +404,23 @@ export const ProjectPicker = memo(function ProjectPicker({
     ? "Adding project..."
     : "Opening folder picker...";
 
+  const handleSearchKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+    const activeItemId = event.currentTarget.getAttribute("aria-activedescendant");
+    const activeItem = activeItemId
+      ? event.currentTarget.ownerDocument.getElementById(activeItemId)
+      : null;
+    if (!activeItem?.matches('[data-slot="combobox-item"]')) {
+      return;
+    }
+    // Base UI normally activates the highlighted item on Enter. Keep this explicit guard because
+    // this picker controls and filters its items outside the primitive, which can otherwise leave
+    // the highlighted DOM item visible without dispatching its activation click.
+    event.preventDefault();
+    event.stopPropagation();
+    activeItem.click();
+  }, []);
+
   const renderActiveFolderOption = (folder: ActiveFolderOption, index: number) => {
     const selected = isProjectSelectionMode
       ? folder.projectId === selectedProjectId
@@ -442,6 +461,8 @@ export const ProjectPicker = memo(function ProjectPicker({
       items={selectableDirectoryPaths}
       filteredItems={filteredDirectoryPaths}
       autoHighlight
+      inputValue={query}
+      onInputValueChange={setQuery}
       onOpenChange={handleOpenChange}
       open={open}
     >
@@ -465,6 +486,17 @@ export const ProjectPicker = memo(function ProjectPicker({
           searchPlaceholder="Search projects"
           query={query}
           onQueryChange={setQuery}
+          searchControl={
+            <ComboboxInput
+              autoFocus
+              inputClassName="rounded-md border-border/60 bg-background shadow-none before:hidden has-focus-visible:border-neutral-500/15 has-focus-visible:ring-0 [&_input]:font-sans"
+              placeholder="Search projects"
+              showTrigger={false}
+              size="sm"
+              type="search"
+              onKeyDownCapture={handleSearchKeyDown}
+            />
+          }
           footer={
             <>
               <button
@@ -489,7 +521,9 @@ export const ProjectPicker = memo(function ProjectPicker({
                 </button>
               ) : null}
               {errorMessage ? (
-                <div className="px-2 pb-1 text-destructive text-xs">{errorMessage}</div>
+                <div aria-live="polite" role="alert" className="px-2 pb-1 text-destructive text-xs">
+                  {errorMessage}
+                </div>
               ) : null}
             </>
           }

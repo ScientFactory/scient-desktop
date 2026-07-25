@@ -4845,15 +4845,27 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const beforeRect = controlsBefore!.getBoundingClientRect();
       const composerBlockBeforeRect = composerBlockBefore!.getBoundingClientRect();
       await workspacePickerTrigger.click();
-
-      const projectOption = await waitForElement(
-        () =>
-          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="combobox-item"]')).find(
-            (item) => item.textContent?.trim() === "project",
-          ) ?? null,
-        "Unable to find existing project option.",
-      );
-      projectOption.click();
+      const projectSearch = page.getByPlaceholder("Search projects");
+      await projectSearch.fill("project");
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll('[data-slot="combobox-item"]')).toHaveLength(1);
+      });
+      await userEvent.keyboard("{ArrowDown}");
+      await vi.waitFor(() => {
+        const searchInput = document.querySelector<HTMLInputElement>(
+          'input[placeholder="Search projects"]',
+        );
+        expect(document.activeElement).toBe(searchInput);
+        expect(searchInput?.getAttribute("aria-activedescendant")).toBeTruthy();
+        expect(
+          document.querySelector<HTMLElement>('[data-slot="combobox-item"][data-highlighted]')
+            ?.textContent,
+        ).toContain("project");
+      });
+      await userEvent.keyboard("{Enter}");
+      await vi.waitFor(() => {
+        expect(document.querySelector('[data-slot="combobox-popup"]')).toBeNull();
+      });
 
       await vi.waitFor(
         () => {

@@ -10632,6 +10632,7 @@ export default function ChatView({
     >
       {isEmptyChatLanding ? (
         <ProjectPicker
+          key={`empty-project-picker-${threadId}`}
           align="start"
           side="top"
           triggerClassName="h-7 py-1"
@@ -11526,6 +11527,7 @@ export default function ChatView({
                               className="inline-flex max-w-full items-baseline gap-0.5 align-bottom"
                             >
                               <ProjectPicker
+                                key={`heading-project-picker-${threadId}`}
                                 align="center"
                                 side="bottom"
                                 selectionMode="project"
