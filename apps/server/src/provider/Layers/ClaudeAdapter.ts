@@ -241,6 +241,7 @@ interface ClaudeSessionContext {
   lastInteractionMode: "default" | "plan" | undefined;
   currentApiModelId: string | undefined;
   readonly claudeExecutable: string;
+  readonly claudeCwd: string;
   claudeVersion: string | null | undefined;
   resumeSessionId: string | undefined;
   readonly pendingApprovals: Map<ApprovalRequestId, PendingApproval>;
@@ -302,7 +303,33 @@ export interface ClaudeAdapterLiveOptions {
   readonly resolveClaudeVersion?: (input: {
     readonly executable: string;
     readonly env: NodeJS.ProcessEnv;
+    readonly cwd: string;
   }) => Effect.Effect<string | null>;
+  readonly discoveryTimeoutMs?: number;
+}
+
+async function runTemporaryClaudeDiscovery<A>(
+  query: ClaudeQueryRuntime,
+  kind: "command" | "model" | "agent",
+  timeoutMs: number,
+  discover: () => Promise<A>,
+): Promise<A> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      discover(),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error(`Claude ${kind} discovery timed out after ${timeoutMs}ms.`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+    }
+    query.close();
+  }
 }
 
 function mapSupportedCommands(commands: SlashCommand[]): ProviderListCommandsResult {
@@ -935,6 +962,7 @@ const CLAUDE_SETTING_SOURCES = [
 const CLAUDE_DEFAULT_CONTEXT_WINDOW_TOKENS = 200_000;
 const CLAUDE_CONTEXT_WARNING_RATIO = 0.8;
 const CLAUDE_CONTEXT_USAGE_TIMEOUT_MS = 1_000;
+const CLAUDE_DISCOVERY_TIMEOUT_MS = 30_000;
 const EMBEDDED_CLAUDE_SYSTEM_PROMPT_APPEND = [
   "You are running inside Scient, a scientific workspace that embeds the Claude Agent SDK.",
   "Do not present the host app as Claude Code unless the user is explicitly asking about Claude Code.",
@@ -1475,6 +1503,13 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         readonly prompt: AsyncIterable<SDKUserMessage>;
         readonly options: ClaudeQueryOptions;
       }) => query({ prompt: input.prompt, options: input.options }) as ClaudeQueryRuntime);
+    const configuredDiscoveryTimeoutMs = options?.discoveryTimeoutMs;
+    const discoveryTimeoutMs =
+      configuredDiscoveryTimeoutMs !== undefined &&
+      Number.isFinite(configuredDiscoveryTimeoutMs) &&
+      configuredDiscoveryTimeoutMs > 0
+        ? configuredDiscoveryTimeoutMs
+        : CLAUDE_DISCOVERY_TIMEOUT_MS;
 
     const sessions = new Map<ThreadId, ClaudeSessionContext>();
     const sessionLifecycleLocks = new Map<ThreadId, Semaphore.Semaphore>();
@@ -1505,7 +1540,11 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         : env;
     const resolveClaudeVersion =
       options?.resolveClaudeVersion ??
-      ((input: { readonly executable: string; readonly env: NodeJS.ProcessEnv }) =>
+      ((input: {
+        readonly executable: string;
+        readonly env: NodeJS.ProcessEnv;
+        readonly cwd: string;
+      }) =>
         resolveClaudeCliVersion(input).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
         ));
@@ -1513,9 +1552,10 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       modelSelection: Extract<ProviderSendTurnInput["modelSelection"], { provider: "claudeAgent" }>,
       executable: string,
       env: NodeJS.ProcessEnv,
+      cwd: string,
     ) =>
       normalizeModelSlug(modelSelection.model, "claudeAgent") === "claude-opus-5"
-        ? resolveClaudeVersion({ executable, env })
+        ? resolveClaudeVersion({ executable, env, cwd })
         : Effect.succeed<string | null | undefined>(undefined);
 
     const offerRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
@@ -3700,6 +3740,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         const requestedModelSelection =
           input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
         const claudeExecutable = providerOptions?.binaryPath ?? "claude";
+        const claudeCwd = input.cwd ?? serverConfig.cwd;
         const claudeSdkEnv = claudeSdkEnvForExecutable(
           yield* resolveClaudeSdkEnv,
           claudeExecutable,
@@ -3709,6 +3750,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
               requestedModelSelection,
               claudeExecutable,
               claudeSdkEnv,
+              claudeCwd,
             )
           : undefined;
         if (requestedModelSelection) {
@@ -3779,7 +3821,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         const claudeSubagents = buildClaudeSdkSubagents();
 
         const queryOptions: ClaudeQueryOptions = {
-          ...(input.cwd ? { cwd: input.cwd } : {}),
+          cwd: claudeCwd,
           // Keep Claude context-window selection model-driven so session start
           // and in-session switches both use the same API model contract.
           ...(apiModelId ? { model: apiModelId } : {}),
@@ -3866,6 +3908,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             lastInteractionMode: undefined,
             currentApiModelId: apiModelId,
             claudeExecutable,
+            claudeCwd,
             claudeVersion,
             resumeSessionId: sessionId,
             pendingApprovals,
@@ -4023,6 +4066,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             requestedModelSelection,
             context.claudeExecutable,
             claudeSdkEnvForExecutable(yield* resolveClaudeSdkEnv, context.claudeExecutable),
+            context.claudeCwd,
           );
           // A failed/timeout probe is transient. Do not poison the live session;
           // a later Opus 5 selection must be allowed to re-probe the same runtime.
@@ -4360,21 +4404,22 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         }),
       });
 
-      try {
-        // Drive the iterator so the subprocess completes its init handshake.
-        // This runs in the background; close() in the finally block stops it.
-        void (async () => {
-          for await (const message of tempQuery) {
-            void message;
-            /* consume until closed */
-          }
-        })().catch(() => undefined);
+      // Drive the iterator so the subprocess completes its init handshake.
+      // This runs in the background; bounded discovery closes it on every exit.
+      void (async () => {
+        for await (const message of tempQuery) {
+          void message;
+          /* consume until closed */
+        }
+      })().catch(() => undefined);
 
-        const commands = await tempQuery.supportedCommands();
-        return mapSupportedCommands(commands);
-      } finally {
-        tempQuery.close();
-      }
+      const commands = await runTemporaryClaudeDiscovery(
+        tempQuery,
+        "command",
+        discoveryTimeoutMs,
+        () => tempQuery.supportedCommands(),
+      );
+      return mapSupportedCommands(commands);
     }
 
     async function discoverModelsViaTemporaryProcess(
@@ -4392,21 +4437,19 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         }),
       });
 
-      try {
-        void (async () => {
-          for await (const message of tempQuery) {
-            void message;
-          }
-        })().catch(() => undefined);
-        const models = await tempQuery.supportedModels();
-        return {
-          models: models.map(mapClaudeModelInfo),
-          source: "sdk",
-          cached: false,
-        };
-      } finally {
-        tempQuery.close();
-      }
+      void (async () => {
+        for await (const message of tempQuery) {
+          void message;
+        }
+      })().catch(() => undefined);
+      const models = await runTemporaryClaudeDiscovery(tempQuery, "model", discoveryTimeoutMs, () =>
+        tempQuery.supportedModels(),
+      );
+      return {
+        models: models.map(mapClaudeModelInfo),
+        source: "sdk",
+        cached: false,
+      };
     }
 
     async function discoverAgentsViaTemporaryProcess(
@@ -4424,26 +4467,24 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         }),
       });
 
-      try {
-        void (async () => {
-          for await (const message of tempQuery) {
-            void message;
-          }
-        })().catch(() => undefined);
-        const agents = await tempQuery.supportedAgents();
-        return {
-          agents: agents.map((agent) => ({
-            name: agent.name,
-            displayName: agent.name,
-            ...(agent.description ? { description: agent.description } : {}),
-            ...(agent.model ? { model: agent.model } : {}),
-          })),
-          source: "sdk",
-          cached: false,
-        };
-      } finally {
-        tempQuery.close();
-      }
+      void (async () => {
+        for await (const message of tempQuery) {
+          void message;
+        }
+      })().catch(() => undefined);
+      const agents = await runTemporaryClaudeDiscovery(tempQuery, "agent", discoveryTimeoutMs, () =>
+        tempQuery.supportedAgents(),
+      );
+      return {
+        agents: agents.map((agent) => ({
+          name: agent.name,
+          displayName: agent.name,
+          ...(agent.description ? { description: agent.description } : {}),
+          ...(agent.model ? { model: agent.model } : {}),
+        })),
+        source: "sdk",
+        cached: false,
+      };
     }
 
     const listCommands: NonNullable<ClaudeAdapterShape["listCommands"]> = (

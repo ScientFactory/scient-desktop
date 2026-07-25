@@ -263,6 +263,23 @@ describe("recommended provider defaults", () => {
     });
   });
 
+  it("does not silently upgrade the Claude default through the moving Opus alias", () => {
+    expect(
+      resolveRecommendedModelSelection("claudeAgent", [
+        {
+          slug: "opus",
+          name: "Claude Opus 5",
+          resolvedModel: "claude-opus-5",
+          isDefault: true,
+        },
+      ]),
+    ).toEqual({
+      provider: "claudeAgent",
+      model: "claude-opus-4-8",
+      options: { effort: "high" },
+    });
+  });
+
   it("uses the recommended available model instead of the first catalog row", () => {
     expect(
       resolveRecommendedModelSelection("codex", [

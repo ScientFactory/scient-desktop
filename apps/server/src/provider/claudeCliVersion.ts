@@ -20,6 +20,7 @@ const collectStreamAsString = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.
 export function resolveClaudeCliVersion(input: {
   readonly executable: string;
   readonly env: NodeJS.ProcessEnv;
+  readonly cwd: string;
 }): Effect.Effect<string | null, never, ChildProcessSpawner.ChildProcessSpawner> {
   return Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -31,6 +32,7 @@ export function resolveClaudeCliVersion(input: {
       ...(prepared.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
       env: input.env,
       stdin: "ignore",
+      cwd: input.cwd,
     });
     const child = yield* spawner.spawn(command);
     const [stdout, stderr, exitCode] = yield* Effect.all(

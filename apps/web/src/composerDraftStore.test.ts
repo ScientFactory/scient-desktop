@@ -2691,7 +2691,7 @@ describe("composerDraftStore modelSelection", () => {
   });
 
   it.each(["opus", "claude-opus-5"])(
-    "does not restore unavailable persisted Claude model %s after runtime gating",
+    "preserves unavailable persisted Claude model %s so runtime gating fails closed",
     (model) => {
       const state = deriveEffectiveComposerModelState({
         draft: { modelSelectionByProvider: {}, activeProvider: "claudeAgent" },
@@ -2717,7 +2717,7 @@ describe("composerDraftStore modelSelection", () => {
         },
       });
 
-      expect(state.selectedModel).toBe("claude-opus-4-8");
+      expect(state.selectedModel).toBe("claude-opus-5");
     },
   );
 

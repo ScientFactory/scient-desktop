@@ -50,7 +50,7 @@ export type RecommendedModelCandidate = SelectableModelOption &
 
 const RECOMMENDED_MODEL_IDENTIFIERS: Record<ProviderKind, ReadonlyArray<ReadonlyArray<string>>> = {
   codex: [["gpt-5-6-sol"], ["gpt-5-6"], ["gpt-5-5"]],
-  claudeAgent: [["claude-opus-4-8"], ["opus"]],
+  claudeAgent: [["claude-opus-4-8"]],
   cursor: [["gpt-5-6-sol"], ["auto"]],
   antigravity: [["gemini-3-6-flash"], ["gemini-3-5-flash"]],
   grok: [["grok-build-latest"], ["grok-4-5-latest"], ["grok-4-5"], ["grok-build"]],
@@ -99,20 +99,6 @@ function findRecommendedCandidate(
     if (candidate) {
       return candidate;
     }
-  }
-
-  if (provider === "claudeAgent") {
-    return candidates
-      .filter((candidate) =>
-        candidateModelIdentities(candidate).some((identity) => identity.includes("opus")),
-      )
-      .toSorted((left, right) =>
-        candidateModelIdentities(right)
-          .join(" ")
-          .localeCompare(candidateModelIdentities(left).join(" "), undefined, {
-            numeric: true,
-          }),
-      )[0];
   }
 
   return undefined;
@@ -210,10 +196,14 @@ export function resolveRecommendedModelSelection(
     return getRecommendedDefaultModelSelection(provider);
   }
 
+  const recommendedCandidate = findRecommendedCandidate(provider, candidates);
+  if (provider === "claudeAgent" && !recommendedCandidate) {
+    // `opus` is a moving SDK alias and can resolve to a newer model. Keep the
+    // explicit Scient default stable rather than silently upgrading a fresh composer.
+    return getRecommendedDefaultModelSelection(provider);
+  }
   const candidate =
-    findRecommendedCandidate(provider, candidates) ??
-    candidates.find((option) => option.isDefault === true) ??
-    candidates[0];
+    recommendedCandidate ?? candidates.find((option) => option.isDefault === true) ?? candidates[0];
   return candidate ? recommendedModelSelection(provider, candidate) : null;
 }
 

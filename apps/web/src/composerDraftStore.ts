@@ -1859,16 +1859,6 @@ export function deriveEffectiveComposerModelState(input: {
     }
     return resolveSelectableModel(input.selectedProvider, candidate, availableOptions);
   };
-  const allowUnlistedModelFallback = (candidate: string | null | undefined): boolean => {
-    if (
-      input.selectedProvider !== "claudeAgent" ||
-      normalizeModelSlug(candidate, "claudeAgent") !== "claude-opus-5"
-    ) {
-      return true;
-    }
-    const availableOptions = input.availableModelOptionsByProvider?.claudeAgent;
-    return !availableOptions || availableOptions.length === 0;
-  };
   const baseModel = resolveModelSlugForProvider(
     input.selectedProvider,
     (input.threadModelSelection?.provider === input.selectedProvider
@@ -1922,13 +1912,13 @@ export function deriveEffectiveComposerModelState(input: {
         : null,
     ) ??
     resolveAvailableModel(selectedDraftModel) ??
-    (allowUnlistedModelFallback(persistedThreadModel) ? persistedThreadModel : null) ??
-    (allowUnlistedModelFallback(persistedProjectModel) ? persistedProjectModel : null) ??
-    (allowUnlistedModelFallback(unlistedDraftModel) ? unlistedDraftModel : null) ??
-    (allowUnlistedModelFallback(offlineDraftModel) ? offlineDraftModel : null) ??
+    persistedThreadModel ??
+    persistedProjectModel ??
+    unlistedDraftModel ??
+    offlineDraftModel ??
     policyModelSelection?.model ??
-    (allowUnlistedModelFallback(selectedDraftModel) ? selectedDraftModel : null) ??
-    (allowUnlistedModelFallback(baseModel) ? baseModel : null) ??
+    selectedDraftModel ??
+    baseModel ??
     getDefaultModel("codex");
   const modelOptions = deriveEffectiveComposerModelOptions({
     ...input,

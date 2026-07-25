@@ -401,6 +401,44 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("bounds and closes a temporary command query when discovery hangs", () => {
+    const harness = makeHarness();
+    (
+      harness.query as {
+        supportedCommands: () => Promise<
+          Array<{ name: string; description: string; argumentHint: string }>
+        >;
+      }
+    ).supportedCommands = () => new Promise(() => undefined);
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => harness.query,
+      discoveryTimeoutMs: 10,
+    }).pipe(
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-discovery-timeout", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listCommands) {
+        return assert.fail("Claude adapter should support command discovery.");
+      }
+
+      const result = yield* Effect.exit(
+        adapter.listCommands({
+          provider: "claudeAgent",
+          cwd: "/tmp/claude-command-discovery-timeout",
+        }),
+      );
+
+      assert.ok(Exit.isFailure(result));
+      assert.equal(harness.query.closeCalls, 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
   it.effect("uses the configured Claude executable for pre-session model discovery", () => {
     const harness = makeHarness();
     (harness.query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels =
@@ -864,6 +902,38 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(autoCompactWindowFromOptions(createInput?.options), 1_000_000);
       assert.equal(effortLevelFromOptions(createInput?.options), "xhigh");
       assert.equal(fastModeFromOptions(createInput?.options), true);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("probes a relative Claude executable in the exact session cwd", () => {
+    const versionProbeInputs: Array<{ executable: string; cwd: string }> = [];
+    const harness = makeHarness({
+      resolveClaudeVersion: ({ executable, cwd }) => {
+        versionProbeInputs.push({ executable, cwd });
+        return Effect.succeed("2.1.219");
+      },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        cwd: "/tmp/project-with-relative-claude",
+        providerOptions: { claudeAgent: { binaryPath: "./claude" } },
+        modelSelection: { provider: "claudeAgent", model: "claude-opus-5" },
+        runtimeMode: "full-access",
+      });
+
+      assert.deepEqual(versionProbeInputs, [
+        { executable: "./claude", cwd: "/tmp/project-with-relative-claude" },
+      ]);
+      assert.equal(
+        harness.getLastCreateQueryInput()?.options.cwd,
+        "/tmp/project-with-relative-claude",
+      );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
