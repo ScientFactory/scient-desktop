@@ -676,7 +676,10 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   };
 }
 
-function withOpenProjectPickerFixtures(snapshot: OrchestrationReadModel): OrchestrationReadModel {
+function withOpenProjectPickerFixtures(
+  snapshot: OrchestrationReadModel,
+  otherProjectTitle = "Other Project",
+): OrchestrationReadModel {
   return {
     ...snapshot,
     projects: [
@@ -684,7 +687,7 @@ function withOpenProjectPickerFixtures(snapshot: OrchestrationReadModel): Orches
       {
         id: OTHER_PROJECT_ID,
         kind: "project",
-        title: "Other Project",
+        title: otherProjectTitle,
         workspaceRoot: "/repo/other",
         defaultModelSelection: {
           provider: "codex",
@@ -4435,6 +4438,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("lets an empty project draft switch to another open project", async () => {
+    const longOtherProjectName =
+      "Other Project With an Intentionally Long Name for Responsive Heading Coverage";
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: withOpenProjectPickerFixtures(
@@ -4442,6 +4447,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           targetMessageId: "msg-user-project-picker-switch-test" as MessageId,
           targetText: "project picker switch test",
         }),
+        longOtherProjectName,
       ),
     });
 
@@ -4465,9 +4471,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
       useComposerDraftStore.getState().setProjectDraftThreadId(OTHER_PROJECT_ID, OTHER_THREAD_ID);
       useComposerDraftStore.getState().setPrompt(OTHER_THREAD_ID, "replace this other draft");
 
-      const projectPickerTrigger = page.getByTestId("project-picker-trigger");
-      await expect.element(projectPickerTrigger).toHaveTextContent("project");
-      await projectPickerTrigger.click();
+      const headingProjectTrigger = page.getByTestId("empty-landing-heading-project-trigger");
+      await expect.element(headingProjectTrigger).toHaveTextContent("Project");
+      expect(page.getByTestId("project-picker-trigger").elements()).toHaveLength(0);
+      await headingProjectTrigger.click();
 
       await expect.element(page.getByText("New project")).toBeInTheDocument();
       await expect.element(page.getByText("Don't work in a project")).toBeInTheDocument();
@@ -4493,44 +4500,72 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      await projectPickerTrigger.click();
+      await headingProjectTrigger.click();
       await page.getByText("other", { exact: true }).click();
 
       await vi.waitFor(
         () => {
+          expect(mounted.router.state.location.pathname).toBe(`/${OTHER_THREAD_ID}`);
           expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
-            projectId: OTHER_PROJECT_ID,
-            envMode: "local",
-            branch: null,
-            worktreePath: null,
+            projectId: PROJECT_ID,
+            envMode: "worktree",
+            branch: "feature/keep-out",
+            worktreePath: "/repo/project/.worktrees/feature-keep-out",
           });
-          expect(useComposerDraftStore.getState().getDraftThread(OTHER_THREAD_ID)).toBeNull();
-          expect(
-            useComposerDraftStore.getState().draftsByThreadId[OTHER_THREAD_ID],
-          ).toBeUndefined();
+          expect(useComposerDraftStore.getState().getDraftThread(OTHER_THREAD_ID)).toMatchObject({
+            projectId: OTHER_PROJECT_ID,
+          });
+          expect(useComposerDraftStore.getState().draftsByThreadId[OTHER_THREAD_ID]?.prompt).toBe(
+            "replace this other draft",
+          );
         },
         { timeout: 8_000, interval: 16 },
       );
-      expect(mounted.router.state.location.pathname).toBe(newThreadPath);
-      const headingProjectTrigger = page.getByTestId("empty-landing-heading-project-trigger");
       const emptyLandingHeading = page.getByTestId("empty-landing-heading");
       await expect
         .element(emptyLandingHeading)
-        .toHaveAccessibleName("What should we do in Other Project?");
-      await expect.element(headingProjectTrigger).toHaveTextContent("Other Project");
+        .toHaveAccessibleName(`What should we do in ${longOtherProjectName}?`);
+      await expect.element(headingProjectTrigger).toHaveTextContent(longOtherProjectName);
       await expect
         .element(headingProjectTrigger)
-        .toHaveAccessibleName("Change project from Other Project");
+        .toHaveAccessibleName(`Change project from ${longOtherProjectName}`);
+
+      await mounted.setViewport({ ...DEFAULT_VIEWPORT, width: 760, height: 700 });
+      const headingProjectElement = await waitForElement(
+        () =>
+          document.querySelector<HTMLElement>(
+            '[data-testid="empty-landing-heading-project-trigger"]',
+          ),
+        "Unable to find responsive heading project trigger.",
+      );
+      const headingProjectCluster = await waitForElement(
+        () =>
+          document.querySelector<HTMLElement>(
+            '[data-testid="empty-landing-heading-project-cluster"]',
+          ),
+        "Unable to find responsive heading project cluster.",
+      );
+      const emptyLandingHeadingElement = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-testid="empty-landing-heading"]'),
+        "Unable to find responsive empty landing heading.",
+      );
+      expect(headingProjectElement.scrollWidth).toBeGreaterThan(headingProjectElement.clientWidth);
+      expect(headingProjectCluster.getBoundingClientRect().width).toBeLessThanOrEqual(
+        emptyLandingHeadingElement.getBoundingClientRect().width,
+      );
+      expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(innerWidth);
+
       await headingProjectTrigger.click();
       await page.getByText("project", { exact: true }).click();
 
       await vi.waitFor(
         () => {
+          expect(mounted.router.state.location.pathname).toBe(newThreadPath);
           expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
             projectId: PROJECT_ID,
-            envMode: "local",
-            branch: null,
-            worktreePath: null,
+            envMode: "worktree",
+            branch: "feature/keep-out",
+            worktreePath: "/repo/project/.worktrees/feature-keep-out",
           });
         },
         { timeout: 8_000, interval: 16 },
@@ -4861,7 +4896,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       const newThreadId = newThreadPath.slice(1) as ThreadId;
 
-      const projectPickerTrigger = page.getByTestId("project-picker-trigger");
+      const projectPickerTrigger = page.getByTestId("empty-landing-heading-project-trigger");
       await expect.element(projectPickerTrigger).toBeInTheDocument();
       await projectPickerTrigger.click();
       await page.getByText("New project").click();

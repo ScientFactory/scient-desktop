@@ -1319,6 +1319,7 @@ export default function ChatView({
     useMemo(() => createProjectSelector(fallbackDraftProjectId), [fallbackDraftProjectId]),
   );
   const promptRef = useRef(prompt);
+  const emptyDraftProjectRequestRef = useRef(0);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -9323,6 +9324,13 @@ export default function ChatView({
     [moveDraftThreadToProject, scheduleComposerFocus, threadId],
   );
 
+  useEffect(
+    () => () => {
+      emptyDraftProjectRequestRef.current += 1;
+    },
+    [],
+  );
+
   const handleResetWorkspaceToHome = useCallback(() => {
     if (isLocalDraftThread) {
       if (isStudioContainer) {
@@ -9451,9 +9459,9 @@ export default function ChatView({
     ],
   );
 
-  const handleSelectProjectForEmptyDraft = useCallback(
-    (projectId: ProjectId) => {
-      if (!isLocalDraftThread) {
+  const selectProjectForEmptyDraftRequest = useCallback(
+    async (projectId: ProjectId, requestId: number) => {
+      if (requestId !== emptyDraftProjectRequestRef.current || !isLocalDraftThread) {
         return;
       }
       const project = useStore
@@ -9466,14 +9474,39 @@ export default function ChatView({
         scheduleComposerFocus();
         return;
       }
+
+      const destinationDraft = getDraftThreadByProjectId(projectId, "chat");
+      if (destinationDraft && destinationDraft.threadId !== threadId) {
+        await navigate({
+          to: "/$threadId",
+          params: { threadId: destinationDraft.threadId },
+        });
+        return;
+      }
+
+      if (requestId !== emptyDraftProjectRequestRef.current) {
+        return;
+      }
       moveEmptyDraftToLocalProject(projectId);
     },
     [
       draftThread?.projectId,
+      getDraftThreadByProjectId,
       isLocalDraftThread,
       moveEmptyDraftToLocalProject,
+      navigate,
       scheduleComposerFocus,
+      threadId,
     ],
+  );
+
+  const handleSelectProjectForEmptyDraft = useCallback(
+    (projectId: ProjectId) => {
+      const requestId = emptyDraftProjectRequestRef.current + 1;
+      emptyDraftProjectRequestRef.current = requestId;
+      return selectProjectForEmptyDraftRequest(projectId, requestId);
+    },
+    [selectProjectForEmptyDraftRequest],
   );
 
   const handleCreateProjectFromPickerPath = useCallback(
@@ -9481,6 +9514,8 @@ export default function ChatView({
       if (!isLocalDraftThread) {
         return;
       }
+      const requestId = emptyDraftProjectRequestRef.current + 1;
+      emptyDraftProjectRequestRef.current = requestId;
       const api = readNativeApi();
       if (!api) {
         throw new Error("App is still connecting. Try again in a moment.");
@@ -9493,7 +9528,7 @@ export default function ChatView({
             project.kind === "project" && workspaceRootsEqual(project.cwd, workspaceRoot),
         );
       if (existingProject) {
-        handleSelectProjectForEmptyDraft(existingProject.id);
+        await selectProjectForEmptyDraftRequest(existingProject.id, requestId);
         return;
       }
 
@@ -9512,14 +9547,9 @@ export default function ChatView({
       if (!creationResult.project) {
         throw new Error(PROJECT_CREATE_SYNC_ERROR);
       }
-      moveEmptyDraftToLocalProject(creationResult.project.id);
+      await selectProjectForEmptyDraftRequest(creationResult.project.id, requestId);
     },
-    [
-      handleSelectProjectForEmptyDraft,
-      isLocalDraftThread,
-      moveEmptyDraftToLocalProject,
-      syncServerShellSnapshot,
-    ],
+    [isLocalDraftThread, selectProjectForEmptyDraftRequest, syncServerShellSnapshot],
   );
 
   const applyPromptReplacement = useCallback(
@@ -10536,20 +10566,7 @@ export default function ChatView({
           onCreateProjectFromPath={handleCreateProjectFromPickerPath}
           onResetToHome={handleResetWorkspaceToHome}
         />
-      ) : showEmptyLandingProjectPicker ? (
-        <ProjectPicker
-          align="start"
-          side="top"
-          triggerClassName="h-7 py-1"
-          selectionMode="project"
-          selectedProjectId={activeProject.id}
-          selectedWorkspaceRoot={activeProject.cwd}
-          showResetToHome
-          onSelectProject={handleSelectProjectForEmptyDraft}
-          onCreateProjectFromPath={handleCreateProjectFromPickerPath}
-          onResetToHome={handleResetWorkspaceToHome}
-        />
-      ) : (
+      ) : showEmptyLandingProjectPicker ? null : (
         emptyLandingProjectChip
       )}
       {/* Reserve the Local/branch slot so project selection fades controls in without resizing. */}
@@ -11428,37 +11445,45 @@ export default function ChatView({
                         <>
                           What should we do in{" "}
                           {showEmptyLandingProjectPicker ? (
-                            <ProjectPicker
-                              align="center"
-                              side="bottom"
-                              selectionMode="project"
-                              selectedProjectId={activeProject.id}
-                              selectedWorkspaceRoot={activeProject.cwd}
-                              showResetToHome
-                              onSelectProject={handleSelectProjectForEmptyDraft}
-                              onCreateProjectFromPath={handleCreateProjectFromPickerPath}
-                              onResetToHome={handleResetWorkspaceToHome}
-                              renderTrigger={
-                                <button
-                                  type="button"
-                                  data-testid="empty-landing-heading-project-trigger"
-                                  aria-label={`Change project from ${activeProjectDisplayName ?? "this folder"}`}
-                                  title="Change project"
-                                  className={cn(
-                                    COMPOSER_MUTED_ACCENT_TEXT_CLASS_NAME,
-                                    "cursor-pointer rounded-sm underline decoration-dotted decoration-[1.5px] underline-offset-[6px] transition-colors duration-150 ease-out hover:text-muted-foreground/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 motion-reduce:transition-none",
-                                  )}
-                                >
-                                  {activeProjectDisplayName ?? "this folder"}
-                                </button>
-                              }
-                            />
-                          ) : (
-                            <span className={COMPOSER_MUTED_ACCENT_TEXT_CLASS_NAME}>
-                              {activeProjectDisplayName ?? "this folder"}
+                            <span
+                              data-testid="empty-landing-heading-project-cluster"
+                              className="inline-flex max-w-full items-baseline gap-0.5 align-bottom"
+                            >
+                              <ProjectPicker
+                                align="center"
+                                side="bottom"
+                                selectionMode="project"
+                                selectedProjectId={activeProject.id}
+                                selectedWorkspaceRoot={activeProject.cwd}
+                                showResetToHome
+                                onSelectProject={handleSelectProjectForEmptyDraft}
+                                onCreateProjectFromPath={handleCreateProjectFromPickerPath}
+                                onResetToHome={handleResetWorkspaceToHome}
+                                renderTrigger={
+                                  <button
+                                    type="button"
+                                    data-testid="empty-landing-heading-project-trigger"
+                                    aria-label={`Change project from ${activeProjectDisplayName ?? "this folder"}`}
+                                    title={activeProjectDisplayName ?? "Change project"}
+                                    className={cn(
+                                      COMPOSER_MUTED_ACCENT_TEXT_CLASS_NAME,
+                                      "inline-block max-w-[min(80vw,42rem)] cursor-pointer truncate rounded-sm align-bottom underline decoration-dotted decoration-[1.5px] underline-offset-[6px] transition-colors duration-150 ease-out hover:text-muted-foreground/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 motion-reduce:transition-none",
+                                    )}
+                                  >
+                                    {activeProjectDisplayName ?? "this folder"}
+                                  </button>
+                                }
+                              />
+                              <span>?</span>
                             </span>
+                          ) : (
+                            <>
+                              <span className={COMPOSER_MUTED_ACCENT_TEXT_CLASS_NAME}>
+                                {activeProjectDisplayName ?? "this folder"}
+                              </span>
+                              ?
+                            </>
                           )}
-                          ?
                         </>
                       )}
                     </h2>
