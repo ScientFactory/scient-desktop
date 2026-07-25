@@ -2920,9 +2920,16 @@ async function showBackendRestartRecovery(input: {
       return;
     }
     if (action === "open-logs") {
-      await openDesktopLogsDirectory(LOG_DIR, (path) => shell.openPath(path));
-      if (!isQuitting) {
-        void showBackendRestartRecovery(input);
+      try {
+        await openDesktopLogsDirectory(LOG_DIR, (path) => shell.openPath(path));
+      } catch (error: unknown) {
+        safeConsoleError(`[desktop] unable to open backend logs: ${formatErrorMessage(error)}`);
+      } finally {
+        // Opening diagnostics is optional recovery assistance. Preserve the
+        // retry choices even when the OS cannot reveal the logs directory.
+        if (!isQuitting) {
+          void showBackendRestartRecovery(input);
+        }
       }
     }
   } catch (error: unknown) {
