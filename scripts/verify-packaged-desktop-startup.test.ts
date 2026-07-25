@@ -373,7 +373,7 @@ describe("packaged desktop startup verification", () => {
   it("cancels a hung preparation command when the smoke receives SIGTERM", async () => {
     const source = new EventEmitter();
     const termination = monitorPackagedStartupTermination(source);
-    const spawnProcess = vi.fn((_command, _args, options) => {
+    const spawnProcess = vi.fn((_command, _args, _options) => {
       const child = new EventEmitter() as ChildProcess;
       Object.assign(child, {
         exitCode: null,
