@@ -8,6 +8,10 @@
       "types": "./src/model.ts",
       "import": "./src/model.ts"
     },
+    "./providerDisconnect": {
+      "types": "./src/providerDisconnect.ts",
+      "import": "./src/providerDisconnect.ts"
+    },
     "./messageOrder": {
       "types": "./src/messageOrder.ts",
       "import": "./src/messageOrder.ts"

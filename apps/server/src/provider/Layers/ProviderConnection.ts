@@ -40,6 +40,10 @@ import { ServerSettingsService } from "../../serverSettings";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText";
 import { PtyAdapter } from "../../terminal/Services/PTY";
 import { buildClaudeProcessEnv } from "../claudeProcessEnv";
+import {
+  providerDisconnectCommandArgs,
+  providerSupportsDisconnect,
+} from "@synara/shared/providerDisconnect";
 import { buildCursorAgentCommand } from "../acp/CursorAcpCommand";
 import { probeDroidAcpAuthentication } from "../acp/DroidAcpSupport";
 import { ProviderConnection, type ProviderConnectionShape } from "../Services/ProviderConnection";
@@ -49,6 +53,7 @@ import { ProviderRuntimeManager } from "../Services/ProviderRuntimeManager";
 import { parseAntigravityModelsAuthStatus, resolveProviderProbeCwd } from "./ProviderHealth";
 
 const CONNECTION_TIMEOUT = Duration.minutes(10);
+const DISCONNECT_TIMEOUT = Duration.seconds(30);
 export const CODEX_DEVICE_CODE_CONNECTION_TIMEOUT = Duration.minutes(16);
 const INSTALLATION_HANDOFF_TIMEOUT = Duration.minutes(30);
 const INSTALLATION_HANDOFF_POLL_INTERVAL = Duration.millis(250);
@@ -275,6 +280,52 @@ export function parseAntigravityOAuthAuthorizationUrl(output: string): string | 
   return null;
 }
 
+const CONNECTION_ERROR_DETAIL_MAX_CHARS = 200;
+const CONNECTION_ERROR_KEYWORDS =
+  /error|failed|failure|invalid|denied|expired|unauthor|forbidden|unable|could not|couldn't|cannot|can't|not found|rejected|timed out|refused/i;
+
+/**
+ * Extracts a short, human-readable reason from a provider CLI's captured
+ * output so a failed sign-in can explain itself instead of showing a generic
+ * message. It picks the last error-looking line and then aggressively redacts
+ * anything that could carry a credential or PII — URLs, emails, filesystem
+ * paths, device/authorization codes, key=value secrets, long opaque tokens,
+ * and numeric codes — before the detail is surfaced to the renderer. If a line
+ * reduces to mostly redactions it is dropped in favour of the generic message.
+ */
+export function sanitizeConnectionErrorDetail(rawOutput: string): string | null {
+  // Build the ANSI matcher from a runtime string so the source has no control
+  // characters in a regex literal.
+  const ansi = new RegExp(`${String.fromCharCode(27)}\\[[0-9;?]*[ -/]*[@-~]`, "g");
+  const lines = rawOutput
+    .replace(ansi, "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) return null;
+  const candidate =
+    [...lines].reverse().find((line) => CONNECTION_ERROR_KEYWORDS.test(line)) ?? lines.at(-1);
+  if (!candidate) return null;
+  const redacted = candidate
+    .replace(/https?:\/\/\S+/gi, "…") // URLs (may embed codes/tokens)
+    .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, "…") // emails
+    .replace(/[A-Za-z]:\\[^\s"']+/g, "…") // Windows paths
+    .replace(/(?:\/[A-Za-z0-9._-]+){2,}\/?/g, "…") // POSIX paths
+    .replace(/\b(token|code|secret|key|password|passwd|pwd|auth|bearer)\b\s*[:=]\s*\S+/gi, "$1 …")
+    .replace(/\b[A-Z0-9]{3,}(?:-[A-Z0-9]{3,})+\b/g, "…") // device codes (ABCD-EFGH)
+    .replace(/\b[A-Za-z0-9_+/=]{16,}\b/g, "…") // long opaque contiguous tokens
+    .replace(/\b\d{6,}\b/g, "…") // long numeric codes
+    .replace(/…(?:\s*…)+/g, "…") // collapse adjacent redactions
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  // If redaction stripped almost everything, the line was mostly sensitive —
+  // fall back to the generic message rather than surface redaction noise.
+  if (redacted.replace(/[…\s]/g, "").length < 3) return null;
+  return redacted.length > CONNECTION_ERROR_DETAIL_MAX_CHARS
+    ? `${redacted.slice(0, CONNECTION_ERROR_DETAIL_MAX_CHARS - 1).trimEnd()}…`
+    : redacted;
+}
+
 /**
  * Antigravity 1.1.4 and newer have no login subcommand, and the hidden bare TUI does not
  * advance to authentication. Print mode reaches provider-owned OAuth before
@@ -341,6 +392,11 @@ export function providerConnectionCommandArgs(
   }
   return null;
 }
+
+// Which providers can be signed out of, and the exact logout argv, live in
+// @synara/shared so the server and the web UI share one source of truth.
+// Re-exported here so existing importers (and tests) keep resolving them.
+export { providerDisconnectCommandArgs, providerSupportsDisconnect };
 
 function makeConnectionError(input: {
   readonly provider: ProviderKind;
@@ -440,6 +496,10 @@ export function makeProviderConnectionLive(options?: {
       const resolveCommand = Effect.fn("ProviderConnection.resolveCommand")(function* (
         provider: ProviderKind,
         method: ServerProviderConnectionMethod,
+        // When set (e.g. for disconnect), the provider's per-config wrapper is
+        // built around these argv instead of the login argv, so Cursor's
+        // `agent`/PowerShell wrapping is preserved for `logout`.
+        argsOverride?: ReadonlyArray<string>,
       ) {
         const settings = yield* serverSettings.getSettings.pipe(
           Effect.mapError(() =>
@@ -458,7 +518,7 @@ export function makeProviderConnectionLive(options?: {
             message: "This provider does not yet support in-app sign in.",
           });
         }
-        const args = providerConnectionCommandArgs(provider, method);
+        const args = argsOverride ?? providerConnectionCommandArgs(provider, method);
         if (!args) {
           return yield* makeConnectionError({
             provider,
@@ -1012,14 +1072,16 @@ export function makeProviderConnectionLive(options?: {
               return;
             }
             if (exitCodeResult.success.value !== 0) {
+              const detail = sanitizeConnectionErrorDetail(oauthOutputBuffer);
+              const baseMessage =
+                provider === "grok"
+                  ? "Grok authorization was not completed. Close any old xAI page, update Grok if an update is available, then try again to start a fresh secure browser sign-in."
+                  : "Sign in was not completed. No credentials were saved by Scient.";
               yield* publishState(
                 provider,
                 state({
                   status: "failed",
-                  message:
-                    provider === "grok"
-                      ? "Grok authorization was not completed. Close any old xAI page, update Grok if an update is available, then try again to start a fresh secure browser sign-in."
-                      : "Sign in was not completed. No credentials were saved by Scient.",
+                  message: detail ? `${baseMessage} The provider reported: ${detail}` : baseMessage,
                   finished: true,
                 }),
               );
@@ -1038,11 +1100,14 @@ export function makeProviderConnectionLive(options?: {
               if (attempt < 9) yield* Effect.sleep(Duration.millis(500));
             }
             if (!verified?.available || verified.authStatus !== "authenticated") {
+              const detail = sanitizeConnectionErrorDetail(oauthOutputBuffer);
               yield* publishState(
                 provider,
                 state({
                   status: "failed",
-                  message: "Sign in finished, but Scient could not verify the account.",
+                  message: detail
+                    ? `Sign in finished, but Scient could not verify the account. The provider reported: ${detail}`
+                    : "Sign in finished, but Scient could not verify the account.",
                   finished: true,
                 }),
               );
@@ -1270,11 +1335,66 @@ export function makeProviderConnectionLive(options?: {
         return { providers: yield* providerHealth.getStatuses };
       });
 
+      const disconnect: ProviderConnectionShape["disconnect"] = Effect.fn(
+        "ProviderConnection.disconnect",
+      )(function* (input) {
+        const { provider } = input;
+        const disconnectArgs = providerDisconnectCommandArgs(provider);
+        if (!disconnectArgs) {
+          return yield* makeConnectionError({
+            provider,
+            reason: "unsupported_provider",
+            message: "Signing out of this provider from Scient is not supported.",
+          });
+        }
+        const method = expectedMethodForProvider(provider);
+        if (!method) {
+          return yield* makeConnectionError({
+            provider,
+            reason: "unsupported_provider",
+            message: "This provider does not support in-app sign in.",
+          });
+        }
+        const reserved = yield* reserveProvider(provider);
+        if (!reserved) {
+          // A connect (or another disconnect) is in flight; do not run a
+          // competing credential process. Return the current statuses.
+          return { providers: yield* providerHealth.getStatuses };
+        }
+        return yield* Effect.gen(function* () {
+          // Reuse the login command's resolved executable, environment, and
+          // per-config wrapper (Cursor's `agent`/PowerShell wrapping) but run
+          // the provider CLI's own logout argv, so credentials stay owned by the
+          // CLI. A non-zero exit (e.g. already signed out) is not fatal on its
+          // own — the refreshed status below is the source of truth.
+          const command = yield* resolveCommand(provider, method, disconnectArgs);
+          yield* runCommandResult({ ...command, cwd: providerConnectionCwd }).pipe(
+            Effect.scoped,
+            Effect.timeoutOption(DISCONNECT_TIMEOUT),
+            Effect.ignore,
+          );
+          const refreshed = yield* providerHealth.refresh;
+          const current = refreshed.find((status) => status.provider === provider);
+          // If the account is still authenticated, the logout did not take
+          // effect; surface a retryable failure instead of a silent success.
+          if (current?.available && current.authStatus === "authenticated") {
+            return yield* makeConnectionError({
+              provider,
+              reason: "invalid_method",
+              message:
+                "Sign-out did not complete — the provider still reports an authenticated account. Try again, or sign out from its CLI.",
+            });
+          }
+          return { providers: refreshed };
+        }).pipe(Effect.ensuring(releaseProvider(provider, "")));
+      });
+
       return {
         start,
         cancel,
         submitAuthorizationCode,
         startAfterInstallation,
+        disconnect,
       } satisfies ProviderConnectionShape;
     }),
   );

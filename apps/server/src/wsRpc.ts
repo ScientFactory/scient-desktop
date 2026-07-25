@@ -1108,6 +1108,11 @@ export const makeWsRpcLayer = () =>
             Effect.andThen(providerClientStatusProjection.getStatuses),
             Effect.map((providers) => ({ providers })),
           ),
+        [WS_METHODS.serverDisconnectProvider]: (input) =>
+          providerConnection.disconnect(input).pipe(
+            Effect.andThen(providerClientStatusProjection.getStatuses),
+            Effect.map((providers) => ({ providers })),
+          ),
         [WS_METHODS.serverSubmitProviderConnectionAuthorizationCode]: (input) =>
           providerConnection.submitAuthorizationCode(input).pipe(
             Effect.andThen(providerClientStatusProjection.getStatuses),

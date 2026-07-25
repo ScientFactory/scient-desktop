@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { constants as FS_CONSTANTS, createWriteStream } from "node:fs";
 import FS from "node:fs/promises";
 import Path from "node:path";
-import { Readable, Transform } from "node:stream";
+import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 import * as Tar from "tar";
@@ -308,26 +308,20 @@ async function extractZip(input: {
       );
     }
     await FS.mkdir(Path.dirname(destination), { recursive: true });
-    const output = await FS.open(destination, "wx", 0o600);
-    try {
-      const limiter = new Transform({
-        transform(chunk: Buffer, _encoding, callback) {
-          actualExpandedBytes += chunk.byteLength;
-          if (actualExpandedBytes > input.maxExpandedBytes) {
-            callback(
-              new ProviderRuntimeFileError("Provider runtime archive exceeds extraction limits."),
-            );
-            return;
-          }
-          callback(null, chunk);
-        },
-      });
-      await pipeline(entry.stream(), limiter, output.createWriteStream({ autoClose: false }), {
-        signal: input.signal,
-      });
-    } finally {
-      await output.close().catch(() => undefined);
+    // unzipper's streaming `entry.stream()` deadlocks on some multi-entry
+    // archives — it hangs indefinitely on the Codex Windows zip, which is what
+    // left one-click Codex installs stuck on "Installing…" forever. Decompress
+    // the entry to a buffer instead (reliable and fast for these artifacts).
+    // The archive is digest-verified before extraction and its total expanded
+    // size is pre-checked above; the running-total guard here stays as defense
+    // in depth against a single oversized entry.
+    if (input.signal.aborted) throw new DOMException("Extraction cancelled.", "AbortError");
+    const content = await entry.buffer();
+    actualExpandedBytes += content.byteLength;
+    if (actualExpandedBytes > input.maxExpandedBytes) {
+      throw new ProviderRuntimeFileError("Provider runtime archive exceeds extraction limits.");
     }
+    await FS.writeFile(destination, content, { flag: "wx", mode: 0o600 });
   }
 }
 

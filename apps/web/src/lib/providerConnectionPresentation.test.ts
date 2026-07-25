@@ -1,12 +1,14 @@
-import type { ServerProviderStatus } from "@synara/contracts";
+import type { ServerProviderInstallationState, ServerProviderStatus } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
   CLAUDE_CONNECTION_METHOD_OPTIONS,
   describeProviderConnection,
   describeManagedProviderUpdate,
+  formatInstallProgress,
   providerConnectionMethod,
   providerInstallUrl,
+  providerSupportsDisconnect,
 } from "./providerConnectionPresentation";
 
 const BASE_STATUS: ServerProviderStatus = {
@@ -373,5 +375,66 @@ describe("provider connection presentation", () => {
     expect(presentation.primaryAction).toBe("sign_in");
     expect(presentation.primaryLabel).toBe("Try again");
     expect(presentation.description).toContain("Grok authorization");
+  });
+});
+
+describe("providerSupportsDisconnect", () => {
+  it("supports CLIs with a sign-out, not Antigravity or Droid", () => {
+    expect(providerSupportsDisconnect("codex")).toBe(true);
+    expect(providerSupportsDisconnect("claudeAgent")).toBe(true);
+    expect(providerSupportsDisconnect("cursor")).toBe(true);
+    expect(providerSupportsDisconnect("grok")).toBe(true);
+    expect(providerSupportsDisconnect("antigravity")).toBe(false);
+    expect(providerSupportsDisconnect("droid")).toBe(false);
+  });
+});
+
+describe("formatInstallProgress", () => {
+  const installState = (
+    overrides: Partial<ServerProviderInstallationState>,
+  ): ServerProviderInstallationState => ({
+    operationId: "op-1",
+    operation: "install",
+    status: "downloading",
+    startedAt: "2026-07-21T11:00:00.000Z",
+    finishedAt: null,
+    message: "Downloading.",
+    ...overrides,
+  });
+
+  const MB = 1_048_576;
+
+  it("has nothing to show outside the downloading phase", () => {
+    expect(formatInstallProgress(undefined)).toBeNull();
+    expect(formatInstallProgress(installState({ status: "verifying" }))).toBeNull();
+    expect(formatInstallProgress(installState({ status: "installed" }))).toBeNull();
+  });
+
+  it("gives a determinate fraction and label when the size is known", () => {
+    const progress = formatInstallProgress(
+      installState({ bytesDownloaded: 11 * MB, totalBytes: 44 * MB }),
+    );
+    expect(progress).toEqual({ fraction: 0.25, label: "11.0 MB of 44.0 MB (25%)" });
+  });
+
+  it("clamps the fraction when the server over-reports bytes", () => {
+    const progress = formatInstallProgress(
+      installState({ bytesDownloaded: 50 * MB, totalBytes: 44 * MB }),
+    );
+    expect(progress?.fraction).toBe(1);
+    expect(progress?.label).toContain("(100%)");
+  });
+
+  it("stays indeterminate when the total size is unknown", () => {
+    expect(
+      formatInstallProgress(installState({ bytesDownloaded: 5 * MB, totalBytes: null })),
+    ).toEqual({ fraction: null, label: "5.0 MB downloaded" });
+  });
+
+  it("labels the pre-transfer moment as starting", () => {
+    expect(formatInstallProgress(installState({ bytesDownloaded: 0 }))).toEqual({
+      fraction: null,
+      label: "Starting download…",
+    });
   });
 });

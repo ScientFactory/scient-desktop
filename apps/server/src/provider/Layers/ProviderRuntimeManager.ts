@@ -83,6 +83,7 @@ const PROVIDERS: ReadonlyArray<ProviderKind> = [
 ];
 const PLAN_TTL_MS = 10 * 60 * 1000;
 const SMOKE_TIMEOUT_MS = 15_000;
+const EXTRACT_TIMEOUT_MS = 3 * 60 * 1000;
 const SMOKE_OUTPUT_LIMIT = 64 * 1024;
 const MINIMUM_INSTALL_FREE_BYTES = 256 * 1024 * 1024;
 const WINDOWS_ENVIRONMENT_CACHE_MS = 5_000;
@@ -803,13 +804,40 @@ export const ProviderRuntimeManagerLive = Layer.effect(
           message: "Installing the verified provider runtime.",
           version: artifact.version,
         });
-        const extractedExecutable = await extractProviderRuntime({
-          archivePath,
-          destination: stagedRelease,
-          format: artifact.archiveFormat,
-          executablePath: artifact.executablePath,
-          signal: gate.signal,
-        });
+        // Extraction is the one install step with no inherent I/O timeout
+        // (unlike the download's idle timeout and the smoke test's process
+        // timeout), so a stuck archive reader could otherwise hang the install
+        // forever. The signal only lets the extractor cancel between entries;
+        // a decompress that hangs mid-read (unzipper's buffer() cannot observe
+        // an abort) would never reject on its own. So race the extraction
+        // against the deadline and reject when it fires — the install unblocks
+        // and surfaces a retryable failure even if the underlying read is stuck.
+        const extractionTimeout = new AbortController();
+        const extractionTimer = setTimeout(() => extractionTimeout.abort(), EXTRACT_TIMEOUT_MS);
+        let extractedExecutable: string;
+        try {
+          extractedExecutable = await Promise.race([
+            extractProviderRuntime({
+              archivePath,
+              destination: stagedRelease,
+              format: artifact.archiveFormat,
+              executablePath: artifact.executablePath,
+              signal: AbortSignal.any([gate.signal, extractionTimeout.signal]),
+            }),
+            new Promise<never>((_, reject) => {
+              const onTimeout = () =>
+                reject(
+                  new Error(
+                    "Extracting the provider runtime timed out. Antivirus or disk activity may be blocking it — please try again.",
+                  ),
+                );
+              if (extractionTimeout.signal.aborted) onTimeout();
+              else extractionTimeout.signal.addEventListener("abort", onTimeout, { once: true });
+            }),
+          ]);
+        } finally {
+          clearTimeout(extractionTimer);
+        }
         const recipe = getProviderRuntimeRecipe(provider);
         const managedExecutableRelativePath = Path.join(
           "bin",

@@ -6,6 +6,7 @@ import {
   PROVIDER_DISPLAY_NAMES,
   type ProviderKind,
   type ServerProviderConnectionMethod,
+  type ServerProviderInstallationState,
   type ServerProviderInstallPlan,
   type ServerProviderStatus,
 } from "@synara/contracts";
@@ -33,6 +34,49 @@ export function providerConnectionMethod(
   if (provider === "grok") return "grok_browser";
   if (provider === "droid") return "droid_device_pairing";
   return null;
+}
+
+// Which providers support disconnect lives in @synara/shared so the server and
+// this UI share one source of truth. Re-exported for existing importers.
+export { providerSupportsDisconnect } from "@synara/shared/providerDisconnect";
+
+export interface InstallProgress {
+  /** 0..1 while the download size is known; null means indeterminate. */
+  readonly fraction: number | null;
+  /** Short human label, e.g. "12.4 MB of 44.5 MB (28%)" or "12.4 MB downloaded". */
+  readonly label: string;
+}
+
+const BYTES_PER_MB = 1_048_576;
+
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / BYTES_PER_MB).toFixed(1)} MB`;
+}
+
+/**
+ * Derives a download indicator from a managed-install state, so the setup
+ * dialog can show real progress instead of a silent spinner. Only the
+ * downloading phase carries byte counts; verifying/smoke-testing phases have
+ * no fraction to show, so this returns null and the caller falls back to the
+ * phase message.
+ */
+export function formatInstallProgress(
+  installation: ServerProviderInstallationState | undefined,
+): InstallProgress | null {
+  if (!installation || installation.status !== "downloading") return null;
+  const downloaded = Math.max(0, installation.bytesDownloaded ?? 0);
+  const total = installation.totalBytes ?? null;
+  if (total !== null && total > 0) {
+    const fraction = Math.min(1, downloaded / total);
+    return {
+      fraction,
+      label: `${formatMegabytes(downloaded)} of ${formatMegabytes(total)} (${Math.round(fraction * 100)}%)`,
+    };
+  }
+  if (downloaded > 0) {
+    return { fraction: null, label: `${formatMegabytes(downloaded)} downloaded` };
+  }
+  return { fraction: null, label: "Starting download…" };
 }
 
 export const CLAUDE_CONNECTION_METHOD_OPTIONS: ReadonlyArray<{

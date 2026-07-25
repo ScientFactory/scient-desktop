@@ -39,7 +39,10 @@ import {
   parseCodexOAuthAuthorizationUrl,
   parseGrokOAuthAuthorizationUrl,
   providerConnectionCommandArgs,
+  providerDisconnectCommandArgs,
+  providerSupportsDisconnect,
   resolveProviderConnectionTimeout,
+  sanitizeConnectionErrorDetail,
 } from "./ProviderConnection";
 import { resolveProviderProbeCwd } from "./ProviderHealth";
 
@@ -485,6 +488,91 @@ describe("provider connection command allowlist", () => {
     expect(providerConnectionCommandArgs("claudeAgent", "claude_subscription")).toBeNull();
     expect(providerConnectionCommandArgs("cursor", "codex_browser")).toBeNull();
     expect(expectedMethodForProvider("opencode")).toBeNull();
+  });
+
+  it("maps disconnect to each CLI's own sign-out command", () => {
+    expect(providerDisconnectCommandArgs("codex")).toEqual(["logout"]);
+    expect(providerDisconnectCommandArgs("claudeAgent")).toEqual(["auth", "logout"]);
+    expect(providerDisconnectCommandArgs("cursor")).toEqual(["logout"]);
+    expect(providerDisconnectCommandArgs("grok")).toEqual(["logout"]);
+    expect(providerSupportsDisconnect("codex")).toBe(true);
+    expect(providerSupportsDisconnect("grok")).toBe(true);
+  });
+
+  it("offers no disconnect for providers without a CLI sign-out", () => {
+    expect(providerDisconnectCommandArgs("antigravity")).toBeNull();
+    expect(providerDisconnectCommandArgs("droid")).toBeNull();
+    expect(providerDisconnectCommandArgs("opencode")).toBeNull();
+    expect(providerSupportsDisconnect("antigravity")).toBe(false);
+    expect(providerSupportsDisconnect("droid")).toBe(false);
+  });
+});
+
+describe("sanitizeConnectionErrorDetail", () => {
+  it("returns null when there is no meaningful output", () => {
+    expect(sanitizeConnectionErrorDetail("")).toBeNull();
+    expect(sanitizeConnectionErrorDetail("   \n\n  ")).toBeNull();
+  });
+
+  it("prefers the last error-looking line from a CLI transcript", () => {
+    const transcript =
+      "Starting sign-in...\nOpening browser\nError: authorization code is invalid\n";
+    expect(sanitizeConnectionErrorDetail(transcript)).toBe("Error: authorization code is invalid");
+  });
+
+  it("falls back to the last non-empty line when nothing looks like an error", () => {
+    expect(sanitizeConnectionErrorDetail("step one\nstep two done")).toBe("step two done");
+  });
+
+  it("strips ANSI escape sequences", () => {
+    const colored = "\u001B[31mError: request was denied\u001B[0m";
+    expect(sanitizeConnectionErrorDetail(colored)).toBe("Error: request was denied");
+  });
+
+  it("redacts long token/code-like runs and URLs so credentials do not leak", () => {
+    const detail = sanitizeConnectionErrorDetail(
+      "authentication failed for token ABCDEFGHIJKLMNOPQRSTUVWXYZ012345 at https://auth.example.com/callback?code=secret",
+    );
+    expect(detail).toContain("authentication failed");
+    expect(detail).not.toContain("ABCDEFGHIJKLMNOPQRSTUVWXYZ012345");
+    expect(detail).not.toContain("secret");
+    expect(detail).not.toContain("https://");
+  });
+
+  it("redacts emails, filesystem paths, and device codes", () => {
+    expect(sanitizeConnectionErrorDetail("login failed for user@example.com")).toBe(
+      "login failed for …",
+    );
+    expect(
+      sanitizeConnectionErrorDetail("could not write to C:\\Users\\alice\\.codex\\auth.json"),
+    ).toBe("could not write to …");
+    expect(sanitizeConnectionErrorDetail("could not read /home/alice/.codex/auth.json")).toBe(
+      "could not read …",
+    );
+    const deviceCode = sanitizeConnectionErrorDetail("Error: enter the code ABCD-EFGH to continue");
+    expect(deviceCode).toContain("Error: enter the code");
+    expect(deviceCode).not.toContain("ABCD-EFGH");
+    const secret = sanitizeConnectionErrorDetail("auth failed: token=sk-abc123def");
+    expect(secret).not.toContain("sk-abc123def");
+  });
+
+  it("falls back to generic when a line reduces to redactions", () => {
+    expect(sanitizeConnectionErrorDetail("https://auth.example.com/x?code=ABCD-EFGH")).toBeNull();
+  });
+
+  it("keeps ordinary hyphenated words readable", () => {
+    expect(sanitizeConnectionErrorDetail("Error: could-not-connect to the host")).toBe(
+      "Error: could-not-connect to the host",
+    );
+  });
+
+  it("truncates very long error lines", () => {
+    const detail = sanitizeConnectionErrorDetail(
+      `failed: ${"the sign in did not finish ".repeat(20)}`,
+    );
+    expect(detail).not.toBeNull();
+    expect(detail!.length).toBeLessThanOrEqual(200);
+    expect(detail!.endsWith("…")).toBe(true);
   });
 });
 

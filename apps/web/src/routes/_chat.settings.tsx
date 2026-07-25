@@ -144,6 +144,8 @@ import {
 import { cn, isMacPlatform } from "../lib/utils";
 import { unarchiveThreadFromClient } from "../lib/threadArchive";
 import { resolveProviderDiscoveryCwd } from "../lib/providerDiscovery";
+import { providerSupportsDisconnect } from "../lib/providerConnectionPresentation";
+import { applyProviderStatusesToCache } from "../lib/providerStatusCache";
 import { ensureNativeApi, readNativeApi } from "../nativeApi";
 import {
   buildNotificationSettingsSupportText,
@@ -819,6 +821,9 @@ function SettingsRouteView() {
   const [updatingProviders, setUpdatingProviders] = useState<ReadonlySet<ProviderKind>>(
     () => new Set(),
   );
+  const [disconnectingProviders, setDisconnectingProviders] = useState<ReadonlySet<ProviderKind>>(
+    () => new Set(),
+  );
   const [selectedCustomModelProvider, setSelectedCustomModelProvider] =
     useState<ProviderKind>("codex");
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
@@ -1442,6 +1447,45 @@ function SettingsRouteView() {
       }
     },
     [queryClient, updatingProviders],
+  );
+
+  const runProviderDisconnect = useCallback(
+    async (provider: ProviderKind) => {
+      if (disconnectingProviders.has(provider)) return;
+      const label = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+      const api = readNativeApi() ?? ensureNativeApi();
+      const confirmed = await api.dialogs.confirm(
+        [
+          `Disconnect ${label}?`,
+          `This signs out of ${label} through its own CLI. You can reconnect any time.`,
+        ].join("\n"),
+      );
+      if (!confirmed) return;
+      const activityKey = `provider:disconnect:${provider}`;
+      setDisconnectingProviders((current) => new Set(current).add(provider));
+      try {
+        const result = await api.server.disconnectProvider({ provider });
+        applyProviderStatusesToCache(queryClient, result.providers);
+      } catch (error) {
+        activityManager.publish({
+          dedupeKey: activityKey,
+          source: "provider",
+          status: "needs_attention",
+          tone: "error",
+          title: `Could not disconnect ${label}`,
+          description:
+            error instanceof Error ? error.message : "Scient could not sign out of this provider.",
+          destination: { type: "settings", section: "providers" },
+        });
+      } finally {
+        setDisconnectingProviders((current) => {
+          const next = new Set(current);
+          next.delete(provider);
+          return next;
+        });
+      }
+    },
+    [disconnectingProviders, queryClient],
   );
 
   const copyProviderUpdateCommand = useCallback(async (provider: ProviderKind, command: string) => {
@@ -3793,6 +3837,29 @@ function SettingsRouteView() {
                               : providerStatus?.available
                                 ? "Connect"
                                 : "Set up"}
+                          </Button>
+                        ) : null}
+                        {providerConnected &&
+                        providerSupportsDisconnect(providerSettings.provider) ? (
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            disabled={
+                              providerConnectionActive ||
+                              disconnectingProviders.has(providerSettings.provider)
+                            }
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void runProviderDisconnect(providerSettings.provider);
+                            }}
+                          >
+                            {disconnectingProviders.has(providerSettings.provider) ? (
+                              <Loader2Icon className="size-3.5 animate-spin" />
+                            ) : null}
+                            {disconnectingProviders.has(providerSettings.provider)
+                              ? "Disconnecting"
+                              : "Disconnect"}
                           </Button>
                         ) : null}
                       </div>

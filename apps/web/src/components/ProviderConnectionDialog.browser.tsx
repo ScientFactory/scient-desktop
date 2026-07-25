@@ -164,7 +164,7 @@ describe("ProviderConnectionDialog", () => {
         .element(page.getByText("Finish signing in in the browser window."))
         .toBeVisible();
       await expect.element(page.getByRole("button", { name: "Cancel sign-in" })).toBeVisible();
-      await expect.element(page.getByText(/sign in continues in the background/u)).toBeVisible();
+      await expect.element(page.getByText(/setup continues in the background/u)).toBeVisible();
     } finally {
       await screen.unmount();
       queryClient.clear();

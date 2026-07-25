@@ -666,6 +666,7 @@ export function createWsNativeApi(): NativeApi {
         transport.request(WS_METHODS.serverStartProviderConnection, input),
       cancelProviderConnection: (input) =>
         transport.request(WS_METHODS.serverCancelProviderConnection, input),
+      disconnectProvider: (input) => transport.request(WS_METHODS.serverDisconnectProvider, input),
       submitProviderConnectionAuthorizationCode: (input) =>
         transport.request(WS_METHODS.serverSubmitProviderConnectionAuthorizationCode, input),
       prepareProviderInstall: (input) =>

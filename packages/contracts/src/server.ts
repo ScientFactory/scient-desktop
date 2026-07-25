@@ -623,6 +623,11 @@ export const ServerProviderConnectionCancelInput = Schema.Struct({
 });
 export type ServerProviderConnectionCancelInput = typeof ServerProviderConnectionCancelInput.Type;
 
+export const ServerProviderDisconnectInput = Schema.Struct({
+  provider: ProviderKind,
+});
+export type ServerProviderDisconnectInput = typeof ServerProviderDisconnectInput.Type;
+
 export const ServerProviderConnectionAuthorizationCode = Schema.redact(
   TrimmedNonEmptyString.check(
     Schema.isMinLength(8),
