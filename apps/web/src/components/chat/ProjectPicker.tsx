@@ -44,7 +44,7 @@ interface ProjectPickerProps {
   selectedWorkspaceRoot?: string | null;
   onSelectProject?: ((projectId: ProjectId) => void | Promise<void>) | undefined;
   onSelectWorkspaceRoot?: ((workspaceRoot: string) => void) | undefined;
-  onCreateProjectFromPath?: ((workspaceRoot: string) => void | Promise<void>) | undefined;
+  onCreateProject?: (() => void | Promise<void>) | undefined;
   onResetToHome?: (() => void | Promise<void>) | undefined;
   /** Class override for the trigger button (e.g. tighter height in the composer tray). */
   triggerClassName?: string;
@@ -97,7 +97,7 @@ export const ProjectPicker = memo(function ProjectPicker({
   selectedWorkspaceRoot = null,
   onSelectProject,
   onSelectWorkspaceRoot,
-  onCreateProjectFromPath,
+  onCreateProject,
   onResetToHome,
   triggerClassName,
   renderTrigger,
@@ -345,32 +345,37 @@ export const ProjectPicker = memo(function ProjectPicker({
 
   const handleAddNewProject = useCallback(async () => {
     if (isPicking) return;
-    const api = readNativeApi();
-    if (!api) {
-      setErrorMessage("App is still connecting. Try again in a moment.");
-      return;
-    }
-
     setIsPicking(true);
     setErrorMessage(null);
+    // Close before the native dialog or any asynchronous creation work. The owning callback starts
+    // its lifetime guard synchronously, so neither navigation nor another picker choice can make
+    // this request current again after its first await.
+    setOpen(false);
+    setQuery("");
     try {
+      if (onCreateProject) {
+        await onCreateProject();
+        setIsPicking(false);
+        return;
+      }
+
+      const api = readNativeApi();
+      if (!api) {
+        throw new Error("App is still connecting. Try again in a moment.");
+      }
       const pickedPath = await api.dialogs.pickFolder();
       if (!pickedPath) {
         setIsPicking(false);
         return;
       }
-      if (onCreateProjectFromPath) {
-        await onCreateProjectFromPath(pickedPath);
-      } else {
-        onSelectWorkspaceRoot?.(pickedPath);
-      }
+      onSelectWorkspaceRoot?.(pickedPath);
       setIsPicking(false);
-      setOpen(false);
     } catch (error) {
       setIsPicking(false);
+      setOpen(true);
       setErrorMessage(error instanceof Error ? error.message : "Unable to open the folder picker.");
     }
-  }, [isPicking, onCreateProjectFromPath, onSelectWorkspaceRoot]);
+  }, [isPicking, onCreateProject, onSelectWorkspaceRoot]);
 
   const handleResetToHome = useCallback(() => {
     setOpen(false);

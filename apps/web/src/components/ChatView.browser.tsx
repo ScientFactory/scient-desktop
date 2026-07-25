@@ -4741,7 +4741,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("navigates to an occupied Home draft instead of replacing it", async () => {
+  it("navigates to a promoting Home draft instead of replacing its recovery state", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: withHomeChatProject(
@@ -4769,6 +4769,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const newThreadId = newThreadPath.slice(1) as ThreadId;
       useComposerDraftStore.getState().setProjectDraftThreadId(HOME_PROJECT_ID, OTHER_THREAD_ID);
       useComposerDraftStore.getState().setPrompt(OTHER_THREAD_ID, "keep occupied Home draft");
+      useComposerDraftStore.getState().markDraftThreadPromoting(OTHER_THREAD_ID);
 
       await page.getByTestId("empty-landing-heading-project-trigger").click();
       await page.getByText("Don't work in a project").click();
@@ -4781,6 +4782,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           });
           expect(useComposerDraftStore.getState().getDraftThread(OTHER_THREAD_ID)).toMatchObject({
             projectId: HOME_PROJECT_ID,
+            promotedTo: OTHER_THREAD_ID,
           });
           expect(useComposerDraftStore.getState().draftsByThreadId[OTHER_THREAD_ID]?.prompt).toBe(
             "keep occupied Home draft",
@@ -4937,7 +4939,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
       },
     });
-
     try {
       const newThreadButton = page.getByLabelText("Create new thread in Project");
       await expect.element(newThreadButton).toBeInTheDocument();
@@ -5002,7 +5003,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("does not let late project creation mutate a draft after same-pane navigation", async () => {
+  it("does not let late project creation mutate a draft after same-ID promotion", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -5060,16 +5061,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await page.getByTestId("empty-landing-heading-project-trigger").click();
       await page.getByText("New project").click();
       await vi.waitFor(() => expect(createdProjectId).not.toBeNull());
-
-      await mounted.router.navigate({
-        to: "/$threadId",
-        params: { threadId: THREAD_ID },
-      });
-      await waitForURL(
-        mounted.router,
-        (path) => path === `/${THREAD_ID}`,
-        "Existing thread should be selected before project creation settles.",
-      );
+      await expect.element(page.getByText("New project")).not.toBeInTheDocument();
+      useComposerDraftStore.getState().markDraftThreadPromoting(newThreadId);
 
       releaseSlowCreate();
       await vi.waitFor(() => {
@@ -5077,12 +5070,103 @@ describe("ChatView timeline estimator parity (full app)", () => {
       });
       expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
         projectId: PROJECT_ID,
+        promotedTo: newThreadId,
       });
       expect(useComposerDraftStore.getState().getDraftThread(newThreadId)?.projectId).not.toBe(
         createdProjectId,
       );
     } finally {
       releaseSlowCreate();
+      if (previousNativeApi) {
+        Object.defineProperty(window, "nativeApi", {
+          configurable: true,
+          value: previousNativeApi,
+        });
+      } else {
+        Reflect.deleteProperty(window, "nativeApi");
+      }
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not create a project when the native picker resolves after same-pane navigation", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-project-picker-dialog-race" as MessageId,
+        targetText: "project picker dialog race",
+      }),
+    });
+    const previousNativeApi = window.nativeApi;
+    const wsNativeApi = readNativeApi();
+    expect(wsNativeApi).toBeDefined();
+    let releasePickFolder!: () => void;
+    const pickFolderGate = new Promise<void>((resolve) => {
+      releasePickFolder = resolve;
+    });
+    const pickFolder = vi.fn(async () => {
+      await pickFolderGate;
+      return "/repo/stale-picker-project";
+    });
+    const dispatchCommand = vi.fn(async (command: unknown) => {
+      wsRequests.push({
+        _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+        command,
+      });
+      return { sequence: fixture.snapshot.snapshotSequence + 1 };
+    });
+    Object.defineProperty(window, "nativeApi", {
+      configurable: true,
+      value: {
+        ...wsNativeApi,
+        dialogs: { ...wsNativeApi?.dialogs, pickFolder },
+        orchestration: { ...wsNativeApi?.orchestration, dispatchCommand },
+      },
+    });
+    const requestStart = wsRequests.length;
+
+    try {
+      await page.getByLabelText("Create new thread in Project").click();
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      await page.getByTestId("empty-landing-heading-project-trigger").click();
+      await page.getByText("New project").click();
+      await vi.waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(1));
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: THREAD_ID },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${THREAD_ID}`,
+        "Existing thread should be selected while the native picker is pending.",
+      );
+
+      releasePickFolder();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 50));
+      expect(
+        wsRequests
+          .slice(requestStart)
+          .some(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              "command" in request &&
+              request.command &&
+              typeof request.command === "object" &&
+              "type" in request.command &&
+              request.command.type === "project.create",
+          ),
+      ).toBe(false);
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        projectId: PROJECT_ID,
+      });
+    } finally {
+      releasePickFolder();
       if (previousNativeApi) {
         Object.defineProperty(window, "nativeApi", {
           configurable: true,

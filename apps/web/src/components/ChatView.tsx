@@ -71,7 +71,7 @@ import {
 import { GoTasklist } from "react-icons/go";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Debouncer, useDebouncedValue } from "@tanstack/react-pacer";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import { type LegendListRef } from "@legendapp/list/react";
 import {
   GIT_WORKING_TREE_DIFF_LIVE_REFETCH_INTERVAL_MS,
@@ -1139,6 +1139,7 @@ export default function ChatView({
   );
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
+  const router = useRouter();
   const { handleNewThread } = useHandleNewThread();
   const { handleNewChat } = useHandleNewChat();
   const { createThreadHandoff } = useThreadHandoff();
@@ -5524,6 +5525,17 @@ export default function ChatView({
     setQueuedSteerGate(null);
   }, [threadId]);
 
+  useEffect(
+    () =>
+      router.subscribe("onBeforeNavigate", () => {
+        // Route ownership changes before React commits the next thread. Invalidate immediately so
+        // a native folder dialog resolving in that interval cannot mint a fresh request for the
+        // previous draft.
+        emptyDraftProjectRequestRef.current += 1;
+      }),
+    [router],
+  );
+
   useEffect(() => {
     if (!activeThread?.id) return;
     if (activeThread.messages.length === 0) {
@@ -9334,31 +9346,42 @@ export default function ChatView({
     };
   }, [threadId]);
 
+  const isEmptyDraftProjectRequestCurrent = useCallback(
+    (requestId: number) => {
+      if (requestId !== emptyDraftProjectRequestRef.current) return false;
+      const liveDraft = useComposerDraftStore.getState().getDraftThread(threadId);
+      return (
+        liveDraft !== null &&
+        liveDraft.promotedTo === undefined &&
+        getThreadFromState(useStore.getState(), threadId) === undefined
+      );
+    },
+    [threadId],
+  );
+
   const openOrMoveEmptyDraftToLocalProject = useCallback(
     async (projectId: ProjectId, requestId: number) => {
-      if (requestId !== emptyDraftProjectRequestRef.current || !isLocalDraftThread) {
+      if (!isEmptyDraftProjectRequestCurrent(requestId)) {
         return;
       }
-      const destinationDraft = getDraftThreadByProjectId(projectId, "chat");
-      if (destinationDraft && destinationDraft.threadId !== threadId) {
+      const draftStore = useComposerDraftStore.getState();
+      const destinationThreadId = draftStore.projectDraftThreadIdByProjectId[projectId];
+      const destinationDraft = destinationThreadId
+        ? draftStore.getDraftThread(destinationThreadId)
+        : null;
+      if (destinationThreadId && destinationDraft && destinationThreadId !== threadId) {
         await navigate({
           to: "/$threadId",
-          params: { threadId: destinationDraft.threadId },
+          params: { threadId: destinationDraft.promotedTo ?? destinationThreadId },
         });
         return;
       }
-      if (requestId !== emptyDraftProjectRequestRef.current) {
+      if (!isEmptyDraftProjectRequestCurrent(requestId)) {
         return;
       }
       moveEmptyDraftToLocalProject(projectId);
     },
-    [
-      getDraftThreadByProjectId,
-      isLocalDraftThread,
-      moveEmptyDraftToLocalProject,
-      navigate,
-      threadId,
-    ],
+    [isEmptyDraftProjectRequestCurrent, moveEmptyDraftToLocalProject, navigate, threadId],
   );
 
   const handleResetWorkspaceToHome = useCallback(() => {
@@ -9500,7 +9523,7 @@ export default function ChatView({
 
   const selectProjectForEmptyDraftRequest = useCallback(
     async (projectId: ProjectId, requestId: number) => {
-      if (requestId !== emptyDraftProjectRequestRef.current || !isLocalDraftThread) {
+      if (!isEmptyDraftProjectRequestCurrent(requestId)) {
         return;
       }
       const project = useStore
@@ -9518,7 +9541,7 @@ export default function ChatView({
     },
     [
       draftThread?.projectId,
-      isLocalDraftThread,
+      isEmptyDraftProjectRequestCurrent,
       openOrMoveEmptyDraftToLocalProject,
       scheduleComposerFocus,
     ],
@@ -9533,48 +9556,54 @@ export default function ChatView({
     [selectProjectForEmptyDraftRequest],
   );
 
-  const handleCreateProjectFromPickerPath = useCallback(
-    async (workspaceRoot: string) => {
-      if (!isLocalDraftThread) {
-        return;
-      }
-      const requestId = emptyDraftProjectRequestRef.current + 1;
-      emptyDraftProjectRequestRef.current = requestId;
-      const api = readNativeApi();
-      if (!api) {
-        throw new Error("App is still connecting. Try again in a moment.");
-      }
+  const handleCreateProjectFromPicker = useCallback(async () => {
+    if (!isLocalDraftThread) {
+      return;
+    }
+    const requestId = emptyDraftProjectRequestRef.current + 1;
+    emptyDraftProjectRequestRef.current = requestId;
+    const api = readNativeApi();
+    if (!api) {
+      throw new Error("App is still connecting. Try again in a moment.");
+    }
+    const workspaceRoot = await api.dialogs.pickFolder();
+    if (!workspaceRoot || !isEmptyDraftProjectRequestCurrent(requestId)) {
+      return;
+    }
 
-      const existingProject = useStore
-        .getState()
-        .projects.find(
-          (project) =>
-            project.kind === "project" && workspaceRootsEqual(project.cwd, workspaceRoot),
-        );
-      if (existingProject) {
-        await selectProjectForEmptyDraftRequest(existingProject.id, requestId);
-        return;
-      }
+    const existingProject = useStore
+      .getState()
+      .projects.find(
+        (project) => project.kind === "project" && workspaceRootsEqual(project.cwd, workspaceRoot),
+      );
+    if (existingProject) {
+      await selectProjectForEmptyDraftRequest(existingProject.id, requestId);
+      return;
+    }
 
-      const creationResult = await createOrRecoverProjectFromPath({
-        api,
-        workspaceRoot,
-        createIfMissing: false,
-        loadSnapshot: () => api.orchestration.getShellSnapshot().catch(() => null),
-      });
-      if (creationResult.snapshot) {
-        syncServerShellSnapshot(creationResult.snapshot);
-      }
-      if (!creationResult.created && !creationResult.project) {
-        throw new Error(PROJECT_CREATE_EXISTING_SYNC_ERROR);
-      }
-      if (!creationResult.project) {
-        throw new Error(PROJECT_CREATE_SYNC_ERROR);
-      }
-      await selectProjectForEmptyDraftRequest(creationResult.project.id, requestId);
-    },
-    [isLocalDraftThread, selectProjectForEmptyDraftRequest, syncServerShellSnapshot],
-  );
+    const creationResult = await createOrRecoverProjectFromPath({
+      api,
+      workspaceRoot,
+      createIfMissing: false,
+      loadSnapshot: () => api.orchestration.getShellSnapshot().catch(() => null),
+    });
+    if (!isEmptyDraftProjectRequestCurrent(requestId)) return;
+    if (creationResult.snapshot) {
+      syncServerShellSnapshot(creationResult.snapshot);
+    }
+    if (!creationResult.created && !creationResult.project) {
+      throw new Error(PROJECT_CREATE_EXISTING_SYNC_ERROR);
+    }
+    if (!creationResult.project) {
+      throw new Error(PROJECT_CREATE_SYNC_ERROR);
+    }
+    await selectProjectForEmptyDraftRequest(creationResult.project.id, requestId);
+  }, [
+    isEmptyDraftProjectRequestCurrent,
+    isLocalDraftThread,
+    selectProjectForEmptyDraftRequest,
+    syncServerShellSnapshot,
+  ]);
 
   const applyPromptReplacement = useCallback(
     (
@@ -10587,7 +10616,7 @@ export default function ChatView({
           selectedWorkspaceRoot={resolvedThreadWorktreePath}
           onSelectProject={handleSelectProjectForEmptyDraft}
           onSelectWorkspaceRoot={handleSelectWorkspaceRoot}
-          onCreateProjectFromPath={handleCreateProjectFromPickerPath}
+          onCreateProject={handleCreateProjectFromPicker}
           onResetToHome={handleResetWorkspaceToHome}
         />
       ) : showEmptyLandingProjectPicker ? null : (
@@ -11481,7 +11510,7 @@ export default function ChatView({
                                 selectedWorkspaceRoot={activeProject.cwd}
                                 showResetToHome
                                 onSelectProject={handleSelectProjectForEmptyDraft}
-                                onCreateProjectFromPath={handleCreateProjectFromPickerPath}
+                                onCreateProject={handleCreateProjectFromPicker}
                                 onResetToHome={handleResetWorkspaceToHome}
                                 renderTrigger={
                                   <button
