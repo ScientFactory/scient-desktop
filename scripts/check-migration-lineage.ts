@@ -43,8 +43,14 @@ export interface LocalDependencyClosure {
 
 export type ReadRepositoryFile = (path: string) => string | undefined;
 export interface PinnedWorkspaceImport {
-  /** Files whose exact content declares the package-to-source resolution chain. */
-  readonly resolutionPaths: readonly string[];
+  readonly resolutionEvidence: readonly (
+    | { readonly kind: "package-root-import"; readonly path: string }
+    | {
+        readonly kind: "named-barrel-export";
+        readonly path: string;
+        readonly exportName: string;
+      }
+  )[];
   /** The runtime source to traverse after the declaration chain is frozen. */
   readonly runtimeSourcePath: string;
 }
@@ -53,6 +59,12 @@ export type PinnedWorkspaceImports = ReadonlyMap<string, PinnedWorkspaceImport>;
 interface StaticModuleReference {
   readonly specifier: string;
   readonly bindingKey: string;
+}
+
+interface ResolvedDependency {
+  readonly path: string;
+  readonly traverse: boolean;
+  readonly content?: string;
 }
 
 export function pinnedWorkspaceImportKey(
@@ -327,16 +339,104 @@ function collectStaticModuleSpecifiers(
   return { references, problems };
 }
 
+function packageRootImportFingerprint(source: string, path: string): string {
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(source);
+  } catch (error) {
+    throw new Error(
+      `${path} is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+  if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
+    throw new Error(`${path} must contain a package manifest object.`);
+  }
+  const exportsField = (manifest as Record<string, unknown>).exports;
+  if (!exportsField || typeof exportsField !== "object" || Array.isArray(exportsField)) {
+    throw new Error(`${path} must declare an exports object.`);
+  }
+  const rootExport = (exportsField as Record<string, unknown>)["."];
+  const importTarget =
+    rootExport && typeof rootExport === "object" && !Array.isArray(rootExport)
+      ? (rootExport as Record<string, unknown>).import
+      : undefined;
+  if (typeof importTarget !== "string" || importTarget.length === 0) {
+    throw new Error(`${path} must declare exports["."].import as a non-empty string.`);
+  }
+  return `package-root-import:${importTarget}`;
+}
+
+function declaresRuntimeExport(source: string, path: string, exportName: string): boolean {
+  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+  return sourceFile.statements.some((statement) => {
+    const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) : undefined;
+    if (!modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) return false;
+    if (ts.isVariableStatement(statement)) {
+      return statement.declarationList.declarations.some(
+        (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === exportName,
+      );
+    }
+    return (
+      (ts.isFunctionDeclaration(statement) ||
+        ts.isClassDeclaration(statement) ||
+        ts.isEnumDeclaration(statement)) &&
+      statement.name?.text === exportName
+    );
+  });
+}
+
+function namedBarrelExportFingerprint(
+  source: string,
+  path: string,
+  exportName: string,
+  readFile: ReadRepositoryFile,
+): string {
+  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+  const sources: string[] = [];
+  for (const statement of sourceFile.statements) {
+    if (!ts.isExportDeclaration(statement) || statement.isTypeOnly || !statement.moduleSpecifier) {
+      continue;
+    }
+    if (!ts.isStringLiteralLike(statement.moduleSpecifier)) continue;
+    const specifier = statement.moduleSpecifier.text;
+    if (statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+      if (
+        statement.exportClause.elements.some(
+          (element) => !element.isTypeOnly && element.name.text === exportName,
+        )
+      ) {
+        sources.push(specifier);
+      }
+      continue;
+    }
+    if (statement.exportClause) continue;
+
+    const resolved = resolveLocalDependency(
+      path,
+      { specifier, bindingKey: "export:*" },
+      readFile,
+      new Map(),
+    );
+    const targetPath = resolved.dependencies?.[0]?.path;
+    const targetSource = targetPath ? readFile(targetPath) : undefined;
+    if (targetPath && targetSource && declaresRuntimeExport(targetSource, targetPath, exportName)) {
+      sources.push(specifier);
+    }
+  }
+  if (sources.length === 0) {
+    throw new Error(`${path} does not resolve runtime export ${exportName}.`);
+  }
+  return `named-barrel-export:${exportName}:${sources.toSorted().join(",")}`;
+}
+
 function resolveLocalDependency(
   importerPath: string,
   reference: StaticModuleReference,
   readFile: ReadRepositoryFile,
   pinnedWorkspaceImports: PinnedWorkspaceImports,
 ): {
-  readonly dependencies?: readonly {
-    readonly path: string;
-    readonly traverse: boolean;
-  }[];
+  readonly dependencies?: readonly ResolvedDependency[];
   readonly problem?: string;
 } {
   const { specifier } = reference;
@@ -350,24 +450,30 @@ function resolveLocalDependency(
       pinnedWorkspaceImportKey(importerPath, specifier, reference.bindingKey),
     );
     if (pinnedWorkspaceImport) {
-      const paths = [
-        ...pinnedWorkspaceImport.resolutionPaths,
-        pinnedWorkspaceImport.runtimeSourcePath,
-      ];
-      const missingPath = paths.find((path) => readFile(path) === undefined);
-      if (missingPath) {
-        return {
-          problem:
-            `${importerPath} workspace import ${JSON.stringify(specifier)} resolves through ` +
-            `missing ${missingPath}.`,
-        };
+      const dependencies: ResolvedDependency[] = [];
+      for (const evidence of pinnedWorkspaceImport.resolutionEvidence) {
+        const source = readFile(evidence.path);
+        if (source === undefined) {
+          return {
+            problem:
+              `${importerPath} workspace import ${JSON.stringify(specifier)} resolves through ` +
+              `missing ${evidence.path}.`,
+          };
+        }
+        try {
+          const content =
+            evidence.kind === "package-root-import"
+              ? packageRootImportFingerprint(source, evidence.path)
+              : namedBarrelExportFingerprint(source, evidence.path, evidence.exportName, readFile);
+          dependencies.push({ path: evidence.path, traverse: false, content });
+        } catch (error) {
+          return {
+            problem: error instanceof Error ? error.message : String(error),
+          };
+        }
       }
-      return {
-        dependencies: paths.map((path) => ({
-          path,
-          traverse: path === pinnedWorkspaceImport.runtimeSourcePath,
-        })),
-      };
+      dependencies.push({ path: pinnedWorkspaceImport.runtimeSourcePath, traverse: true });
+      return { dependencies };
     }
     if (
       specifier.startsWith("@synara/") ||
@@ -422,13 +528,13 @@ export function buildLocalDependencyClosure(
     if (!readCache.has(path)) readCache.set(path, sourceReader(path));
     return readCache.get(path);
   };
-  const pending = entryPaths.map((path) => ({ path, traverse: true }));
+  const pending: ResolvedDependency[] = entryPaths.map((path) => ({ path, traverse: true }));
   const traversed = new Set<string>();
 
   while (pending.length > 0) {
     const dependency = pending.pop()!;
     const { path } = dependency;
-    const source = readFile(path);
+    const source = dependency.content ?? readFile(path);
     if (source === undefined) {
       problems.push(`Migration dependency ${path} could not be read.`);
       continue;
@@ -641,7 +747,14 @@ function main(): void {
         "import:MODEL_OPTIONS_BY_PROVIDER",
       ),
       {
-        resolutionPaths: ["packages/contracts/package.json", "packages/contracts/src/index.ts"],
+        resolutionEvidence: [
+          { kind: "package-root-import", path: "packages/contracts/package.json" },
+          {
+            kind: "named-barrel-export",
+            path: "packages/contracts/src/index.ts",
+            exportName: "MODEL_OPTIONS_BY_PROVIDER",
+          },
+        ],
         runtimeSourcePath: "packages/contracts/src/model.ts",
       },
     ],

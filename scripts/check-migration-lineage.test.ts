@@ -8,6 +8,7 @@ import {
   findReleasedIdentityViolations,
   parseMigrationCatalog,
   pinnedWorkspaceImportKey,
+  type PinnedWorkspaceImport,
 } from "./check-migration-lineage.ts";
 
 const sourceFor = (entries: ReadonlyArray<readonly [number, string]>) => {
@@ -162,15 +163,18 @@ describe("Scient migration lineage guard", () => {
       ],
       ["packages/contracts/package.json", '{"exports":{".":{"import":"./src/index.ts"}}}\n'],
       ["packages/contracts/src/index.ts", 'export * from "./model.ts";\n'],
-      ["packages/contracts/src/model.ts", "export const model = 'released';\n"],
+      ["packages/contracts/src/model.ts", "export const MODEL_OPTIONS_BY_PROVIDER = 'released';\n"],
     ]);
     const currentFiles = new Map(releasedFiles);
     currentFiles.set(
       "apps/server/src/persistence/Migrations/schemaHelpers.ts",
       'export const helper = "changed";\n',
     );
-    currentFiles.set("packages/contracts/src/model.ts", "export const model = 'changed';\n");
-    const localPackages = new Map([
+    currentFiles.set(
+      "packages/contracts/src/model.ts",
+      "export const MODEL_OPTIONS_BY_PROVIDER = 'changed';\n",
+    );
+    const localPackages = new Map<string, PinnedWorkspaceImport>([
       [
         pinnedWorkspaceImportKey(
           "apps/server/src/persistence/modelSelectionCompatibility.ts",
@@ -178,7 +182,14 @@ describe("Scient migration lineage guard", () => {
           "import:MODEL_OPTIONS_BY_PROVIDER",
         ),
         {
-          resolutionPaths: ["packages/contracts/package.json", "packages/contracts/src/index.ts"],
+          resolutionEvidence: [
+            { kind: "package-root-import", path: "packages/contracts/package.json" },
+            {
+              kind: "named-barrel-export",
+              path: "packages/contracts/src/index.ts",
+              exportName: "MODEL_OPTIONS_BY_PROVIDER",
+            },
+          ],
           runtimeSourcePath: "packages/contracts/src/model.ts",
         },
       ],
@@ -224,7 +235,7 @@ describe("Scient migration lineage guard", () => {
       ["contracts/index.ts", 'export * from "./model.ts";\n'],
       ["contracts/model.ts", "export {};\n"],
     ]);
-    const pins = new Map([
+    const pins = new Map<string, PinnedWorkspaceImport>([
       [
         pinnedWorkspaceImportKey(
           "persistence/modelSelectionCompatibility.ts",
@@ -232,7 +243,14 @@ describe("Scient migration lineage guard", () => {
           "import:MODEL_OPTIONS_BY_PROVIDER",
         ),
         {
-          resolutionPaths: ["contracts/package.json", "contracts/index.ts"],
+          resolutionEvidence: [
+            { kind: "package-root-import", path: "contracts/package.json" },
+            {
+              kind: "named-barrel-export",
+              path: "contracts/index.ts",
+              exportName: "MODEL_OPTIONS_BY_PROVIDER",
+            },
+          ],
           runtimeSourcePath: "contracts/model.ts",
         },
       ],
@@ -267,17 +285,17 @@ describe("Scient migration lineage guard", () => {
         "persistence/modelSelectionCompatibility.ts",
         'import { MODEL_OPTIONS_BY_PROVIDER } from "@synara/contracts";\n',
       ],
-      ["contracts/package.json", '{"exports":{".":"./index.ts"}}\n'],
+      ["contracts/package.json", '{"exports":{".":{"import":"./index.ts"}}}\n'],
       ["contracts/index.ts", 'export { MODEL_OPTIONS_BY_PROVIDER } from "./model.ts";\n'],
       ["contracts/model.ts", "export const MODEL_OPTIONS_BY_PROVIDER = {};\n"],
     ]);
     const currentFiles = new Map(releasedFiles);
-    currentFiles.set("contracts/package.json", '{"exports":{".":"./redirect.ts"}}\n');
+    currentFiles.set("contracts/package.json", '{"exports":{".":{"import":"./redirect.ts"}}}\n');
     currentFiles.set(
       "contracts/index.ts",
       'export { MODEL_OPTIONS_BY_PROVIDER } from "./redirect.ts";\n',
     );
-    const pins = new Map([
+    const pins = new Map<string, PinnedWorkspaceImport>([
       [
         pinnedWorkspaceImportKey(
           "persistence/modelSelectionCompatibility.ts",
@@ -285,7 +303,14 @@ describe("Scient migration lineage guard", () => {
           "import:MODEL_OPTIONS_BY_PROVIDER",
         ),
         {
-          resolutionPaths: ["contracts/package.json", "contracts/index.ts"],
+          resolutionEvidence: [
+            { kind: "package-root-import", path: "contracts/package.json" },
+            {
+              kind: "named-barrel-export",
+              path: "contracts/index.ts",
+              exportName: "MODEL_OPTIONS_BY_PROVIDER",
+            },
+          ],
           runtimeSourcePath: "contracts/model.ts",
         },
       ],
@@ -307,6 +332,65 @@ describe("Scient migration lineage guard", () => {
       "Released migration dependency contracts/index.ts was modified.",
       "Released migration dependency contracts/package.json was modified.",
     ]);
+  });
+
+  it("ignores unrelated package metadata and unrelated barrel exports", () => {
+    const releasedFiles = new Map([
+      [
+        "persistence/modelSelectionCompatibility.ts",
+        'import { MODEL_OPTIONS_BY_PROVIDER } from "@synara/contracts";\n',
+      ],
+      [
+        "contracts/package.json",
+        '{"name":"contracts","version":"1.0.0","exports":{".":{"import":"./index.ts"}}}\n',
+      ],
+      ["contracts/index.ts", 'export * from "./model.ts";\n'],
+      ["contracts/model.ts", "export const MODEL_OPTIONS_BY_PROVIDER = {};\n"],
+      ["contracts/unrelated.ts", "export const UNRELATED = true;\n"],
+    ]);
+    const currentFiles = new Map(releasedFiles);
+    currentFiles.set(
+      "contracts/package.json",
+      '{"name":"contracts","version":"2.0.0","scripts":{"build":"changed"},"exports":{".":{"import":"./index.ts"}}}\n',
+    );
+    currentFiles.set(
+      "contracts/index.ts",
+      'export * from "./model.ts";\nexport * from "./unrelated.ts";\n',
+    );
+    const pins = new Map<string, PinnedWorkspaceImport>([
+      [
+        pinnedWorkspaceImportKey(
+          "persistence/modelSelectionCompatibility.ts",
+          "@synara/contracts",
+          "import:MODEL_OPTIONS_BY_PROVIDER",
+        ),
+        {
+          resolutionEvidence: [
+            { kind: "package-root-import", path: "contracts/package.json" },
+            {
+              kind: "named-barrel-export",
+              path: "contracts/index.ts",
+              exportName: "MODEL_OPTIONS_BY_PROVIDER",
+            },
+          ],
+          runtimeSourcePath: "contracts/model.ts",
+        },
+      ],
+    ]);
+    const released = buildLocalDependencyClosure(
+      ["persistence/modelSelectionCompatibility.ts"],
+      (path) => releasedFiles.get(path),
+      pins,
+    );
+    const current = buildLocalDependencyClosure(
+      ["persistence/modelSelectionCompatibility.ts"],
+      (path) => currentFiles.get(path),
+      pins,
+    );
+
+    assert.deepEqual(released.problems, []);
+    assert.deepEqual(current.problems, []);
+    assert.deepEqual(findReleasedDependencyViolations(released.contents, current.contents), []);
   });
 
   it("keeps a runtime default import when every named companion is type-only", () => {
