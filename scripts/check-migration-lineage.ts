@@ -3,6 +3,7 @@
 // Layer: CI and release preflight
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +23,7 @@ export interface MigrationEntry {
 export interface MigrationCatalog {
   readonly entries: readonly MigrationEntry[];
   readonly importPaths: ReadonlyMap<string, string>;
+  readonly runtimeSafetyProblems?: readonly string[];
 }
 
 export interface ReleasedIdentityViolation {
@@ -65,6 +67,7 @@ interface ResolvedDependency {
   readonly path: string;
   readonly traverse: boolean;
   readonly content?: string;
+  readonly traversalSource?: string;
 }
 
 export function pinnedWorkspaceImportKey(
@@ -89,9 +92,31 @@ export const RELEASED_IDENTITY_ALLOWANCES: readonly ReleasedIdentityAllowance[] 
   },
 ];
 
-const entriesBlockPattern = /export const migrationEntries\s*=\s*\[([\s\S]*?)\]\s*as const;/u;
-const entryPattern = /\[\s*(\d+)\s*,\s*"([^"]+)"\s*,\s*([A-Za-z_$][\w$]*)\s*\]/gu;
-const importPattern = /import\s+([A-Za-z_$][\w$]*)\s+from\s+"(\.\/Migrations\/[^"]+\.ts)";/gu;
+/**
+ * Exact pre-guard source rewrites found by the one-time audit of every official
+ * release tag. Each allowance pins both Git blob identities; it cannot bless a
+ * new edit to either the historical or current migration.
+ */
+export const RELEASED_CONTENT_ALLOWANCES = new Set([
+  "5:c950da76a18e2fd25609109764831ded8c84fbfe:5c49219877e23af4e795c72c2b571a81b1122e4f",
+  "16:68d7baf83fa27e432e771c021052bcff9fec27d2:bce0bb7d2b82e5ba55a16002512bcb5f42fe15ea",
+  "23:c34152b5f792a95398db7787d4ead6c34d098bd2:c7c7b52a7e7f4fbd00aef479daaae28fb9e4ab8c",
+  "32:584318be301c5eb2b4374eb2c9850dff7fbed82c:5228231e32cb0c9d2519cdcdf403777f5d25cc93",
+  "32:75ec7b220a38aa1dafc55aee7881439792477002:5228231e32cb0c9d2519cdcdf403777f5d25cc93",
+  "32:ab3f15243ce0e52083570d112ddb947206b3d24a:5228231e32cb0c9d2519cdcdf403777f5d25cc93",
+  "36:ccc73b97cce1ba78ddd22c013ac6474e1d67163b:4196b4113c7b465d35fd770748a745b2bddb9999",
+  "39:58c3e0a0c4128dfc218296231f7c7f880d15487d:f149b299375c6fd12931618b4eb93ef1cf00b94d",
+]);
+
+// Digest of every version tag reachable from origin/release/stable at the
+// v0.5.13 release boundary, encoded as sorted `tag\0commit\n` records.
+// A tag-triggered run may add exactly one new tag at HEAD; the manifest must be
+// advanced after publication so subsequent branch runs preserve that release.
+const protectedReleaseTagCount = 79;
+const protectedReleaseTagDigest =
+  "4ed6ced392c2b5bb0f1720e410567907db14f34cc0945bec6bccb5187359c095";
+const runtimeResolutionEvidencePath = "@scient/migration-runtime-resolution";
+
 const numberedTypeScriptModulePattern = /^\d{3}_.+\.ts$/u;
 const migrationNamePattern = /^[A-Z][A-Za-z0-9]*$/u;
 
@@ -102,32 +127,258 @@ const migrationImportPath = (id: number, name: string): string =>
   `./Migrations/${migrationModuleName(id, name)}`;
 
 export function parseMigrationCatalog(source: string): MigrationCatalog {
-  const entriesBlock = entriesBlockPattern.exec(source);
-  if (entriesBlock?.[1] === undefined) {
+  const sourceFile = ts.createSourceFile(
+    migrationsSourcePath,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const declarations = sourceFile.statements.flatMap((statement) =>
+    ts.isVariableStatement(statement)
+      ? statement.declarationList.declarations.filter(
+          (declaration) =>
+            ts.isIdentifier(declaration.name) && declaration.name.text === "migrationEntries",
+        )
+      : [],
+  );
+  if (declarations.length !== 1) {
     throw new Error(`Could not locate migrationEntries in ${migrationsSourcePath}.`);
   }
 
-  const entries = [...entriesBlock[1].matchAll(entryPattern)].map((match) => ({
-    id: Number(match[1]),
-    name: match[2]!,
-    importName: match[3]!,
-  }));
+  let initializer = declarations[0]!.initializer;
+  while (
+    initializer &&
+    (ts.isAsExpression(initializer) ||
+      ts.isSatisfiesExpression(initializer) ||
+      ts.isParenthesizedExpression(initializer))
+  ) {
+    initializer = initializer.expression;
+  }
+  if (!initializer || !ts.isArrayLiteralExpression(initializer)) {
+    throw new Error(`migrationEntries in ${migrationsSourcePath} must be an array literal.`);
+  }
+
+  const entries = initializer.elements.map((element, index) => {
+    if (!ts.isArrayLiteralExpression(element) || element.elements.length !== 3) {
+      throw new Error(
+        `migrationEntries element ${index + 1} in ${migrationsSourcePath} must be an exact ` +
+          `[numeric ID, string name, imported migration identifier] tuple; spreads, references, ` +
+          `templates, and computed entries are forbidden.`,
+      );
+    }
+    const idNode = element.elements[0]!;
+    const nameNode = element.elements[1]!;
+    const importNode = element.elements[2]!;
+    if (
+      !ts.isNumericLiteral(idNode) ||
+      !ts.isStringLiteral(nameNode) ||
+      !ts.isIdentifier(importNode)
+    ) {
+      throw new Error(
+        `migrationEntries element ${index + 1} in ${migrationsSourcePath} must be an exact ` +
+          `[numeric ID, string name, imported migration identifier] tuple; spreads, references, ` +
+          `templates, and computed entries are forbidden.`,
+      );
+    }
+    return {
+      id: Number(idNode.text),
+      name: nameNode.text,
+      importName: importNode.text,
+    };
+  });
   if (entries.length === 0) {
     throw new Error(`Parsed zero migrations from ${migrationsSourcePath}.`);
   }
 
   const importPaths = new Map<string, string>();
-  for (const match of source.matchAll(importPattern)) {
-    importPaths.set(match[1]!, match[2]!);
+  for (const statement of sourceFile.statements) {
+    if (
+      !ts.isImportDeclaration(statement) ||
+      !statement.importClause?.name ||
+      !ts.isStringLiteralLike(statement.moduleSpecifier)
+    ) {
+      continue;
+    }
+    const importName = statement.importClause.name.text;
+    if (importPaths.has(importName)) {
+      throw new Error(
+        `${migrationsSourcePath} imports migration binding ${importName} more than once.`,
+      );
+    }
+    importPaths.set(importName, statement.moduleSpecifier.text);
   }
-  return { entries, importPaths };
+  const migratorImports = sourceFile.statements.filter(
+    (statement): statement is ts.ImportDeclaration =>
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteralLike(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === "effect/unstable/sql/Migrator" &&
+      statement.importClause?.namedBindings !== undefined &&
+      ts.isNamespaceImport(statement.importClause.namedBindings) &&
+      statement.importClause.namedBindings.name.text === "Migrator",
+  );
+  const bindingNames = (name: ts.BindingName): readonly string[] => {
+    if (ts.isIdentifier(name)) return [name.text];
+    return name.elements.flatMap((element) =>
+      ts.isOmittedExpression(element) ? [] : bindingNames(element.name),
+    );
+  };
+  const topLevelBindings = sourceFile.statements.flatMap((statement): readonly string[] => {
+    if (ts.isImportDeclaration(statement)) {
+      const clause = statement.importClause;
+      if (!clause) return [];
+      return [
+        ...(clause.name ? [clause.name.text] : []),
+        ...(clause.namedBindings
+          ? ts.isNamespaceImport(clause.namedBindings)
+            ? [clause.namedBindings.name.text]
+            : clause.namedBindings.elements.map((element) => element.name.text)
+          : []),
+      ];
+    }
+    if (ts.isImportEqualsDeclaration(statement)) return [statement.name.text];
+    if (ts.isVariableStatement(statement)) {
+      return statement.declarationList.declarations.flatMap((declaration) =>
+        bindingNames(declaration.name),
+      );
+    }
+    if (
+      (ts.isFunctionDeclaration(statement) ||
+        ts.isClassDeclaration(statement) ||
+        ts.isEnumDeclaration(statement)) &&
+      statement.name
+    ) {
+      return [statement.name.text];
+    }
+    return [];
+  });
+  const declarationStatement = declarations[0]!.parent.parent;
+  const declarationIndex = sourceFile.statements.findIndex(
+    (statement) => statement === declarationStatement,
+  );
+  const freezesEntry = (statement: ts.Statement | undefined): boolean => {
+    if (!statement || !ts.isForOfStatement(statement)) return false;
+    const declarationList = statement.initializer;
+    if (
+      !ts.isVariableDeclarationList(declarationList) ||
+      (declarationList.flags & ts.NodeFlags.Const) === 0 ||
+      declarationList.declarations.length !== 1
+    ) {
+      return false;
+    }
+    const declaration = declarationList.declarations[0]!;
+    if (
+      !ts.isIdentifier(declaration.name) ||
+      declaration.name.text !== "migrationEntry" ||
+      !ts.isIdentifier(statement.expression) ||
+      statement.expression.text !== "migrationEntries"
+    ) {
+      return false;
+    }
+    const bodyStatements = ts.isBlock(statement.statement)
+      ? statement.statement.statements
+      : [statement.statement];
+    if (bodyStatements.length !== 1 || !ts.isExpressionStatement(bodyStatements[0]!)) return false;
+    const expression = bodyStatements[0]!.expression;
+    return (
+      ts.isCallExpression(expression) &&
+      expression.arguments.length === 1 &&
+      ts.isPropertyAccessExpression(expression.expression) &&
+      ts.isIdentifier(expression.expression.expression) &&
+      expression.expression.expression.text === "Object" &&
+      expression.expression.name.text === "freeze" &&
+      ts.isIdentifier(expression.arguments[0]!) &&
+      expression.arguments[0]!.text === "migrationEntry"
+    );
+  };
+  const freezesCatalog = (statement: ts.Statement | undefined): boolean => {
+    if (!statement || !ts.isExpressionStatement(statement)) return false;
+    const expression = statement.expression;
+    return (
+      ts.isCallExpression(expression) &&
+      expression.arguments.length === 1 &&
+      ts.isPropertyAccessExpression(expression.expression) &&
+      ts.isIdentifier(expression.expression.expression) &&
+      expression.expression.expression.text === "Object" &&
+      expression.expression.name.text === "freeze" &&
+      ts.isIdentifier(expression.arguments[0]!) &&
+      expression.arguments[0]!.text === "migrationEntries"
+    );
+  };
+  const canonicalStatement = (statement: ts.Statement | undefined): string | undefined =>
+    statement
+      ? ts
+          .createPrinter({
+            newLine: ts.NewLineKind.LineFeed,
+            removeComments: true,
+          })
+          .printNode(ts.EmitHint.Unspecified, statement, sourceFile)
+      : undefined;
+  const expectedLoaderSource = ts.createSourceFile(
+    "expected-migration-loader.ts",
+    `export const makeMigrationLoader = (throughId?: number) =>
+      Migrator.fromRecord(
+        Object.fromEntries(
+          migrationEntries
+            .filter(([id]) => throughId === undefined || id <= throughId)
+            .map(([id, name, migration]) => [\`\${id}_\${name}\`, migration]),
+        ),
+      );`,
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  const freezesExecutableIdentity =
+    declarationIndex >= 0 &&
+    freezesEntry(sourceFile.statements[declarationIndex + 1]) &&
+    freezesCatalog(sourceFile.statements[declarationIndex + 2]);
+  const preservesLoaderMapping =
+    declarationIndex >= 0 &&
+    canonicalStatement(sourceFile.statements[declarationIndex + 3]) ===
+      ts
+        .createPrinter({
+          newLine: ts.NewLineKind.LineFeed,
+          removeComments: true,
+        })
+        .printNode(
+          ts.EmitHint.Unspecified,
+          expectedLoaderSource.statements[0]!,
+          expectedLoaderSource,
+        );
+  const runtimeSafetyProblems: string[] = [];
+  if (
+    migratorImports.length !== 1 ||
+    topLevelBindings.filter((name) => name === "Migrator").length !== 1
+  ) {
+    runtimeSafetyProblems.push(
+      `${migrationsSourcePath} must bind Migrator exactly once as the namespace import from ` +
+        `effect/unstable/sql/Migrator so the pinned loader cannot be redirected.`,
+    );
+  }
+  if (topLevelBindings.includes("Object")) {
+    runtimeSafetyProblems.push(
+      `${migrationsSourcePath} must not shadow the global Object binding used by the pinned loader.`,
+    );
+  }
+  if (!freezesExecutableIdentity) {
+    runtimeSafetyProblems.push(
+      `${migrationsSourcePath} must immediately freeze every migrationEntries tuple and the ` +
+        `catalog itself so later runtime statements cannot rewrite executable migration identity.`,
+    );
+  }
+  if (!preservesLoaderMapping) {
+    runtimeSafetyProblems.push(
+      `${migrationsSourcePath} must build makeMigrationLoader directly from the frozen ` +
+        `migrationEntries IDs, names, and imported migration values.`,
+    );
+  }
+  return { entries, importPaths, runtimeSafetyProblems };
 }
 
 export function findCurrentStructureViolations(
   catalog: MigrationCatalog,
   migrationModuleNames: readonly string[],
 ): string[] {
-  const problems: string[] = [];
+  const problems: string[] = [...(catalog.runtimeSafetyProblems ?? [])];
   const seenIds = new Map<number, string>();
   const seenNames = new Map<string, number>();
   const expectedModules = new Set<string>();
@@ -218,6 +469,122 @@ export function findReleasedIdentityViolations(
 
 const canonicalText = (contents: string): string => contents.replaceAll("\r\n", "\n");
 
+export const gitBlobOid = (contents: string): string => {
+  const canonical = canonicalText(contents);
+  return createHash("sha1")
+    .update(`blob ${Buffer.byteLength(canonical)}\0`)
+    .update(canonical)
+    .digest("hex");
+};
+
+export function releaseTagSetFingerprint(tagCommits: ReadonlyMap<string, string>): string {
+  const records = [...tagCommits]
+    .toSorted(([left], [right]) => left.localeCompare(right))
+    .map(([tag, commit]) => `${tag}\0${commit}\n`)
+    .join("");
+  return createHash("sha256").update(records).digest("hex");
+}
+
+export function findProtectedReleaseTagSetViolations(
+  tagCommits: ReadonlyMap<string, string>,
+  head: string,
+  expectedCount = protectedReleaseTagCount,
+  expectedDigest = protectedReleaseTagDigest,
+): string[] {
+  if (
+    tagCommits.size === expectedCount &&
+    releaseTagSetFingerprint(tagCommits) === expectedDigest
+  ) {
+    return [];
+  }
+  const newHeadTags = [...tagCommits].filter(([, commit]) => commit === head);
+  if (newHeadTags.length === 1 && tagCommits.size === expectedCount + 1) {
+    const withoutNewHeadTag = new Map(tagCommits);
+    withoutNewHeadTag.delete(newHeadTags[0]![0]);
+    if (releaseTagSetFingerprint(withoutNewHeadTag) === expectedDigest) return [];
+  }
+  return [
+    `Official release tag manifest changed: expected ${expectedCount} protected tags with digest ` +
+      `${expectedDigest}, received ${tagCommits.size} tags with digest ` +
+      `${releaseTagSetFingerprint(tagCommits)}. Restore the protected tag/ref history or, after ` +
+      `a deliberate successful release, advance the reviewed manifest in a separate change.`,
+  ];
+}
+
+export function acceptedNewHeadReleaseTag(
+  tagCommits: ReadonlyMap<string, string>,
+  head: string,
+  expectedCount = protectedReleaseTagCount,
+  expectedDigest = protectedReleaseTagDigest,
+): string | undefined {
+  if (
+    tagCommits.size === expectedCount &&
+    releaseTagSetFingerprint(tagCommits) === expectedDigest
+  ) {
+    return undefined;
+  }
+  const newHeadTags = [...tagCommits].filter(([, commit]) => commit === head);
+  if (newHeadTags.length !== 1 || tagCommits.size !== expectedCount + 1) return undefined;
+  const withoutNewHeadTag = new Map(tagCommits);
+  withoutNewHeadTag.delete(newHeadTags[0]![0]);
+  return releaseTagSetFingerprint(withoutNewHeadTag) === expectedDigest
+    ? newHeadTags[0]![0]
+    : undefined;
+}
+
+export function selectReleasedDependencyBaselineTag(
+  releaseCommitsNewestFirst: readonly string[],
+  tagCommits: ReadonlyMap<string, string>,
+  newHeadReleaseTag: string | undefined,
+): string | undefined {
+  const eligibleTagsByCommit = new Map<string, string[]>();
+  for (const [tag, commit] of tagCommits) {
+    if (tag === newHeadReleaseTag) continue;
+    const tags = eligibleTagsByCommit.get(commit) ?? [];
+    tags.push(tag);
+    eligibleTagsByCommit.set(commit, tags);
+  }
+  for (const commit of releaseCommitsNewestFirst) {
+    const tags = eligibleTagsByCommit.get(commit);
+    if (tags !== undefined) return tags.toSorted()[0];
+  }
+  return undefined;
+}
+
+export function findHistoricalReleasedContentViolations(
+  tag: string,
+  released: readonly MigrationEntry[],
+  current: readonly MigrationEntry[],
+  releasedContents: ReadonlyMap<string, string>,
+  currentContents: ReadonlyMap<string, string>,
+  allowances: ReadonlySet<string> = RELEASED_CONTENT_ALLOWANCES,
+): string[] {
+  const currentById = new Map(current.map((entry) => [entry.id, entry]));
+  const problems: string[] = [];
+  for (const releasedEntry of released) {
+    const currentEntry = currentById.get(releasedEntry.id);
+    if (!currentEntry) continue; // Identity validation reports the missing entry.
+    const releasedPath = migrationModuleName(releasedEntry.id, releasedEntry.name);
+    const currentPath = migrationModuleName(currentEntry.id, currentEntry.name);
+    const releasedContent = releasedContents.get(releasedPath);
+    const currentContent = currentContents.get(currentPath);
+    if (releasedContent === undefined || currentContent === undefined) {
+      problems.push(
+        `${tag} released migration ${releasedPath} could not be compared with current ${currentPath}.`,
+      );
+      continue;
+    }
+    if (canonicalText(releasedContent) === canonicalText(currentContent)) continue;
+    const allowanceKey = `${releasedEntry.id}:${gitBlobOid(releasedContent)}:${gitBlobOid(currentContent)}`;
+    if (allowances.has(allowanceKey)) continue;
+    problems.push(
+      `${tag} released migration ${releasedPath} differs from current ${currentPath} without an ` +
+        `exact audited content allowance.`,
+    );
+  }
+  return problems;
+}
+
 const sourceModuleExtensions = new Set([
   ".ts",
   ".tsx",
@@ -266,6 +633,84 @@ function collectStaticModuleSpecifiers(
       `${path} has invalid syntax: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")}`,
   );
   const references: StaticModuleReference[] = [];
+  const reportedRuntimeHazards = new Set<string>();
+  const reportRuntimeHazard = (hazard: string): void => {
+    if (reportedRuntimeHazards.has(hazard)) return;
+    reportedRuntimeHazards.add(hazard);
+    problems.push(`${path} uses ${hazard}; migration dependencies must be statically resolvable.`);
+  };
+  const isInsideTypeSyntax = (node: ts.Node): boolean => {
+    for (let current = node.parent; current; current = current.parent) {
+      if (ts.isTypeNode(current)) return true;
+      if (ts.isStatement(current) || ts.isExpression(current)) return false;
+    }
+    return false;
+  };
+  const isDeclarationOrPropertyName = (node: ts.Identifier): boolean => {
+    const parent = node.parent;
+    return (
+      (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+      ((ts.isPropertyAssignment(parent) ||
+        ts.isMethodDeclaration(parent) ||
+        ts.isPropertyDeclaration(parent) ||
+        ts.isGetAccessorDeclaration(parent) ||
+        ts.isSetAccessorDeclaration(parent)) &&
+        parent.name === node) ||
+      ((ts.isVariableDeclaration(parent) ||
+        ts.isParameter(parent) ||
+        ts.isBindingElement(parent) ||
+        ts.isFunctionDeclaration(parent) ||
+        ts.isFunctionExpression(parent) ||
+        ts.isClassDeclaration(parent) ||
+        ts.isClassExpression(parent) ||
+        ts.isInterfaceDeclaration(parent) ||
+        ts.isTypeAliasDeclaration(parent) ||
+        ts.isEnumDeclaration(parent) ||
+        ts.isModuleDeclaration(parent)) &&
+        parent.name === node) ||
+      ts.isImportClause(parent) ||
+      ts.isImportSpecifier(parent) ||
+      ts.isNamespaceImport(parent) ||
+      ts.isImportEqualsDeclaration(parent) ||
+      ts.isExportSpecifier(parent) ||
+      ts.isLabeledStatement(parent) ||
+      ts.isBreakStatement(parent) ||
+      ts.isContinueStatement(parent)
+    );
+  };
+  const literalElementName = (node: ts.ElementAccessExpression): string | undefined => {
+    const argument = node.argumentExpression;
+    const staticString = (expression: ts.Expression): string | undefined => {
+      if (ts.isStringLiteralLike(expression) || ts.isNumericLiteral(expression)) {
+        return expression.text;
+      }
+      if (
+        ts.isBinaryExpression(expression) &&
+        expression.operatorToken.kind === ts.SyntaxKind.PlusToken
+      ) {
+        const left = staticString(expression.left);
+        const right = staticString(expression.right);
+        return left === undefined || right === undefined ? undefined : left + right;
+      }
+      return undefined;
+    };
+    return argument ? staticString(argument) : undefined;
+  };
+  const accessedPropertyName = (
+    node: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  ): string | undefined =>
+    ts.isPropertyAccessExpression(node) ? node.name.text : literalElementName(node);
+  const isNamedGlobal = (node: ts.Expression, name: string): boolean => {
+    if (ts.isIdentifier(node)) return node.text === name;
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      return (
+        ts.isIdentifier(node.expression) &&
+        (node.expression.text === "globalThis" || node.expression.text === "global") &&
+        accessedPropertyName(node) === name
+      );
+    }
+    return false;
+  };
 
   const visit = (node: ts.Node): void => {
     if (
@@ -281,6 +726,12 @@ function collectStaticModuleSpecifiers(
         node.importClause.namedBindings.elements.every((element) => element.isTypeOnly)
       )
     ) {
+      if (node.moduleSpecifier.text === "node:module" || node.moduleSpecifier.text === "module") {
+        problems.push(
+          `${path} imports ${JSON.stringify(node.moduleSpecifier.text)}; migration dependencies ` +
+            `must not create indirect runtime module loaders.`,
+        );
+      }
       const bindings: string[] = [];
       if (!node.importClause) {
         bindings.push("side-effect");
@@ -312,26 +763,102 @@ function collectStaticModuleSpecifiers(
               .filter((element) => !element.isTypeOnly)
               .map((element) => element.propertyName?.text ?? element.name.text)
         : ["*"];
-      references.push({
-        specifier: node.moduleSpecifier.text,
-        bindingKey: `export:${bindings.toSorted().join(",")}`,
-      });
+      if (bindings.length > 0) {
+        if (node.moduleSpecifier.text === "node:module" || node.moduleSpecifier.text === "module") {
+          problems.push(
+            `${path} re-exports ${JSON.stringify(node.moduleSpecifier.text)}; migration dependencies ` +
+              `must not expose indirect runtime module loaders.`,
+          );
+        }
+        references.push({
+          specifier: node.moduleSpecifier.text,
+          bindingKey: `export:${bindings.toSorted().join(",")}`,
+        });
+      }
     } else if (
       ts.isImportEqualsDeclaration(node) &&
+      !node.isTypeOnly &&
       ts.isExternalModuleReference(node.moduleReference)
     ) {
       const expression = node.moduleReference.expression;
       if (expression && ts.isStringLiteralLike(expression)) {
+        if (expression.text === "node:module" || expression.text === "module") {
+          problems.push(
+            `${path} imports ${JSON.stringify(expression.text)}; migration dependencies ` +
+              `must not create indirect runtime module loaders.`,
+          );
+        }
         references.push({ specifier: expression.text, bindingKey: "import:*" });
       }
+    } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      reportRuntimeHazard("dynamic import()");
     } else if (
-      ts.isCallExpression(node) &&
-      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-        (ts.isIdentifier(node.expression) && node.expression.text === "require"))
+      ts.isIdentifier(node) &&
+      !isInsideTypeSyntax(node) &&
+      !isDeclarationOrPropertyName(node)
     ) {
-      problems.push(
-        `${path} uses ${node.expression.kind === ts.SyntaxKind.ImportKeyword ? "dynamic import()" : "require()"}; migration dependencies must be statically resolvable.`,
-      );
+      if (node.text === "eval") reportRuntimeHazard("an eval reference");
+      if (node.text === "Function") reportRuntimeHazard("a Function constructor reference");
+      if (node.text === "require") reportRuntimeHazard("a require reference");
+      if (node.text === "globalThis" || node.text === "global") {
+        reportRuntimeHazard(`a ${node.text} runtime-global reference`);
+      }
+      if (node.text === "process") reportRuntimeHazard("a process runtime-global reference");
+      if (node.text === "module") reportRuntimeHazard("a module runtime-global reference");
+      if (node.text === "fetch") reportRuntimeHazard("a fetch runtime-global reference");
+      if (node.text === "Bun") reportRuntimeHazard("a Bun runtime-global reference");
+      if (
+        ["Worker", "SharedWorker", "WebSocket", "EventSource", "XMLHttpRequest"].includes(node.text)
+      ) {
+        reportRuntimeHazard(`a ${node.text} runtime loader reference`);
+      }
+    } else if (
+      ts.isPropertyAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      (node.expression.text === "globalThis" || node.expression.text === "global") &&
+      ["eval", "Function", "require", "process", "module"].includes(node.name.text)
+    ) {
+      reportRuntimeHazard(`globalThis.${node.name.text}`);
+    } else if (
+      ts.isElementAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      (node.expression.text === "globalThis" || node.expression.text === "global")
+    ) {
+      const propertyName = literalElementName(node);
+      if (
+        propertyName !== undefined &&
+        ["eval", "Function", "require", "process", "module"].includes(propertyName)
+      ) {
+        reportRuntimeHazard(`globalThis[${JSON.stringify(propertyName)}]`);
+      } else if (propertyName === undefined) {
+        reportRuntimeHazard("computed globalThis access");
+      }
+    } else if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword) {
+      reportRuntimeHazard("an import.meta reference");
+    } else if (
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      isNamedGlobal(node.expression, "process") &&
+      accessedPropertyName(node) === "getBuiltinModule"
+    ) {
+      reportRuntimeHazard("process.getBuiltinModule");
+    } else if (
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      ts.isMetaProperty(node.expression) &&
+      node.expression.keywordToken === ts.SyntaxKind.ImportKeyword &&
+      accessedPropertyName(node) === "require"
+    ) {
+      reportRuntimeHazard("import.meta.require");
+    } else if (
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      isNamedGlobal(node.expression, "module") &&
+      accessedPropertyName(node) === "require"
+    ) {
+      reportRuntimeHazard("module.require");
+    } else if (
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      accessedPropertyName(node) === "constructor"
+    ) {
+      reportRuntimeHazard("a constructor property reference");
     }
     ts.forEachChild(node, visit);
   };
@@ -364,7 +891,154 @@ function packageRootImportFingerprint(source: string, path: string): string {
   if (typeof importTarget !== "string" || importTarget.length === 0) {
     throw new Error(`${path} must declare exports["."].import as a non-empty string.`);
   }
-  return `package-root-import:${importTarget}`;
+  // Conditional export key order can change which runtime entrypoint wins, so
+  // preserve the complete root export rather than only its `import` member.
+  const packageName = (manifest as Record<string, unknown>).name;
+  return `package-root-import:${JSON.stringify({ name: packageName, rootExport })}`;
+}
+
+const readJsonObject = (
+  source: string,
+  path: string,
+  allowJsonComments = false,
+): Record<string, unknown> => {
+  const parsed = allowJsonComments
+    ? ts.parseConfigFileTextToJson(path, source)
+    : (() => {
+        try {
+          return { config: JSON.parse(source) as unknown };
+        } catch (error) {
+          return { error: { messageText: error instanceof Error ? error.message : String(error) } };
+        }
+      })();
+  if (parsed.error) {
+    throw new Error(
+      `${path} is not valid JSON: ${ts.flattenDiagnosticMessageText(parsed.error.messageText, " ")}`,
+    );
+  }
+  if (!parsed.config || typeof parsed.config !== "object" || Array.isArray(parsed.config)) {
+    throw new Error(`${path} must contain an object.`);
+  }
+  return parsed.config as Record<string, unknown>;
+};
+
+const objectField = (
+  value: Record<string, unknown>,
+  field: string,
+  path: string,
+): Record<string, unknown> => {
+  const nested = value[field];
+  if (!nested || typeof nested !== "object" || Array.isArray(nested)) {
+    throw new Error(`${path} must contain object field ${JSON.stringify(field)}.`);
+  }
+  return nested as Record<string, unknown>;
+};
+
+const optionalObjectField = (
+  value: Record<string, unknown>,
+  field: string,
+  path: string,
+): Record<string, unknown> => {
+  const nested = value[field];
+  if (nested === undefined) return {};
+  if (!nested || typeof nested !== "object" || Array.isArray(nested)) {
+    throw new Error(`${path} field ${JSON.stringify(field)} must be an object when present.`);
+  }
+  return nested as Record<string, unknown>;
+};
+
+const relevantRuntimePatches = (patches: Record<string, unknown>): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(patches)
+      .filter(([packageName]) =>
+        ["effect@", "@effect/", "@synara/contracts@"].some((prefix) =>
+          packageName.startsWith(prefix),
+        ),
+      )
+      .map(([packageName, patchPath]) => {
+        if (typeof patchPath !== "string" || patchPath.length === 0) {
+          throw new Error(`Runtime patch ${packageName} must resolve to a non-empty path.`);
+        }
+        return [packageName, patchPath];
+      }),
+  );
+
+export function scientRuntimeResolutionFingerprint(readFile: ReadRepositoryFile): string {
+  const required = [
+    "package.json",
+    "apps/server/package.json",
+    "packages/contracts/package.json",
+    "bun.lock",
+  ] as const;
+  const sources = new Map(required.map((path) => [path, readFile(path)]));
+  for (const path of required) {
+    if (sources.get(path) === undefined) {
+      throw new Error(`Migration runtime resolution evidence ${path} could not be read.`);
+    }
+  }
+  const root = readJsonObject(sources.get("package.json")!, "package.json");
+  const server = readJsonObject(
+    sources.get("apps/server/package.json")!,
+    "apps/server/package.json",
+  );
+  const contracts = readJsonObject(
+    sources.get("packages/contracts/package.json")!,
+    "packages/contracts/package.json",
+  );
+  const lock = readJsonObject(sources.get("bun.lock")!, "bun.lock", true);
+  const rootWorkspaces = objectField(root, "workspaces", "package.json");
+  const rootCatalog = objectField(rootWorkspaces, "catalog", "package.json#workspaces");
+  const serverDependencies = objectField(server, "dependencies", "apps/server/package.json");
+  const serverDevDependencies = objectField(server, "devDependencies", "apps/server/package.json");
+  const contractsDependencies = objectField(
+    contracts,
+    "dependencies",
+    "packages/contracts/package.json",
+  );
+  const lockWorkspaces = objectField(lock, "workspaces", "bun.lock");
+  const lockServer = objectField(lockWorkspaces, "apps/server", "bun.lock#workspaces");
+  const lockContracts = objectField(lockWorkspaces, "packages/contracts", "bun.lock#workspaces");
+  const lockPackages = objectField(lock, "packages", "bun.lock");
+  const rootRuntimePatches = relevantRuntimePatches(
+    optionalObjectField(root, "patchedDependencies", "package.json"),
+  );
+  const lockRuntimePatches = relevantRuntimePatches(
+    optionalObjectField(lock, "patchedDependencies", "bun.lock"),
+  );
+  const patchPaths = new Set([
+    ...Object.values(rootRuntimePatches),
+    ...Object.values(lockRuntimePatches),
+  ]);
+  const patchContents = Object.fromEntries(
+    [...patchPaths].toSorted().map((patchPath) => {
+      const contents = readFile(patchPath);
+      if (contents === undefined) {
+        throw new Error(`Migration runtime patch ${patchPath} could not be read.`);
+      }
+      return [patchPath, canonicalText(contents)];
+    }),
+  );
+
+  return JSON.stringify({
+    workspacePackages: rootWorkspaces.packages,
+    effectCatalog: rootCatalog.effect,
+    serverEffect: objectField(lockServer, "dependencies", "bun.lock#apps/server").effect,
+    serverManifestEffect: serverDependencies.effect,
+    serverContracts: serverDevDependencies["@synara/contracts"],
+    lockServerContracts: objectField(lockServer, "devDependencies", "bun.lock#apps/server")[
+      "@synara/contracts"
+    ],
+    contractsName: contracts.name,
+    contractsEffect: contractsDependencies.effect,
+    lockContractsName: lockContracts.name,
+    lockContractsEffect: objectField(lockContracts, "dependencies", "bun.lock#packages/contracts")
+      .effect,
+    lockContractsPackage: lockPackages["@synara/contracts"],
+    lockEffectPackage: lockPackages.effect,
+    rootRuntimePatches,
+    lockRuntimePatches,
+    patchContents,
+  });
 }
 
 function declaresRuntimeExport(source: string, path: string, exportName: string): boolean {
@@ -384,6 +1058,66 @@ function declaresRuntimeExport(source: string, path: string, exportName: string)
       statement.name?.text === exportName
     );
   });
+}
+
+function canonicalRuntimeModuleSource(source: string, path: string): string {
+  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+  const printer = ts.createPrinter({
+    newLine: ts.NewLineKind.LineFeed,
+    removeComments: true,
+  });
+  const runtimeStatements = sourceFile.statements.flatMap((statement): ts.Statement[] => {
+    const modifiers = ts.canHaveModifiers(statement) ? ts.getModifiers(statement) : undefined;
+    if (modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)) return [];
+    if (ts.isInterfaceDeclaration(statement) || ts.isTypeAliasDeclaration(statement)) return [];
+    if (ts.isImportEqualsDeclaration(statement) && statement.isTypeOnly) return [];
+    if (ts.isImportDeclaration(statement)) {
+      if (statement.importClause?.isTypeOnly) return [];
+      const bindings = statement.importClause?.namedBindings;
+      if (bindings && ts.isNamedImports(bindings)) {
+        const runtimeElements = bindings.elements.filter((element) => !element.isTypeOnly);
+        if (!statement.importClause?.name && runtimeElements.length === 0) return [];
+        const importClause = ts.factory.updateImportClause(
+          statement.importClause!,
+          false,
+          statement.importClause?.name,
+          ts.factory.updateNamedImports(bindings, runtimeElements),
+        );
+        return [
+          ts.factory.updateImportDeclaration(
+            statement,
+            statement.modifiers,
+            importClause,
+            statement.moduleSpecifier,
+            statement.attributes,
+          ),
+        ];
+      }
+    }
+    if (ts.isExportDeclaration(statement)) {
+      if (statement.isTypeOnly) return [];
+      if (statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+        const runtimeElements = statement.exportClause.elements.filter(
+          (element) => !element.isTypeOnly,
+        );
+        if (runtimeElements.length === 0) return [];
+        return [
+          ts.factory.updateExportDeclaration(
+            statement,
+            statement.modifiers,
+            false,
+            ts.factory.updateNamedExports(statement.exportClause, runtimeElements),
+            statement.moduleSpecifier,
+            statement.attributes,
+          ),
+        ];
+      }
+    }
+    return [statement];
+  });
+  return runtimeStatements
+    .map((statement) => printer.printNode(ts.EmitHint.Unspecified, statement, sourceFile))
+    .join("\n");
 }
 
 function namedBarrelExportFingerprint(
@@ -444,7 +1178,12 @@ function namedBarrelExportFingerprint(
   if (sources.length === 0) {
     throw new Error(`${path} does not resolve runtime export ${exportName}.`);
   }
-  return `named-barrel-export:${exportName}:${sources.toSorted().join(",")}`;
+  // Freeze runtime statements without making comments, formatting, or separate
+  // type-only declarations part of the released migration contract.
+  return (
+    `named-barrel-export:${exportName}:${sources.toSorted().join(",")}:` +
+    canonicalRuntimeModuleSource(source, path)
+  );
 }
 
 function resolveLocalDependency(
@@ -482,7 +1221,12 @@ function resolveLocalDependency(
             evidence.kind === "package-root-import"
               ? packageRootImportFingerprint(source, evidence.path)
               : namedBarrelExportFingerprint(source, evidence.path, evidence.exportName, readFile);
-          dependencies.push({ path: evidence.path, traverse: false, content });
+          dependencies.push({
+            path: evidence.path,
+            traverse: evidence.kind === "named-barrel-export",
+            content,
+            ...(evidence.kind === "named-barrel-export" ? { traversalSource: source } : {}),
+          });
         } catch (error) {
           return {
             problem: error instanceof Error ? error.message : String(error),
@@ -507,7 +1251,12 @@ function resolveLocalDependency(
           `(${reference.bindingKey}) has no exact pinned repository-local entrypoint.`,
       };
     }
-    return {};
+    if (specifier === "effect" || specifier.startsWith("effect/")) return {};
+    return {
+      problem:
+        `${importerPath} imports unreviewed external runtime ${JSON.stringify(specifier)}; ` +
+        `released migration dependencies must be statically bounded.`,
+    };
   }
 
   const candidateBase = posix.normalize(posix.join(posix.dirname(importerPath), specifier));
@@ -557,12 +1306,13 @@ export function buildLocalDependencyClosure(
   while (pending.length > 0) {
     const dependency = pending.pop()!;
     const { path } = dependency;
-    const source = dependency.content ?? readFile(path);
-    if (source === undefined) {
+    const fileSource = readFile(path);
+    const content = dependency.content ?? fileSource;
+    if (content === undefined) {
       problems.push(`Migration dependency ${path} could not be read.`);
       continue;
     }
-    contents.set(path, source);
+    contents.set(path, content);
     if (
       !dependency.traverse ||
       traversed.has(path) ||
@@ -572,7 +1322,8 @@ export function buildLocalDependencyClosure(
     }
     traversed.add(path);
 
-    const parsed = collectStaticModuleSpecifiers(source, path);
+    const traversalSource = dependency.traversalSource ?? fileSource ?? content;
+    const parsed = collectStaticModuleSpecifiers(traversalSource, path);
     problems.push(...parsed.problems);
     for (const reference of parsed.references) {
       const resolved = resolveLocalDependency(path, reference, readFile, pinnedWorkspaceImports);
@@ -581,6 +1332,22 @@ export function buildLocalDependencyClosure(
     }
   }
 
+  return { contents, problems };
+}
+
+export function buildScientMigrationDependencyClosure(
+  entryPaths: readonly string[],
+  sourceReader: ReadRepositoryFile,
+  pinnedWorkspaceImports: PinnedWorkspaceImports,
+): LocalDependencyClosure {
+  const closure = buildLocalDependencyClosure(entryPaths, sourceReader, pinnedWorkspaceImports);
+  const contents = new Map(closure.contents);
+  const problems = [...closure.problems];
+  try {
+    contents.set(runtimeResolutionEvidencePath, scientRuntimeResolutionFingerprint(sourceReader));
+  } catch (error) {
+    problems.push(error instanceof Error ? error.message : String(error));
+  }
   return { contents, problems };
 }
 
@@ -685,8 +1452,40 @@ function main(): void {
     return;
   }
 
-  const identityProblems: string[] = [];
   const head = git(["rev-parse", "HEAD"]).stdout.trim();
+  const tagCommits = new Map(
+    tags.map((tag) => [tag, git(["rev-list", "-n", "1", tag]).stdout.trim()] as const),
+  );
+  const tagManifestProblems = findProtectedReleaseTagSetViolations(tagCommits, head);
+  if (tagManifestProblems.length > 0) {
+    fail(tagManifestProblems);
+    return;
+  }
+  const newHeadReleaseTag = acceptedNewHeadReleaseTag(tagCommits, head);
+  const releaseCommits = git(["rev-list", "--first-parent", releaseRef])
+    .stdout.split("\n")
+    .map((commit) => commit.trim())
+    .filter(Boolean);
+  const dependencyBaselineTag = selectReleasedDependencyBaselineTag(
+    releaseCommits,
+    tagCommits,
+    newHeadReleaseTag,
+  );
+
+  const identityProblems: string[] = [];
+  const historicalContentProblems: string[] = [];
+  const currentHistoricalContents = new Map<string, string>();
+  for (const entry of currentCatalog.entries) {
+    const moduleName = migrationModuleName(entry.id, entry.name);
+    try {
+      currentHistoricalContents.set(
+        moduleName,
+        readFileSync(resolve(repoRoot, migrationsDirectoryPath, moduleName), "utf8"),
+      );
+    } catch {
+      // Per-tag content validation reports the missing current migration.
+    }
+  }
   let contentBaseline: { readonly tag: string; readonly catalog: MigrationCatalog } | undefined;
   let checkedTags = 0;
   for (const tag of tags) {
@@ -703,11 +1502,10 @@ function main(): void {
       continue;
     }
     checkedTags += 1;
-    const tagCommit = git(["rev-list", "-n", "1", tag]).stdout.trim();
-    // On a tag-triggered release run, the new tag already points at HEAD. It
-    // cannot prove its own history was append-only, so compare content with the
-    // previous shipped tag instead. Identity is still checked across all tags.
-    if (contentBaseline === undefined && tagCommit !== head) {
+    // A newly accepted tag at HEAD cannot prove its own history was append-only,
+    // so compare it with the previous protected release. An already-manifested
+    // tag at HEAD is itself authoritative and remains the dependency baseline.
+    if (contentBaseline === undefined && tag === dependencyBaselineTag) {
       contentBaseline = { tag, catalog: releasedCatalog };
     }
     for (const violation of findReleasedIdentityViolations(
@@ -719,6 +1517,21 @@ function main(): void {
           `history has ${violation.currentName === null ? "no entry" : `"${violation.currentName}"`}.`,
       );
     }
+    const tagContents = new Map<string, string>();
+    for (const entry of releasedCatalog.entries) {
+      const moduleName = migrationModuleName(entry.id, entry.name);
+      const content = showFile(tag, `${migrationsDirectoryPath}/${moduleName}`);
+      if (content !== undefined) tagContents.set(moduleName, content);
+    }
+    historicalContentProblems.push(
+      ...findHistoricalReleasedContentViolations(
+        tag,
+        releasedCatalog.entries,
+        currentCatalog.entries,
+        tagContents,
+        currentHistoricalContents,
+      ),
+    );
   }
 
   if (contentBaseline === undefined || checkedTags === 0) {
@@ -785,12 +1598,12 @@ function main(): void {
       },
     ],
   ]);
-  const releasedClosure = buildLocalDependencyClosure(
+  const releasedClosure = buildScientMigrationDependencyClosure(
     [...migrationModulePaths],
     (path) => showFile(contentBaseline.tag, path),
     pinnedWorkspaceImports,
   );
-  const currentReleasedClosure = buildLocalDependencyClosure(
+  const currentReleasedClosure = buildScientMigrationDependencyClosure(
     [...migrationModulePaths],
     readCurrentFile,
     pinnedWorkspaceImports,
@@ -798,7 +1611,7 @@ function main(): void {
   const currentMigrationModulePaths = currentCatalog.entries.map(
     (entry) => `${migrationsDirectoryPath}/${migrationModuleName(entry.id, entry.name)}`,
   );
-  const currentSafetyClosure = buildLocalDependencyClosure(
+  const currentSafetyClosure = buildScientMigrationDependencyClosure(
     currentMigrationModulePaths,
     readCurrentFile,
     pinnedWorkspaceImports,
@@ -817,7 +1630,12 @@ function main(): void {
       migrationModulePaths,
     ).map((problem) => `${problem} (baseline: ${contentBaseline.tag})`),
   ];
-  const problems = [...identityProblems, ...contentProblems, ...dependencyProblems];
+  const problems = [
+    ...identityProblems,
+    ...historicalContentProblems,
+    ...contentProblems,
+    ...dependencyProblems,
+  ];
   if (problems.length > 0) {
     fail(problems);
     return;
@@ -825,7 +1643,8 @@ function main(): void {
 
   console.log(
     `Scient migration lineage passed: ${currentCatalog.entries.length} contiguous migrations; ` +
-      `${checkedTags} official release tags checked; shipped migration code and local dependencies ` +
+      `${checkedTags} protected official release tags checked; all historical migration code and ` +
+      `the latest shipped dependency resolution ` +
       `match ${contentBaseline.tag}.`,
   );
 }
