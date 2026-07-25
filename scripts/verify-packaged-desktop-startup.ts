@@ -324,15 +324,28 @@ export interface ProcessTerminationTarget {
 
 export interface ProcessTerminationDependencies {
   readonly platform?: NodeJS.Platform;
+  readonly childIsAlive?: (child: ChildProcess) => boolean;
   readonly runTaskkill?: (pid: number) => {
     readonly error?: Error;
     readonly status: number | null;
   };
   readonly sendSignal?: (target: ProcessTerminationTarget, signal: NodeJS.Signals) => void;
+  readonly targetIsAlive?: (target: ProcessTerminationTarget) => boolean;
   readonly waitForTargetsExit?: (
     targets: ReadonlyArray<ProcessTerminationTarget>,
     timeoutMs: number,
   ) => Promise<boolean>;
+}
+
+function childProcessHandleIsAlive(child: ChildProcess): boolean {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null) return false;
+  try {
+    // ChildProcess.kill uses the spawned process handle on Windows, avoiding a
+    // decision based solely on an asynchronously updated exitCode or reused PID.
+    return child.kill(0);
+  } catch {
+    return false;
+  }
 }
 
 function processTerminationTargetIsAlive(target: ProcessTerminationTarget): boolean {
@@ -380,7 +393,10 @@ export async function terminateProcessTree(
 ): Promise<void> {
   const platform = dependencies.platform ?? process.platform;
   const childCanStillOwnProcesses =
-    platform !== "win32" || (child.exitCode === null && child.signalCode === null);
+    platform !== "win32" ||
+    ((dependencies.childIsAlive ?? childProcessHandleIsAlive)(child) &&
+      child.exitCode === null &&
+      child.signalCode === null);
   const targets = [
     ...(child.pid && childCanStillOwnProcesses
       ? [{ pid: child.pid, processGroup: platform !== "win32" }]
@@ -425,10 +441,13 @@ export async function terminateProcessTree(
   const sendSignal = dependencies.sendSignal ?? sendProcessTreeSignal;
   for (const target of targets) sendSignal(target, "SIGTERM");
   if (await awaitTargetsExit(targets, 5_000)) return;
-  for (const target of targets) sendSignal(target, "SIGKILL");
-  if (await awaitTargetsExit(targets, 2_000)) return;
+  const targetIsAlive = dependencies.targetIsAlive ?? processTerminationTargetIsAlive;
+  const survivingTargets = targets.filter((target) => targetIsAlive(target));
+  if (survivingTargets.length === 0) return;
+  for (const target of survivingTargets) sendSignal(target, "SIGKILL");
+  if (await awaitTargetsExit(survivingTargets, 2_000)) return;
   throw new Error(
-    `Packaged process trees ${targets.map(({ pid }) => pid).join(", ")} survived SIGTERM and SIGKILL.`,
+    `Packaged process trees ${survivingTargets.map(({ pid }) => pid).join(", ")} survived SIGTERM and SIGKILL.`,
   );
 }
 

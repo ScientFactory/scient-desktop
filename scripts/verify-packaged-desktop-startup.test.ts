@@ -240,6 +240,7 @@ describe("packaged desktop startup verification", () => {
         child,
         {
           platform: "win32",
+          childIsAlive: () => true,
           runTaskkill,
           waitForTargetsExit: async () => false,
         },
@@ -247,6 +248,28 @@ describe("packaged desktop startup verification", () => {
       ),
     ).rejects.toThrow("survived Windows cleanup");
     expect(runTaskkill.mock.calls.map(([pid]) => pid)).toEqual([42]);
+  });
+
+  it("uses recorded Windows backends when the root handle has exited before its event", async () => {
+    const child = {
+      exitCode: null,
+      pid: 42,
+      signalCode: null,
+    } as unknown as ChildProcess;
+    const runTaskkill = vi.fn((_pid: number) => ({ status: 0 }));
+
+    await terminateProcessTree(
+      child,
+      {
+        platform: "win32",
+        childIsAlive: () => false,
+        runTaskkill,
+        waitForTargetsExit: async () => true,
+      },
+      [84],
+    );
+
+    expect(runTaskkill.mock.calls.map(([pid]) => pid)).toEqual([84]);
   });
 
   it("still cleans a detached Windows backend after the packaged root exits", async () => {
@@ -350,6 +373,7 @@ describe("packaged desktop startup verification", () => {
         {
           platform: "darwin",
           sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
+          targetIsAlive: () => true,
           waitForTargetsExit: async () => false,
         },
         [84],
@@ -359,6 +383,32 @@ describe("packaged desktop startup verification", () => {
       { pid: 42, signal: "SIGTERM" },
       { pid: 84, signal: "SIGTERM" },
       { pid: 42, signal: "SIGKILL" },
+      { pid: 84, signal: "SIGKILL" },
+    ]);
+  });
+
+  it("does not escalate a POSIX process tree that exited during the TERM grace period", async () => {
+    const child = {
+      exitCode: null,
+      pid: 42,
+      signalCode: null,
+    } as unknown as ChildProcess;
+    const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+
+    await terminateProcessTree(
+      child,
+      {
+        platform: "darwin",
+        sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
+        targetIsAlive: (target) => target.pid === 84,
+        waitForTargetsExit: async (targets) => targets.every((target) => target.pid === 84),
+      },
+      [84],
+    );
+
+    expect(signals).toEqual([
+      { pid: 42, signal: "SIGTERM" },
+      { pid: 84, signal: "SIGTERM" },
       { pid: 84, signal: "SIGKILL" },
     ]);
   });
