@@ -391,7 +391,7 @@ export default function GitActionsControl({
 
   const gitStatusForActions = resolveGitStatusForActions({
     repositoryConfirmed,
-    isGitStatusOutOfSync,
+    currentBranch,
     gitStatus,
   });
 

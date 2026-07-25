@@ -567,10 +567,17 @@ export function resolveLiveThreadBranchUpdate(input: {
 
 export function resolveGitStatusForActions(input: {
   repositoryConfirmed: boolean;
-  isGitStatusOutOfSync: boolean;
+  currentBranch: string | null;
   gitStatus: GitStatusResult | null;
 }): GitStatusResult | null {
-  if (!input.repositoryConfirmed || input.isGitStatusOutOfSync) {
+  // Branch discovery is the action-safety authority. Cached status from a
+  // previous branch must not enable mutations on the newly discovered branch;
+  // detached HEAD intentionally exposes no branch actions.
+  if (
+    !input.repositoryConfirmed ||
+    input.currentBranch === null ||
+    input.gitStatus?.branch !== input.currentBranch
+  ) {
     return null;
   }
 

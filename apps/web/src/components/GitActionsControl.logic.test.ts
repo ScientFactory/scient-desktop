@@ -1406,7 +1406,7 @@ describe("resolveGitStatusForActions", () => {
     assert.isNull(
       resolveGitStatusForActions({
         repositoryConfirmed: false,
-        isGitStatusOutOfSync: false,
+        currentBranch: "main",
         gitStatus: cachedStatus,
       }),
     );
@@ -1418,16 +1418,29 @@ describe("resolveGitStatusForActions", () => {
     assert.strictEqual(
       resolveGitStatusForActions({
         repositoryConfirmed: true,
-        isGitStatusOutOfSync: false,
+        currentBranch: "main",
         gitStatus: currentStatus,
       }),
       currentStatus,
     );
+  });
+
+  it("rejects status cached from a temporary branch after discovery reaches main", () => {
     assert.isNull(
       resolveGitStatusForActions({
         repositoryConfirmed: true,
-        isGitStatusOutOfSync: true,
-        gitStatus: currentStatus,
+        currentBranch: "main",
+        gitStatus: status({ branch: "scient/deadbeef" }),
+      }),
+    );
+  });
+
+  it("rejects cached named-branch status while HEAD is detached", () => {
+    assert.isNull(
+      resolveGitStatusForActions({
+        repositoryConfirmed: true,
+        currentBranch: null,
+        gitStatus: status({ branch: "feature/previous" }),
       }),
     );
   });
