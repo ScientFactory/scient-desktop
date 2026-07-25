@@ -420,9 +420,9 @@ export function BrowserPanel({
   const [isAddressFocused, setIsAddressFocused] = useState(false);
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
-  const [localHtmlRefreshErrors, setLocalHtmlRefreshErrors] = useState<ReadonlyMap<string, string>>(
-    () => new Map(),
-  );
+  const [localHtmlRefreshErrors, setLocalHtmlRefreshErrors] = useState<
+    ReadonlyMap<string, { message: string; revisionUrl: string }>
+  >(() => new Map());
   const [isCreatingTab, setIsCreatingTab] = useState(false);
   const [refreshingLocalHtmlSources, setRefreshingLocalHtmlSources] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -461,8 +461,29 @@ export function BrowserPanel({
   const activeLocalHtmlRefreshError = activeLocalHtmlSourceKey
     ? (localHtmlRefreshErrors.get(activeLocalHtmlSourceKey) ?? null)
     : null;
+  const activeLocalHtmlRefreshErrorMessage =
+    activeLocalHtmlRefreshError && activeLocalHtmlRefreshError.revisionUrl === activeTab?.url
+      ? activeLocalHtmlRefreshError.message
+      : null;
+
+  useEffect(() => {
+    const openLocalHtmlSources = new Set(
+      (threadBrowserState?.tabs ?? [])
+        .filter(
+          (tab) => tab.kind === "local-html" && Boolean(tab.displayUrl) && Boolean(tab.previewCwd),
+        )
+        .map((tab) => `${tab.previewCwd}\0${tab.displayUrl}`),
+    );
+    setLocalHtmlRefreshErrors((current) => {
+      const next = new Map(
+        [...current].filter(([sourceKey]) => openLocalHtmlSources.has(sourceKey)),
+      );
+      return next.size === current.size ? current : next;
+    });
+  }, [threadBrowserState?.tabs]);
+
   const browserChromeStatus = resolveBrowserChromeStatus({
-    localError: activeLocalHtmlRefreshError ?? localError,
+    localError: activeLocalHtmlRefreshErrorMessage ?? localError,
     threadLastError: threadBrowserState?.lastError,
     activeTabStatus: showLocalServersHome ? "live" : activeTabStatus,
     hasActiveTab: activeTab !== null,
@@ -621,7 +642,9 @@ export function BrowserPanel({
             error instanceof Error
               ? error.message
               : "The local HTML preview could not be refreshed.";
-          setLocalHtmlRefreshErrors((current) => new Map(current).set(sourceKey, message));
+          setLocalHtmlRefreshErrors((current) =>
+            new Map(current).set(sourceKey, { message, revisionUrl: sourceTab.url }),
+          );
           throw error;
         })
         .finally(() => {
