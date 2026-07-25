@@ -7,6 +7,7 @@ import {
   findReleasedContentViolations,
   findReleasedIdentityViolations,
   parseMigrationCatalog,
+  pinnedWorkspaceImportKey,
 } from "./check-migration-lineage.ts";
 
 const sourceFor = (entries: ReadonlyArray<readonly [number, string]>) => {
@@ -144,26 +145,47 @@ describe("Scient migration lineage guard", () => {
 
   it("freezes repository-local transitive dependencies of released migrations", () => {
     const releasedFiles = new Map([
-      ["Migrations/001_CreateProjects.ts", 'import { helper } from "./schemaHelpers.ts";\n'],
-      ["Migrations/schemaHelpers.ts", 'export { normalize } from "../normalize.ts";\n'],
-      ["normalize.ts", 'export { model } from "@synara/contracts";\n'],
+      [
+        "apps/server/src/persistence/Migrations/035_Normalize.ts",
+        [
+          'import { helper } from "./schemaHelpers.ts";',
+          'import { normalize } from "../modelSelectionCompatibility.ts";',
+        ].join("\n"),
+      ],
+      [
+        "apps/server/src/persistence/Migrations/schemaHelpers.ts",
+        "export const helper = 'released';\n",
+      ],
+      [
+        "apps/server/src/persistence/modelSelectionCompatibility.ts",
+        'import { MODEL_OPTIONS_BY_PROVIDER } from "@synara/contracts";\nexport const normalize = MODEL_OPTIONS_BY_PROVIDER;\n',
+      ],
       ["packages/contracts/src/model.ts", "export const model = 'released';\n"],
     ]);
     const currentFiles = new Map(releasedFiles);
     currentFiles.set(
-      "Migrations/schemaHelpers.ts",
-      'export { normalize } from "../normalize.ts";\nexport const helper = "changed";\n',
+      "apps/server/src/persistence/Migrations/schemaHelpers.ts",
+      'export const helper = "changed";\n',
     );
     currentFiles.set("packages/contracts/src/model.ts", "export const model = 'changed';\n");
-    const localPackages = new Map([["@synara/contracts", "packages/contracts/src/model.ts"]]);
+    const localPackages = new Map([
+      [
+        pinnedWorkspaceImportKey(
+          "apps/server/src/persistence/modelSelectionCompatibility.ts",
+          "@synara/contracts",
+          "import:MODEL_OPTIONS_BY_PROVIDER",
+        ),
+        "packages/contracts/src/model.ts",
+      ],
+    ]);
 
     const released = buildLocalDependencyClosure(
-      ["Migrations/001_CreateProjects.ts"],
+      ["apps/server/src/persistence/Migrations/035_Normalize.ts"],
       (path) => releasedFiles.get(path),
       localPackages,
     );
     const current = buildLocalDependencyClosure(
-      ["Migrations/001_CreateProjects.ts"],
+      ["apps/server/src/persistence/Migrations/035_Normalize.ts"],
       (path) => currentFiles.get(path),
       localPackages,
     );
@@ -174,12 +196,58 @@ describe("Scient migration lineage guard", () => {
       findReleasedDependencyViolations(
         released.contents,
         current.contents,
-        new Set(["Migrations/001_CreateProjects.ts"]),
+        new Set(["apps/server/src/persistence/Migrations/035_Normalize.ts"]),
       ),
       [
-        "Released migration dependency Migrations/schemaHelpers.ts was modified.",
+        "Released migration dependency apps/server/src/persistence/Migrations/schemaHelpers.ts was modified.",
         "Released migration dependency packages/contracts/src/model.ts was modified.",
       ],
+    );
+  });
+
+  it("pins workspace imports to the exact importer and runtime bindings", () => {
+    const files = new Map([
+      [
+        "persistence/modelSelectionCompatibility.ts",
+        'import { OTHER_EXPORT } from "@synara/contracts";\n',
+      ],
+      [
+        "persistence/anotherCompatibility.ts",
+        'import { MODEL_OPTIONS_BY_PROVIDER } from "@synara/contracts";\n',
+      ],
+      ["contracts/model.ts", "export {};\n"],
+    ]);
+    const pins = new Map([
+      [
+        pinnedWorkspaceImportKey(
+          "persistence/modelSelectionCompatibility.ts",
+          "@synara/contracts",
+          "import:MODEL_OPTIONS_BY_PROVIDER",
+        ),
+        "contracts/model.ts",
+      ],
+    ]);
+
+    const wrongBinding = buildLocalDependencyClosure(
+      ["persistence/modelSelectionCompatibility.ts"],
+      (path) => files.get(path),
+      pins,
+    );
+    const wrongImporter = buildLocalDependencyClosure(
+      ["persistence/anotherCompatibility.ts"],
+      (path) => files.get(path),
+      pins,
+    );
+
+    assert.isTrue(
+      wrongBinding.problems.some((problem) =>
+        problem.includes("import:OTHER_EXPORT) has no exact pinned"),
+      ),
+    );
+    assert.isTrue(
+      wrongImporter.problems.some((problem) =>
+        problem.includes("import:MODEL_OPTIONS_BY_PROVIDER) has no exact pinned"),
+      ),
     );
   });
 

@@ -42,7 +42,20 @@ export interface LocalDependencyClosure {
 }
 
 export type ReadRepositoryFile = (path: string) => string | undefined;
-export type LocalPackageEntrypoints = ReadonlyMap<string, string>;
+export type PinnedWorkspaceImports = ReadonlyMap<string, string>;
+
+interface StaticModuleReference {
+  readonly specifier: string;
+  readonly bindingKey: string;
+}
+
+export function pinnedWorkspaceImportKey(
+  importerPath: string,
+  specifier: string,
+  bindingKey: string,
+): string {
+  return `${importerPath}\u0000${specifier}\u0000${bindingKey}`;
+}
 
 /**
  * This rename shipped before the guard existed. Scient already repairs exactly
@@ -221,7 +234,7 @@ function collectStaticModuleSpecifiers(
   source: string,
   path: string,
 ): {
-  readonly specifiers: readonly string[];
+  readonly references: readonly StaticModuleReference[];
   readonly problems: readonly string[];
 } {
   const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
@@ -234,7 +247,7 @@ function collectStaticModuleSpecifiers(
     (diagnostic) =>
       `${path} has invalid syntax: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")}`,
   );
-  const specifiers: string[] = [];
+  const references: StaticModuleReference[] = [];
 
   const visit = (node: ts.Node): void => {
     if (
@@ -249,20 +262,49 @@ function collectStaticModuleSpecifiers(
         node.importClause.namedBindings.elements.every((element) => element.isTypeOnly)
       )
     ) {
-      specifiers.push(node.moduleSpecifier.text);
+      const bindings: string[] = [];
+      if (!node.importClause) {
+        bindings.push("side-effect");
+      } else {
+        if (node.importClause.name) bindings.push("default");
+        const namedBindings = node.importClause.namedBindings;
+        if (namedBindings && ts.isNamespaceImport(namedBindings)) {
+          bindings.push("*");
+        } else if (namedBindings) {
+          for (const element of namedBindings.elements) {
+            if (!element.isTypeOnly) bindings.push(element.propertyName?.text ?? element.name.text);
+          }
+        }
+      }
+      references.push({
+        specifier: node.moduleSpecifier.text,
+        bindingKey: `import:${bindings.toSorted().join(",")}`,
+      });
     } else if (
       ts.isExportDeclaration(node) &&
       !node.isTypeOnly &&
       node.moduleSpecifier &&
       ts.isStringLiteralLike(node.moduleSpecifier)
     ) {
-      specifiers.push(node.moduleSpecifier.text);
+      const bindings = node.exportClause
+        ? ts.isNamespaceExport(node.exportClause)
+          ? ["*"]
+          : node.exportClause.elements
+              .filter((element) => !element.isTypeOnly)
+              .map((element) => element.propertyName?.text ?? element.name.text)
+        : ["*"];
+      references.push({
+        specifier: node.moduleSpecifier.text,
+        bindingKey: `export:${bindings.toSorted().join(",")}`,
+      });
     } else if (
       ts.isImportEqualsDeclaration(node) &&
       ts.isExternalModuleReference(node.moduleReference)
     ) {
       const expression = node.moduleReference.expression;
-      if (expression && ts.isStringLiteralLike(expression)) specifiers.push(expression.text);
+      if (expression && ts.isStringLiteralLike(expression)) {
+        references.push({ specifier: expression.text, bindingKey: "import:*" });
+      }
     } else if (
       ts.isCallExpression(node) &&
       (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
@@ -275,22 +317,25 @@ function collectStaticModuleSpecifiers(
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
-  return { specifiers, problems };
+  return { references, problems };
 }
 
 function resolveLocalDependency(
   importerPath: string,
-  specifier: string,
+  reference: StaticModuleReference,
   readFile: ReadRepositoryFile,
-  localPackageEntrypoints: LocalPackageEntrypoints,
+  pinnedWorkspaceImports: PinnedWorkspaceImports,
 ): { readonly path?: string; readonly problem?: string } {
+  const { specifier } = reference;
   if (specifier.startsWith("/")) {
     return {
       problem: `${importerPath} imports absolute path ${JSON.stringify(specifier)}.`,
     };
   }
   if (!specifier.startsWith("./") && !specifier.startsWith("../")) {
-    const localPackagePath = localPackageEntrypoints.get(specifier);
+    const localPackagePath = pinnedWorkspaceImports.get(
+      pinnedWorkspaceImportKey(importerPath, specifier, reference.bindingKey),
+    );
     if (localPackagePath) {
       return readFile(localPackagePath) === undefined
         ? {
@@ -308,8 +353,8 @@ function resolveLocalDependency(
     ) {
       return {
         problem:
-          `${importerPath} workspace import ${JSON.stringify(specifier)} has no pinned ` +
-          "repository-local entrypoint.",
+          `${importerPath} workspace import ${JSON.stringify(specifier)} ` +
+          `(${reference.bindingKey}) has no exact pinned repository-local entrypoint.`,
       };
     }
     return {};
@@ -344,7 +389,7 @@ function resolveLocalDependency(
 export function buildLocalDependencyClosure(
   entryPaths: readonly string[],
   sourceReader: ReadRepositoryFile,
-  localPackageEntrypoints: LocalPackageEntrypoints = new Map(),
+  pinnedWorkspaceImports: PinnedWorkspaceImports = new Map(),
 ): LocalDependencyClosure {
   const contents = new Map<string, string>();
   const problems: string[] = [];
@@ -368,8 +413,8 @@ export function buildLocalDependencyClosure(
 
     const parsed = collectStaticModuleSpecifiers(source, path);
     problems.push(...parsed.problems);
-    for (const specifier of parsed.specifiers) {
-      const resolved = resolveLocalDependency(path, specifier, readFile, localPackageEntrypoints);
+    for (const reference of parsed.references) {
+      const resolved = resolveLocalDependency(path, reference, readFile, pinnedWorkspaceImports);
       if (resolved.problem) problems.push(resolved.problem);
       if (resolved.path && !contents.has(resolved.path)) pending.push(resolved.path);
     }
@@ -397,7 +442,7 @@ export function findReleasedDependencyViolations(
     if (migrationModulePaths.has(path) || releasedContents.has(path)) continue;
     problems.push(`Released migration dependency closure gained ${path}.`);
   }
-  return problems;
+  return problems.toSorted();
 }
 
 export function findReleasedContentViolations(
@@ -556,30 +601,45 @@ function main(): void {
       return undefined;
     }
   };
-  const localPackageEntrypoints: LocalPackageEntrypoints = new Map([
-    // Migration 35 imports only MODEL_OPTIONS_BY_PROVIDER. Point directly at
-    // its defining module so unrelated barrel exports do not become frozen.
-    ["@synara/contracts", "packages/contracts/src/model.ts"],
+  const pinnedWorkspaceImports: PinnedWorkspaceImports = new Map([
+    [
+      pinnedWorkspaceImportKey(
+        "apps/server/src/persistence/modelSelectionCompatibility.ts",
+        "@synara/contracts",
+        "import:MODEL_OPTIONS_BY_PROVIDER",
+      ),
+      "packages/contracts/src/model.ts",
+    ],
   ]);
   const releasedClosure = buildLocalDependencyClosure(
     [...migrationModulePaths],
     (path) => showFile(contentBaseline.tag, path),
-    localPackageEntrypoints,
+    pinnedWorkspaceImports,
   );
-  const currentClosure = buildLocalDependencyClosure(
+  const currentReleasedClosure = buildLocalDependencyClosure(
     [...migrationModulePaths],
     readCurrentFile,
-    localPackageEntrypoints,
+    pinnedWorkspaceImports,
+  );
+  const currentMigrationModulePaths = currentCatalog.entries.map(
+    (entry) => `${migrationsDirectoryPath}/${migrationModuleName(entry.id, entry.name)}`,
+  );
+  const currentSafetyClosure = buildLocalDependencyClosure(
+    currentMigrationModulePaths,
+    readCurrentFile,
+    pinnedWorkspaceImports,
   );
   const dependencyProblems = [
     ...releasedClosure.problems.map(
       (problem) =>
         `Released dependency graph is unsafe: ${problem} (baseline: ${contentBaseline.tag})`,
     ),
-    ...currentClosure.problems.map((problem) => `Current dependency graph is unsafe: ${problem}`),
+    ...currentSafetyClosure.problems.map(
+      (problem) => `Current dependency graph is unsafe: ${problem}`,
+    ),
     ...findReleasedDependencyViolations(
       releasedClosure.contents,
-      currentClosure.contents,
+      currentReleasedClosure.contents,
       migrationModulePaths,
     ).map((problem) => `${problem} (baseline: ${contentBaseline.tag})`),
   ];
