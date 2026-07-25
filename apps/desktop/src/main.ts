@@ -63,6 +63,7 @@ import {
   buildBackendRestartRecoveryDialog,
   handleBackendRestartRecoveryAction,
   resolveBackendRestartRecoveryAction,
+  shouldShowBackendRestartRecovery,
 } from "./backendRestartRecovery";
 import { resolveBackendNodeArgs } from "./backendNodeOptions";
 import {
@@ -2906,6 +2907,7 @@ async function showBackendRestartRecovery(input: {
   failures: number;
   windowMs: number;
 }): Promise<void> {
+  if (!shouldShowBackendRestartRecovery(isQuitting)) return;
   try {
     const { response } = await dialog.showMessageBox(
       buildBackendRestartRecoveryDialog({

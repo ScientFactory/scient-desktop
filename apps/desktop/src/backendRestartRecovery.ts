@@ -4,6 +4,10 @@
 
 export type BackendRestartRecoveryAction = "retry" | "open-logs" | "dismiss";
 
+export function shouldShowBackendRestartRecovery(isQuitting: boolean): boolean {
+  return !isQuitting;
+}
+
 export interface BackendRestartRecoveryDialogOptions {
   type: "error";
   title: string;

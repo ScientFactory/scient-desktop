@@ -4,9 +4,15 @@ import {
   buildBackendRestartRecoveryDialog,
   handleBackendRestartRecoveryAction,
   resolveBackendRestartRecoveryAction,
+  shouldShowBackendRestartRecovery,
 } from "./backendRestartRecovery";
 
 describe("backend restart recovery", () => {
+  it("suppresses the initial recovery dialog once shutdown begins", () => {
+    expect(shouldShowBackendRestartRecovery(false)).toBe(true);
+    expect(shouldShowBackendRestartRecovery(true)).toBe(false);
+  });
+
   it("offers retry and logs while keeping cancellation non-destructive", () => {
     const options = buildBackendRestartRecoveryDialog({
       appName: "Scient",
