@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export type PackagedDesktopPlatform = "mac" | "win";
@@ -27,6 +27,8 @@ export interface PackagedDesktopStartupOptions {
   readonly version: string;
   readonly commit: string;
   readonly timeoutMs: number;
+  readonly allowUnsignedWindows?: boolean;
+  readonly windowsPublisherSubject?: string;
 }
 
 interface TerminationSignalSource {
@@ -36,6 +38,7 @@ interface TerminationSignalSource {
 
 export function monitorPackagedStartupTermination(source: TerminationSignalSource = process): {
   readonly signal: Promise<NodeJS.Signals>;
+  readonly abortSignal: AbortSignal;
   readonly readSignal: () => NodeJS.Signals | null;
   readonly dispose: () => void;
 } {
@@ -45,11 +48,13 @@ export function monitorPackagedStartupTermination(source: TerminationSignalSourc
     resolveSignal = resolve;
   });
   const listeners = new Map<NodeJS.Signals, () => void>();
+  const abortController = new AbortController();
 
   for (const name of ["SIGINT", "SIGTERM"] as const) {
     const listener = () => {
       if (observedSignal !== null) return;
       observedSignal = name;
+      abortController.abort(new Error(`Packaged startup verification interrupted by ${name}.`));
       resolveSignal(name);
     };
     listeners.set(name, listener);
@@ -58,6 +63,7 @@ export function monitorPackagedStartupTermination(source: TerminationSignalSourc
 
   return {
     signal,
+    abortSignal: abortController.signal,
     readSignal: () => observedSignal,
     dispose: () => {
       for (const [name, listener] of listeners) {
@@ -88,6 +94,8 @@ export function parsePackagedDesktopStartupArgs(
     "--version",
     "--commit",
     "--timeout-ms",
+    "--allow-unsigned-windows",
+    "--windows-publisher-subject",
   ]);
   for (const name of values.keys()) {
     if (!known.has(name)) throw new Error(`Unknown packaged startup argument: ${name}.`);
@@ -116,6 +124,14 @@ export function parsePackagedDesktopStartupArgs(
   if (!/^[0-9a-f]{40}$/u.test(commit)) {
     throw new Error("--commit must be a complete 40-character Git commit SHA.");
   }
+  const allowUnsignedWindowsValue = values.get("--allow-unsigned-windows") ?? "false";
+  if (allowUnsignedWindowsValue !== "true" && allowUnsignedWindowsValue !== "false") {
+    throw new Error("--allow-unsigned-windows must be true or false.");
+  }
+  const windowsPublisherSubject = values.get("--windows-publisher-subject")?.trim();
+  if (platform === "win" && allowUnsignedWindowsValue === "false" && !windowsPublisherSubject) {
+    throw new Error("Signed Windows startup proof requires --windows-publisher-subject.");
+  }
 
   return {
     assetsDirectory: resolve(required("--assets-dir")),
@@ -124,44 +140,67 @@ export function parsePackagedDesktopStartupArgs(
     version: required("--version"),
     commit,
     timeoutMs,
+    ...(platform === "win"
+      ? {
+          allowUnsignedWindows: allowUnsignedWindowsValue === "true",
+          ...(windowsPublisherSubject ? { windowsPublisherSubject } : {}),
+        }
+      : {}),
   };
 }
 
-function runCommand(command: string, args: ReadonlyArray<string>, cwd?: string): void {
-  const result = spawnSync(command, [...args], {
-    cwd,
-    encoding: "utf8",
-    maxBuffer: 8 * 1024 * 1024,
-    shell: false,
-    windowsHide: true,
-  });
-  if (result.error) {
-    throw new Error(`${command} could not start: ${result.error.message}`);
-  }
-  if (result.status !== 0) {
-    const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-    const detail = output ? `\n${output}` : "";
-    throw new Error(
-      `${command} ${args.join(" ")} failed with exit ${result.status ?? "unknown"}.${detail}`,
-    );
-  }
-}
+const PREPARATION_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024;
 
-function runTextCommand(command: string, args: ReadonlyArray<string>, cwd?: string): string {
-  const result = spawnSync(command, [...args], {
-    cwd,
-    encoding: "utf8",
-    maxBuffer: 8 * 1024 * 1024,
+export async function runPackagedPreparationCommand(
+  command: string,
+  args: ReadonlyArray<string>,
+  options: {
+    readonly cwd?: string;
+    readonly signal: AbortSignal;
+    readonly spawnProcess?: typeof spawn;
+  },
+): Promise<string> {
+  if (options.signal.aborted) throw options.signal.reason;
+  const child = (options.spawnProcess ?? spawn)(command, [...args], {
+    cwd: options.cwd,
     shell: false,
+    signal: options.signal,
+    stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  if (result.error || result.status !== 0) {
-    const detail = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-    throw new Error(
-      `${command} ${args.join(" ")} failed${result.error ? `: ${result.error.message}` : ` with exit ${result.status ?? "unknown"}`}${detail ? `\n${detail}` : ""}`,
-    );
-  }
-  return result.stdout.trim();
+  let stdout = "";
+  let stderr = "";
+  const append = (current: string, chunk: unknown) =>
+    `${current}${String(chunk)}`.slice(-PREPARATION_OUTPUT_LIMIT_BYTES);
+  child.stdout?.on("data", (chunk) => {
+    stdout = append(stdout, chunk);
+  });
+  child.stderr?.on("data", (chunk) => {
+    stderr = append(stderr, chunk);
+  });
+  await new Promise<void>((resolveCommand, rejectCommand) => {
+    let settled = false;
+    const settle = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      if (error) rejectCommand(error);
+      else resolveCommand();
+    };
+    child.once("error", (error) => settle(error));
+    child.once("exit", (code, signal) => {
+      if (code === 0) {
+        settle();
+        return;
+      }
+      const detail = [stdout, stderr].filter(Boolean).join("\n").trim();
+      settle(
+        new Error(
+          `${command} ${args.join(" ")} failed with exit ${code ?? "unknown"}${signal ? ` signal ${signal}` : ""}.${detail ? `\n${detail}` : ""}`,
+        ),
+      );
+    });
+  });
+  return stdout.trim();
 }
 
 function findFiles(root: string, predicate: (path: string) => boolean): string[] {
@@ -191,6 +230,15 @@ export function expectedPackagedDesktopStartupAssetName(
   return `Scient-${version}-${arch}${extension}`;
 }
 
+export function expectedPackagedDesktopStartupAssetNames(
+  platform: PackagedDesktopPlatform,
+  arch: string,
+  version: string,
+): ReadonlyArray<string> {
+  const primary = expectedPackagedDesktopStartupAssetName(platform, arch, version);
+  return platform === "mac" ? [primary, `Scient-${version}-${arch}.dmg`] : [primary];
+}
+
 export function resolveExactPackagedDesktopStartupAsset(
   directory: string,
   expectedName: string,
@@ -216,6 +264,7 @@ export interface PackagedDesktopLaunchCommand {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
+  readonly cleanup?: () => Promise<void>;
 }
 
 export function assertPackagedLaunchCommandSafety(launch: PackagedDesktopLaunchCommand): void {
@@ -229,69 +278,103 @@ export function assertPackagedLaunchCommandSafety(launch: PackagedDesktopLaunchC
   }
 }
 
-function prepareMacLaunch(
+async function prepareMacLaunch(
   assetsDirectory: string,
   extractionRoot: string,
   expectedAssetName: string,
   options: Pick<PackagedDesktopStartupOptions, "arch" | "version">,
-): PackagedDesktopLaunchCommand {
+  signal: AbortSignal,
+): Promise<PackagedDesktopLaunchCommand> {
   const archive = resolveExactPackagedDesktopStartupAsset(assetsDirectory, expectedAssetName);
-  runCommand("ditto", ["-x", "-k", archive, extractionRoot]);
-  const appBundles = readdirSync(extractionRoot).filter((entry) => entry.endsWith(".app"));
-  if (appBundles.length !== 1 || appBundles[0] !== "Scient.app") {
-    throw new Error(`Expected the exact Scient.app bundle in ${basename(archive)}.`);
-  }
-  const appBundle = join(extractionRoot, appBundles[0]!);
-  const executables = findFiles(join(appBundle, "Contents", "MacOS"), (candidate) =>
-    statSync(candidate).isFile(),
-  );
-  if (executables.length !== 1) {
-    throw new Error(`Expected one macOS main executable, found ${executables.length}.`);
-  }
-  const infoPlist = join(appBundle, "Contents", "Info.plist");
-  const bundleIdentifier = runTextCommand("plutil", [
-    "-extract",
-    "CFBundleIdentifier",
-    "raw",
-    "-o",
-    "-",
-    infoPlist,
-  ]);
-  const bundleVersion = runTextCommand("plutil", [
-    "-extract",
-    "CFBundleShortVersionString",
-    "raw",
-    "-o",
-    "-",
-    infoPlist,
-  ]);
-  const bundleExecutable = runTextCommand("plutil", [
-    "-extract",
-    "CFBundleExecutable",
-    "raw",
-    "-o",
-    "-",
-    infoPlist,
-  ]);
-  if (
-    bundleIdentifier !== "com.scientfactory.scient" ||
-    bundleVersion !== options.version ||
-    bundleExecutable !== "Scient"
-  ) {
-    throw new Error(
-      `Unexpected macOS bundle identity id=${bundleIdentifier} version=${bundleVersion} executable=${bundleExecutable}.`,
+  const isDiskImage = expectedAssetName.endsWith(".dmg");
+  if (isDiskImage) {
+    await runPackagedPreparationCommand(
+      "hdiutil",
+      ["attach", "-readonly", "-nobrowse", "-mountpoint", extractionRoot, archive],
+      { signal },
     );
+  } else {
+    await runPackagedPreparationCommand("ditto", ["-x", "-k", archive, extractionRoot], { signal });
   }
-  const expectedArchitecture = options.arch === "x64" ? "x86_64" : options.arch;
-  const executableArchitectures = runTextCommand("lipo", ["-archs", executables[0]!])
-    .split(/\s+/u)
-    .filter(Boolean);
-  if (executableArchitectures.length !== 1 || executableArchitectures[0] !== expectedArchitecture) {
-    throw new Error(
-      `Expected exact macOS ${expectedArchitecture} executable, found ${executableArchitectures.join(", ") || "unknown"}.`,
+  const cleanup = isDiskImage
+    ? async () => {
+        await runPackagedPreparationCommand("hdiutil", ["detach", extractionRoot], {
+          signal: AbortSignal.timeout(30_000),
+        });
+      }
+    : undefined;
+  try {
+    const appBundles = readdirSync(extractionRoot).filter((entry) => entry.endsWith(".app"));
+    if (appBundles.length !== 1 || appBundles[0] !== "Scient.app") {
+      throw new Error(`Expected the exact Scient.app bundle in ${basename(archive)}.`);
+    }
+    const appBundle = join(extractionRoot, appBundles[0]!);
+    const executables = findFiles(join(appBundle, "Contents", "MacOS"), (candidate) =>
+      statSync(candidate).isFile(),
     );
+    if (executables.length !== 1) {
+      throw new Error(`Expected one macOS main executable, found ${executables.length}.`);
+    }
+    const infoPlist = join(appBundle, "Contents", "Info.plist");
+    const bundleIdentifier = await runPackagedPreparationCommand(
+      "plutil",
+      ["-extract", "CFBundleIdentifier", "raw", "-o", "-", infoPlist],
+      { signal },
+    );
+    const bundleVersion = await runPackagedPreparationCommand(
+      "plutil",
+      ["-extract", "CFBundleShortVersionString", "raw", "-o", "-", infoPlist],
+      { signal },
+    );
+    const bundleExecutable = await runPackagedPreparationCommand(
+      "plutil",
+      ["-extract", "CFBundleExecutable", "raw", "-o", "-", infoPlist],
+      { signal },
+    );
+    if (
+      bundleIdentifier !== "com.scientfactory.scient" ||
+      bundleVersion !== options.version ||
+      bundleExecutable !== "Scient"
+    ) {
+      throw new Error(
+        `Unexpected macOS bundle identity id=${bundleIdentifier} version=${bundleVersion} executable=${bundleExecutable}.`,
+      );
+    }
+    const expectedArchitecture = options.arch === "x64" ? "x86_64" : options.arch;
+    const executableArchitectures = (
+      await runPackagedPreparationCommand("lipo", ["-archs", executables[0]!], {
+        signal,
+      })
+    )
+      .split(/\s+/u)
+      .filter(Boolean);
+    if (
+      executableArchitectures.length !== 1 ||
+      executableArchitectures[0] !== expectedArchitecture
+    ) {
+      throw new Error(
+        `Expected exact macOS ${expectedArchitecture} executable, found ${executableArchitectures.join(", ") || "unknown"}.`,
+      );
+    }
+    return {
+      command: executables[0]!,
+      args: [],
+      cwd: appBundle,
+      ...(cleanup ? { cleanup } : {}),
+    };
+  } catch (error) {
+    if (cleanup) {
+      try {
+        await cleanup();
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          `Failed to inspect and detach ${basename(archive)}.`,
+        );
+      }
+    }
+    throw error;
   }
-  return { command: executables[0]!, args: [], cwd: appBundle };
 }
 
 export function isScientWindowsExecutable(candidate: string): boolean {
@@ -318,18 +401,114 @@ export function readWindowsExecutableArchitecture(executable: Uint8Array): strin
   return null;
 }
 
-function prepareWindowsLaunch(
+export interface WindowsReleaseSignatureDetails {
+  readonly status: string;
+  readonly statusMessage: string;
+  readonly signerSubject: string | null;
+  readonly signerThumbprint: string | null;
+  readonly timestampSubject: string | null;
+}
+
+export function assertWindowsReleaseSignatureDetails(
+  signatures: ReadonlyArray<WindowsReleaseSignatureDetails>,
+  expectedPublisherSubject: string,
+): void {
+  for (const [index, signature] of signatures.entries()) {
+    const label = index === 0 ? "Windows installer" : "Extracted Scient executable";
+    if (signature.status !== "Valid") {
+      throw new Error(
+        `${label} Authenticode signature is not valid (${signature.status}: ${signature.statusMessage}).`,
+      );
+    }
+    if (signature.signerSubject?.trim() !== expectedPublisherSubject) {
+      throw new Error(
+        `${label} publisher ${signature.signerSubject ?? "missing"} does not match ${expectedPublisherSubject}.`,
+      );
+    }
+    if (!signature.signerThumbprint?.trim()) {
+      throw new Error(`${label} signer thumbprint is missing.`);
+    }
+    if (!signature.timestampSubject?.trim()) {
+      throw new Error(`${label} timestamp signer is missing.`);
+    }
+  }
+}
+
+const WINDOWS_RELEASE_SIGNATURE_SCRIPT = [
+  "param([string]$InstallerPath, [string]$ExecutablePath)",
+  "$ErrorActionPreference = 'Stop'",
+  "function Read-Signature([string]$Path) {",
+  "  $Signature = Get-AuthenticodeSignature -LiteralPath $Path",
+  "  [pscustomobject]@{",
+  "    status = [string]$Signature.Status",
+  "    statusMessage = [string]$Signature.StatusMessage",
+  "    signerSubject = if ($null -eq $Signature.SignerCertificate) { $null } else { [string]$Signature.SignerCertificate.Subject }",
+  "    signerThumbprint = if ($null -eq $Signature.SignerCertificate) { $null } else { [string]$Signature.SignerCertificate.Thumbprint }",
+  "    timestampSubject = if ($null -eq $Signature.TimeStamperCertificate) { $null } else { [string]$Signature.TimeStamperCertificate.Subject }",
+  "  }",
+  "}",
+  "@((Read-Signature $InstallerPath), (Read-Signature $ExecutablePath)) | ConvertTo-Json -Compress -Depth 4",
+].join("\r\n");
+
+async function verifyWindowsReleaseSignatures(
+  installer: string,
+  executable: string,
+  expectedPublisherSubject: string,
+  extractionRoot: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const scriptPath = join(extractionRoot, "verify-release-signatures.ps1");
+  writeFileSync(scriptPath, WINDOWS_RELEASE_SIGNATURE_SCRIPT, { encoding: "utf8", mode: 0o600 });
+  const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "C:\\Windows";
+  const powershell = win32.join(
+    systemRoot,
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+  const output = await runPackagedPreparationCommand(
+    powershell,
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      scriptPath,
+      "-InstallerPath",
+      installer,
+      "-ExecutablePath",
+      executable,
+    ],
+    { signal },
+  );
+  const parsed = JSON.parse(output) as ReadonlyArray<WindowsReleaseSignatureDetails>;
+  if (!Array.isArray(parsed) || parsed.length !== 2) {
+    throw new Error("Windows Authenticode verifier returned invalid release signature details.");
+  }
+  assertWindowsReleaseSignatureDetails(parsed, expectedPublisherSubject);
+}
+
+async function prepareWindowsLaunch(
   assetsDirectory: string,
   extractionRoot: string,
   expectedAssetName: string,
-  options: Pick<PackagedDesktopStartupOptions, "arch">,
-): PackagedDesktopLaunchCommand {
+  options: Pick<
+    PackagedDesktopStartupOptions,
+    "arch" | "allowUnsignedWindows" | "windowsPublisherSubject"
+  >,
+  signal: AbortSignal,
+): Promise<PackagedDesktopLaunchCommand> {
   const installer = resolveExactPackagedDesktopStartupAsset(assetsDirectory, expectedAssetName);
   const installerRoot = join(extractionRoot, "installer");
   const applicationRoot = join(extractionRoot, "application");
   mkdirSync(installerRoot, { recursive: true });
   mkdirSync(applicationRoot, { recursive: true });
-  runCommand("7z", ["x", "-y", `-o${installerRoot}`, installer]);
+  await runPackagedPreparationCommand("7z", ["x", "-y", `-o${installerRoot}`, installer], {
+    signal,
+  });
   const applicationArchives = findFiles(installerRoot, (candidate) =>
     /[/\\]app-(?:32|64|arm64)\.7z$/i.test(candidate),
   );
@@ -338,7 +517,11 @@ function prepareWindowsLaunch(
       `Expected one embedded NSIS application archive, found ${applicationArchives.length}.`,
     );
   }
-  runCommand("7z", ["x", "-y", `-o${applicationRoot}`, applicationArchives[0]!]);
+  await runPackagedPreparationCommand(
+    "7z",
+    ["x", "-y", `-o${applicationRoot}`, applicationArchives[0]!],
+    { signal },
+  );
   const executables = findFiles(applicationRoot, isScientWindowsExecutable);
   if (executables.length !== 1) {
     throw new Error(`Expected one extracted Scient.exe, found ${executables.length}.`);
@@ -349,22 +532,44 @@ function prepareWindowsLaunch(
       `Expected exact Windows ${options.arch} executable, found ${executableArchitecture ?? "unknown"}.`,
     );
   }
+  if (!options.allowUnsignedWindows) {
+    const expectedPublisherSubject = options.windowsPublisherSubject?.trim();
+    if (!expectedPublisherSubject) {
+      throw new Error("Signed Windows startup proof requires an expected publisher subject.");
+    }
+    await verifyWindowsReleaseSignatures(
+      installer,
+      executables[0]!,
+      expectedPublisherSubject,
+      extractionRoot,
+      signal,
+    );
+  }
   return { command: executables[0]!, args: [], cwd: dirname(executables[0]!) };
 }
 
-function prepareLaunch(
+async function prepareLaunch(
   options: PackagedDesktopStartupOptions,
   extractionRoot: string,
-): PackagedDesktopLaunchCommand {
-  const expectedAssetName = expectedPackagedDesktopStartupAssetName(
-    options.platform,
-    options.arch,
-    options.version,
-  );
+  expectedAssetName: string,
+  signal: AbortSignal,
+): Promise<PackagedDesktopLaunchCommand> {
   const launch =
     options.platform === "mac"
-      ? prepareMacLaunch(options.assetsDirectory, extractionRoot, expectedAssetName, options)
-      : prepareWindowsLaunch(options.assetsDirectory, extractionRoot, expectedAssetName, options);
+      ? await prepareMacLaunch(
+          options.assetsDirectory,
+          extractionRoot,
+          expectedAssetName,
+          options,
+          signal,
+        )
+      : await prepareWindowsLaunch(
+          options.assetsDirectory,
+          extractionRoot,
+          expectedAssetName,
+          options,
+          signal,
+        );
   assertPackagedLaunchCommandSafety(launch);
   return launch;
 }
@@ -579,7 +784,14 @@ export async function terminateProcessTree(
       (target) => target.pid !== (rootTarget?.pid ?? exitedRootGroupTarget?.pid),
     ),
   ];
-  if (targets.length === 0) return;
+  if (targets.length === 0) {
+    if (platform === "win32" && child.pid) {
+      throw new Error(
+        `Packaged Windows root ${child.pid} exited before cleanup ownership was established; preserving evidence because unobserved descendants may remain.`,
+      );
+    }
+    return;
+  }
   const awaitTargetsExit = dependencies.waitForTargetsExit ?? waitForProcessTerminationTargets;
   if (!rootTarget) {
     if (await awaitTargetsExit(targets, 5_000)) return;
@@ -642,6 +854,7 @@ export function hasPackagedStartupProof(
       log.includes("app ready") &&
       log.includes(expectedIdentity) &&
       log.includes("bootstrap main window created") &&
+      log.includes("packaged main window visible") &&
       log.includes("renderer main frame loaded") &&
       log.includes("backend semantic ready generation=") &&
       log.includes("packaged responsiveness confirmed generation=") &&
@@ -710,7 +923,10 @@ export function readPackagedBackendProcessIds(environment: NodeJS.ProcessEnv | n
 }
 
 export interface PackagedDesktopChildOutcome {
-  readonly exited: { readonly code: number | null; readonly signal: NodeJS.Signals | null } | null;
+  readonly exited: {
+    readonly code: number | null;
+    readonly signal: NodeJS.Signals | null;
+  } | null;
   readonly launchError: Error | null;
 }
 
@@ -735,6 +951,25 @@ export function formatPackagedStartupFailures(
   const processDetail = output.trim() ? `\nPackaged process output:\n${output.trim()}` : "";
   const logDetail = logTail ? `\nPackaged desktop log tail:\n${logTail}` : "";
   return `${failureDetail}${processDetail}${logDetail}`;
+}
+
+function redactPackagedStartupDiagnostic(value: string): string {
+  return value
+    .replace(/\bBearer\s+\S+/giu, "Bearer [REDACTED]")
+    .replace(/([?&](?:token|key|secret|code)=)[^&\s]+/giu, "$1[REDACTED]");
+}
+
+export function writePackagedStartupFailureDiagnostics(
+  diagnosticsDirectory: string,
+  details: string,
+): string {
+  const resolvedDirectory = resolve(diagnosticsDirectory);
+  mkdirSync(resolvedDirectory, { recursive: true });
+  const diagnosticPath = join(resolvedDirectory, "packaged-startup-failure.txt");
+  writeFileSync(diagnosticPath, `${redactPackagedStartupDiagnostic(details).slice(-400_000)}\n`, {
+    mode: 0o600,
+  });
+  return diagnosticPath;
 }
 
 interface PackagedStartupProofWaitOptions {
@@ -803,8 +1038,9 @@ export function resolveNativePackagedDesktopPlatform(
   return null;
 }
 
-export async function verifyPackagedDesktopStartup(
+async function verifyPackagedDesktopPayload(
   options: PackagedDesktopStartupOptions,
+  expectedAssetName: string,
 ): Promise<void> {
   const nativePlatform = resolveNativePackagedDesktopPlatform(process.platform);
   if (nativePlatform !== options.platform) {
@@ -813,18 +1049,29 @@ export async function verifyPackagedDesktopStartup(
     );
   }
 
-  const temporaryRoot = mkdtempSync(join(tmpdir(), `scient-packaged-smoke-${options.platform}-`));
+  const temporaryRoot = mkdtempSync(
+    join(
+      tmpdir(),
+      `scient-packaged-smoke-${options.platform}-${expectedAssetName.endsWith(".dmg") ? "dmg" : "primary"}-`,
+    ),
+  );
   const extractionRoot = join(temporaryRoot, "payload");
   mkdirSync(extractionRoot, { recursive: true });
 
   let child: ChildProcess | null = null;
+  let launch: PackagedDesktopLaunchCommand | null = null;
   let environment: NodeJS.ProcessEnv | null = null;
   let logPath: string | null = null;
   let output = "";
   const failures: Array<{ phase: string; error: unknown }> = [];
   const termination = monitorPackagedStartupTermination();
   try {
-    const launch = prepareLaunch(options, extractionRoot);
+    const preparationSignal = AbortSignal.any([
+      AbortSignal.timeout(options.timeoutMs),
+      termination.abortSignal,
+    ]);
+    launch = await prepareLaunch(options, extractionRoot, expectedAssetName, preparationSignal);
+    if (preparationSignal.aborted) throw preparationSignal.reason;
     environment = createPackagedDesktopSmokeEnvironment(join(temporaryRoot, "state"), options);
     const launchLogPath = resolvePackagedDesktopLogPath(environment);
     logPath = launchLogPath;
@@ -877,6 +1124,15 @@ export async function verifyPackagedDesktopStartup(
     failures.push({ phase: "process cleanup failed", error });
   }
 
+  if (launch?.cleanup) {
+    try {
+      await launch.cleanup();
+    } catch (error) {
+      processCleanupFailed = true;
+      failures.push({ phase: "payload unmount failed", error });
+    }
+  }
+
   const interruptedBy = termination.readSignal();
   termination.dispose();
   if (
@@ -900,18 +1156,42 @@ export async function verifyPackagedDesktopStartup(
     try {
       rmSync(temporaryRoot, { recursive: true, force: true });
     } catch (error) {
-      failures.push({ phase: `temporary-state cleanup failed at ${temporaryRoot}`, error });
+      failures.push({
+        phase: `temporary-state cleanup failed at ${temporaryRoot}`,
+        error,
+      });
     }
   }
 
   if (failures.length > 0) {
+    const details = formatPackagedStartupFailures(failures, output, logTail);
+    const diagnosticsDirectory = process.env.SCIENT_PACKAGED_STARTUP_DIAGNOSTICS_DIR?.trim();
+    if (diagnosticsDirectory) {
+      try {
+        writePackagedStartupFailureDiagnostics(diagnosticsDirectory, details);
+      } catch (error) {
+        failures.push({ phase: "failure-diagnostic export failed", error });
+      }
+    }
     throw new Error(formatPackagedStartupFailures(failures, output, logTail), {
       cause: failures[0]?.error,
     });
   }
   console.log(
-    `Packaged ${options.platform}/${options.arch} startup smoke passed from isolated Scient state.`,
+    `Packaged ${options.platform}/${options.arch} startup smoke passed for ${expectedAssetName} from isolated Scient state.`,
   );
+}
+
+export async function verifyPackagedDesktopStartup(
+  options: PackagedDesktopStartupOptions,
+): Promise<void> {
+  for (const expectedAssetName of expectedPackagedDesktopStartupAssetNames(
+    options.platform,
+    options.arch,
+    options.version,
+  )) {
+    await verifyPackagedDesktopPayload(options, expectedAssetName);
+  }
 }
 
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : null;

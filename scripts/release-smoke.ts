@@ -53,7 +53,10 @@ function copyWorkspaceManifestFixture(targetRoot: string): void {
   });
 }
 
-function writeMacManifestFixtures(targetRoot: string): { arm64Path: string; x64Path: string } {
+function writeMacManifestFixtures(targetRoot: string): {
+  arm64Path: string;
+  x64Path: string;
+} {
   const assetDirectory = resolve(targetRoot, "release-assets");
   mkdirSync(assetDirectory, { recursive: true });
 
@@ -140,6 +143,8 @@ interface ReleaseWorkflowStep {
   readonly if?: string;
   readonly name?: string;
   readonly run?: string;
+  readonly uses?: string;
+  readonly with?: Record<string, unknown>;
 }
 
 function assertScopedSigningEnvironment(
@@ -185,7 +190,10 @@ function verifyCanonicalIdentity(): void {
     throw new Error("Expected packaged Scient clients to use the approved update channel.");
   }
 
-  const linux = createDesktopPlatformBuildConfig({ platform: "linux", target: "AppImage" }).linux;
+  const linux = createDesktopPlatformBuildConfig({
+    platform: "linux",
+    target: "AppImage",
+  }).linux;
   if (!linux || linux.executableName !== "scient") {
     throw new Error("Expected Linux desktop releases to install the scient executable.");
   }
@@ -238,13 +246,31 @@ function verifyReleaseWorkflowSafety(): void {
     "utf8",
   ).replaceAll("\r\n", "\n");
   const parsedWorkflow = parseYaml(workflow) as {
+    permissions?: Record<string, string>;
     jobs?: {
-      build?: { steps?: Array<ReleaseWorkflowStep> };
+      build?: { permissions?: Record<string, string>; steps?: Array<ReleaseWorkflowStep> };
       preflight?: { steps?: Array<ReleaseWorkflowStep> };
+      publish_cli?: { permissions?: Record<string, string> };
+      release?: { permissions?: Record<string, string> };
     };
   };
   const buildSteps = parsedWorkflow.jobs?.build?.steps ?? [];
   const preflightSteps = parsedWorkflow.jobs?.preflight?.steps ?? [];
+  const buildPermissions = parsedWorkflow.jobs?.build?.permissions ?? {};
+  const buildCheckout = buildSteps.find((step) => step.name === "Checkout");
+  if (
+    parsedWorkflow.permissions?.contents !== "read" ||
+    Object.keys(parsedWorkflow.permissions ?? {}).length !== 1 ||
+    buildPermissions.contents !== "read" ||
+    "id-token" in buildPermissions ||
+    buildCheckout?.with?.["persist-credentials"] !== false ||
+    parsedWorkflow.jobs?.publish_cli?.permissions?.["id-token"] !== "write" ||
+    parsedWorkflow.jobs?.release?.permissions?.contents !== "write"
+  ) {
+    throw new Error(
+      "Expected native payload execution to have read-only contents, no OIDC, and no persisted checkout credential.",
+    );
+  }
   const requireBuildStep = (name: string) => {
     const step = buildSteps.find((candidate) => candidate.name === name);
     if (!step) {
@@ -303,10 +329,27 @@ function verifyReleaseWorkflowSafety(): void {
     packagedStartupStep?.if !== "${{ matrix.platform != 'linux' }}" ||
     !packagedStartupStep.run?.includes("node scripts/verify-packaged-desktop-startup.ts") ||
     !packagedStartupStep.run.includes("--assets-dir release-publish") ||
-    !packagedStartupStep.run.includes('--commit "${{ github.sha }}"')
+    !packagedStartupStep.run.includes('--commit "${{ github.sha }}"') ||
+    !packagedStartupStep.run.includes("--allow-unsigned-windows") ||
+    !packagedStartupStep.run.includes("--windows-publisher-subject")
   ) {
     throw new Error(
       "Expected exact macOS and Windows packaged-startup proof after collection and before upload.",
+    );
+  }
+  const packagedDiagnosticsIndex = buildSteps.findIndex(
+    (step) => step.name === "Upload packaged startup failure diagnostics",
+  );
+  const packagedDiagnosticsStep = buildSteps[packagedDiagnosticsIndex];
+  if (
+    packagedDiagnosticsIndex !== packagedStartupIndex + 1 ||
+    packagedDiagnosticsStep?.if !== "${{ failure() && matrix.platform != 'linux' }}" ||
+    packagedDiagnosticsStep.uses !==
+      "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" ||
+    packagedDiagnosticsStep.with?.path !== "packaged-startup-diagnostics/*"
+  ) {
+    throw new Error(
+      "Expected bounded packaged-startup failure diagnostics to upload from native runners.",
     );
   }
   const packagedStartupVerifier = readFileSync(
@@ -335,6 +378,18 @@ function verifyReleaseWorkflowSafety(): void {
     "packaged identity name=${app.getName()} version=${app.getVersion()} commit=${commit}",
     "Expected the running packaged app to expose its exact embedded identity to the verifier.",
   );
+  if (
+    desktopMain.indexOf("configureAppIdentity();", desktopMain.indexOf("app.whenReady()")) < 0 ||
+    desktopMain.indexOf("configureAppIdentity();", desktopMain.indexOf("app.whenReady()")) >
+      desktopMain.indexOf(
+        "writePackagedStartupSmokeIdentity();",
+        desktopMain.indexOf("app.whenReady()"),
+      )
+  ) {
+    throw new Error(
+      "Expected Scient runtime identity to be configured before smoke identity proof.",
+    );
+  }
   assertContains(
     webMain,
     'document.documentElement.dataset.scientRendererReady = "true"',
@@ -364,6 +419,11 @@ function verifyReleaseWorkflowSafety(): void {
     packagedStartupVerifier,
     "PACKAGED_SMOKE_INHERITED_ENVIRONMENT_ALLOWLIST",
     "Expected packaged startup verification to inherit only explicit host variables.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    'log.includes("packaged main window visible")',
+    "Expected packaged startup proof to require a visible native window.",
   );
   assertContains(
     packagedStartupVerifier,

@@ -971,7 +971,11 @@ function resolveEmbeddedReleaseMetadata(): {
 
   const packageJsonPath = Path.join(resolveAppRoot(), "package.json");
   if (!FS.existsSync(packageJsonPath)) {
-    embeddedReleaseMetadataCache = { commitHash: null, fullCommitHash: null, signed: null };
+    embeddedReleaseMetadataCache = {
+      commitHash: null,
+      fullCommitHash: null,
+      signed: null,
+    };
     return embeddedReleaseMetadataCache;
   }
 
@@ -987,7 +991,11 @@ function resolveEmbeddedReleaseMetadata(): {
       signed: typeof parsed.scientSigned === "boolean" ? parsed.scientSigned : null,
     };
   } catch {
-    embeddedReleaseMetadataCache = { commitHash: null, fullCommitHash: null, signed: null };
+    embeddedReleaseMetadataCache = {
+      commitHash: null,
+      fullCommitHash: null,
+      signed: null,
+    };
   }
 
   return embeddedReleaseMetadataCache;
@@ -1473,7 +1481,11 @@ function configureApplicationMenu(): void {
     ? [
         { role: "resetZoom" },
         { role: "zoomIn", ...acceleratorProps("CmdOrCtrl+=") },
-        { role: "zoomIn", ...acceleratorProps("CmdOrCtrl+Plus"), visible: false },
+        {
+          role: "zoomIn",
+          ...acceleratorProps("CmdOrCtrl+Plus"),
+          visible: false,
+        },
         { role: "zoomOut" },
       ]
     : [
@@ -1785,8 +1797,14 @@ function showDesktopNotification(input: {
 function resolveUserDataPath(): string {
   const appDataBase = resolveDesktopAppDataBase();
   const targetPath = resolveDesktopUserDataPath({ appDataBase, isDevelopment });
-  const sourcePath = resolvePapiLabDesktopUserDataPath({ appDataBase, isDevelopment });
-  const migration = seedDesktopUserDataProfileFromPapiLab({ sourcePath, targetPath });
+  const sourcePath = resolvePapiLabDesktopUserDataPath({
+    appDataBase,
+    isDevelopment,
+  });
+  const migration = seedDesktopUserDataProfileFromPapiLab({
+    sourcePath,
+    targetPath,
+  });
   if (migration.status === "seed-failed") {
     console.warn("[desktop] Failed to seed Scient profile from PapiLab", migration.error);
   }
@@ -1898,7 +1916,9 @@ function refreshMacIconCacheOnVersionChange(): void {
     // Read-only bundle: fall through to lsregister.
   }
 
-  const child = ChildProcess.spawn(LSREGISTER_PATH, ["-f", bundlePath], { stdio: "ignore" });
+  const child = ChildProcess.spawn(LSREGISTER_PATH, ["-f", bundlePath], {
+    stdio: "ignore",
+  });
   child.unref();
   child.once("error", (error) => {
     console.warn("[desktop] Failed to refresh macOS icon cache after update", error);
@@ -2624,7 +2644,9 @@ function configureAutoUpdater(): void {
   configuredGitHubUpdateSource = resolveGitHubUpdateSource(appUpdateYml);
   if (configuredGitHubUpdateSource !== null) {
     // The updater itself uses app-update.yml; this URL is only the human fallback.
-    setUpdateState({ releaseUrl: buildGitHubReleasesPageUrl(configuredGitHubUpdateSource) });
+    setUpdateState({
+      releaseUrl: buildGitHubReleasesPageUrl(configuredGitHubUpdateSource),
+    });
   }
 
   autoUpdater.autoDownload = false;
@@ -3427,7 +3449,9 @@ function getIconOption(): { icon: string } | Record<string, never> {
 // (`show: false`), so this color is not expected to match a custom in-app theme exactly.
 function getWindowMaterialOptions(): BrowserWindowConstructorOptions {
   if (process.platform !== "darwin") {
-    return { backgroundColor: nativeTheme.shouldUseDarkColors ? "#181818" : "#ffffff" };
+    return {
+      backgroundColor: nativeTheme.shouldUseDarkColors ? "#181818" : "#ffffff",
+    };
   }
   return {
     vibrancy: "under-window",
@@ -3495,6 +3519,10 @@ function createWindow(): BrowserWindow {
       backgroundThrottling: true,
     },
   });
+  let resolvePackagedWindowVisibility!: (visible: boolean) => void;
+  const packagedWindowVisibility = new Promise<boolean>((resolveVisibility) => {
+    resolvePackagedWindowVisibility = resolveVisibility;
+  });
   browserManager.setWindow(window);
   attachDesktopZoomFactorSync(window);
 
@@ -3558,22 +3586,31 @@ function createWindow(): BrowserWindow {
             `new Promise((resolve) => requestAnimationFrame(() => resolve(${PACKAGED_RENDERER_READINESS_EXPRESSION})))`,
             true,
           ),
-          fetch(`${backendHttpUrl}/health`, { signal: AbortSignal.timeout(5_000) }).then(
-            async (response) => {
-              if (!response.ok) return false;
-              const payload = (await response.json()) as { startupReady?: unknown };
-              return payload.startupReady === true;
-            },
-          ),
+          fetch(`${backendHttpUrl}/health`, {
+            signal: AbortSignal.timeout(5_000),
+          }).then(async (response) => {
+            if (!response.ok) return false;
+            const payload = (await response.json()) as {
+              startupReady?: unknown;
+            };
+            return payload.startupReady === true;
+          }),
+          packagedWindowVisibility,
         ])
-          .then(([rendererReady, backendReady]) => {
+          .then(([rendererReady, backendReady, windowVisible]) => {
             const currentGeneration = getBackendSupervisor().currentGeneration;
             const sameLiveGeneration =
               generation !== null &&
               currentGeneration?.number === generation.number &&
               currentGeneration.child.exitCode === null &&
               currentGeneration.child.signalCode === null;
-            if (rendererReady !== true || backendReady !== true || !sameLiveGeneration) {
+            if (
+              rendererReady !== true ||
+              backendReady !== true ||
+              !sameLiveGeneration ||
+              windowVisible !== true ||
+              !window.isVisible()
+            ) {
               throw new Error("renderer or backend failed the delayed responsiveness check");
             }
             writeDesktopLogHeader(
@@ -3613,6 +3650,10 @@ function createWindow(): BrowserWindow {
       window.maximize();
     }
     window.show();
+    if (window.isVisible()) {
+      writeDesktopLogHeader("packaged main window visible");
+      resolvePackagedWindowVisibility(true);
+    }
     emitDesktopWindowState(window);
   });
 
@@ -3765,9 +3806,9 @@ if (hasSingleInstanceLock) {
   app
     .whenReady()
     .then(async () => {
+      configureAppIdentity();
       writeDesktopLogHeader("app ready");
       writePackagedStartupSmokeIdentity();
-      configureAppIdentity();
       applyLegacyMacDockIcon();
       refreshMacIconCacheOnVersionChange();
       configureMediaPermissions();

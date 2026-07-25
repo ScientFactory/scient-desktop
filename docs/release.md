@@ -264,6 +264,13 @@ Build-only validation may continue with an unsigned NSIS installer when neither
 provider is configured; a deliberate unsigned early-access dispatch may publish
 that installer with its operating-system warning.
 
+Set the repository variable `SCIENT_WINDOWS_PUBLISHER_SUBJECT` to the exact
+Authenticode certificate subject (for example, the complete `CN=..., O=..., C=...`
+value reported by `Get-AuthenticodeSignature`). Before upload, native Windows
+startup proof requires both the collected NSIS installer and its extracted
+`Scient.exe` to have valid timestamped signatures from that exact subject. The
+check is skipped only by the explicit unsigned early-access publication mode.
+
 ### Option A: standard Authenticode certificate
 
 This path supports an OV/EV code-signing certificate accepted by electron-builder.

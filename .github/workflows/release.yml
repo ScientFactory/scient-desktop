@@ -22,8 +22,7 @@ on:
         type: boolean
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: scient-desktop-release
@@ -202,6 +201,8 @@ jobs:
 
   build:
     name: Build ${{ matrix.label }}
+    permissions:
+      contents: read
     needs: preflight
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
@@ -239,6 +240,7 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -383,13 +385,26 @@ jobs:
       - name: Smoke exact packaged desktop startup
         if: ${{ matrix.platform != 'linux' }}
         shell: bash
+        env:
+          SCIENT_PACKAGED_STARTUP_DIAGNOSTICS_DIR: ${{ github.workspace }}/packaged-startup-diagnostics
         run: |
           node scripts/verify-packaged-desktop-startup.ts \
             --assets-dir release-publish \
             --platform "${{ matrix.platform }}" \
             --arch "${{ matrix.arch }}" \
             --version "${{ needs.preflight.outputs.version }}" \
-            --commit "${{ github.sha }}"
+            --commit "${{ github.sha }}" \
+            --allow-unsigned-windows "${{ needs.preflight.outputs.publish_release != 'true' || needs.preflight.outputs.unsigned_release == 'true' }}" \
+            --windows-publisher-subject "${{ vars.SCIENT_WINDOWS_PUBLISHER_SUBJECT }}"
+
+      - name: Upload packaged startup failure diagnostics
+        if: ${{ failure() && matrix.platform != 'linux' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: packaged-startup-diagnostics-${{ matrix.platform }}-${{ matrix.arch }}
+          path: packaged-startup-diagnostics/*
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -400,6 +415,9 @@ jobs:
 
   publish_cli:
     name: Publish CLI to npm
+    permissions:
+      contents: read
+      id-token: write
     if: ${{ needs.preflight.outputs.publish_release == 'true' && vars.SCIENT_PUBLISH_CLI == '1' }}
     needs: [preflight, build]
     runs-on: ubuntu-24.04
@@ -437,6 +455,8 @@ jobs:
 
   release:
     name: Publish GitHub Release
+    permissions:
+      contents: write
     if: ${{ needs.preflight.outputs.publish_release == 'true' }}
     needs: [preflight, build]
     runs-on: ubuntu-24.04

@@ -16,8 +16,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertPackagedLaunchCommandSafety,
+  assertWindowsReleaseSignatureDetails,
   createPackagedDesktopSmokeEnvironment,
   expectedPackagedDesktopStartupAssetName,
+  expectedPackagedDesktopStartupAssetNames,
   formatPackagedStartupFailures,
   hasPackagedStartupProof,
   isScientWindowsExecutable,
@@ -29,9 +31,11 @@ import {
   resolveExactPackagedDesktopStartupAsset,
   resolveNativePackagedDesktopPlatform,
   resolvePackagedDesktopLogPath,
+  runPackagedPreparationCommand,
   sanitizePackagedDesktopInheritedEnvironment,
   terminateProcessTree,
   waitForPackagedStartupProof,
+  writePackagedStartupFailureDiagnostics,
 } from "./verify-packaged-desktop-startup.ts";
 
 const temporaryRoots: string[] = [];
@@ -202,6 +206,16 @@ describe("packaged desktop startup verification", () => {
     );
   });
 
+  it("requires both exact macOS distributable payloads but one Windows installer", () => {
+    expect(expectedPackagedDesktopStartupAssetNames("mac", "arm64", "1.2.3")).toEqual([
+      "Scient-1.2.3-arm64.zip",
+      "Scient-1.2.3-arm64.dmg",
+    ]);
+    expect(expectedPackagedDesktopStartupAssetNames("win", "x64", "1.2.3")).toEqual([
+      "Scient-1.2.3-x64.exe",
+    ]);
+  });
+
   it("does not accept proof from a packaged process that exits immediately", async () => {
     let now = 0;
     let outcome = { exited: null, launchError: null } as {
@@ -231,6 +245,7 @@ describe("packaged desktop startup verification", () => {
       "app ready",
       "packaged identity name=Scient version=1.2.3 commit=0123456789abcdef0123456789abcdef01234567",
       "bootstrap main window created",
+      "packaged main window visible",
       "backend semantic ready generation=1",
       "renderer main frame loaded",
       "packaged responsiveness confirmed generation=1",
@@ -288,6 +303,40 @@ describe("packaged desktop startup verification", () => {
     expect(readWindowsExecutableArchitecture(executable)).toBeNull();
   });
 
+  it("requires valid timestamped Windows signatures from the configured publisher", () => {
+    const valid = {
+      status: "Valid",
+      statusMessage: "Signature verified.",
+      signerSubject: "CN=Scient Factory Ltd, O=Scient Factory Ltd, C=IL",
+      signerThumbprint: "ABC123",
+      timestampSubject: "CN=Trusted Timestamp",
+    };
+    expect(() =>
+      assertWindowsReleaseSignatureDetails(
+        [valid, valid],
+        "CN=Scient Factory Ltd, O=Scient Factory Ltd, C=IL",
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertWindowsReleaseSignatureDetails(
+        [{ ...valid, status: "NotSigned" }, valid],
+        valid.signerSubject,
+      ),
+    ).toThrow("not valid");
+    expect(() =>
+      assertWindowsReleaseSignatureDetails(
+        [{ ...valid, signerSubject: "CN=Other Publisher" }, valid],
+        valid.signerSubject,
+      ),
+    ).toThrow("does not match");
+    expect(() =>
+      assertWindowsReleaseSignatureDetails(
+        [{ ...valid, timestampSubject: null }, valid],
+        valid.signerSubject,
+      ),
+    ).toThrow("timestamp signer is missing");
+  });
+
   it("accepts startup proof only after the process remains alive for the stability window", async () => {
     let now = 0;
     await expect(
@@ -318,6 +367,32 @@ describe("packaged desktop startup verification", () => {
     termination.dispose();
     expect(source.listenerCount("SIGINT")).toBe(0);
     expect(source.listenerCount("SIGTERM")).toBe(0);
+  });
+
+  it("cancels a hung preparation command when the smoke receives SIGTERM", async () => {
+    const source = new EventEmitter();
+    const termination = monitorPackagedStartupTermination(source);
+    const spawnProcess = vi.fn((_command, _args, options) => {
+      const child = new EventEmitter() as ChildProcess;
+      Object.assign(child, {
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+      });
+      options.signal?.addEventListener("abort", () => child.emit("error", options.signal?.reason), {
+        once: true,
+      });
+      return child;
+    }) as unknown as typeof import("node:child_process").spawn;
+
+    const command = runPackagedPreparationCommand("ditto", ["hung.zip"], {
+      signal: termination.abortSignal,
+      spawnProcess,
+    });
+    source.emit("SIGTERM");
+
+    await expect(command).rejects.toThrow("interrupted by SIGTERM");
+    expect(termination.abortSignal.aborted).toBe(true);
+    termination.dispose();
   });
 
   it("rejects startup proof when the process handle closes before the exit event arrives", async () => {
@@ -352,8 +427,14 @@ describe("packaged desktop startup verification", () => {
     expect(
       formatPackagedStartupFailures(
         [
-          { phase: "startup verification failed", error: new Error("renderer froze") },
-          { phase: "process cleanup failed", error: new Error("backend survived") },
+          {
+            phase: "startup verification failed",
+            error: new Error("renderer froze"),
+          },
+          {
+            phase: "process cleanup failed",
+            error: new Error("backend survived"),
+          },
         ],
         "stderr detail",
         "desktop log detail",
@@ -363,13 +444,29 @@ describe("packaged desktop startup verification", () => {
     );
   });
 
+  it("exports bounded redacted failure evidence for hosted runners", () => {
+    const root = mkdtempSync(join(tmpdir(), "scient-packaged-diagnostics-test-"));
+    temporaryRoots.push(root);
+
+    const path = writePackagedStartupFailureDiagnostics(
+      root,
+      "failed https://localhost/?token=private Bearer very-secret",
+    );
+
+    expect(readFileSync(path, "utf8")).toContain("token=[REDACTED]");
+    expect(readFileSync(path, "utf8")).toContain("Bearer [REDACTED]");
+    expect(readFileSync(path, "utf8")).not.toContain("very-secret");
+  });
+
   it("targets a live Windows root once and fails when its complete tree survives", async () => {
     const child = {
       exitCode: null,
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
-    const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({ status: 1 }));
+    const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({
+      status: 1,
+    }));
     await expect(
       terminateProcessTree(
         child,
@@ -392,7 +489,9 @@ describe("packaged desktop startup verification", () => {
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
-    const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({ status: 0 }));
+    const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({
+      status: 0,
+    }));
 
     await terminateProcessTree(
       child,
@@ -414,7 +513,9 @@ describe("packaged desktop startup verification", () => {
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
-    const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({ status: 0 }));
+    const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({
+      status: 0,
+    }));
 
     await terminateProcessTree(
       child,
@@ -551,12 +652,15 @@ describe("packaged desktop startup verification", () => {
   });
 
   it("fails closed when the POSIX root exits before escalation", async () => {
-    const childState: { exitCode: number | null; pid: number; signalCode: NodeJS.Signals | null } =
-      {
-        exitCode: null,
-        pid: 42,
-        signalCode: null,
-      };
+    const childState: {
+      exitCode: number | null;
+      pid: number;
+      signalCode: NodeJS.Signals | null;
+    } = {
+      exitCode: null,
+      pid: 42,
+      signalCode: null,
+    };
     const child = childState as unknown as ChildProcess;
     const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
 
@@ -580,7 +684,11 @@ describe("packaged desktop startup verification", () => {
   });
 
   it("observes an orphaned POSIX process group without signaling it", async () => {
-    const child = { exitCode: 0, pid: 42, signalCode: null } as unknown as ChildProcess;
+    const child = {
+      exitCode: 0,
+      pid: 42,
+      signalCode: null,
+    } as unknown as ChildProcess;
     const observed: Array<ReadonlyArray<{ pid: number; processGroup: boolean }>> = [];
     const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
 
@@ -599,8 +707,14 @@ describe("packaged desktop startup verification", () => {
   });
 
   it("fails closed without signaling a recorded PID when the root is already gone", async () => {
-    const child = { exitCode: 0, pid: 42, signalCode: null } as unknown as ChildProcess;
-    const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({ status: 0 }));
+    const child = {
+      exitCode: 0,
+      pid: 42,
+      signalCode: null,
+    } as unknown as ChildProcess;
+    const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({
+      status: 0,
+    }));
 
     await expect(
       terminateProcessTree(
@@ -614,6 +728,14 @@ describe("packaged desktop startup verification", () => {
       ),
     ).rejects.toThrow("refusing to signal unverified PIDs");
     expect(runTaskkill).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when a Windows root exits without any recorded descendants", async () => {
+    const child = { exitCode: 0, pid: 42, signalCode: null } as unknown as ChildProcess;
+
+    await expect(terminateProcessTree(child, { platform: "win32" })).rejects.toThrow(
+      "exited before cleanup ownership was established",
+    );
   });
 
   it("prepares the isolated Scient macOS profile marker", () => {
@@ -633,7 +755,9 @@ describe("packaged desktop startup verification", () => {
       "last-launch-version.json",
     );
 
-    expect(JSON.parse(readFileSync(markerPath, "utf8"))).toEqual({ version: "1.2.3" });
+    expect(JSON.parse(readFileSync(markerPath, "utf8"))).toEqual({
+      version: "1.2.3",
+    });
   });
 
   it("recognizes only the Scient Windows executable identity", () => {
