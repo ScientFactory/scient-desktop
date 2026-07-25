@@ -59,6 +59,7 @@ import { NetService } from "@synara/shared/Net";
 import { RotatingFileSink } from "@synara/shared/logging";
 import { ensureStaticSnapshot, findAsarArchivePath } from "@synara/shared/staticSnapshot";
 import { isBackendReadinessAborted, waitForHttpReady } from "./backendReadiness";
+import { waitForPackagedBackendResponsiveness } from "./packagedStartupResponsiveness";
 import { resolveBackendNodeArgs } from "./backendNodeOptions";
 import {
   backendProcessContainmentOptions,
@@ -3586,15 +3587,7 @@ function createWindow(): BrowserWindow {
             `new Promise((resolve) => requestAnimationFrame(() => resolve(${PACKAGED_RENDERER_READINESS_EXPRESSION})))`,
             true,
           ),
-          fetch(`${backendHttpUrl}/health`, {
-            signal: AbortSignal.timeout(5_000),
-          }).then(async (response) => {
-            if (!response.ok) return false;
-            const payload = (await response.json()) as {
-              startupReady?: unknown;
-            };
-            return payload.startupReady === true;
-          }),
+          waitForPackagedBackendResponsiveness(backendHttpUrl).then(() => true),
           packagedWindowVisibility,
         ])
           .then(([rendererReady, backendReady, windowVisible]) => {

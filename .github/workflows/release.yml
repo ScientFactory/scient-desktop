@@ -311,6 +311,7 @@ jobs:
             "${{ needs.preflight.outputs.version }}"
 
       - name: Build Windows desktop artifact
+        id: build_windows
         if: matrix.platform == 'win'
         shell: bash
         env:
@@ -401,7 +402,7 @@ jobs:
             --arch "${{ matrix.arch }}" \
             --version "${{ needs.preflight.outputs.version }}" \
             --commit "${{ github.sha }}" \
-            --allow-unsigned-windows "${{ needs.preflight.outputs.publish_release != 'true' || needs.preflight.outputs.unsigned_release == 'true' }}" \
+            --allow-unsigned-windows "${{ steps.build_windows.outputs.windows_signed != 'true' }}" \
             --windows-publisher-subject "$SCIENT_WINDOWS_PUBLISHER_SUBJECT"
 
       - name: Upload packaged startup failure diagnostics

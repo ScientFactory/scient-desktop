@@ -140,6 +140,7 @@ function verifyReleaseRepositoryPolicy(): void {
 
 interface ReleaseWorkflowStep {
   readonly env?: Record<string, unknown>;
+  readonly id?: string;
   readonly if?: string;
   readonly name?: string;
   readonly run?: string;
@@ -330,7 +331,9 @@ function verifyReleaseWorkflowSafety(): void {
     !packagedStartupStep.run?.includes("node scripts/verify-packaged-desktop-startup.ts") ||
     !packagedStartupStep.run.includes("--assets-dir release-publish") ||
     !packagedStartupStep.run.includes('--commit "${{ github.sha }}"') ||
-    !packagedStartupStep.run.includes("--allow-unsigned-windows") ||
+    !packagedStartupStep.run.includes(
+      "--allow-unsigned-windows \"${{ steps.build_windows.outputs.windows_signed != 'true' }}\"",
+    ) ||
     !packagedStartupStep.run.includes(
       '--windows-publisher-subject "$SCIENT_WINDOWS_PUBLISHER_SUBJECT"',
     ) ||
@@ -486,6 +489,9 @@ function verifyReleaseWorkflowSafety(): void {
   }
   if (windowsBuildStep.if !== "matrix.platform == 'win'") {
     throw new Error("Expected Windows signing credentials to be gated to Windows builders.");
+  }
+  if (windowsBuildStep.id !== "build_windows") {
+    throw new Error("Expected Windows packaging to expose its actual signing mode.");
   }
   assertScopedSigningEnvironment(macBuildStep, appleSigningNames, windowsSigningNames);
   assertScopedSigningEnvironment(windowsBuildStep, windowsSigningNames, appleSigningNames);
@@ -658,6 +664,11 @@ function verifyReleaseWorkflowSafety(): void {
     releaseBuildScript,
     "Public Windows releases require a standard Authenticode certificate or Azure Trusted Signing.",
     "Expected public Windows releases to fail closed without signing.",
+  );
+  assertContains(
+    releaseBuildScript,
+    'printf \'windows_signed=%s\\n\' "$windows_signed" >> "$GITHUB_OUTPUT"',
+    "Expected Windows packaging to report whether the produced artifact was signed.",
   );
   assertContains(
     workflow,
