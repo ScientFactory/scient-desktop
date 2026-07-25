@@ -1,3 +1,5 @@
+import { performance } from "node:perf_hooks";
+
 import type { ScientBackendShutdownMessage } from "@synara/shared/backendControl";
 
 export interface DesktopBackendChild {
@@ -151,7 +153,9 @@ export class DesktopBackendSupervisor {
     this.#options = options;
     this.#setTimer = options.setTimer ?? setTimeout;
     this.#clearTimer = options.clearTimer ?? clearTimeout;
-    this.#now = options.now ?? Date.now;
+    // Restart windows measure elapsed process time. Wall-clock corrections must not forgive a
+    // crash loop early or retain failures beyond the configured window.
+    this.#now = options.now ?? (() => performance.now());
   }
 
   get desiredRunning(): boolean {

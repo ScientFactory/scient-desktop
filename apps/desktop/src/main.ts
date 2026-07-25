@@ -2906,6 +2906,7 @@ function handleBackendGenerationExited(exit: DesktopBackendExit): void {
 async function showBackendRestartRecovery(input: {
   failures: number;
   windowMs: number;
+  openLogsErrorMessage?: string | null;
 }): Promise<void> {
   if (!shouldShowBackendRestartRecovery(isQuitting)) return;
   try {
@@ -2915,18 +2916,23 @@ async function showBackendRestartRecovery(input: {
         failures: input.failures,
         windowMs: input.windowMs,
         logFilePath: Path.join(LOG_DIR, "server-child.log"),
+        ...(input.openLogsErrorMessage !== undefined
+          ? { openLogsErrorMessage: input.openLogsErrorMessage }
+          : {}),
       }),
     );
     const action = resolveBackendRestartRecoveryAction(response);
+    let openLogsErrorMessage: string | null = null;
     await handleBackendRestartRecoveryAction({
       action,
       retry: startBackend,
       openLogs: () => openDesktopLogsDirectory(LOG_DIR, (path) => shell.openPath(path)),
       onOpenLogsError: (error) => {
-        safeConsoleError(`[desktop] unable to open backend logs: ${formatErrorMessage(error)}`);
+        openLogsErrorMessage = formatErrorMessage(error);
+        safeConsoleError(`[desktop] unable to open backend logs: ${openLogsErrorMessage}`);
       },
       isQuitting: () => isQuitting,
-      reopen: () => void showBackendRestartRecovery(input),
+      reopen: () => void showBackendRestartRecovery({ ...input, openLogsErrorMessage }),
     });
   } catch (error: unknown) {
     safeConsoleError(`[desktop] backend recovery dialog failed: ${formatErrorMessage(error)}`);

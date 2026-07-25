@@ -89,6 +89,9 @@ function makeHarness(overrides: Partial<DesktopBackendSupervisorOptions> = {}) {
     onGenerationExited: (event) => exits.push(event),
     onRestartScheduled: (event) => restarts.push(event),
     onRestartLimitReached: (event) => restartLimits.push(event),
+    // Fake timers advance Date.now but not Node's monotonic performance clock. Production keeps
+    // the monotonic default; tests inject the fake-timer clock unless a case supplies its own.
+    now: () => Date.now(),
     ...overrides,
   });
   return {

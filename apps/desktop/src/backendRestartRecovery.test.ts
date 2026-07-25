@@ -28,6 +28,19 @@ describe("backend restart recovery", () => {
     expect(options.detail).toContain("/tmp/scient/server-child.log");
   });
 
+  it("explains a log-opening failure when recovery choices reopen", () => {
+    const options = buildBackendRestartRecoveryDialog({
+      appName: "Scient",
+      failures: 5,
+      windowMs: 60_000,
+      logFilePath: "/tmp/scient/server-child.log",
+      openLogsErrorMessage: "permission denied",
+    });
+
+    expect(options.detail).toContain("Scient could not open the logs folder: permission denied");
+    expect(options.detail).toContain("/tmp/scient/server-child.log");
+  });
+
   it("reopens recovery choices after logs open successfully", async () => {
     const retry = vi.fn();
     const reopen = vi.fn();

@@ -24,7 +24,11 @@ export function buildBackendRestartRecoveryDialog(input: {
   failures: number;
   windowMs: number;
   logFilePath: string;
+  openLogsErrorMessage?: string | null;
 }): BackendRestartRecoveryDialogOptions {
+  const openLogsFailure = input.openLogsErrorMessage
+    ? `\n\nScient could not open the logs folder: ${input.openLogsErrorMessage}`
+    : "";
   return {
     type: "error",
     title: `${input.appName} backend stopped repeatedly`,
@@ -33,7 +37,8 @@ export function buildBackendRestartRecoveryDialog(input: {
       `${input.appName} stopped its backend after ${input.failures} failures in ` +
       `${Math.ceil(input.windowMs / 1_000)} seconds to prevent a crash loop. ` +
       "You can try again now or inspect the backend log before retrying.\n\n" +
-      input.logFilePath,
+      input.logFilePath +
+      openLogsFailure,
     buttons: ["Try again", "Open logs", `Keep ${input.appName} open`],
     defaultId: 0,
     cancelId: 2,
