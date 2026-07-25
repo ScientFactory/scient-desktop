@@ -4512,6 +4512,30 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
       expect(mounted.router.state.location.pathname).toBe(newThreadPath);
+      const headingProjectTrigger = page.getByTestId("empty-landing-heading-project-trigger");
+      await expect.element(headingProjectTrigger).toHaveTextContent("Other Project");
+      await expect
+        .element(headingProjectTrigger)
+        .toHaveAccessibleName("Change project from Other Project");
+      await headingProjectTrigger.click();
+      await page.getByText("project", { exact: true }).click();
+
+      await vi.waitFor(
+        () => {
+          expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+            projectId: PROJECT_ID,
+            envMode: "local",
+            branch: null,
+            worktreePath: null,
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(mounted.router.state.location.pathname).toBe(newThreadPath);
+      await expect.element(headingProjectTrigger).toHaveTextContent("Project");
+      await expect
+        .element(headingProjectTrigger)
+        .toHaveAccessibleName("Change project from Project");
     } finally {
       await mounted.cleanup();
     }

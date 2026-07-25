@@ -3,7 +3,15 @@
 //          folders while always creating chats as rows inside the shared Chats container.
 // Layer: Chat / empty-state entrypoint
 
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactElement,
+} from "react";
 import { type ProjectDirectoryEntry, type ProjectId } from "@synara/contracts";
 import { readNativeApi } from "../../nativeApi";
 import { useStore } from "../../store";
@@ -40,6 +48,8 @@ interface ProjectPickerProps {
   onResetToHome?: (() => void | Promise<void>) | undefined;
   /** Class override for the trigger button (e.g. tighter height in the composer tray). */
   triggerClassName?: string;
+  /** Replaces the standard picker button while retaining the combobox trigger semantics. */
+  renderTrigger?: ReactElement<Record<string, unknown>>;
 }
 
 interface ActiveFolderOption {
@@ -90,6 +100,7 @@ export const ProjectPicker = memo(function ProjectPicker({
   onCreateProjectFromPath,
   onResetToHome,
   triggerClassName,
+  renderTrigger,
 }: ProjectPickerProps) {
   const projects = useStore((state) => state.projects);
   const sidebarThreads = useStore(useMemo(() => createSidebarDisplayThreadsSelector(), []));
@@ -419,15 +430,17 @@ export const ProjectPicker = memo(function ProjectPicker({
     >
       <ComboboxTrigger
         render={
-          <PickerTriggerButton
-            data-testid={
-              isProjectSelectionMode ? "project-picker-trigger" : "workspace-picker-trigger"
-            }
-            icon={<FolderClosed className="size-3.5" />}
-            label={triggerLabel}
-            hideChevron
-            {...(triggerClassName ? { className: triggerClassName } : {})}
-          />
+          renderTrigger ?? (
+            <PickerTriggerButton
+              data-testid={
+                isProjectSelectionMode ? "project-picker-trigger" : "workspace-picker-trigger"
+              }
+              icon={<FolderClosed className="size-3.5" />}
+              label={triggerLabel}
+              hideChevron
+              {...(triggerClassName ? { className: triggerClassName } : {})}
+            />
+          )
         }
       />
       <ComboboxPopup align={align} side={side} className="p-0">
