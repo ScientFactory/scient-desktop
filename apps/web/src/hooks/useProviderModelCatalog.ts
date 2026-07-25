@@ -75,6 +75,7 @@ export function useProviderModelCatalog(input: {
     providerModelsQueryOptions({
       provider: "claudeAgent",
       binaryPath: settings.claudeBinaryPath || null,
+      cwd: discoveryCwd,
     }),
   );
   const codexDynamicModelsQuery = useQuery(providerModelsQueryOptions({ provider: "codex" }));
@@ -142,6 +143,7 @@ export function useProviderModelCatalog(input: {
     providerAgentsQueryOptions({
       provider: "claudeAgent",
       binaryPath: settings.claudeBinaryPath || null,
+      cwd: discoveryCwd,
       enabled: selectedProvider === "claudeAgent",
     }),
   );

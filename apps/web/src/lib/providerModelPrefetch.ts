@@ -74,6 +74,7 @@ export function providerModelsPrefetchQueryOptions(input: {
       return providerModelsQueryOptions({
         provider: "claudeAgent",
         binaryPath: settings.claudeBinaryPath || null,
+        cwd,
       });
     case "codex":
       return providerModelsQueryOptions({ provider: "codex" });
@@ -135,6 +136,7 @@ function providerAgentsPrefetchQueryOptions(input: {
       return providerAgentsQueryOptions({
         provider: "claudeAgent",
         binaryPath: settings.claudeBinaryPath || null,
+        cwd,
       });
     case "codex":
       return providerAgentsQueryOptions({ provider: "codex" });

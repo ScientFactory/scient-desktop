@@ -25,8 +25,6 @@ import {
   type ProviderWithDefaultModel,
   CodexReasoningEffort,
 } from "@synara/contracts";
-import { isClaudeOpus5RuntimeSupported } from "./providerVersions";
-
 const MODEL_SLUG_SET_BY_PROVIDER: Record<ProviderKind, ReadonlySet<ModelSlug>> = {
   claudeAgent: new Set(MODEL_OPTIONS_BY_PROVIDER.claudeAgent.map((option) => option.slug)),
   codex: new Set(MODEL_OPTIONS_BY_PROVIDER.codex.map((option) => option.slug)),
@@ -744,16 +742,11 @@ export function normalizeClaudeModelOptions(
 
 export function normalizeClaudeModelSelectionForRuntime(
   modelSelection: Extract<ModelSelection, { provider: "claudeAgent" }>,
-  providerVersion: string | null | undefined,
 ): Extract<ModelSelection, { provider: "claudeAgent" }> {
   const contextWindowSuffix = modelSelection.model.trim().match(/\[[^\]]+\]$/u)?.[0] ?? "";
   const normalizedModel =
     normalizeModelSlug(modelSelection.model, "claudeAgent") ?? getDefaultModel("claudeAgent");
-  const runtimeModel =
-    normalizedModel === "claude-opus-5" && !isClaudeOpus5RuntimeSupported(providerVersion)
-      ? "claude-opus-4-8"
-      : normalizedModel;
-  const model = `${runtimeModel}${contextWindowSuffix}`;
+  const model = `${normalizedModel}${contextWindowSuffix}`;
   return {
     provider: "claudeAgent",
     model,

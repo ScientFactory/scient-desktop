@@ -2164,6 +2164,7 @@ export default function ChatView({
     providerModelsQueryOptions({
       provider: "claudeAgent",
       binaryPath: settings.claudeBinaryPath || null,
+      cwd: providerModelDiscoveryCwd,
     }),
   );
   const codexDynamicModelsQuery = useQuery(providerModelsQueryOptions({ provider: "codex" }));
@@ -2258,6 +2259,7 @@ export default function ChatView({
     providerAgentsQueryOptions({
       provider: "claudeAgent",
       binaryPath: settings.claudeBinaryPath || null,
+      cwd: providerModelDiscoveryCwd,
     }),
   );
   const codexDynamicAgentsQuery = useQuery(providerAgentsQueryOptions({ provider: "codex" }));

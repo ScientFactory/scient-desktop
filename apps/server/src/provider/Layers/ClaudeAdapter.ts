@@ -54,6 +54,7 @@ import {
   type ProviderListSkillsResult,
   type ProviderListAgentsResult,
   type ProviderListModelsResult,
+  type ModelSelection,
   type ProviderModelDescriptor,
   getAgentMentionAliases,
 } from "@synara/contracts";
@@ -70,6 +71,10 @@ import {
   resolveApiModelId,
   trimOrNull,
 } from "@synara/shared/model";
+import {
+  isClaudeOpus5RuntimeSupported,
+  MINIMUM_CLAUDE_OPUS_5_VERSION,
+} from "@synara/shared/providerVersions";
 import { buildClaudeSubagentPrompt } from "@synara/shared/agentMentions";
 import {
   Cause,
@@ -1362,6 +1367,27 @@ function toRequestError(threadId: ThreadId, method: string, cause: unknown): Pro
     method,
     detail: toMessage(cause, `${method} failed`),
     cause,
+  });
+}
+
+function unsupportedClaudeModelError(
+  modelSelection: Extract<ModelSelection, { provider: "claudeAgent" }>,
+  providerVersion: string | null | undefined,
+  method: "startSession" | "sendTurn",
+): ProviderAdapterRequestError | undefined {
+  if (
+    normalizeModelSlug(modelSelection.model, "claudeAgent") !== "claude-opus-5" ||
+    isClaudeOpus5RuntimeSupported(providerVersion)
+  ) {
+    return undefined;
+  }
+  const runtimeDetail = providerVersion
+    ? `the installed Claude Code version is ${providerVersion}`
+    : "the installed Claude Code version could not be confirmed";
+  return new ProviderAdapterRequestError({
+    provider: PROVIDER,
+    method,
+    detail: `Claude Opus 5 requires Claude Code ${MINIMUM_CLAUDE_OPUS_5_VERSION} or newer, but ${runtimeDetail}. Update Claude Code or select Claude Opus 4.8.`,
   });
 }
 
@@ -3687,8 +3713,16 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
               claudeSdkEnv,
             )
           : undefined;
+        if (requestedModelSelection) {
+          const unsupportedModel = unsupportedClaudeModelError(
+            requestedModelSelection,
+            claudeVersion,
+            "startSession",
+          );
+          if (unsupportedModel) return yield* unsupportedModel;
+        }
         const modelSelection = requestedModelSelection
-          ? normalizeClaudeModelSelectionForRuntime(requestedModelSelection, claudeVersion)
+          ? normalizeClaudeModelSelectionForRuntime(requestedModelSelection)
           : undefined;
         const requestedEffort = trimOrNull(modelSelection?.options?.effort ?? null);
         const requestedAutoCompactWindow = trimOrNull(
@@ -4022,19 +4056,31 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         const context = yield* requireSession(input.threadId);
         const requestedModelSelection =
           input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
+        let claudeVersion = context.claudeVersion;
         if (
           requestedModelSelection &&
-          context.claudeVersion === undefined &&
+          claudeVersion === undefined &&
           normalizeModelSlug(requestedModelSelection.model, "claudeAgent") === "claude-opus-5"
         ) {
-          context.claudeVersion = yield* resolveClaudeVersionForSelection(
+          claudeVersion = yield* resolveClaudeVersionForSelection(
             requestedModelSelection,
             context.claudeExecutable,
             claudeSdkEnvForExecutable(yield* resolveClaudeSdkEnv, context.claudeExecutable),
           );
+          // A failed/timeout probe is transient. Do not poison the live session;
+          // a later Opus 5 selection must be allowed to re-probe the same runtime.
+          if (claudeVersion !== null) context.claudeVersion = claudeVersion;
+        }
+        if (requestedModelSelection) {
+          const unsupportedModel = unsupportedClaudeModelError(
+            requestedModelSelection,
+            claudeVersion,
+            "sendTurn",
+          );
+          if (unsupportedModel) return yield* unsupportedModel;
         }
         const modelSelection = requestedModelSelection
-          ? normalizeClaudeModelSelectionForRuntime(requestedModelSelection, context.claudeVersion)
+          ? normalizeClaudeModelSelectionForRuntime(requestedModelSelection)
           : undefined;
         const dispatchInput = requestedModelSelection ? { ...input, modelSelection } : input;
         const requestedAutoCompactWindow = resolveSelectedClaudeAutoCompactWindow(

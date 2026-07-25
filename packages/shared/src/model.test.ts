@@ -783,45 +783,13 @@ describe("normalizeClaudeModelOptions", () => {
 });
 
 describe("normalizeClaudeModelSelectionForRuntime", () => {
-  it.each([
-    ["opus", "claude-opus-4-8"],
-    ["claude-opus-5", "claude-opus-4-8"],
-    ["opus[1m]", "claude-opus-4-8[1m]"],
-  ])(
-    "falls back persisted %s selections when the Claude runtime is too old",
-    (model, expectedModel) => {
-      expect(
-        normalizeClaudeModelSelectionForRuntime(
-          {
-            provider: "claudeAgent",
-            model,
-            options: { effort: "ultracode", fastMode: true },
-          },
-          "2.1.218",
-        ),
-      ).toEqual({
+  it("normalizes the Opus alias while preserving its native context suffix", () => {
+    expect(
+      normalizeClaudeModelSelectionForRuntime({
         provider: "claudeAgent",
-        model: expectedModel,
-        options: { effort: "ultracode", fastMode: true },
-      });
-    },
-  );
-
-  it("fails closed to Opus 4.8 when the Claude runtime version is unknown", () => {
-    expect(
-      normalizeClaudeModelSelectionForRuntime(
-        { provider: "claudeAgent", model: "claude-opus-5" },
-        null,
-      ),
-    ).toEqual({ provider: "claudeAgent", model: "claude-opus-4-8" });
-  });
-
-  it("preserves Opus 5 and its native context suffix at the minimum supported runtime", () => {
-    expect(
-      normalizeClaudeModelSelectionForRuntime(
-        { provider: "claudeAgent", model: "opus[1m]", options: { fastMode: true } },
-        "2.1.219",
-      ),
+        model: "opus[1m]",
+        options: { fastMode: true },
+      }),
     ).toEqual({
       provider: "claudeAgent",
       model: "claude-opus-5[1m]",

@@ -118,9 +118,16 @@ describe("providerModelsPrefetchQueryOptions", () => {
     const claudeOptions = providerModelsPrefetchQueryOptions({
       provider: "claudeAgent",
       settings,
+      cwd: "/tmp/project",
     });
     expect(claudeOptions.queryKey).toEqual(
-      providerDiscoveryQueryKeys.models("claudeAgent", "/bin/claude-custom", null, null, null),
+      providerDiscoveryQueryKeys.models(
+        "claudeAgent",
+        "/bin/claude-custom",
+        null,
+        null,
+        "/tmp/project",
+      ),
     );
 
     const cursorOptions = providerModelsPrefetchQueryOptions({
@@ -182,14 +189,21 @@ describe("prefetchProviderModelsForNewThread", () => {
     prefetchProviderModelsForNewThread(queryClient, {
       provider: "claudeAgent",
       settings: makeSettings({ claudeBinaryPath: "/bin/claude-custom" }),
+      cwd: "/tmp/project",
     });
 
     expect(prefetchQuery).toHaveBeenCalledTimes(2);
     expect(prefetchQuery.mock.calls[0]?.[0].queryKey).toEqual(
-      providerDiscoveryQueryKeys.models("claudeAgent", "/bin/claude-custom", null, null, null),
+      providerDiscoveryQueryKeys.models(
+        "claudeAgent",
+        "/bin/claude-custom",
+        null,
+        null,
+        "/tmp/project",
+      ),
     );
     expect(prefetchQuery.mock.calls[1]?.[0].queryKey).toEqual(
-      providerDiscoveryQueryKeys.agents("claudeAgent", "/bin/claude-custom", null),
+      providerDiscoveryQueryKeys.agents("claudeAgent", "/bin/claude-custom", "/tmp/project"),
     );
   });
 
