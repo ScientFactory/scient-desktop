@@ -305,6 +305,10 @@ export interface BrowserTabState {
   kind: BrowserTabKind;
   url: string;
   displayUrl: string | null;
+  /** Authority root used to re-prepare a source-backed local HTML preview. */
+  previewCwd?: string;
+  /** Set while a watched source revision is waiting to be re-prepared. */
+  sourceChanged?: boolean;
   title: string;
   status: "live" | "suspended";
   isLoading: boolean;
@@ -330,6 +334,8 @@ export interface BrowserOpenInput {
   initialUrl?: string;
   kind?: BrowserTabKind;
   displayUrl?: string;
+  previewCwd?: string;
+  watchedPaths?: readonly string[];
   /** Exact public subresource URLs declared by a capability-backed local HTML document. */
   allowedExternalUrls?: readonly string[];
 }
@@ -354,8 +360,21 @@ export interface BrowserNewTabInput {
   url?: string;
   kind?: BrowserTabKind;
   displayUrl?: string;
+  previewCwd?: string;
+  watchedPaths?: readonly string[];
   activate?: boolean;
   allowedExternalUrls?: readonly string[];
+}
+
+export interface BrowserReplaceLocalHtmlPreviewInput {
+  threadId: ThreadId;
+  tabId: string;
+  url: string;
+  displayUrl: string;
+  previewCwd: string;
+  watchedPaths: readonly string[];
+  allowedExternalUrls?: readonly string[];
+  activate?: boolean;
 }
 
 export interface BrowserPanelBounds {
@@ -559,6 +578,9 @@ export interface DesktopBridge {
     executeCdp: (input: BrowserExecuteCdpInput) => Promise<unknown>;
     navigate: (input: BrowserNavigateInput) => Promise<ThreadBrowserState>;
     reload: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
+    replaceLocalHtmlPreview: (
+      input: BrowserReplaceLocalHtmlPreviewInput,
+    ) => Promise<ThreadBrowserState>;
     goBack: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
     goForward: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
     newTab: (input: BrowserNewTabInput) => Promise<ThreadBrowserState>;
@@ -835,6 +857,9 @@ export interface NativeApi {
     executeCdp: (input: BrowserExecuteCdpInput) => Promise<unknown>;
     navigate: (input: BrowserNavigateInput) => Promise<ThreadBrowserState>;
     reload: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
+    replaceLocalHtmlPreview: (
+      input: BrowserReplaceLocalHtmlPreviewInput,
+    ) => Promise<ThreadBrowserState>;
     goBack: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
     goForward: (input: BrowserTabInput) => Promise<ThreadBrowserState>;
     newTab: (input: BrowserNewTabInput) => Promise<ThreadBrowserState>;

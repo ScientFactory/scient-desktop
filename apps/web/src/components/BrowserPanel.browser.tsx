@@ -809,4 +809,186 @@ describe("BrowserPanel interactions", () => {
       expect(revokeHtmlArtifactPreview).toHaveBeenCalledWith({ previewUrl });
     });
   });
+
+  it("re-prepares a local HTML source on Reload and replaces its capability in one tab", async () => {
+    const previousUrl = "http://g-12345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const replacementUrl = "http://g-22345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const openState = browserState("tab-source");
+    openState.tabs = [
+      {
+        ...openState.tabs[0]!,
+        id: "tab-source",
+        kind: "local-html",
+        url: previousUrl,
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        lastCommittedUrl: previousUrl,
+      },
+    ];
+    const replacementState: ThreadBrowserState = {
+      ...openState,
+      version: openState.version + 1,
+      activeTabId: "tab-revision",
+      tabs: [
+        {
+          ...openState.tabs[0]!,
+          id: "tab-revision",
+          url: replacementUrl,
+          lastCommittedUrl: replacementUrl,
+        },
+      ],
+    };
+    const prepareHtmlArtifactPreview = vi.fn(async () => ({
+      mode: "static-document" as const,
+      warnings: [],
+      previewUrl: replacementUrl,
+      watchedPaths: ["/workspace/report.html", "/workspace/theme.css"],
+    }));
+    const replaceLocalHtmlPreview = vi.fn(async () => replacementState);
+    const revokeHtmlArtifactPreview = vi.fn(async () => ({ revoked: true }));
+    nativeApiTestState.api = {
+      browser: {
+        open: vi.fn(async () => openState),
+        hide: vi.fn(async () => undefined),
+        setPanelBounds: vi.fn(async () => undefined),
+        replaceLocalHtmlPreview,
+        onState: vi.fn(() => () => undefined),
+        onCopyLink: vi.fn(() => () => undefined),
+      },
+      projects: { prepareHtmlArtifactPreview, revokeHtmlArtifactPreview },
+    } as unknown as NativeApi;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+
+    await renderLivePanel(() => undefined);
+    ((await page.getByRole("button", { name: "Reload" }).element()) as HTMLButtonElement).click();
+
+    await vi.waitFor(() => {
+      expect(prepareHtmlArtifactPreview).toHaveBeenCalledWith({
+        cwd: "/workspace",
+        path: "/workspace/report.html",
+      });
+      expect(replaceLocalHtmlPreview).toHaveBeenCalledWith({
+        threadId: THREAD_ID,
+        tabId: "tab-source",
+        url: replacementUrl,
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        watchedPaths: ["/workspace/report.html", "/workspace/theme.css"],
+        activate: true,
+      });
+      expect(revokeHtmlArtifactPreview).toHaveBeenCalledWith({ previewUrl: previousUrl });
+    });
+    expect(useBrowserStateStore.getState().threadStatesByThreadId[THREAD_ID]?.tabs).toHaveLength(1);
+  });
+
+  it("keeps the previous local HTML grant when a refreshed runtime fails to load", async () => {
+    const previousUrl = "http://g-32345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const replacementUrl = "http://g-42345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const openState = browserState("tab-source");
+    openState.lastError = "This local HTML page could not be loaded (HTTP 404).";
+    openState.tabs = [
+      {
+        ...openState.tabs[0]!,
+        id: "tab-source",
+        kind: "local-html",
+        url: previousUrl,
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        lastCommittedUrl: previousUrl,
+        lastError: "This local HTML page could not be loaded (HTTP 404).",
+      },
+    ];
+    const revokeHtmlArtifactPreview = vi.fn(async () => ({ revoked: true }));
+    nativeApiTestState.api = {
+      browser: {
+        open: vi.fn(async () => openState),
+        hide: vi.fn(async () => undefined),
+        setPanelBounds: vi.fn(async () => undefined),
+        replaceLocalHtmlPreview: vi.fn(async () => {
+          throw new Error("The refreshed local HTML page could not be loaded.");
+        }),
+        onState: vi.fn(() => () => undefined),
+        onCopyLink: vi.fn(() => () => undefined),
+      },
+      projects: {
+        prepareHtmlArtifactPreview: vi.fn(async () => ({
+          mode: "interactive-bundle" as const,
+          warnings: [],
+          previewUrl: replacementUrl,
+          watchedPaths: ["/workspace/report.html"],
+        })),
+        revokeHtmlArtifactPreview,
+      },
+    } as unknown as NativeApi;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+
+    await renderLivePanel(() => undefined);
+    ((await page.getByRole("button", { name: "Retry" }).element()) as HTMLButtonElement).click();
+
+    await vi.waitFor(() =>
+      expect(revokeHtmlArtifactPreview).toHaveBeenCalledWith({ previewUrl: replacementUrl }),
+    );
+    expect(
+      useBrowserStateStore.getState().threadStatesByThreadId[THREAD_ID]?.tabs[0],
+    ).toMatchObject({
+      id: "tab-source",
+      url: previousUrl,
+    });
+  });
+
+  it("refreshes a local HTML preview after the native source watcher reports a change", async () => {
+    const previousUrl = "http://g-52345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const replacementUrl = "http://g-62345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const openState = browserState("tab-source");
+    openState.tabs = [
+      {
+        ...openState.tabs[0]!,
+        id: "tab-source",
+        kind: "local-html",
+        url: previousUrl,
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        lastCommittedUrl: previousUrl,
+        sourceChanged: true,
+      },
+    ];
+    const replacementState: ThreadBrowserState = {
+      ...openState,
+      version: openState.version + 1,
+      activeTabId: "tab-revision",
+      tabs: [
+        {
+          ...openState.tabs[0]!,
+          id: "tab-revision",
+          url: replacementUrl,
+          lastCommittedUrl: replacementUrl,
+          sourceChanged: false,
+        },
+      ],
+    };
+    const prepareHtmlArtifactPreview = vi.fn(async () => ({
+      mode: "static-document" as const,
+      warnings: [],
+      previewUrl: replacementUrl,
+      watchedPaths: ["/workspace/report.html"],
+    }));
+    nativeApiTestState.api = {
+      browser: {
+        open: vi.fn(async () => openState),
+        hide: vi.fn(async () => undefined),
+        setPanelBounds: vi.fn(async () => undefined),
+        replaceLocalHtmlPreview: vi.fn(async () => replacementState),
+        onState: vi.fn(() => () => undefined),
+        onCopyLink: vi.fn(() => () => undefined),
+      },
+      projects: {
+        prepareHtmlArtifactPreview,
+        revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
+      },
+    } as unknown as NativeApi;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+
+    await renderLivePanel(() => undefined);
+    await vi.waitFor(() => expect(prepareHtmlArtifactPreview).toHaveBeenCalledOnce());
+  });
 });

@@ -4,12 +4,16 @@
 // Depends on: DesktopBrowserManager with a minimal Electron session mock
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const electron = vi.hoisted(() => {
   const createdWebContents: Array<{
     id: number;
     loadURL: ReturnType<typeof vi.fn>;
     reload: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
     setWebRTCIPHandlingPolicy: ReturnType<typeof vi.fn>;
     handlers: Map<string, Array<(...args: any[]) => void>>;
     windowOpenHandler: ((details: any) => { action: string }) | null;
@@ -38,7 +42,12 @@ const electron = vi.hoisted(() => {
     }
   >();
   let nextWebContentsId = 1;
-  let setProxyImplementation = async (): Promise<void> => undefined;
+  let setProxyImplementation = async (): Promise<void> => {
+    void nextWebContentsId;
+  };
+  let loadURLImplementation = async (_url: string, _webContentsId: number): Promise<void> => {
+    void nextWebContentsId;
+  };
 
   function createWebContents() {
     let currentUrl = "about:blank";
@@ -60,6 +69,7 @@ const electron = vi.hoisted(() => {
       getProcessId: () => 42,
       loadURL: vi.fn(async (url: string) => {
         currentUrl = url;
+        await loadURLImplementation(url, webContents.id);
       }),
       setUserAgent: vi.fn(),
       setWebRTCIPHandlingPolicy: vi.fn(),
@@ -128,6 +138,11 @@ const electron = vi.hoisted(() => {
     setProxyImplementation: (implementation: () => Promise<void>) => {
       setProxyImplementation = implementation;
     },
+    setLoadURLImplementation: (
+      implementation: (url: string, webContentsId: number) => Promise<void>,
+    ) => {
+      loadURLImplementation = implementation;
+    },
     sessionFor,
   };
 });
@@ -184,6 +199,7 @@ describe("DesktopBrowserManager reliability", () => {
     electron.createdViews.splice(0);
     electron.sessions.clear();
     electron.setProxyImplementation(async () => undefined);
+    electron.setLoadURLImplementation(async () => undefined);
   });
 
   it("closes the browser session when its final tab closes", () => {
@@ -447,6 +463,244 @@ describe("DesktopBrowserManager reliability", () => {
       expect(previewSession?.clearCache).toHaveBeenCalledOnce();
     });
     manager.dispose();
+  });
+
+  it("atomically replaces a local HTML runtime only after the fresh capability loads", async () => {
+    const manager = new DesktopBrowserManager();
+    const previousUrl = "http://g-12345678-1234-4123-8123-123456789abc.preview.localhost:43123/";
+    const nextUrl = "http://g-22345678-1234-4123-8123-123456789abc.preview.localhost:43123/";
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: previousUrl,
+      kind: "local-html",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+      watchedPaths: ["/missing/report.html"],
+    });
+    const previousTabId = opened.activeTabId ?? "";
+    const internals = manager as unknown as {
+      ensureLiveRuntime: (threadId: ThreadId, tabId: string) => unknown;
+    };
+    internals.ensureLiveRuntime(THREAD_ID, previousTabId);
+    const previousContents = electron.createdWebContents.at(-1);
+
+    const replaced = await manager.replaceLocalHtmlPreview({
+      threadId: THREAD_ID,
+      tabId: previousTabId,
+      url: nextUrl,
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+      watchedPaths: ["/missing/report.html", "/missing/theme.css"],
+      activate: true,
+    });
+
+    expect(replaced.tabs).toHaveLength(1);
+    expect(replaced.activeTabId).not.toBe(previousTabId);
+    expect(replaced.tabs[0]).toMatchObject({
+      kind: "local-html",
+      url: nextUrl,
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+      lastError: null,
+    });
+    expect(replaced.tabs[0]?.sourceChanged).toBeUndefined();
+    expect(electron.createdWebContents.at(-1)?.loadURL).toHaveBeenCalledWith(nextUrl);
+    expect(previousContents?.close).toHaveBeenCalledOnce();
+    const previousPartition = `scient-local-html-preview-${THREAD_ID}-${previousTabId}`;
+    await vi.waitFor(() =>
+      expect(electron.sessions.get(previousPartition)?.clearStorageData).toHaveBeenCalledOnce(),
+    );
+    manager.dispose();
+  });
+
+  it("keeps the working local HTML runtime when a prepared replacement cannot load", async () => {
+    const manager = new DesktopBrowserManager();
+    const previousUrl = "http://g-32345678-1234-4123-8123-123456789abc.preview.localhost:43123/";
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: previousUrl,
+      kind: "local-html",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+    });
+    const previousTabId = opened.activeTabId ?? "";
+    const internals = manager as unknown as {
+      ensureLiveRuntime: (threadId: ThreadId, tabId: string) => unknown;
+    };
+    internals.ensureLiveRuntime(THREAD_ID, previousTabId);
+    const previousContents = electron.createdWebContents.at(-1);
+    electron.setLoadURLImplementation(async () => {
+      throw new Error("ERR_CONNECTION_REFUSED");
+    });
+
+    await expect(
+      manager.replaceLocalHtmlPreview({
+        threadId: THREAD_ID,
+        tabId: previousTabId,
+        url: "http://g-42345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+        displayUrl: "/missing/report.html",
+        previewCwd: "/missing",
+        watchedPaths: ["/missing/report.html"],
+      }),
+    ).rejects.toThrow("could not be loaded");
+
+    const preserved = manager.getState({ threadId: THREAD_ID });
+    expect(preserved.tabs).toHaveLength(1);
+    expect(preserved.activeTabId).toBe(previousTabId);
+    expect(preserved.tabs[0]?.url).toBe(previousUrl);
+    expect(previousContents?.close).not.toHaveBeenCalled();
+    expect(electron.createdWebContents.at(-1)?.close).toHaveBeenCalledOnce();
+    manager.dispose();
+  });
+
+  it("rejects an HTTP-error replacement without discarding the previous page", async () => {
+    const manager = new DesktopBrowserManager();
+    const previousUrl = "http://g-a2345678-1234-4123-8123-123456789abc.preview.localhost:43123/";
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: previousUrl,
+      kind: "local-html",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+    });
+    const previousTabId = opened.activeTabId ?? "";
+    const internals = manager as unknown as {
+      ensureLiveRuntime: (threadId: ThreadId, tabId: string) => unknown;
+    };
+    internals.ensureLiveRuntime(THREAD_ID, previousTabId);
+    const previousContents = electron.createdWebContents.at(-1);
+    electron.setLoadURLImplementation(async (url, webContentsId) => {
+      const newestSession = [...electron.sessions.values()].at(-1);
+      const onCompleted = newestSession?.webRequest.onCompleted.mock.calls[0]?.[0];
+      onCompleted?.({
+        resourceType: "mainFrame",
+        statusCode: 404,
+        webContentsId,
+        url,
+      });
+    });
+
+    await expect(
+      manager.replaceLocalHtmlPreview({
+        threadId: THREAD_ID,
+        tabId: previousTabId,
+        url: "http://g-b2345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+        displayUrl: "/missing/report.html",
+        previewCwd: "/missing",
+        watchedPaths: ["/missing/report.html"],
+      }),
+    ).rejects.toThrow("HTTP 404");
+
+    const preserved = manager.getState({ threadId: THREAD_ID });
+    expect(preserved.activeTabId).toBe(previousTabId);
+    expect(preserved.tabs[0]?.url).toBe(previousUrl);
+    expect(previousContents?.close).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
+  it("refreshes a background local HTML tab without stealing focus", async () => {
+    const manager = new DesktopBrowserManager();
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: "http://g-82345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+      kind: "local-html",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+    });
+    const sourceTabId = opened.activeTabId ?? "";
+    const withWebTab = manager.newTab({
+      threadId: THREAD_ID,
+      url: "https://example.com/",
+      kind: "web",
+      activate: true,
+    });
+    const activeWebTabId = withWebTab.activeTabId;
+
+    const replaced = await manager.replaceLocalHtmlPreview({
+      threadId: THREAD_ID,
+      tabId: sourceTabId,
+      url: "http://g-92345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+      watchedPaths: ["/missing/report.html"],
+      activate: false,
+    });
+
+    expect(replaced.tabs).toHaveLength(2);
+    expect(replaced.activeTabId).toBe(activeWebTabId);
+    expect(replaced.tabs.some((tab) => tab.id === sourceTabId)).toBe(false);
+    expect(replaced.tabs.find((tab) => tab.kind === "local-html")?.displayUrl).toBe(
+      "/missing/report.html",
+    );
+    manager.dispose();
+  });
+
+  it("coalesces concurrent replacement requests for the same source tab", async () => {
+    const manager = new DesktopBrowserManager();
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: "http://g-52345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+      kind: "local-html",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+    });
+    let releaseLoad: (() => void) | undefined;
+    electron.setLoadURLImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseLoad = resolve;
+        }),
+    );
+    const input = {
+      threadId: THREAD_ID,
+      tabId: opened.activeTabId ?? "",
+      url: "http://g-62345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+      watchedPaths: ["/missing/report.html"],
+    };
+
+    const first = manager.replaceLocalHtmlPreview(input);
+    const second = manager.replaceLocalHtmlPreview(input);
+    expect(second).toBe(first);
+    expect(electron.createdWebContents).toHaveLength(1);
+    await vi.waitFor(() => expect(releaseLoad).toBeTypeOf("function"));
+    releaseLoad?.();
+    await expect(first).resolves.toMatchObject({ tabs: [{ url: input.url }] });
+    manager.dispose();
+  });
+
+  it("detects an atomic replacement of a watched HTML source path", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "scient-html-watch-"));
+    const sourcePath = join(directory, "report.html");
+    const replacementPath = join(directory, "report.next.html");
+    await writeFile(sourcePath, "<p>before</p>", "utf8");
+    const manager = new DesktopBrowserManager();
+    try {
+      const opened = manager.open({
+        threadId: THREAD_ID,
+        initialUrl: "http://g-72345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+        kind: "local-html",
+        displayUrl: sourcePath,
+        previewCwd: directory,
+        watchedPaths: [sourcePath],
+      });
+      await writeFile(replacementPath, "<p>after</p>", "utf8");
+      await rename(replacementPath, sourcePath);
+
+      await vi.waitFor(
+        () => {
+          const current = manager.getState({ threadId: THREAD_ID });
+          expect(current.tabs.find((tab) => tab.id === opened.activeTabId)?.sourceChanged).toBe(
+            true,
+          );
+        },
+        { timeout: 2_000 },
+      );
+    } finally {
+      manager.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("keeps same-origin local navigation and denies cross-origin navigation", () => {

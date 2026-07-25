@@ -1912,17 +1912,48 @@ function SingleChatSurface(props: {
           }
           requestImmediateDockHydration("browser");
           openPane(props.threadId, { kind: "browser" });
-          await api.browser.open({
-            threadId: props.threadId,
-            initialUrl: url,
-            kind: browserKind,
-            displayUrl: absolutePath,
-            ...(browserKind === "local-html" &&
+          const allowedExternalUrls =
+            browserKind === "local-html" &&
             prepared.mode === "static-document" &&
             prepared.allowedExternalUrls
-              ? { allowedExternalUrls: prepared.allowedExternalUrls }
-              : {}),
-          });
+              ? prepared.allowedExternalUrls
+              : undefined;
+          const currentBrowserState = await api.browser.getState({ threadId: props.threadId });
+          const existingSourceTab =
+            browserKind === "local-html"
+              ? currentBrowserState.tabs.find(
+                  (tab) =>
+                    tab.kind === "local-html" &&
+                    tab.displayUrl === absolutePath &&
+                    tab.previewCwd === htmlCwd,
+                )
+              : undefined;
+          if (existingSourceTab) {
+            await api.browser.replaceLocalHtmlPreview({
+              threadId: props.threadId,
+              tabId: existingSourceTab.id,
+              url,
+              displayUrl: absolutePath,
+              previewCwd: htmlCwd,
+              watchedPaths: prepared.watchedPaths ?? [absolutePath],
+              ...(allowedExternalUrls ? { allowedExternalUrls } : {}),
+              activate: true,
+            });
+          } else {
+            await api.browser.open({
+              threadId: props.threadId,
+              initialUrl: url,
+              kind: browserKind,
+              displayUrl: absolutePath,
+              ...(browserKind === "local-html"
+                ? {
+                    previewCwd: htmlCwd,
+                    watchedPaths: prepared.watchedPaths ?? [absolutePath],
+                  }
+                : {}),
+              ...(allowedExternalUrls ? { allowedExternalUrls } : {}),
+            });
+          }
           previewUrlToRevoke = null;
         } finally {
           if (previewUrlToRevoke) {

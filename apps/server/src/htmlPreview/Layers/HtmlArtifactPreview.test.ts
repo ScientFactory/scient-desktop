@@ -103,6 +103,14 @@ describe("HtmlArtifactPreviewLive", () => {
       );
       expect(prepared.mode).toBe("static-document");
       expect(prepared.previewUrl).toBeDefined();
+      const canonicalWorkspace = await fs.realpath(workspace);
+      expect(new Set(prepared.watchedPaths)).toEqual(
+        new Set([
+          path.join(canonicalWorkspace, "report.html"),
+          path.join(canonicalWorkspace, "report.css"),
+          path.join(canonicalWorkspace, "paper.png"),
+        ]),
+      );
 
       const document = await requestPreview(prepared.previewUrl!);
       expect(document.status).toBe(200);
@@ -369,6 +377,36 @@ describe("HtmlArtifactPreviewLive", () => {
       const response = await requestPreview(prepared.previewUrl!);
       expect(response.status).toBe(404);
       expect(response.body).not.toContain("Secret");
+    });
+  });
+
+  it("prepares a fresh capability after an atomic save replaces the source inode", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "index.html");
+    const replacementPath = path.join(workspace, "index.next.html");
+    await fs.writeFile(sourcePath, "<p>Before</p>");
+
+    await withPreviewService(async (service) => {
+      const previous = await Effect.runPromise(
+        service.prepare({ cwd: workspace, path: "index.html" }),
+      );
+      await expect(requestPreview(previous.previewUrl!)).resolves.toMatchObject({
+        status: 200,
+        body: expect.stringContaining("Before"),
+      });
+
+      await fs.writeFile(replacementPath, "<p>After</p>");
+      await fs.rename(replacementPath, sourcePath);
+      await expect(requestPreview(previous.previewUrl!)).resolves.toMatchObject({ status: 404 });
+
+      const refreshed = await Effect.runPromise(
+        service.prepare({ cwd: workspace, path: "index.html" }),
+      );
+      expect(refreshed.previewUrl).not.toBe(previous.previewUrl);
+      await expect(requestPreview(refreshed.previewUrl!)).resolves.toMatchObject({
+        status: 200,
+        body: expect.stringContaining("After"),
+      });
     });
   });
 

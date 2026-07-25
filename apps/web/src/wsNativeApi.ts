@@ -140,12 +140,14 @@ function createFallbackTab(
   url = "about:blank",
   kind: BrowserTabKind = "web",
   displayUrl?: string,
+  previewCwd?: string,
 ): BrowserTabState {
   return {
     id: crypto.randomUUID(),
     kind,
     url,
     displayUrl: displayUrl?.trim() || null,
+    ...(kind === "local-html" && previewCwd?.trim() ? { previewCwd: previewCwd.trim() } : {}),
     title: defaultBrowserTitle(url),
     status: "live" as const,
     isLoading: false,
@@ -795,12 +797,23 @@ export function createWsNativeApi(): NativeApi {
           const activeTab = resolveFallbackBrowserTab(state);
           const kind = input.kind ?? "web";
           if (activeTab.kind !== kind) {
-            const tab = createFallbackTab(input.initialUrl, kind, input.displayUrl);
+            const tab = createFallbackTab(
+              input.initialUrl,
+              kind,
+              input.displayUrl,
+              input.previewCwd,
+            );
             state.tabs = [...state.tabs, tab];
             state.activeTabId = tab.id;
           } else {
             activeTab.url = input.initialUrl;
             activeTab.displayUrl = input.displayUrl?.trim() || null;
+            const previewCwd = kind === "local-html" ? input.previewCwd?.trim() : undefined;
+            if (previewCwd) {
+              activeTab.previewCwd = previewCwd;
+            } else {
+              delete activeTab.previewCwd;
+            }
             activeTab.title = defaultBrowserTitle(input.initialUrl);
             activeTab.lastCommittedUrl = input.initialUrl;
           }
@@ -895,6 +908,27 @@ export function createWsNativeApi(): NativeApi {
         }
         return cloneBrowserState(getFallbackBrowserState(input.threadId));
       },
+      replaceLocalHtmlPreview: async (input) => {
+        if (window.desktopBridge) {
+          return window.desktopBridge.browser.replaceLocalHtmlPreview(input);
+        }
+        const state = ensureFallbackBrowserWorkspace(input.threadId);
+        const tab = resolveFallbackBrowserTab(state, input.tabId);
+        tab.url = input.url;
+        tab.displayUrl = input.displayUrl;
+        tab.previewCwd = input.previewCwd;
+        if (input.allowedExternalUrls) {
+          tab.allowedExternalUrls = input.allowedExternalUrls;
+        } else {
+          delete tab.allowedExternalUrls;
+        }
+        tab.title = defaultBrowserTitle(input.url);
+        tab.lastCommittedUrl = input.url;
+        tab.lastError = null;
+        state.activeTabId = tab.id;
+        markFallbackBrowserStateChanged(state);
+        return emitFallbackBrowserState(input.threadId);
+      },
       goBack: async (input) => {
         if (window.desktopBridge) {
           return window.desktopBridge.browser.goBack(input);
@@ -912,7 +946,12 @@ export function createWsNativeApi(): NativeApi {
           return window.desktopBridge.browser.newTab(input);
         }
         const state = ensureFallbackBrowserWorkspace(input.threadId);
-        const tab = createFallbackTab(input.url, input.kind ?? "web", input.displayUrl);
+        const tab = createFallbackTab(
+          input.url,
+          input.kind ?? "web",
+          input.displayUrl,
+          input.previewCwd,
+        );
         state.tabs = [...state.tabs, tab];
         if (input.activate !== false || !state.activeTabId) {
           state.activeTabId = tab.id;

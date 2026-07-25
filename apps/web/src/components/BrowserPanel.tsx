@@ -388,6 +388,8 @@ export function BrowserPanel({
   const previousActiveTabIdRef = useRef<string | null>(null);
   const pendingCreateTabRef = useRef(false);
   const createTabInFlightRef = useRef(false);
+  const localHtmlRefreshTasksRef = useRef(new Map<string, Promise<void>>());
+  const pendingLocalHtmlRefreshesRef = useRef(new Set<string>());
   const htmlPreviewGrantsRef = useRef(
     new Map(
       threadBrowserState?.tabs
@@ -419,6 +421,9 @@ export function BrowserPanel({
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [isCreatingTab, setIsCreatingTab] = useState(false);
+  const [refreshingLocalHtmlSources, setRefreshingLocalHtmlSources] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const browserTabsId = useId();
   const runtimeReady = isLiveRuntime ? workspaceReady : true;
   const activeTab =
@@ -439,7 +444,13 @@ export function BrowserPanel({
     : null;
   const copiedBrowserItem =
     visibleCopyFeedback?.tone === "success" ? visibleCopyFeedback.item : null;
-  const loading = activeTab?.isLoading ?? false;
+  const activeLocalHtmlSourceKey =
+    activeTab?.kind === "local-html" && activeTab.displayUrl && activeTab.previewCwd
+      ? `${activeTab.previewCwd}\0${activeTab.displayUrl}`
+      : null;
+  const loading =
+    (activeTab?.isLoading ?? false) ||
+    (activeLocalHtmlSourceKey ? refreshingLocalHtmlSources.has(activeLocalHtmlSourceKey) : false);
   const activeTabIsBlank = isBlankBrowserTabUrl(activeTab);
   const showLocalServersHome = isLiveRuntime && workspaceReady && (!activeTab || activeTabIsBlank);
   const localServersQuery = useQuery(serverLocalServersQueryOptions(showLocalServersHome));
@@ -504,6 +515,131 @@ export function BrowserPanel({
     [api],
   );
 
+  const refreshLocalHtmlPreview = useCallback(
+    (sourceTab: BrowserTabState): Promise<void> => {
+      if (
+        !api ||
+        sourceTab.kind !== "local-html" ||
+        !sourceTab.displayUrl ||
+        !sourceTab.previewCwd
+      ) {
+        return Promise.reject(new Error("This local HTML preview cannot be refreshed."));
+      }
+      const sourceKey = `${sourceTab.previewCwd}\0${sourceTab.displayUrl}`;
+      const existing = localHtmlRefreshTasksRef.current.get(sourceKey);
+      if (existing) {
+        pendingLocalHtmlRefreshesRef.current.add(sourceKey);
+        return existing;
+      }
+      setRefreshingLocalHtmlSources((current) => new Set(current).add(sourceKey));
+
+      const task = (async () => {
+        do {
+          pendingLocalHtmlRefreshesRef.current.delete(sourceKey);
+          const latestState =
+            useBrowserStateStore.getState().threadStatesByThreadId[threadId] ?? threadBrowserState;
+          const latestTab = latestState?.tabs.find(
+            (tab) =>
+              tab.kind === "local-html" &&
+              tab.displayUrl === sourceTab.displayUrl &&
+              tab.previewCwd === sourceTab.previewCwd,
+          );
+          const displayUrl = latestTab?.displayUrl;
+          const previewCwd = latestTab?.previewCwd;
+          if (!latestTab || !displayUrl || !previewCwd) {
+            return;
+          }
+
+          const prepared = await api.projects.prepareHtmlArtifactPreview({
+            cwd: previewCwd,
+            path: displayUrl,
+          });
+          const replacementUrl = prepared.previewUrl;
+          if (
+            !replacementUrl ||
+            (prepared.mode !== "static-document" && prepared.mode !== "interactive-bundle")
+          ) {
+            throw new Error(
+              prepared.mode === "dev-server-entrypoint"
+                ? "This file now needs its project development server. Reopen it from Files to run it."
+                : (prepared.reason ?? "This HTML file is no longer available for preview."),
+            );
+          }
+
+          try {
+            const nextState = await api.browser.replaceLocalHtmlPreview({
+              threadId,
+              tabId: latestTab.id,
+              url: replacementUrl,
+              displayUrl,
+              previewCwd,
+              watchedPaths: prepared.watchedPaths ?? [displayUrl],
+              ...(prepared.allowedExternalUrls
+                ? { allowedExternalUrls: prepared.allowedExternalUrls }
+                : {}),
+              activate: latestState?.activeTabId === latestTab.id,
+            });
+            const installedRevision = nextState.tabs.find(
+              (tab) =>
+                tab.kind === "local-html" &&
+                tab.displayUrl === displayUrl &&
+                tab.previewCwd === previewCwd,
+            );
+            if (installedRevision?.url !== replacementUrl) {
+              await api.projects
+                .revokeHtmlArtifactPreview({ previewUrl: replacementUrl })
+                .catch(() => ({ revoked: false }));
+            }
+            syncHtmlPreviewGrants(nextState.tabs);
+            upsertThreadState(nextState);
+          } catch (error) {
+            await api.projects
+              .revokeHtmlArtifactPreview({ previewUrl: replacementUrl })
+              .catch(() => ({ revoked: false }));
+            throw error;
+          }
+        } while (pendingLocalHtmlRefreshesRef.current.has(sourceKey));
+      })()
+        .then(() => {
+          setLocalError(null);
+        })
+        .catch((error: unknown) => {
+          setLocalError(
+            error instanceof Error
+              ? error.message
+              : "The local HTML preview could not be refreshed.",
+          );
+          throw error;
+        })
+        .finally(() => {
+          localHtmlRefreshTasksRef.current.delete(sourceKey);
+          setRefreshingLocalHtmlSources((current) => {
+            const next = new Set(current);
+            next.delete(sourceKey);
+            return next;
+          });
+        });
+      localHtmlRefreshTasksRef.current.set(sourceKey, task);
+      return task;
+    },
+    [api, syncHtmlPreviewGrants, threadBrowserState, threadId, upsertThreadState],
+  );
+
+  const reloadBrowserTab = useCallback(
+    async (tab: BrowserTabState): Promise<void> => {
+      if (!api) {
+        return;
+      }
+      if (tab.kind === "local-html") {
+        await refreshLocalHtmlPreview(tab);
+        return;
+      }
+      const nextState = await api.browser.reload({ threadId, tabId: tab.id });
+      upsertThreadState(nextState);
+    },
+    [api, refreshLocalHtmlPreview, threadId, upsertThreadState],
+  );
+
   // Renderer-owned <webview>s are adopted by the desktop manager. Always detach before
   // removing the DOM node so main never keeps a stale webContents runtime.
   const detachRendererBrowserWebview = useCallback(() => {
@@ -542,6 +678,17 @@ export function BrowserPanel({
       upsertThreadState(state);
     });
   }, [api, isLiveRuntime, syncHtmlPreviewGrants, threadId, upsertThreadState]);
+
+  useEffect(() => {
+    if (!isLiveRuntime) {
+      return;
+    }
+    for (const tab of threadBrowserState?.tabs ?? []) {
+      if (tab.kind === "local-html" && tab.sourceChanged) {
+        void refreshLocalHtmlPreview(tab).catch(() => undefined);
+      }
+    }
+  }, [isLiveRuntime, refreshLocalHtmlPreview, threadBrowserState?.tabs]);
 
   useEffect(() => {
     if (!api || !isLiveRuntime) {
@@ -1389,13 +1536,7 @@ export function BrowserPanel({
             onClick={() => {
               if (!ensureLiveRuntime()) return;
               if (!api || !activeTab) return;
-              void runBrowserAction(() =>
-                api.browser.reload({ threadId, tabId: activeTab.id }),
-              ).then((state) => {
-                if (state) {
-                  upsertThreadState(state);
-                }
-              });
+              void runBrowserAction(() => reloadBrowserTab(activeTab));
             }}
           >
             {loading ? (
@@ -1797,11 +1938,7 @@ export function BrowserPanel({
                     size="sm"
                     onClick={() => {
                       if (!api) return;
-                      void runBrowserAction(() =>
-                        api.browser.reload({ threadId, tabId: activeTab.id }),
-                      ).then((state) => {
-                        if (state) upsertThreadState(state);
-                      });
+                      void runBrowserAction(() => reloadBrowserTab(activeTab));
                     }}
                   >
                     <RefreshCwIcon className="size-3.5" aria-hidden="true" />

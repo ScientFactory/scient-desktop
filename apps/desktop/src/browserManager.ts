@@ -4,6 +4,8 @@
 // Depends on: Electron BrowserWindow/WebContentsView, shared browser IPC contracts
 
 import * as Crypto from "node:crypto";
+import { watch, type FSWatcher } from "node:fs";
+import * as Path from "node:path";
 
 import {
   app,
@@ -39,6 +41,7 @@ import type {
   BrowserSetPanelBoundsInput,
   BrowserTabInput,
   BrowserTabKind,
+  BrowserReplaceLocalHtmlPreviewInput,
   BrowserTabState,
   BrowserThreadInput,
   ThreadBrowserState,
@@ -80,6 +83,10 @@ const LOCAL_HTML_DEFAULT_CANVAS_SCRIPT = `(() => {
 
 type BrowserStateListener = (state: ThreadBrowserState) => void;
 type BrowserCopyLinkListener = (event: BrowserCopyLinkEvent) => void;
+interface LocalHtmlSourceWatch {
+  readonly watchers: FSWatcher[];
+  debounceTimer: ReturnType<typeof setTimeout> | null;
+}
 
 interface LiveTabRuntime {
   key: string;
@@ -174,12 +181,14 @@ function createBrowserTab(
   kind: BrowserTabKind = "web",
   displayUrl?: string,
   allowedExternalUrls?: readonly string[],
+  previewCwd?: string,
 ): BrowserTabState {
   return {
     id: Crypto.randomUUID(),
     kind,
     url,
     displayUrl: displayUrl?.trim() || null,
+    ...(kind === "local-html" && previewCwd?.trim() ? { previewCwd: previewCwd.trim() } : {}),
     title: defaultTitleForUrl(url),
     status: SUSPENDED_TAB_STATUS,
     isLoading: false,
@@ -313,6 +322,10 @@ export class DesktopBrowserManager {
   private readonly pendingRuntimeSyncs = new Map<string, PendingRuntimeSync>();
   private readonly listeners = new Set<BrowserStateListener>();
   private readonly copyLinkListeners = new Set<BrowserCopyLinkListener>();
+  private readonly localHtmlSourceWatches = new Map<string, LocalHtmlSourceWatch>();
+  private readonly pendingLocalHtmlHttpErrors = new Map<number, number>();
+  private readonly localHtmlReplacementTasks = new Map<string, Promise<ThreadBrowserState>>();
+  private readonly localHtmlReplacementActivationRequests = new Set<string>();
   // OAuth/sign-in popups opened by pages via `window.open`. Tracked so they can be sized over
   // the panel and torn down cleanly without leaking native windows.
   private readonly popupRuntimes = new Map<BrowserWindow, OAuthPopupRuntime>();
@@ -558,6 +571,91 @@ export class DesktopBrowserManager {
     );
   }
 
+  private clearLocalHtmlSourceWatch(threadId: ThreadId, tabId: string): void {
+    const key = buildRuntimeKey(threadId, tabId);
+    const sourceWatch = this.localHtmlSourceWatches.get(key);
+    if (!sourceWatch) {
+      return;
+    }
+    this.localHtmlSourceWatches.delete(key);
+    if (sourceWatch.debounceTimer) {
+      clearTimeout(sourceWatch.debounceTimer);
+    }
+    for (const watcher of sourceWatch.watchers) {
+      watcher.close();
+    }
+  }
+
+  private configureLocalHtmlSourceWatch(
+    threadId: ThreadId,
+    tab: BrowserTabState,
+    watchedPaths: readonly string[] | undefined,
+  ): void {
+    this.clearLocalHtmlSourceWatch(threadId, tab.id);
+    if (tab.kind !== "local-html" || !tab.displayUrl) {
+      return;
+    }
+
+    const normalizedPaths = new Set(
+      [tab.displayUrl, ...(watchedPaths ?? [])]
+        .filter((sourcePath) => Path.isAbsolute(sourcePath))
+        .map((sourcePath) => Path.normalize(sourcePath)),
+    );
+    const namesByDirectory = new Map<string, Set<string>>();
+    const normalizeWatchName = (name: string) =>
+      process.platform === "win32" ? name.toLocaleLowerCase("en-US") : name;
+    for (const sourcePath of normalizedPaths) {
+      const directory = Path.dirname(sourcePath);
+      const names = namesByDirectory.get(directory) ?? new Set<string>();
+      names.add(normalizeWatchName(Path.basename(sourcePath)));
+      namesByDirectory.set(directory, names);
+    }
+
+    const sourceWatch: LocalHtmlSourceWatch = {
+      watchers: [],
+      debounceTimer: null,
+    };
+    const notifyChanged = () => {
+      if (sourceWatch.debounceTimer) {
+        clearTimeout(sourceWatch.debounceTimer);
+      }
+      sourceWatch.debounceTimer = setTimeout(() => {
+        sourceWatch.debounceTimer = null;
+        const state = this.states.get(threadId);
+        const currentTab = state?.tabs.find((candidate) => candidate.id === tab.id);
+        if (!state || !currentTab) {
+          return;
+        }
+        currentTab.sourceChanged = true;
+        this.markThreadStateChanged(threadId);
+        this.emitState(threadId);
+      }, 300);
+      sourceWatch.debounceTimer.unref();
+    };
+
+    for (const [directory, names] of namesByDirectory) {
+      try {
+        const watcher = watch(directory, { persistent: false }, (_eventType, filename) => {
+          if (filename === null || names.has(normalizeWatchName(filename.toString()))) {
+            notifyChanged();
+          }
+        });
+        watcher.on("error", () => {
+          // A replaced or removed directory invalidates this watcher. The next
+          // successful preview revision rebuilds the complete watch set.
+        });
+        sourceWatch.watchers.push(watcher);
+      } catch {
+        // The source can disappear during an atomic multi-file write. Manual
+        // Reload remains available and a later successful revision watches it again.
+      }
+    }
+
+    if (sourceWatch.watchers.length > 0) {
+      this.localHtmlSourceWatches.set(buildRuntimeKey(threadId, tab.id), sourceWatch);
+    }
+  }
+
   // Options for an OAuth/sign-in popup. Stays on the shared persistent partition and keeps the
   // hardened sandbox; `window.opener` is preserved by Electron because we allow (not deny) the
   // open, which is what lets the auth callback `postMessage`/`window.close()` back to the page.
@@ -759,7 +857,19 @@ export class DesktopBrowserManager {
     this.detachAttachedRuntime();
     this.destroyAllRuntimes();
     this.closeAllPopupWindows();
+    for (const sourceWatch of this.localHtmlSourceWatches.values()) {
+      if (sourceWatch.debounceTimer) {
+        clearTimeout(sourceWatch.debounceTimer);
+      }
+      for (const watcher of sourceWatch.watchers) {
+        watcher.close();
+      }
+    }
+    this.localHtmlSourceWatches.clear();
     this.pendingRuntimeSyncs.clear();
+    this.pendingLocalHtmlHttpErrors.clear();
+    this.localHtmlReplacementTasks.clear();
+    this.localHtmlReplacementActivationRequests.clear();
     this.runtimeLastActiveAtByKey.clear();
     this.previewSessionsConfigured.clear();
     this.previewSessionReady.clear();
@@ -817,6 +927,8 @@ export class DesktopBrowserManager {
       requestedKind,
       input.displayUrl,
       input.allowedExternalUrls,
+      input.previewCwd,
+      input.watchedPaths,
     );
     const didChange = !state.open;
     state.open = true;
@@ -834,6 +946,8 @@ export class DesktopBrowserManager {
         url: nextInitialUrl,
         kind: requestedKind,
         ...(input.displayUrl ? { displayUrl: input.displayUrl } : {}),
+        ...(input.previewCwd ? { previewCwd: input.previewCwd } : {}),
+        ...(input.watchedPaths ? { watchedPaths: input.watchedPaths } : {}),
         ...(input.allowedExternalUrls ? { allowedExternalUrls: input.allowedExternalUrls } : {}),
         activate: true,
       });
@@ -841,7 +955,14 @@ export class DesktopBrowserManager {
     if (nextInitialUrl && activeTab && activeTab.url !== nextInitialUrl) {
       activeTab.displayUrl = input.displayUrl?.trim() || null;
       if (requestedKind === "local-html") {
+        const previewCwd = input.previewCwd?.trim();
+        if (previewCwd) {
+          activeTab.previewCwd = previewCwd;
+        } else {
+          delete activeTab.previewCwd;
+        }
         activeTab.allowedExternalUrls = normalizedLocalHtmlExternalUrls(input.allowedExternalUrls);
+        this.configureLocalHtmlSourceWatch(input.threadId, activeTab, input.watchedPaths);
       }
       return this.navigate({
         threadId: input.threadId,
@@ -895,6 +1016,7 @@ export class DesktopBrowserManager {
     this.lastEmittedVersionByThreadId.delete(input.threadId);
     this.emitState(input.threadId);
     for (const tab of closedPreviewTabs) {
+      this.clearLocalHtmlSourceWatch(input.threadId, tab.id);
       this.clearPreviewSession(input.threadId, tab);
     }
     return this.snapshotThreadState(input.threadId, state);
@@ -1161,6 +1283,124 @@ export class DesktopBrowserManager {
     return this.snapshotThreadState(input.threadId, state);
   }
 
+  replaceLocalHtmlPreview(input: BrowserReplaceLocalHtmlPreviewInput): Promise<ThreadBrowserState> {
+    const key = buildRuntimeKey(input.threadId, input.tabId);
+    if (input.activate !== false) {
+      this.localHtmlReplacementActivationRequests.add(key);
+    }
+    const existing = this.localHtmlReplacementTasks.get(key);
+    if (existing) {
+      return existing;
+    }
+    const task = this.performLocalHtmlPreviewReplacement(input).finally(() => {
+      if (this.localHtmlReplacementTasks.get(key) === task) {
+        this.localHtmlReplacementTasks.delete(key);
+        this.localHtmlReplacementActivationRequests.delete(key);
+      }
+    });
+    this.localHtmlReplacementTasks.set(key, task);
+    return task;
+  }
+
+  private async performLocalHtmlPreviewReplacement(
+    input: BrowserReplaceLocalHtmlPreviewInput,
+  ): Promise<ThreadBrowserState> {
+    const state = this.ensureWorkspace(input.threadId);
+    const previousTabIndex = state.tabs.findIndex((candidate) => candidate.id === input.tabId);
+    const previousTab = state.tabs[previousTabIndex];
+    if (!previousTab || previousTab.kind !== "local-html") {
+      throw new Error("The local HTML preview is no longer available.");
+    }
+
+    const candidateTab = createBrowserTab(
+      normalizeUrlInput(input.url),
+      "local-html",
+      input.displayUrl,
+      input.allowedExternalUrls,
+      input.previewCwd,
+    );
+    this.configureTabSession(input.threadId, candidateTab);
+    const candidateRuntime = this.createLiveRuntime(input.threadId, candidateTab.id, candidateTab);
+    this.runtimes.set(candidateRuntime.key, candidateRuntime);
+
+    try {
+      const partition = browserSessionPartition(candidateTab.kind, input.threadId, candidateTab.id);
+      const previewSessionError = await (this.previewSessionReady.get(partition) ??
+        Promise.resolve(null));
+      if (previewSessionError) {
+        throw previewSessionError;
+      }
+
+      const outcome = await loadBrowserRuntimeUrl({
+        webContents: candidateRuntime.webContents,
+        nextUrl: candidateTab.url,
+        force: true,
+        isCurrent: () => this.runtimes.get(candidateRuntime.key) === candidateRuntime,
+        onLoadStart: () => undefined,
+      });
+      const httpStatus = this.pendingLocalHtmlHttpErrors.get(candidateRuntime.webContents.id);
+      this.pendingLocalHtmlHttpErrors.delete(candidateRuntime.webContents.id);
+      if (httpStatus !== undefined) {
+        throw new Error(`The refreshed local HTML page returned HTTP ${httpStatus}.`);
+      }
+      if (outcome !== "loaded" && outcome !== "unchanged") {
+        throw new Error("The refreshed local HTML page could not be loaded.");
+      }
+
+      const currentTabIndex = state.tabs.findIndex((candidate) => candidate.id === input.tabId);
+      if (currentTabIndex < 0 || state.tabs[currentTabIndex] !== previousTab) {
+        throw new Error("The local HTML preview changed while it was refreshing.");
+      }
+
+      candidateTab.status = LIVE_TAB_STATUS;
+      candidateTab.isLoading = candidateRuntime.webContents.isLoading();
+      candidateTab.lastCommittedUrl =
+        candidateRuntime.webContents.getURL() || candidateTab.lastCommittedUrl || candidateTab.url;
+      const loadedTitle = candidateRuntime.webContents.getTitle();
+      candidateTab.title =
+        loadedTitle && loadedTitle !== ABOUT_BLANK_URL
+          ? loadedTitle
+          : defaultTitleForUrl(candidateTab.url);
+      candidateTab.canGoBack = canWebContentsGoBack(candidateRuntime.webContents);
+      candidateTab.canGoForward = canWebContentsGoForward(candidateRuntime.webContents);
+      candidateTab.lastError = null;
+
+      const replacementKey = buildRuntimeKey(input.threadId, previousTab.id);
+      const shouldActivate =
+        this.localHtmlReplacementActivationRequests.has(replacementKey) ||
+        state.activeTabId === previousTab.id;
+      state.tabs = state.tabs.map((tab, index) => (index === currentTabIndex ? candidateTab : tab));
+      if (shouldActivate) {
+        state.activeTabId = candidateTab.id;
+      }
+
+      this.closePopupWindowsForTab(input.threadId, previousTab.id);
+      this.destroyRuntime(input.threadId, previousTab.id);
+      this.clearLocalHtmlSourceWatch(input.threadId, previousTab.id);
+      this.clearPreviewSession(input.threadId, previousTab);
+      this.configureLocalHtmlSourceWatch(input.threadId, candidateTab, input.watchedPaths);
+
+      syncThreadLastError(state);
+      this.markThreadStateChanged(input.threadId);
+      this.emitState(input.threadId);
+
+      const bounds = this.getVisibleBoundsForThread(input.threadId);
+      if (
+        this.activeThreadId === input.threadId &&
+        state.activeTabId === candidateTab.id &&
+        bounds
+      ) {
+        this.attachRuntime(candidateRuntime, bounds);
+      }
+      return this.snapshotThreadState(input.threadId, state);
+    } catch (error) {
+      this.pendingLocalHtmlHttpErrors.delete(candidateRuntime.webContents.id);
+      this.destroyRuntime(input.threadId, candidateTab.id);
+      this.clearPreviewSession(input.threadId, candidateTab);
+      throw error;
+    }
+  }
+
   goBack(input: BrowserTabInput): ThreadBrowserState {
     const runtime = this.runtimes.get(buildRuntimeKey(input.threadId, input.tabId));
     if (runtime && canWebContentsGoBack(runtime.webContents)) {
@@ -1184,9 +1424,11 @@ export class DesktopBrowserManager {
       input.kind ?? "web",
       input.displayUrl,
       input.allowedExternalUrls,
+      input.previewCwd,
     );
     this.configureTabSession(input.threadId, tab);
     state.tabs = [...state.tabs, tab];
+    this.configureLocalHtmlSourceWatch(input.threadId, tab, input.watchedPaths);
     if (input.activate !== false || !state.activeTabId) {
       state.activeTabId = tab.id;
     }
@@ -1225,6 +1467,7 @@ export class DesktopBrowserManager {
 
     this.closePopupWindowsForTab(input.threadId, input.tabId);
     this.destroyRuntime(input.threadId, input.tabId);
+    this.clearLocalHtmlSourceWatch(input.threadId, input.tabId);
     state.tabs = nextTabs;
     if (closedTab) {
       this.clearPreviewSession(input.threadId, closedTab);
@@ -1819,9 +2062,13 @@ export class DesktopBrowserManager {
     return runtime;
   }
 
-  private createLiveRuntime(threadId: ThreadId, tabId: string): LiveTabRuntime {
+  private createLiveRuntime(
+    threadId: ThreadId,
+    tabId: string,
+    sourceTabOverride?: BrowserTabState,
+  ): LiveTabRuntime {
     const state = this.ensureWorkspace(threadId);
-    const tab = this.resolveTab(state, tabId);
+    const tab = sourceTabOverride ?? this.resolveTab(state, tabId);
     const partition = browserSessionPartition(tab.kind, threadId, tab.id);
     if (tab.kind !== "web") {
       this.configureTabSession(threadId, tab);
@@ -1847,14 +2094,17 @@ export class DesktopBrowserManager {
       ownsWebContents: true,
       listenerDisposers: [],
     };
-    this.configureRuntimeWebContents(runtime);
+    this.configureRuntimeWebContents(runtime, tab);
     return runtime;
   }
 
-  private configureRuntimeWebContents(runtime: LiveTabRuntime): void {
+  private configureRuntimeWebContents(
+    runtime: LiveTabRuntime,
+    sourceTabOverride?: BrowserTabState,
+  ): void {
     const { threadId, tabId, webContents } = runtime;
     const state = this.ensureWorkspace(threadId);
-    const sourceTab = this.getTab(state, tabId);
+    const sourceTab = sourceTabOverride ?? this.getTab(state, tabId);
     const tabKind = sourceTab?.kind ?? "web";
     const artifactOrigin = tabKind === "artifact" ? safeUrlOrigin(sourceTab?.url) : null;
     const localHtmlOrigin = tabKind === "local-html" ? safeUrlOrigin(sourceTab?.url) : null;
@@ -2043,9 +2293,7 @@ export class DesktopBrowserManager {
     });
 
     const didFinishLoad = () => {
-      const state = this.states.get(threadId);
-      const tab = state ? this.getTab(state, tabId) : null;
-      if (tab?.kind === "local-html") {
+      if (tabKind === "local-html") {
         void webContents
           .executeJavaScript(LOCAL_HTML_DEFAULT_CANVAS_SCRIPT, true)
           .catch(() => undefined);
@@ -2332,6 +2580,7 @@ export class DesktopBrowserManager {
       this.emitState(threadId);
       return;
     }
+    this.pendingLocalHtmlHttpErrors.set(webContentsId, statusCode);
   }
 
   private getOrCreateState(threadId: ThreadId): ThreadBrowserState {
@@ -2416,6 +2665,8 @@ export class DesktopBrowserManager {
     kind: BrowserTabKind = "web",
     displayUrl?: string,
     allowedExternalUrls?: readonly string[],
+    previewCwd?: string,
+    watchedPaths?: readonly string[],
   ): ThreadBrowserState {
     this.ensureSessionConfigured();
     const state = this.getOrCreateState(threadId);
@@ -2425,10 +2676,12 @@ export class DesktopBrowserManager {
         kind,
         displayUrl,
         allowedExternalUrls,
+        previewCwd,
       );
       this.configureTabSession(threadId, initialTab);
       state.tabs = [initialTab];
       state.activeTabId = initialTab.id;
+      this.configureLocalHtmlSourceWatch(threadId, initialTab, watchedPaths);
     }
 
     if (!state.activeTabId || !state.tabs.some((tab) => tab.id === state.activeTabId)) {

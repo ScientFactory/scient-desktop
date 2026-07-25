@@ -14,6 +14,7 @@ import type {
   BrowserNavigateInput,
   BrowserNewTabInput,
   BrowserOpenInput,
+  BrowserReplaceLocalHtmlPreviewInput,
   BrowserSetPanelBoundsInput,
   BrowserTabInput,
   BrowserThreadInput,
@@ -39,6 +40,7 @@ export const BROWSER_IPC_CHANNELS = {
   executeCdp: "desktop:browser-execute-cdp",
   navigate: "desktop:browser-navigate",
   reload: "desktop:browser-reload",
+  replaceLocalHtmlPreview: "desktop:browser-replace-local-html-preview",
   goBack: "desktop:browser-go-back",
   goForward: "desktop:browser-go-forward",
   newTab: "desktop:browser-new-tab",
@@ -142,6 +144,13 @@ export function registerBrowserIpcHandlers(
   ipcMain.removeHandler(BROWSER_IPC_CHANNELS.reload);
   ipcMain.handle(BROWSER_IPC_CHANNELS.reload, async (_event, input: BrowserTabInput) =>
     browserManager.reload(input),
+  );
+
+  ipcMain.removeHandler(BROWSER_IPC_CHANNELS.replaceLocalHtmlPreview);
+  ipcMain.handle(
+    BROWSER_IPC_CHANNELS.replaceLocalHtmlPreview,
+    async (_event, input: BrowserReplaceLocalHtmlPreviewInput) =>
+      browserManager.replaceLocalHtmlPreview(input),
   );
 
   ipcMain.removeHandler(BROWSER_IPC_CHANNELS.goBack);
