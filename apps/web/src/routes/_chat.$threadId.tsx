@@ -172,6 +172,7 @@ import {
   DialogTitle,
 } from "../components/ui/dialog";
 import {
+  browserStateOwnsLocalHtmlRevision,
   resolveDockDiffAvailable,
   resolveFilePreviewWorkspaceRoot,
   resolveRoutePanelBootstrap,
@@ -1929,7 +1930,7 @@ function SingleChatSurface(props: {
                 )
               : undefined;
           if (existingSourceTab) {
-            await api.browser.replaceLocalHtmlPreview({
+            const nextBrowserState = await api.browser.replaceLocalHtmlPreview({
               threadId: props.threadId,
               tabId: existingSourceTab.id,
               url,
@@ -1939,8 +1940,17 @@ function SingleChatSurface(props: {
               ...(allowedExternalUrls ? { allowedExternalUrls } : {}),
               activate: true,
             });
+            if (
+              browserStateOwnsLocalHtmlRevision(nextBrowserState, {
+                url,
+                displayUrl: absolutePath,
+                previewCwd: htmlCwd,
+              })
+            ) {
+              previewUrlToRevoke = null;
+            }
           } else {
-            await api.browser.open({
+            const nextBrowserState = await api.browser.open({
               threadId: props.threadId,
               initialUrl: url,
               kind: browserKind,
@@ -1953,8 +1963,16 @@ function SingleChatSurface(props: {
                 : {}),
               ...(allowedExternalUrls ? { allowedExternalUrls } : {}),
             });
+            if (
+              browserStateOwnsLocalHtmlRevision(nextBrowserState, {
+                url,
+                displayUrl: absolutePath,
+                previewCwd: htmlCwd,
+              })
+            ) {
+              previewUrlToRevoke = null;
+            }
           }
-          previewUrlToRevoke = null;
         } finally {
           if (previewUrlToRevoke) {
             await api.projects

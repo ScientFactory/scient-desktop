@@ -635,6 +635,72 @@ describe("DesktopBrowserManager reliability", () => {
     manager.dispose();
   });
 
+  it("does not reactivate a local HTML tab after the user switches away during refresh", async () => {
+    const manager = new DesktopBrowserManager();
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: "http://g-c2345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+      kind: "local-html",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+    });
+    let releaseLoad: (() => void) | undefined;
+    electron.setLoadURLImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseLoad = resolve;
+        }),
+    );
+
+    const replacement = manager.replaceLocalHtmlPreview({
+      threadId: THREAD_ID,
+      tabId: opened.activeTabId ?? "",
+      url: "http://g-d2345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+      watchedPaths: ["/missing/report.html"],
+      activate: true,
+    });
+    await vi.waitFor(() => expect(releaseLoad).toBeTypeOf("function"));
+    const withWebTab = manager.newTab({
+      threadId: THREAD_ID,
+      url: "https://example.com/",
+      kind: "web",
+      activate: true,
+    });
+    const selectedWebTabId = withWebTab.activeTabId;
+    releaseLoad?.();
+
+    const replaced = await replacement;
+    expect(replaced.activeTabId).toBe(selectedWebTabId);
+    expect(replaced.tabs.find((tab) => tab.kind === "local-html")?.url).toContain("g-d2345678");
+    manager.dispose();
+  });
+
+  it("reuses one tab when concurrent callers open the same local HTML source", () => {
+    const manager = new DesktopBrowserManager();
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: "http://g-e2345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+      kind: "local-html",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+    });
+    const deduplicated = manager.newTab({
+      threadId: THREAD_ID,
+      url: "http://g-f2345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+      kind: "local-html",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+      activate: true,
+    });
+
+    expect(deduplicated.tabs).toHaveLength(1);
+    expect(deduplicated.activeTabId).toBe(opened.activeTabId);
+    expect(deduplicated.tabs[0]?.url).toContain("g-e2345678");
+    manager.dispose();
+  });
+
   it("coalesces concurrent replacement requests for the same source tab", async () => {
     const manager = new DesktopBrowserManager();
     const opened = manager.open({

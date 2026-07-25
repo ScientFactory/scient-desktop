@@ -2,6 +2,7 @@ import { ThreadId, TurnId } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  browserStateOwnsLocalHtmlRevision,
   resolveDockDiffAvailable,
   resolveFilePreviewWorkspaceRoot,
   resolveRoutePanelBootstrap,
@@ -73,6 +74,50 @@ describe("resolveDockDiffAvailable", () => {
     expect(resolveDockDiffAvailable({ turnDiffCount: 0, hasWorkingTreeChanges: false })).toBe(
       false,
     );
+  });
+});
+
+describe("browserStateOwnsLocalHtmlRevision", () => {
+  const state = {
+    threadId: THREAD_ID,
+    version: 1,
+    open: true,
+    activeTabId: "preview-a",
+    lastError: null,
+    tabs: [
+      {
+        id: "preview-a",
+        kind: "local-html" as const,
+        url: "http://g-a.preview.localhost:5000/",
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        title: "report.html",
+        status: "live" as const,
+        isLoading: false,
+        canGoBack: false,
+        canGoForward: false,
+        faviconUrl: null,
+        lastCommittedUrl: "http://g-a.preview.localhost:5000/",
+        lastError: null,
+      },
+    ],
+  };
+
+  it("transfers capability ownership only to the exact installed revision", () => {
+    expect(
+      browserStateOwnsLocalHtmlRevision(state, {
+        url: "http://g-a.preview.localhost:5000/",
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+      }),
+    ).toBe(true);
+    expect(
+      browserStateOwnsLocalHtmlRevision(state, {
+        url: "http://g-b.preview.localhost:5000/",
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+      }),
+    ).toBe(false);
   });
 });
 

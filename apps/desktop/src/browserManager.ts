@@ -120,6 +120,8 @@ interface PendingRuntimeSync {
 
 const LIVE_TAB_STATUS: BrowserTabState["status"] = "live";
 const SUSPENDED_TAB_STATUS: BrowserTabState["status"] = "suspended";
+const MAX_LOCAL_HTML_WATCH_DIRECTORIES_PER_TAB = 64;
+const MAX_LOCAL_HTML_WATCH_DIRECTORIES_TOTAL = 256;
 
 function safeUrlOrigin(value: string | null | undefined): string | null {
   if (!value) {
@@ -146,6 +148,30 @@ function normalizedLocalHtmlExternalUrls(values: readonly string[] | undefined):
     }
   }
   return [...normalized];
+}
+
+function normalizedLocalHtmlSourcePath(value: string | null | undefined): string | null {
+  if (!value?.trim() || !Path.isAbsolute(value)) {
+    return null;
+  }
+  const normalized = Path.normalize(value.trim());
+  return process.platform === "win32" ? normalized.toLocaleLowerCase("en-US") : normalized;
+}
+
+function isSameLocalHtmlSource(left: BrowserTabState, right: BrowserTabState): boolean {
+  if (left.kind !== "local-html" || right.kind !== "local-html") {
+    return false;
+  }
+  const leftDisplayUrl = normalizedLocalHtmlSourcePath(left.displayUrl);
+  const rightDisplayUrl = normalizedLocalHtmlSourcePath(right.displayUrl);
+  const leftPreviewCwd = normalizedLocalHtmlSourcePath(left.previewCwd);
+  const rightPreviewCwd = normalizedLocalHtmlSourcePath(right.previewCwd);
+  return (
+    leftDisplayUrl !== null &&
+    leftDisplayUrl === rightDisplayUrl &&
+    leftPreviewCwd !== null &&
+    leftPreviewCwd === rightPreviewCwd
+  );
 }
 
 interface BrowserPerformanceSnapshot {
@@ -633,7 +659,15 @@ export class DesktopBrowserManager {
       sourceWatch.debounceTimer.unref();
     };
 
-    for (const [directory, names] of namesByDirectory) {
+    const existingWatchDirectoryCount = [...this.localHtmlSourceWatches.values()].reduce(
+      (total, existingWatch) => total + existingWatch.watchers.length,
+      0,
+    );
+    const watchDirectoryBudget = Math.min(
+      MAX_LOCAL_HTML_WATCH_DIRECTORIES_PER_TAB,
+      Math.max(0, MAX_LOCAL_HTML_WATCH_DIRECTORIES_TOTAL - existingWatchDirectoryCount),
+    );
+    for (const [directory, names] of [...namesByDirectory].slice(0, watchDirectoryBudget)) {
       try {
         const watcher = watch(directory, { persistent: false }, (_eventType, filename) => {
           if (filename === null || names.has(normalizeWatchName(filename.toString()))) {
@@ -1306,6 +1340,7 @@ export class DesktopBrowserManager {
     input: BrowserReplaceLocalHtmlPreviewInput,
   ): Promise<ThreadBrowserState> {
     const state = this.ensureWorkspace(input.threadId);
+    const activeTabIdAtStart = state.activeTabId;
     const previousTabIndex = state.tabs.findIndex((candidate) => candidate.id === input.tabId);
     const previousTab = state.tabs[previousTabIndex];
     if (!previousTab || previousTab.kind !== "local-html") {
@@ -1365,11 +1400,21 @@ export class DesktopBrowserManager {
       candidateTab.canGoForward = canWebContentsGoForward(candidateRuntime.webContents);
       candidateTab.lastError = null;
 
+      const duplicateTabs = state.tabs.filter(
+        (tab) => tab.id !== previousTab.id && isSameLocalHtmlSource(tab, candidateTab),
+      );
+      const duplicateTabIds = new Set(duplicateTabs.map((tab) => tab.id));
       const replacementKey = buildRuntimeKey(input.threadId, previousTab.id);
+      const sourceIsSelected =
+        state.activeTabId === previousTab.id ||
+        (state.activeTabId !== null && duplicateTabIds.has(state.activeTabId));
       const shouldActivate =
-        this.localHtmlReplacementActivationRequests.has(replacementKey) ||
-        state.activeTabId === previousTab.id;
-      state.tabs = state.tabs.map((tab, index) => (index === currentTabIndex ? candidateTab : tab));
+        sourceIsSelected ||
+        (this.localHtmlReplacementActivationRequests.has(replacementKey) &&
+          state.activeTabId === activeTabIdAtStart);
+      state.tabs = state.tabs
+        .map((tab, index) => (index === currentTabIndex ? candidateTab : tab))
+        .filter((tab) => !duplicateTabIds.has(tab.id));
       if (shouldActivate) {
         state.activeTabId = candidateTab.id;
       }
@@ -1378,6 +1423,12 @@ export class DesktopBrowserManager {
       this.destroyRuntime(input.threadId, previousTab.id);
       this.clearLocalHtmlSourceWatch(input.threadId, previousTab.id);
       this.clearPreviewSession(input.threadId, previousTab);
+      for (const duplicateTab of duplicateTabs) {
+        this.closePopupWindowsForTab(input.threadId, duplicateTab.id);
+        this.destroyRuntime(input.threadId, duplicateTab.id);
+        this.clearLocalHtmlSourceWatch(input.threadId, duplicateTab.id);
+        this.clearPreviewSession(input.threadId, duplicateTab);
+      }
       this.configureLocalHtmlSourceWatch(input.threadId, candidateTab, input.watchedPaths);
 
       syncThreadLastError(state);
@@ -1426,6 +1477,20 @@ export class DesktopBrowserManager {
       input.allowedExternalUrls,
       input.previewCwd,
     );
+    const existingSourceTab =
+      tab.kind === "local-html"
+        ? state.tabs.find((candidate) => isSameLocalHtmlSource(candidate, tab))
+        : undefined;
+    if (existingSourceTab) {
+      this.configureLocalHtmlSourceWatch(input.threadId, existingSourceTab, input.watchedPaths);
+      if (input.activate !== false && state.activeTabId !== existingSourceTab.id) {
+        state.activeTabId = existingSourceTab.id;
+        syncThreadLastError(state);
+        this.markThreadStateChanged(input.threadId);
+        this.emitState(input.threadId);
+      }
+      return this.snapshotThreadState(input.threadId, state);
+    }
     this.configureTabSession(input.threadId, tab);
     state.tabs = [...state.tabs, tab];
     this.configureLocalHtmlSourceWatch(input.threadId, tab, input.watchedPaths);

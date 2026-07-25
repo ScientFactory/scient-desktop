@@ -881,6 +881,138 @@ describe("BrowserPanel interactions", () => {
     expect(useBrowserStateStore.getState().threadStatesByThreadId[THREAD_ID]?.tabs).toHaveLength(1);
   });
 
+  it("keeps interactive HTML network-sealed when Reload prepares a discovered external URL", async () => {
+    const previousUrl = "http://g-72345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const replacementUrl = "http://g-82345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const openState = browserState("tab-source");
+    openState.tabs = [
+      {
+        ...openState.tabs[0]!,
+        id: "tab-source",
+        kind: "local-html",
+        url: previousUrl,
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        lastCommittedUrl: previousUrl,
+      },
+    ];
+    const replacementState: ThreadBrowserState = {
+      ...openState,
+      version: openState.version + 1,
+      activeTabId: "tab-revision",
+      tabs: [
+        {
+          ...openState.tabs[0]!,
+          id: "tab-revision",
+          url: replacementUrl,
+          lastCommittedUrl: replacementUrl,
+        },
+      ],
+    };
+    const replaceLocalHtmlPreview = vi.fn(async () => replacementState);
+    nativeApiTestState.api = {
+      browser: {
+        open: vi.fn(async () => openState),
+        hide: vi.fn(async () => undefined),
+        setPanelBounds: vi.fn(async () => undefined),
+        replaceLocalHtmlPreview,
+        onState: vi.fn(() => () => undefined),
+        onCopyLink: vi.fn(() => () => undefined),
+      },
+      projects: {
+        prepareHtmlArtifactPreview: vi.fn(async () => ({
+          mode: "interactive-bundle" as const,
+          warnings: [],
+          previewUrl: replacementUrl,
+          watchedPaths: ["/workspace/report.html"],
+          allowedExternalUrls: ["https://cdn.example/script.js"],
+        })),
+        revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
+      },
+    } as unknown as NativeApi;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+
+    await renderLivePanel(() => undefined);
+    ((await page.getByRole("button", { name: "Reload" }).element()) as HTMLButtonElement).click();
+
+    await vi.waitFor(() => {
+      expect(replaceLocalHtmlPreview).toHaveBeenCalledWith({
+        threadId: THREAD_ID,
+        tabId: "tab-source",
+        url: replacementUrl,
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        watchedPaths: ["/workspace/report.html"],
+        activate: true,
+      });
+    });
+  });
+
+  it("keeps a background local HTML refresh error scoped to its own tab", async () => {
+    const previewUrl = "http://g-92345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const openState = browserState("tab-1");
+    openState.version = 10;
+    openState.tabs = [
+      openState.tabs[0]!,
+      {
+        ...openState.tabs[1]!,
+        id: "tab-source",
+        kind: "local-html",
+        url: previewUrl,
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        lastCommittedUrl: previewUrl,
+        sourceChanged: true,
+      },
+    ];
+    nativeApiTestState.api = {
+      browser: {
+        open: vi.fn(async () => openState),
+        hide: vi.fn(async () => undefined),
+        setPanelBounds: vi.fn(async () => undefined),
+        replaceLocalHtmlPreview: vi.fn(async () => {
+          throw new Error("The refreshed local HTML page could not be loaded.");
+        }),
+        onState: vi.fn(() => () => undefined),
+        onCopyLink: vi.fn(() => () => undefined),
+      },
+      projects: {
+        prepareHtmlArtifactPreview: vi.fn(async () => ({
+          mode: "static-document" as const,
+          warnings: [],
+          previewUrl: "http://g-a2345678-1234-4123-8123-123456789abc.preview.localhost:5000/",
+          watchedPaths: ["/workspace/report.html"],
+        })),
+        revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
+      },
+    } as unknown as NativeApi;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+
+    await renderLivePanel(() => undefined);
+    await vi.waitFor(() =>
+      expect(nativeApiTestState.api?.browser.replaceLocalHtmlPreview).toHaveBeenCalled(),
+    );
+    expect(
+      page
+        .getByRole("status")
+        .elements()
+        .some((element) => element.textContent?.includes("refreshed")),
+    ).toBe(false);
+
+    useBrowserStateStore.getState().upsertThreadState({
+      ...openState,
+      version: openState.version + 1,
+      activeTabId: "tab-source",
+    });
+    await vi.waitFor(() => {
+      const status = page
+        .getByRole("status")
+        .elements()
+        .find((element) => element.textContent?.includes("refreshed"));
+      expect(status?.textContent).toContain("could not be loaded");
+    });
+  });
+
   it("keeps the previous local HTML grant when a refreshed runtime fails to load", async () => {
     const previousUrl = "http://g-32345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
     const replacementUrl = "http://g-42345678-1234-4123-8123-123456789abc.preview.localhost:5000/";

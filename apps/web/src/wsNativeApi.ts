@@ -925,7 +925,9 @@ export function createWsNativeApi(): NativeApi {
         tab.title = defaultBrowserTitle(input.url);
         tab.lastCommittedUrl = input.url;
         tab.lastError = null;
-        state.activeTabId = tab.id;
+        if (input.activate !== false) {
+          state.activeTabId = tab.id;
+        }
         markFallbackBrowserStateChanged(state);
         return emitFallbackBrowserState(input.threadId);
       },

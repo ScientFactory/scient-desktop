@@ -3,7 +3,12 @@
 // Layer: Route UI logic helpers.
 // Exports: thread title fallback, deep-link bootstrap replay handling, and panel toggle helpers.
 
-import type { ThreadEnvironmentMode, ThreadId, TurnId } from "@synara/contracts";
+import type {
+  ThreadBrowserState,
+  ThreadEnvironmentMode,
+  ThreadId,
+  TurnId,
+} from "@synara/contracts";
 import { resolveThreadWorkspaceCwd } from "@synara/shared/threadEnvironment";
 
 import type { ChatRightPanel, DiffRouteSearch } from "../diffRouteSearch";
@@ -68,6 +73,19 @@ export function resolveDockDiffAvailable(input: {
   readonly hasWorkingTreeChanges: boolean;
 }): boolean {
   return input.turnDiffCount > 0 || input.hasWorkingTreeChanges;
+}
+
+export function browserStateOwnsLocalHtmlRevision(
+  state: ThreadBrowserState,
+  input: { url: string; displayUrl: string; previewCwd: string },
+): boolean {
+  return state.tabs.some(
+    (tab) =>
+      tab.kind === "local-html" &&
+      tab.url === input.url &&
+      tab.displayUrl === input.displayUrl &&
+      tab.previewCwd === input.previewCwd,
+  );
 }
 
 function createRoutePanelSearchKey(input: {

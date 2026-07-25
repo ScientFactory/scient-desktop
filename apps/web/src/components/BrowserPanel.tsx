@@ -420,6 +420,9 @@ export function BrowserPanel({
   const [isAddressFocused, setIsAddressFocused] = useState(false);
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [localHtmlRefreshErrors, setLocalHtmlRefreshErrors] = useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
   const [isCreatingTab, setIsCreatingTab] = useState(false);
   const [refreshingLocalHtmlSources, setRefreshingLocalHtmlSources] = useState<ReadonlySet<string>>(
     () => new Set(),
@@ -455,8 +458,11 @@ export function BrowserPanel({
   const showLocalServersHome = isLiveRuntime && workspaceReady && (!activeTab || activeTabIsBlank);
   const localServersQuery = useQuery(serverLocalServersQueryOptions(showLocalServersHome));
   const activeTabStatus = activeTab?.status ?? "suspended";
+  const activeLocalHtmlRefreshError = activeLocalHtmlSourceKey
+    ? (localHtmlRefreshErrors.get(activeLocalHtmlSourceKey) ?? null)
+    : null;
   const browserChromeStatus = resolveBrowserChromeStatus({
-    localError,
+    localError: activeLocalHtmlRefreshError ?? localError,
     threadLastError: threadBrowserState?.lastError,
     activeTabStatus: showLocalServersHome ? "live" : activeTabStatus,
     hasActiveTab: activeTab !== null,
@@ -574,7 +580,7 @@ export function BrowserPanel({
               displayUrl,
               previewCwd,
               watchedPaths: prepared.watchedPaths ?? [displayUrl],
-              ...(prepared.allowedExternalUrls
+              ...(prepared.mode === "static-document" && prepared.allowedExternalUrls
                 ? { allowedExternalUrls: prepared.allowedExternalUrls }
                 : {}),
               activate: latestState?.activeTabId === latestTab.id,
@@ -601,14 +607,21 @@ export function BrowserPanel({
         } while (pendingLocalHtmlRefreshesRef.current.has(sourceKey));
       })()
         .then(() => {
-          setLocalError(null);
+          setLocalHtmlRefreshErrors((current) => {
+            if (!current.has(sourceKey)) {
+              return current;
+            }
+            const next = new Map(current);
+            next.delete(sourceKey);
+            return next;
+          });
         })
         .catch((error: unknown) => {
-          setLocalError(
+          const message =
             error instanceof Error
               ? error.message
-              : "The local HTML preview could not be refreshed.",
-          );
+              : "The local HTML preview could not be refreshed.";
+          setLocalHtmlRefreshErrors((current) => new Map(current).set(sourceKey, message));
           throw error;
         })
         .finally(() => {
@@ -1536,6 +1549,11 @@ export function BrowserPanel({
             onClick={() => {
               if (!ensureLiveRuntime()) return;
               if (!api || !activeTab) return;
+              if (activeTab.kind === "local-html") {
+                setLocalError(null);
+                void reloadBrowserTab(activeTab).catch(() => undefined);
+                return;
+              }
               void runBrowserAction(() => reloadBrowserTab(activeTab));
             }}
           >
@@ -1874,6 +1892,8 @@ export function BrowserPanel({
           </Button>
           {browserChromeStatus ? (
             <div
+              role="status"
+              aria-live={browserChromeStatus.tone === "error" ? "assertive" : "polite"}
               className={cn(
                 "max-w-[13rem] shrink-0 truncate rounded-full border px-2.5 py-1 text-[11px] leading-none sm:max-w-[16rem]",
                 browserChromeStatus.tone === "error"
@@ -1938,6 +1958,11 @@ export function BrowserPanel({
                     size="sm"
                     onClick={() => {
                       if (!api) return;
+                      if (activeTab.kind === "local-html") {
+                        setLocalError(null);
+                        void reloadBrowserTab(activeTab).catch(() => undefined);
+                        return;
+                      }
                       void runBrowserAction(() => reloadBrowserTab(activeTab));
                     }}
                   >

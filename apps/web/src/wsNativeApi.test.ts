@@ -836,6 +836,37 @@ describe("wsNativeApi", () => {
     expect(nextState.activeTabId).toBeNull();
   });
 
+  it("does not activate a background fallback local HTML replacement", async () => {
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    const threadId = ThreadId.makeUnsafe("thread-background-preview");
+    const opened = await api.browser.open({ threadId, initialUrl: "https://example.com/" });
+    const activeWebTabId = opened.activeTabId;
+    const withPreview = await api.browser.newTab({
+      threadId,
+      url: "http://g-12345678-1234-4123-8123-123456789abc.preview.localhost:5000/",
+      kind: "local-html",
+      displayUrl: "/workspace/report.html",
+      previewCwd: "/workspace",
+      watchedPaths: ["/workspace/report.html"],
+      activate: false,
+    });
+    const previewTab = withPreview.tabs.find((tab) => tab.kind === "local-html");
+
+    const replaced = await api.browser.replaceLocalHtmlPreview({
+      threadId,
+      tabId: previewTab?.id ?? "",
+      url: "http://g-22345678-1234-4123-8123-123456789abc.preview.localhost:5000/",
+      displayUrl: "/workspace/report.html",
+      previewCwd: "/workspace",
+      watchedPaths: ["/workspace/report.html"],
+      activate: false,
+    });
+
+    expect(replaced.activeTabId).toBe(activeWebTabId);
+    expect(replaced.tabs.find((tab) => tab.kind === "local-html")?.url).toContain("g-22345678");
+  });
+
   it("forwards context menu metadata to desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
     Object.defineProperty(getWindowForTest(), "desktopBridge", {
