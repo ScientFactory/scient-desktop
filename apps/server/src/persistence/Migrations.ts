@@ -148,6 +148,11 @@ export const migrationEntries = [
   [59, "ProjectionThreadsForkTitleFamilyRoot", Migration0059],
 ] as const;
 
+for (const migrationEntry of migrationEntries) {
+  Object.freeze(migrationEntry);
+}
+Object.freeze(migrationEntries);
+
 export const makeMigrationLoader = (throughId?: number) =>
   Migrator.fromRecord(
     Object.fromEntries(
