@@ -301,6 +301,7 @@ function runStackedAction(
     action: "commit" | "push" | "create_pr" | "commit_push" | "commit_push_pr";
     actionId?: string;
     commitMessage?: string;
+    expectedBranch?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
   },
@@ -1053,6 +1054,30 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(result.commit.status).toBe("skipped_no_changes");
       expect(result.push.status).toBe("skipped_not_requested");
       expect(result.pr.status).toBe("skipped_not_requested");
+    }),
+  );
+
+  it.effect("rejects a stacked action when the current branch changed after confirmation", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("synara-git-manager-");
+      yield* initRepo(repoDir);
+      fs.writeFileSync(path.join(repoDir, "branch-race.txt"), "keep uncommitted\n");
+
+      const { manager } = yield* makeManager();
+      const errorMessage = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        expectedBranch: "feature/previous",
+      }).pipe(
+        Effect.flip,
+        Effect.map((error) => error.message),
+      );
+
+      expect(errorMessage).toContain("current branch changed");
+      expect(fs.existsSync(path.join(repoDir, "branch-race.txt"))).toBe(true);
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toContain(
+        "branch-race.txt",
+      );
     }),
   );
 

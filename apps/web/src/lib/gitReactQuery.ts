@@ -398,6 +398,7 @@ export function gitRunStackedActionMutationOptions(input: {
     {
       actionId: string;
       action: GitStackedAction;
+      expectedBranch: string;
       commitMessage?: string;
       featureBranch?: boolean;
       filePaths?: string[];
@@ -408,11 +409,16 @@ export function gitRunStackedActionMutationOptions(input: {
     queryClient: input.queryClient,
     mutationKey: gitMutationKeys.runStackedAction(input.cwd),
     unavailableMessage: "Git action is unavailable.",
-    run: (api, cwd, { actionId, action, commitMessage, featureBranch, filePaths }) =>
+    run: (
+      api,
+      cwd,
+      { actionId, action, expectedBranch, commitMessage, featureBranch, filePaths },
+    ) =>
       api.git.runStackedAction({
         actionId,
         cwd,
         action,
+        expectedBranch,
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),

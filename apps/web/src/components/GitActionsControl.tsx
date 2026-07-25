@@ -711,6 +711,11 @@ export default function GitActionsControl({
     }: RunGitActionInput) {
       const actionStatus = statusOverride ?? gitStatusForActions;
       const actionBranch = actionStatus?.branch ?? null;
+      // Every mutating action requires a branch status that branch discovery has independently
+      // confirmed. The server receives the same branch as an execution-time compare-and-set guard.
+      if (!actionStatus || !actionBranch) {
+        return;
+      }
       const actionIsDefaultBranch =
         isDefaultBranchOverride ?? (featureBranch ? false : isDefaultBranch);
       const includesCommit =
@@ -783,6 +788,7 @@ export default function GitActionsControl({
       const promise = runImmediateGitActionMutation.mutateAsync({
         actionId,
         action,
+        expectedBranch: actionBranch,
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
@@ -853,6 +859,13 @@ export default function GitActionsControl({
     if (!pendingDefaultBranchAction) return;
     const { action, commitMessage, forcePushOnlyProgress, filePaths } = pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
+    if (gitStatusForActions?.branch !== pendingDefaultBranchAction.branchName) {
+      transientAlertManager.add({
+        title: "Git branch changed",
+        description: "No action was run. Review the current branch and try again.",
+      });
+      return;
+    }
     void runGitAction({
       action,
       ...(commitMessage ? { commitMessage } : {}),
@@ -860,13 +873,21 @@ export default function GitActionsControl({
       ...(filePaths ? { filePaths } : {}),
       ...(requiresFeatureBranchForDefaultBranchAction(action) ? { featureBranch: true } : {}),
       skipDefaultBranchPrompt: true,
+      statusOverride: gitStatusForActions,
     });
-  }, [pendingDefaultBranchAction, runGitAction]);
+  }, [gitStatusForActions, pendingDefaultBranchAction, runGitAction]);
 
   const checkoutFeatureBranchAndContinuePendingAction = useCallback(() => {
     if (!pendingDefaultBranchAction) return;
     const { action, commitMessage, forcePushOnlyProgress, filePaths } = pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
+    if (gitStatusForActions?.branch !== pendingDefaultBranchAction.branchName) {
+      transientAlertManager.add({
+        title: "Git branch changed",
+        description: "No action was run. Review the current branch and try again.",
+      });
+      return;
+    }
     void runGitAction({
       action,
       ...(commitMessage ? { commitMessage } : {}),
@@ -874,8 +895,9 @@ export default function GitActionsControl({
       ...(filePaths ? { filePaths } : {}),
       featureBranch: true,
       skipDefaultBranchPrompt: true,
+      statusOverride: gitStatusForActions,
     });
-  }, [pendingDefaultBranchAction, runGitAction]);
+  }, [gitStatusForActions, pendingDefaultBranchAction, runGitAction]);
 
   const runDialogActionOnNewBranch = useCallback(() => {
     if (!isCommitDialogOpen) return;

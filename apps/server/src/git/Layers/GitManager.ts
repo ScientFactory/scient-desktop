@@ -2537,6 +2537,12 @@ The local stash entry was kept for recovery.`,
 
       const runAction = Effect.gen(function* () {
         const initialStatus = yield* gitCore.statusDetails(input.cwd);
+        if (input.expectedBranch && initialStatus.branch !== input.expectedBranch) {
+          return yield* gitManagerError(
+            "runStackedAction",
+            `The current branch changed from '${input.expectedBranch}' to '${initialStatus.branch ?? "detached HEAD"}'. Review the current branch and try again.`,
+          );
+        }
         const textGenerationParams: GitTextGenerationParams = {
           textGenerationModel: input.textGenerationModel,
           textGenerationModelSelection: input.textGenerationModelSelection,

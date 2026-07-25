@@ -2064,7 +2064,7 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
           }
         }
 
-        const localBranches = localBranchResult.stdout
+        let localBranches = localBranchResult.stdout
           .split("\n")
           .map(parseBranchLine)
           .filter((branch): branch is { name: string; current: boolean } => branch !== null)
@@ -2085,6 +2085,43 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
             if (aLastCommit !== bLastCommit) return bLastCommit - aLastCommit;
             return a.name.localeCompare(b.name);
           });
+
+        // `git branch` prints no rows before the first commit, even though HEAD already names the
+        // unborn branch. Resolve that uncommon state separately so clients can safely distinguish
+        // it from detached HEAD without adding another Git process to the normal branch-list path.
+        if (!localBranches.some((branch) => branch.current)) {
+          const currentBranchResult = yield* executeGit(
+            "GitCore.listBranches.currentBranch",
+            input.cwd,
+            ["branch", "--show-current"],
+            {
+              timeoutMs: 5_000,
+              allowNonZeroExit: true,
+            },
+          ).pipe(Effect.catch(() => Effect.succeed({ code: 1, stdout: "", stderr: "" })));
+          const currentBranch =
+            currentBranchResult.code === 0 ? currentBranchResult.stdout.trim() : "";
+          if (currentBranch.length > 0) {
+            const existingCurrentBranch = localBranches.find(
+              (branch) => branch.name === currentBranch,
+            );
+            localBranches = existingCurrentBranch
+              ? localBranches.map((branch) => ({
+                  ...branch,
+                  current: branch.name === currentBranch,
+                }))
+              : [
+                  {
+                    name: currentBranch,
+                    current: true,
+                    isRemote: false,
+                    isDefault: currentBranch === defaultBranch,
+                    worktreePath: worktreeMap.get(currentBranch) ?? null,
+                  },
+                  ...localBranches,
+                ];
+          }
+        }
 
         const remoteBranches =
           remoteBranchResult.code === 0

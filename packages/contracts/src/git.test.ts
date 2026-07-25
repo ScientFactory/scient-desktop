@@ -81,6 +81,17 @@ describe("GitRunStackedActionInput", () => {
     expect(parsed.action).toBe("commit");
   });
 
+  it("accepts an expected branch for execution-time authority checks", () => {
+    const parsed = decodeRunStackedActionInput({
+      actionId: "action-branch-authority",
+      cwd: "/repo",
+      action: "commit_push",
+      expectedBranch: "main",
+    });
+
+    expect(parsed.expectedBranch).toBe("main");
+  });
+
   it("accepts an optional codexHomePath for git text generation", () => {
     const parsed = decodeRunStackedActionInput({
       actionId: "action-2",

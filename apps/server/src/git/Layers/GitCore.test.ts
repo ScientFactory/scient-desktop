@@ -238,6 +238,19 @@ it.layer(TestLayer)("git integration", (it) => {
       }),
     );
 
+    it.effect("returns the unborn branch as current before the first commit", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithoutCommit(tmp);
+        const expectedBranch = yield* git(tmp, ["branch", "--show-current"]);
+
+        const result = yield* (yield* GitCore).listBranches({ cwd: tmp });
+
+        expect(result.isRepo).toBe(true);
+        expect(result.branches.find((branch) => branch.current)?.name).toBe(expectedBranch);
+      }),
+    );
+
     it.effect("does not include detached HEAD pseudo-refs as branches", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
