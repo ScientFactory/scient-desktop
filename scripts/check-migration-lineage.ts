@@ -4,8 +4,9 @@
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const migrationsSourcePath = "apps/server/src/persistence/Migrations.ts";
@@ -34,6 +35,14 @@ export interface ReleasedIdentityAllowance {
   readonly releasedName: string;
   readonly currentName: string;
 }
+
+export interface LocalDependencyClosure {
+  readonly contents: ReadonlyMap<string, string>;
+  readonly problems: readonly string[];
+}
+
+export type ReadRepositoryFile = (path: string) => string | undefined;
+export type LocalPackageEntrypoints = ReadonlyMap<string, string>;
 
 /**
  * This rename shipped before the guard existed. Scient already repairs exactly
@@ -178,6 +187,219 @@ export function findReleasedIdentityViolations(
 
 const canonicalText = (contents: string): string => contents.replaceAll("\r\n", "\n");
 
+const sourceModuleExtensions = new Set([
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+]);
+const extensionlessResolutionSuffixes = [
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  ".json",
+  "/index.ts",
+  "/index.tsx",
+  "/index.mts",
+  "/index.cts",
+  "/index.js",
+  "/index.jsx",
+  "/index.mjs",
+  "/index.cjs",
+] as const;
+
+function collectStaticModuleSpecifiers(
+  source: string,
+  path: string,
+): {
+  readonly specifiers: readonly string[];
+  readonly problems: readonly string[];
+} {
+  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
+  const parseDiagnostics = (
+    sourceFile as ts.SourceFile & {
+      readonly parseDiagnostics?: readonly ts.Diagnostic[];
+    }
+  ).parseDiagnostics;
+  const problems = (parseDiagnostics ?? []).map(
+    (diagnostic) =>
+      `${path} has invalid syntax: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, " ")}`,
+  );
+  const specifiers: string[] = [];
+
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isImportDeclaration(node) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteralLike(node.moduleSpecifier) &&
+      !node.importClause?.isTypeOnly &&
+      !(
+        node.importClause?.namedBindings &&
+        ts.isNamedImports(node.importClause.namedBindings) &&
+        node.importClause.namedBindings.elements.length > 0 &&
+        node.importClause.namedBindings.elements.every((element) => element.isTypeOnly)
+      )
+    ) {
+      specifiers.push(node.moduleSpecifier.text);
+    } else if (
+      ts.isExportDeclaration(node) &&
+      !node.isTypeOnly &&
+      node.moduleSpecifier &&
+      ts.isStringLiteralLike(node.moduleSpecifier)
+    ) {
+      specifiers.push(node.moduleSpecifier.text);
+    } else if (
+      ts.isImportEqualsDeclaration(node) &&
+      ts.isExternalModuleReference(node.moduleReference)
+    ) {
+      const expression = node.moduleReference.expression;
+      if (expression && ts.isStringLiteralLike(expression)) specifiers.push(expression.text);
+    } else if (
+      ts.isCallExpression(node) &&
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) && node.expression.text === "require"))
+    ) {
+      problems.push(
+        `${path} uses ${node.expression.kind === ts.SyntaxKind.ImportKeyword ? "dynamic import()" : "require()"}; migration dependencies must be statically resolvable.`,
+      );
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return { specifiers, problems };
+}
+
+function resolveLocalDependency(
+  importerPath: string,
+  specifier: string,
+  readFile: ReadRepositoryFile,
+  localPackageEntrypoints: LocalPackageEntrypoints,
+): { readonly path?: string; readonly problem?: string } {
+  if (specifier.startsWith("/")) {
+    return {
+      problem: `${importerPath} imports absolute path ${JSON.stringify(specifier)}.`,
+    };
+  }
+  if (!specifier.startsWith("./") && !specifier.startsWith("../")) {
+    const localPackagePath = localPackageEntrypoints.get(specifier);
+    if (localPackagePath) {
+      return readFile(localPackagePath) === undefined
+        ? {
+            problem:
+              `${importerPath} workspace import ${JSON.stringify(specifier)} resolves to ` +
+              `missing ${localPackagePath}.`,
+          }
+        : { path: localPackagePath };
+    }
+    if (
+      specifier.startsWith("@synara/") ||
+      specifier.startsWith("@scientfactory/") ||
+      specifier === "effect-acp" ||
+      specifier.startsWith("effect-acp/")
+    ) {
+      return {
+        problem:
+          `${importerPath} workspace import ${JSON.stringify(specifier)} has no pinned ` +
+          "repository-local entrypoint.",
+      };
+    }
+    return {};
+  }
+
+  const candidateBase = posix.normalize(posix.join(posix.dirname(importerPath), specifier));
+  if (candidateBase === ".." || candidateBase.startsWith("../")) {
+    return {
+      problem: `${importerPath} local import ${JSON.stringify(specifier)} escapes the repository.`,
+    };
+  }
+
+  const suffixes = posix.extname(candidateBase) ? ([""] as const) : extensionlessResolutionSuffixes;
+  const matches = suffixes
+    .map((suffix) => `${candidateBase}${suffix}`)
+    .filter((candidate) => readFile(candidate) !== undefined);
+  if (matches.length === 0) {
+    return {
+      problem: `${importerPath} local import ${JSON.stringify(specifier)} could not be resolved.`,
+    };
+  }
+  if (matches.length > 1) {
+    return {
+      problem:
+        `${importerPath} local import ${JSON.stringify(specifier)} is ambiguous: ` +
+        matches.join(", "),
+    };
+  }
+  return { path: matches[0]! };
+}
+
+export function buildLocalDependencyClosure(
+  entryPaths: readonly string[],
+  sourceReader: ReadRepositoryFile,
+  localPackageEntrypoints: LocalPackageEntrypoints = new Map(),
+): LocalDependencyClosure {
+  const contents = new Map<string, string>();
+  const problems: string[] = [];
+  const readCache = new Map<string, string | undefined>();
+  const readFile = (path: string): string | undefined => {
+    if (!readCache.has(path)) readCache.set(path, sourceReader(path));
+    return readCache.get(path);
+  };
+  const pending = [...entryPaths];
+
+  while (pending.length > 0) {
+    const path = pending.pop()!;
+    if (contents.has(path)) continue;
+    const source = readFile(path);
+    if (source === undefined) {
+      problems.push(`Migration dependency ${path} could not be read.`);
+      continue;
+    }
+    contents.set(path, source);
+    if (!sourceModuleExtensions.has(posix.extname(path))) continue;
+
+    const parsed = collectStaticModuleSpecifiers(source, path);
+    problems.push(...parsed.problems);
+    for (const specifier of parsed.specifiers) {
+      const resolved = resolveLocalDependency(path, specifier, readFile, localPackageEntrypoints);
+      if (resolved.problem) problems.push(resolved.problem);
+      if (resolved.path && !contents.has(resolved.path)) pending.push(resolved.path);
+    }
+  }
+
+  return { contents, problems };
+}
+
+export function findReleasedDependencyViolations(
+  releasedContents: ReadonlyMap<string, string>,
+  currentContents: ReadonlyMap<string, string>,
+  migrationModulePaths: ReadonlySet<string> = new Set(),
+): string[] {
+  const problems: string[] = [];
+  for (const [path, releasedContent] of releasedContents) {
+    if (migrationModulePaths.has(path)) continue;
+    const currentContent = currentContents.get(path);
+    if (currentContent === undefined) {
+      problems.push(`Released migration dependency ${path} was deleted or is no longer reachable.`);
+    } else if (canonicalText(currentContent) !== canonicalText(releasedContent)) {
+      problems.push(`Released migration dependency ${path} was modified.`);
+    }
+  }
+  for (const path of currentContents.keys()) {
+    if (migrationModulePaths.has(path) || releasedContents.has(path)) continue;
+    problems.push(`Released migration dependency closure gained ${path}.`);
+  }
+  return problems;
+}
+
 export function findReleasedContentViolations(
   released: readonly MigrationEntry[],
   currentContents: ReadonlyMap<string, string>,
@@ -203,8 +425,14 @@ export function findReleasedContentViolations(
   return problems;
 }
 
-function git(args: readonly string[]): { readonly status: number; readonly stdout: string } {
-  const result = spawnSync("git", [...args], { cwd: repoRoot, encoding: "utf8" });
+function git(args: readonly string[]): {
+  readonly status: number;
+  readonly stdout: string;
+} {
+  const result = spawnSync("git", [...args], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
   return { status: result.status ?? 1, stdout: result.stdout ?? "" };
 }
 
@@ -296,8 +524,10 @@ function main(): void {
 
   const currentContents = new Map<string, string>();
   const releasedContents = new Map<string, string>();
+  const migrationModulePaths = new Set<string>();
   for (const entry of contentBaseline.catalog.entries) {
     const moduleName = migrationModuleName(entry.id, entry.name);
+    migrationModulePaths.add(`${migrationsDirectoryPath}/${moduleName}`);
     try {
       currentContents.set(
         moduleName,
@@ -318,7 +548,42 @@ function main(): void {
     currentContents,
     releasedContents,
   ).map((problem) => `${problem} (baseline: ${contentBaseline.tag})`);
-  const problems = [...identityProblems, ...contentProblems];
+
+  const readCurrentFile: ReadRepositoryFile = (path) => {
+    try {
+      return readFileSync(resolve(repoRoot, path), "utf8");
+    } catch {
+      return undefined;
+    }
+  };
+  const localPackageEntrypoints: LocalPackageEntrypoints = new Map([
+    // Migration 35 imports only MODEL_OPTIONS_BY_PROVIDER. Point directly at
+    // its defining module so unrelated barrel exports do not become frozen.
+    ["@synara/contracts", "packages/contracts/src/model.ts"],
+  ]);
+  const releasedClosure = buildLocalDependencyClosure(
+    [...migrationModulePaths],
+    (path) => showFile(contentBaseline.tag, path),
+    localPackageEntrypoints,
+  );
+  const currentClosure = buildLocalDependencyClosure(
+    [...migrationModulePaths],
+    readCurrentFile,
+    localPackageEntrypoints,
+  );
+  const dependencyProblems = [
+    ...releasedClosure.problems.map(
+      (problem) =>
+        `Released dependency graph is unsafe: ${problem} (baseline: ${contentBaseline.tag})`,
+    ),
+    ...currentClosure.problems.map((problem) => `Current dependency graph is unsafe: ${problem}`),
+    ...findReleasedDependencyViolations(
+      releasedClosure.contents,
+      currentClosure.contents,
+      migrationModulePaths,
+    ).map((problem) => `${problem} (baseline: ${contentBaseline.tag})`),
+  ];
+  const problems = [...identityProblems, ...contentProblems, ...dependencyProblems];
   if (problems.length > 0) {
     fail(problems);
     return;
@@ -326,7 +591,8 @@ function main(): void {
 
   console.log(
     `Scient migration lineage passed: ${currentCatalog.entries.length} contiguous migrations; ` +
-      `${checkedTags} official release tags checked; shipped content matches ${contentBaseline.tag}.`,
+      `${checkedTags} official release tags checked; shipped migration code and local dependencies ` +
+      `match ${contentBaseline.tag}.`,
   );
 }
 

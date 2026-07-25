@@ -1,7 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
 
 import {
+  buildLocalDependencyClosure,
   findCurrentStructureViolations,
+  findReleasedDependencyViolations,
   findReleasedContentViolations,
   findReleasedIdentityViolations,
   parseMigrationCatalog,
@@ -76,7 +78,11 @@ describe("Scient migration lineage guard", () => {
         [],
       ),
       [
-        { id: 1, releasedName: "CreateProjects", currentName: "CreateProjectsV2" },
+        {
+          id: 1,
+          releasedName: "CreateProjects",
+          currentName: "CreateProjectsV2",
+        },
         { id: 2, releasedName: "AddThreadState", currentName: null },
       ],
     );
@@ -84,10 +90,18 @@ describe("Scient migration lineage guard", () => {
 
   it("allows only Scient's exact, already-repaired migration 32 rename", () => {
     const released = [
-      { id: 32, name: "ReconcileLegacyT3SchemaImport", importName: "Migration0032" },
+      {
+        id: 32,
+        name: "ReconcileLegacyT3SchemaImport",
+        importName: "Migration0032",
+      },
     ];
     const current = [
-      { id: 32, name: "ReconcileImportedSchemaLineage", importName: "Migration0032" },
+      {
+        id: 32,
+        name: "ReconcileImportedSchemaLineage",
+        importName: "Migration0032",
+      },
     ];
 
     assert.deepEqual(findReleasedIdentityViolations(released, current), []);
@@ -126,5 +140,70 @@ describe("Scient migration lineage guard", () => {
       ),
       [],
     );
+  });
+
+  it("freezes repository-local transitive dependencies of released migrations", () => {
+    const releasedFiles = new Map([
+      ["Migrations/001_CreateProjects.ts", 'import { helper } from "./schemaHelpers.ts";\n'],
+      ["Migrations/schemaHelpers.ts", 'export { normalize } from "../normalize.ts";\n'],
+      ["normalize.ts", 'export { model } from "@synara/contracts";\n'],
+      ["packages/contracts/src/model.ts", "export const model = 'released';\n"],
+    ]);
+    const currentFiles = new Map(releasedFiles);
+    currentFiles.set(
+      "Migrations/schemaHelpers.ts",
+      'export { normalize } from "../normalize.ts";\nexport const helper = "changed";\n',
+    );
+    currentFiles.set("packages/contracts/src/model.ts", "export const model = 'changed';\n");
+    const localPackages = new Map([["@synara/contracts", "packages/contracts/src/model.ts"]]);
+
+    const released = buildLocalDependencyClosure(
+      ["Migrations/001_CreateProjects.ts"],
+      (path) => releasedFiles.get(path),
+      localPackages,
+    );
+    const current = buildLocalDependencyClosure(
+      ["Migrations/001_CreateProjects.ts"],
+      (path) => currentFiles.get(path),
+      localPackages,
+    );
+
+    assert.deepEqual(released.problems, []);
+    assert.deepEqual(current.problems, []);
+    assert.deepEqual(
+      findReleasedDependencyViolations(
+        released.contents,
+        current.contents,
+        new Set(["Migrations/001_CreateProjects.ts"]),
+      ),
+      [
+        "Released migration dependency Migrations/schemaHelpers.ts was modified.",
+        "Released migration dependency packages/contracts/src/model.ts was modified.",
+      ],
+    );
+  });
+
+  it("fails closed for unresolved, escaping, ambiguous, or dynamic local dependencies", () => {
+    const files = new Map([
+      [
+        "Migrations/001_CreateProjects.ts",
+        [
+          'import "./missing.ts";',
+          'import "../../../outside.ts";',
+          'import "./ambiguous";',
+          'const module = import("./dynamic.ts");',
+        ].join("\n"),
+      ],
+      ["Migrations/ambiguous.ts", "export {};\n"],
+      ["Migrations/ambiguous/index.ts", "export {};\n"],
+    ]);
+    const closure = buildLocalDependencyClosure(["Migrations/001_CreateProjects.ts"], (path) =>
+      files.get(path),
+    );
+
+    assert.isTrue(closure.problems.some((problem) => problem.includes("could not be resolved")));
+    assert.isTrue(closure.problems.some((problem) => problem.includes("escapes the repository")));
+    assert.isTrue(closure.problems.some((problem) => problem.includes("is ambiguous")));
+    assert.isTrue(closure.problems.some((problem) => problem.includes("dynamic import()")));
   });
 });
