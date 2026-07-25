@@ -20,6 +20,7 @@ import {
   hasPackagedStartupProof,
   isScientWindowsExecutable,
   parsePackagedDesktopStartupArgs,
+  readPackagedDesktopLogTail,
   readPackagedBackendProcessIds,
   resolveExactPackagedDesktopStartupAsset,
   resolveNativePackagedDesktopPlatform,
@@ -226,6 +227,34 @@ describe("packaged desktop startup verification", () => {
       }),
     ).resolves.toBeUndefined();
     expect(now).toBeGreaterThanOrEqual(1_000);
+  });
+
+  it("rejects startup proof when the process handle closes before the exit event arrives", async () => {
+    let now = 0;
+    await expect(
+      waitForPackagedStartupProof({
+        timeoutMs: 5_000,
+        hasProof: () => true,
+        readOutcome: () => ({ exited: null, launchError: null }),
+        isProcessAlive: () => now < 1_000,
+        now: () => now,
+        delay: async (milliseconds) => {
+          now += milliseconds;
+        },
+      }),
+    ).rejects.toThrow("process handle is closed");
+  });
+
+  it("keeps a bounded diagnostic tail from a failed packaged startup log", () => {
+    const root = mkdtempSync(join(tmpdir(), "scient-packaged-log-tail-test-"));
+    temporaryRoots.push(root);
+    const logPath = join(root, "desktop-main.log");
+    writeFileSync(logPath, "discarded-prefix\nrenderer main process gone reason=crashed");
+
+    const tail = readPackagedDesktopLogTail(logPath, 49);
+    expect(tail.length).toBeLessThanOrEqual(49);
+    expect(tail).toContain("renderer main process gone reason=crashed");
+    expect(readPackagedDesktopLogTail(join(root, "missing.log"))).toBe("");
   });
 
   it("targets a live Windows root once and fails when its complete tree survives", async () => {

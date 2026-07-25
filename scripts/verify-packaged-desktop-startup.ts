@@ -527,10 +527,20 @@ export interface PackagedDesktopChildOutcome {
   readonly launchError: Error | null;
 }
 
+export function readPackagedDesktopLogTail(logPath: string, maxCharacters = 200_000): string {
+  try {
+    return readFileSync(logPath, "utf8").slice(-maxCharacters).trim();
+  } catch {
+    return "";
+  }
+}
+
 interface PackagedStartupProofWaitOptions {
   readonly timeoutMs: number;
   readonly hasProof: () => boolean;
   readonly readOutcome: () => PackagedDesktopChildOutcome;
+  /** Authoritative process-handle probe used when exit events lag behind OS state. */
+  readonly isProcessAlive?: () => boolean;
   readonly now?: () => number;
   readonly delay?: (milliseconds: number) => Promise<void>;
   readonly stableForMs?: number;
@@ -540,6 +550,7 @@ export async function waitForPackagedStartupProof({
   timeoutMs,
   hasProof,
   readOutcome,
+  isProcessAlive = () => true,
   now = Date.now,
   delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds)),
   stableForMs = 1_000,
@@ -556,10 +567,24 @@ export async function waitForPackagedStartupProof({
         `Packaged app exited before stable startup proof (code=${outcome.exited.code ?? "null"}, signal=${outcome.exited.signal ?? "null"}).`,
       );
     }
+    if (!isProcessAlive()) {
+      throw new Error(
+        "Packaged app exited before stable startup proof (process handle is closed).",
+      );
+    }
     const currentTime = now();
     if (hasProof()) {
       proofObservedAt ??= currentTime;
-      if (currentTime - proofObservedAt >= stableForMs) return;
+      if (currentTime - proofObservedAt >= stableForMs) {
+        // Recheck at the acceptance boundary: Windows can close the process
+        // handle before Node delivers the asynchronous `exit` event.
+        if (!isProcessAlive()) {
+          throw new Error(
+            "Packaged app exited before stable startup proof (process handle is closed).",
+          );
+        }
+        return;
+      }
     } else {
       proofObservedAt = null;
     }
@@ -592,11 +617,13 @@ export async function verifyPackagedDesktopStartup(
 
   let child: ChildProcess | null = null;
   let environment: NodeJS.ProcessEnv | null = null;
+  let logPath: string | null = null;
   let output = "";
   try {
     const launch = prepareLaunch(options, extractionRoot);
     environment = createPackagedDesktopSmokeEnvironment(join(temporaryRoot, "state"), options);
-    const logPath = resolvePackagedDesktopLogPath(environment);
+    const launchLogPath = resolvePackagedDesktopLogPath(environment);
+    logPath = launchLogPath;
     child = spawn(launch.command, [...launch.args], {
       cwd: launch.cwd,
       env: environment,
@@ -623,17 +650,26 @@ export async function verifyPackagedDesktopStartup(
 
     await waitForPackagedStartupProof({
       timeoutMs: options.timeoutMs,
-      hasProof: () => hasPackagedStartupProof(logPath),
+      hasProof: () => hasPackagedStartupProof(launchLogPath),
       readOutcome: () => childOutcome,
+      isProcessAlive: () => childProcessHandleIsAlive(child!),
     });
     console.log(
       `Packaged ${options.platform}/${options.arch} startup smoke passed from isolated Scient state.`,
     );
   } catch (error) {
     const detail = output.trim() ? `\nPackaged process output:\n${output.trim()}` : "";
-    throw new Error(`${error instanceof Error ? error.message : String(error)}${detail}`, {
-      cause: error,
-    });
+    let logDetail = "";
+    if (logPath) {
+      const boundedLog = readPackagedDesktopLogTail(logPath);
+      if (boundedLog) logDetail = `\nPackaged desktop log tail:\n${boundedLog}`;
+    }
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)}${detail}${logDetail}`,
+      {
+        cause: error,
+      },
+    );
   } finally {
     try {
       if (child) {
