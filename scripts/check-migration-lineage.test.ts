@@ -394,6 +394,57 @@ describe("Scient migration lineage guard", () => {
     ]);
   });
 
+  it("accepts equivalent pinned barrel specifier spellings", () => {
+    const releasedFiles = new Map([
+      [
+        "persistence/modelSelectionCompatibility.ts",
+        'import { MODEL_OPTIONS_BY_PROVIDER } from "@synara/contracts";\n',
+      ],
+      ["contracts/package.json", '{"exports":{".":{"import":"./index.ts"}}}\n'],
+      ["contracts/index.ts", 'export { MODEL_OPTIONS_BY_PROVIDER } from "./model";\n'],
+      ["contracts/model.ts", "export const MODEL_OPTIONS_BY_PROVIDER = {};\n"],
+    ]);
+    const currentFiles = new Map(releasedFiles);
+    currentFiles.set(
+      "contracts/index.ts",
+      'export { MODEL_OPTIONS_BY_PROVIDER } from "./model.ts";\n',
+    );
+    const pins = new Map<string, PinnedWorkspaceImport>([
+      [
+        pinnedWorkspaceImportKey(
+          "persistence/modelSelectionCompatibility.ts",
+          "@synara/contracts",
+          "import:MODEL_OPTIONS_BY_PROVIDER",
+        ),
+        {
+          resolutionEvidence: [
+            { kind: "package-root-import", path: "contracts/package.json" },
+            {
+              kind: "named-barrel-export",
+              path: "contracts/index.ts",
+              exportName: "MODEL_OPTIONS_BY_PROVIDER",
+            },
+          ],
+          runtimeSourcePath: "contracts/model.ts",
+        },
+      ],
+    ]);
+    const released = buildLocalDependencyClosure(
+      ["persistence/modelSelectionCompatibility.ts"],
+      (path) => releasedFiles.get(path),
+      pins,
+    );
+    const current = buildLocalDependencyClosure(
+      ["persistence/modelSelectionCompatibility.ts"],
+      (path) => currentFiles.get(path),
+      pins,
+    );
+
+    assert.deepEqual(released.problems, []);
+    assert.deepEqual(current.problems, []);
+    assert.deepEqual(findReleasedDependencyViolations(released.contents, current.contents), []);
+  });
+
   it("ignores unrelated package metadata and unrelated barrel exports", () => {
     const releasedFiles = new Map([
       [

@@ -423,7 +423,7 @@ function namedBarrelExportFingerprint(
               `does not resolve runtime source binding ${sourceBinding}.`,
           );
         }
-        sources.push(`${sourceBinding}:${specifier}`);
+        sources.push(`${sourceBinding}:${targetPath}`);
       }
       continue;
     }
@@ -438,7 +438,7 @@ function namedBarrelExportFingerprint(
     const targetPath = resolved.dependencies?.[0]?.path;
     const targetSource = targetPath ? readFile(targetPath) : undefined;
     if (targetPath && targetSource && declaresRuntimeExport(targetSource, targetPath, exportName)) {
-      sources.push(`${exportName}:${specifier}`);
+      sources.push(`${exportName}:${targetPath}`);
     }
   }
   if (sources.length === 0) {
