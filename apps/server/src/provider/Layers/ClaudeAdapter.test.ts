@@ -464,7 +464,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("scopes pre-session agent discovery and caching to the Claude executable", () => {
+  it.effect("scopes and refreshes pre-session agent discovery", () => {
     const queries: FakeClaudeQuery[] = [];
     const discoveryContexts: Array<{
       executable: string | undefined;
@@ -476,12 +476,17 @@ describe("ClaudeAdapterLive", () => {
         const executable = input.options.pathToClaudeCodeExecutable;
         const cwd = input.options.cwd;
         discoveryContexts.push({ executable, cwd });
+        const matchingProjectDiscoveryCount = discoveryContexts.filter(
+          (context) => context.executable === "/managed/claude-a" && context.cwd === "/tmp/project",
+        ).length;
         Object.assign(query, {
           supportedAgents: async () => [
             {
               name:
                 executable === "/managed/claude-a" && cwd === "/tmp/project"
-                  ? "agent-a"
+                  ? matchingProjectDiscoveryCount === 1
+                    ? "agent-a"
+                    : "agent-a-refreshed"
                   : executable === "/managed/claude-b"
                     ? "agent-b"
                     : "agent-other-cwd",
@@ -519,7 +524,7 @@ describe("ClaudeAdapterLive", () => {
         cwd: "/tmp/other-project",
         binaryPath: "/managed/claude-a",
       });
-      const firstCached = yield* adapter.listAgents({
+      const firstRefreshed = yield* adapter.listAgents({
         provider: "claudeAgent",
         cwd: "/tmp/project",
         binaryPath: "/managed/claude-a",
@@ -529,6 +534,7 @@ describe("ClaudeAdapterLive", () => {
         { executable: "/managed/claude-a", cwd: "/tmp/project" },
         { executable: "/managed/claude-b", cwd: "/tmp/project" },
         { executable: "/managed/claude-a", cwd: "/tmp/other-project" },
+        { executable: "/managed/claude-a", cwd: "/tmp/project" },
       ]);
       assert.deepEqual(
         first.agents.map((agent) => agent.name),
@@ -545,14 +551,14 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(first.cached, false);
       assert.equal(second.cached, false);
       assert.equal(otherCwd.cached, false);
-      assert.equal(firstCached.cached, true);
+      assert.equal(firstRefreshed.cached, false);
       assert.deepEqual(
-        firstCached.agents.map((agent) => agent.name),
-        ["agent-a"],
+        firstRefreshed.agents.map((agent) => agent.name),
+        ["agent-a-refreshed"],
       );
       assert.deepEqual(
         queries.map((query) => query.closeCalls),
-        [1, 1, 1],
+        [1, 1, 1, 1],
       );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -5022,10 +5028,13 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("closes an uninstalled Claude query when post-spawn setup fails", () => {
+  it.effect("does not probe discovery metadata while starting a real session", () => {
     const query = new FakeClaudeQuery();
     (query as { supportedModels: () => Promise<[]> }).supportedModels = () => {
-      throw new Error("simulated post-spawn setup failure");
+      throw new Error("session start must not probe model discovery");
+    };
+    (query as { supportedAgents: () => Promise<[]> }).supportedAgents = () => {
+      throw new Error("session start must not probe agent discovery");
     };
     const layer = makeClaudeAdapterLive({ createQuery: () => query }).pipe(
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
@@ -5034,18 +5043,17 @@ describe("ClaudeAdapterLive", () => {
 
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
-      const result = yield* Effect.exit(
-        adapter.startSession({
-          threadId: THREAD_ID,
-          provider: "claudeAgent",
-          runtimeMode: "full-access",
-        }),
-      );
+      const result = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
 
-      assert.ok(Exit.isFailure(result));
-      assert.equal(query.closeCalls, 1);
-      assert.equal(yield* adapter.hasSession(THREAD_ID), false);
-      assert.equal((yield* adapter.listSessions()).length, 0);
+      assert.equal(result.threadId, THREAD_ID);
+      assert.equal(query.closeCalls, 0);
+      assert.equal(yield* adapter.hasSession(THREAD_ID), true);
+      assert.equal((yield* adapter.listSessions()).length, 1);
+      yield* adapter.stopAll();
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(layer),

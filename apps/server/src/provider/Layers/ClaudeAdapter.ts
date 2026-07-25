@@ -1478,9 +1478,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
 
     const sessions = new Map<ThreadId, ClaudeSessionContext>();
     const sessionLifecycleLocks = new Map<ThreadId, Semaphore.Semaphore>();
-    const modelsCache = new Map<string, ProviderListModelsResult>();
     const pendingModelDiscoveries = new Map<string, Promise<ProviderListModelsResult>>();
-    const agentsCache = new Map<string, ProviderListAgentsResult>();
     const pendingAgentDiscoveries = new Map<string, Promise<ProviderListAgentsResult>>();
     const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
 
@@ -3829,47 +3827,6 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         let installationComplete = false;
 
         return yield* Effect.gen(function* () {
-          // Populate the exact executable/cwd model cache in background from first session.
-          const modelCacheKey = JSON.stringify({
-            cwd: input.cwd ?? serverConfig.cwd,
-            binaryPath: providerOptions?.binaryPath ?? "claude",
-          });
-          if (!modelsCache.has(modelCacheKey)) {
-            queryRuntime
-              .supportedModels()
-              .then((models) => {
-                modelsCache.set(modelCacheKey, {
-                  models: models.map(mapClaudeModelInfo),
-                  source: "sdk",
-                  cached: false,
-                });
-              })
-              .catch(() => {
-                /* ignore discovery failures */
-              });
-          }
-
-          // Populate the same executable/cwd-scoped agent cache used by discovery.
-          if (!agentsCache.has(modelCacheKey)) {
-            queryRuntime
-              .supportedAgents()
-              .then((agents) => {
-                agentsCache.set(modelCacheKey, {
-                  agents: agents.map((a) => ({
-                    name: a.name,
-                    displayName: a.name,
-                    ...(a.description ? { description: a.description } : {}),
-                    ...(a.model ? { model: a.model } : {}),
-                  })),
-                  source: "sdk",
-                  cached: false,
-                });
-              })
-              .catch(() => {
-                /* ignore discovery failures */
-              });
-          }
-
           const session: ProviderSession = {
             threadId,
             provider: PROVIDER,
@@ -4601,9 +4558,6 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         const cwd = input.cwd ?? serverConfig.cwd;
         const binaryPath = input.binaryPath ?? "claude";
         const cacheKey = JSON.stringify({ cwd, binaryPath });
-        const cached = modelsCache.get(cacheKey);
-        if (cached) return { ...cached, cached: true };
-
         const claudeSdkEnv = yield* resolveClaudeSdkEnv;
         const existing = pendingModelDiscoveries.get(cacheKey);
         const discovery =
@@ -4627,7 +4581,6 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             }),
           ),
         );
-        modelsCache.set(cacheKey, result);
         return result;
       });
 
@@ -4636,9 +4589,6 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         const cwd = input.cwd ?? serverConfig.cwd;
         const binaryPath = input.binaryPath ?? "claude";
         const cacheKey = JSON.stringify({ cwd, binaryPath });
-        const cached = agentsCache.get(cacheKey);
-        if (cached) return { ...cached, cached: true };
-
         const claudeSdkEnv = yield* resolveClaudeSdkEnv;
         const existing = pendingAgentDiscoveries.get(cacheKey);
         const discovery =
@@ -4662,7 +4612,6 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             }),
           ),
         );
-        agentsCache.set(cacheKey, result);
         return result;
       });
 
