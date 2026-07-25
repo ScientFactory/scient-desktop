@@ -160,6 +160,8 @@ describe("Scient migration lineage guard", () => {
         "apps/server/src/persistence/modelSelectionCompatibility.ts",
         'import { MODEL_OPTIONS_BY_PROVIDER } from "@synara/contracts";\nexport const normalize = MODEL_OPTIONS_BY_PROVIDER;\n',
       ],
+      ["packages/contracts/package.json", '{"exports":{".":{"import":"./src/index.ts"}}}\n'],
+      ["packages/contracts/src/index.ts", 'export * from "./model.ts";\n'],
       ["packages/contracts/src/model.ts", "export const model = 'released';\n"],
     ]);
     const currentFiles = new Map(releasedFiles);
@@ -175,7 +177,10 @@ describe("Scient migration lineage guard", () => {
           "@synara/contracts",
           "import:MODEL_OPTIONS_BY_PROVIDER",
         ),
-        "packages/contracts/src/model.ts",
+        {
+          resolutionPaths: ["packages/contracts/package.json", "packages/contracts/src/index.ts"],
+          runtimeSourcePath: "packages/contracts/src/model.ts",
+        },
       ],
     ]);
 
@@ -215,6 +220,8 @@ describe("Scient migration lineage guard", () => {
         "persistence/anotherCompatibility.ts",
         'import { MODEL_OPTIONS_BY_PROVIDER } from "@synara/contracts";\n',
       ],
+      ["contracts/package.json", "{}\n"],
+      ["contracts/index.ts", 'export * from "./model.ts";\n'],
       ["contracts/model.ts", "export {};\n"],
     ]);
     const pins = new Map([
@@ -224,7 +231,10 @@ describe("Scient migration lineage guard", () => {
           "@synara/contracts",
           "import:MODEL_OPTIONS_BY_PROVIDER",
         ),
-        "contracts/model.ts",
+        {
+          resolutionPaths: ["contracts/package.json", "contracts/index.ts"],
+          runtimeSourcePath: "contracts/model.ts",
+        },
       ],
     ]);
 
@@ -249,6 +259,65 @@ describe("Scient migration lineage guard", () => {
         problem.includes("import:MODEL_OPTIONS_BY_PROVIDER) has no exact pinned"),
       ),
     );
+  });
+
+  it("freezes the package manifest and barrel that resolve a pinned workspace import", () => {
+    const releasedFiles = new Map([
+      [
+        "persistence/modelSelectionCompatibility.ts",
+        'import { MODEL_OPTIONS_BY_PROVIDER } from "@synara/contracts";\n',
+      ],
+      ["contracts/package.json", '{"exports":{".":"./index.ts"}}\n'],
+      ["contracts/index.ts", 'export { MODEL_OPTIONS_BY_PROVIDER } from "./model.ts";\n'],
+      ["contracts/model.ts", "export const MODEL_OPTIONS_BY_PROVIDER = {};\n"],
+    ]);
+    const currentFiles = new Map(releasedFiles);
+    currentFiles.set("contracts/package.json", '{"exports":{".":"./redirect.ts"}}\n');
+    currentFiles.set(
+      "contracts/index.ts",
+      'export { MODEL_OPTIONS_BY_PROVIDER } from "./redirect.ts";\n',
+    );
+    const pins = new Map([
+      [
+        pinnedWorkspaceImportKey(
+          "persistence/modelSelectionCompatibility.ts",
+          "@synara/contracts",
+          "import:MODEL_OPTIONS_BY_PROVIDER",
+        ),
+        {
+          resolutionPaths: ["contracts/package.json", "contracts/index.ts"],
+          runtimeSourcePath: "contracts/model.ts",
+        },
+      ],
+    ]);
+    const released = buildLocalDependencyClosure(
+      ["persistence/modelSelectionCompatibility.ts"],
+      (path) => releasedFiles.get(path),
+      pins,
+    );
+    const current = buildLocalDependencyClosure(
+      ["persistence/modelSelectionCompatibility.ts"],
+      (path) => currentFiles.get(path),
+      pins,
+    );
+
+    assert.deepEqual(released.problems, []);
+    assert.deepEqual(current.problems, []);
+    assert.deepEqual(findReleasedDependencyViolations(released.contents, current.contents), [
+      "Released migration dependency contracts/index.ts was modified.",
+      "Released migration dependency contracts/package.json was modified.",
+    ]);
+  });
+
+  it("keeps a runtime default import when every named companion is type-only", () => {
+    const files = new Map([
+      ["migration.ts", 'import RuntimeDefault, { type Metadata } from "./helper.ts";\n'],
+      ["helper.ts", "export default 1;\n"],
+    ]);
+    const closure = buildLocalDependencyClosure(["migration.ts"], (path) => files.get(path));
+
+    assert.deepEqual(closure.problems, []);
+    assert.isTrue(closure.contents.has("helper.ts"));
   });
 
   it("fails closed for unresolved, escaping, ambiguous, or dynamic local dependencies", () => {

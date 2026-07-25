@@ -42,7 +42,13 @@ export interface LocalDependencyClosure {
 }
 
 export type ReadRepositoryFile = (path: string) => string | undefined;
-export type PinnedWorkspaceImports = ReadonlyMap<string, string>;
+export interface PinnedWorkspaceImport {
+  /** Files whose exact content declares the package-to-source resolution chain. */
+  readonly resolutionPaths: readonly string[];
+  /** The runtime source to traverse after the declaration chain is frozen. */
+  readonly runtimeSourcePath: string;
+}
+export type PinnedWorkspaceImports = ReadonlyMap<string, PinnedWorkspaceImport>;
 
 interface StaticModuleReference {
   readonly specifier: string;
@@ -258,6 +264,7 @@ function collectStaticModuleSpecifiers(
       !(
         node.importClause?.namedBindings &&
         ts.isNamedImports(node.importClause.namedBindings) &&
+        !node.importClause.name &&
         node.importClause.namedBindings.elements.length > 0 &&
         node.importClause.namedBindings.elements.every((element) => element.isTypeOnly)
       )
@@ -325,7 +332,13 @@ function resolveLocalDependency(
   reference: StaticModuleReference,
   readFile: ReadRepositoryFile,
   pinnedWorkspaceImports: PinnedWorkspaceImports,
-): { readonly path?: string; readonly problem?: string } {
+): {
+  readonly dependencies?: readonly {
+    readonly path: string;
+    readonly traverse: boolean;
+  }[];
+  readonly problem?: string;
+} {
   const { specifier } = reference;
   if (specifier.startsWith("/")) {
     return {
@@ -333,17 +346,28 @@ function resolveLocalDependency(
     };
   }
   if (!specifier.startsWith("./") && !specifier.startsWith("../")) {
-    const localPackagePath = pinnedWorkspaceImports.get(
+    const pinnedWorkspaceImport = pinnedWorkspaceImports.get(
       pinnedWorkspaceImportKey(importerPath, specifier, reference.bindingKey),
     );
-    if (localPackagePath) {
-      return readFile(localPackagePath) === undefined
-        ? {
-            problem:
-              `${importerPath} workspace import ${JSON.stringify(specifier)} resolves to ` +
-              `missing ${localPackagePath}.`,
-          }
-        : { path: localPackagePath };
+    if (pinnedWorkspaceImport) {
+      const paths = [
+        ...pinnedWorkspaceImport.resolutionPaths,
+        pinnedWorkspaceImport.runtimeSourcePath,
+      ];
+      const missingPath = paths.find((path) => readFile(path) === undefined);
+      if (missingPath) {
+        return {
+          problem:
+            `${importerPath} workspace import ${JSON.stringify(specifier)} resolves through ` +
+            `missing ${missingPath}.`,
+        };
+      }
+      return {
+        dependencies: paths.map((path) => ({
+          path,
+          traverse: path === pinnedWorkspaceImport.runtimeSourcePath,
+        })),
+      };
     }
     if (
       specifier.startsWith("@synara/") ||
@@ -383,7 +407,7 @@ function resolveLocalDependency(
         matches.join(", "),
     };
   }
-  return { path: matches[0]! };
+  return { dependencies: [{ path: matches[0]!, traverse: true }] };
 }
 
 export function buildLocalDependencyClosure(
@@ -398,25 +422,33 @@ export function buildLocalDependencyClosure(
     if (!readCache.has(path)) readCache.set(path, sourceReader(path));
     return readCache.get(path);
   };
-  const pending = [...entryPaths];
+  const pending = entryPaths.map((path) => ({ path, traverse: true }));
+  const traversed = new Set<string>();
 
   while (pending.length > 0) {
-    const path = pending.pop()!;
-    if (contents.has(path)) continue;
+    const dependency = pending.pop()!;
+    const { path } = dependency;
     const source = readFile(path);
     if (source === undefined) {
       problems.push(`Migration dependency ${path} could not be read.`);
       continue;
     }
     contents.set(path, source);
-    if (!sourceModuleExtensions.has(posix.extname(path))) continue;
+    if (
+      !dependency.traverse ||
+      traversed.has(path) ||
+      !sourceModuleExtensions.has(posix.extname(path))
+    ) {
+      continue;
+    }
+    traversed.add(path);
 
     const parsed = collectStaticModuleSpecifiers(source, path);
     problems.push(...parsed.problems);
     for (const reference of parsed.references) {
       const resolved = resolveLocalDependency(path, reference, readFile, pinnedWorkspaceImports);
       if (resolved.problem) problems.push(resolved.problem);
-      if (resolved.path && !contents.has(resolved.path)) pending.push(resolved.path);
+      if (resolved.dependencies) pending.push(...resolved.dependencies);
     }
   }
 
@@ -608,7 +640,10 @@ function main(): void {
         "@synara/contracts",
         "import:MODEL_OPTIONS_BY_PROVIDER",
       ),
-      "packages/contracts/src/model.ts",
+      {
+        resolutionPaths: ["packages/contracts/package.json", "packages/contracts/src/index.ts"],
+        runtimeSourcePath: "packages/contracts/src/model.ts",
+      },
     ],
   ]);
   const releasedClosure = buildLocalDependencyClosure(
