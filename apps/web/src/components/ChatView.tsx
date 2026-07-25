@@ -2126,9 +2126,6 @@ export default function ChatView({
   const featureFlags = useFeatureFlags();
   const showDebugTaskBanner = import.meta.env.DEV && featureFlags["show-debug-task-banner"];
   const serverConfigQuery = useQuery(serverConfigQueryOptions());
-  const claudeProviderVersion =
-    serverConfigQuery.data?.providers.find((provider) => provider.provider === "claudeAgent")
-      ?.version ?? null;
   const composerModelHintByProvider = useMemo<Record<ProviderKind, string | null>>(() => {
     const threadModelSelection = activeThread?.modelSelection ?? null;
     const projectModelSelection = activeProject?.defaultModelSelection ?? null;
@@ -2160,13 +2157,20 @@ export default function ChatView({
     activeProjectCwd: activeProject?.cwd ?? null,
     serverCwd: serverConfigQuery.data?.cwd ?? null,
   });
+  const claudeDiscoveryEnabled =
+    selectedProvider === "claudeAgent" ||
+    lockedProvider === "claudeAgent" ||
+    pendingProviderSelection === "claudeAgent" ||
+    isModelPickerOpen;
   const claudeDynamicModelsQuery = useQuery(
     providerModelsQueryOptions({
       provider: "claudeAgent",
       binaryPath: settings.claudeBinaryPath || null,
       cwd: providerModelDiscoveryCwd,
+      enabled: claudeDiscoveryEnabled,
     }),
   );
+  const claudeProviderVersion = claudeDynamicModelsQuery.data?.runtimeVersion ?? null;
   const codexDynamicModelsQuery = useQuery(providerModelsQueryOptions({ provider: "codex" }));
   const openCodeModelDiscoveryEnabled =
     selectedProvider === "opencode" ||
@@ -2260,6 +2264,7 @@ export default function ChatView({
       provider: "claudeAgent",
       binaryPath: settings.claudeBinaryPath || null,
       cwd: providerModelDiscoveryCwd,
+      enabled: claudeDiscoveryEnabled,
     }),
   );
   const codexDynamicAgentsQuery = useQuery(providerAgentsQueryOptions({ provider: "codex" }));

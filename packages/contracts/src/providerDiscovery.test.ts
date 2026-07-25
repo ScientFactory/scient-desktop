@@ -20,9 +20,11 @@ describe("ProviderListModelsResult", () => {
         },
       ],
       source: "droid-acp",
+      runtimeVersion: "2.1.219",
     });
 
     expect(result.models[0]?.description).toBe("0.4x Factory token rate");
     expect(result.models[1]?.description).toBeUndefined();
+    expect(result.runtimeVersion).toBe("2.1.219");
   });
 });

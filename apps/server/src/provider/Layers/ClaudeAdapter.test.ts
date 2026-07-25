@@ -369,6 +369,105 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect(
+    "does not retain completed command discovery across exact cwd and binary queries",
+    () => {
+      const harness = makeMultiQueryHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        if (!adapter.listCommands) {
+          return assert.fail("Claude adapter should support command discovery.");
+        }
+
+        yield* adapter.listCommands({
+          provider: "claudeAgent",
+          cwd: "/tmp/claude-command-cache",
+          binaryPath: "/managed/claude-a",
+        });
+        yield* adapter.listCommands({
+          provider: "claudeAgent",
+          cwd: "/tmp/claude-command-cache",
+          binaryPath: "/managed/claude-b",
+        });
+        yield* adapter.listCommands({
+          provider: "claudeAgent",
+          cwd: "/tmp/claude-command-cache",
+          binaryPath: "/managed/claude-a",
+        });
+
+        assert.deepEqual(
+          harness.createInputs.map((input) => input.options.pathToClaudeCodeExecutable),
+          ["/managed/claude-a", "/managed/claude-b", "/managed/claude-a"],
+        );
+        assert.deepEqual(
+          harness.createInputs.map((input) => input.options.cwd),
+          ["/tmp/claude-command-cache", "/tmp/claude-command-cache", "/tmp/claude-command-cache"],
+        );
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect("keeps in-flight discovery owned after one deduplicated waiter is interrupted", () => {
+    let resolveCommands: (
+      commands: Array<{ name: string; description: string; argumentHint: string }>,
+    ) => void = () => undefined;
+    const commands = new Promise<
+      Array<{ name: string; description: string; argumentHint: string }>
+    >((resolve) => {
+      resolveCommands = resolve;
+    });
+    const queries: Array<FakeClaudeQuery> = [];
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => {
+        const query = new FakeClaudeQuery();
+        (
+          query as {
+            supportedCommands: () => Promise<
+              Array<{ name: string; description: string; argumentHint: string }>
+            >;
+          }
+        ).supportedCommands = () => commands;
+        queries.push(query);
+        return query;
+      },
+    }).pipe(
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-command-inflight", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listCommands) {
+        return assert.fail("Claude adapter should support command discovery.");
+      }
+      const input = {
+        provider: "claudeAgent" as const,
+        cwd: "/tmp/claude-command-inflight",
+        binaryPath: "/managed/claude",
+      };
+
+      const first = yield* adapter.listCommands(input).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      const second = yield* adapter.listCommands(input).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(first);
+      const third = yield* adapter.listCommands(input).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      assert.equal(queries.length, 1);
+      resolveCommands([]);
+      yield* Fiber.join(second);
+      yield* Fiber.join(third);
+      assert.equal(queries.length, 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
   it.effect("closes an isolated temporary command query after discovery failure", () => {
     const harness = makeHarness();
     (
@@ -440,7 +539,13 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("uses the configured Claude executable for pre-session model discovery", () => {
-    const harness = makeHarness();
+    const versionProbeInputs: Array<{ executable: string; cwd: string }> = [];
+    const harness = makeHarness({
+      resolveClaudeVersion: ({ executable, cwd }) => {
+        versionProbeInputs.push({ executable, cwd });
+        return Effect.succeed("2.1.219");
+      },
+    });
     (harness.query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels =
       async () => [
         {
@@ -480,6 +585,10 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(harness.getLastCreateQueryInput()?.options.permissionMode, "plan");
       assert.equal(harness.getLastCreateQueryInput()?.options.persistSession, false);
       assert.equal(harness.query.closeCalls, 1);
+      assert.equal(result.runtimeVersion, "2.1.219");
+      assert.deepEqual(versionProbeInputs, [
+        { executable: "/managed/claude-models", cwd: "/tmp/claude-model-discovery" },
+      ]);
       assert.deepEqual(result.models, [
         {
           slug: "opus[1m]",
@@ -4625,10 +4734,10 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("retries a transient failed Opus 5 version probe on the live session", () => {
+  it.effect("does not authorize a live Opus 5 switch from a replaced on-disk executable", () => {
     let probes = 0;
     const harness = makeHarness({
-      resolveClaudeVersion: () => Effect.succeed(++probes === 1 ? null : "2.1.219"),
+      resolveClaudeVersion: () => Effect.succeed(++probes === 1 ? "2.1.218" : "2.1.219"),
     });
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -4647,13 +4756,11 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       };
 
-      const first = yield* adapter.sendTurn(input).pipe(Effect.result);
-      assert.equal(first._tag, "Failure");
-      const second = yield* adapter.sendTurn(input).pipe(Effect.result);
+      const result = yield* adapter.sendTurn(input).pipe(Effect.result);
 
-      assert.equal(second._tag, "Success");
-      assert.equal(probes, 2);
-      assert.deepEqual(harness.query.setModelCalls, ["claude-opus-5"]);
+      assert.equal(result._tag, "Failure");
+      assert.equal(probes, 1);
+      assert.deepEqual(harness.query.setModelCalls, []);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

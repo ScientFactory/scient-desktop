@@ -20,7 +20,6 @@ import {
   providerAgentsQueryOptions,
   providerModelsQueryOptions,
 } from "../lib/providerDiscoveryReactQuery";
-import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import {
   filterProviderModelOptionsForRuntime,
   mergeDynamicModelOptions,
@@ -66,18 +65,15 @@ export function useProviderModelCatalog(input: {
   const discoveryCwd = input.cwd ?? null;
   const { settings } = useAppSettings();
   const customModelsByProvider = useMemo(() => getCustomModelsByProvider(settings), [settings]);
-  const serverConfigQuery = useQuery(serverConfigQueryOptions());
-  const claudeProviderVersion =
-    serverConfigQuery.data?.providers.find((provider) => provider.provider === "claudeAgent")
-      ?.version ?? null;
-
   const claudeDynamicModelsQuery = useQuery(
     providerModelsQueryOptions({
       provider: "claudeAgent",
       binaryPath: settings.claudeBinaryPath || null,
       cwd: discoveryCwd,
+      enabled: selectedProvider === "claudeAgent" || discoveryEnabled,
     }),
   );
+  const claudeProviderVersion = claudeDynamicModelsQuery.data?.runtimeVersion ?? null;
   const codexDynamicModelsQuery = useQuery(providerModelsQueryOptions({ provider: "codex" }));
   const cursorDynamicModelsQuery = useQuery(
     providerModelsQueryOptions({
@@ -144,7 +140,7 @@ export function useProviderModelCatalog(input: {
       provider: "claudeAgent",
       binaryPath: settings.claudeBinaryPath || null,
       cwd: discoveryCwd,
-      enabled: selectedProvider === "claudeAgent",
+      enabled: selectedProvider === "claudeAgent" || discoveryEnabled,
     }),
   );
   const codexDynamicAgentsQuery = useQuery(
