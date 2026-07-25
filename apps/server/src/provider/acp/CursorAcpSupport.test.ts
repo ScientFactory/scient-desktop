@@ -124,6 +124,7 @@ describe("buildCursorAcpSpawnInput", () => {
       args: ["acp"],
       cwd: "/tmp/project",
       env: {
+        NO_OPEN_BROWSER: "true",
         NO_BROWSER: "true",
         BROWSER: "www-browser",
       },
@@ -136,6 +137,7 @@ describe("buildCursorAcpSpawnInput", () => {
       args: ["acp"],
       cwd: "/tmp/project",
       env: {
+        NO_OPEN_BROWSER: "true",
         NO_BROWSER: "true",
         BROWSER: "www-browser",
       },
@@ -154,6 +156,7 @@ describe("buildCursorAcpSpawnInput", () => {
       args: ["agent", "acp"],
       cwd: "/tmp/project",
       env: {
+        NO_OPEN_BROWSER: "true",
         NO_BROWSER: "true",
         BROWSER: "www-browser",
       },
@@ -173,6 +176,7 @@ describe("buildCursorAcpSpawnInput", () => {
       args: ["acp"],
       cwd: "/tmp/project",
       env: {
+        NO_OPEN_BROWSER: "true",
         NO_BROWSER: "true",
         BROWSER: "www-browser",
       },
@@ -193,6 +197,7 @@ describe("buildCursorAcpSpawnInput", () => {
       args: ["-e", "http://localhost:3000", "acp"],
       cwd: "/tmp/project",
       env: {
+        NO_OPEN_BROWSER: "true",
         NO_BROWSER: "true",
         BROWSER: "www-browser",
       },
@@ -214,6 +219,7 @@ describe("buildCursorAcpSpawnInput", () => {
       args: ["agent", "-e", "http://localhost:3000", "acp"],
       cwd: "/tmp/project",
       env: {
+        NO_OPEN_BROWSER: "true",
         NO_BROWSER: "true",
         BROWSER: "www-browser",
       },

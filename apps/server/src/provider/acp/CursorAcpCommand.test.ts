@@ -301,9 +301,17 @@ describe("buildCursorAgentCommand", () => {
 });
 
 describe("buildCursorAgentHeadlessEnv", () => {
-  it("forces Cursor probe subprocesses into headless mode while preserving the base env", () => {
-    expect(buildCursorAgentHeadlessEnv({ PATH: "/bin", BROWSER: "open" })).toMatchObject({
+  it("forces Cursor probe subprocesses into headless mode over inherited browser settings", () => {
+    expect(
+      buildCursorAgentHeadlessEnv({
+        PATH: "/bin",
+        BROWSER: "open",
+        NO_BROWSER: "false",
+        NO_OPEN_BROWSER: "false",
+      }),
+    ).toMatchObject({
       PATH: "/bin",
+      NO_OPEN_BROWSER: "true",
       NO_BROWSER: "true",
       BROWSER: "www-browser",
       CI: "true",
