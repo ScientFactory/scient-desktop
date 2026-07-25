@@ -25,6 +25,7 @@ export interface PackagedDesktopStartupOptions {
   readonly platform: PackagedDesktopPlatform;
   readonly arch: string;
   readonly version: string;
+  readonly commit: string;
   readonly timeoutMs: number;
 }
 
@@ -41,7 +42,14 @@ export function parsePackagedDesktopStartupArgs(
     values.set(name, value);
   }
 
-  const known = new Set(["--assets-dir", "--platform", "--arch", "--version", "--timeout-ms"]);
+  const known = new Set([
+    "--assets-dir",
+    "--platform",
+    "--arch",
+    "--version",
+    "--commit",
+    "--timeout-ms",
+  ]);
   for (const name of values.keys()) {
     if (!known.has(name)) throw new Error(`Unknown packaged startup argument: ${name}.`);
   }
@@ -56,17 +64,26 @@ export function parsePackagedDesktopStartupArgs(
   if (platform !== "mac" && platform !== "win") {
     throw new Error(`Unsupported packaged startup platform: ${platform}.`);
   }
+  const arch = required("--arch");
+  if (arch !== "arm64" && arch !== "x64") {
+    throw new Error(`Unsupported packaged startup architecture: ${arch}.`);
+  }
 
   const timeoutMs = Number(values.get("--timeout-ms") ?? "60000");
   if (!Number.isInteger(timeoutMs) || timeoutMs < 5_000 || timeoutMs > 180_000) {
     throw new Error("--timeout-ms must be an integer between 5000 and 180000.");
   }
+  const commit = required("--commit").toLowerCase();
+  if (!/^[0-9a-f]{40}$/u.test(commit)) {
+    throw new Error("--commit must be a complete 40-character Git commit SHA.");
+  }
 
   return {
     assetsDirectory: resolve(required("--assets-dir")),
     platform,
-    arch: required("--arch"),
+    arch,
     version: required("--version"),
+    commit,
     timeoutMs,
   };
 }
@@ -89,6 +106,23 @@ function runCommand(command: string, args: ReadonlyArray<string>, cwd?: string):
       `${command} ${args.join(" ")} failed with exit ${result.status ?? "unknown"}.${detail}`,
     );
   }
+}
+
+function runTextCommand(command: string, args: ReadonlyArray<string>, cwd?: string): string {
+  const result = spawnSync(command, [...args], {
+    cwd,
+    encoding: "utf8",
+    maxBuffer: 8 * 1024 * 1024,
+    shell: false,
+    windowsHide: true,
+  });
+  if (result.error || result.status !== 0) {
+    const detail = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+    throw new Error(
+      `${command} ${args.join(" ")} failed${result.error ? `: ${result.error.message}` : ` with exit ${result.status ?? "unknown"}`}${detail ? `\n${detail}` : ""}`,
+    );
+  }
+  return result.stdout.trim();
 }
 
 function findFiles(root: string, predicate: (path: string) => boolean): string[] {
@@ -160,12 +194,13 @@ function prepareMacLaunch(
   assetsDirectory: string,
   extractionRoot: string,
   expectedAssetName: string,
+  options: Pick<PackagedDesktopStartupOptions, "arch" | "version">,
 ): PackagedDesktopLaunchCommand {
   const archive = resolveExactPackagedDesktopStartupAsset(assetsDirectory, expectedAssetName);
   runCommand("ditto", ["-x", "-k", archive, extractionRoot]);
   const appBundles = readdirSync(extractionRoot).filter((entry) => entry.endsWith(".app"));
-  if (appBundles.length !== 1) {
-    throw new Error(`Expected one packaged macOS app in ${basename(archive)}.`);
+  if (appBundles.length !== 1 || appBundles[0] !== "Scient.app") {
+    throw new Error(`Expected the exact Scient.app bundle in ${basename(archive)}.`);
   }
   const appBundle = join(extractionRoot, appBundles[0]!);
   const executables = findFiles(join(appBundle, "Contents", "MacOS"), (candidate) =>
@@ -174,6 +209,49 @@ function prepareMacLaunch(
   if (executables.length !== 1) {
     throw new Error(`Expected one macOS main executable, found ${executables.length}.`);
   }
+  const infoPlist = join(appBundle, "Contents", "Info.plist");
+  const bundleIdentifier = runTextCommand("plutil", [
+    "-extract",
+    "CFBundleIdentifier",
+    "raw",
+    "-o",
+    "-",
+    infoPlist,
+  ]);
+  const bundleVersion = runTextCommand("plutil", [
+    "-extract",
+    "CFBundleShortVersionString",
+    "raw",
+    "-o",
+    "-",
+    infoPlist,
+  ]);
+  const bundleExecutable = runTextCommand("plutil", [
+    "-extract",
+    "CFBundleExecutable",
+    "raw",
+    "-o",
+    "-",
+    infoPlist,
+  ]);
+  if (
+    bundleIdentifier !== "com.scientfactory.scient" ||
+    bundleVersion !== options.version ||
+    bundleExecutable !== "Scient"
+  ) {
+    throw new Error(
+      `Unexpected macOS bundle identity id=${bundleIdentifier} version=${bundleVersion} executable=${bundleExecutable}.`,
+    );
+  }
+  const expectedArchitecture = options.arch === "x64" ? "x86_64" : options.arch;
+  const executableArchitectures = runTextCommand("lipo", ["-archs", executables[0]!])
+    .split(/\s+/u)
+    .filter(Boolean);
+  if (executableArchitectures.length !== 1 || executableArchitectures[0] !== expectedArchitecture) {
+    throw new Error(
+      `Expected exact macOS ${expectedArchitecture} executable, found ${executableArchitectures.join(", ") || "unknown"}.`,
+    );
+  }
   return { command: executables[0]!, args: [], cwd: appBundle };
 }
 
@@ -181,10 +259,31 @@ export function isScientWindowsExecutable(candidate: string): boolean {
   return /[/\\]Scient\.exe$/i.test(candidate);
 }
 
+export function readWindowsExecutableArchitecture(executable: Uint8Array): string | null {
+  if (executable.length < 64 || executable[0] !== 0x4d || executable[1] !== 0x5a) return null;
+  const view = new DataView(executable.buffer, executable.byteOffset, executable.byteLength);
+  const peOffset = view.getUint32(0x3c, true);
+  if (
+    peOffset + 6 > executable.length ||
+    executable[peOffset] !== 0x50 ||
+    executable[peOffset + 1] !== 0x45 ||
+    executable[peOffset + 2] !== 0 ||
+    executable[peOffset + 3] !== 0
+  ) {
+    return null;
+  }
+  const machine = view.getUint16(peOffset + 4, true);
+  if (machine === 0x8664) return "x64";
+  if (machine === 0xaa64) return "arm64";
+  if (machine === 0x014c) return "ia32";
+  return null;
+}
+
 function prepareWindowsLaunch(
   assetsDirectory: string,
   extractionRoot: string,
   expectedAssetName: string,
+  options: Pick<PackagedDesktopStartupOptions, "arch">,
 ): PackagedDesktopLaunchCommand {
   const installer = resolveExactPackagedDesktopStartupAsset(assetsDirectory, expectedAssetName);
   const installerRoot = join(extractionRoot, "installer");
@@ -205,6 +304,12 @@ function prepareWindowsLaunch(
   if (executables.length !== 1) {
     throw new Error(`Expected one extracted Scient.exe, found ${executables.length}.`);
   }
+  const executableArchitecture = readWindowsExecutableArchitecture(readFileSync(executables[0]!));
+  if (executableArchitecture !== options.arch) {
+    throw new Error(
+      `Expected exact Windows ${options.arch} executable, found ${executableArchitecture ?? "unknown"}.`,
+    );
+  }
   return { command: executables[0]!, args: [], cwd: dirname(executables[0]!) };
 }
 
@@ -219,8 +324,8 @@ function prepareLaunch(
   );
   const launch =
     options.platform === "mac"
-      ? prepareMacLaunch(options.assetsDirectory, extractionRoot, expectedAssetName)
-      : prepareWindowsLaunch(options.assetsDirectory, extractionRoot, expectedAssetName);
+      ? prepareMacLaunch(options.assetsDirectory, extractionRoot, expectedAssetName, options)
+      : prepareWindowsLaunch(options.assetsDirectory, extractionRoot, expectedAssetName, options);
   assertPackagedLaunchCommandSafety(launch);
   return launch;
 }
@@ -242,8 +347,12 @@ export function createPackagedDesktopSmokeEnvironment(
     XDG_CACHE_HOME: join(root, "xdg-cache"),
     XDG_DATA_HOME: join(root, "xdg-data"),
     XDG_RUNTIME_DIR: join(root, "xdg-runtime"),
+    TEMP: join(root, "tmp"),
+    TMP: join(root, "tmp"),
+    TMPDIR: join(root, "tmp"),
     SCIENT_HOME: scientHome,
     SCIENT_DISABLE_SHELL_ENV_SYNC: "1",
+    SCIENT_PACKAGED_STARTUP_SMOKE: "1",
     SYNARA_DISABLE_AUTO_UPDATE: "1",
     SYNARA_TELEMETRY_ENABLED: "false",
     ELECTRON_ENABLE_LOGGING: "1",
@@ -255,6 +364,7 @@ export function createPackagedDesktopSmokeEnvironment(
     env.XDG_CONFIG_HOME,
     env.XDG_CACHE_HOME,
     env.XDG_DATA_HOME,
+    env.TEMP,
     env.SCIENT_HOME,
   ]) {
     if (path) mkdirSync(path, { recursive: true });
@@ -393,75 +503,83 @@ export async function terminateProcessTree(
 ): Promise<void> {
   const platform = dependencies.platform ?? process.platform;
   const childCanStillOwnProcesses =
-    platform !== "win32" ||
-    ((dependencies.childIsAlive ?? childProcessHandleIsAlive)(child) &&
-      child.exitCode === null &&
-      child.signalCode === null);
+    (dependencies.childIsAlive ?? childProcessHandleIsAlive)(child) &&
+    child.exitCode === null &&
+    child.signalCode === null;
+  const rootTarget =
+    child.pid && childCanStillOwnProcesses
+      ? { pid: child.pid, processGroup: platform !== "win32" }
+      : null;
+  // Backend PIDs recovered from logs/runtime state are observation-only. They
+  // prove cleanup completion, but a bare PID is not durable signal authority:
+  // the OS may reuse it after an unlogged exit.
+  const observedTargets = additionalProcessIds
+    .map((pid) => ({ pid, processGroup: platform !== "win32" }))
+    .filter(
+      (target, index, allTargets) =>
+        target.pid > 0 &&
+        allTargets.findIndex((candidate) => candidate.pid === target.pid) === index,
+    );
   const targets = [
-    ...(child.pid && childCanStillOwnProcesses
-      ? [{ pid: child.pid, processGroup: platform !== "win32" }]
-      : []),
-    ...additionalProcessIds.map((pid) => ({ pid, processGroup: platform !== "win32" })),
-  ].filter(
-    (target, index, allTargets) =>
-      target.pid > 0 && allTargets.findIndex((candidate) => candidate.pid === target.pid) === index,
-  );
+    ...(rootTarget ? [rootTarget] : []),
+    ...observedTargets.filter((target) => target.pid !== rootTarget?.pid),
+  ];
   if (targets.length === 0) return;
   const awaitTargetsExit = dependencies.waitForTargetsExit ?? waitForProcessTerminationTargets;
-  if (platform === "win32") {
-    // taskkill /T already owns every descendant of a live packaged root. Do
-    // not target recorded backend PIDs again after killing that tree: Windows
-    // could reuse one between calls. When the root has already exited, the
-    // recorded active backend PIDs are the only remaining cleanup authority.
-    const liveRootProcessId = child.pid && childCanStillOwnProcesses ? child.pid : null;
-    const taskkillTargets = liveRootProcessId
-      ? targets.filter((target) => target.pid === liveRootProcessId)
-      : targets;
-    const taskkillResults = taskkillTargets.map((target) => ({
-      pid: target.pid,
-      result:
-        dependencies.runTaskkill?.(target.pid) ??
-        spawnSync("taskkill", ["/pid", String(target.pid), "/t", "/f"], {
-          stdio: "ignore",
-          windowsHide: true,
-        }),
-    }));
-    if (await awaitTargetsExit(targets, 5_000)) return;
-    const taskkillResult = taskkillResults
-      .map(({ pid, result }) =>
-        result.error
-          ? `${pid}: could not start (${result.error.message})`
-          : `${pid}: status ${result.status ?? "unknown"}`,
-      )
-      .join(", ");
+  if (!rootTarget) {
+    if (await awaitTargetsExit(observedTargets, 5_000)) return;
     throw new Error(
-      `Packaged process trees survived Windows cleanup; taskkill results: ${taskkillResult}.`,
+      `Recorded backend process candidates ${observedTargets.map(({ pid }) => pid).join(", ")} remained after their parent exited; refusing to signal unverified PIDs.`,
+    );
+  }
+  if (platform === "win32") {
+    // The live ChildProcess handle establishes root ownership; taskkill /T
+    // derives descendants from that root. Never signal observation-only PIDs.
+    const taskkillResult =
+      dependencies.runTaskkill?.(rootTarget.pid) ??
+      spawnSync("taskkill", ["/pid", String(rootTarget.pid), "/t", "/f"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+    if (await awaitTargetsExit(targets, 5_000)) return;
+    const taskkillDetail = taskkillResult.error
+      ? `could not start (${taskkillResult.error.message})`
+      : `status ${taskkillResult.status ?? "unknown"}`;
+    throw new Error(
+      `Packaged process trees survived Windows cleanup; root ${rootTarget.pid} taskkill ${taskkillDetail}.`,
     );
   }
   const sendSignal = dependencies.sendSignal ?? sendProcessTreeSignal;
-  for (const target of targets) sendSignal(target, "SIGTERM");
+  sendSignal(rootTarget, "SIGTERM");
   if (await awaitTargetsExit(targets, 5_000)) return;
   const targetIsAlive = dependencies.targetIsAlive ?? processTerminationTargetIsAlive;
-  const survivingTargets = targets.filter((target) => targetIsAlive(target));
-  if (survivingTargets.length === 0) return;
-  for (const target of survivingTargets) sendSignal(target, "SIGKILL");
-  if (await awaitTargetsExit(survivingTargets, 2_000)) return;
+  if (targetIsAlive(rootTarget)) sendSignal(rootTarget, "SIGKILL");
+  if (await awaitTargetsExit(targets, 2_000)) return;
   throw new Error(
-    `Packaged process trees ${survivingTargets.map(({ pid }) => pid).join(", ")} survived SIGTERM and SIGKILL.`,
+    `Packaged process trees ${targets.map(({ pid }) => pid).join(", ")} survived root-only SIGTERM and SIGKILL; refusing to signal unverified backend PIDs.`,
   );
 }
 
-export function hasPackagedStartupProof(logPath: string): boolean {
+export function hasPackagedStartupProof(
+  logPath: string,
+  expected?: Pick<PackagedDesktopStartupOptions, "version" | "commit">,
+): boolean {
   try {
     const log = readFileSync(logPath, "utf8");
+    const expectedIdentity = expected
+      ? `packaged identity name=Scient version=${expected.version} commit=${expected.commit}`
+      : "packaged identity name=Scient";
     return (
       log.includes("app ready") &&
+      log.includes(expectedIdentity) &&
       log.includes("bootstrap main window created") &&
       log.includes("renderer main frame loaded") &&
       log.includes("backend semantic ready generation=") &&
+      log.includes("packaged responsiveness confirmed generation=") &&
       !log.includes("renderer main frame load failed") &&
       !log.includes("renderer main process gone") &&
       !log.includes("renderer main window unresponsive") &&
+      !log.includes("packaged responsiveness failed") &&
       !log.includes("backend process exited generation=")
     );
   } catch {
@@ -533,6 +651,21 @@ export function readPackagedDesktopLogTail(logPath: string, maxCharacters = 200_
   } catch {
     return "";
   }
+}
+
+export function formatPackagedStartupFailures(
+  failures: ReadonlyArray<{ readonly phase: string; readonly error: unknown }>,
+  output: string,
+  logTail: string,
+): string {
+  const failureDetail = failures
+    .map(
+      ({ phase, error }) => `${phase}: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    .join("\n");
+  const processDetail = output.trim() ? `\nPackaged process output:\n${output.trim()}` : "";
+  const logDetail = logTail ? `\nPackaged desktop log tail:\n${logTail}` : "";
+  return `${failureDetail}${processDetail}${logDetail}`;
 }
 
 interface PackagedStartupProofWaitOptions {
@@ -619,6 +752,7 @@ export async function verifyPackagedDesktopStartup(
   let environment: NodeJS.ProcessEnv | null = null;
   let logPath: string | null = null;
   let output = "";
+  const failures: Array<{ phase: string; error: unknown }> = [];
   try {
     const launch = prepareLaunch(options, extractionRoot);
     environment = createPackagedDesktopSmokeEnvironment(join(temporaryRoot, "state"), options);
@@ -650,35 +784,38 @@ export async function verifyPackagedDesktopStartup(
 
     await waitForPackagedStartupProof({
       timeoutMs: options.timeoutMs,
-      hasProof: () => hasPackagedStartupProof(launchLogPath),
+      hasProof: () => hasPackagedStartupProof(launchLogPath, options),
       readOutcome: () => childOutcome,
       isProcessAlive: () => childProcessHandleIsAlive(child!),
     });
-    console.log(
-      `Packaged ${options.platform}/${options.arch} startup smoke passed from isolated Scient state.`,
-    );
   } catch (error) {
-    const detail = output.trim() ? `\nPackaged process output:\n${output.trim()}` : "";
-    let logDetail = "";
-    if (logPath) {
-      const boundedLog = readPackagedDesktopLogTail(logPath);
-      if (boundedLog) logDetail = `\nPackaged desktop log tail:\n${boundedLog}`;
-    }
-    throw new Error(
-      `${error instanceof Error ? error.message : String(error)}${detail}${logDetail}`,
-      {
-        cause: error,
-      },
-    );
-  } finally {
-    try {
-      if (child) {
-        await terminateProcessTree(child, {}, readPackagedBackendProcessIds(environment));
-      }
-    } finally {
-      rmSync(temporaryRoot, { recursive: true, force: true });
-    }
+    failures.push({ phase: "startup verification failed", error });
   }
+
+  try {
+    if (child) {
+      await terminateProcessTree(child, {}, readPackagedBackendProcessIds(environment));
+    }
+  } catch (error) {
+    failures.push({ phase: "process cleanup failed", error });
+  }
+
+  // Capture diagnostics after cleanup attempts but before deleting isolated state.
+  const logTail = logPath ? readPackagedDesktopLogTail(logPath) : "";
+  try {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  } catch (error) {
+    failures.push({ phase: `temporary-state cleanup failed at ${temporaryRoot}`, error });
+  }
+
+  if (failures.length > 0) {
+    throw new Error(formatPackagedStartupFailures(failures, output, logTail), {
+      cause: failures[0]?.error,
+    });
+  }
+  console.log(
+    `Packaged ${options.platform}/${options.arch} startup smoke passed from isolated Scient state.`,
+  );
 }
 
 const invokedPath = process.argv[1] ? resolve(process.argv[1]) : null;

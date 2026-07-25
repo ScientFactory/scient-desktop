@@ -315,7 +315,11 @@ let desktopShutdownComplete = false;
 let desktopProtocolRegistered = false;
 let aboutCommitHashCache: string | null | undefined;
 let embeddedReleaseMetadataCache:
-  | { readonly commitHash: string | null; readonly signed: boolean | null }
+  | {
+      readonly commitHash: string | null;
+      readonly fullCommitHash: string | null;
+      readonly signed: boolean | null;
+    }
   | undefined;
 let appUpdateYmlCache: Record<string, string> | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
@@ -936,6 +940,10 @@ function parseAppUpdateYml(): Record<string, string> | null {
 }
 
 function normalizeCommitHash(value: unknown): string | null {
+  return normalizeFullCommitHash(value)?.slice(0, COMMIT_HASH_DISPLAY_LENGTH) ?? null;
+}
+
+function normalizeFullCommitHash(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
@@ -943,11 +951,12 @@ function normalizeCommitHash(value: unknown): string | null {
   if (!COMMIT_HASH_PATTERN.test(trimmed)) {
     return null;
   }
-  return trimmed.slice(0, COMMIT_HASH_DISPLAY_LENGTH).toLowerCase();
+  return trimmed.toLowerCase();
 }
 
 function resolveEmbeddedReleaseMetadata(): {
   readonly commitHash: string | null;
+  readonly fullCommitHash: string | null;
   readonly signed: boolean | null;
 } {
   if (embeddedReleaseMetadataCache !== undefined) {
@@ -956,7 +965,7 @@ function resolveEmbeddedReleaseMetadata(): {
 
   const packageJsonPath = Path.join(resolveAppRoot(), "package.json");
   if (!FS.existsSync(packageJsonPath)) {
-    embeddedReleaseMetadataCache = { commitHash: null, signed: null };
+    embeddedReleaseMetadataCache = { commitHash: null, fullCommitHash: null, signed: null };
     return embeddedReleaseMetadataCache;
   }
 
@@ -968,10 +977,11 @@ function resolveEmbeddedReleaseMetadata(): {
     };
     embeddedReleaseMetadataCache = {
       commitHash: normalizeCommitHash(parsed.scientCommitHash),
+      fullCommitHash: normalizeFullCommitHash(parsed.scientCommitHash),
       signed: typeof parsed.scientSigned === "boolean" ? parsed.scientSigned : null,
     };
   } catch {
-    embeddedReleaseMetadataCache = { commitHash: null, signed: null };
+    embeddedReleaseMetadataCache = { commitHash: null, fullCommitHash: null, signed: null };
   }
 
   return embeddedReleaseMetadataCache;
@@ -979,6 +989,14 @@ function resolveEmbeddedReleaseMetadata(): {
 
 function resolveEmbeddedCommitHash(): string | null {
   return resolveEmbeddedReleaseMetadata().commitHash;
+}
+
+function writePackagedStartupSmokeIdentity(): void {
+  if (process.env.SCIENT_PACKAGED_STARTUP_SMOKE !== "1") return;
+  const commit = resolveEmbeddedReleaseMetadata().fullCommitHash ?? "unknown";
+  writeDesktopLogHeader(
+    `packaged identity name=${app.getName()} version=${app.getVersion()} commit=${commit}`,
+  );
 }
 
 function resolveAboutCommitHash(): string | null {
@@ -3526,6 +3544,43 @@ function createWindow(): BrowserWindow {
     writeDesktopLogHeader("renderer main frame loaded");
     window.setTitle(APP_DISPLAY_NAME);
     emitUpdateState();
+    if (process.env.SCIENT_PACKAGED_STARTUP_SMOKE === "1") {
+      setTimeout(() => {
+        const generation = getBackendSupervisor().currentGeneration;
+        void Promise.all([
+          window.webContents.executeJavaScript(
+            "new Promise((resolve) => requestAnimationFrame(() => resolve(document.readyState === 'complete')))",
+            true,
+          ),
+          fetch(`${backendHttpUrl}/health`, { signal: AbortSignal.timeout(5_000) }).then(
+            async (response) => {
+              if (!response.ok) return false;
+              const payload = (await response.json()) as { startupReady?: unknown };
+              return payload.startupReady === true;
+            },
+          ),
+        ])
+          .then(([rendererReady, backendReady]) => {
+            const currentGeneration = getBackendSupervisor().currentGeneration;
+            const sameLiveGeneration =
+              generation !== null &&
+              currentGeneration?.number === generation.number &&
+              currentGeneration.child.exitCode === null &&
+              currentGeneration.child.signalCode === null;
+            if (rendererReady !== true || backendReady !== true || !sameLiveGeneration) {
+              throw new Error("renderer or backend failed the delayed responsiveness check");
+            }
+            writeDesktopLogHeader(
+              `packaged responsiveness confirmed generation=${generation.number}`,
+            );
+          })
+          .catch((error: unknown) => {
+            writeDesktopLogHeader(
+              `packaged responsiveness failed message=${formatErrorMessage(error)}`,
+            );
+          });
+      }, 1_500);
+    }
   });
   window.webContents.on(
     "did-fail-load",
@@ -3705,6 +3760,7 @@ if (hasSingleInstanceLock) {
     .whenReady()
     .then(async () => {
       writeDesktopLogHeader("app ready");
+      writePackagedStartupSmokeIdentity();
       configureAppIdentity();
       applyLegacyMacDockIcon();
       refreshMacIconCacheOnVersionChange();

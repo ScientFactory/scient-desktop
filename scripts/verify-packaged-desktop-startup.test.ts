@@ -17,9 +17,11 @@ import {
   assertPackagedLaunchCommandSafety,
   createPackagedDesktopSmokeEnvironment,
   expectedPackagedDesktopStartupAssetName,
+  formatPackagedStartupFailures,
   hasPackagedStartupProof,
   isScientWindowsExecutable,
   parsePackagedDesktopStartupArgs,
+  readWindowsExecutableArchitecture,
   readPackagedDesktopLogTail,
   readPackagedBackendProcessIds,
   resolveExactPackagedDesktopStartupAsset,
@@ -50,12 +52,15 @@ describe("packaged desktop startup verification", () => {
         "x64",
         "--version",
         "1.2.3",
+        "--commit",
+        "0123456789abcdef0123456789abcdef01234567",
       ]),
     ).toEqual({
       assetsDirectory: expect.stringMatching(/release-publish$/),
       platform: "mac",
       arch: "x64",
       version: "1.2.3",
+      commit: "0123456789abcdef0123456789abcdef01234567",
       timeoutMs: 60_000,
     });
 
@@ -69,10 +74,42 @@ describe("packaged desktop startup verification", () => {
         "x64",
         "--version",
         "1.2.3",
+        "--commit",
+        "0123456789abcdef0123456789abcdef01234567",
         "--timeout-ms",
         "4999",
       ]),
     ).toThrow("--timeout-ms must be an integer between 5000 and 180000");
+
+    expect(() =>
+      parsePackagedDesktopStartupArgs([
+        "--assets-dir",
+        "./release-publish",
+        "--platform",
+        "win",
+        "--arch",
+        "ia32",
+        "--version",
+        "1.2.3",
+        "--commit",
+        "0123456789abcdef0123456789abcdef01234567",
+      ]),
+    ).toThrow("Unsupported packaged startup architecture: ia32");
+
+    expect(() =>
+      parsePackagedDesktopStartupArgs([
+        "--assets-dir",
+        "./release-publish",
+        "--platform",
+        "win",
+        "--arch",
+        "x64",
+        "--version",
+        "1.2.3",
+        "--commit",
+        "0123456",
+      ]),
+    ).toThrow("--commit must be a complete 40-character Git commit SHA");
   });
 
   it("isolates Scient state and removes inherited runtime authority", () => {
@@ -102,6 +139,7 @@ describe("packaged desktop startup verification", () => {
     expect(env.SCIENT_DEV_ALLOW_NO_SANDBOX).toBeUndefined();
     expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined();
     expect(env.SCIENT_DISABLE_SHELL_ENV_SYNC).toBe("1");
+    expect(env.SCIENT_PACKAGED_STARTUP_SMOKE).toBe("1");
     expect(env.SYNARA_TELEMETRY_ENABLED).toBe("false");
     expect(env.DISPLAY).toBe(":99");
     for (const name of [
@@ -113,6 +151,9 @@ describe("packaged desktop startup verification", () => {
       "XDG_CACHE_HOME",
       "XDG_DATA_HOME",
       "XDG_RUNTIME_DIR",
+      "TEMP",
+      "TMP",
+      "TMPDIR",
       "SCIENT_HOME",
     ] as const) {
       expect(env[name]?.startsWith(root)).toBe(true);
@@ -186,9 +227,11 @@ describe("packaged desktop startup verification", () => {
     const logPath = join(root, "desktop-main.log");
     const requiredMarkers = [
       "app ready",
+      "packaged identity name=Scient version=1.2.3 commit=0123456789abcdef0123456789abcdef01234567",
       "bootstrap main window created",
       "backend semantic ready generation=1",
       "renderer main frame loaded",
+      "packaged responsiveness confirmed generation=1",
     ];
 
     for (const omittedMarker of requiredMarkers) {
@@ -196,21 +239,51 @@ describe("packaged desktop startup verification", () => {
         logPath,
         requiredMarkers.filter((marker) => marker !== omittedMarker).join("\n"),
       );
-      expect(hasPackagedStartupProof(logPath)).toBe(false);
+      expect(
+        hasPackagedStartupProof(logPath, {
+          version: "1.2.3",
+          commit: "0123456789abcdef0123456789abcdef01234567",
+        }),
+      ).toBe(false);
     }
 
     writeFileSync(logPath, requiredMarkers.join("\n"));
-    expect(hasPackagedStartupProof(logPath)).toBe(true);
+    expect(
+      hasPackagedStartupProof(logPath, {
+        version: "1.2.3",
+        commit: "0123456789abcdef0123456789abcdef01234567",
+      }),
+    ).toBe(true);
 
     for (const failureMarker of [
       "renderer main frame load failed code=-2 message=failed",
       "renderer main process gone reason=crashed exitCode=1",
       "renderer main window unresponsive",
+      "packaged responsiveness failed message=frozen",
       "backend process exited generation=1 pid=42 reason=unexpected exit",
     ]) {
       writeFileSync(logPath, [...requiredMarkers, failureMarker].join("\n"));
-      expect(hasPackagedStartupProof(logPath)).toBe(false);
+      expect(
+        hasPackagedStartupProof(logPath, {
+          version: "1.2.3",
+          commit: "0123456789abcdef0123456789abcdef01234567",
+        }),
+      ).toBe(false);
     }
+  });
+
+  it("reads the native architecture from a Windows PE executable header", () => {
+    const executable = new Uint8Array(128);
+    executable[0] = 0x4d;
+    executable[1] = 0x5a;
+    new DataView(executable.buffer).setUint32(0x3c, 64, true);
+    executable.set([0x50, 0x45, 0, 0], 64);
+    new DataView(executable.buffer).setUint16(68, 0x8664, true);
+    expect(readWindowsExecutableArchitecture(executable)).toBe("x64");
+    new DataView(executable.buffer).setUint16(68, 0xaa64, true);
+    expect(readWindowsExecutableArchitecture(executable)).toBe("arm64");
+    executable[64] = 0;
+    expect(readWindowsExecutableArchitecture(executable)).toBeNull();
   });
 
   it("accepts startup proof only after the process remains alive for the stability window", async () => {
@@ -257,6 +330,21 @@ describe("packaged desktop startup verification", () => {
     expect(readPackagedDesktopLogTail(join(root, "missing.log"))).toBe("");
   });
 
+  it("preserves startup, cleanup, process output, and log diagnostics together", () => {
+    expect(
+      formatPackagedStartupFailures(
+        [
+          { phase: "startup verification failed", error: new Error("renderer froze") },
+          { phase: "process cleanup failed", error: new Error("backend survived") },
+        ],
+        "stderr detail",
+        "desktop log detail",
+      ),
+    ).toContain(
+      "startup verification failed: renderer froze\nprocess cleanup failed: backend survived\nPackaged process output:\nstderr detail\nPackaged desktop log tail:\ndesktop log detail",
+    );
+  });
+
   it("targets a live Windows root once and fails when its complete tree survives", async () => {
     const child = {
       exitCode: null,
@@ -279,7 +367,7 @@ describe("packaged desktop startup verification", () => {
     expect(runTaskkill.mock.calls.map(([pid]) => pid)).toEqual([42]);
   });
 
-  it("uses recorded Windows backends when the root handle has exited before its event", async () => {
+  it("waits for recorded Windows backends without signaling reused PIDs after root exit", async () => {
     const child = {
       exitCode: null,
       pid: 42,
@@ -298,10 +386,10 @@ describe("packaged desktop startup verification", () => {
       [84],
     );
 
-    expect(runTaskkill.mock.calls.map(([pid]) => pid)).toEqual([84]);
+    expect(runTaskkill).not.toHaveBeenCalled();
   });
 
-  it("still cleans a detached Windows backend after the packaged root exits", async () => {
+  it("observes detached Windows backend cleanup after the packaged root exits", async () => {
     const child = {
       exitCode: 0,
       pid: 42,
@@ -319,7 +407,7 @@ describe("packaged desktop startup verification", () => {
       [84],
     );
 
-    expect(runTaskkill.mock.calls.map(([pid]) => pid)).toEqual([84]);
+    expect(runTaskkill).not.toHaveBeenCalled();
   });
 
   it("recovers every spawned backend PID before runtime state is durable", () => {
@@ -401,18 +489,17 @@ describe("packaged desktop startup verification", () => {
         child,
         {
           platform: "darwin",
+          childIsAlive: () => true,
           sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
           targetIsAlive: () => true,
           waitForTargetsExit: async () => false,
         },
         [84],
       ),
-    ).rejects.toThrow("survived SIGTERM and SIGKILL");
+    ).rejects.toThrow("refusing to signal unverified backend PIDs");
     expect(signals).toEqual([
       { pid: 42, signal: "SIGTERM" },
-      { pid: 84, signal: "SIGTERM" },
       { pid: 42, signal: "SIGKILL" },
-      { pid: 84, signal: "SIGKILL" },
     ]);
   });
 
@@ -428,18 +515,33 @@ describe("packaged desktop startup verification", () => {
       child,
       {
         platform: "darwin",
+        childIsAlive: () => true,
         sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
-        targetIsAlive: (target) => target.pid === 84,
-        waitForTargetsExit: async (targets) => targets.every((target) => target.pid === 84),
+        targetIsAlive: () => false,
+        waitForTargetsExit: async () => true,
       },
       [84],
     );
 
-    expect(signals).toEqual([
-      { pid: 42, signal: "SIGTERM" },
-      { pid: 84, signal: "SIGTERM" },
-      { pid: 84, signal: "SIGKILL" },
-    ]);
+    expect(signals).toEqual([{ pid: 42, signal: "SIGTERM" }]);
+  });
+
+  it("fails closed without signaling a recorded PID when the root is already gone", async () => {
+    const child = { exitCode: 0, pid: 42, signalCode: null } as unknown as ChildProcess;
+    const runTaskkill = vi.fn((_pid: number) => ({ status: 0 }));
+
+    await expect(
+      terminateProcessTree(
+        child,
+        {
+          platform: "win32",
+          runTaskkill,
+          waitForTargetsExit: async () => false,
+        },
+        [84],
+      ),
+    ).rejects.toThrow("refusing to signal unverified PIDs");
+    expect(runTaskkill).not.toHaveBeenCalled();
   });
 
   it("prepares the isolated Scient macOS profile marker", () => {

@@ -302,7 +302,8 @@ function verifyReleaseWorkflowSafety(): void {
     uploadArtifactsIndex <= packagedStartupIndex ||
     packagedStartupStep?.if !== "${{ matrix.platform != 'linux' }}" ||
     !packagedStartupStep.run?.includes("node scripts/verify-packaged-desktop-startup.ts") ||
-    !packagedStartupStep.run.includes("--assets-dir release-publish")
+    !packagedStartupStep.run.includes("--assets-dir release-publish") ||
+    !packagedStartupStep.run.includes('--commit "${{ github.sha }}"')
   ) {
     throw new Error(
       "Expected exact macOS and Windows packaged-startup proof after collection and before upload.",
@@ -341,6 +342,16 @@ function verifyReleaseWorkflowSafety(): void {
     packagedStartupVerifier,
     'log.includes("backend semantic ready generation=")',
     "Expected packaged startup proof to require semantic backend readiness.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    'log.includes("packaged responsiveness confirmed generation=")',
+    "Expected packaged startup proof to require delayed active renderer and backend responsiveness.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    "packaged identity name=Scient version=${expected.version} commit=${expected.commit}",
+    "Expected packaged startup proof to bind the running product, version, and commit.",
   );
   assertContains(
     packagedStartupVerifier,
