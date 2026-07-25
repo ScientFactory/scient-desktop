@@ -314,6 +314,11 @@ export const ProjectPicker = memo(function ProjectPicker({
 
   const handleSelectActiveFolder = useCallback(
     (folder: ActiveFolderOption) => {
+      // Close before awaiting route/project work so a second picker choice cannot race an already
+      // issued navigation. Reopen only when the owning action reports an error.
+      setOpen(false);
+      setQuery("");
+      setErrorMessage(null);
       try {
         // Existing projects should switch the draft into that project; raw paths stay workspace roots.
         const selection =
@@ -324,12 +329,14 @@ export const ProjectPicker = memo(function ProjectPicker({
               : onSelectWorkspaceRoot?.(folder.cwd);
         void Promise.resolve(selection)
           .then(() => {
-            setOpen(false);
+            setErrorMessage(null);
           })
           .catch((error) => {
+            setOpen(true);
             setErrorMessage(error instanceof Error ? error.message : "Unable to select project.");
           });
       } catch (error) {
+        setOpen(true);
         setErrorMessage(error instanceof Error ? error.message : "Unable to select project.");
       }
     },
@@ -366,15 +373,20 @@ export const ProjectPicker = memo(function ProjectPicker({
   }, [isPicking, onCreateProjectFromPath, onSelectWorkspaceRoot]);
 
   const handleResetToHome = useCallback(() => {
+    setOpen(false);
+    setQuery("");
+    setErrorMessage(null);
     try {
       void Promise.resolve(onResetToHome?.())
         .then(() => {
-          setOpen(false);
+          setErrorMessage(null);
         })
         .catch((error) => {
+          setOpen(true);
           setErrorMessage(error instanceof Error ? error.message : "Unable to update project.");
         });
     } catch (error) {
+      setOpen(true);
       setErrorMessage(error instanceof Error ? error.message : "Unable to update project.");
     }
   }, [onResetToHome]);

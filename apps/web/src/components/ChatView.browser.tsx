@@ -4741,6 +4741,58 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("navigates to an occupied Home draft instead of replacing it", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withHomeChatProject(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-project-picker-occupied-home" as MessageId,
+          targetText: "project picker occupied home",
+        }),
+      ),
+      configureFixture: (nextFixture) => {
+        nextFixture.welcome = {
+          ...nextFixture.welcome,
+          homeDir: "/Users/tester",
+          chatWorkspaceRoot: "/Users/tester/Documents/Synara",
+        };
+      },
+    });
+
+    try {
+      await page.getByLabelText("Create new thread in Project").click();
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new project draft UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+      useComposerDraftStore.getState().setProjectDraftThreadId(HOME_PROJECT_ID, OTHER_THREAD_ID);
+      useComposerDraftStore.getState().setPrompt(OTHER_THREAD_ID, "keep occupied Home draft");
+
+      await page.getByTestId("empty-landing-heading-project-trigger").click();
+      await page.getByText("Don't work in a project").click();
+
+      await vi.waitFor(
+        () => {
+          expect(mounted.router.state.location.pathname).toBe(`/${OTHER_THREAD_ID}`);
+          expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+            projectId: PROJECT_ID,
+          });
+          expect(useComposerDraftStore.getState().getDraftThread(OTHER_THREAD_ID)).toMatchObject({
+            projectId: HOME_PROJECT_ID,
+          });
+          expect(useComposerDraftStore.getState().draftsByThreadId[OTHER_THREAD_ID]?.prompt).toBe(
+            "keep occupied Home draft",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("moves a home draft into an existing project from the home picker without carrying branch", async () => {
     useComposerDraftStore.setState({
       draftThreadsByThreadId: {

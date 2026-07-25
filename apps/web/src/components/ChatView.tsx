@@ -9334,6 +9334,33 @@ export default function ChatView({
     };
   }, [threadId]);
 
+  const openOrMoveEmptyDraftToLocalProject = useCallback(
+    async (projectId: ProjectId, requestId: number) => {
+      if (requestId !== emptyDraftProjectRequestRef.current || !isLocalDraftThread) {
+        return;
+      }
+      const destinationDraft = getDraftThreadByProjectId(projectId, "chat");
+      if (destinationDraft && destinationDraft.threadId !== threadId) {
+        await navigate({
+          to: "/$threadId",
+          params: { threadId: destinationDraft.threadId },
+        });
+        return;
+      }
+      if (requestId !== emptyDraftProjectRequestRef.current) {
+        return;
+      }
+      moveEmptyDraftToLocalProject(projectId);
+    },
+    [
+      getDraftThreadByProjectId,
+      isLocalDraftThread,
+      moveEmptyDraftToLocalProject,
+      navigate,
+      threadId,
+    ],
+  );
+
   const handleResetWorkspaceToHome = useCallback(() => {
     const requestId = emptyDraftProjectRequestRef.current + 1;
     emptyDraftProjectRequestRef.current = requestId;
@@ -9365,7 +9392,7 @@ export default function ChatView({
             syncServerShellSnapshot(snapshot);
           }
           if (requestId !== emptyDraftProjectRequestRef.current) return;
-          moveEmptyDraftToLocalProject(studioProjectId);
+          await openOrMoveEmptyDraftToLocalProject(studioProjectId, requestId);
         })();
       }
       if (!isHomeChatContainer) {
@@ -9394,7 +9421,7 @@ export default function ChatView({
             syncServerShellSnapshot(snapshot);
           }
           if (requestId !== emptyDraftProjectRequestRef.current) return;
-          moveEmptyDraftToLocalProject(homeProjectId);
+          await openOrMoveEmptyDraftToLocalProject(homeProjectId, requestId);
         })();
       }
       setDraftThreadContext(threadId, {
@@ -9432,7 +9459,7 @@ export default function ChatView({
     isHomeChatContainer,
     isLocalDraftThread,
     isStudioContainer,
-    moveEmptyDraftToLocalProject,
+    openOrMoveEmptyDraftToLocalProject,
     scheduleComposerFocus,
     setDraftThreadContext,
     setStoreThreadWorkspace,
@@ -9487,28 +9514,13 @@ export default function ChatView({
         return;
       }
 
-      const destinationDraft = getDraftThreadByProjectId(projectId, "chat");
-      if (destinationDraft && destinationDraft.threadId !== threadId) {
-        await navigate({
-          to: "/$threadId",
-          params: { threadId: destinationDraft.threadId },
-        });
-        return;
-      }
-
-      if (requestId !== emptyDraftProjectRequestRef.current) {
-        return;
-      }
-      moveEmptyDraftToLocalProject(projectId);
+      await openOrMoveEmptyDraftToLocalProject(projectId, requestId);
     },
     [
       draftThread?.projectId,
-      getDraftThreadByProjectId,
       isLocalDraftThread,
-      moveEmptyDraftToLocalProject,
-      navigate,
+      openOrMoveEmptyDraftToLocalProject,
       scheduleComposerFocus,
-      threadId,
     ],
   );
 
