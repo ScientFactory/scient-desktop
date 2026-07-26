@@ -7,7 +7,17 @@ import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, PlatformError, Schema, Scope } from "effect";
+import {
+  Deferred,
+  Effect,
+  Fiber,
+  FileSystem,
+  Layer,
+  PlatformError,
+  Ref,
+  Schema,
+  Scope,
+} from "effect";
 import { describe, expect, vi } from "vitest";
 
 import { GitCoreLive, makeGitCore } from "./GitCore.ts";
@@ -175,6 +185,58 @@ function commitWithDate(
 // ── Tests ──
 
 it.layer(TestLayer)("git integration", (it) => {
+  describe("repository action lock", () => {
+    it.effect("serializes subdirectories and linked worktrees by Git common directory", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        const core = yield* GitCore;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const { initialBranch } = yield* initRepoWithCommit(tmp);
+        const nestedDirectory = path.join(tmp, "nested");
+        const linkedWorktreeParent = yield* makeTmpDir("git-action-lock-linked-");
+        const linkedWorktreePath = path.join(linkedWorktreeParent, "worktree");
+        yield* fileSystem.makeDirectory(nestedDirectory);
+        yield* core.createWorktree({
+          cwd: tmp,
+          branch: initialBranch,
+          newBranch: "lock-linked-worktree",
+          path: linkedWorktreePath,
+        });
+        const events = yield* Ref.make<string[]>([]);
+        const firstEntered = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const append = (event: string) => Ref.update(events, (current) => [...current, event]);
+
+        const first = core.withActionLock(
+          tmp,
+          append("first:start").pipe(
+            Effect.andThen(Deferred.succeed(firstEntered, undefined)),
+            Effect.andThen(Deferred.await(releaseFirst)),
+            Effect.andThen(append("first:end")),
+          ),
+        );
+        const firstFiber = yield* Effect.forkChild(first);
+        yield* Deferred.await(firstEntered);
+        const nestedFiber = yield* Effect.forkChild(
+          core.withActionLock(nestedDirectory, append("nested:start")),
+        );
+        const linkedWorktreeFiber = yield* Effect.forkChild(
+          core.withActionLock(linkedWorktreePath, append("linked:start")),
+        );
+
+        expect(yield* Ref.get(events)).toEqual(["first:start"]);
+        yield* Deferred.succeed(releaseFirst, undefined);
+        yield* Fiber.join(firstFiber);
+        yield* Fiber.join(nestedFiber);
+        yield* Fiber.join(linkedWorktreeFiber);
+        const finalEvents = yield* Ref.get(events);
+        expect(finalEvents.slice(0, 2)).toEqual(["first:start", "first:end"]);
+        expect(new Set(finalEvents.slice(2))).toEqual(new Set(["nested:start", "linked:start"]));
+        yield* core.removeWorktree({ cwd: tmp, path: linkedWorktreePath, force: true });
+      }),
+    );
+  });
+
   describe("shell process execution", () => {
     it.effect("caps captured output when maxOutputBytes is exceeded", () =>
       Effect.gen(function* () {
@@ -235,6 +297,19 @@ it.layer(TestLayer)("git integration", (it) => {
         const current = result.branches.find((b) => b.current);
         expect(current).toBeDefined();
         expect(current!.current).toBe(true);
+      }),
+    );
+
+    it.effect("returns the unborn branch as current before the first commit", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithoutCommit(tmp);
+        const expectedBranch = yield* git(tmp, ["branch", "--show-current"]);
+
+        const result = yield* (yield* GitCore).listBranches({ cwd: tmp });
+
+        expect(result.isRepo).toBe(true);
+        expect(result.branches.find((branch) => branch.current)?.name).toBe(expectedBranch);
       }),
     );
 
@@ -2223,11 +2298,11 @@ it.layer(TestLayer)("git integration", (it) => {
         yield* git(clone, ["push", "origin", initialBranch]);
 
         const core = yield* GitCore;
-        const pulled = yield* core.pullCurrentBranch(source);
+        const pulled = yield* core.pullCurrentBranch(source, initialBranch);
         expect(pulled.status).toBe("pulled");
         expect((yield* core.statusDetails(source)).behindCount).toBe(0);
 
-        const skipped = yield* core.pullCurrentBranch(source);
+        const skipped = yield* core.pullCurrentBranch(source, initialBranch);
         expect(skipped.status).toBe("skipped_up_to_date");
       }),
     );
@@ -2236,7 +2311,8 @@ it.layer(TestLayer)("git integration", (it) => {
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithCommit(tmp);
-        const result = yield* Effect.result((yield* GitCore).pullCurrentBranch(tmp));
+        const currentBranch = yield* git(tmp, ["branch", "--show-current"]);
+        const result = yield* Effect.result((yield* GitCore).pullCurrentBranch(tmp, currentBranch));
         expect(result._tag).toBe("Failure");
         if (result._tag === "Failure") {
           expect(result.failure.message.toLowerCase()).toContain("no upstream");
@@ -2268,7 +2344,9 @@ it.layer(TestLayer)("git integration", (it) => {
 
         yield* writeTextFile(path.join(source, "README.md"), "local change\n");
 
-        const result = yield* Effect.result((yield* GitCore).pullCurrentBranch(source));
+        const result = yield* Effect.result(
+          (yield* GitCore).pullCurrentBranch(source, initialBranch),
+        );
         expect(result._tag).toBe("Failure");
         if (result._tag === "Failure") {
           expect(result.failure.detail).toContain("Local changes block pull");

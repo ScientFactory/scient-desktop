@@ -274,6 +274,17 @@ export function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
   return fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
 }
 
+// @pierre/diffs reads theme and layout as mount-time configuration. Keep the
+// stable file identity separate for selection/collapse state, while giving the
+// React renderer an instance key that changes whenever either setting changes.
+export function buildFileDiffRenderInstanceKey(
+  fileDiff: FileDiffMetadata,
+  theme: "light" | "dark",
+  mode: "stacked" | "split",
+): string {
+  return `${buildFileDiffRenderKey(fileDiff)}:${theme}:${mode}`;
+}
+
 // Split a repo-relative path into a trailing-slash directory prefix and a leaf
 // name so diff/file rows can dim the directory while emphasizing the file name.
 // Intentionally not reusing the directory-browser helpers (projectPaths.ts):

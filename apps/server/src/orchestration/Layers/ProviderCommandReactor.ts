@@ -1586,31 +1586,36 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const renamed = yield* git.renameBranch({
-      cwd: input.cwd,
-      oldBranch: input.oldBranch,
-      newBranch: input.targetBranch,
-    });
-    yield* git.publishBranch({ cwd: input.cwd, branch: renamed.branch }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.logWarning("provider command reactor failed to publish renamed branch", {
-          threadId: input.threadId,
+    yield* git.withActionLock(
+      input.cwd,
+      Effect.gen(function* () {
+        const renamed = yield* git.renameBranch({
           cwd: input.cwd,
+          oldBranch: input.oldBranch,
+          newBranch: input.targetBranch,
+        });
+        yield* git.publishBranch({ cwd: input.cwd, branch: renamed.branch }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("provider command reactor failed to publish renamed branch", {
+              threadId: input.threadId,
+              cwd: input.cwd,
+              branch: renamed.branch,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+        );
+        yield* orchestrationEngine.dispatch({
+          type: "thread.meta.update",
+          commandId: serverCommandId("worktree-branch-rename"),
+          threadId: input.threadId,
           branch: renamed.branch,
-          cause: Cause.pretty(cause),
-        }),
-      ),
+          worktreePath: input.cwd,
+          associatedWorktreePath: input.cwd,
+          associatedWorktreeBranch: renamed.branch,
+          associatedWorktreeRef: renamed.branch,
+        });
+      }),
     );
-    yield* orchestrationEngine.dispatch({
-      type: "thread.meta.update",
-      commandId: serverCommandId("worktree-branch-rename"),
-      threadId: input.threadId,
-      branch: renamed.branch,
-      worktreePath: input.cwd,
-      associatedWorktreePath: input.cwd,
-      associatedWorktreeBranch: renamed.branch,
-      associatedWorktreeRef: renamed.branch,
-    });
   });
 
   const maybeGenerateAndRenameWorktreeBranchForFirstTurn = Effect.fnUntraced(function* (input: {

@@ -21,6 +21,11 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<voi
   throw new Error("Timed out waiting for condition");
 }
 
+const gitCoreLayer = (
+  execute: GitCoreShape["execute"],
+  withActionLock: GitCoreShape["withActionLock"] = (_cwd, effect) => effect,
+) => Layer.succeed(GitCore, { execute, withActionLock } as unknown as GitCoreShape);
+
 describe("CheckpointStoreLive", () => {
   let runtime: ManagedRuntime.ManagedRuntime<CheckpointStore, unknown> | null = null;
 
@@ -56,7 +61,7 @@ describe("CheckpointStoreLive", () => {
       throw new Error(`Unexpected git args: ${args}`);
     });
     const layer = CheckpointStoreLive.pipe(
-      Layer.provide(Layer.succeed(GitCore, { execute } as unknown as GitCoreShape)),
+      Layer.provide(gitCoreLayer(execute)),
       Layer.provide(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
@@ -113,7 +118,7 @@ describe("CheckpointStoreLive", () => {
       throw new Error(`Unexpected git args: ${args}`);
     });
     const layer = CheckpointStoreLive.pipe(
-      Layer.provide(Layer.succeed(GitCore, { execute } as unknown as GitCoreShape)),
+      Layer.provide(gitCoreLayer(execute)),
       Layer.provide(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
@@ -179,7 +184,7 @@ describe("CheckpointStoreLive", () => {
       throw new Error(`Unexpected git args: ${args}`);
     });
     const layer = CheckpointStoreLive.pipe(
-      Layer.provide(Layer.succeed(GitCore, { execute } as unknown as GitCoreShape)),
+      Layer.provide(gitCoreLayer(execute)),
       Layer.provide(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
@@ -206,6 +211,61 @@ describe("CheckpointStoreLive", () => {
         expect(captureArgs(`update-ref ${missingRef} commit-oid`)).toHaveLength(1);
       }),
     );
+  });
+
+  it("holds a destructive restore behind the shared repository action lock", async () => {
+    const checkpointRef = CheckpointRef.makeUnsafe("refs/synara-checkpoints/thread/restore/target");
+    const commands: string[] = [];
+    let lockEntered = false;
+    let releaseLock: (() => void) | undefined;
+    const lockGate = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    const execute = vi.fn<GitCoreShape["execute"]>((input) => {
+      const args = input.args.join(" ");
+      commands.push(args);
+      if (args === `rev-parse --verify --quiet ${checkpointRef}^{commit}`) {
+        return Effect.succeed({ code: 0, stdout: "checkpoint-oid\n", stderr: "" });
+      }
+      if (args === "restore --source checkpoint-oid --worktree --staged -- .") {
+        return Effect.succeed({ code: 0, stdout: "", stderr: "" });
+      }
+      if (args === "clean -fd -- .") {
+        return Effect.succeed({ code: 0, stdout: "", stderr: "" });
+      }
+      if (args === "rev-parse --verify HEAD") {
+        return Effect.succeed({ code: 1, stdout: "", stderr: "" });
+      }
+      throw new Error(`Unexpected git args: ${args}`);
+    });
+    const withActionLock: GitCoreShape["withActionLock"] = (cwd, effect) =>
+      Effect.sync(() => {
+        expect(cwd).toBe("/repo");
+        lockEntered = true;
+      }).pipe(Effect.andThen(Effect.promise(() => lockGate)), Effect.andThen(effect));
+    const layer = CheckpointStoreLive.pipe(
+      Layer.provide(gitCoreLayer(execute, withActionLock)),
+      Layer.provide(NodeServices.layer),
+    );
+    runtime = ManagedRuntime.make(layer);
+
+    const restore = runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CheckpointStore;
+        return yield* store.restoreCheckpoint({ cwd: "/repo", checkpointRef });
+      }),
+    );
+
+    await waitFor(() => lockEntered);
+    expect(commands).toEqual([]);
+    releaseLock?.();
+    await expect(restore).resolves.toBe(true);
+    expect(commands).toEqual([
+      `rev-parse --verify --quiet ${checkpointRef}^{commit}`,
+      "restore --source checkpoint-oid --worktree --staged -- .",
+      "clean -fd -- .",
+      "rev-parse --verify HEAD",
+    ]);
   });
 
   it("resolves checkpoint refs concurrently before falling back to HEAD", async () => {
@@ -238,7 +298,7 @@ describe("CheckpointStoreLive", () => {
       throw new Error(`Unexpected git args: ${args}`);
     });
     const layer = CheckpointStoreLive.pipe(
-      Layer.provide(Layer.succeed(GitCore, { execute } as unknown as GitCoreShape)),
+      Layer.provide(gitCoreLayer(execute)),
       Layer.provide(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
@@ -291,7 +351,7 @@ describe("CheckpointStoreLive", () => {
       throw new Error(`Unexpected git args: ${args}`);
     });
     const layer = CheckpointStoreLive.pipe(
-      Layer.provide(Layer.succeed(GitCore, { execute } as unknown as GitCoreShape)),
+      Layer.provide(gitCoreLayer(execute)),
       Layer.provide(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
@@ -350,7 +410,7 @@ describe("CheckpointStoreLive", () => {
       throw new Error(`Unexpected git args: ${args}`);
     });
     const layer = CheckpointStoreLive.pipe(
-      Layer.provide(Layer.succeed(GitCore, { execute } as unknown as GitCoreShape)),
+      Layer.provide(gitCoreLayer(execute)),
       Layer.provide(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);

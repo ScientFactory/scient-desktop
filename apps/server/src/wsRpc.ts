@@ -23,6 +23,11 @@ import { clamp } from "effect/Number";
 import { Effect, FileSystem, Layer, Option, Path, Queue, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
+import {
+  GitMutationRpcGroup,
+  type AuthorizedGitPullInput,
+  type AuthorizedGitRunStackedActionInput,
+} from "@synara/shared/gitMutationRpc";
 
 import { AutomationService } from "./automation/Services/AutomationService";
 import { authErrorResponse, makeEffectAuthRequest } from "./auth/http";
@@ -87,6 +92,7 @@ import { cloneProjectSource, getRepositorySourceStatuses } from "./projectSource
 
 const MAX_DIAGNOSTIC_CHILD_PROCESSES = 80;
 const MAX_DIAGNOSTIC_ARGS_CHARS = 500;
+const ScientWsRpcGroup = WsRpcGroup.merge(GitMutationRpcGroup);
 
 // Relative subdirectories scaffolded under a freshly created chat container workspace root.
 // The Studio layout lives in studioWorkspaceScaffold.ts alongside its instruction files.
@@ -258,7 +264,7 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 }
 
 export const makeWsRpcLayer = () =>
-  WsRpcGroup.toLayer(
+  ScientWsRpcGroup.toLayer(
     Effect.gen(function* () {
       const checkpointDiffQuery = yield* CheckpointDiffQuery;
       const automationService = yield* AutomationService;
@@ -590,7 +596,7 @@ export const makeWsRpcLayer = () =>
       const rpcEffect = <A, E, R>(effect: Effect.Effect<A, E, R>, fallbackMessage: string) =>
         effect.pipe(Effect.mapError((cause) => toWsRpcError(cause, fallbackMessage)));
 
-      return WsRpcGroup.of({
+      return ScientWsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           rpcEffect(
             Effect.gen(function* () {
@@ -855,23 +861,34 @@ export const makeWsRpcLayer = () =>
           rpcEffect(gitManager.readWorkingTreeDiff(input), "Failed to read working tree diff"),
         [WS_METHODS.gitSummarizeDiff]: (input) =>
           rpcEffect(gitManager.summarizeDiff(input), "Failed to summarize diff"),
-        [WS_METHODS.gitPull]: (input) =>
-          rpcEffect(
-            git.pullCurrentBranch(input.cwd).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+        [WS_METHODS.gitPull]: (input) => {
+          // The merged live group replaces this released method tag with the
+          // authority-bearing schema. RpcGroup keeps the duplicate tag union in
+          // its TypeScript surface even though the runtime map uses this schema.
+          const authorizedInput = input as AuthorizedGitPullInput;
+          return rpcEffect(
+            git.withActionLock(
+              authorizedInput.cwd,
+              git
+                .pullCurrentBranch(authorizedInput.cwd, authorizedInput.expectedBranch)
+                .pipe(Effect.tap(() => refreshGitStatus(authorizedInput.cwd))),
+            ),
             "Failed to pull branch",
-          ),
-        [WS_METHODS.gitRunStackedAction]: (input) =>
-          bufferLiveUiStream(
+          );
+        },
+        [WS_METHODS.gitRunStackedAction]: (input) => {
+          const authorizedInput = input as AuthorizedGitRunStackedActionInput;
+          return bufferLiveUiStream(
             Stream.callback<GitActionProgressEvent, WsRpcError>((queue) =>
               gitManager
-                .runStackedAction(input, {
-                  actionId: input.actionId,
+                .runStackedAction(authorizedInput, {
+                  actionId: authorizedInput.actionId,
                   progressReporter: {
                     publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
                   },
                 })
                 .pipe(
-                  Effect.tap(() => refreshGitStatus(input.cwd)),
+                  Effect.tap(() => refreshGitStatus(authorizedInput.cwd)),
                   Effect.matchCauseEffect({
                     onFailure: (cause) =>
                       Queue.fail(queue, toWsRpcError(cause, "Git action failed")),
@@ -880,7 +897,8 @@ export const makeWsRpcLayer = () =>
                 ),
             ),
             { label: "git.stacked-action" },
-          ),
+          );
+        },
         [WS_METHODS.gitResolvePullRequest]: (input) =>
           rpcEffect(gitManager.resolvePullRequest(input), "Failed to resolve pull request"),
         [WS_METHODS.gitPullRequestSnapshot]: (input) =>
@@ -890,9 +908,12 @@ export const makeWsRpcLayer = () =>
           ),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           rpcEffect(
-            gitManager
-              .preparePullRequestThread(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              gitManager
+                .preparePullRequestThread(input)
+                .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to prepare pull request thread",
           ),
         [WS_METHODS.pullRequestsList]: (input) =>
@@ -916,71 +937,107 @@ export const makeWsRpcLayer = () =>
           rpcEffect(git.listBranches(input), "Failed to list branches"),
         [WS_METHODS.gitCreateWorktree]: (input) =>
           rpcEffect(
-            git.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              git.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to create worktree",
           ),
         [WS_METHODS.gitCreateDetachedWorktree]: (input) =>
           rpcEffect(
-            git.createDetachedWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              git.createDetachedWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to create detached worktree",
           ),
         [WS_METHODS.gitRemoveWorktree]: (input) =>
           rpcEffect(
-            git.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              git.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to remove worktree",
           ),
         [WS_METHODS.gitCreateBranch]: (input) =>
           rpcEffect(
-            git.createBranch(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              git.createBranch(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to create branch",
           ),
         [WS_METHODS.gitCheckout]: (input) =>
           rpcEffect(
-            Effect.scoped(git.checkoutBranch(input)).pipe(
-              Effect.tap(() => refreshGitStatus(input.cwd)),
+            git.withActionLock(
+              input.cwd,
+              Effect.scoped(git.checkoutBranch(input)).pipe(
+                Effect.tap(() => refreshGitStatus(input.cwd)),
+              ),
             ),
             "Failed to checkout branch",
           ),
         [WS_METHODS.gitStashAndCheckout]: (input) =>
           rpcEffect(
-            Effect.scoped(git.stashAndCheckout(input)).pipe(
-              Effect.tap(() => refreshGitStatus(input.cwd)),
+            git.withActionLock(
+              input.cwd,
+              Effect.scoped(git.stashAndCheckout(input)).pipe(
+                Effect.tap(() => refreshGitStatus(input.cwd)),
+              ),
             ),
             "Failed to stash and checkout",
           ),
         [WS_METHODS.gitStashDrop]: (input) =>
           rpcEffect(
-            git.stashDrop(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              git.stashDrop(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to drop stash",
           ),
         [WS_METHODS.gitStashInfo]: (input) =>
           rpcEffect(git.stashInfo(input), "Failed to read stash"),
         [WS_METHODS.gitRemoveIndexLock]: (input) =>
-          rpcEffect(git.removeIndexLock(input), "Failed to remove Git index lock"),
+          rpcEffect(
+            git.withActionLock(input.cwd, git.removeIndexLock(input)),
+            "Failed to remove Git index lock",
+          ),
         [WS_METHODS.gitInit]: (input) =>
           rpcEffect(
-            git.initRepo(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              git.initRepo(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to initialize repository",
           ),
         [WS_METHODS.gitStageFiles]: (input) =>
           rpcEffect(
-            git.stageFiles(input.cwd, input.paths).pipe(
-              Effect.tap(() => refreshGitStatus(input.cwd)),
-              Effect.as({ ok: true }),
+            git.withActionLock(
+              input.cwd,
+              git.stageFiles(input.cwd, input.paths).pipe(
+                Effect.tap(() => refreshGitStatus(input.cwd)),
+                Effect.as({ ok: true }),
+              ),
             ),
             "Failed to stage files",
           ),
         [WS_METHODS.gitUnstageFiles]: (input) =>
           rpcEffect(
-            git.unstageFiles(input.cwd, input.paths).pipe(
-              Effect.tap(() => refreshGitStatus(input.cwd)),
-              Effect.as({ ok: true }),
+            git.withActionLock(
+              input.cwd,
+              git.unstageFiles(input.cwd, input.paths).pipe(
+                Effect.tap(() => refreshGitStatus(input.cwd)),
+                Effect.as({ ok: true }),
+              ),
             ),
             "Failed to unstage files",
           ),
         [WS_METHODS.gitHandoffThread]: (input) =>
           rpcEffect(
-            gitManager.handoffThread(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.withActionLock(
+              input.cwd,
+              gitManager.handoffThread(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            ),
             "Failed to hand off thread",
           ),
 
@@ -1460,7 +1517,7 @@ export const makeWsRpcLayer = () =>
     }),
   );
 
-const makeRpcWebSocketHttpEffect = RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
+const makeRpcWebSocketHttpEffect = RpcServer.toHttpEffectWebsocket(ScientWsRpcGroup, {
   spanPrefix: "ws.rpc",
   spanAttributes: {
     "rpc.transport": "websocket",
