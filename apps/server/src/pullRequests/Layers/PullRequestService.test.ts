@@ -14,6 +14,7 @@ import type { ProjectPullRequestPinsShape } from "../../persistence/Services/Pro
 import {
   PULL_REQUEST_PIN_RECOVERY_LIMIT,
   isDefinitivePullRequestNotFound,
+  listLiveProjectsForPullRequests,
   liveProjectFromShell,
   makePullRequestService,
 } from "./PullRequestService";
@@ -144,6 +145,28 @@ describe("PullRequestService", () => {
     const { deletedAt: _deletedAt, ...shell } = makeProject("project-shell", "Shell", "/tmp/shell");
 
     expect(liveProjectFromShell(shell)).toEqual({ ...shell, deletedAt: null });
+  });
+
+  it("loads polling projects only through the project-only projection seam", async () => {
+    const { deletedAt: _deletedAt, ...shell } = makeProject(
+      "project-polling-shell",
+      "Polling",
+      "/tmp/polling",
+    );
+    let projectReads = 0;
+
+    const projects = await Effect.runPromise(
+      listLiveProjectsForPullRequests({
+        listActiveProjectShells: () =>
+          Effect.sync(() => {
+            projectReads += 1;
+            return [shell];
+          }),
+      }),
+    );
+
+    expect(projectReads).toBe(1);
+    expect(projects).toEqual([{ ...shell, deletedAt: null }]);
   });
 
   it("returns one repository-level row for projects sharing a repository", async () => {

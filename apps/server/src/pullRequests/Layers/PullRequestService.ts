@@ -18,7 +18,10 @@ import {
   type GitHubCliShape,
   type GitHubPullRequestListItem,
 } from "../../git/Services/GitHubCli";
-import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery";
+import {
+  ProjectionSnapshotQuery,
+  type ProjectionSnapshotQueryShape,
+} from "../../orchestration/Services/ProjectionSnapshotQuery";
 import {
   ProjectPullRequestPins,
   type ProjectPullRequestPinsShape,
@@ -79,6 +82,14 @@ export interface PullRequestServiceDependencies {
 /** The shell query excludes soft-deleted projects, so its omitted deletion marker is known null. */
 export function liveProjectFromShell(shell: OrchestrationProjectShell): OrchestrationProject {
   return { ...shell, deletedAt: null };
+}
+
+export function listLiveProjectsForPullRequests(
+  projection: Pick<ProjectionSnapshotQueryShape, "listActiveProjectShells">,
+): Effect.Effect<ReadonlyArray<OrchestrationProject>, unknown> {
+  return projection
+    .listActiveProjectShells()
+    .pipe(Effect.map((projects) => projects.map(liveProjectFromShell)));
 }
 
 /** Exact gh error shape for a PR number that is known not to exist. Generic 404/auth failures are
@@ -582,10 +593,7 @@ export const PullRequestServiceLive = Layer.effect(
       homeDir: config.homeDir,
       github,
       pins,
-      listProjects: () =>
-        projection
-          .getShellSnapshot()
-          .pipe(Effect.map((snapshot) => snapshot.projects.map(liveProjectFromShell))),
+      listProjects: () => listLiveProjectsForPullRequests(projection),
       resolveRepositories: (project) => resolveGitHubRepositories(git, project.workspaceRoot),
     });
   }),
