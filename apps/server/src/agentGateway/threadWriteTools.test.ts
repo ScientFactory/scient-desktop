@@ -26,9 +26,10 @@ const ISO = "2026-01-01T00:00:00.000Z";
 
 type Capability = "thread:read" | "thread:write" | "automation:write";
 
-// Captured dispatch commands are asserted structurally; a broad type keeps the
-// test focused on the runtime shape the gateway emits.
-type AnyCommand = Record<string, any>;
+// Captured dispatch commands are asserted structurally; `any` keeps the test
+// focused on the runtime shape the gateway emits and, unlike an object type,
+// absorbs `undefined` from indexed access under noUncheckedIndexedAccess.
+type AnyCommand = any;
 
 function shell(id: string, overrides?: Record<string, unknown>): OrchestrationThreadShell {
   return {
