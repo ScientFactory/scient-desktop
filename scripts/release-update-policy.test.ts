@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   channelManifestNames,
+  cleanReleaseManifestNames,
   prepareReleaseUpdateManifests,
   resolveReleaseUpdatePolicy,
   type ReleaseUpdatePolicyConfig,
@@ -52,7 +53,7 @@ describe("release update policy", () => {
     );
   });
 
-  it("keeps clean release metadata on Latest and dedicated channel filenames", () => {
+  it("keeps desktop channels format-safe across the AppImage to Debian migration", () => {
     const root = mkdtempSync(join(tmpdir(), "scient-release-policy-"));
     try {
       mkdirSync(root, { recursive: true });
@@ -61,19 +62,21 @@ describe("release update policy", () => {
       }
 
       expect(prepareReleaseUpdateManifests(root, cleanConfig)).toEqual([
-        ...defaultManifestNames,
-        ...channelManifestNames("scient"),
+        "latest-mac.yml",
+        "latest.yml",
+        ...cleanReleaseManifestNames("scient"),
       ]);
-      for (const name of defaultManifestNames) {
+      for (const name of ["latest-mac.yml", "latest.yml"]) {
         expect(readFileSync(resolve(root, name), "utf8")).toBe(name);
       }
-      for (const [index, channelName] of channelManifestNames("scient").entries()) {
+      for (const [index, channelName] of cleanReleaseManifestNames("scient").entries()) {
         const defaultName = defaultManifestNames[index];
         if (!defaultName) throw new Error(`Missing default manifest mapping for ${channelName}`);
-        expect(readFileSync(resolve(root, channelName), "utf8")).toBe(
-          readFileSync(resolve(root, defaultName), "utf8"),
-        );
+        expect(readFileSync(resolve(root, channelName), "utf8")).toBe(defaultName);
       }
+      expect(existsSync(resolve(root, "latest-linux.yml"))).toBe(false);
+      expect(existsSync(resolve(root, "scient-linux.yml"))).toBe(false);
+      expect(readFileSync(resolve(root, "scient-deb-linux.yml"), "utf8")).toBe("latest-linux.yml");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

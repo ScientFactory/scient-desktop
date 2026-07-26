@@ -35,7 +35,7 @@ Before a Tier A or B run, confirm all of the following:
 - The OS user has never launched Scient or the provider being tested.
 - Scient data, provider configuration, browser profiles, credentials, and
   relevant environment variables are absent from that user profile.
-- The test starts from an exact installer or AppImage with a recorded filename,
+- The test starts from an exact installer or package with a recorded filename,
   SHA-256 digest, source commit, and build run.
 - The workspace contains only public, disposable fixtures. Never expose a real
   project or personal account merely to test the UI.
@@ -115,22 +115,25 @@ another supported distribution when a change touches packaging or desktop
 integration. Preserve separate Wayland and X11 results if the behavior differs.
 
 1. Restore a clean VM snapshot with no Scient or provider configuration.
-2. Download the exact AppImage and record `uname -a`, desktop session, display
+2. Download the exact `.deb` and record `uname -a`, desktop session, display
    scaling, and its SHA-256 digest.
-3. Mark it executable and launch it from the desktop as an ordinary user.
+3. Install it through the system package installer, then launch Scient as an
+   ordinary user. Record the privilege prompt used for installation separately
+   from the unprivileged application launch.
 4. Record missing runtime libraries, sandbox errors, desktop integration
    prompts, and file-opening behavior instead of repairing the image silently.
 
 Tier C shell launch:
 
 ```bash
-chmod +x ./Scient-*.AppImage
-SCIENT_HOME="$(mktemp -d)" ./Scient-*.AppImage
+sudo apt install ./Scient-*-amd64.deb
+SCIENT_HOME="$(mktemp -d)" scient
 ```
 
 Do not add `--no-sandbox` merely to obtain a green result. If the packaged app
-requires it, that is a release defect or an explicitly documented platform
-limitation.
+requires it, that is a release defect. The AppImage compatibility artifact
+remains fail-closed and is not the supported Ubuntu route because stock Ubuntu
+24.04 can block its randomized mount path from obtaining a Chromium sandbox.
 
 ## Running a manual verification
 

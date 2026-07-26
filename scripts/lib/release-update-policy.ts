@@ -3,7 +3,7 @@
 // releases publish through GitHub's Latest updater feed and retain the packaged app's
 // dedicated `scient` channel aliases.
 
-import { constants, copyFileSync, existsSync, readFileSync } from "node:fs";
+import { constants, copyFileSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
 
 export type ReleaseLane = "bridge" | "clean";
@@ -111,6 +111,15 @@ export function channelManifestNames(channel: string): readonly string[] {
   return [`${channel}-mac.yml`, `${channel}.yml`, `${channel}-linux.yml`];
 }
 
+export function cleanReleaseManifestNames(channel: string): readonly string[] {
+  const [macManifest, windowsManifest] = channelManifestNames(channel);
+  const linuxDebManifest = channelManifestNames(`${channel}-deb`)[2];
+  if (!macManifest || !windowsManifest || !linuxDebManifest) {
+    throw new Error(`Could not resolve release manifest names for channel ${channel}.`);
+  }
+  return [macManifest, windowsManifest, linuxDebManifest];
+}
+
 function copyChannelManifests(
   assetDirectory: string,
   sourceNames: readonly string[],
@@ -137,7 +146,10 @@ export function prepareReleaseUpdateManifests(
 ): readonly string[] {
   const normalizedConfig = validateReleaseUpdatePolicyConfig(config);
   const sourceNames = ["latest-mac.yml", "latest.yml", "latest-linux.yml"] as const;
-  const destinationNames = channelManifestNames(normalizedConfig.channel);
+  const destinationNames =
+    normalizedConfig.lane === "bridge"
+      ? channelManifestNames(normalizedConfig.channel)
+      : cleanReleaseManifestNames(normalizedConfig.channel);
   if (normalizedConfig.lane === "bridge") {
     const missing = sourceNames.filter((name) => !existsSync(resolve(assetDirectory, name)));
     if (missing.length > 0) {
@@ -151,9 +163,10 @@ export function prepareReleaseUpdateManifests(
   if (missing.length > 0) {
     throw new Error(`Latest release is missing update manifests: ${missing.join(", ")}`);
   }
-  // Stable 0.5.x releases are GitHub Latest, but shipped desktop binaries still
-  // request the dedicated `scient` channel. Keep both filenames in the same
-  // release so existing installations and new Latest installs use the same feed.
+  // macOS and Windows continue on the dedicated Scient channel. Debian packages
+  // use a format-specific channel so an older AppImage updater can never download
+  // a .deb and attempt an unsafe cross-format replacement.
   copyChannelManifests(assetDirectory, sourceNames, destinationNames);
-  return [...sourceNames, ...destinationNames];
+  rmSync(resolve(assetDirectory, "latest-linux.yml"));
+  return [sourceNames[0], sourceNames[1], ...destinationNames];
 }

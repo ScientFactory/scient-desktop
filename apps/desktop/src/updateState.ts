@@ -5,6 +5,15 @@ export type DownloadProgressSample = {
   readonly transferred?: number | null;
 };
 
+export function resolveLinuxPackageType(args: {
+  readonly resourcePackageType: string | null;
+  readonly appImage?: string | undefined;
+}): string | null {
+  const packagedType = args.resourcePackageType?.trim();
+  if (packagedType) return packagedType;
+  return args.appImage ? "AppImage" : null;
+}
+
 export function getDownloadStallTimeoutMessage(timeoutMs: number): string {
   const timeoutSeconds = Math.max(1, Math.round(timeoutMs / 1000));
   return `Download stalled after ${timeoutSeconds} seconds without progress. Try again.`;
@@ -153,6 +162,7 @@ export function getAutoUpdateDisabledReason(args: {
   isPackaged: boolean;
   platform: NodeJS.Platform;
   appImage?: string | undefined;
+  linuxPackageType?: string | undefined;
   disabledByEnv: boolean;
   hasUpdateFeedConfig: boolean;
 }): string | null {
@@ -165,8 +175,8 @@ export function getAutoUpdateDisabledReason(args: {
   if (args.disabledByEnv) {
     return "Automatic updates are disabled by the SYNARA_DISABLE_AUTO_UPDATE setting.";
   }
-  if (args.platform === "linux" && !args.appImage) {
-    return "Automatic updates on Linux require running the AppImage build.";
+  if (args.platform === "linux" && !args.appImage && args.linuxPackageType !== "deb") {
+    return "Automatic updates on Linux require an installed Scient Debian package.";
   }
   return null;
 }

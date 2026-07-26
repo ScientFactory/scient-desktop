@@ -9,6 +9,7 @@ import {
   isExpectedStalledDownloadCancellationError,
   isUpdateVersionNewer,
   nextStatusAfterDownloadFailure,
+  resolveLinuxPackageType,
   shouldCheckForUpdatesOnForeground,
   shouldBroadcastDownloadProgress,
 } from "./updateState";
@@ -31,6 +32,26 @@ const baseState: DesktopUpdateState = {
   installFailureCount: 0,
   releaseUrl: null,
 };
+
+describe("resolveLinuxPackageType", () => {
+  it("prefers the packaged resource marker over an inherited AppImage variable", () => {
+    expect(
+      resolveLinuxPackageType({
+        resourcePackageType: " deb\n",
+        appImage: "/tmp/parent.AppImage",
+      }),
+    ).toBe("deb");
+  });
+
+  it("uses the AppImage marker only when packaged metadata is absent", () => {
+    expect(
+      resolveLinuxPackageType({
+        resourcePackageType: null,
+        appImage: "/tmp/Scient.AppImage",
+      }),
+    ).toBe("AppImage");
+  });
+});
 
 describe("getDownloadStallTimeoutMessage", () => {
   it("formats the no-progress timeout in seconds", () => {
@@ -226,7 +247,7 @@ describe("getAutoUpdateDisabledReason", () => {
     ).toContain("SYNARA_DISABLE_AUTO_UPDATE");
   });
 
-  it("reports linux non-AppImage builds as disabled", () => {
+  it("reports unsupported Linux package types as disabled", () => {
     expect(
       getAutoUpdateDisabledReason({
         isDevelopment: false,
@@ -236,7 +257,21 @@ describe("getAutoUpdateDisabledReason", () => {
         disabledByEnv: false,
         hasUpdateFeedConfig: true,
       }),
-    ).toContain("AppImage");
+    ).toContain("Debian package");
+  });
+
+  it("allows installed Debian packages to use their dedicated update channel", () => {
+    expect(
+      getAutoUpdateDisabledReason({
+        isDevelopment: false,
+        isPackaged: true,
+        platform: "linux",
+        appImage: undefined,
+        linuxPackageType: "deb",
+        disabledByEnv: false,
+        hasUpdateFeedConfig: true,
+      }),
+    ).toBeNull();
   });
 });
 
