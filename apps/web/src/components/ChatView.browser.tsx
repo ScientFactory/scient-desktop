@@ -5117,13 +5117,15 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("does not create a project when the native picker resolves after same-pane navigation", async () => {
+  it("releases the send gate and rejects a late native picker after same-pane navigation", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
-      snapshot: createSnapshotForTargetUser({
-        targetMessageId: "msg-user-project-picker-dialog-race" as MessageId,
-        targetText: "project picker dialog race",
-      }),
+      snapshot: withOpenProjectPickerFixtures(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-project-picker-dialog-race" as MessageId,
+          targetText: "project picker dialog race",
+        }),
+      ),
     });
     const previousNativeApi = window.nativeApi;
     const wsNativeApi = readNativeApi();
@@ -5165,14 +5167,48 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await page.getByTestId("empty-landing-heading-project-trigger").click();
       await page.getByText("New project").click();
       await vi.waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(1));
+
+      const destinationThreadId = "00000000-0000-4000-8000-000000000128" as ThreadId;
+      useComposerDraftStore.getState().registerDraftThread(destinationThreadId, {
+        projectId: OTHER_PROJECT_ID,
+        createdAt: NOW_ISO,
+      });
+      useComposerDraftStore.getState().setModelSelection(destinationThreadId, {
+        provider: "codex",
+        model: "gpt-5",
+      });
+      useComposerDraftStore
+        .getState()
+        .setPrompt(destinationThreadId, "send while the previous picker is still pending");
       await mounted.router.navigate({
         to: "/$threadId",
-        params: { threadId: THREAD_ID },
+        params: { threadId: destinationThreadId },
       });
       await waitForURL(
         mounted.router,
-        (path) => path === `/${THREAD_ID}`,
-        "Existing thread should be selected while the native picker is pending.",
+        (path) => path === `/${destinationThreadId}`,
+        "The destination draft should be selected while the native picker is pending.",
+      );
+
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(composerEditor.textContent ?? "").toContain(
+          "send while the previous picker is still pending",
+        );
+      });
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      await sendButton.click();
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests.some((request) => {
+              const command = readDispatchedCommand(request);
+              return command?.type === "thread.create" && command.threadId === destinationThreadId;
+            }),
+          ).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
       );
 
       releasePickFolder();
@@ -5203,6 +5239,124 @@ describe("ChatView timeline estimator parity (full app)", () => {
       } else {
         Reflect.deleteProperty(window, "nativeApi");
       }
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not move a draft while its first send is still in provider preflight", async () => {
+    const unavailableProvider = {
+      provider: "codex" as const,
+      status: "error" as const,
+      available: false,
+      authStatus: "unauthenticated" as const,
+      message: "Codex is temporarily unavailable.",
+      checkedAt: NOW_ISO,
+    };
+    const availableProvider = {
+      provider: "codex" as const,
+      status: "ready" as const,
+      available: true,
+      authStatus: "authenticated" as const,
+      checkedAt: NOW_ISO,
+      runtime: {
+        source: "system" as const,
+        managedVersion: null,
+        canInstall: false,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: null,
+      },
+    };
+    let resolveProviderRefresh!: (value: { providers: [typeof availableProvider] }) => void;
+    const providerRefresh = new Promise<{ providers: [typeof availableProvider] }>((resolve) => {
+      resolveProviderRefresh = resolve;
+    });
+    const refreshProviders = vi.fn<NativeApi["server"]["refreshProviders"]>(() => providerRefresh);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withOpenProjectPickerFixtures(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-project-picker-send-race" as MessageId,
+          targetText: "project picker send race",
+        }),
+      ),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [unavailableProvider],
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        server: {
+          ...api.server,
+          refreshProviders,
+        },
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await page.getByLabelText("Create new thread in Project").click();
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+      await waitForDraftNavigationIdle(draftNavigationSlotKey());
+      useComposerDraftStore.getState().setModelSelection(newThreadId, {
+        provider: "codex",
+        model: "gpt-5",
+      });
+      useComposerDraftStore
+        .getState()
+        .setPrompt(newThreadId, "keep this send in the original project");
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(composerEditor.textContent ?? "").toContain(
+          "keep this send in the original project",
+        );
+      });
+      await page.getByTestId("empty-landing-heading-project-trigger").click();
+      const otherProjectOption = await waitForElement(
+        () =>
+          Array.from(
+            document.querySelectorAll<HTMLElement>('[data-slot="combobox-item"]'),
+          ).find((item) => item.textContent?.trim() === "other") ?? null,
+        "Unable to find the Other Project picker option.",
+      );
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find composer form.",
+      );
+      // Start the send and choose the already-open project option in the same
+      // task. This reproduces the rapid reverse-order race before React hides
+      // the empty-draft landing for provider preflight.
+      composerForm.requestSubmit();
+      otherProjectOption.click();
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledOnce());
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        projectId: PROJECT_ID,
+      });
+
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await vi.waitFor(
+        () => {
+          const createCommand = wsRequests
+            .map(readDispatchedCommand)
+            .find(
+              (command) => command?.type === "thread.create" && command.threadId === newThreadId,
+            );
+          expect(createCommand).toMatchObject({
+            projectId: PROJECT_ID,
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      resolveProviderRefresh({ providers: [availableProvider] });
       await mounted.cleanup();
     }
   });

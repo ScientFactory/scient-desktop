@@ -6,7 +6,6 @@
 import {
   memo,
   useCallback,
-  useDeferredValue,
   useEffect,
   useMemo,
   useState,
@@ -109,7 +108,6 @@ export const ProjectPicker = memo(function ProjectPicker({
   const homeDir = useWorkspaceStore((state) => state.homeDir);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const deferredQuery = useDeferredValue(query);
   const [isPicking, setIsPicking] = useState(false);
   const [isLoadingDirectories, setIsLoadingDirectories] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -191,7 +189,10 @@ export const ProjectPicker = memo(function ProjectPicker({
     [homeDir],
   );
 
-  const normalizedQuery = deferredQuery.trim().toLowerCase();
+  // Keep the combobox's semantic item set synchronous with the live input. In
+  // particular, Enter must never activate an aria-activedescendant left over
+  // from a deferred render of the previous query.
+  const normalizedQuery = query.trim().toLowerCase();
   const filteredActiveFolderOptions = useMemo(() => {
     if (normalizedQuery.length === 0) return activeFolderOptions;
     return activeFolderOptions.filter((entry) =>

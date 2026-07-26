@@ -71,7 +71,7 @@ import {
 import { GoTasklist } from "react-icons/go";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Debouncer, useDebouncedValue } from "@tanstack/react-pacer";
-import { useNavigate, useRouter } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { type LegendListRef } from "@legendapp/list/react";
 import {
   GIT_WORKING_TREE_DIFF_LIVE_REFETCH_INTERVAL_MS,
@@ -1139,7 +1139,6 @@ export default function ChatView({
   );
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
-  const router = useRouter();
   const { handleNewThread } = useHandleNewThread();
   const { handleNewChat } = useHandleNewChat();
   const { createThreadHandoff } = useThreadHandoff();
@@ -1504,6 +1503,7 @@ export default function ChatView({
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
   const sendInFlightRef = useRef(false);
   const sendPreflightInFlightRef = useRef(false);
+  const sendOperationInFlightRef = useRef(false);
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const activatedThreadIdRef = useRef<ThreadId | null>(null);
@@ -5526,17 +5526,6 @@ export default function ChatView({
     setQueuedSteerGate(null);
   }, [threadId]);
 
-  useEffect(
-    () =>
-      router.subscribe("onBeforeNavigate", () => {
-        // Route ownership changes before React commits the next thread. Invalidate immediately so
-        // a native folder dialog resolving in that interval cannot mint a fresh request for the
-        // previous draft.
-        emptyDraftProjectRequestRef.current += 1;
-      }),
-    [router],
-  );
-
   useEffect(() => {
     if (!activeThread?.id) return;
     if (activeThread.messages.length === 0) {
@@ -7295,7 +7284,7 @@ export default function ChatView({
     [removeQueuedComposerTurnFromDraft, threadId],
   );
 
-  const onSend = async (
+  const runSend = async (
     e?: { preventDefault: () => void },
     dispatchMode: "queue" | "steer" = "queue",
     queuedTurn?: QueuedComposerChatTurn,
@@ -8329,6 +8318,23 @@ export default function ChatView({
     }
     return turnStartSucceeded;
   };
+  const onSend = async (
+    e?: { preventDefault: () => void },
+    dispatchMode: "queue" | "steer" = "queue",
+    queuedTurn?: QueuedComposerChatTurn,
+    voicePromptOverride?: string,
+  ): Promise<boolean> => {
+    if (sendOperationInFlightRef.current) {
+      e?.preventDefault();
+      return false;
+    }
+    sendOperationInFlightRef.current = true;
+    try {
+      return await runSend(e, dispatchMode, queuedTurn, voicePromptOverride);
+    } finally {
+      sendOperationInFlightRef.current = false;
+    }
+  };
   sendVoiceTranscriptRef.current = (voicePrompt) =>
     onSend(undefined, "queue", undefined, voicePrompt);
 
@@ -9338,13 +9344,28 @@ export default function ChatView({
     [moveDraftThreadToProject, scheduleComposerFocus, threadId],
   );
 
+  const assertEmptyDraftProjectChangeAvailable = useCallback(() => {
+    if (
+      sendOperationInFlightRef.current ||
+      sendPreflightInFlightRef.current ||
+      sendInFlightRef.current ||
+      isSendBusy
+    ) {
+      throw new Error("Wait for the current message to finish preparing before changing projects.");
+    }
+  }, [isSendBusy]);
+
   useLayoutEffect(() => {
     // ChatView is keyed by pane scope and remains mounted when that pane changes
-    // threads. Invalidate requests during the commit boundary so an operation
-    // started for the previous draft cannot mutate it after route navigation.
+    // threads. Invalidate only when this pane's actual thread ownership changes;
+    // global router navigation can merely focus another split pane. Release the
+    // previous thread's send gate immediately while its late completion remains
+    // rejected by the request generation check.
     emptyDraftProjectRequestRef.current += 1;
+    emptyDraftProjectRequestInFlightRef.current = null;
     return () => {
       emptyDraftProjectRequestRef.current += 1;
+      emptyDraftProjectRequestInFlightRef.current = null;
     };
   }, [threadId]);
 
@@ -9387,6 +9408,7 @@ export default function ChatView({
   );
 
   const handleResetWorkspaceToHome = useCallback(() => {
+    assertEmptyDraftProjectChangeAvailable();
     const requestId = emptyDraftProjectRequestRef.current + 1;
     emptyDraftProjectRequestRef.current = requestId;
     emptyDraftProjectRequestInFlightRef.current = requestId;
@@ -9486,6 +9508,7 @@ export default function ChatView({
     finishRequest();
   }, [
     activeThread,
+    assertEmptyDraftProjectChangeAvailable,
     chatWorkspaceRoot,
     hasNativeUserMessages,
     homeDir,
@@ -9559,6 +9582,7 @@ export default function ChatView({
 
   const handleSelectProjectForEmptyDraft = useCallback(
     (projectId: ProjectId) => {
+      assertEmptyDraftProjectChangeAvailable();
       const requestId = emptyDraftProjectRequestRef.current + 1;
       emptyDraftProjectRequestRef.current = requestId;
       emptyDraftProjectRequestInFlightRef.current = requestId;
@@ -9568,10 +9592,11 @@ export default function ChatView({
         }
       });
     },
-    [selectProjectForEmptyDraftRequest],
+    [assertEmptyDraftProjectChangeAvailable, selectProjectForEmptyDraftRequest],
   );
 
   const handleCreateProjectFromPicker = useCallback(async () => {
+    assertEmptyDraftProjectChangeAvailable();
     if (!isLocalDraftThread) {
       return;
     }
@@ -9622,6 +9647,7 @@ export default function ChatView({
       }
     }
   }, [
+    assertEmptyDraftProjectChangeAvailable,
     isEmptyDraftProjectRequestCurrent,
     isLocalDraftThread,
     selectProjectForEmptyDraftRequest,
