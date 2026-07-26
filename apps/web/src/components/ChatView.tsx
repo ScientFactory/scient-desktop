@@ -11539,6 +11539,7 @@ export default function ChatView({
                 </div>
 
                 <div
+                  data-chat-composer-stack="true"
                   className={cn(
                     "relative z-10 -mt-5 w-full shrink-0 overflow-visible pt-0 sm:pt-0",
                     ENVIRONMENT_CONTENT_INSET_MOTION_CLASS,

@@ -186,7 +186,13 @@ const MAX_VISIBLE_CHANGED_FILES = 5;
 // tail), so the list appends a fixed tail spacer beyond that overlap to keep final cards
 // from sitting flush against the composer.
 const BOTTOM_CONTENT_INSET_PX = 64;
-const TIMELINE_LIST_FOOTER = <div aria-hidden="true" style={{ height: BOTTOM_CONTENT_INSET_PX }} />;
+const TIMELINE_LIST_FOOTER = (
+  <div
+    data-testid="transcript-bottom-spacer"
+    aria-hidden="true"
+    style={{ height: BOTTOM_CONTENT_INSET_PX }}
+  />
+);
 const MESSAGE_HOVER_REVEAL_CLASS_NAME =
   "opacity-0 transition-opacity pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto";
 // Shared interaction tone for a work row's leading glyph and labels: muted by
