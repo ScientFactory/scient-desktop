@@ -214,7 +214,11 @@ import {
   ensureLeadingSpaceForReplacement,
   extendReplacementRangeForTrailingSpace,
 } from "../composerTriggerInsertion";
-import { createProjectSelector, createThreadSelector } from "../storeSelectors";
+import {
+  createProjectSelector,
+  createSidebarThreadSummarySelector,
+  createThreadSelector,
+} from "../storeSelectors";
 import {
   canOfferForkSlashCommand,
   canOfferSideSlashCommand,
@@ -459,6 +463,7 @@ import {
   useAutomations,
 } from "../routes/-automations.shared";
 import { ChatTranscriptPane } from "./chat/ChatTranscriptPane";
+import { resolveForkProvenance } from "./chat/forkProvenance";
 import type { MessagesTimelineController } from "./chat/MessagesTimeline";
 import { buildTurnDiffSummaryByAssistantMessageId } from "./chat/MessagesTimeline.logic";
 import { deriveAgentActivityTimelineState } from "./chat/agentActivity.logic";
@@ -1774,6 +1779,14 @@ export default function ChatView({
     [draftThread, fallbackDraftProject?.defaultModelSelection, localDraftError, threadId],
   );
   const activeThread = serverThread ?? localDraftThread;
+  const forkSourceThreadId = activeThread?.forkSourceThreadId ?? null;
+  const forkSourceThread = useStore(
+    useMemo(() => createSidebarThreadSummarySelector(forkSourceThreadId), [forkSourceThreadId]),
+  );
+  const forkProvenance = useMemo(
+    () => (activeThread ? resolveForkProvenance(activeThread, forkSourceThread) : null),
+    [activeThread, forkSourceThread],
+  );
   useEffect(() => {
     if (
       pendingFileUndo &&
@@ -3369,7 +3382,10 @@ export default function ChatView({
   // Home-scoped chats get the global "What should we work on?" copy plus the project picker,
   // while project-scoped drafts reuse the same centered layout with folder-specific copy.
   const isCenteredEmptyLanding =
-    timelineEntries.length === 0 && !activeThread?.parentThreadId && !isEditorRail;
+    timelineEntries.length === 0 &&
+    forkProvenance === null &&
+    !activeThread?.parentThreadId &&
+    !isEditorRail;
   const isEmptyChatLanding =
     isCenteredEmptyLanding && Boolean(homeDir) && isContainerLandingProject;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
@@ -12028,6 +12044,7 @@ export default function ChatView({
                     threadMarkers={threadMarkers}
                     enteringUserMessageIds={enteringUserMessageIds}
                     timelineEntries={timelineEntries}
+                    forkProvenance={forkProvenance}
                     turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
                     onOpenTurnDiff={onOpenTurnDiff}
                     onOpenThread={onNavigateToThread}

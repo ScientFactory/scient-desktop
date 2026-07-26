@@ -92,6 +92,8 @@ import { AssistantArtifactShelf } from "./AssistantArtifactShelf";
 import { FileAttachmentChip } from "./FileAttachmentChip";
 import { FileCommentsSummaryChip } from "./FileCommentsSummaryChip";
 import { UserMessagePastedTextCard } from "./PastedTextChip";
+import { ForkProvenanceMarker } from "./ForkProvenanceMarker";
+import type { ForkProvenance } from "./forkProvenance";
 import {
   hasLeadingUserMedia,
   resolveUserTurnMarker,
@@ -408,6 +410,7 @@ interface MessagesTimelineProps {
   /** User messages inserted locally by send actions, eligible for the subtle enter affordance. */
   enteringUserMessageIds?: ReadonlySet<MessageId>;
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
+  forkProvenance?: ForkProvenance | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   nowIso?: string;
   expandedWorkGroups?: Record<string, boolean>;
@@ -471,6 +474,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   threadMarkers = [],
   enteringUserMessageIds = EMPTY_MESSAGE_ID_SET,
   timelineEntries,
+  forkProvenance = null,
   turnDiffSummaryByAssistantMessageId,
   nowIso,
   expandedWorkGroups,
@@ -612,6 +616,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     () =>
       deriveMessagesTimelineRows({
         timelineEntries,
+        forkProvenance,
         isWorking,
         worktreeSetup: presentedWorktreeSetup?.snapshot ?? null,
         worktreeSetupOpen: presentedWorktreeSetup?.open ?? false,
@@ -623,6 +628,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       }),
     [
       timelineEntries,
+      forkProvenance,
       isWorking,
       presentedWorktreeSetup,
       activeTurnInProgress,
@@ -999,6 +1005,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       data-message-id={row.kind === "message" ? row.message.id : undefined}
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
+      {row.kind === "fork-provenance" && (
+        <ForkProvenanceMarker
+          provenance={row.provenance}
+          {...(onOpenThread ? { onOpenSource: onOpenThread } : {})}
+        />
+      )}
+
       {row.kind === "work" &&
         (() => {
           const groupId = row.id;
