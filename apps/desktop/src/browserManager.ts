@@ -118,6 +118,13 @@ interface PendingRuntimeSync {
   faviconUrls?: string[];
 }
 
+interface ProvisionalLocalHtmlRuntime {
+  threadId: ThreadId;
+  sourceTabId: string;
+  replacementTaskKey: string;
+  tab: BrowserTabState;
+}
+
 const LIVE_TAB_STATUS: BrowserTabState["status"] = "live";
 const SUSPENDED_TAB_STATUS: BrowserTabState["status"] = "suspended";
 const MAX_LOCAL_HTML_WATCH_DIRECTORIES_PER_TAB = 64;
@@ -171,6 +178,31 @@ function isSameLocalHtmlSource(left: BrowserTabState, right: BrowserTabState): b
     leftDisplayUrl === rightDisplayUrl &&
     leftPreviewCwd !== null &&
     leftPreviewCwd === rightPreviewCwd
+  );
+}
+
+function sameStringList(
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right || left.length !== right.length) return false;
+  return left.every((value, index) => value === right[index]);
+}
+
+function sameLocalHtmlReplacementInput(
+  left: BrowserReplaceLocalHtmlPreviewInput,
+  right: BrowserReplaceLocalHtmlPreviewInput,
+): boolean {
+  return (
+    left.threadId === right.threadId &&
+    left.tabId === right.tabId &&
+    left.url === right.url &&
+    left.displayUrl === right.displayUrl &&
+    left.previewCwd === right.previewCwd &&
+    left.activate === right.activate &&
+    sameStringList(left.watchedPaths, right.watchedPaths) &&
+    sameStringList(left.allowedExternalUrls, right.allowedExternalUrls)
   );
 }
 
@@ -351,7 +383,15 @@ export class DesktopBrowserManager {
   private readonly localHtmlSourceWatches = new Map<string, LocalHtmlSourceWatch>();
   private readonly pendingLocalHtmlHttpErrors = new Map<number, number>();
   private readonly localHtmlReplacementTasks = new Map<string, Promise<ThreadBrowserState>>();
-  private readonly localHtmlReplacementActivationRequests = new Set<string>();
+  private readonly localHtmlReplacementCurrentInputs = new Map<
+    string,
+    BrowserReplaceLocalHtmlPreviewInput
+  >();
+  private readonly localHtmlReplacementQueuedInputs = new Map<
+    string,
+    BrowserReplaceLocalHtmlPreviewInput
+  >();
+  private readonly provisionalLocalHtmlRuntimes = new Map<string, ProvisionalLocalHtmlRuntime>();
   // OAuth/sign-in popups opened by pages via `window.open`. Tracked so they can be sized over
   // the panel and torn down cleanly without leaking native windows.
   private readonly popupRuntimes = new Map<BrowserWindow, OAuthPopupRuntime>();
@@ -393,6 +433,9 @@ export class DesktopBrowserManager {
 
     this.detachAttachedRuntime();
     this.destroyAllRuntimes();
+    for (const provisional of this.provisionalLocalHtmlRuntimes.values()) {
+      this.clearPreviewSession(provisional.threadId, provisional.tab);
+    }
     this.closeAllPopupWindows();
   }
 
@@ -916,7 +959,9 @@ export class DesktopBrowserManager {
     this.pendingRuntimeSyncs.clear();
     this.pendingLocalHtmlHttpErrors.clear();
     this.localHtmlReplacementTasks.clear();
-    this.localHtmlReplacementActivationRequests.clear();
+    this.localHtmlReplacementCurrentInputs.clear();
+    this.localHtmlReplacementQueuedInputs.clear();
+    this.provisionalLocalHtmlRuntimes.clear();
     this.runtimeLastActiveAtByKey.clear();
     this.previewSessionsConfigured.clear();
     this.previewSessionReady.clear();
@@ -1332,25 +1377,78 @@ export class DesktopBrowserManager {
 
   replaceLocalHtmlPreview(input: BrowserReplaceLocalHtmlPreviewInput): Promise<ThreadBrowserState> {
     const key = buildRuntimeKey(input.threadId, input.tabId);
-    if (input.activate !== false) {
-      this.localHtmlReplacementActivationRequests.add(key);
-    }
     const existing = this.localHtmlReplacementTasks.get(key);
     if (existing) {
+      const latestInput =
+        this.localHtmlReplacementQueuedInputs.get(key) ??
+        this.localHtmlReplacementCurrentInputs.get(key);
+      if (!latestInput || !sameLocalHtmlReplacementInput(latestInput, input)) {
+        // Preserve only the newest distinct revision. All callers share the task that
+        // settles after that newest revision is either installed or rejected.
+        this.localHtmlReplacementQueuedInputs.set(key, input);
+      }
       return existing;
     }
-    const task = this.performLocalHtmlPreviewReplacement(input).finally(() => {
+    this.localHtmlReplacementCurrentInputs.set(key, input);
+    const task = this.performQueuedLocalHtmlPreviewReplacements(key, input).finally(() => {
       if (this.localHtmlReplacementTasks.get(key) === task) {
         this.localHtmlReplacementTasks.delete(key);
-        this.localHtmlReplacementActivationRequests.delete(key);
+        this.localHtmlReplacementCurrentInputs.delete(key);
+        this.localHtmlReplacementQueuedInputs.delete(key);
       }
     });
     this.localHtmlReplacementTasks.set(key, task);
     return task;
   }
 
+  private async performQueuedLocalHtmlPreviewReplacements(
+    key: string,
+    initialInput: BrowserReplaceLocalHtmlPreviewInput,
+  ): Promise<ThreadBrowserState> {
+    let nextInput = initialInput;
+    let latestState: ThreadBrowserState | null = null;
+    let latestError: unknown = null;
+
+    while (true) {
+      this.localHtmlReplacementCurrentInputs.set(key, nextInput);
+      try {
+        latestState = await this.performLocalHtmlPreviewReplacement(nextInput, key);
+        latestError = null;
+      } catch (error) {
+        latestError = error;
+      }
+
+      const queuedInput = this.localHtmlReplacementQueuedInputs.get(key);
+      this.localHtmlReplacementQueuedInputs.delete(key);
+      if (!queuedInput) {
+        if (latestError) {
+          throw latestError;
+        }
+        if (!latestState) {
+          throw new Error("The local HTML preview could not be refreshed.");
+        }
+        return latestState;
+      }
+
+      const state = this.states.get(queuedInput.threadId);
+      const currentSourceTab = state?.tabs.find(
+        (tab) =>
+          tab.kind === "local-html" &&
+          normalizedLocalHtmlSourcePath(tab.displayUrl) ===
+            normalizedLocalHtmlSourcePath(queuedInput.displayUrl) &&
+          normalizedLocalHtmlSourcePath(tab.previewCwd) ===
+            normalizedLocalHtmlSourcePath(queuedInput.previewCwd),
+      );
+      nextInput = {
+        ...queuedInput,
+        tabId: currentSourceTab?.id ?? queuedInput.tabId,
+      };
+    }
+  }
+
   private async performLocalHtmlPreviewReplacement(
     input: BrowserReplaceLocalHtmlPreviewInput,
+    replacementTaskKey: string,
   ): Promise<ThreadBrowserState> {
     const state = this.ensureWorkspace(input.threadId);
     const activeTabIdAtStart = state.activeTabId;
@@ -1370,6 +1468,12 @@ export class DesktopBrowserManager {
     this.configureTabSession(input.threadId, candidateTab);
     const candidateRuntime = this.createLiveRuntime(input.threadId, candidateTab.id, candidateTab);
     this.runtimes.set(candidateRuntime.key, candidateRuntime);
+    this.provisionalLocalHtmlRuntimes.set(candidateRuntime.key, {
+      threadId: input.threadId,
+      sourceTabId: input.tabId,
+      replacementTaskKey,
+      tab: candidateTab,
+    });
 
     try {
       const partition = browserSessionPartition(candidateTab.kind, input.threadId, candidateTab.id);
@@ -1417,14 +1521,11 @@ export class DesktopBrowserManager {
         (tab) => tab.id !== previousTab.id && isSameLocalHtmlSource(tab, candidateTab),
       );
       const duplicateTabIds = new Set(duplicateTabs.map((tab) => tab.id));
-      const replacementKey = buildRuntimeKey(input.threadId, previousTab.id);
       const sourceIsSelected =
         state.activeTabId === previousTab.id ||
         (state.activeTabId !== null && duplicateTabIds.has(state.activeTabId));
       const shouldActivate =
-        sourceIsSelected ||
-        (this.localHtmlReplacementActivationRequests.has(replacementKey) &&
-          state.activeTabId === activeTabIdAtStart);
+        sourceIsSelected || (input.activate !== false && state.activeTabId === activeTabIdAtStart);
       state.tabs = state.tabs
         .map((tab, index) => (index === currentTabIndex ? candidateTab : tab))
         .filter((tab) => !duplicateTabIds.has(tab.id));
@@ -1456,11 +1557,14 @@ export class DesktopBrowserManager {
       ) {
         this.attachRuntime(candidateRuntime, bounds);
       }
+      this.provisionalLocalHtmlRuntimes.delete(candidateRuntime.key);
       return this.snapshotThreadState(input.threadId, state);
     } catch (error) {
       this.pendingLocalHtmlHttpErrors.delete(candidateRuntime.webContents.id);
       this.destroyRuntime(input.threadId, candidateTab.id);
-      this.clearPreviewSession(input.threadId, candidateTab);
+      if (this.provisionalLocalHtmlRuntimes.delete(candidateRuntime.key)) {
+        this.clearPreviewSession(input.threadId, candidateTab);
+      }
       throw error;
     }
   }
@@ -1544,6 +1648,7 @@ export class DesktopBrowserManager {
     }
 
     this.closePopupWindowsForTab(input.threadId, input.tabId);
+    this.destroyProvisionalLocalHtmlRuntimesForSource(input.threadId, input.tabId);
     this.destroyRuntime(input.threadId, input.tabId);
     this.clearLocalHtmlSourceWatch(input.threadId, input.tabId);
     state.tabs = nextTabs;
@@ -2581,13 +2686,41 @@ export class DesktopBrowserManager {
   }
 
   private destroyThreadRuntimes(threadId: ThreadId): void {
-    const state = this.states.get(threadId);
-    if (!state) {
-      return;
+    // Include provisional local-HTML replacements, whose random tab ids are not
+    // committed to state.tabs until their fresh capability has loaded successfully.
+    for (const runtime of [...this.runtimes.values()]) {
+      if (runtime.threadId === threadId) {
+        this.destroyRuntime(threadId, runtime.tabId);
+      }
     }
+    for (const [key, provisional] of [...this.provisionalLocalHtmlRuntimes]) {
+      if (provisional.threadId === threadId) {
+        this.clearPreviewSession(threadId, provisional.tab);
+        this.provisionalLocalHtmlRuntimes.delete(key);
+      }
+    }
+    for (const [key, task] of this.localHtmlReplacementTasks) {
+      if (key.startsWith(`${threadId}:`)) {
+        // The active promise observes its destroyed runtime and rejects. Discard any
+        // not-yet-started revision so a closed workspace cannot be reopened implicitly.
+        this.localHtmlReplacementQueuedInputs.delete(key);
+        void task.catch(() => undefined);
+      }
+    }
+  }
 
-    for (const tab of state.tabs) {
-      this.destroyRuntime(threadId, tab.id);
+  private destroyProvisionalLocalHtmlRuntimesForSource(
+    threadId: ThreadId,
+    sourceTabId: string,
+  ): void {
+    for (const [key, provisional] of [...this.provisionalLocalHtmlRuntimes]) {
+      if (provisional.threadId !== threadId || provisional.sourceTabId !== sourceTabId) {
+        continue;
+      }
+      this.destroyRuntime(threadId, provisional.tab.id);
+      this.clearPreviewSession(threadId, provisional.tab);
+      this.provisionalLocalHtmlRuntimes.delete(key);
+      this.localHtmlReplacementQueuedInputs.delete(provisional.replacementTaskKey);
     }
   }
 

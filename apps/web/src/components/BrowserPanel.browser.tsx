@@ -34,6 +34,7 @@ import { RecentViewSwitcher } from "./RecentViewSwitcher";
 import { showUndoSnackbar, UndoSnackbarProvider } from "./ui/undoSnackbar";
 
 const THREAD_ID = "thread-browser-copy" as ThreadId;
+const SECOND_THREAD_ID = "thread-browser-copy-second" as ThreadId;
 
 function browserState(activeTabId: string, lastError: string | null = null): ThreadBrowserState {
   return {
@@ -187,6 +188,7 @@ describe("BrowserPanel interactions", () => {
   afterEach(() => {
     nativeApiTestState.api = undefined;
     useBrowserStateStore.getState().removeThreadState(THREAD_ID);
+    useBrowserStateStore.getState().removeThreadState(SECOND_THREAD_ID);
     vi.restoreAllMocks();
     document
       .querySelectorAll("[data-browser-panel-test-fallback]")
@@ -1291,5 +1293,124 @@ describe("BrowserPanel interactions", () => {
 
     await renderLivePanel(() => undefined);
     await vi.waitFor(() => expect(prepareHtmlArtifactPreview).toHaveBeenCalledOnce());
+  });
+
+  it("refreshes the next thread independently when a split pane changes ownership mid-refresh", async () => {
+    const sourcePath = "/workspace/report.html";
+    const previousUrlA = "http://g-17345678-2234-4123-8123-123456789abc.preview.localhost:5000/";
+    const previousUrlB = "http://g-18345678-2234-4123-8123-123456789abc.preview.localhost:5000/";
+    const replacementUrlB = "http://g-19345678-2234-4123-8123-123456789abc.preview.localhost:5000/";
+    const stateA: ThreadBrowserState = {
+      ...browserState("tab-source-a"),
+      threadId: THREAD_ID,
+      tabs: [
+        {
+          ...browserState("tab-1").tabs[0]!,
+          id: "tab-source-a",
+          kind: "local-html",
+          url: previousUrlA,
+          displayUrl: sourcePath,
+          previewCwd: "/workspace",
+          lastCommittedUrl: previousUrlA,
+          sourceChanged: true,
+        },
+      ],
+    };
+    const stateB: ThreadBrowserState = {
+      ...stateA,
+      threadId: SECOND_THREAD_ID,
+      activeTabId: "tab-source-b",
+      tabs: [
+        {
+          ...stateA.tabs[0]!,
+          id: "tab-source-b",
+          url: previousUrlB,
+          lastCommittedUrl: previousUrlB,
+        },
+      ],
+    };
+    const replacementStateB: ThreadBrowserState = {
+      ...stateB,
+      version: stateB.version + 1,
+      activeTabId: "tab-revision-b",
+      tabs: [
+        {
+          ...stateB.tabs[0]!,
+          id: "tab-revision-b",
+          url: replacementUrlB,
+          lastCommittedUrl: replacementUrlB,
+          sourceChanged: false,
+        },
+      ],
+    };
+    let rejectThreadA: (error: Error) => void = () => undefined;
+    const threadAPrepare = new Promise<never>((_resolve, reject) => {
+      rejectThreadA = reject;
+    });
+    const prepareHtmlArtifactPreview = vi
+      .fn()
+      .mockImplementationOnce(() => threadAPrepare)
+      .mockResolvedValueOnce({
+        mode: "static-document" as const,
+        warnings: [],
+        previewUrl: replacementUrlB,
+        watchedPaths: [sourcePath],
+      });
+    const replaceLocalHtmlPreview = vi.fn(async () => replacementStateB);
+    nativeApiTestState.api = {
+      browser: {
+        // Native open returns the manager's latest snapshot; if B's refresh wins before
+        // this microtask settles, it must not overwrite that newer revision with stateB.
+        open: vi.fn(async ({ threadId }) => (threadId === THREAD_ID ? stateA : replacementStateB)),
+        hide: vi.fn(async () => undefined),
+        setPanelBounds: vi.fn(async () => undefined),
+        replaceLocalHtmlPreview,
+        onState: vi.fn(() => () => undefined),
+        onCopyLink: vi.fn(() => () => undefined),
+      },
+      projects: {
+        prepareHtmlArtifactPreview,
+        revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
+      },
+    } as unknown as NativeApi;
+    useBrowserStateStore.getState().upsertThreadState(stateA);
+    useBrowserStateStore.getState().upsertThreadState(stateB);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = (threadId: ThreadId) => (
+      <QueryClientProvider client={queryClient}>
+        <div className="h-[640px] w-[720px]">
+          <BrowserPanel
+            mode="inline"
+            threadId={threadId}
+            runtimeMode="live"
+            onClosePanel={() => undefined}
+          />
+        </div>
+      </QueryClientProvider>
+    );
+
+    const screen = await render(view(THREAD_ID));
+    await vi.waitFor(() => expect(prepareHtmlArtifactPreview).toHaveBeenCalledOnce());
+    await screen.rerender(view(SECOND_THREAD_ID));
+
+    await vi.waitFor(() => {
+      expect(prepareHtmlArtifactPreview).toHaveBeenCalledTimes(2);
+      expect(replaceLocalHtmlPreview).toHaveBeenCalledWith(
+        expect.objectContaining({ threadId: SECOND_THREAD_ID, tabId: "tab-source-b" }),
+      );
+      expect(
+        useBrowserStateStore.getState().threadStatesByThreadId[SECOND_THREAD_ID]?.tabs[0]?.url,
+      ).toBe(replacementUrlB);
+    });
+
+    rejectThreadA(new Error("Thread A refresh failed after ownership changed."));
+    await vi.waitFor(() => {
+      expect(
+        page
+          .getByRole("status")
+          .elements()
+          .some((element) => element.textContent?.includes("Thread A refresh failed")),
+      ).toBe(false);
+    });
   });
 });

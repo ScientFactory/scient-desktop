@@ -449,7 +449,7 @@ export function BrowserPanel({
     visibleCopyFeedback?.tone === "success" ? visibleCopyFeedback.item : null;
   const activeLocalHtmlSourceKey =
     activeTab?.kind === "local-html" && activeTab.displayUrl && activeTab.previewCwd
-      ? `${activeTab.previewCwd}\0${activeTab.displayUrl}`
+      ? `${threadId}\0${activeTab.previewCwd}\0${activeTab.displayUrl}`
       : null;
   const loading =
     (activeTab?.isLoading ?? false) ||
@@ -472,7 +472,7 @@ export function BrowserPanel({
         .filter(
           (tab) => tab.kind === "local-html" && Boolean(tab.displayUrl) && Boolean(tab.previewCwd),
         )
-        .map((tab) => `${tab.previewCwd}\0${tab.displayUrl}`),
+        .map((tab) => `${threadId}\0${tab.previewCwd}\0${tab.displayUrl}`),
     );
     setLocalHtmlRefreshErrors((current) => {
       const next = new Map(
@@ -480,7 +480,7 @@ export function BrowserPanel({
       );
       return next.size === current.size ? current : next;
     });
-  }, [threadBrowserState?.tabs]);
+  }, [threadBrowserState?.tabs, threadId]);
 
   const browserChromeStatus = resolveBrowserChromeStatus({
     localError: activeLocalHtmlRefreshErrorMessage ?? localError,
@@ -552,7 +552,10 @@ export function BrowserPanel({
       ) {
         return Promise.reject(new Error("This local HTML preview cannot be refreshed."));
       }
-      const sourceKey = `${sourceTab.previewCwd}\0${sourceTab.displayUrl}`;
+      // BrowserPanel is reused when a split pane switches threads. Keep async refresh
+      // ownership thread-scoped so the next thread cannot join or display the previous
+      // thread's in-flight work merely because both tabs reference the same file path.
+      const sourceKey = `${threadId}\0${sourceTab.previewCwd}\0${sourceTab.displayUrl}`;
       const existing = localHtmlRefreshTasksRef.current.get(sourceKey);
       if (existing) {
         pendingLocalHtmlRefreshesRef.current.add(sourceKey);

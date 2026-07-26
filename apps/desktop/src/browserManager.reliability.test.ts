@@ -4,7 +4,7 @@
 // Depends on: DesktopBrowserManager with a minimal Electron session mock
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -749,6 +749,217 @@ describe("DesktopBrowserManager reliability", () => {
     releaseLoad?.();
     await expect(first).resolves.toMatchObject({ tabs: [{ url: input.url }] });
     manager.dispose();
+  });
+
+  it("destroys a provisional local HTML runtime and session when the browser closes", async () => {
+    const manager = new DesktopBrowserManager();
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: "http://g-10345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+      kind: "local-html",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+    });
+    let releaseLoad: (() => void) | undefined;
+    electron.setLoadURLImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseLoad = resolve;
+        }),
+    );
+
+    const replacement = manager.replaceLocalHtmlPreview({
+      threadId: THREAD_ID,
+      tabId: opened.activeTabId ?? "",
+      url: "http://g-11345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+      watchedPaths: ["/missing/report.html"],
+    });
+    await vi.waitFor(() => expect(releaseLoad).toBeTypeOf("function"));
+    const provisionalContents = electron.createdWebContents.at(-1);
+    const provisionalSession = [...electron.sessions.values()].at(-1);
+
+    manager.close({ threadId: THREAD_ID });
+
+    expect(provisionalContents?.close).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(provisionalSession?.clearStorageData).toHaveBeenCalledOnce();
+      expect(provisionalSession?.clearCache).toHaveBeenCalledOnce();
+      expect(provisionalSession?.setProxy).toHaveBeenCalledWith({ mode: "direct" });
+    });
+    releaseLoad?.();
+    await expect(replacement).rejects.toThrow("could not be loaded");
+    manager.dispose();
+  });
+
+  it("destroys a provisional local HTML runtime when the final source tab closes", async () => {
+    const manager = new DesktopBrowserManager();
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: "http://g-12345678-2234-4123-8123-123456789abc.preview.localhost:43123/",
+      kind: "local-html",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+    });
+    let releaseLoad: (() => void) | undefined;
+    electron.setLoadURLImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseLoad = resolve;
+        }),
+    );
+
+    const replacement = manager.replaceLocalHtmlPreview({
+      threadId: THREAD_ID,
+      tabId: opened.activeTabId ?? "",
+      url: "http://g-13345678-2234-4123-8123-123456789abc.preview.localhost:43123/",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+      watchedPaths: ["/missing/report.html"],
+    });
+    await vi.waitFor(() => expect(releaseLoad).toBeTypeOf("function"));
+    const provisionalContents = electron.createdWebContents.at(-1);
+
+    const closed = manager.closeTab({
+      threadId: THREAD_ID,
+      tabId: opened.activeTabId ?? "",
+    });
+
+    expect(closed).toMatchObject({ open: false, activeTabId: null, tabs: [] });
+    expect(provisionalContents?.close).toHaveBeenCalledOnce();
+    releaseLoad?.();
+    await expect(replacement).rejects.toThrow("could not be loaded");
+    manager.dispose();
+  });
+
+  it("destroys a provisional replacement when its source tab closes beside another tab", async () => {
+    const manager = new DesktopBrowserManager();
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: "http://g-1a345678-2234-4123-8123-123456789abc.preview.localhost:43123/",
+      kind: "local-html",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+    });
+    const sourceTabId = opened.activeTabId ?? "";
+    manager.newTab({
+      threadId: THREAD_ID,
+      url: "https://example.com/",
+      kind: "web",
+      activate: true,
+    });
+    let releaseLoad: (() => void) | undefined;
+    electron.setLoadURLImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseLoad = resolve;
+        }),
+    );
+
+    const replacement = manager.replaceLocalHtmlPreview({
+      threadId: THREAD_ID,
+      tabId: sourceTabId,
+      url: "http://g-1b345678-2234-4123-8123-123456789abc.preview.localhost:43123/",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+      watchedPaths: ["/missing/report.html"],
+    });
+    await vi.waitFor(() => expect(releaseLoad).toBeTypeOf("function"));
+    const provisionalContents = electron.createdWebContents.at(-1);
+
+    const remaining = manager.closeTab({ threadId: THREAD_ID, tabId: sourceTabId });
+
+    expect(remaining.open).toBe(true);
+    expect(remaining.tabs).toHaveLength(1);
+    expect(remaining.tabs[0]?.kind).toBe("web");
+    expect(provisionalContents?.close).toHaveBeenCalledOnce();
+    releaseLoad?.();
+    await expect(replacement).rejects.toThrow("could not be loaded");
+    manager.dispose();
+  });
+
+  it("installs the newest distinct queued revision with its watch, network, and activation input", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "scient-html-queued-refresh-"));
+    const assetDirectory = join(directory, "assets");
+    await mkdir(assetDirectory);
+    const sourcePath = join(directory, "report.html");
+    const assetPath = join(assetDirectory, "theme.css");
+    await writeFile(sourcePath, "<p>first</p>", "utf8");
+    await writeFile(assetPath, "body {}", "utf8");
+    const manager = new DesktopBrowserManager();
+    try {
+      const opened = manager.open({
+        threadId: THREAD_ID,
+        initialUrl: "http://g-14345678-2234-4123-8123-123456789abc.preview.localhost:43123/",
+        kind: "local-html",
+        displayUrl: sourcePath,
+        previewCwd: directory,
+      });
+      const sourceTabId = opened.activeTabId ?? "";
+      const withWebTab = manager.newTab({
+        threadId: THREAD_ID,
+        url: "https://example.com/",
+        kind: "web",
+        activate: true,
+      });
+      const webTabId = withWebTab.activeTabId;
+      let releaseFirstLoad: (() => void) | undefined;
+      let loadCount = 0;
+      electron.setLoadURLImplementation(async () => {
+        loadCount += 1;
+        if (loadCount === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirstLoad = resolve;
+          });
+        }
+      });
+      const firstUrl = "http://g-15345678-2234-4123-8123-123456789abc.preview.localhost:43123/";
+      const newestUrl = "http://g-16345678-2234-4123-8123-123456789abc.preview.localhost:43123/";
+
+      const first = manager.replaceLocalHtmlPreview({
+        threadId: THREAD_ID,
+        tabId: sourceTabId,
+        url: firstUrl,
+        displayUrl: sourcePath,
+        previewCwd: directory,
+        watchedPaths: [sourcePath],
+        allowedExternalUrls: ["https://cdn.example/first.js"],
+        activate: false,
+      });
+      await vi.waitFor(() => expect(releaseFirstLoad).toBeTypeOf("function"));
+      const newest = manager.replaceLocalHtmlPreview({
+        threadId: THREAD_ID,
+        tabId: sourceTabId,
+        url: newestUrl,
+        displayUrl: sourcePath,
+        previewCwd: directory,
+        watchedPaths: [sourcePath, assetPath],
+        allowedExternalUrls: ["https://cdn.example/newest.js"],
+        activate: true,
+      });
+      expect(newest).toBe(first);
+      expect(manager.getState({ threadId: THREAD_ID }).activeTabId).toBe(webTabId);
+      releaseFirstLoad?.();
+
+      const finalState = await newest;
+      const finalTab = finalState.tabs.find((tab) => tab.kind === "local-html");
+      expect(
+        electron.createdWebContents.map((contents) => contents.loadURL.mock.calls[0]?.[0]),
+      ).toEqual([firstUrl, newestUrl]);
+      expect(finalTab).toMatchObject({
+        url: newestUrl,
+        allowedExternalUrls: ["https://cdn.example/newest.js"],
+      });
+      expect(finalState.activeTabId).toBe(finalTab?.id);
+      const internals = manager as unknown as {
+        localHtmlSourceWatches: Map<string, { watchers: unknown[] }>;
+      };
+      expect([...internals.localHtmlSourceWatches.values()].at(-1)?.watchers).toHaveLength(2);
+    } finally {
+      manager.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("detects an atomic replacement of a watched HTML source path", async () => {
