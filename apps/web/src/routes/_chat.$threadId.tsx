@@ -174,6 +174,7 @@ import {
 } from "../components/ui/dialog";
 import {
   browserStateOwnsLocalHtmlRevision,
+  localHtmlPreviewPathsEqual,
   resolveDockDiffAvailable,
   resolveFilePreviewWorkspaceRoot,
   resolveRoutePanelBootstrap,
@@ -1936,9 +1937,10 @@ function SingleChatSurface(props: {
                   (tab) =>
                     tab.kind === "local-html" &&
                     (prepared.sourceIdentity
-                      ? tab.sourceIdentity === prepared.sourceIdentity &&
-                        tab.sourceRoot === prepared.sourceRoot
-                      : tab.displayUrl === absolutePath && tab.previewCwd === htmlCwd),
+                      ? localHtmlPreviewPathsEqual(tab.sourceIdentity, prepared.sourceIdentity) &&
+                        localHtmlPreviewPathsEqual(tab.sourceRoot, prepared.sourceRoot)
+                      : localHtmlPreviewPathsEqual(tab.displayUrl, absolutePath) &&
+                        localHtmlPreviewPathsEqual(tab.previewCwd, htmlCwd)),
                 )
               : undefined;
           if (browserKind === "local-html") {

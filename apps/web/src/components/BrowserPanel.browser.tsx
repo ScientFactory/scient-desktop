@@ -888,6 +888,55 @@ describe("BrowserPanel interactions", () => {
     expect(useBrowserStateStore.getState().threadStatesByThreadId[THREAD_ID]?.tabs).toHaveLength(1);
   });
 
+  it("revokes a prepared refresh grant when its capability proof is missing", async () => {
+    const previousUrl = "http://g-32345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const replacementUrl = "http://g-42345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const openState = browserState("tab-source");
+    openState.tabs = [
+      {
+        ...openState.tabs[0]!,
+        id: "tab-source",
+        kind: "local-html",
+        url: previousUrl,
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        lastCommittedUrl: previousUrl,
+      },
+    ];
+    const replaceLocalHtmlPreview = vi.fn();
+    const revokeHtmlArtifactPreview = vi.fn(async () => ({ revoked: true }));
+    nativeApiTestState.api = {
+      browser: {
+        open: vi.fn(async () => openState),
+        hide: vi.fn(async () => undefined),
+        setPanelBounds: vi.fn(async () => undefined),
+        replaceLocalHtmlPreview,
+        onState: vi.fn(() => () => undefined),
+        onCopyLink: vi.fn(() => () => undefined),
+      },
+      projects: {
+        prepareLiveHtmlPreview: vi.fn(async () => ({
+          mode: "static-document" as const,
+          warnings: [],
+          previewUrl: replacementUrl,
+          localHtmlNetworkPolicy: "reviewed-static" as const,
+          watchedPaths: ["/workspace/report.html"],
+        })),
+        revokeHtmlArtifactPreview,
+      },
+    } as unknown as LiveHtmlNativeApi;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+
+    await renderLivePanel(() => undefined);
+    ((await page.getByRole("button", { name: "Reload" }).element()) as HTMLButtonElement).click();
+
+    await vi.waitFor(() => {
+      expect(revokeHtmlArtifactPreview).toHaveBeenCalledWith({ previewUrl: replacementUrl });
+    });
+    expect(replaceLocalHtmlPreview).not.toHaveBeenCalled();
+    expect(revokeHtmlArtifactPreview).not.toHaveBeenCalledWith({ previewUrl: previousUrl });
+  });
+
   it("keeps interactive HTML network-sealed when Reload prepares a discovered external URL", async () => {
     const previousUrl = "http://g-72345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
     const replacementUrl = "http://g-82345678-1234-4123-8123-123456789abc.preview.localhost:5000/";

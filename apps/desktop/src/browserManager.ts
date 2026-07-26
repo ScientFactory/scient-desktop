@@ -2242,6 +2242,11 @@ export class DesktopBrowserManager {
         this.provisionalLocalHtmlRuntimes.delete(
           buildRuntimeKey(input.threadId, provisionalRuntimeTabId),
         );
+      } else {
+        // Session policy is configured before runtime construction. If Electron
+        // throws while creating the provisional view, retire that now-ownerless
+        // slot so the next refresh cannot inherit the failed capability origin.
+        this.requestPreviewSessionRetirement(partition);
       }
       throw error;
     } finally {
@@ -2987,11 +2992,24 @@ export class DesktopBrowserManager {
       ownsWebContents: true,
       listenerDisposers: [],
     };
-    this.configureRuntimeWebContents(runtime, tab);
-    if (tab.kind === "artifact" || tab.kind === "local-html") {
-      this.registerPreviewSessionOwner(partition, view.webContents.id);
+    try {
+      this.configureRuntimeWebContents(runtime, tab);
+      if (tab.kind === "artifact" || tab.kind === "local-html") {
+        this.registerPreviewSessionOwner(partition, view.webContents.id);
+      }
+      return runtime;
+    } catch (error) {
+      for (const disposeListener of runtime.listenerDisposers.splice(0)) {
+        disposeListener();
+      }
+      if (!view.webContents.isDestroyed()) {
+        view.webContents.close({ waitForBeforeUnload: false });
+      }
+      if (tab.kind === "artifact" || tab.kind === "local-html") {
+        this.requestPreviewSessionRetirement(partition);
+      }
+      throw error;
     }
-    return runtime;
   }
 
   private configureRuntimeWebContents(

@@ -53,6 +53,8 @@ const electron = vi.hoisted(() => {
     void nextWebContentsId;
   };
   let holdWebContentsDestruction = false;
+  let webContentsViewConstructionError: Error | null = null;
+  let webContentsConfigurationError: Error | null = null;
 
   function createWebContents() {
     let currentUrl = "about:blank";
@@ -77,7 +79,13 @@ const electron = vi.hoisted(() => {
         currentUrl = url;
         await loadURLImplementation(url, webContents.id);
       }),
-      setUserAgent: vi.fn(),
+      setUserAgent: vi.fn(() => {
+        if (webContentsConfigurationError) {
+          const error = webContentsConfigurationError;
+          webContentsConfigurationError = null;
+          throw error;
+        }
+      }),
       setWebRTCIPHandlingPolicy: vi.fn(),
       handlers,
       windowOpenHandler: null as ((details: any) => { action: string }) | null,
@@ -164,6 +172,17 @@ const electron = vi.hoisted(() => {
     setHoldWebContentsDestruction: (hold: boolean) => {
       holdWebContentsDestruction = hold;
     },
+    setWebContentsViewConstructionError: (error: Error | null) => {
+      webContentsViewConstructionError = error;
+    },
+    takeWebContentsViewConstructionError: () => {
+      const error = webContentsViewConstructionError;
+      webContentsViewConstructionError = null;
+      return error;
+    },
+    setWebContentsConfigurationError: (error: Error | null) => {
+      webContentsConfigurationError = error;
+    },
     sessionFor,
   };
 });
@@ -194,13 +213,16 @@ vi.mock("electron", () => ({
     fromId: vi.fn(),
   },
   WebContentsView: class {
-    readonly webContents = electron.createWebContents();
+    readonly webContents: ReturnType<typeof electron.createWebContents>;
     readonly setBounds = vi.fn();
     readonly setBackgroundColor = vi.fn();
     readonly setVisible = vi.fn();
 
     constructor(options: { webPreferences?: Record<string, unknown> }) {
       electron.createdWebContentsViewPreferences.push(options.webPreferences ?? {});
+      const constructionError = electron.takeWebContentsViewConstructionError();
+      if (constructionError) throw constructionError;
+      this.webContents = electron.createWebContents();
       electron.createdViews.push(this);
     }
   },
@@ -357,6 +379,8 @@ describe("DesktopBrowserManager reliability", () => {
     electron.setProxyImplementation(async () => undefined);
     electron.setLoadURLImplementation(async () => undefined);
     electron.setHoldWebContentsDestruction(false);
+    electron.setWebContentsViewConstructionError(null);
+    electron.setWebContentsConfigurationError(null);
   });
 
   it("closes the browser session when its final tab closes", () => {
@@ -1095,6 +1119,90 @@ describe("DesktopBrowserManager reliability", () => {
     expect(electron.createdWebContents).toHaveLength(1);
     releaseLoad?.();
     await expect(first).resolves.toMatchObject({ tabs: [{ url: input.url }] });
+    manager.dispose();
+  });
+
+  it("retires a provisional session when Electron view construction fails", async () => {
+    const manager = new DesktopBrowserManager();
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: "http://g-70345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+      kind: "local-html",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+    });
+    electron.setWebContentsViewConstructionError(new Error("view construction failed"));
+
+    await expect(
+      manager.replaceLocalHtmlPreview({
+        threadId: THREAD_ID,
+        tabId: opened.activeTabId ?? "",
+        url: "http://g-71345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+        displayUrl: "/missing/report.html",
+        previewCwd: "/missing",
+        watchedPaths: ["/missing/report.html"],
+      }),
+    ).rejects.toThrow("view construction failed");
+
+    const failedSession = electron.sessionFor(localHtmlPartitionForSlot(1));
+    await vi.waitFor(() => {
+      expect(failedSession.clearStorageData).toHaveBeenCalledOnce();
+      expect(failedSession.clearCache).toHaveBeenCalledOnce();
+      expect(failedSession.setProxy).toHaveBeenLastCalledWith({ mode: "direct" });
+    });
+
+    const recovered = await manager.replaceLocalHtmlPreview({
+      threadId: THREAD_ID,
+      tabId: opened.activeTabId ?? "",
+      url: "http://g-72345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+      watchedPaths: ["/missing/report.html"],
+    });
+    expect(recovered.tabs[0]?.url).toContain("g-72345678");
+    manager.dispose();
+  });
+
+  it("closes a partially configured provisional view and clears its session", async () => {
+    const manager = new DesktopBrowserManager();
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: "http://g-80345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+      kind: "local-html",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+    });
+    electron.setWebContentsConfigurationError(new Error("view configuration failed"));
+
+    await expect(
+      manager.replaceLocalHtmlPreview({
+        threadId: THREAD_ID,
+        tabId: opened.activeTabId ?? "",
+        url: "http://g-81345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+        displayUrl: "/missing/report.html",
+        previewCwd: "/missing",
+        watchedPaths: ["/missing/report.html"],
+      }),
+    ).rejects.toThrow("view configuration failed");
+
+    const failedContents = electron.createdWebContents.at(-1);
+    const failedSession = electron.sessionFor(localHtmlPartitionForSlot(1));
+    expect(failedContents?.close).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(failedSession.clearStorageData).toHaveBeenCalledOnce();
+      expect(failedSession.clearCache).toHaveBeenCalledOnce();
+      expect(failedSession.setProxy).toHaveBeenLastCalledWith({ mode: "direct" });
+    });
+
+    const recovered = await manager.replaceLocalHtmlPreview({
+      threadId: THREAD_ID,
+      tabId: opened.activeTabId ?? "",
+      url: "http://g-82345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+      watchedPaths: ["/missing/report.html"],
+    });
+    expect(recovered.tabs[0]?.url).toContain("g-82345678");
     manager.dispose();
   });
 

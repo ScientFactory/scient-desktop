@@ -617,21 +617,23 @@ export function BrowserPanel({
                 path: displayUrl,
               });
               const replacementUrl = prepared.previewUrl;
-              if (
-                !replacementUrl ||
-                (prepared.mode !== "static-document" && prepared.mode !== "interactive-bundle")
-              ) {
-                throw new Error(
-                  prepared.mode === "dev-server-entrypoint"
-                    ? "This file now needs its project development server. Reopen it from Files to run it."
-                    : (prepared.reason ?? "This HTML file is no longer available for preview."),
-                );
-              }
-              if (!prepared.localHtmlCapabilityProof || !prepared.localHtmlNetworkPolicy) {
-                throw new Error("This HTML preview is missing its server-issued capability proof.");
-              }
-
+              let replacementInstalled = false;
               try {
+                if (
+                  !replacementUrl ||
+                  (prepared.mode !== "static-document" && prepared.mode !== "interactive-bundle")
+                ) {
+                  throw new Error(
+                    prepared.mode === "dev-server-entrypoint"
+                      ? "This file now needs its project development server. Reopen it from Files to run it."
+                      : (prepared.reason ?? "This HTML file is no longer available for preview."),
+                  );
+                }
+                if (!prepared.localHtmlCapabilityProof || !prepared.localHtmlNetworkPolicy) {
+                  throw new Error(
+                    "This HTML preview is missing its server-issued capability proof.",
+                  );
+                }
                 const nextState = await api.browser.replaceLocalHtmlPreview({
                   threadId,
                   tabId: latestTab.id,
@@ -654,11 +656,8 @@ export function BrowserPanel({
                 const installedRevision = nextState.tabs.find(
                   (tab) => tab.kind === "local-html" && localHtmlTabsShareSource(tab, latestTab),
                 );
-                if (installedRevision?.url !== replacementUrl) {
-                  await api.projects
-                    .revokeHtmlArtifactPreview({ previewUrl: replacementUrl })
-                    .catch(() => ({ revoked: false }));
-                } else if (latestTab.url !== replacementUrl) {
+                replacementInstalled = installedRevision?.url === replacementUrl;
+                if (replacementInstalled && latestTab.url !== replacementUrl) {
                   await api.projects
                     .revokeHtmlArtifactPreview({ previewUrl: latestTab.url })
                     .catch(() => ({ revoked: false }));
@@ -666,11 +665,12 @@ export function BrowserPanel({
                 syncHtmlPreviewGrants(nextState.threadId, nextState.tabs);
                 upsertThreadState(nextState);
                 latestError = null;
-              } catch (error) {
-                await api.projects
-                  .revokeHtmlArtifactPreview({ previewUrl: replacementUrl })
-                  .catch(() => ({ revoked: false }));
-                throw error;
+              } finally {
+                if (replacementUrl && !replacementInstalled) {
+                  await api.projects
+                    .revokeHtmlArtifactPreview({ previewUrl: replacementUrl })
+                    .catch(() => ({ revoked: false }));
+                }
               }
             } catch (error) {
               latestError = error;

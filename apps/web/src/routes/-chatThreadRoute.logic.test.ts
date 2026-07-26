@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   browserStateOwnsLocalHtmlRevision,
+  localHtmlPreviewPathsEqual,
   resolveDockDiffAvailable,
   resolveFilePreviewWorkspaceRoot,
   resolveRoutePanelBootstrap,
@@ -158,6 +159,46 @@ describe("browserStateOwnsLocalHtmlRevision", () => {
         installed,
       }),
     ).toBeNull();
+  });
+
+  it("keeps Windows source authority owned across separator and casing normalization", () => {
+    const windowsState = {
+      ...state,
+      tabs: [
+        {
+          ...state.tabs[0]!,
+          displayUrl: "c:\\users\\yaacov\\scient\\report-mixedcase.html",
+          previewCwd: "c:\\users\\yaacov\\scient",
+          sourceIdentity: "c:\\users\\yaacov\\scient\\report-mixedcase.html",
+          sourceRoot: "c:\\users\\yaacov\\scient",
+        },
+      ],
+    };
+    const installed = {
+      url: "http://g-a.preview.localhost:5000/",
+      displayUrl: "C:/Users/Yaacov/Scient/Report-MixedCase.HTML",
+      previewCwd: "C:/Users/Yaacov/Scient/",
+      sourceIdentity: "C:/Users/Yaacov/Scient/Report-MixedCase.HTML",
+      sourceRoot: "C:/Users/Yaacov/Scient/",
+    };
+
+    expect(
+      localHtmlPreviewPathsEqual(windowsState.tabs[0]?.sourceIdentity, installed.sourceIdentity),
+    ).toBe(true);
+    expect(browserStateOwnsLocalHtmlRevision(windowsState, installed)).toBe(true);
+    expect(
+      retiredLocalHtmlPreviewUrl({
+        previousUrl: "http://g-old.preview.localhost:5000/",
+        nextState: windowsState,
+        installed,
+      }),
+    ).toBe("http://g-old.preview.localhost:5000/");
+  });
+
+  it("preserves case-sensitive ownership for POSIX paths", () => {
+    expect(localHtmlPreviewPathsEqual("/Workspace/report.html", "/workspace/report.html")).toBe(
+      false,
+    );
   });
 });
 
