@@ -1,5 +1,5 @@
 import { ProjectId } from "@synara/contracts";
-import type { OrchestrationProject, OrchestrationReadModel } from "@synara/contracts";
+import type { OrchestrationProject } from "@synara/contracts";
 import { Deferred, Effect, Fiber } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -14,6 +14,7 @@ import type { ProjectPullRequestPinsShape } from "../../persistence/Services/Pro
 import {
   PULL_REQUEST_PIN_RECOVERY_LIMIT,
   isDefinitivePullRequestNotFound,
+  liveProjectFromShell,
   makePullRequestService,
 } from "./PullRequestService";
 
@@ -62,10 +63,6 @@ function makeBatch(
   return { entries, rawCount };
 }
 
-function makeSnapshot(projects: OrchestrationProject[]): OrchestrationReadModel {
-  return { snapshotSequence: 1, projects, threads: [], updatedAt: now };
-}
-
 function makePins(
   rows: ReadonlyArray<{ projectId: ProjectId; repositoryKey: string; number: number }> = [],
   onSetPinned?: (input: {
@@ -92,7 +89,7 @@ function makeDependencies(input: {
     homeDir: "/tmp",
     github: input.github,
     pins: input.pins ?? makePins(),
-    getSnapshot: () => Effect.succeed(makeSnapshot(input.projects)),
+    listProjects: () => Effect.succeed(input.projects),
     resolveRepositories: (project: OrchestrationProject) => {
       const repository = input.repositories.get(project.id);
       return Effect.succeed({
@@ -106,6 +103,49 @@ function makeDependencies(input: {
 }
 
 describe("PullRequestService", () => {
+  it("uses lightweight live projects without hydrating the full orchestration snapshot", async () => {
+    const liveProject = makeProject("project-live", "Live", "/tmp/live");
+    const deletedProject = {
+      ...makeProject("project-deleted", "Deleted", "/tmp/deleted"),
+      deletedAt: "2026-07-15T01:00:00.000Z",
+    };
+    const nonProject = {
+      ...makeProject("project-chat", "Chat", "/tmp/chat"),
+      kind: "chat" as const,
+    };
+    const resolvedProjectIds: ProjectId[] = [];
+    const dependencies = makeDependencies({
+      projects: [liveProject, deletedProject, nonProject],
+      repositories: new Map([[liveProject.id, "acme/live"]]),
+      github: createGitHubCliWithFakeGh().service,
+    });
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* makePullRequestService({
+            ...dependencies,
+            listProjects: () => Effect.succeed([liveProject, deletedProject, nonProject]),
+            resolveRepositories: (project) => {
+              resolvedProjectIds.push(project.id);
+              return dependencies.resolveRepositories(project);
+            },
+          });
+          return yield* service.list({ state: "open", involvement: "authored" });
+        }),
+      ),
+    );
+
+    expect(resolvedProjectIds).toEqual([liveProject.id]);
+    expect(result.repositoryBatches).toHaveLength(1);
+  });
+
+  it("restores only the known live deletion marker on project shell rows", () => {
+    const { deletedAt: _deletedAt, ...shell } = makeProject("project-shell", "Shell", "/tmp/shell");
+
+    expect(liveProjectFromShell(shell)).toEqual({ ...shell, deletedAt: null });
+  });
+
   it("returns one repository-level row for projects sharing a repository", async () => {
     const projectA = makeProject("project-list-a", "List A", "/tmp/list-a");
     const projectB = makeProject("project-list-b", "feature-1", "/tmp/list-b");
