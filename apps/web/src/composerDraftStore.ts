@@ -3318,6 +3318,19 @@ function verifyPersistedAttachmentsForSlot(
 
 const composerAttachmentSyncGenerationByKey = new Map<string, number>();
 
+/** Test-only leak probe for settled attachment-sync generation entries. */
+export function pendingComposerAttachmentSyncGenerationCount(): number {
+  return composerAttachmentSyncGenerationByKey.size;
+}
+
+/** @internal Exported so the stale-generation guard can be regression-tested directly. */
+export function isComposerAttachmentSyncGenerationCurrent(
+  currentGeneration: number | undefined,
+  settledGeneration: number,
+): boolean {
+  return currentGeneration === settledGeneration;
+}
+
 function syncPersistedAttachmentsForSlot(
   threadId: ThreadId,
   attachments: PersistedComposerImageAttachment[],
@@ -3368,7 +3381,7 @@ function syncPersistedAttachmentsForSlot(
   }
   // Verification stays serialized per thread (across both slots) so overlapping
   // verifications cannot roll back each other's committed state.
-  return enqueueComposerAttachmentPersistence(threadId, () =>
+  const verification = enqueueComposerAttachmentPersistence(threadId, () =>
     verifyPersistedAttachmentsForSlot(
       threadId,
       attachments,
@@ -3378,6 +3391,18 @@ function syncPersistedAttachmentsForSlot(
       composerAttachmentSyncGenerationByKey.get(generationKey) === generation,
     ),
   );
+  return verification.finally(() => {
+    // A newer sync still needs its generation marker to suppress stale state
+    // writes, so an older completion must not retire that newer marker.
+    if (
+      isComposerAttachmentSyncGenerationCurrent(
+        composerAttachmentSyncGenerationByKey.get(generationKey),
+        generation,
+      )
+    ) {
+      composerAttachmentSyncGenerationByKey.delete(generationKey);
+    }
+  });
 }
 
 function hydreatePersistedComposerImageAttachment(
