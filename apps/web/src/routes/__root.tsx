@@ -40,6 +40,7 @@ import type { FeedbackThreadContext } from "../feedback";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
   createPackagedStartupRendererReadinessState,
+  disposePackagedStartupRendererReadiness,
   hydrateShellForPackagedStartupRenderer,
 } from "../lib/packagedStartupRendererReadiness";
 import {
@@ -1165,18 +1166,16 @@ function EventRouter() {
           chatWorkspaceRoot: payload.chatWorkspaceRoot,
           studioWorkspaceRoot: payload.studioWorkspaceRoot,
         });
-        await ensureScopedSubscriptions();
-        if (disposed) {
-          return;
-        }
         await hydrateShellForPackagedStartupRenderer({
-          hydrateShell: loadShellSnapshotOnce,
+          hydrateShell: async () => {
+            await ensureScopedSubscriptions();
+            if (disposed) return;
+            await loadShellSnapshotOnce();
+          },
           state: packagedStartupRendererReadiness,
           shouldMark: () => !disposed,
         });
         if (disposed) {
-          packagedStartupRendererReadiness.clear?.();
-          packagedStartupRendererReadiness.clear = null;
           return;
         }
 
@@ -1304,8 +1303,7 @@ function EventRouter() {
     return () => {
       flushPendingDomainEvents();
       disposed = true;
-      packagedStartupRendererReadiness.clear?.();
-      packagedStartupRendererReadiness.clear = null;
+      disposePackagedStartupRendererReadiness(packagedStartupRendererReadiness);
       window.clearTimeout(shellBootstrapFallbackTimer);
       window.clearInterval(threadDetailCatchupInterval);
       needsProviderInvalidation = false;

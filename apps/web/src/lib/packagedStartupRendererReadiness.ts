@@ -4,11 +4,12 @@ type RendererReadinessElement = Pick<HTMLElement, "dataset">;
 
 export interface PackagedStartupRendererReadinessState {
   clear: (() => void) | null;
-  inFlight: Promise<() => void> | null;
+  generation: number;
+  disposed: boolean;
 }
 
 export function createPackagedStartupRendererReadinessState(): PackagedStartupRendererReadinessState {
-  return { clear: null, inFlight: null };
+  return { clear: null, generation: 0, disposed: false };
 }
 
 export async function markPackagedStartupRendererReadyAfterShellHydration(input: {
@@ -31,18 +32,36 @@ export async function hydrateShellForPackagedStartupRenderer(input: {
   readonly element?: RendererReadinessElement;
   readonly shouldMark?: () => boolean;
 }): Promise<void> {
-  if (input.state.clear) {
+  const generation = ++input.state.generation;
+  input.state.clear?.();
+  input.state.clear = null;
+
+  try {
     await input.hydrateShell();
+  } catch (error) {
+    if (input.state.disposed || input.state.generation !== generation) return;
+    throw error;
+  }
+  if (
+    input.state.disposed ||
+    input.state.generation !== generation ||
+    (input.shouldMark && !input.shouldMark())
+  ) {
     return;
   }
 
-  input.state.inFlight ??= markPackagedStartupRendererReadyAfterShellHydration(input);
-  const readiness = input.state.inFlight;
-  try {
-    input.state.clear ??= await readiness;
-  } finally {
-    if (input.state.inFlight === readiness) {
-      input.state.inFlight = null;
-    }
-  }
+  const element = input.element ?? document.documentElement;
+  element.dataset[PACKAGED_STARTUP_RENDERER_READY_DATASET_KEY] = "true";
+  input.state.clear = () => {
+    delete element.dataset[PACKAGED_STARTUP_RENDERER_READY_DATASET_KEY];
+  };
+}
+
+export function disposePackagedStartupRendererReadiness(
+  state: PackagedStartupRendererReadinessState,
+): void {
+  state.disposed = true;
+  state.generation += 1;
+  state.clear?.();
+  state.clear = null;
 }

@@ -4,7 +4,8 @@ param(
   [string]$AssemblyPath = '',
   [string]$CompileAssemblyPath = '',
   [string]$PreResumeMarkerPath = '',
-  [string]$PreResumeGatePath = ''
+  [string]$PreResumeGatePath = '',
+  [int]$VerifierProcessId = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -16,7 +17,6 @@ using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Threading;
 
 public static class ScientPackagedStartupJobLauncher
 {
@@ -26,6 +26,10 @@ public static class ScientPackagedStartupJobLauncher
     private const int ERROR_INSUFFICIENT_BUFFER = 122;
     private const int JobObjectExtendedLimitInformation = 9;
     private const uint INFINITE = 0xFFFFFFFF;
+    private const uint SYNCHRONIZE = 0x00100000;
+    private const uint WAIT_OBJECT_0 = 0x00000000;
+    private const uint WAIT_FAILED = 0xFFFFFFFF;
+    private const uint WAIT_TIMEOUT = 0x00000102;
     private static readonly IntPtr PROC_THREAD_ATTRIBUTE_JOB_LIST = new IntPtr(0x0002000D);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -157,6 +161,17 @@ public static class ScientPackagedStartupJobLauncher
     private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
 
     [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForMultipleObjects(
+        uint count,
+        IntPtr[] handles,
+        bool waitAll,
+        uint milliseconds
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint desiredAccess, bool inheritHandle, uint processId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
 
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -170,7 +185,8 @@ public static class ScientPackagedStartupJobLauncher
     private static void AwaitPreResumeGate(
         string markerPath,
         string gatePath,
-        uint childProcessId
+        uint childProcessId,
+        IntPtr verifierProcess
     )
     {
         bool hasMarker = !String.IsNullOrWhiteSpace(markerPath);
@@ -180,14 +196,23 @@ public static class ScientPackagedStartupJobLauncher
             throw new ArgumentException("Pre-resume marker and gate paths must be supplied together.");
 
         File.WriteAllText(markerPath, childProcessId.ToString(CultureInfo.InvariantCulture));
-        while (!File.Exists(gatePath)) Thread.Sleep(20);
+        while (!File.Exists(gatePath))
+        {
+            uint verifierWait = WaitForSingleObject(verifierProcess, 20);
+            if (verifierWait == WAIT_OBJECT_0)
+                throw new InvalidOperationException("Packaged startup verifier exited before payload resume.");
+            if (verifierWait == WAIT_FAILED) ThrowLastError("Verifier liveness wait failed");
+            if (verifierWait != WAIT_TIMEOUT)
+                throw new InvalidOperationException("Unexpected verifier liveness wait result.");
+        }
     }
 
     public static int Run(
         string executablePath,
         string workingDirectory,
         string preResumeMarkerPath,
-        string preResumeGatePath
+        string preResumeGatePath,
+        uint verifierProcessId
     )
     {
         if (executablePath.IndexOf('"') >= 0)
@@ -197,9 +222,18 @@ public static class ScientPackagedStartupJobLauncher
         IntPtr information = IntPtr.Zero;
         IntPtr attributeList = IntPtr.Zero;
         IntPtr jobList = IntPtr.Zero;
+        IntPtr verifierProcess = IntPtr.Zero;
         PROCESS_INFORMATION child = new PROCESS_INFORMATION();
         try
         {
+            if (verifierProcessId == 0)
+                throw new ArgumentException("Verifier process ID is required.", "verifierProcessId");
+            // Open the verifier before creating any payload process. This handle
+            // remains bound to the original process object even if its numeric
+            // PID is later reused.
+            verifierProcess = OpenProcess(SYNCHRONIZE, false, verifierProcessId);
+            if (verifierProcess == IntPtr.Zero) ThrowLastError("OpenProcess for verifier failed");
+
             job = CreateJobObject(IntPtr.Zero, null);
             if (job == IntPtr.Zero) ThrowLastError("CreateJobObject failed");
 
@@ -257,11 +291,22 @@ public static class ScientPackagedStartupJobLauncher
             // PROC_THREAD_ATTRIBUTE_JOB_LIST makes Job membership atomic with
             // process creation, before this launcher can be interrupted and
             // before any native payload instruction is allowed to execute.
-            AwaitPreResumeGate(preResumeMarkerPath, preResumeGatePath, child.dwProcessId);
+            AwaitPreResumeGate(
+                preResumeMarkerPath,
+                preResumeGatePath,
+                child.dwProcessId,
+                verifierProcess
+            );
             if (ResumeThread(child.hThread) == UInt32.MaxValue)
                 ThrowLastError("ResumeThread failed");
 
-            WaitForSingleObject(child.hProcess, INFINITE);
+            IntPtr[] livenessHandles = new IntPtr[] { child.hProcess, verifierProcess };
+            uint waitResult = WaitForMultipleObjects(2, livenessHandles, false, INFINITE);
+            if (waitResult == WAIT_FAILED) ThrowLastError("WaitForMultipleObjects failed");
+            if (waitResult == WAIT_OBJECT_0 + 1)
+                throw new InvalidOperationException("Packaged startup verifier exited before payload completion.");
+            if (waitResult != WAIT_OBJECT_0)
+                throw new InvalidOperationException("Unexpected packaged startup liveness wait result.");
             uint exitCode;
             if (!GetExitCodeProcess(child.hProcess, out exitCode))
                 ThrowLastError("GetExitCodeProcess failed");
@@ -278,6 +323,7 @@ public static class ScientPackagedStartupJobLauncher
             // Closing the final job handle atomically terminates every process
             // that Electron created inside the kill-on-close job.
             if (job != IntPtr.Zero) CloseHandle(job);
+            if (verifierProcess != IntPtr.Zero) CloseHandle(verifierProcess);
         }
     }
 }
@@ -291,9 +337,10 @@ if (![string]::IsNullOrWhiteSpace($CompileAssemblyPath)) {
 if (
   [string]::IsNullOrWhiteSpace($AssemblyPath) -or
   [string]::IsNullOrWhiteSpace($ExecutablePath) -or
-  [string]::IsNullOrWhiteSpace($WorkingDirectory)
+  [string]::IsNullOrWhiteSpace($WorkingDirectory) -or
+  $VerifierProcessId -le 0
 ) {
-  throw 'AssemblyPath, ExecutablePath, and WorkingDirectory are required for launch.'
+  throw 'AssemblyPath, ExecutablePath, WorkingDirectory, and VerifierProcessId are required for launch.'
 }
 
 # Load only the assembly compiled during the separately classified preparation
@@ -312,5 +359,6 @@ exit [ScientPackagedStartupJobLauncher]::Run(
   $ExecutablePath,
   $WorkingDirectory,
   $PreResumeMarkerPath,
-  $PreResumeGatePath
+  $PreResumeGatePath,
+  [uint32]$VerifierProcessId
 )

@@ -51,6 +51,24 @@ import {
 
 const temporaryRoots: string[] = [];
 
+async function waitUntil(predicate: () => boolean, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+  }
+  return predicate();
+}
+
+function processHasExited(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH";
+  }
+}
+
 afterEach(() => {
   for (const root of temporaryRoots.splice(0)) {
     rmSync(root, { recursive: true, force: true });
@@ -929,6 +947,8 @@ describe("packaged desktop startup verification", () => {
     expect(jobScript).toContain("EXTENDED_STARTUPINFO_PRESENT");
     expect(jobScript).toContain("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE");
     expect(jobScript).toContain("PROC_THREAD_ATTRIBUTE_JOB_LIST");
+    expect(jobScript).toContain("OpenProcess(SYNCHRONIZE");
+    expect(jobScript).toContain("WaitForMultipleObjects");
     expect(jobScript).toContain("SCIENT_PACKAGED_STARTUP_SENTINEL_PID");
     expect(jobScript).toContain("Add-Type -Path $AssemblyPath");
     expect(jobScript.indexOf("Add-Type -TypeDefinition $source")).toBeLessThan(
@@ -938,6 +958,9 @@ describe("packaged desktop startup verification", () => {
     expect(jobScript).toContain("[string]$PID");
     expect(jobScript).not.toContain("AssignProcessToJobObject");
     expect(jobScript.indexOf("if (!UpdateProcThreadAttribute(")).toBeLessThan(
+      jobScript.indexOf("if (!CreateProcess("),
+    );
+    expect(jobScript.indexOf("OpenProcess(SYNCHRONIZE")).toBeLessThan(
       jobScript.indexOf("if (!CreateProcess("),
     );
     expect(jobScript.indexOf("if (!CreateProcess(")).toBeLessThan(
@@ -958,8 +981,48 @@ describe("packaged desktop startup verification", () => {
     expect(posixCall[1]).toEqual(
       expect.arrayContaining([expect.stringMatching(/packaged-startup-posix-sentinel\.mjs$/)]),
     );
+    expect(posixCall[1][1]).toBe(String(process.pid));
     expect(posixCall[2]).toEqual(expect.objectContaining({ detached: true }));
   });
+
+  it.skipIf(process.platform === "win32")(
+    "kills the retained POSIX sentinel group when its verifier parent dies",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "scient-packaged-sentinel-parent-death-test-"));
+      temporaryRoots.push(root);
+      const sentinelMarkerPath = join(root, "sentinel.pid");
+      const payloadMarkerPath = join(root, "payload.pid");
+      const sentinelPath = fileURLToPath(
+        new URL("./lib/packaged-startup-posix-sentinel.mjs", import.meta.url),
+      );
+      const payloadSource = [
+        'const { writeFileSync } = require("node:fs");',
+        `writeFileSync(${JSON.stringify(payloadMarkerPath)}, String(process.pid));`,
+        "setInterval(() => undefined, 60000);",
+      ].join("");
+      const verifierSource = [
+        'const { spawn } = require("node:child_process");',
+        'const { writeFileSync } = require("node:fs");',
+        `const child = spawn(process.execPath, [${JSON.stringify(sentinelPath)}, String(process.pid), process.execPath, ${JSON.stringify(root)}, JSON.stringify(["-e", ${JSON.stringify(payloadSource)}])],`,
+        `{ cwd: ${JSON.stringify(root)}, env: { ...process.env, SCIENT_HOME: ${JSON.stringify(root)} }, detached: true, stdio: "ignore" });`,
+        `writeFileSync(${JSON.stringify(sentinelMarkerPath)}, String(child.pid));`,
+        "setInterval(() => undefined, 60000);",
+      ].join("");
+      const verifier = spawn(process.execPath, ["-e", verifierSource], { stdio: "ignore" });
+      expect(
+        await waitUntil(
+          () => existsSync(sentinelMarkerPath) && existsSync(payloadMarkerPath),
+          5_000,
+        ),
+      ).toBe(true);
+      const sentinelPid = Number(readFileSync(sentinelMarkerPath, "utf8"));
+      const payloadPid = Number(readFileSync(payloadMarkerPath, "utf8"));
+      expect(verifier.kill("SIGKILL")).toBe(true);
+      expect(await waitUntil(() => processHasExited(sentinelPid), 5_000)).toBe(true);
+      expect(await waitUntil(() => processHasExited(payloadPid), 5_000)).toBe(true);
+    },
+    15_000,
+  );
 
   it.skipIf(process.platform !== "win32")(
     "passes authenticated direct-parent authority through the actual Windows Job launcher",
@@ -1061,18 +1124,12 @@ describe("packaged desktop startup verification", () => {
           markerPath,
           "-PreResumeGatePath",
           gatePath,
+          "-VerifierProcessId",
+          String(process.pid),
         ],
         { stdio: "ignore" },
       );
 
-      const waitUntil = async (predicate: () => boolean, timeoutMs: number): Promise<boolean> => {
-        const deadline = Date.now() + timeoutMs;
-        while (Date.now() < deadline) {
-          if (predicate()) return true;
-          await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
-        }
-        return predicate();
-      };
       const markerAppeared = await waitUntil(() => existsSync(markerPath), 15_000);
       const payloadProcessId = markerAppeared ? Number(readFileSync(markerPath, "utf8")) : null;
       const launcherTerminated = launcher.kill();
@@ -1097,6 +1154,76 @@ describe("packaged desktop startup verification", () => {
           }
         }, 5_000),
       ).toBe(true);
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "closes the Windows Job Object when its verifier process dies",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "scient-packaged-job-parent-death-test-"));
+      temporaryRoots.push(root);
+      const executable = join(root, "LongLivedPayload.exe");
+      const launcherMarkerPath = join(root, "launcher.pid");
+      const payloadMarkerPath = join(root, "payload.pid");
+      const powershell = join(
+        process.env.SystemRoot ?? "C:\\Windows",
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe",
+      );
+      const source = [
+        "using System;",
+        "using System.Diagnostics;",
+        "using System.IO;",
+        "using System.Threading;",
+        "public static class LongLivedPayload {",
+        "  public static void Main() {",
+        '    File.WriteAllText(Environment.GetEnvironmentVariable("SCIENT_PAYLOAD_MARKER_PATH"),',
+        "      Process.GetCurrentProcess().Id.ToString());",
+        "    Thread.Sleep(Timeout.Infinite);",
+        "  }",
+        "}",
+      ].join(" ");
+      execFileSync(
+        powershell,
+        [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `Add-Type -TypeDefinition $env:SCIENT_PAYLOAD_SOURCE -Language CSharp -OutputAssembly '${executable.replaceAll("'", "''")}' -OutputType ConsoleApplication`,
+        ],
+        { env: { ...process.env, SCIENT_PAYLOAD_SOURCE: source }, stdio: "pipe" },
+      );
+      const windowsJobAssemblyPath = await prepareWindowsJobLauncherAssembly(
+        root,
+        new AbortController().signal,
+      );
+      const launcherScript = fileURLToPath(
+        new URL("./lib/packaged-startup-windows-job.ps1", import.meta.url),
+      );
+      const verifierSource = [
+        'const { spawn } = require("node:child_process");',
+        'const { writeFileSync } = require("node:fs");',
+        `const child = spawn(${JSON.stringify(powershell)}, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ${JSON.stringify(launcherScript)}, "-AssemblyPath", ${JSON.stringify(windowsJobAssemblyPath)}, "-ExecutablePath", ${JSON.stringify(executable)}, "-WorkingDirectory", ${JSON.stringify(root)}, "-VerifierProcessId", String(process.pid)],`,
+        `{ cwd: ${JSON.stringify(root)}, env: { ...process.env, SCIENT_HOME: ${JSON.stringify(join(root, "scient-home"))}, SCIENT_PAYLOAD_MARKER_PATH: ${JSON.stringify(payloadMarkerPath)} }, stdio: "ignore", windowsHide: true });`,
+        `writeFileSync(${JSON.stringify(launcherMarkerPath)}, String(child.pid));`,
+        "setInterval(() => undefined, 60000);",
+      ].join("");
+      const verifier = spawn(process.execPath, ["-e", verifierSource], { stdio: "ignore" });
+      expect(
+        await waitUntil(
+          () => existsSync(launcherMarkerPath) && existsSync(payloadMarkerPath),
+          15_000,
+        ),
+      ).toBe(true);
+      const launcherPid = Number(readFileSync(launcherMarkerPath, "utf8"));
+      const payloadPid = Number(readFileSync(payloadMarkerPath, "utf8"));
+      expect(verifier.kill()).toBe(true);
+      expect(await waitUntil(() => processHasExited(launcherPid), 5_000)).toBe(true);
+      expect(await waitUntil(() => processHasExited(payloadPid), 5_000)).toBe(true);
     },
     30_000,
   );
@@ -1208,69 +1335,57 @@ describe("packaged desktop startup verification", () => {
     expect(readPackagedBackendProcessIds(env)).toEqual([84]);
   });
 
-  it("keeps the POSIX sentinel as group authority through TERM and KILL", async () => {
+  it("requests POSIX cleanup once through the retained sentinel handle", async () => {
     const child = {
       exitCode: null,
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
-    const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+    const terminateRoot = vi.fn(() => true);
     await expect(
       terminateProcessTree(
         child,
         {
           platform: "darwin",
           childIsAlive: () => true,
-          sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
-          targetIsAlive: () => true,
-          waitForPosixPayloadExit: async (timeoutMs) => timeoutMs === 12_000,
+          terminateRoot,
           waitForTargetsExit: async () => false,
         },
         [84],
       ),
-    ).rejects.toThrow("survived authoritative");
-    expect(signals).toEqual([
-      { pid: 42, signal: "SIGTERM" },
-      { pid: 42, signal: "SIGKILL" },
-    ]);
+    ).rejects.toThrow("survived sentinel-owned cleanup");
+    expect(terminateRoot).toHaveBeenCalledOnce();
+    expect(terminateRoot).toHaveBeenCalledWith(child);
   });
 
-  it("waits for the native POSIX payload before killing the retained sentinel group", async () => {
+  it("waits for sentinel-owned POSIX cleanup without verifier-side escalation", async () => {
     const child = {
       exitCode: null,
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
-    const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
     const events: string[] = [];
+    const terminateRoot = vi.fn(() => {
+      events.push("terminate-root");
+      return true;
+    });
 
     await terminateProcessTree(
       child,
       {
         platform: "darwin",
         childIsAlive: () => true,
-        sendSignal: (target, signal) => {
-          events.push(signal);
-          signals.push({ pid: target.pid, signal });
-        },
-        targetIsAlive: () => true,
-        waitForPosixPayloadExit: async (timeoutMs) => {
-          events.push(`wait:${timeoutMs}`);
-          return true;
-        },
+        terminateRoot,
         waitForTargetsExit: async (_targets, timeoutMs) => {
           events.push(`reap:${timeoutMs}`);
-          return timeoutMs === 2_000;
+          return true;
         },
       },
       [84],
     );
 
-    expect(signals).toEqual([
-      { pid: 42, signal: "SIGTERM" },
-      { pid: 42, signal: "SIGKILL" },
-    ]);
-    expect(events).toEqual(["SIGTERM", "wait:12000", "SIGKILL", "reap:2000"]);
+    expect(terminateRoot).toHaveBeenCalledOnce();
+    expect(events).toEqual(["terminate-root", "reap:14000"]);
   });
 
   it("fails closed when a POSIX sentinel is gone even after observed processes exit", async () => {
@@ -1279,18 +1394,17 @@ describe("packaged desktop startup verification", () => {
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
-    const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+    const terminateRoot = vi.fn(() => true);
 
     await expect(
       terminateProcessTree(child, {
         platform: "darwin",
-        sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
-        targetIsAlive: () => false,
+        terminateRoot,
         waitForTargetsExit: async () => true,
       }),
     ).rejects.toThrow("before authoritative whole-group cleanup");
 
-    expect(signals).toEqual([]);
+    expect(terminateRoot).not.toHaveBeenCalled();
   });
 
   it("fails closed when the POSIX sentinel vanished without any native outcome", async () => {
@@ -1326,25 +1440,27 @@ describe("packaged desktop startup verification", () => {
     ).rejects.toThrow("before authoritative whole-group cleanup");
   });
 
-  it("fails closed when the POSIX sentinel disappears while cleanup is starting", async () => {
+  it("never performs numeric fallback when the POSIX sentinel disappears during cleanup", async () => {
     const child = {
       exitCode: null,
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
 
+    const terminateRoot = vi.fn(() => true);
     await expect(
       terminateProcessTree(
         child,
         {
           platform: "darwin",
           childIsAlive: () => true,
-          targetIsAlive: () => false,
-          waitForTargetsExit: async () => true,
+          terminateRoot,
+          waitForTargetsExit: async () => false,
         },
         [84],
       ),
-    ).rejects.toThrow("before authoritative whole-group cleanup");
+    ).rejects.toThrow("survived sentinel-owned cleanup");
+    expect(terminateRoot).toHaveBeenCalledOnce();
   });
 
   it("refuses numeric POSIX signaling after the retained sentinel exits early", async () => {
@@ -1353,20 +1469,20 @@ describe("packaged desktop startup verification", () => {
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
-    const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+    const terminateRoot = vi.fn(() => true);
 
     await expect(
       terminateProcessTree(
         child,
         {
           platform: "darwin",
-          sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
+          terminateRoot,
           waitForTargetsExit: async () => false,
         },
         [84],
       ),
     ).rejects.toThrow("refusing numeric signaling authority");
-    expect(signals).toEqual([]);
+    expect(terminateRoot).not.toHaveBeenCalled();
   });
 
   it("fails closed when the Windows launcher exited but a Job Object descendant survived", async () => {

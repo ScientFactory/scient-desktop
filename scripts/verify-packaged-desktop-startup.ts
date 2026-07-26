@@ -428,6 +428,8 @@ export function spawnContainedPackagedDesktop(
         launch.command,
         "-WorkingDirectory",
         launch.cwd,
+        "-VerifierProcessId",
+        String(process.pid),
       ],
       {
         cwd: launch.cwd,
@@ -440,7 +442,13 @@ export function spawnContainedPackagedDesktop(
   }
   return spawnProcess(
     process.execPath,
-    [POSIX_SENTINEL_PATH, launch.command, launch.cwd, JSON.stringify(launch.args)],
+    [
+      POSIX_SENTINEL_PATH,
+      String(process.pid),
+      launch.command,
+      launch.cwd,
+      JSON.stringify(launch.args),
+    ],
     {
       cwd: launch.cwd,
       env: environment,
@@ -959,16 +967,13 @@ export interface ProcessTerminationDependencies {
   readonly platform?: NodeJS.Platform;
   readonly childIsAlive?: (child: ChildProcess) => boolean;
   readonly terminateRoot?: (child: ChildProcess) => boolean;
-  readonly sendSignal?: (target: ProcessTerminationTarget, signal: NodeJS.Signals) => void;
-  readonly targetIsAlive?: (target: ProcessTerminationTarget) => boolean;
-  readonly waitForPosixPayloadExit?: (timeoutMs: number) => Promise<boolean>;
   readonly waitForTargetsExit?: (
     targets: ReadonlyArray<ProcessTerminationTarget>,
     timeoutMs: number,
   ) => Promise<boolean>;
 }
 
-const POSIX_DESKTOP_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 12_000;
+const POSIX_SENTINEL_SHUTDOWN_TIMEOUT_MS = 14_000;
 const WINDOWS_JOB_CLOSE_TIMEOUT_MS = 5_000;
 
 function childProcessHandleIsAlive(child: ChildProcess): boolean {
@@ -1012,14 +1017,6 @@ function waitForProcessTerminationTargets(
   });
 }
 
-function sendProcessTreeSignal(target: ProcessTerminationTarget, signal: NodeJS.Signals): void {
-  try {
-    process.kill(target.processGroup ? -target.pid : target.pid, signal);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-  }
-}
-
 export async function terminateProcessTree(
   child: ChildProcess,
   dependencies: ProcessTerminationDependencies = {},
@@ -1031,9 +1028,7 @@ export async function terminateProcessTree(
     child.exitCode === null &&
     child.signalCode === null;
   const rootTarget: ProcessTerminationTarget | null =
-    child.pid && childCanStillOwnProcesses
-      ? { pid: child.pid, processGroup: platform !== "win32" }
-      : null;
+    child.pid && childCanStillOwnProcesses ? { pid: child.pid, processGroup: false } : null;
   // Backend PIDs recovered from logs/runtime state are observation-only. The
   // retained POSIX sentinel group or Windows kill-on-close Job Object owns
   // every descendant; numeric backend PIDs are never signaling authority.
@@ -1079,25 +1074,19 @@ export async function terminateProcessTree(
       `Packaged POSIX sentinel exited before authoritative whole-group cleanup; preserving evidence and refusing numeric signaling authority for observed descendants ${targets.map(({ pid }) => pid).join(", ")}.`,
     );
   }
-  const sendSignal = dependencies.sendSignal ?? sendProcessTreeSignal;
-  const targetIsAlive = dependencies.targetIsAlive ?? processTerminationTargetIsAlive;
-  if (!targetIsAlive(rootTarget)) {
-    await awaitTargetsExit(targets, 2_000);
+  // Signal only the still-retained direct ChildProcess. The sentinel itself
+  // owns graceful whole-group termination and escalation from its unrecycled
+  // process-group identity. If it disappears, the verifier never falls back to
+  // a delayed numeric PID or process-group signal.
+  const terminated = dependencies.terminateRoot?.(child) ?? child.kill("SIGTERM");
+  if (!terminated) {
     throw new Error(
-      "Packaged POSIX sentinel disappeared before authoritative whole-group cleanup; preserving evidence because its group can no longer be signaled safely.",
+      "Packaged POSIX sentinel could not accept handle-bound cleanup; preserving evidence and refusing numeric fallback signaling.",
     );
   }
-  sendSignal(rootTarget, "SIGTERM");
-  // The sentinel ignores TERM and remains the original process-group member
-  // while Electron performs its bounded graceful backend shutdown. Once the
-  // native payload exits (or the deadline expires), KILL targets a group whose
-  // identity cannot have been recycled because the sentinel still occupies it.
-  await (dependencies.waitForPosixPayloadExit?.(POSIX_DESKTOP_GRACEFUL_SHUTDOWN_TIMEOUT_MS) ??
-    awaitTargetsExit(observedTargets, POSIX_DESKTOP_GRACEFUL_SHUTDOWN_TIMEOUT_MS));
-  if (targetIsAlive(rootTarget)) sendSignal(rootTarget, "SIGKILL");
-  if (await awaitTargetsExit(targets, 2_000)) return;
+  if (await awaitTargetsExit(targets, POSIX_SENTINEL_SHUTDOWN_TIMEOUT_MS)) return;
   throw new Error(
-    `Packaged process trees ${targets.map(({ pid }) => pid).join(", ")} survived authoritative SIGTERM and SIGKILL cleanup.`,
+    `Packaged process trees ${targets.map(({ pid }) => pid).join(", ")} survived sentinel-owned cleanup.`,
   );
 }
 
@@ -1277,18 +1266,6 @@ export function readPackagedNativeChildOutcome(
 
 export function hasProvenPackagedNativeChildOutcome(environment: NodeJS.ProcessEnv): boolean {
   return inspectPackagedNativeChildOutcome(environment).evidence === "proven";
-}
-
-async function waitForPackagedNativeChildOutcome(
-  environment: NodeJS.ProcessEnv,
-  timeoutMs: number,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (hasProvenPackagedNativeChildOutcome(environment)) return true;
-    await delay(Math.min(100, Math.max(1, deadline - Date.now())));
-  }
-  return false;
 }
 
 export function readPackagedDesktopLogTail(logPath: string, maxCharacters = 200_000): string {
@@ -1520,18 +1497,7 @@ async function verifyPackagedDesktopPayload(
 
   try {
     if (child) {
-      await terminateProcessTree(
-        child,
-        {
-          ...(process.platform !== "win32" && environment
-            ? {
-                waitForPosixPayloadExit: (timeoutMs: number) =>
-                  waitForPackagedNativeChildOutcome(environment!, timeoutMs),
-              }
-            : {}),
-        },
-        readPackagedBackendProcessIds(environment),
-      );
+      await terminateProcessTree(child, {}, readPackagedBackendProcessIds(environment));
     }
   } catch (error) {
     processCleanupFailed = true;

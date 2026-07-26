@@ -2838,6 +2838,7 @@ class MissingBackendEntryError extends Error {
 }
 
 const backendGenerationRuntimes = new Map<number, BackendGenerationRuntime>();
+const externallyContainedBackendChildren = new WeakSet<ChildProcess.ChildProcess>();
 
 function spawnBackendGeneration(generation: number): ChildProcess.ChildProcess {
   const backendEntry = resolveBackendEntry();
@@ -2853,6 +2854,14 @@ function spawnBackendGeneration(generation: number): ChildProcess.ChildProcess {
   // Packaged-smoke descendants remain inside the verifier-owned POSIX process
   // group or Windows Job Object. Normal application launches retain their
   // existing dedicated backend containment.
+  // Authenticate outer containment once for this generation. Recomputing after
+  // reparenting would lose authority and could incorrectly fall back to a
+  // backend PID or process-group signal that this child never owned.
+  const retainedByExternalContainment = isVerifierOwnedPackagedStartupSmoke(
+    process.env,
+    process.ppid,
+    app.isPackaged,
+  );
   const child = ChildProcess.spawn(process.execPath, [...backendNodeArgs(), backendEntry], {
     cwd: resolveBackendCwd(),
     // In Electron main, process.execPath points to the Electron binary.
@@ -2864,9 +2873,10 @@ function spawnBackendGeneration(generation: number): ChildProcess.ChildProcess {
     ...backendProcessContainmentOptions(
       captureBackendLogs,
       process.platform,
-      !isVerifierOwnedPackagedStartupSmoke(process.env, process.ppid, app.isPackaged),
+      !retainedByExternalContainment,
     ),
   });
+  if (retainedByExternalContainment) externallyContainedBackendChildren.add(child);
   writeDesktopLogHeader(
     `backend process spawned generation=${generation} pid=${child.pid ?? "unknown"}`,
   );
@@ -2971,15 +2981,11 @@ function getBackendSupervisor(): DesktopBackendSupervisor {
       });
     },
     forceTerminateTree: (child) => {
-      if (
-        process.platform !== "win32" &&
-        isVerifierOwnedPackagedStartupSmoke(process.env, process.ppid, app.isPackaged)
-      ) {
-        throw new Error(
-          "Verifier-owned packaged startup retains process-group cleanup authority; refusing unsafe backend PID-group signaling.",
-        );
-      }
-      return forceTerminateBackendProcessTree(child);
+      return forceTerminateBackendProcessTree(child, {
+        retainedByExternalContainment: externallyContainedBackendChildren.has(
+          child as ChildProcess.ChildProcess,
+        ),
+      });
     },
     onGenerationStarted: handleBackendGenerationStarted,
     onGenerationExited: handleBackendGenerationExited,

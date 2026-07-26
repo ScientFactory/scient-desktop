@@ -488,8 +488,18 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     webRootRoute,
-    "markPackagedStartupRendererReadyAfterShellHydration",
+    "hydrateShellForPackagedStartupRenderer",
     "Expected the server-welcome router lifecycle to own packaged renderer readiness.",
+  );
+  assertContains(
+    webRendererReadiness,
+    "input.state.generation !== generation",
+    "Expected renderer readiness to reject stale reconnect hydration generations.",
+  );
+  assertContains(
+    webRootRoute,
+    "disposePackagedStartupRendererReadiness(packagedStartupRendererReadiness)",
+    "Expected router disposal to invalidate pending renderer readiness.",
   );
   assertNotContains(
     webMain,
@@ -549,8 +559,30 @@ function verifyReleaseWorkflowSafety(): void {
   }
   assertContains(
     posixStartupSentinel,
-    'process.on("SIGTERM", () => undefined)',
-    "Expected the POSIX sentinel to retain process-group identity through graceful cleanup.",
+    'process.on("SIGTERM", () => beginSentinelOwnedShutdown(false))',
+    "Expected the POSIX sentinel to own graceful process-group cleanup.",
+  );
+  assertContains(
+    posixStartupSentinel,
+    "process.ppid !== verifierParentPid",
+    "Expected the POSIX sentinel to terminate its group when its verifier parent dies.",
+  );
+  assertContains(
+    windowsStartupJobLauncher,
+    "OpenProcess(SYNCHRONIZE, false, verifierProcessId)",
+    "Expected Windows startup containment to retain a verifier process handle.",
+  );
+  if (
+    windowsStartupJobLauncher.indexOf("OpenProcess(SYNCHRONIZE, false, verifierProcessId)") < 0 ||
+    windowsStartupJobLauncher.indexOf("OpenProcess(SYNCHRONIZE, false, verifierProcessId)") >
+      windowsStartupJobLauncher.indexOf("if (!CreateProcess(")
+  ) {
+    throw new Error("Expected Windows verifier liveness authority before payload creation.");
+  }
+  assertContains(
+    windowsStartupJobLauncher,
+    "WaitForMultipleObjects(2, livenessHandles, false, INFINITE)",
+    "Expected Windows Job cleanup to observe verifier death as well as payload exit.",
   );
   assertContains(
     windowsStartupJobLauncher,
