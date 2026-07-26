@@ -46,7 +46,6 @@ import { autoUpdater, BaseUpdater, CancellationToken } from "electron-updater";
 
 import type { ContextMenuItem } from "@synara/contracts";
 import { makeScientBackendShutdownMessage } from "@synara/shared/backendControl";
-import { recordWindowsPackagedStartupOwnedProcess } from "@synara/shared/packagedStartupProcessOwnership";
 import { getMacTrafficLightPosition } from "@synara/shared/desktopChrome";
 import {
   SCIENT_APP_NAME,
@@ -2863,11 +2862,9 @@ function spawnBackendGeneration(generation: number): ChildProcess.ChildProcess {
     ...backendEnv(),
     ELECTRON_RUN_AS_NODE: "1",
   };
-  // Windows records an authenticated process-creation identity so the verifier
-  // can reap this backend after an Electron crash without trusting a reused PID.
-  // POSIX smoke backends inherit the verifier-created Electron process group.
-  // Neither backend nor provider subprocesses inherit the verifier capability.
-  delete environment.SCIENT_PACKAGED_STARTUP_CLEANUP_TOKEN;
+  // Packaged-smoke descendants remain inside the verifier-owned POSIX process
+  // group or Windows Job Object. Normal application launches retain their
+  // existing dedicated backend containment.
   const child = ChildProcess.spawn(process.execPath, [...backendNodeArgs(), backendEntry], {
     cwd: resolveBackendCwd(),
     // In Electron main, process.execPath points to the Electron binary.
@@ -2882,14 +2879,6 @@ function spawnBackendGeneration(generation: number): ChildProcess.ChildProcess {
       process.env.SCIENT_PACKAGED_STARTUP_SMOKE !== "1",
     ),
   });
-  try {
-    if (child.pid && process.platform === "win32") {
-      recordWindowsPackagedStartupOwnedProcess(process.env, child.pid);
-    }
-  } catch (error) {
-    void forceTerminateBackendProcessTree(child).catch(() => undefined);
-    throw error;
-  }
   writeDesktopLogHeader(
     `backend process spawned generation=${generation} pid=${child.pid ?? "unknown"}`,
   );

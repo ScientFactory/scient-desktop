@@ -364,6 +364,19 @@ function verifyReleaseWorkflowSafety(): void {
     resolve(repoRoot, "scripts/verify-packaged-desktop-startup.ts"),
     "utf8",
   ).replaceAll("\r\n", "\n");
+  const posixStartupSentinel = readFileSync(
+    resolve(repoRoot, "scripts/lib/packaged-startup-posix-sentinel.mjs"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  const windowsStartupJobLauncher = readFileSync(
+    resolve(repoRoot, "scripts/lib/packaged-startup-windows-job.ps1"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  execFileSync(
+    process.execPath,
+    ["--input-type=module", "--eval", 'import("./scripts/verify-packaged-desktop-startup.ts")'],
+    { cwd: repoRoot, stdio: "pipe" },
+  );
   const desktopMain = readFileSync(
     resolve(repoRoot, "apps/desktop/src/main.ts"),
     "utf8",
@@ -428,6 +441,35 @@ function verifyReleaseWorkflowSafety(): void {
     "PACKAGED_SMOKE_INHERITED_ENVIRONMENT_ALLOWLIST",
     "Expected packaged startup verification to inherit only explicit host variables.",
   );
+  assertContains(
+    packagedStartupVerifier,
+    "spawnContainedPackagedDesktop",
+    "Expected native startup proof to launch inside verifier-owned OS containment.",
+  );
+  assertNotContains(
+    packagedStartupVerifier,
+    "taskkill",
+    "Packaged startup cleanup must not restore numeric Windows process signaling authority.",
+  );
+  assertContains(
+    posixStartupSentinel,
+    'process.on("SIGTERM", () => undefined)',
+    "Expected the POSIX sentinel to retain process-group identity through graceful cleanup.",
+  );
+  assertContains(
+    windowsStartupJobLauncher,
+    "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE",
+    "Expected Windows startup proof to use kill-on-close Job Object containment.",
+  );
+  if (
+    windowsStartupJobLauncher.indexOf("AssignProcessToJobObject(job, child.hProcess)") < 0 ||
+    windowsStartupJobLauncher.indexOf("AssignProcessToJobObject(job, child.hProcess)") >
+      windowsStartupJobLauncher.indexOf("ResumeThread(child.hThread)")
+  ) {
+    throw new Error(
+      "Expected Windows startup proof to assign the suspended Electron process before resume.",
+    );
+  }
   assertContains(
     packagedStartupVerifier,
     'log.includes("packaged main window visible")',

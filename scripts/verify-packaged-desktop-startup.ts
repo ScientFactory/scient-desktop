@@ -3,8 +3,7 @@
 // Purpose: Launches an exact collected desktop release payload from isolated temporary state.
 // Layer: Release verification script
 
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { spawn, type ChildProcess } from "node:child_process";
 import {
   chmodSync,
   mkdirSync,
@@ -24,11 +23,15 @@ import {
   isWindowsAuthenticodeSignatureDetails,
   WINDOWS_AUTHENTICODE_READER_FUNCTION_LINES,
   type WindowsAuthenticodeSignatureDetails,
-} from "./lib/windows-authenticode";
-import {
-  readPackagedStartupOwnedProcesses,
-  readWindowsProcessInstanceId,
-} from "@synara/shared/packagedStartupProcessOwnership";
+} from "./lib/windows-authenticode.ts";
+
+const PACKAGED_NATIVE_CHILD_OUTCOME_FILE = "packaged-native-child-outcome.json";
+const POSIX_SENTINEL_PATH = fileURLToPath(
+  new URL("./lib/packaged-startup-posix-sentinel.mjs", import.meta.url),
+);
+const WINDOWS_JOB_LAUNCHER_PATH = fileURLToPath(
+  new URL("./lib/packaged-startup-windows-job.ps1", import.meta.url),
+);
 
 export type PackagedDesktopPlatform = "mac" | "win";
 
@@ -322,6 +325,63 @@ export interface PackagedDesktopLaunchCommand {
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
   readonly cleanup?: () => Promise<void>;
+}
+
+export function spawnContainedPackagedDesktop(
+  launch: PackagedDesktopLaunchCommand,
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+  spawnProcess: typeof spawn = spawn,
+): ChildProcess {
+  if (platform === "win32") {
+    if (launch.args.length > 0) {
+      throw new Error(
+        "Windows Job Object launcher does not accept packaged application arguments.",
+      );
+    }
+    const systemRoot = environment.SystemRoot ?? environment.SYSTEMROOT ?? "C:\\Windows";
+    const powershell = win32.join(
+      systemRoot,
+      "System32",
+      "WindowsPowerShell",
+      "v1.0",
+      "powershell.exe",
+    );
+    return spawnProcess(
+      powershell,
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        WINDOWS_JOB_LAUNCHER_PATH,
+        "-ExecutablePath",
+        launch.command,
+        "-WorkingDirectory",
+        launch.cwd,
+      ],
+      {
+        cwd: launch.cwd,
+        env: environment,
+        detached: false,
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      },
+    );
+  }
+  return spawnProcess(
+    process.execPath,
+    [POSIX_SENTINEL_PATH, launch.command, launch.cwd, JSON.stringify(launch.args)],
+    {
+      cwd: launch.cwd,
+      env: environment,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    },
+  );
 }
 
 type PackagedPreparationCommandRunner = typeof runPackagedPreparationCommand;
@@ -685,7 +745,6 @@ export function createPackagedDesktopSmokeEnvironment(
     SCIENT_HOME: scientHome,
     SCIENT_DISABLE_SHELL_ENV_SYNC: "1",
     SCIENT_PACKAGED_STARTUP_SMOKE: "1",
-    SCIENT_PACKAGED_STARTUP_CLEANUP_TOKEN: randomBytes(32).toString("hex"),
     SYNARA_DISABLE_AUTO_UPDATE: "1",
     SYNARA_TELEMETRY_ENABLED: "false",
     ELECTRON_ENABLE_LOGGING: "1",
@@ -763,22 +822,15 @@ export function resolvePackagedDesktopLogPath(environment: NodeJS.ProcessEnv): s
 export interface ProcessTerminationTarget {
   readonly pid: number;
   readonly processGroup: boolean;
-  readonly instanceId?: string;
 }
 
 export interface ProcessTerminationDependencies {
   readonly platform?: NodeJS.Platform;
   readonly childIsAlive?: (child: ChildProcess) => boolean;
-  readonly runTaskkill?: (
-    pid: number,
-    timeoutMs: number,
-  ) => {
-    readonly error?: Error;
-    readonly status: number | null;
-  };
-  readonly readWindowsProcessInstanceId?: (pid: number) => string | null;
+  readonly terminateRoot?: (child: ChildProcess) => boolean;
   readonly sendSignal?: (target: ProcessTerminationTarget, signal: NodeJS.Signals) => void;
   readonly targetIsAlive?: (target: ProcessTerminationTarget) => boolean;
+  readonly waitForPosixPayloadExit?: (timeoutMs: number) => Promise<boolean>;
   readonly waitForTargetsExit?: (
     targets: ReadonlyArray<ProcessTerminationTarget>,
     timeoutMs: number,
@@ -786,7 +838,7 @@ export interface ProcessTerminationDependencies {
 }
 
 const POSIX_DESKTOP_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 12_000;
-const WINDOWS_TASKKILL_TIMEOUT_MS = 5_000;
+const WINDOWS_JOB_CLOSE_TIMEOUT_MS = 5_000;
 
 function childProcessHandleIsAlive(child: ChildProcess): boolean {
   if (!child.pid || child.exitCode !== null || child.signalCode !== null) return false;
@@ -841,8 +893,6 @@ export async function terminateProcessTree(
   child: ChildProcess,
   dependencies: ProcessTerminationDependencies = {},
   additionalProcessIds: ReadonlyArray<number> = [],
-  recordedOwnedTargets: ReadonlyArray<ProcessTerminationTarget> = [],
-  rootProcessInstanceId?: string,
 ): Promise<void> {
   const platform = dependencies.platform ?? process.platform;
   const childCanStillOwnProcesses =
@@ -851,33 +901,11 @@ export async function terminateProcessTree(
     child.signalCode === null;
   const rootTarget: ProcessTerminationTarget | null =
     child.pid && childCanStillOwnProcesses
-      ? {
-          pid: child.pid,
-          processGroup: platform !== "win32",
-          ...(platform === "win32" && rootProcessInstanceId
-            ? { instanceId: rootProcessInstanceId }
-            : {}),
-        }
+      ? { pid: child.pid, processGroup: platform !== "win32" }
       : null;
-  // The verifier creates this POSIX process group and keeps authority over it
-  // while any descendant remains, even after its original leader exits.
-  const exitedRootGroupTarget: ProcessTerminationTarget | null =
-    platform !== "win32" && child.pid && !rootTarget
-      ? { pid: child.pid, processGroup: true }
-      : null;
-  const ownedTargets = recordedOwnedTargets.filter(
-    (target, index, allTargets) =>
-      target.pid > 0 &&
-      allTargets.findIndex(
-        (candidate) =>
-          candidate.pid === target.pid &&
-          candidate.processGroup === target.processGroup &&
-          candidate.instanceId === target.instanceId,
-      ) === index,
-  );
-  // Backend PIDs recovered from logs/runtime state are observation-only. A
-  // matching HMAC record with the Windows process creation identity is the
-  // separate authority that permits signaling a backend after Electron exits.
+  // Backend PIDs recovered from logs/runtime state are observation-only. The
+  // retained POSIX sentinel group or Windows kill-on-close Job Object owns
+  // every descendant; numeric backend PIDs are never signaling authority.
   const observedTargets = additionalProcessIds
     .map((pid) => ({ pid, processGroup: false }))
     .filter(
@@ -887,89 +915,46 @@ export async function terminateProcessTree(
     );
   const targets = [
     ...(rootTarget ? [rootTarget] : []),
-    ...(exitedRootGroupTarget ? [exitedRootGroupTarget] : []),
-    ...ownedTargets.filter(
-      (target) => target.pid !== (rootTarget?.pid ?? exitedRootGroupTarget?.pid),
-    ),
-    ...observedTargets.filter(
-      (target) =>
-        target.pid !== (rootTarget?.pid ?? exitedRootGroupTarget?.pid) &&
-        !ownedTargets.some((owned) => owned.pid === target.pid),
-    ),
+    ...observedTargets.filter((target) => target.pid !== rootTarget?.pid),
   ];
-  if (targets.length === 0) {
-    if (platform === "win32" && child.pid) {
-      throw new Error(
-        `Packaged Windows root ${child.pid} exited before cleanup ownership was established; preserving evidence because unobserved descendants may remain.`,
-      );
-    }
-    return;
-  }
+  if (targets.length === 0) return;
   const awaitTargetsExit = dependencies.waitForTargetsExit ?? waitForProcessTerminationTargets;
-  if (!rootTarget && platform === "win32") {
-    if (await awaitTargetsExit(targets, 5_000)) return;
-    if (ownedTargets.length === 0) {
-      throw new Error(
-        `Recorded process candidates ${targets.map(({ pid }) => pid).join(", ")} remained after their parent exited; refusing to signal unverified PIDs or process groups.`,
-      );
-    }
-  }
   if (platform === "win32") {
-    // A live ChildProcess handle establishes liveness, while the captured
-    // process-creation identity prevents numeric-PID reuse before taskkill.
-    // Authenticated backend records use the same identity boundary.
-    const candidateWindowsRoots = [
-      ...(rootTarget ? [rootTarget] : []),
-      ...ownedTargets.filter((target) => target.pid !== rootTarget?.pid),
-    ];
-    const authoritativeWindowsRoots: ProcessTerminationTarget[] = [];
-    const readInstanceId =
-      dependencies.readWindowsProcessInstanceId ??
-      ((pid: number) => readWindowsProcessInstanceId(pid));
-    for (const target of candidateWindowsRoots) {
-      if (!target.instanceId || readInstanceId(target.pid) !== target.instanceId) {
-        continue;
-      }
-      authoritativeWindowsRoots.push(target);
-      const taskkillResult =
-        dependencies.runTaskkill?.(target.pid, WINDOWS_TASKKILL_TIMEOUT_MS) ??
-        spawnSync("taskkill", ["/pid", String(target.pid), "/t", "/f"], {
-          stdio: "ignore",
-          timeout: WINDOWS_TASKKILL_TIMEOUT_MS,
-          windowsHide: true,
-        });
-      const taskkillDetail = taskkillResult.error
-        ? `could not start (${taskkillResult.error.message})`
-        : `status ${taskkillResult.status ?? "unknown"}`;
-      if (taskkillResult.error || taskkillResult.status !== 0) {
-        throw new Error(
-          `Packaged Windows cleanup lost authoritative tree termination; root ${target.pid} taskkill ${taskkillDetail}.`,
-        );
+    // The ChildProcess handle belongs to the verifier-only PowerShell job
+    // launcher. Terminating that handle closes its kill-on-close Job Object,
+    // atomically terminating Electron and every descendant without PID lookup.
+    if (rootTarget) {
+      const terminated = dependencies.terminateRoot?.(child) ?? child.kill();
+      if (!terminated) {
+        throw new Error("Packaged Windows Job Object launcher could not be terminated by handle.");
       }
     }
-    if (await awaitTargetsExit(targets, 5_000)) return;
+    if (await awaitTargetsExit(targets, WINDOWS_JOB_CLOSE_TIMEOUT_MS)) return;
     throw new Error(
-      `Packaged process trees survived Windows cleanup; authoritative roots ${authoritativeWindowsRoots.map(({ pid }) => pid).join(", ")}.`,
+      `Packaged Windows Job Object tree survived handle-bound cleanup; observed processes ${targets.map(({ pid }) => pid).join(", ")}.`,
+    );
+  }
+
+  if (!rootTarget) {
+    if (await awaitTargetsExit(targets, 2_000)) return;
+    throw new Error(
+      `Packaged POSIX sentinel exited before cleanup while observed descendants ${targets.map(({ pid }) => pid).join(", ")} remained; refusing numeric signaling authority.`,
     );
   }
   const sendSignal = dependencies.sendSignal ?? sendProcessTreeSignal;
   const targetIsAlive = dependencies.targetIsAlive ?? processTerminationTargetIsAlive;
-  const authoritativeRootGroup = rootTarget ?? exitedRootGroupTarget;
-  if (authoritativeRootGroup) {
-    if (targetIsAlive(authoritativeRootGroup)) {
-      sendSignal(authoritativeRootGroup, "SIGTERM");
-    }
-    // The desktop owns a bounded backend shutdown that can legitimately take
-    // up to ten seconds. Preserve its supervisor for that complete deadline.
-    if (await awaitTargetsExit(targets, POSIX_DESKTOP_GRACEFUL_SHUTDOWN_TIMEOUT_MS)) return;
+  if (!targetIsAlive(rootTarget)) {
+    if (await awaitTargetsExit(targets, 2_000)) return;
+    throw new Error("Packaged POSIX sentinel disappeared before its descendants were reaped.");
   }
-  const authoritativePosixTargets = [
-    ...(authoritativeRootGroup ? [authoritativeRootGroup] : []),
-    ...ownedTargets.filter((target) => target.pid !== authoritativeRootGroup?.pid),
-  ];
-  for (const target of authoritativePosixTargets) {
-    if (targetIsAlive(target)) sendSignal(target, "SIGKILL");
-  }
+  sendSignal(rootTarget, "SIGTERM");
+  // The sentinel ignores TERM and remains the original process-group member
+  // while Electron performs its bounded graceful backend shutdown. Once the
+  // native payload exits (or the deadline expires), KILL targets a group whose
+  // identity cannot have been recycled because the sentinel still occupies it.
+  await (dependencies.waitForPosixPayloadExit?.(POSIX_DESKTOP_GRACEFUL_SHUTDOWN_TIMEOUT_MS) ??
+    awaitTargetsExit(observedTargets, POSIX_DESKTOP_GRACEFUL_SHUTDOWN_TIMEOUT_MS));
+  if (targetIsAlive(rootTarget)) sendSignal(rootTarget, "SIGKILL");
   if (await awaitTargetsExit(targets, 2_000)) return;
   throw new Error(
     `Packaged process trees ${targets.map(({ pid }) => pid).join(", ")} survived authoritative SIGTERM and SIGKILL cleanup.`,
@@ -1063,6 +1048,66 @@ export interface PackagedDesktopChildOutcome {
     readonly signal: NodeJS.Signals | null;
   } | null;
   readonly launchError: Error | null;
+}
+
+export function resolvePackagedNativeChildOutcomePath(environment: NodeJS.ProcessEnv): string {
+  const scientHome = environment.SCIENT_HOME?.trim();
+  if (!scientHome) throw new Error("Packaged startup smoke requires an isolated SCIENT_HOME.");
+  return join(scientHome, PACKAGED_NATIVE_CHILD_OUTCOME_FILE);
+}
+
+export function readPackagedNativeChildOutcome(
+  environment: NodeJS.ProcessEnv,
+): PackagedDesktopChildOutcome {
+  try {
+    const parsed = JSON.parse(
+      readFileSync(resolvePackagedNativeChildOutcomePath(environment), "utf8"),
+    ) as {
+      readonly exited?: { readonly code?: unknown; readonly signal?: unknown } | null;
+      readonly launchError?: { readonly message?: unknown } | null;
+    };
+    const exited = parsed.exited;
+    const launchError = parsed.launchError;
+    if (
+      exited &&
+      (typeof exited.code === "number" || exited.code === null) &&
+      (typeof exited.signal === "string" || exited.signal === null) &&
+      launchError === null
+    ) {
+      return {
+        exited: {
+          code: exited.code,
+          signal: exited.signal as NodeJS.Signals | null,
+        },
+        launchError: null,
+      };
+    }
+    if (exited === null && launchError && typeof launchError.message === "string") {
+      return { exited: null, launchError: new Error(launchError.message) };
+    }
+    return { exited: null, launchError: new Error("Malformed packaged native child outcome.") };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { exited: null, launchError: null };
+    }
+    return {
+      exited: null,
+      launchError: error instanceof Error ? error : new Error(String(error)),
+    };
+  }
+}
+
+async function waitForPackagedNativeChildOutcome(
+  environment: NodeJS.ProcessEnv,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const outcome = readPackagedNativeChildOutcome(environment);
+    if (outcome.exited || outcome.launchError) return true;
+    await delay(Math.min(100, Math.max(1, deadline - Date.now())));
+  }
+  return false;
 }
 
 export function readPackagedDesktopLogTail(logPath: string, maxCharacters = 200_000): string {
@@ -1196,7 +1241,6 @@ async function verifyPackagedDesktopPayload(
   let child: ChildProcess | null = null;
   let launch: PackagedDesktopLaunchCommand | null = null;
   let environment: NodeJS.ProcessEnv | null = null;
-  let rootProcessInstanceId: string | null = null;
   let logPath: string | null = null;
   let output = "";
   const failures: Array<{ phase: string; error: unknown }> = [];
@@ -1211,13 +1255,7 @@ async function verifyPackagedDesktopPayload(
     environment = createPackagedDesktopSmokeEnvironment(join(temporaryRoot, "state"), options);
     const launchLogPath = resolvePackagedDesktopLogPath(environment);
     logPath = launchLogPath;
-    child = spawn(launch.command, [...launch.args], {
-      cwd: launch.cwd,
-      env: environment,
-      detached: process.platform !== "win32",
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
+    child = spawnContainedPackagedDesktop(launch, environment);
 
     const childOutcome: {
       exited: PackagedDesktopChildOutcome["exited"];
@@ -1235,20 +1273,17 @@ async function verifyPackagedDesktopPayload(
     child.stdout?.on("data", recordOutput);
     child.stderr?.on("data", recordOutput);
 
-    if (process.platform === "win32") {
-      rootProcessInstanceId = child.pid
-        ? readWindowsProcessInstanceId(child.pid, environment)
-        : null;
-      if (!rootProcessInstanceId) {
-        throw new Error("Could not establish the packaged Electron process instance identity.");
-      }
-    }
-
     await Promise.race([
       waitForPackagedStartupProof({
         timeoutMs: options.timeoutMs,
         hasProof: () => hasPackagedStartupProof(launchLogPath, options),
-        readOutcome: () => childOutcome,
+        readOutcome: () => {
+          if (process.platform === "win32") return childOutcome;
+          const payloadOutcome = readPackagedNativeChildOutcome(environment!);
+          return payloadOutcome.exited || payloadOutcome.launchError
+            ? payloadOutcome
+            : childOutcome;
+        },
         isProcessAlive: () => childProcessHandleIsAlive(child!),
       }),
       termination.signal.then((signal) => {
@@ -1262,21 +1297,17 @@ async function verifyPackagedDesktopPayload(
   let processCleanupFailed = false;
   try {
     if (child) {
-      const ownedTargets = environment
-        ? readPackagedStartupOwnedProcesses(environment).map(
-            ({ pid, processGroup, instanceId }) => ({
-              pid,
-              processGroup,
-              instanceId,
-            }),
-          )
-        : [];
       await terminateProcessTree(
         child,
-        {},
+        {
+          ...(process.platform !== "win32" && environment
+            ? {
+                waitForPosixPayloadExit: (timeoutMs: number) =>
+                  waitForPackagedNativeChildOutcome(environment!, timeoutMs),
+              }
+            : {}),
+        },
         readPackagedBackendProcessIds(environment),
-        ownedTargets,
-        rootProcessInstanceId ?? undefined,
       );
     }
   } catch (error) {

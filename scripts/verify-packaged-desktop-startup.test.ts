@@ -30,11 +30,13 @@ import {
   readWindowsExecutableArchitecture,
   readPackagedDesktopLogTail,
   readPackagedBackendProcessIds,
+  readPackagedNativeChildOutcome,
   resolveExactPackagedDesktopStartupAsset,
   resolveNativePackagedDesktopPlatform,
   resolvePackagedDesktopLogPath,
   runPackagedPreparationCommand,
   sanitizePackagedDesktopInheritedEnvironment,
+  spawnContainedPackagedDesktop,
   terminateProcessTree,
   waitForPackagedStartupProof,
   writePackagedStartupFailureDiagnostics,
@@ -571,102 +573,133 @@ describe("packaged desktop startup verification", () => {
     expect(readFileSync(path, "utf8")).not.toContain("very-secret");
   });
 
-  it("targets a live Windows root once and fails when its complete tree survives", async () => {
+  it("closes a live Windows Job Object launcher by process handle", async () => {
     const child = {
       exitCode: null,
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
-    const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({
-      status: 0,
-    }));
+    const terminateRoot = vi.fn(() => true);
     await expect(
       terminateProcessTree(
         child,
         {
           platform: "win32",
           childIsAlive: () => true,
-          readWindowsProcessInstanceId: () => "638891234567890123",
-          runTaskkill,
+          terminateRoot,
           waitForTargetsExit: async () => false,
         },
         [84],
-        [],
-        "638891234567890123",
       ),
-    ).rejects.toThrow("survived Windows cleanup");
-    expect(runTaskkill.mock.calls.map(([pid]) => pid)).toEqual([42]);
-    expect(runTaskkill.mock.calls.map(([, timeoutMs]) => timeoutMs)).toEqual([5_000]);
+    ).rejects.toThrow("survived handle-bound cleanup");
+    expect(terminateRoot).toHaveBeenCalledOnce();
+    expect(terminateRoot).toHaveBeenCalledWith(child);
   });
 
-  it("fails Windows cleanup when taskkill fails even if observed targets disappear", async () => {
+  it("fails closed when the Windows Job Object launcher handle cannot terminate", async () => {
     const child = {
       exitCode: null,
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
     await expect(
-      terminateProcessTree(
-        child,
-        {
-          platform: "win32",
-          childIsAlive: () => true,
-          readWindowsProcessInstanceId: () => "638891234567890123",
-          runTaskkill: () => ({ status: 1 }),
-          waitForTargetsExit: async () => true,
-        },
-        [],
-        [],
-        "638891234567890123",
-      ),
-    ).rejects.toThrow("lost authoritative tree termination");
-  });
-
-  it("waits for recorded Windows backends without signaling reused PIDs after root exit", async () => {
-    const child = {
-      exitCode: null,
-      pid: 42,
-      signalCode: null,
-    } as unknown as ChildProcess;
-    const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({
-      status: 0,
-    }));
-
-    await terminateProcessTree(
-      child,
-      {
+      terminateProcessTree(child, {
         platform: "win32",
-        childIsAlive: () => false,
-        runTaskkill,
+        childIsAlive: () => true,
+        terminateRoot: () => false,
         waitForTargetsExit: async () => true,
-      },
-      [84],
-    );
-
-    expect(runTaskkill).not.toHaveBeenCalled();
+      }),
+    ).rejects.toThrow("could not be terminated by handle");
   });
 
-  it("observes detached Windows backend cleanup after the packaged root exits", async () => {
+  it("only observes Job Object descendants after the Windows launcher exits", async () => {
     const child = {
       exitCode: 0,
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
-    const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({
-      status: 0,
-    }));
+    const terminateRoot = vi.fn(() => true);
 
     await terminateProcessTree(
       child,
       {
         platform: "win32",
-        runTaskkill,
+        terminateRoot,
         waitForTargetsExit: async () => true,
       },
       [84],
     );
 
-    expect(runTaskkill).not.toHaveBeenCalled();
+    expect(terminateRoot).not.toHaveBeenCalled();
+  });
+
+  it("launches Windows suspended into a kill-on-close Job Object and macOS behind a sentinel", () => {
+    const spawnProcess = vi.fn(() => ({ pid: 42 }) as unknown as ChildProcess);
+    const launch = { command: "/payload/Scient", args: [], cwd: "/payload" };
+
+    spawnContainedPackagedDesktop(
+      launch,
+      { SystemRoot: "D:\\Windows" },
+      "win32",
+      spawnProcess as unknown as typeof import("node:child_process").spawn,
+    );
+    const windowsCall = (
+      spawnProcess.mock.calls as unknown as Array<[string, string[], Record<string, unknown>]>
+    )[0]!;
+    expect(windowsCall[0]).toBe("D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+    expect(windowsCall[1]).toEqual(
+      expect.arrayContaining([
+        "-File",
+        expect.stringMatching(/packaged-startup-windows-job\.ps1$/),
+      ]),
+    );
+    expect(windowsCall[2]).toEqual(expect.objectContaining({ detached: false }));
+    const jobScriptPath = (windowsCall[1] as string[])[
+      (windowsCall[1] as string[]).indexOf("-File") + 1
+    ]!;
+    const jobScript = readFileSync(jobScriptPath, "utf8");
+    expect(jobScript).toContain("CREATE_SUSPENDED");
+    expect(jobScript).toContain("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE");
+    expect(jobScript.indexOf("AssignProcessToJobObject(job, child.hProcess)")).toBeLessThan(
+      jobScript.indexOf("ResumeThread(child.hThread)"),
+    );
+
+    spawnProcess.mockClear();
+    spawnContainedPackagedDesktop(
+      launch,
+      { SCIENT_HOME: "/isolated" },
+      "darwin",
+      spawnProcess as unknown as typeof import("node:child_process").spawn,
+    );
+    const posixCall = (
+      spawnProcess.mock.calls as unknown as Array<[string, string[], Record<string, unknown>]>
+    )[0]!;
+    expect(posixCall[0]).toBe(process.execPath);
+    expect(posixCall[1]).toEqual(
+      expect.arrayContaining([expect.stringMatching(/packaged-startup-posix-sentinel\.mjs$/)]),
+    );
+    expect(posixCall[2]).toEqual(expect.objectContaining({ detached: true }));
+  });
+
+  it("reads the POSIX sentinel native-child outcome from isolated state", () => {
+    const root = mkdtempSync(join(tmpdir(), "scient-packaged-outcome-test-"));
+    temporaryRoots.push(root);
+    const environment = { SCIENT_HOME: root };
+
+    expect(readPackagedNativeChildOutcome(environment)).toEqual({
+      exited: null,
+      launchError: null,
+    });
+    writeFileSync(
+      join(root, "packaged-native-child-outcome.json"),
+      JSON.stringify({ exited: { code: 7, signal: null }, launchError: null }),
+    );
+    expect(readPackagedNativeChildOutcome(environment)).toEqual({
+      exited: { code: 7, signal: null },
+      launchError: null,
+    });
+    writeFileSync(join(root, "packaged-native-child-outcome.json"), "{malformed");
+    expect(readPackagedNativeChildOutcome(environment).launchError).toBeInstanceOf(Error);
   });
 
   it("recovers every spawned backend PID before runtime state is durable", () => {
@@ -736,7 +769,7 @@ describe("packaged desktop startup verification", () => {
     expect(readPackagedBackendProcessIds(env)).toEqual([84]);
   });
 
-  it("fails when a POSIX process tree survives TERM and KILL", async () => {
+  it("keeps the POSIX sentinel as group authority through TERM and KILL", async () => {
     const child = {
       exitCode: null,
       pid: 42,
@@ -751,6 +784,7 @@ describe("packaged desktop startup verification", () => {
           childIsAlive: () => true,
           sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
           targetIsAlive: () => true,
+          waitForPosixPayloadExit: async (timeoutMs) => timeoutMs === 12_000,
           waitForTargetsExit: async () => false,
         },
         [84],
@@ -762,35 +796,45 @@ describe("packaged desktop startup verification", () => {
     ]);
   });
 
-  it("does not escalate a POSIX process tree that exited during the TERM grace period", async () => {
+  it("waits for the native POSIX payload before killing the retained sentinel group", async () => {
     const child = {
       exitCode: null,
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
     const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
-    const exitWaits: number[] = [];
+    const events: string[] = [];
 
     await terminateProcessTree(
       child,
       {
         platform: "darwin",
         childIsAlive: () => true,
-        sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
+        sendSignal: (target, signal) => {
+          events.push(signal);
+          signals.push({ pid: target.pid, signal });
+        },
         targetIsAlive: () => true,
-        waitForTargetsExit: async (_targets, timeoutMs) => {
-          exitWaits.push(timeoutMs);
+        waitForPosixPayloadExit: async (timeoutMs) => {
+          events.push(`wait:${timeoutMs}`);
           return true;
+        },
+        waitForTargetsExit: async (_targets, timeoutMs) => {
+          events.push(`reap:${timeoutMs}`);
+          return timeoutMs === 2_000;
         },
       },
       [84],
     );
 
-    expect(signals).toEqual([{ pid: 42, signal: "SIGTERM" }]);
-    expect(exitWaits).toEqual([12_000]);
+    expect(signals).toEqual([
+      { pid: 42, signal: "SIGTERM" },
+      { pid: 42, signal: "SIGKILL" },
+    ]);
+    expect(events).toEqual(["SIGTERM", "wait:12000", "SIGKILL", "reap:2000"]);
   });
 
-  it("does not signal a verifier-created POSIX group after it is already gone", async () => {
+  it("does not signal an already-gone POSIX sentinel", async () => {
     const child = {
       exitCode: 0,
       pid: 42,
@@ -808,17 +852,12 @@ describe("packaged desktop startup verification", () => {
     expect(signals).toEqual([]);
   });
 
-  it("keeps the verifier-created POSIX group authoritative when its leader exits", async () => {
-    const childState: {
-      exitCode: number | null;
-      pid: number;
-      signalCode: NodeJS.Signals | null;
-    } = {
-      exitCode: null,
+  it("refuses numeric POSIX signaling after the retained sentinel exits early", async () => {
+    const child = {
+      exitCode: 0,
       pid: 42,
       signalCode: null,
-    };
-    const child = childState as unknown as ChildProcess;
+    } as unknown as ChildProcess;
     const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
 
     await expect(
@@ -826,170 +865,35 @@ describe("packaged desktop startup verification", () => {
         child,
         {
           platform: "darwin",
-          childIsAlive: () => true,
-          sendSignal: (target, signal) => {
-            signals.push({ pid: target.pid, signal });
-            if (signal === "SIGTERM") childState.exitCode = 0;
-          },
-          targetIsAlive: () => true,
+          sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
           waitForTargetsExit: async () => false,
         },
         [84],
-        [{ pid: 84, processGroup: true }],
       ),
-    ).rejects.toThrow("survived authoritative");
-    expect(signals).toEqual([
-      { pid: 42, signal: "SIGTERM" },
-      { pid: 42, signal: "SIGKILL" },
-      { pid: 84, signal: "SIGKILL" },
-    ]);
+    ).rejects.toThrow("refusing numeric signaling authority");
+    expect(signals).toEqual([]);
   });
 
-  it("terminates a token-recorded Windows backend after the desktop root exits", async () => {
-    const child = { exitCode: 0, pid: 42, signalCode: null } as unknown as ChildProcess;
-    const runTaskkill = vi.fn(() => ({ status: 0 }));
-
-    await terminateProcessTree(
-      child,
-      {
-        platform: "win32",
-        readWindowsProcessInstanceId: () => "638891234567890123",
-        runTaskkill,
-        targetIsAlive: () => true,
-        waitForTargetsExit: async (_targets, timeoutMs) =>
-          timeoutMs === 5_000 && runTaskkill.mock.calls.length > 0,
-      },
-      [84],
-      [{ pid: 84, processGroup: false, instanceId: "638891234567890123" }],
-    );
-
-    expect(runTaskkill).toHaveBeenCalledWith(84, 5_000);
-  });
-
-  it("reaps an orphaned verifier-created POSIX process group", async () => {
+  it("fails closed when the Windows launcher exited but a Job Object descendant survived", async () => {
     const child = {
       exitCode: 0,
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
-    const observed: Array<ReadonlyArray<{ pid: number; processGroup: boolean }>> = [];
-    const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
-
-    await terminateProcessTree(child, {
-      platform: "darwin",
-      sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
-      targetIsAlive: () => true,
-      waitForTargetsExit: async (targets, timeoutMs) => {
-        observed.push(targets);
-        return timeoutMs === 2_000;
-      },
-    });
-    expect(observed).toEqual([
-      [{ pid: 42, processGroup: true }],
-      [{ pid: 42, processGroup: true }],
-    ]);
-    expect(signals).toEqual([
-      { pid: 42, signal: "SIGTERM" },
-      { pid: 42, signal: "SIGKILL" },
-    ]);
-  });
-
-  it("refuses a Windows backend record whose process instance was reused", async () => {
-    const child = { exitCode: 0, pid: 42, signalCode: null } as unknown as ChildProcess;
-    const runTaskkill = vi.fn(() => ({ status: 0 }));
+    const terminateRoot = vi.fn(() => true);
 
     await expect(
       terminateProcessTree(
         child,
         {
           platform: "win32",
-          readWindowsProcessInstanceId: () => "638891234567890999",
-          runTaskkill,
-          waitForTargetsExit: async () => false,
-        },
-        [84],
-        [{ pid: 84, processGroup: false, instanceId: "638891234567890123" }],
-      ),
-    ).rejects.toThrow("survived Windows cleanup");
-    expect(runTaskkill).not.toHaveBeenCalled();
-  });
-
-  it("retains the newest authenticated backend when Windows reuses a PID", async () => {
-    const child = { exitCode: 0, pid: 42, signalCode: null } as unknown as ChildProcess;
-    const runTaskkill = vi.fn(() => ({ status: 0 }));
-
-    await terminateProcessTree(
-      child,
-      {
-        platform: "win32",
-        readWindowsProcessInstanceId: () => "638891234567890999",
-        runTaskkill,
-        waitForTargetsExit: async (_targets, timeoutMs) =>
-          timeoutMs === 5_000 && runTaskkill.mock.calls.length > 0,
-      },
-      [84],
-      [
-        { pid: 84, processGroup: false, instanceId: "638891234567890123" },
-        { pid: 84, processGroup: false, instanceId: "638891234567890999" },
-      ],
-    );
-
-    expect(runTaskkill).toHaveBeenCalledTimes(1);
-    expect(runTaskkill).toHaveBeenCalledWith(84, 5_000);
-  });
-
-  it("does not taskkill a Windows Electron root after its process instance is reused", async () => {
-    const child = { exitCode: null, pid: 42, signalCode: null } as unknown as ChildProcess;
-    const runTaskkill = vi.fn(() => ({ status: 0 }));
-
-    await expect(
-      terminateProcessTree(
-        child,
-        {
-          platform: "win32",
-          childIsAlive: () => true,
-          readWindowsProcessInstanceId: () => "638891234567890999",
-          runTaskkill,
-          waitForTargetsExit: async () => false,
-        },
-        [],
-        [],
-        "638891234567890123",
-      ),
-    ).rejects.toThrow("survived Windows cleanup");
-    expect(runTaskkill).not.toHaveBeenCalled();
-  });
-
-  it("fails closed without signaling a recorded PID when the root is already gone", async () => {
-    const child = {
-      exitCode: 0,
-      pid: 42,
-      signalCode: null,
-    } as unknown as ChildProcess;
-    const runTaskkill = vi.fn((_pid: number, _timeoutMs: number) => ({
-      status: 0,
-    }));
-
-    await expect(
-      terminateProcessTree(
-        child,
-        {
-          platform: "win32",
-          runTaskkill,
+          terminateRoot,
           waitForTargetsExit: async () => false,
         },
         [84],
       ),
-    ).rejects.toThrow("refusing to signal unverified PIDs");
-    expect(runTaskkill).not.toHaveBeenCalled();
-  });
-
-  it("fails closed when a Windows root exits without any recorded descendants", async () => {
-    const child = { exitCode: 0, pid: 42, signalCode: null } as unknown as ChildProcess;
-
-    await expect(terminateProcessTree(child, { platform: "win32" })).rejects.toThrow(
-      "exited before cleanup ownership was established",
-    );
+    ).rejects.toThrow("survived handle-bound cleanup");
+    expect(terminateRoot).not.toHaveBeenCalled();
   });
 
   it("prepares the isolated Scient macOS profile marker", () => {
