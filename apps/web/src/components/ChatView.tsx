@@ -1321,6 +1321,10 @@ export default function ChatView({
     useMemo(() => createProjectSelector(fallbackDraftProjectId), [fallbackDraftProjectId]),
   );
   const promptRef = useRef(prompt);
+  // ChatView is pane-scoped and remains mounted while that pane changes threads.
+  // Async send work must check this ref before mutating pane-local UI state.
+  const activeThreadIdRef = useRef(threadId);
+  activeThreadIdRef.current = threadId;
   const emptyDraftProjectRequestRef = useRef(0);
   const emptyDraftProjectRequestInFlightRef = useRef<number | null>(null);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
@@ -1338,6 +1342,7 @@ export default function ChatView({
     Record<ThreadId, string | null>
   >({});
   const [localDispatch, setLocalDispatch] = useState<LocalDispatchSnapshot | null>(null);
+  const localDispatchOwnerThreadIdRef = useRef<ThreadId | null>(null);
   const failedWorktreeSetupDispatchStartedAtRef = useRef<string | null>(null);
   const [isLocalConnecting, _setIsLocalConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
@@ -1862,8 +1867,6 @@ export default function ChatView({
   } | null>(null);
   // Tracks the live thread + setup/send state so an async automation resolve that
   // finishes after navigation, cancel, or a later send never commits a stale result.
-  const activeThreadIdRef = useRef(threadId);
-  activeThreadIdRef.current = threadId;
   const pendingAutomationConversationRef = useRef(pendingAutomationConversation);
   pendingAutomationConversationRef.current = pendingAutomationConversation;
   const hasLiveTurnRef = useRef(false);
@@ -5645,6 +5648,7 @@ export default function ChatView({
       }
       return [];
     });
+    localDispatchOwnerThreadIdRef.current = null;
     setLocalDispatch(null);
     setComposerHighlightedItemId(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
@@ -5828,7 +5832,11 @@ export default function ChatView({
   });
 
   const beginLocalDispatch = useCallback(
-    (options?: WorktreeSetupDispatchOptions) => {
+    (ownerThreadId: ThreadId, options?: WorktreeSetupDispatchOptions) => {
+      if (activeThreadIdRef.current !== ownerThreadId) {
+        return;
+      }
+      localDispatchOwnerThreadIdRef.current = ownerThreadId;
       setLocalDispatch((current) => {
         const next = resolveNextLocalDispatchSnapshot(
           options ? { current, activeThread, options } : { current, activeThread },
@@ -5842,7 +5850,10 @@ export default function ChatView({
     [activeThread],
   );
 
-  const failLocalDispatchWorktreeSetup = useCallback(() => {
+  const failLocalDispatchWorktreeSetup = useCallback((ownerThreadId: ThreadId) => {
+    if (localDispatchOwnerThreadIdRef.current !== ownerThreadId) {
+      return;
+    }
     setLocalDispatch((current) => {
       if (!current?.worktreeSetup) {
         return current;
@@ -5853,16 +5864,26 @@ export default function ChatView({
     });
   }, []);
 
-  const resetLocalDispatch = useCallback(() => {
+  const resetLocalDispatch = useCallback((ownerThreadId?: ThreadId) => {
+    if (ownerThreadId !== undefined && localDispatchOwnerThreadIdRef.current !== ownerThreadId) {
+      return;
+    }
     failedWorktreeSetupDispatchStartedAtRef.current = null;
+    localDispatchOwnerThreadIdRef.current = null;
     setLocalDispatch(null);
   }, []);
 
   // Fallback cleanup for a failed worktree setup: clears the dispatch after the
   // error hold unless a newer dispatch already replaced it.
-  const scheduleFailedWorktreeSetupDispatchReset = useCallback(() => {
+  const scheduleFailedWorktreeSetupDispatchReset = useCallback((ownerThreadId: ThreadId) => {
+    if (localDispatchOwnerThreadIdRef.current !== ownerThreadId) {
+      return;
+    }
     const failedDispatchStartedAt = failedWorktreeSetupDispatchStartedAtRef.current;
     window.setTimeout(() => {
+      if (localDispatchOwnerThreadIdRef.current !== ownerThreadId) {
+        return;
+      }
       setLocalDispatch((current) => {
         if (
           !failedDispatchStartedAt ||
@@ -5873,6 +5894,7 @@ export default function ChatView({
           return current;
         }
         failedWorktreeSetupDispatchStartedAtRef.current = null;
+        localDispatchOwnerThreadIdRef.current = null;
         return null;
       });
     }, WORKTREE_SETUP_ERROR_HOLD_MS);
@@ -5901,6 +5923,7 @@ export default function ChatView({
             return current;
           }
           failedWorktreeSetupDispatchStartedAtRef.current = null;
+          localDispatchOwnerThreadIdRef.current = null;
           return null;
         });
       }, WORKTREE_SETUP_ERROR_HOLD_MS);
@@ -7286,6 +7309,22 @@ export default function ChatView({
     [removeQueuedComposerTurnFromDraft, threadId],
   );
 
+  const beginExclusiveSendOperation = useCallback((ownerThreadId: ThreadId): boolean => {
+    if (
+      sendOperationInFlightThreadIdsRef.current.has(ownerThreadId) ||
+      sendPreflightInFlightThreadIdsRef.current.has(ownerThreadId) ||
+      sendInFlightThreadIdsRef.current.has(ownerThreadId)
+    ) {
+      return false;
+    }
+    sendOperationInFlightThreadIdsRef.current.add(ownerThreadId);
+    return true;
+  }, []);
+
+  const finishExclusiveSendOperation = useCallback((ownerThreadId: ThreadId): void => {
+    sendOperationInFlightThreadIdsRef.current.delete(ownerThreadId);
+  }, []);
+
   const runSend = async (
     e?: { preventDefault: () => void },
     dispatchMode: "queue" | "steer" = "queue",
@@ -7306,6 +7345,8 @@ export default function ChatView({
     ) {
       return false;
     }
+    const threadIdForSend = activeThread.id;
+    const sendOwnsActivePane = () => activeThreadIdRef.current === threadIdForSend;
     if (
       shouldRouteComposerSendToPendingInput({
         hasActivePendingProgress: activePendingProgress !== null,
@@ -7472,6 +7513,7 @@ export default function ChatView({
           text: followUp.text,
           interactionMode: followUp.interactionMode,
           dispatchMode,
+          operationAlreadyHeld: true,
         });
       }
     }
@@ -7762,7 +7804,6 @@ export default function ChatView({
       });
       return true;
     }
-    const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || !hasNativeUserMessages;
     const firstSendCreatedAt = new Date();
     let firstComposerImageNameForTitle: string | null = null;
@@ -7925,6 +7966,7 @@ export default function ChatView({
 
     sendInFlightThreadIdsRef.current.add(threadIdForSend);
     beginLocalDispatch(
+      threadIdForSend,
       baseBranchForWorktree
         ? { worktreeSetupStepId: "create-worktree", setupScriptName: worktreeSetupScriptName }
         : undefined,
@@ -7996,7 +8038,7 @@ export default function ChatView({
     // Sending the first message flips the centered empty landing into a normal
     // transcript. Clear session-only landing overrides when default-open is enabled;
     // otherwise keep the transition closed.
-    if (isCenteredEmptyLanding) {
+    if (sendOwnsActivePane() && isCenteredEmptyLanding) {
       setEnvironmentPanelPreferenceOpen(
         resolveEnvironmentPanelPreferenceAfterFirstSend({
           isCenteredEmptyLanding,
@@ -8005,23 +8047,25 @@ export default function ChatView({
         }),
       );
     }
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        dispatchMode,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-        ...(mentionedSkillsForSend.length > 0 ? { skills: mentionedSkillsForSend } : {}),
-        ...(mentionedPluginMentionsForSend.length > 0
-          ? { mentions: mentionedPluginMentionsForSend }
-          : {}),
-        createdAt: messageCreatedAt,
-        streaming: false,
-        source: "native",
-      },
-    ]);
+    if (sendOwnsActivePane()) {
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          dispatchMode,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          ...(mentionedSkillsForSend.length > 0 ? { skills: mentionedSkillsForSend } : {}),
+          ...(mentionedPluginMentionsForSend.length > 0
+            ? { mentions: mentionedPluginMentionsForSend }
+            : {}),
+          createdAt: messageCreatedAt,
+          streaming: false,
+          source: "native",
+        },
+      ]);
+    }
     // Mark the transcript as anchored before the optimistic row lands so the
     // re-snap effect on row count change pulls us to the new tail.
     armTranscriptAutoFollow(threadIdForSend, true);
@@ -8041,20 +8085,22 @@ export default function ChatView({
     // Queued turns are dispatched from their captured snapshot, so this send path
     // must not clear a separate live draft the user may already be editing.
     if (queuedChatTurn === null) {
-      promptHistoryNavigationRef.current = null;
-      applyingPromptHistoryNavigationRef.current = false;
-      expectedPromptHistoryPromptRef.current = null;
-      promptRef.current = "";
       clearComposerDraftContent(threadIdForSend, { preservePreviewUrls: true });
       if (isLivePlanFollowUpSubmission) {
         setComposerDraftInteractionMode(threadIdForSend, interactionModeForSend);
       }
-      setComposerHighlightedItemId(null);
-      setComposerCursor(0);
-      setComposerTrigger(null);
-      // A clicked submit button steals focus; return it after the controlled
-      // draft reset so rapid follow-up typing lands in the composer.
-      scheduleComposerFocus();
+      if (sendOwnsActivePane()) {
+        promptHistoryNavigationRef.current = null;
+        applyingPromptHistoryNavigationRef.current = false;
+        expectedPromptHistoryPromptRef.current = null;
+        promptRef.current = "";
+        setComposerHighlightedItemId(null);
+        setComposerCursor(0);
+        setComposerTrigger(null);
+        // A clicked submit button steals focus; return it after the controlled
+        // draft reset so rapid follow-up typing lands in the composer.
+        scheduleComposerFocus();
+      }
     }
 
     let createdServerThreadForLocalDraft = false;
@@ -8067,7 +8113,7 @@ export default function ChatView({
           branch: baseBranchForWorktree,
           newBranch: buildTemporaryWorktreeBranchName(),
         });
-        beginLocalDispatch({
+        beginLocalDispatch(threadIdForSend, {
           worktreeSetupStepId: "prepare-thread",
           setupScriptName: worktreeSetupScriptName,
         });
@@ -8167,7 +8213,7 @@ export default function ChatView({
           }
         }
         if (shouldRunSetupScript) {
-          beginLocalDispatch({
+          beginLocalDispatch(threadIdForSend, {
             worktreeSetupStepId: "run-setup-action",
             setupScriptName: setupScript.name,
           });
@@ -8200,6 +8246,7 @@ export default function ChatView({
       }
 
       beginLocalDispatch(
+        threadIdForSend,
         baseBranchForWorktree
           ? { worktreeSetupStepId: "start-session", setupScriptName: worktreeSetupScriptName }
           : undefined,
@@ -8238,10 +8285,14 @@ export default function ChatView({
       turnStartSucceeded = true;
       // Non-Codex steers interrupt the live turn before re-dispatching; hold
       // queued auto-dispatch through that gap so it can't race the steer.
-      if (dispatchMode === "steer" && selectedModelSelectionForSend.provider !== "codex") {
+      if (
+        sendOwnsActivePane() &&
+        dispatchMode === "steer" &&
+        selectedModelSelectionForSend.provider !== "codex"
+      ) {
         setQueuedSteerGate({ sawInterruptGap: false, gapStartedAt: null });
       }
-      if (sourceProposedPlanForSend) {
+      if (sendOwnsActivePane() && sourceProposedPlanForSend) {
         planSidebarDismissedForTurnRef.current = null;
         setPlanSidebarOpen(true);
       }
@@ -8251,7 +8302,7 @@ export default function ChatView({
     })().catch(async (err: unknown) => {
       // Surface the failure on whichever setup step was active (no-op for
       // sends without a worktree setup in flight).
-      failLocalDispatchWorktreeSetup();
+      failLocalDispatchWorktreeSetup(threadIdForSend);
       if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
         // This rollback cleans up a retryable draft promotion; do not tombstone the draft id.
         await api.orchestration
@@ -8262,17 +8313,17 @@ export default function ChatView({
           })
           .catch(() => undefined);
       }
-      if (
-        queuedChatTurn === null &&
-        !turnStartSucceeded &&
-        promptRef.current.length === 0 &&
-        composerImagesRef.current.length === 0 &&
-        composerFilesRef.current.length === 0 &&
-        composerAssistantSelectionsRef.current.length === 0 &&
-        composerFileCommentsRef.current.length === 0 &&
-        composerTerminalContextsRef.current.length === 0 &&
-        composerPastedTextsRef.current.length === 0
-      ) {
+      const failedSendDraft =
+        useComposerDraftStore.getState().draftsByThreadId[threadIdForSend] ?? null;
+      const failedSendDraftStillEmpty =
+        (failedSendDraft?.prompt ?? "").length === 0 &&
+        (failedSendDraft?.images.length ?? 0) === 0 &&
+        (failedSendDraft?.files.length ?? 0) === 0 &&
+        (failedSendDraft?.assistantSelections.length ?? 0) === 0 &&
+        (failedSendDraft?.fileComments.length ?? 0) === 0 &&
+        (failedSendDraft?.terminalContexts.length ?? 0) === 0 &&
+        (failedSendDraft?.pastedTexts.length ?? 0) === 0;
+      if (queuedChatTurn === null && !turnStartSucceeded && failedSendDraftStillEmpty) {
         setOptimisticUserMessages((existing) => {
           const removed = existing.filter((message) => message.id === messageIdForSend);
           for (const message of removed) {
@@ -8281,8 +8332,7 @@ export default function ChatView({
           const next = existing.filter((message) => message.id !== messageIdForSend);
           return next.length === existing.length ? existing : next;
         });
-        promptRef.current = promptForSend;
-        setPrompt(promptForSend);
+        setComposerDraftPrompt(threadIdForSend, promptForSend);
         if (sourceProposedPlanForSend) {
           setRestoredQueuedSourceProposedPlan(threadIdForSend, {
             threadId: threadIdForSend,
@@ -8290,20 +8340,26 @@ export default function ChatView({
             sourceProposedPlan: sourceProposedPlanForSend,
           });
         }
-        setComposerCursor(collapseExpandedComposerCursor(promptForSend, promptForSend.length));
-        addComposerImagesToDraft(composerImagesSnapshot.map(cloneComposerImageAttachment));
-        addComposerFilesToDraft(composerFilesSnapshot);
+        addComposerDraftImages(
+          threadIdForSend,
+          composerImagesSnapshot.map(cloneComposerImageAttachment),
+        );
+        addComposerDraftFiles(threadIdForSend, composerFilesSnapshot);
         for (const selection of composerAssistantSelectionsSnapshot) {
-          addComposerAssistantSelectionToDraft(selection);
+          addComposerDraftAssistantSelection(threadIdForSend, selection);
         }
         for (const comment of composerFileCommentsSnapshot) {
-          addComposerFileCommentToDraft(comment);
+          addComposerDraftFileComment(threadIdForSend, comment);
         }
-        addComposerTerminalContextsToDraft(composerTerminalContextsSnapshot);
-        addComposerPastedTextsToDraft(composerPastedTextsSnapshot);
-        updateSelectedComposerSkills(composerSkillsSnapshot);
-        updateSelectedComposerMentions(composerMentionsSnapshot);
-        setComposerTrigger(detectComposerTrigger(promptForSend, promptForSend.length));
+        addComposerDraftTerminalContexts(threadIdForSend, composerTerminalContextsSnapshot);
+        addComposerDraftPastedTexts(threadIdForSend, composerPastedTextsSnapshot);
+        setComposerDraftSkills(threadIdForSend, composerSkillsSnapshot);
+        setComposerDraftMentions(threadIdForSend, composerMentionsSnapshot);
+        if (sendOwnsActivePane()) {
+          promptRef.current = promptForSend;
+          setComposerCursor(collapseExpandedComposerCursor(promptForSend, promptForSend.length));
+          setComposerTrigger(detectComposerTrigger(promptForSend, promptForSend.length));
+        }
       }
       setThreadError(
         threadIdForSend,
@@ -8313,9 +8369,9 @@ export default function ChatView({
     sendInFlightThreadIdsRef.current.delete(threadIdForSend);
     if (!turnStartSucceeded) {
       if (baseBranchForWorktree) {
-        scheduleFailedWorktreeSetupDispatchReset();
+        scheduleFailedWorktreeSetupDispatchReset(threadIdForSend);
       } else {
-        resetLocalDispatch();
+        resetLocalDispatch(threadIdForSend);
       }
     }
     return turnStartSucceeded;
@@ -8326,15 +8382,14 @@ export default function ChatView({
     queuedTurn?: QueuedComposerChatTurn,
     voicePromptOverride?: string,
   ): Promise<boolean> => {
-    if (sendOperationInFlightThreadIdsRef.current.has(threadId)) {
+    if (!beginExclusiveSendOperation(threadId)) {
       e?.preventDefault();
       return false;
     }
-    sendOperationInFlightThreadIdsRef.current.add(threadId);
     try {
       return await runSend(e, dispatchMode, queuedTurn, voicePromptOverride);
     } finally {
-      sendOperationInFlightThreadIdsRef.current.delete(threadId);
+      finishExclusiveSendOperation(threadId);
     }
   };
   sendVoiceTranscriptRef.current = (voicePrompt) =>
@@ -8602,11 +8657,13 @@ export default function ChatView({
     interactionMode: nextInteractionMode,
     dispatchMode,
     queuedTurn,
+    operationAlreadyHeld = false,
   }: {
     text: string;
     interactionMode: "default" | "plan";
     dispatchMode: "queue" | "steer";
     queuedTurn?: QueuedComposerPlanFollowUp;
+    operationAlreadyHeld?: boolean;
   }): Promise<boolean> {
     const api = readNativeApi();
     if (
@@ -8626,6 +8683,10 @@ export default function ChatView({
     }
 
     const threadIdForSend = activeThread.id;
+    const operationAcquiredHere = !operationAlreadyHeld;
+    if (operationAcquiredHere && !beginExclusiveSendOperation(threadIdForSend)) {
+      return false;
+    }
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
     const outgoingMessageText = formatOutgoingComposerPrompt({
@@ -8636,7 +8697,7 @@ export default function ChatView({
     });
 
     sendInFlightThreadIdsRef.current.add(threadIdForSend);
-    beginLocalDispatch();
+    beginLocalDispatch(threadIdForSend);
     setThreadError(threadIdForSend, null);
     setOptimisticUserMessages((existing) => [
       ...existing,
@@ -8705,13 +8766,17 @@ export default function ChatView({
       });
       // Non-Codex steers interrupt the live turn before re-dispatching; hold
       // queued auto-dispatch through that gap so it can't race the steer.
-      if (dispatchMode === "steer" && modelSelectionForPlanDispatch.provider !== "codex") {
+      if (
+        activeThreadIdRef.current === threadIdForSend &&
+        dispatchMode === "steer" &&
+        modelSelectionForPlanDispatch.provider !== "codex"
+      ) {
         setQueuedSteerGate({ sawInterruptGap: false, gapStartedAt: null });
       }
       // Optimistically open the plan sidebar when implementing (not refining).
       // "default" mode here means the agent is executing the plan, which produces
       // step-tracking activities that the sidebar will display.
-      if (nextInteractionMode === "default") {
+      if (activeThreadIdRef.current === threadIdForSend && nextInteractionMode === "default") {
         planSidebarDismissedForTurnRef.current = null;
         setPlanSidebarOpen(true);
       }
@@ -8726,8 +8791,12 @@ export default function ChatView({
         err instanceof Error ? err.message : "Failed to send plan follow-up.",
       );
       sendInFlightThreadIdsRef.current.delete(threadIdForSend);
-      resetLocalDispatch();
+      resetLocalDispatch(threadIdForSend);
       return false;
+    } finally {
+      if (operationAcquiredHere) {
+        finishExclusiveSendOperation(threadIdForSend);
+      }
     }
   }
 
@@ -8756,6 +8825,11 @@ export default function ChatView({
       }
       if (isSendBusy || isConnecting || sendInFlightThreadIdsRef.current.has(activeThread.id)) {
         setThreadError(activeThread.id, "Wait for the current send to start before editing.");
+        return false;
+      }
+      const threadIdForEdit = activeThread.id;
+      if (!beginExclusiveSendOperation(threadIdForEdit)) {
+        setThreadError(threadIdForEdit, "Wait for the current send to start before editing.");
         return false;
       }
 
@@ -8802,10 +8876,13 @@ export default function ChatView({
         return false;
       } finally {
         setIsRevertingCheckpoint(false);
+        finishExclusiveSendOperation(threadIdForEdit);
       }
     },
     [
       activeThread,
+      beginExclusiveSendOperation,
+      finishExclusiveSendOperation,
       isConnecting,
       isRevertingCheckpoint,
       isSendBusy,
@@ -8920,6 +8997,7 @@ export default function ChatView({
     }
     if (
       autoDispatchingQueuedTurnRef.current ||
+      sendOperationInFlightThreadIdsRef.current.has(threadId) ||
       sendInFlightThreadIdsRef.current.has(threadId) ||
       sendPreflightInFlightThreadIdsRef.current.has(threadId)
     ) {
@@ -8989,11 +9067,15 @@ export default function ChatView({
       proposedPlan: activeProposedPlan,
     });
 
+    if (!beginExclusiveSendOperation(activeThread.id)) {
+      return;
+    }
     sendInFlightThreadIdsRef.current.add(activeThread.id);
-    beginLocalDispatch();
+    beginLocalDispatch(activeThread.id);
     const finish = () => {
       sendInFlightThreadIdsRef.current.delete(activeThread.id);
-      resetLocalDispatch();
+      resetLocalDispatch(activeThread.id);
+      finishExclusiveSendOperation(activeThread.id);
     };
 
     await api.orchestration
@@ -9080,7 +9162,9 @@ export default function ChatView({
     activeProposedPlan,
     activeThread,
     activeThreadAssociatedWorktree,
+    beginExclusiveSendOperation,
     beginLocalDispatch,
+    finishExclusiveSendOperation,
     isConnecting,
     isSendBusy,
     isServerThread,

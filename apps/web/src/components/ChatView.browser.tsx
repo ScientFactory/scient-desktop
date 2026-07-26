@@ -5704,6 +5704,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
         model: "gpt-5",
       });
       useComposerDraftStore.getState().setPrompt(sourceThreadId, "send from source draft");
+      useComposerDraftStore.getState().addImages(sourceThreadId, [
+        createComposerImage({
+          id: "source-preflight-image",
+          previewUrl: "blob:source-preflight-image",
+          name: "source-preflight-image.png",
+        }),
+      ]);
       const sourceComposer = await waitForComposerEditor();
       await vi.waitFor(() => {
         expect(sourceComposer.textContent ?? "").toContain("send from source draft");
@@ -5741,6 +5748,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       expect(useComposerDraftStore.getState().getDraftThread(sourceThreadId)).toMatchObject({
         projectId: PROJECT_ID,
       });
+      useComposerDraftStore
+        .getState()
+        .setPrompt(destinationThreadId, "destination remains independently sendable");
 
       resolveProviderRefresh({ providers: [availableProvider] });
       await vi.waitFor(
@@ -5751,6 +5761,146 @@ describe("ChatView timeline estimator parity (full app)", () => {
               (command) => command?.type === "thread.create" && command.threadId === sourceThreadId,
             );
           expect(createCommand).toMatchObject({ projectId: PROJECT_ID });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      await vi.waitFor(() => {
+        const destinationComposer = document.querySelector<HTMLElement>(
+          '[data-testid="composer-editor"]',
+        );
+        expect(destinationComposer?.textContent ?? "").toContain(
+          "destination remains independently sendable",
+        );
+        expect(document.body.textContent ?? "").not.toContain("send from source draft");
+        expect(
+          document.querySelector('[aria-label="Preview source-preflight-image.png"]'),
+        ).toBeNull();
+      });
+
+      const destinationForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the destination composer after the source preflight completed.",
+      );
+      destinationForm.requestSubmit();
+      await vi.waitFor(
+        () => {
+          const destinationCreate = wsRequests
+            .map(readDispatchedCommand)
+            .find(
+              (command) =>
+                command?.type === "thread.create" && command.threadId === destinationThreadId,
+            );
+          expect(destinationCreate).toMatchObject({ projectId: OTHER_PROJECT_ID });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await mounted.cleanup();
+    }
+  });
+
+  it("rejects edit-and-resend while a normal send owns the thread preflight", async () => {
+    const unavailableProvider = {
+      provider: "codex" as const,
+      status: "error" as const,
+      available: false,
+      authStatus: "unauthenticated" as const,
+      message: "Codex is temporarily unavailable.",
+      checkedAt: NOW_ISO,
+    };
+    const availableProvider = {
+      provider: "codex" as const,
+      status: "ready" as const,
+      available: true,
+      authStatus: "authenticated" as const,
+      checkedAt: NOW_ISO,
+      runtime: {
+        source: "system" as const,
+        managedVersion: null,
+        canInstall: false,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: null,
+      },
+    };
+    let resolveProviderRefresh!: (value: { providers: [typeof availableProvider] }) => void;
+    const providerRefresh = new Promise<{ providers: [typeof availableProvider] }>((resolve) => {
+      resolveProviderRefresh = resolve;
+    });
+    const refreshProviders = vi.fn<NativeApi["server"]["refreshProviders"]>(() => providerRefresh);
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-edit-preflight-lock" as MessageId,
+      targetText: "edit preflight lock",
+    });
+    const snapshot: OrchestrationReadModel = {
+      ...baseSnapshot,
+      threads: baseSnapshot.threads.map((thread) => ({
+        ...thread,
+        messages: thread.messages.map((message, index) =>
+          index >= thread.messages.length - 2
+            ? { ...message, turnId: "turn-edit-preflight-lock" as TurnId }
+            : message,
+        ),
+      })),
+    };
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [unavailableProvider],
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        server: { ...api.server, refreshProviders },
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "normal send owns preflight");
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the composer before the edit concurrency test.",
+      );
+      composerForm.requestSubmit();
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledOnce());
+
+      await page.getByRole("button", { name: "Edit message" }).click();
+      const editTextArea = page.getByRole("textbox", { name: "Edit message" });
+      await editTextArea.fill("edited text must not dispatch concurrently");
+      const editForm = editTextArea.element().closest("form");
+      expect(editForm).not.toBeNull();
+      editForm!.requestSubmit();
+
+      await vi.waitFor(() => {
+        const commands = wsRequests.map(readDispatchedCommand);
+        expect(commands.some((command) => command?.type === "thread.message.edit-and-resend")).toBe(
+          false,
+        );
+        expect(document.body.textContent ?? "").toContain(
+          "Wait for the current send to start before editing.",
+        );
+      });
+
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await vi.waitFor(
+        () => {
+          const turnStarts = wsRequests
+            .map(readDispatchedCommand)
+            .filter(
+              (command) => command?.type === "thread.turn.start" && command.threadId === THREAD_ID,
+            );
+          expect(turnStarts).toHaveLength(1);
+          expect(turnStarts[0]).toMatchObject({
+            message: expect.objectContaining({
+              text: expect.stringContaining("normal send owns preflight"),
+            }),
+          });
         },
         { timeout: 8_000, interval: 16 },
       );
