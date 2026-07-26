@@ -6976,6 +6976,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }));
     const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => undefined);
     let failSetupOpen = true;
+    const setupTerminalOpenInputs: Array<Parameters<NativeApi["terminal"]["open"]>[0]> = [];
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: withProjectScripts(createDraftOnlySnapshot(), [
@@ -6993,8 +6994,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         terminal: {
           ...api.terminal,
           open: vi.fn(async (input) => {
-            if (failSetupOpen) {
+            if (input.threadId === newThreadId && input.cwd === createdPath && failSetupOpen) {
               failSetupOpen = false;
+              setupTerminalOpenInputs.push(input);
               throw new Error("deterministic setup failure");
             }
             return api.terminal.open(input);
@@ -7036,6 +7038,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 20_000, interval: 16 },
       );
       expect(removeWorktree).not.toHaveBeenCalled();
+      expect(setupTerminalOpenInputs).toEqual([
+        expect.objectContaining({ threadId: newThreadId, cwd: createdPath }),
+      ]);
       expect(useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID)?.threadId).toBe(
         newThreadId,
       );
