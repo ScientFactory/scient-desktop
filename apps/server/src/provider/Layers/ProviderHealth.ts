@@ -2147,10 +2147,12 @@ export function makeProviderHealthLive(options?: {
       ).pipe(
         Effect.map((statuses) =>
           orderProviderStatuses(
-            statuses.filter(
-              (status): status is ServerProviderStatus =>
-                status !== undefined && !isDisabledProviderStatusOverlay(status),
-            ),
+            statuses
+              .filter(
+                (status): status is ServerProviderStatus =>
+                  status !== undefined && !isDisabledProviderStatusOverlay(status),
+              )
+              .map(suppressProviderVersionAdvisory),
           ),
         ),
       );

@@ -579,6 +579,62 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
         assert.strictEqual(spawnCount, 0);
       }),
     );
+
+    it.effect("withholds cached update availability until a current check completes", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "provider-health-stale-update-cache-",
+        });
+        const cachePath = resolveProviderStatusCachePath({
+          stateDir: path.join(baseDir, "userdata"),
+          provider: "codex",
+        });
+        yield* writeProviderStatusCache({
+          filePath: cachePath,
+          provider: {
+            ...cachedReadyCodexStatus,
+            version: "1.0.0",
+            versionAdvisory: {
+              status: "behind_latest",
+              currentVersion: "1.0.0",
+              latestVersion: "1.1.0",
+              updateCommand: "npm install -g @openai/codex@latest",
+              canUpdate: true,
+              checkedAt: cachedReadyCodexStatus.checkedAt,
+              message: "Update available.",
+            },
+          },
+        });
+
+        let spawnCount = 0;
+        const layer = ProviderHealthLive.pipe(
+          Layer.provideMerge(ServerSettingsService.layerTest(DEFAULT_SERVER_SETTINGS)),
+          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+          Layer.provideMerge(
+            mockSpawnerLayer(() => {
+              spawnCount += 1;
+              return { stdout: "", stderr: "", code: 0 };
+            }),
+          ),
+        );
+
+        const statuses = yield* Effect.gen(function* () {
+          const providerHealth = yield* ProviderHealth;
+          return yield* providerHealth.getStatuses;
+        }).pipe(Effect.provide(layer));
+        const codex = statuses.find((status) => status.provider === "codex");
+
+        assert.strictEqual(codex?.available, true);
+        assert.strictEqual(codex?.version, "1.0.0");
+        assert.strictEqual(codex?.versionAdvisory?.status, "unknown");
+        assert.strictEqual(codex?.versionAdvisory?.latestVersion, null);
+        assert.strictEqual(codex?.versionAdvisory?.updateCommand, null);
+        assert.strictEqual(codex?.versionAdvisory?.canUpdate, false);
+        assert.strictEqual(spawnCount, 0);
+      }),
+    );
   });
 
   describe("stabilizeProviderStatusesAgainstTransientTimeouts", () => {

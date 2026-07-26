@@ -98,6 +98,7 @@ import {
   SettingsSelectPopup,
 } from "../components/settings/SettingsPanelPrimitives";
 import { ProviderUsageSettingsPanel } from "../components/settings/ProviderUsageSettingsPanel";
+import { ProviderUpdateActionButton } from "../components/settings/ProviderUpdateActionButton";
 import { ProfileSettingsPanel } from "../components/settings/ProfileSettingsPanel";
 import { KeyboardShortcutsSettingsPanel } from "../components/settings/KeyboardShortcutsSettingsPanel";
 import { SkillsSettingsPanel } from "../components/settings/SkillsSettingsPanel";
@@ -126,7 +127,6 @@ import {
   ArchiveIcon,
   ChevronDownIcon,
   DeviceLaptopIcon,
-  DownloadIcon,
   ExternalLinkIcon,
   Loader2Icon,
   MoonIcon,
@@ -3472,14 +3472,11 @@ function SettingsRouteView() {
               )}
             >
               {outdatedProviderStatuses.map((providerStatus) => {
-                const updateAdvisory = providerStatus.versionAdvisory;
                 const updateState = providerStatus.updateState?.status;
                 const isProviderUpdateActive =
                   updateState === "queued" ||
                   updateState === "running" ||
                   updatingProviders.has(providerStatus.provider);
-                const canUpdateProvider =
-                  shouldOfferProviderUpdateAction(providerStatus) && !isProviderUpdateActive;
                 const updateLabel = providerUpdateStatusLabel(providerStatus);
 
                 return (
@@ -3488,26 +3485,13 @@ function SettingsRouteView() {
                     title={PROVIDER_DISPLAY_NAMES[providerStatus.provider]}
                     description={updateLabel || undefined}
                     actions={
-                      shouldOfferProviderUpdateAction(providerStatus) ? (
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="outline"
-                          disabled={!canUpdateProvider}
-                          title={
-                            updateAdvisory?.updateCommand
-                              ? `Run ${updateAdvisory.updateCommand}`
-                              : undefined
-                          }
-                          onClick={() => void runProviderUpdate(providerStatus)}
-                        >
-                          {isProviderUpdateActive ? (
-                            <Loader2Icon className="size-3.5 animate-spin" />
-                          ) : (
-                            <DownloadIcon className="size-3.5" />
-                          )}
-                          {isProviderUpdateActive ? "Updating" : "Update"}
-                        </Button>
+                      shouldOfferProviderUpdateAction(providerStatus) || isProviderUpdateActive ? (
+                        <ProviderUpdateActionButton
+                          providerStatus={providerStatus}
+                          confirmedUpdateVisible
+                          locallyUpdating={updatingProviders.has(providerStatus.provider)}
+                          onUpdate={() => void runProviderUpdate(providerStatus)}
+                        />
                       ) : (
                         <span className="text-[11px] text-muted-foreground">Manual update</span>
                       )
@@ -3680,16 +3664,6 @@ function SettingsRouteView() {
                       : providerUpdateStatusLabel(providerStatus)
                   : null;
                 const updateAdvisory = providerStatus?.versionAdvisory;
-                const providerUpdateState = providerStatus?.updateState?.status;
-                const isProviderUpdateActive =
-                  providerUpdateState === "queued" ||
-                  providerUpdateState === "running" ||
-                  updatingProviders.has(providerSettings.provider);
-                const shouldShowProviderUpdateButton = providerStatus
-                  ? shouldOfferProviderUpdateAction(providerStatus) &&
-                    (showProviderUpdateStatus || updateAdvisory?.status === "unknown")
-                  : false;
-                const canUpdateProvider = shouldShowProviderUpdateButton && !isProviderUpdateActive;
                 const providerConnectionActive =
                   providerStatus?.connectionState?.status === "starting" ||
                   providerStatus?.connectionState?.status === "waiting_for_browser" ||
@@ -3748,29 +3722,13 @@ function SettingsRouteView() {
                             )}
                           />
                         </button>
-                        {shouldShowProviderUpdateButton ? (
-                          <Button
-                            type="button"
-                            size="xs"
-                            variant="outline"
-                            disabled={!canUpdateProvider}
-                            title={
-                              updateAdvisory?.updateCommand
-                                ? `Run ${updateAdvisory.updateCommand}`
-                                : undefined
-                            }
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              if (providerStatus) void runProviderUpdate(providerStatus);
-                            }}
-                          >
-                            {isProviderUpdateActive ? (
-                              <Loader2Icon className="size-3.5 animate-spin" />
-                            ) : (
-                              <DownloadIcon className="size-3.5" />
-                            )}
-                            {isProviderUpdateActive ? "Updating" : "Update"}
-                          </Button>
+                        {providerStatus ? (
+                          <ProviderUpdateActionButton
+                            providerStatus={providerStatus}
+                            confirmedUpdateVisible={showProviderUpdateStatus}
+                            locallyUpdating={updatingProviders.has(providerSettings.provider)}
+                            onUpdate={() => void runProviderUpdate(providerStatus)}
+                          />
                         ) : null}
                         {!providerConnected ? (
                           <Button
