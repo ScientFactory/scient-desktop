@@ -4,6 +4,8 @@
 
 import fs from "node:fs/promises";
 import type { BigIntStats } from "node:fs";
+import type { FileHandle } from "node:fs/promises";
+import crypto from "node:crypto";
 import path from "node:path";
 
 import type {
@@ -70,6 +72,7 @@ export interface InspectedHtmlArtifact {
   readonly watchDiscoveryLimited: boolean;
   readonly allowedExternalUrls: readonly string[];
   readonly fileFingerprints: ReadonlyMap<string, HtmlArtifactFileFingerprint>;
+  readonly classifiedDocumentDigests: ReadonlyMap<string, string>;
 }
 
 export interface HtmlArtifactFileFingerprint {
@@ -115,11 +118,54 @@ export function htmlArtifactFileFingerprintsEqual(
 interface InspectedFileSnapshot {
   readonly fingerprint: HtmlArtifactFileFingerprint;
   readonly contents?: string;
+  readonly contentDigest?: string;
+}
+
+export type HtmlArtifactReadChunk = (
+  handle: FileHandle,
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  position: number,
+) => Promise<{ bytesRead: number }>;
+
+export interface HtmlArtifactInspectionOptions {
+  readonly readChunk?: HtmlArtifactReadChunk;
+}
+
+export function htmlArtifactContentDigest(contents: Uint8Array): string {
+  return crypto.createHash("sha256").update(contents).digest("base64url");
+}
+
+export async function readExactPositionedBytes(
+  handle: FileHandle,
+  requestedBytes: number,
+  readChunk: HtmlArtifactReadChunk = (source, buffer, offset, length, position) =>
+    source.read(buffer, offset, length, position),
+): Promise<Buffer> {
+  const buffer = Buffer.allocUnsafe(requestedBytes);
+  let totalBytesRead = 0;
+  while (totalBytesRead < requestedBytes) {
+    const remainingBytes = requestedBytes - totalBytesRead;
+    const { bytesRead } = await readChunk(
+      handle,
+      buffer,
+      totalBytesRead,
+      remainingBytes,
+      totalBytesRead,
+    );
+    if (!Number.isInteger(bytesRead) || bytesRead <= 0 || bytesRead > remainingBytes) {
+      throw new HtmlArtifactChangedDuringPreparationError();
+    }
+    totalBytesRead += bytesRead;
+  }
+  return buffer;
 }
 
 async function inspectFileSnapshot(
   filePath: string,
   readMaxBytes?: number,
+  options: HtmlArtifactInspectionOptions = {},
 ): Promise<InspectedFileSnapshot | null> {
   const handle = await fs.open(filePath, "r").catch(() => null);
   if (!handle) return null;
@@ -127,13 +173,14 @@ async function inspectFileSnapshot(
     const before = await handle.stat({ bigint: true });
     if (!before.isFile()) return null;
     let contents: string | undefined;
+    let contentDigest: string | undefined;
     if (readMaxBytes !== undefined) {
       const requestedBytes = Number(
         before.size < BigInt(readMaxBytes) ? before.size : BigInt(readMaxBytes),
       );
-      const buffer = Buffer.allocUnsafe(requestedBytes);
-      const { bytesRead } = await handle.read(buffer, 0, requestedBytes, 0);
-      contents = buffer.subarray(0, bytesRead).toString("utf8");
+      const buffer = await readExactPositionedBytes(handle, requestedBytes, options.readChunk);
+      contents = buffer.toString("utf8");
+      contentDigest = htmlArtifactContentDigest(buffer);
     }
     const after = await handle.stat({ bigint: true });
     const beforeFingerprint = htmlArtifactFileFingerprint(before);
@@ -147,6 +194,7 @@ async function inspectFileSnapshot(
     return {
       fingerprint: beforeFingerprint,
       ...(contents !== undefined ? { contents } : {}),
+      ...(contentDigest !== undefined ? { contentDigest } : {}),
     };
   } finally {
     await handle.close().catch(() => undefined);
@@ -272,6 +320,7 @@ function unsupported(reason: string): InspectedHtmlArtifact {
     watchDiscoveryLimited: false,
     allowedExternalUrls: [],
     fileFingerprints: new Map(),
+    classifiedDocumentDigests: new Map(),
   };
 }
 
@@ -493,9 +542,11 @@ async function collectAllowedResourcePaths(
   entryPath: string,
   entryBaseHref: string | null,
   resourceBoundary: string,
+  options: HtmlArtifactInspectionOptions,
 ): Promise<{
   readonly paths: readonly string[];
   readonly fileFingerprints: ReadonlyMap<string, HtmlArtifactFileFingerprint>;
+  readonly classifiedDocumentDigests: ReadonlyMap<string, string>;
   readonly watchedPaths: readonly string[];
   readonly watchDiscoveryLimited: boolean;
   readonly externalUrls: readonly string[];
@@ -516,6 +567,7 @@ async function collectAllowedResourcePaths(
     .filter((resource): resource is string => resource !== null);
   const allowed = new Set<string>();
   const fileFingerprints = new Map<string, HtmlArtifactFileFingerprint>();
+  const classifiedDocumentDigests = new Map<string, string>();
   const watchedPaths = new Set<string>();
   const externalUrls = new Set<string>();
   const canonicalResourceBoundary = await fs.realpath(resourceBoundary).catch(() => null);
@@ -586,10 +638,14 @@ async function collectAllowedResourcePaths(
     const snapshot = await inspectFileSnapshot(
       canonical,
       isActiveDocument || isInspectableDependency ? RESOURCE_GRAPH_PARSE_MAX_BYTES : undefined,
+      options,
     );
     if (!snapshot) continue;
     allowed.add(canonical);
     fileFingerprints.set(canonical, snapshot.fingerprint);
+    if (isActiveDocument && snapshot.contentDigest) {
+      classifiedDocumentDigests.set(canonical, snapshot.contentDigest);
+    }
     if (watchedPaths.size < RESOURCE_GRAPH_MAX_FILES) watchedPaths.add(canonical);
     else watchDiscoveryLimited = true;
 
@@ -684,6 +740,7 @@ async function collectAllowedResourcePaths(
   return {
     paths: [...allowed],
     fileFingerprints,
+    classifiedDocumentDigests,
     watchedPaths: [...watchedPaths],
     watchDiscoveryLimited: watchDiscoveryLimited || pending.length > 0,
     externalUrls: [...externalUrls],
@@ -711,6 +768,7 @@ function commonSiteRoot(
 
 export async function inspectHtmlArtifact(
   input: ProjectInspectHtmlArtifactInput,
+  options: HtmlArtifactInspectionOptions = {},
 ): Promise<InspectedHtmlArtifact> {
   const canonicalWorkspaceRoot = await fs.realpath(path.resolve(input.cwd)).catch(() => null);
   if (!canonicalWorkspaceRoot) {
@@ -734,7 +792,7 @@ export async function inspectHtmlArtifact(
     return unsupported("Only HTML files can be inspected for browser preview.");
   }
 
-  const entrySnapshot = await inspectFileSnapshot(absolutePath, HTML_INSPECTION_MAX_BYTES);
+  const entrySnapshot = await inspectFileSnapshot(absolutePath, HTML_INSPECTION_MAX_BYTES, options);
   if (!entrySnapshot) {
     return unsupported("The HTML artifact is not a file.");
   }
@@ -901,6 +959,7 @@ export async function inspectHtmlArtifact(
     absolutePath,
     documentBaseHref,
     resourceBoundary,
+    options,
   );
   const allowedResourcePaths = collectedResources.paths;
   for (const externalUrl of collectedResources.externalUrls) addExternalResource(externalUrl);
@@ -965,6 +1024,10 @@ export async function inspectHtmlArtifact(
     fileFingerprints: new Map([
       ...collectedResources.fileFingerprints,
       [absolutePath, entrySnapshot.fingerprint],
+    ]),
+    classifiedDocumentDigests: new Map([
+      ...collectedResources.classifiedDocumentDigests,
+      [absolutePath, entrySnapshot.contentDigest!],
     ]),
   };
 }

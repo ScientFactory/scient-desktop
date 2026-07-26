@@ -718,6 +718,90 @@ describe("HtmlArtifactPreviewLive", () => {
     });
   });
 
+  it("never streams classified bytes mutated after the request fingerprint check", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "index.html");
+    const [inertSource, activeSource] = sameLengthHtml(
+      "<p>Inspected static document</p>",
+      "<script>window.uninspected = true</script>",
+    );
+    await fs.writeFile(sourcePath, inertSource);
+    const canonicalSourcePath = await fs.realpath(sourcePath);
+    let mutateOnRequest = false;
+
+    await withPreviewService(
+      async (service) => {
+        const prepared = await Effect.runPromise(
+          service.prepare({ cwd: workspace, path: sourcePath }),
+        );
+        expect(prepared.mode).toBe("static-document");
+        expect(prepared.localHtmlNetworkPolicy).toBe("reviewed-static");
+
+        mutateOnRequest = true;
+        const response = await requestPreview(prepared.previewUrl!);
+        expect(response.status).toBe(404);
+        expect(response.body).not.toContain("uninspected");
+      },
+      makeHtmlArtifactPreviewLayer({
+        afterGrantedFileFingerprint: async (filePath) => {
+          if (!mutateOnRequest || filePath !== canonicalSourcePath) return;
+          mutateOnRequest = false;
+          await fs.writeFile(sourcePath, activeSource);
+        },
+      }),
+    );
+  });
+
+  it("buffers linked classified documents for full and ranged responses", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "index.html");
+    const childPath = path.join(workspace, "child.html");
+    const [inertChild, activeChild] = sameLengthHtml(
+      "<p>Inspected linked document</p>",
+      "<script>window.uninspected = true</script>",
+    );
+    await fs.writeFile(sourcePath, '<iframe src="child.html"></iframe>');
+    await fs.writeFile(childPath, inertChild);
+    const canonicalChildPath = await fs.realpath(childPath);
+    let mutateOnRequest = false;
+
+    await withPreviewService(
+      async (service) => {
+        const prepared = await Effect.runPromise(
+          service.prepare({ cwd: workspace, path: sourcePath }),
+        );
+        expect(prepared.mode).toBe("static-document");
+
+        await expect(requestPreview(prepared.previewUrl!, "/child.html")).resolves.toMatchObject({
+          status: 200,
+          body: inertChild,
+        });
+        await expect(
+          requestPreview(prepared.previewUrl!, "/child.html", {
+            headers: { Range: "bytes=0-9" },
+          }),
+        ).resolves.toMatchObject({
+          status: 206,
+          body: Buffer.from(inertChild).subarray(0, 10).toString("utf8"),
+        });
+
+        mutateOnRequest = true;
+        const ranged = await requestPreview(prepared.previewUrl!, "/child.html", {
+          headers: { Range: "bytes=0-9" },
+        });
+        expect(ranged.status).toBe(404);
+        expect(ranged.body).not.toContain("uninspect");
+      },
+      makeHtmlArtifactPreviewLayer({
+        afterGrantedFileFingerprint: async (filePath) => {
+          if (!mutateOnRequest || filePath !== canonicalChildPath) return;
+          mutateOnRequest = false;
+          await fs.writeFile(childPath, activeChild);
+        },
+      }),
+    );
+  });
+
   it("revokes a capability explicitly and refuses every later request", async () => {
     const workspace = await makeWorkspace();
     await fs.writeFile(path.join(workspace, "index.html"), "<p>Short lived</p>");

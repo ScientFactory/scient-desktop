@@ -20,9 +20,11 @@ import { Effect, Layer } from "effect";
 
 import {
   HtmlArtifactChangedDuringPreparationError,
+  htmlArtifactContentDigest,
   htmlArtifactFileFingerprint,
   htmlArtifactFileFingerprintsEqual,
   inspectHtmlArtifact,
+  readExactPositionedBytes,
   type HtmlArtifactFileFingerprint,
 } from "../Inspector";
 import {
@@ -47,6 +49,7 @@ interface PreviewGrant {
 interface GrantedFile {
   readonly path: string;
   readonly fingerprint: HtmlArtifactFileFingerprint;
+  readonly classifiedDocumentDigest?: string;
 }
 
 function isPathInside(candidate: string, root: string): boolean {
@@ -142,10 +145,12 @@ function decodeRequestedAssetPath(rawUrl: string | undefined): string | null {
 async function resolveGrantedFile(
   grant: PreviewGrant,
   rawUrl: string | undefined,
+  afterFingerprint?: (filePath: string) => Promise<void>,
 ): Promise<{
-  readonly file: FileHandle;
+  readonly file: FileHandle | null;
   readonly path: string;
   readonly size: number;
+  readonly immutableContents?: Buffer;
 } | null> {
   const relativePath = decodeRequestedAssetPath(rawUrl);
   if (relativePath === null) return null;
@@ -169,7 +174,35 @@ async function resolveGrantedFile(
     await file.close().catch(() => undefined);
     return null;
   }
-  return { file, path: granted.path, size: Number(stat.size) };
+  try {
+    await afterFingerprint?.(granted.path);
+    if (granted.classifiedDocumentDigest) {
+      const immutableContents = await readExactPositionedBytes(file, Number(stat.size));
+      const afterRead = await file.stat({ bigint: true });
+      if (
+        !afterRead.isFile() ||
+        !htmlArtifactFileFingerprintsEqual(
+          htmlArtifactFileFingerprint(afterRead),
+          granted.fingerprint,
+        ) ||
+        htmlArtifactContentDigest(immutableContents) !== granted.classifiedDocumentDigest
+      ) {
+        await file.close().catch(() => undefined);
+        return null;
+      }
+      await file.close().catch(() => undefined);
+      return {
+        file: null,
+        path: granted.path,
+        size: immutableContents.length,
+        immutableContents,
+      };
+    }
+    return { file, path: granted.path, size: Number(stat.size) };
+  } catch {
+    await file.close().catch(() => undefined);
+    return null;
+  }
 }
 
 function browserHeaders(grant: PreviewGrant): Record<string, string> {
@@ -234,6 +267,7 @@ async function buildGrantedFileRoutes(input: {
   siteRoot: string;
   resourcePaths: readonly string[];
   fileFingerprints: ReadonlyMap<string, HtmlArtifactFileFingerprint>;
+  classifiedDocumentDigests: ReadonlyMap<string, string>;
 }): Promise<ReadonlyMap<string, GrantedFile>> {
   const routes = new Map<string, GrantedFile>();
   const addRoute = async (route: string, filePath: string) => {
@@ -249,7 +283,12 @@ async function buildGrantedFileRoutes(input: {
     ) {
       throw new HtmlArtifactChangedDuringPreparationError();
     }
-    routes.set(route, { path: filePath, fingerprint: expectedFingerprint });
+    const classifiedDocumentDigest = input.classifiedDocumentDigests.get(filePath);
+    routes.set(route, {
+      path: filePath,
+      fingerprint: expectedFingerprint,
+      ...(classifiedDocumentDigest ? { classifiedDocumentDigest } : {}),
+    });
   };
 
   for (const filePath of [input.entryPath, ...input.resourcePaths]) {
@@ -302,6 +341,7 @@ export function makeHtmlArtifactPreviewLayer(
     readonly useDedicatedServers?: boolean;
     readonly capabilitySigningKey?: string;
     readonly inspectArtifact?: typeof inspectHtmlArtifact;
+    readonly afterGrantedFileFingerprint?: (filePath: string) => Promise<void>;
   } = {},
 ) {
   const maxActiveGrants = options.maxActiveGrants ?? PREVIEW_MAX_ACTIVE_GRANTS;
@@ -351,12 +391,16 @@ export function makeHtmlArtifactPreviewLayer(
               writeNotFound(response);
               return;
             }
-            const resolvedFile = await resolveGrantedFile(grant, request.url);
+            const resolvedFile = await resolveGrantedFile(
+              grant,
+              request.url,
+              options.afterGrantedFileFingerprint,
+            );
             if (!resolvedFile) {
               writeNotFound(response);
               return;
             }
-            const { file, path: filePath, size } = resolvedFile;
+            const { file, path: filePath, size, immutableContents } = resolvedFile;
             const contentType = contentTypeFor(filePath);
             const range = parseSingleByteRange(request.headers.range, size);
             if (range === "invalid") {
@@ -365,7 +409,7 @@ export function makeHtmlArtifactPreviewLayer(
                 "Content-Range": `bytes */${size}`,
               });
               response.end();
-              await file.close().catch(() => undefined);
+              await file?.close().catch(() => undefined);
               return;
             }
             const responseSize = range ? range.end - range.start + 1 : size;
@@ -377,7 +421,17 @@ export function makeHtmlArtifactPreviewLayer(
             });
             if (request.method === "HEAD") {
               response.end();
-              await file.close().catch(() => undefined);
+              await file?.close().catch(() => undefined);
+              return;
+            }
+            if (immutableContents) {
+              response.end(
+                range ? immutableContents.subarray(range.start, range.end + 1) : immutableContents,
+              );
+              return;
+            }
+            if (!file) {
+              response.destroy();
               return;
             }
             const stream = file.createReadStream(
@@ -465,6 +519,10 @@ export function makeHtmlArtifactPreviewLayer(
                   siteRoot: canonicalSiteRoot,
                   resourcePaths: inspected.allowedResourcePaths,
                   fileFingerprints: inspected.fileFingerprints,
+                  classifiedDocumentDigests:
+                    inspected.result.mode === "static-document"
+                      ? inspected.classifiedDocumentDigests
+                      : new Map(),
                 });
                 break;
               } catch (cause) {

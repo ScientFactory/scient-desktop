@@ -26,6 +26,42 @@ afterEach(async () => {
 });
 
 describe("inspectHtmlArtifact", () => {
+  it("continues positioned inspection reads after deterministic short reads", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "lesson.html");
+    const source = "<main>שיעור 🧪</main><script>window.ready = true</script>";
+    await fs.writeFile(sourcePath, source);
+    const positions: number[] = [];
+
+    const inspected = await inspectHtmlArtifact(
+      { cwd: workspace, path: sourcePath },
+      {
+        readChunk: (handle, buffer, offset, length, position) => {
+          positions.push(position);
+          return handle.read(buffer, offset, Math.min(length, 2), position);
+        },
+      },
+    );
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+    expect(positions).toEqual(
+      Array.from({ length: Math.ceil(Buffer.byteLength(source) / 2) }, (_, index) => index * 2),
+    );
+  });
+
+  it("fails closed when a positioned inspection read reports premature EOF", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "lesson.html");
+    await fs.writeFile(sourcePath, "<main>Lesson</main>");
+
+    await expect(
+      inspectHtmlArtifact(
+        { cwd: workspace, path: sourcePath },
+        { readChunk: async () => ({ bytesRead: 0 }) },
+      ),
+    ).rejects.toThrow("changed while its preview was being prepared");
+  });
+
   it("keeps a safe watch candidate for a referenced dependency created later", async () => {
     const workspace = await makeWorkspace();
     const sourcePath = path.join(workspace, "lesson.html");
