@@ -13,7 +13,7 @@
  *
  * @module agentGateway/authorization
  */
-import type { SynaraGatewayErrorCode } from "@synara/contracts";
+import type { SynaraGatewayErrorCode } from "./contract.ts";
 
 export type GatewayAuthorizationDecision =
   | { readonly allow: true }

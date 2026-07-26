@@ -16,15 +16,12 @@
  *
  * @module agentGateway/threadReadTools
  */
-import {
-  SYNARA_GATEWAY_MAX_THREADS_PER_OPERATION,
-  ThreadId,
-  type OrchestrationThreadShell,
-} from "@synara/contracts";
+import { ThreadId, type OrchestrationThreadShell } from "@synara/contracts";
 import { Effect, Option } from "effect";
 
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { authorizeThreadRead } from "./authorization.ts";
+import { SYNARA_GATEWAY_MAX_THREADS_PER_OPERATION } from "./contract.ts";
 import { SYNARA_HARNESS_POLICY_VERSION } from "./harnessPolicy.ts";
 import { mcpToolResultError, mcpToolResultJson } from "./protocol.ts";
 import {

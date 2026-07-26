@@ -45,7 +45,9 @@ describe("buildCodexMcpConfigToml", () => {
   });
 
   it("references the bearer_token_env_var as SYNARA_AGENT_GATEWAY_TOKEN", () => {
-    expect(toml).toContain(`bearer_token_env_var = ${JSON.stringify("SYNARA_AGENT_GATEWAY_TOKEN")}`);
+    expect(toml).toContain(
+      `bearer_token_env_var = ${JSON.stringify("SYNARA_AGENT_GATEWAY_TOKEN")}`,
+    );
   });
 
   it("contains a shell_environment_policy table", () => {

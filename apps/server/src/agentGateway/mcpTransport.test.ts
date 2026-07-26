@@ -7,11 +7,7 @@
  * the read-model snapshot query, and the tool set. No HTTP or Effect layers are
  * involved so each rule is asserted in isolation.
  */
-import {
-  ProjectId,
-  ThreadId,
-  type OrchestrationThreadShell,
-} from "@synara/contracts";
+import { ProjectId, ThreadId, type OrchestrationThreadShell } from "@synara/contracts";
 import { Effect, Option } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -29,7 +25,9 @@ const RUNNING_TURN = "turn-running";
 
 type Capability = "thread:read" | "thread:write" | "automation:write";
 
-function makeIdentity(overrides?: Partial<AgentGatewaySessionIdentity>): AgentGatewaySessionIdentity {
+function makeIdentity(
+  overrides?: Partial<AgentGatewaySessionIdentity>,
+): AgentGatewaySessionIdentity {
   return {
     sessionKey: "gateway-session:test",
     threadId: ThreadId.makeUnsafe(CALLER_THREAD),
@@ -71,7 +69,9 @@ function makeCredentials(cfg?: {
   } as unknown as AgentGatewayCredentialsShape;
 }
 
-function makeSnapshotQuery(callerShell: Option.Option<OrchestrationThreadShell>): ProjectionSnapshotQueryShape {
+function makeSnapshotQuery(
+  callerShell: Option.Option<OrchestrationThreadShell>,
+): ProjectionSnapshotQueryShape {
   return {
     getThreadShellById: () => Effect.succeed(callerShell),
   } as unknown as ProjectionSnapshotQueryShape;
@@ -105,9 +105,10 @@ function makeTransport(cfg?: {
   const requireShell = cfg?.requireShell ?? makeShell();
   return makeAgentGatewayMcpTransport({
     credentials: cfg?.credentials ?? makeCredentials(),
-    snapshotQuery: cfg?.callerShell !== undefined
-      ? makeSnapshotQuery(cfg.callerShell)
-      : makeSnapshotQuery(Option.some(makeShell())),
+    snapshotQuery:
+      cfg?.callerShell !== undefined
+        ? makeSnapshotQuery(cfg.callerShell)
+        : makeSnapshotQuery(Option.some(makeShell())),
     tools: cfg?.tools ?? [echoTool, writeTool],
     instructions: "TEST_INSTRUCTIONS",
     requireThreadShell: () => Effect.succeed(requireShell),
@@ -199,7 +200,9 @@ describe("makeAgentGatewayMcpTransport JSON-RPC handling", () => {
       },
     });
     expect(res.status).toBe(200);
-    const body = res.body as { result: { protocolVersion: string; serverInfo: { name: string }; instructions: string } };
+    const body = res.body as {
+      result: { protocolVersion: string; serverInfo: { name: string }; instructions: string };
+    };
     expect(body.result.protocolVersion).toBe("2025-06-18");
     expect(body.result.serverInfo.name).toBe("synara");
     expect(body.result.instructions).toBe("TEST_INSTRUCTIONS");
@@ -290,7 +293,9 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
         params: { name: "synara_write_thing", arguments: {} },
       },
     });
-    const parsed = toolResultJson(res.body) as { error: { code: string; details: { requiredCapability: string } } };
+    const parsed = toolResultJson(res.body) as {
+      error: { code: string; details: { requiredCapability: string } };
+    };
     expect(parsed.error.code).toBe("capability_denied");
     expect(parsed.error.details.requiredCapability).toBe("thread:write");
   });
@@ -301,7 +306,9 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
     const res = await run(
       makeTransport({
         credentials: makeCredentials({
-          session: makeIdentity({ capabilities: new Set<Capability>(["thread:read", "thread:write"]) }),
+          session: makeIdentity({
+            capabilities: new Set<Capability>(["thread:read", "thread:write"]),
+          }),
         }),
         callerShell: Option.some(makeShell({ latestTurn: null })),
       }),
@@ -327,7 +334,9 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
     const res = await run(
       makeTransport({
         credentials: makeCredentials({
-          session: makeIdentity({ capabilities: new Set<Capability>(["thread:read", "thread:write"]) }),
+          session: makeIdentity({
+            capabilities: new Set<Capability>(["thread:read", "thread:write"]),
+          }),
           writeAuthorityValid: true,
         }),
         callerShell: Option.some(runningShell),
@@ -358,7 +367,9 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
     const res = await run(
       makeTransport({
         credentials: makeCredentials({
-          session: makeIdentity({ capabilities: new Set<Capability>(["thread:read", "thread:write"]) }),
+          session: makeIdentity({
+            capabilities: new Set<Capability>(["thread:read", "thread:write"]),
+          }),
           writeAuthorityValid: true,
         }),
         callerShell: Option.some(ingressShell),

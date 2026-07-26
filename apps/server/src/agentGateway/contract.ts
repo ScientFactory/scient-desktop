@@ -1,5 +1,5 @@
 /**
- * Public contracts for the Synara agent-control gateway (read surface).
+ * Contracts for the Synara agent-control gateway (read surface).
  *
  * The gateway serves thread-scoped `synara_*` MCP tools that let an agent in
  * one Synara thread observe sibling threads in the same project. This slice
@@ -9,12 +9,17 @@
  * Keeping the limits and result shapes here ensures the MCP surface, the server
  * implementation, and the tests all share one definition of a valid request.
  *
- * @module contracts/agentGateway
+ * These types live inside the server subsystem rather than `@synara/contracts`
+ * because the gateway has no client/renderer consumer: everything that reads
+ * them is server-side, and the shared barrel is a frozen released-migration
+ * dependency (adding an export to it trips the migration-lineage guard). If a
+ * renderer consumer ever appears, promote these to `@synara/contracts` as part
+ * of a change that rebaselines the migration closure.
+ *
+ * @module agentGateway/contract
  */
+import { ProjectId, ProviderKind, ThreadId, TurnId } from "@synara/contracts";
 import { Schema } from "effect";
-
-import { ProjectId, ThreadId, TurnId } from "./baseSchemas";
-import { ProviderKind } from "./orchestration";
 
 export const SYNARA_GATEWAY_MAX_THREADS_PER_OPERATION = 20;
 export const SYNARA_GATEWAY_MAX_WAIT_MS = 60_000;

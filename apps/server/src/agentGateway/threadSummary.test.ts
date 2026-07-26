@@ -1,4 +1,8 @@
-import type { OrchestrationMessage, OrchestrationThread, OrchestrationThreadShell } from "@synara/contracts";
+import type {
+  OrchestrationMessage,
+  OrchestrationThread,
+  OrchestrationThreadShell,
+} from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
 import {

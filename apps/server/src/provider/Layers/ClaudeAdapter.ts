@@ -4006,7 +4006,9 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
                 // (e.g. the SDK query failed to construct after minting).
                 if (agentGatewayToken !== undefined) {
                   const revokedToken = agentGatewayToken;
-                  yield* Effect.sync(() => agentGatewayCredentials.revokeSessionToken(revokedToken));
+                  yield* Effect.sync(() =>
+                    agentGatewayCredentials.revokeSessionToken(revokedToken),
+                  );
                 }
                 yield* Queue.shutdown(promptQueue);
                 const closeExit = yield* Effect.exit(Effect.sync(() => queryRuntime.close()));

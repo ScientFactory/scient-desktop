@@ -39,9 +39,11 @@ describe("parseMcpMessage", () => {
     expect(parseMcpMessage({ jsonrpc: "2.0", id: "1", result: { ok: true } })).toEqual({
       kind: "response",
     });
-    expect(parseMcpMessage({ jsonrpc: "2.0", id: "1", error: { code: -1, message: "x" } })).toEqual({
-      kind: "response",
-    });
+    expect(parseMcpMessage({ jsonrpc: "2.0", id: "1", error: { code: -1, message: "x" } })).toEqual(
+      {
+        kind: "response",
+      },
+    );
   });
 
   it("marks a method-less, result/error-less message as invalid", () => {

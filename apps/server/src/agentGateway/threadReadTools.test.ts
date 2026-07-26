@@ -103,7 +103,8 @@ function makeSnapshotQuery(fakes: Fakes): ProjectionSnapshotQueryShape {
         threads: fakes.threads ?? [],
         updatedAt: ISO,
       }),
-    getThreadShellById: (id: string) => Effect.succeed(Option.fromNullishOr(fakes.threadShells?.[id])),
+    getThreadShellById: (id: string) =>
+      Effect.succeed(Option.fromNullishOr(fakes.threadShells?.[id])),
     getThreadDetailById: (id: string) =>
       Effect.succeed(Option.fromNullishOr(fakes.threadDetails?.[id])),
   } as unknown as ProjectionSnapshotQueryShape;
@@ -132,9 +133,7 @@ function callTool(
   const snapshotQuery = makeSnapshotQuery(fakes);
   const requireThreadShell = (id: string) => {
     const found = fakes.threadShells?.[id];
-    return found
-      ? Effect.succeed(found)
-      : Effect.fail(new Error(`Thread "${id}" was not found.`));
+    return found ? Effect.succeed(found) : Effect.fail(new Error(`Thread "${id}" was not found.`));
   };
   const tools = makeThreadReadTools({ snapshotQuery, requireThreadShell });
   const tool = tools.find((entry) => entry.definition.name === name);
@@ -143,9 +142,9 @@ function callTool(
   // ToolInputError becomes a defect, not an Effect failure). Mirror that net so
   // these unit calls exercise the same contract the transport enforces.
   return Effect.runPromise(
-    tool.handler(args, context).pipe(
-      Effect.catchDefect((defect) => Effect.succeed(mcpToolResultError(errorText(defect)))),
-    ),
+    tool
+      .handler(args, context)
+      .pipe(Effect.catchDefect((defect) => Effect.succeed(mcpToolResultError(errorText(defect))))),
   );
 }
 

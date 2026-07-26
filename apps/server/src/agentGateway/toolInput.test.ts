@@ -15,9 +15,7 @@ describe("readStringArg", () => {
 
   it("throws ToolInputError when required and missing", () => {
     expect(() => readStringArg({}, "name", { required: true })).toThrow(ToolInputError);
-    expect(() => readStringArg({ name: null }, "name", { required: true })).toThrow(
-      ToolInputError,
-    );
+    expect(() => readStringArg({ name: null }, "name", { required: true })).toThrow(ToolInputError);
   });
 
   it("returns undefined when optional and missing", () => {
@@ -89,9 +87,9 @@ describe("decodeWaitForThreadsInput", () => {
   });
 
   it("throws ToolInputError on excess/unknown properties", () => {
-    expect(() =>
-      decodeWaitForThreadsInput({ threadIds: ["t1"], unexpected: "field" }),
-    ).toThrow(ToolInputError);
+    expect(() => decodeWaitForThreadsInput({ threadIds: ["t1"], unexpected: "field" })).toThrow(
+      ToolInputError,
+    );
   });
 
   it("throws when threadIds exceeds the max of 20", () => {

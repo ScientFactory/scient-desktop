@@ -7,8 +7,10 @@
  *
  * @module agentGateway/toolInput
  */
-import { SynaraWaitForThreadsInput, type ProviderKind } from "@synara/contracts";
+import { type ProviderKind } from "@synara/contracts";
 import { Schema } from "effect";
+
+import { SynaraWaitForThreadsInput } from "./contract.ts";
 
 export const PROVIDER_KINDS: ReadonlyArray<ProviderKind> = [
   "codex",
