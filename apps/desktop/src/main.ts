@@ -95,6 +95,7 @@ import { collectMacUpdateDiagnostics } from "./macUpdateDiagnostics";
 import { openInitialBackendWindow } from "./initialBackendWindowOpen";
 import { shouldAllowMediaPermissionRequest } from "./mediaPermissions";
 import { PACKAGED_RENDERER_READINESS_EXPRESSION } from "./packagedStartupRendererReadiness";
+import { attachPackagedStartupWindowLifecycleProof } from "./packagedStartupWindowLifecycle";
 import {
   installResumableUpdateDownloader,
   type ResumableDownloaderTarget,
@@ -1483,11 +1484,7 @@ function configureApplicationMenu(): void {
     ? [
         { role: "resetZoom" },
         { role: "zoomIn", ...acceleratorProps("CmdOrCtrl+=") },
-        {
-          role: "zoomIn",
-          ...acceleratorProps("CmdOrCtrl+Plus"),
-          visible: false,
-        },
+        { role: "zoomIn", ...acceleratorProps("CmdOrCtrl+Plus"), visible: false },
         { role: "zoomOut" },
       ]
     : [
@@ -1799,14 +1796,8 @@ function showDesktopNotification(input: {
 function resolveUserDataPath(): string {
   const appDataBase = resolveDesktopAppDataBase();
   const targetPath = resolveDesktopUserDataPath({ appDataBase, isDevelopment });
-  const sourcePath = resolvePapiLabDesktopUserDataPath({
-    appDataBase,
-    isDevelopment,
-  });
-  const migration = seedDesktopUserDataProfileFromPapiLab({
-    sourcePath,
-    targetPath,
-  });
+  const sourcePath = resolvePapiLabDesktopUserDataPath({ appDataBase, isDevelopment });
+  const migration = seedDesktopUserDataProfileFromPapiLab({ sourcePath, targetPath });
   if (migration.status === "seed-failed") {
     console.warn("[desktop] Failed to seed Scient profile from PapiLab", migration.error);
   }
@@ -1918,9 +1909,7 @@ function refreshMacIconCacheOnVersionChange(): void {
     // Read-only bundle: fall through to lsregister.
   }
 
-  const child = ChildProcess.spawn(LSREGISTER_PATH, ["-f", bundlePath], {
-    stdio: "ignore",
-  });
+  const child = ChildProcess.spawn(LSREGISTER_PATH, ["-f", bundlePath], { stdio: "ignore" });
   child.unref();
   child.once("error", (error) => {
     console.warn("[desktop] Failed to refresh macOS icon cache after update", error);
@@ -2646,9 +2635,7 @@ function configureAutoUpdater(): void {
   configuredGitHubUpdateSource = resolveGitHubUpdateSource(appUpdateYml);
   if (configuredGitHubUpdateSource !== null) {
     // The updater itself uses app-update.yml; this URL is only the human fallback.
-    setUpdateState({
-      releaseUrl: buildGitHubReleasesPageUrl(configuredGitHubUpdateSource),
-    });
+    setUpdateState({ releaseUrl: buildGitHubReleasesPageUrl(configuredGitHubUpdateSource) });
   }
 
   autoUpdater.autoDownload = false;
@@ -3470,9 +3457,7 @@ function getIconOption(): { icon: string } | Record<string, never> {
 // (`show: false`), so this color is not expected to match a custom in-app theme exactly.
 function getWindowMaterialOptions(): BrowserWindowConstructorOptions {
   if (process.platform !== "darwin") {
-    return {
-      backgroundColor: nativeTheme.shouldUseDarkColors ? "#181818" : "#ffffff",
-    };
+    return { backgroundColor: nativeTheme.shouldUseDarkColors ? "#181818" : "#ffffff" };
   }
   return {
     vibrancy: "under-window",
@@ -3660,10 +3645,10 @@ function createWindow(): BrowserWindow {
   window.on("unresponsive", () => {
     writeDesktopLogHeader("renderer main window unresponsive");
   });
-  window.on("hide", () => {
-    if (verifierOwnedPackagedStartupSmoke) {
-      writeDesktopLogHeader("packaged main window hidden");
-    }
+  attachPackagedStartupWindowLifecycleProof({
+    window,
+    enabled: verifierOwnedPackagedStartupSmoke,
+    writeFailureMarker: writeDesktopLogHeader,
   });
   window.once("ready-to-show", () => {
     // Preserve the original first-launch behavior, then respect the state saved
@@ -3717,9 +3702,6 @@ function createWindow(): BrowserWindow {
   }
 
   window.on("closed", () => {
-    if (verifierOwnedPackagedStartupSmoke) {
-      writeDesktopLogHeader("packaged main window closed");
-    }
     if (mainWindow === window) {
       mainWindow = null;
     }

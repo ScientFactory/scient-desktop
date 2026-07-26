@@ -6,16 +6,18 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import {
   chmodSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { constants as osConstants, tmpdir } from "node:os";
-import { basename, dirname, join, resolve, win32 } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -311,6 +313,35 @@ function findFiles(root: string, predicate: (path: string) => boolean): string[]
   return matches.toSorted((left, right) => left.localeCompare(right));
 }
 
+function assertCanonicalPackagedPath(input: {
+  readonly root: string;
+  readonly candidate: string;
+  readonly label: string;
+  readonly kind: "directory" | "file";
+}): string {
+  const candidateStats = lstatSync(input.candidate);
+  if (candidateStats.isSymbolicLink()) {
+    throw new Error(`${input.label} must not be a symbolic link.`);
+  }
+  if (
+    (input.kind === "directory" && !candidateStats.isDirectory()) ||
+    (input.kind === "file" && !candidateStats.isFile())
+  ) {
+    throw new Error(`${input.label} must be a regular ${input.kind}.`);
+  }
+  const canonicalRoot = realpathSync(input.root);
+  const canonicalCandidate = realpathSync(input.candidate);
+  const relativeCandidate = relative(canonicalRoot, canonicalCandidate);
+  if (
+    relativeCandidate === ".." ||
+    relativeCandidate.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) ||
+    isAbsolute(relativeCandidate)
+  ) {
+    throw new Error(`${input.label} resolves outside the inspected payload root.`);
+  }
+  return input.candidate;
+}
+
 export function expectedPackagedDesktopStartupAssetName(
   platform: PackagedDesktopPlatform,
   arch: string,
@@ -354,6 +385,7 @@ export interface PackagedDesktopLaunchCommand {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
+  readonly windowsJobAssemblyPath?: string;
   readonly cleanup?: () => Promise<void>;
 }
 
@@ -368,6 +400,9 @@ export function spawnContainedPackagedDesktop(
       throw new Error(
         "Windows Job Object launcher does not accept packaged application arguments.",
       );
+    }
+    if (!launch.windowsJobAssemblyPath) {
+      throw new Error("Windows Job Object launcher assembly was not prepared.");
     }
     const systemRoot = environment.SystemRoot ?? environment.SYSTEMROOT ?? "C:\\Windows";
     const powershell = win32.join(
@@ -387,6 +422,8 @@ export function spawnContainedPackagedDesktop(
         "Bypass",
         "-File",
         WINDOWS_JOB_LAUNCHER_PATH,
+        "-AssemblyPath",
+        launch.windowsJobAssemblyPath,
         "-ExecutablePath",
         launch.command,
         "-WorkingDirectory",
@@ -412,6 +449,38 @@ export function spawnContainedPackagedDesktop(
       windowsHide: true,
     },
   );
+}
+
+function resolveWindowsPowerShell(environment: NodeJS.ProcessEnv = process.env): string {
+  const systemRoot = environment.SystemRoot ?? environment.SYSTEMROOT ?? "C:\\Windows";
+  return win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+}
+
+export async function prepareWindowsJobLauncherAssembly(
+  extractionRoot: string,
+  signal: AbortSignal,
+  runCommand: PackagedPreparationCommandRunner = runPackagedPreparationCommand,
+): Promise<string> {
+  const assemblyPath = join(extractionRoot, "packaged-startup-windows-job.dll");
+  await runCommand(
+    resolveWindowsPowerShell(),
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      WINDOWS_JOB_LAUNCHER_PATH,
+      "-CompileAssemblyPath",
+      assemblyPath,
+    ],
+    { signal },
+  );
+  if (!lstatSync(assemblyPath).isFile()) {
+    throw new Error("Windows Job Object launcher preparation did not produce an assembly.");
+  }
+  return assemblyPath;
 }
 
 type PackagedPreparationCommandRunner = typeof runPackagedPreparationCommand;
@@ -495,18 +564,45 @@ export async function prepareMacLaunch(
     await runCommand("ditto", ["-x", "-k", archive, extractionRoot], { signal });
   }
   try {
-    const appBundles = readdirSync(extractionRoot).filter((entry) => entry.endsWith(".app"));
-    if (appBundles.length !== 1 || appBundles[0] !== "Scient.app") {
+    const appBundles = readdirSync(extractionRoot, { withFileTypes: true }).filter((entry) =>
+      entry.name.endsWith(".app"),
+    );
+    if (
+      appBundles.length !== 1 ||
+      appBundles[0]!.name !== "Scient.app" ||
+      !appBundles[0]!.isDirectory() ||
+      appBundles[0]!.isSymbolicLink()
+    ) {
       throw new Error(`Expected the exact Scient.app bundle in ${basename(archive)}.`);
     }
-    const appBundle = join(extractionRoot, appBundles[0]!);
-    const executables = findFiles(join(appBundle, "Contents", "MacOS"), (candidate) =>
-      statSync(candidate).isFile(),
-    );
+    const appBundle = assertCanonicalPackagedPath({
+      root: extractionRoot,
+      candidate: join(extractionRoot, appBundles[0]!.name),
+      label: "Scient.app bundle",
+      kind: "directory",
+    });
+    const executableDirectory = assertCanonicalPackagedPath({
+      root: extractionRoot,
+      candidate: join(appBundle, "Contents", "MacOS"),
+      label: "Scient.app executable directory",
+      kind: "directory",
+    });
+    const executables = findFiles(executableDirectory, (candidate) => statSync(candidate).isFile());
     if (executables.length !== 1) {
       throw new Error(`Expected one macOS main executable, found ${executables.length}.`);
     }
-    const infoPlist = join(appBundle, "Contents", "Info.plist");
+    const executable = assertCanonicalPackagedPath({
+      root: extractionRoot,
+      candidate: executables[0]!,
+      label: "Scient.app main executable",
+      kind: "file",
+    });
+    const infoPlist = assertCanonicalPackagedPath({
+      root: extractionRoot,
+      candidate: join(appBundle, "Contents", "Info.plist"),
+      label: "Scient.app Info.plist",
+      kind: "file",
+    });
     const bundleIdentifier = await runCommand(
       "plutil",
       ["-extract", "CFBundleIdentifier", "raw", "-o", "-", infoPlist],
@@ -533,7 +629,7 @@ export async function prepareMacLaunch(
     }
     const expectedArchitecture = options.arch === "x64" ? "x86_64" : options.arch;
     const executableArchitectures = (
-      await runCommand("lipo", ["-archs", executables[0]!], {
+      await runCommand("lipo", ["-archs", executable], {
         signal,
       })
     )
@@ -548,7 +644,7 @@ export async function prepareMacLaunch(
       );
     }
     return {
-      command: executables[0]!,
+      command: executable,
       args: [],
       cwd: appBundle,
       ...(cleanup ? { cleanup } : {}),
@@ -638,14 +734,7 @@ async function verifyWindowsReleaseSignatures(
 ): Promise<void> {
   const scriptPath = join(extractionRoot, "verify-release-signatures.ps1");
   writeFileSync(scriptPath, WINDOWS_RELEASE_SIGNATURE_SCRIPT, { encoding: "utf8", mode: 0o600 });
-  const systemRoot = process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "C:\\Windows";
-  const powershell = win32.join(
-    systemRoot,
-    "System32",
-    "WindowsPowerShell",
-    "v1.0",
-    "powershell.exe",
-  );
+  const powershell = resolveWindowsPowerShell();
   const output = await runPackagedPreparationCommand(
     powershell,
     [
@@ -729,7 +818,13 @@ async function prepareWindowsLaunch(
     extractionRoot,
     signal,
   );
-  return { command: executables[0]!, args: [], cwd: dirname(executables[0]!) };
+  const windowsJobAssemblyPath = await prepareWindowsJobLauncherAssembly(extractionRoot, signal);
+  return {
+    command: executables[0]!,
+    args: [],
+    cwd: dirname(executables[0]!),
+    windowsJobAssemblyPath,
+  };
 }
 
 async function prepareLaunch(
@@ -1249,6 +1344,17 @@ interface PackagedStartupProofWaitOptions {
   readonly stableForMs?: number;
 }
 
+function assertPackagedDesktopChildStillRunning(outcome: PackagedDesktopChildOutcome): void {
+  if (outcome.launchError) {
+    throw new Error(`Packaged app could not start: ${outcome.launchError.message}`);
+  }
+  if (outcome.exited) {
+    throw new Error(
+      `Packaged app exited before stable startup proof (code=${outcome.exited.code ?? "null"}, signal=${outcome.exited.signal ?? "null"}).`,
+    );
+  }
+}
+
 export async function waitForPackagedStartupProof({
   timeoutMs,
   hasProof,
@@ -1261,15 +1367,7 @@ export async function waitForPackagedStartupProof({
   const deadline = now() + timeoutMs;
   let proofObservedAt: number | null = null;
   while (now() < deadline) {
-    const outcome = readOutcome();
-    if (outcome.launchError) {
-      throw new Error(`Packaged app could not start: ${outcome.launchError.message}`);
-    }
-    if (outcome.exited) {
-      throw new Error(
-        `Packaged app exited before stable startup proof (code=${outcome.exited.code ?? "null"}, signal=${outcome.exited.signal ?? "null"}).`,
-      );
-    }
+    assertPackagedDesktopChildStillRunning(readOutcome());
     if (!isProcessAlive()) {
       throw new Error(
         "Packaged app exited before stable startup proof (process handle is closed).",
@@ -1286,6 +1384,10 @@ export async function waitForPackagedStartupProof({
             "Packaged app exited before stable startup proof (process handle is closed).",
           );
         }
+        // POSIX uses a retained sentinel handle, so the native Electron child can
+        // exit while that handle is still alive. Re-read its durable outcome at
+        // the exact acceptance boundary instead of trusting the earlier sample.
+        assertPackagedDesktopChildStillRunning(readOutcome());
         return;
       }
     } else {
@@ -1294,6 +1396,36 @@ export async function waitForPackagedStartupProof({
     await delay(Math.min(200, Math.max(1, deadline - currentTime)));
   }
   throw new Error(`Packaged startup proof timed out after ${timeoutMs}ms.`);
+}
+
+export function cleanupPackagedStartupTemporaryRoot(input: {
+  readonly temporaryRoot: string;
+  readonly processCleanupFailed: boolean;
+  readonly remove?: (path: string) => void;
+}): { readonly preserved: boolean; readonly failure: { phase: string; error: unknown } | null } {
+  if (input.processCleanupFailed) {
+    return {
+      preserved: true,
+      failure: {
+        phase: "temporary-state cleanup skipped",
+        error: new Error(`Preserved failed process evidence at ${input.temporaryRoot}.`),
+      },
+    };
+  }
+  try {
+    (input.remove ?? ((path) => rmSync(path, { recursive: true, force: true })))(
+      input.temporaryRoot,
+    );
+    return { preserved: false, failure: null };
+  } catch (error) {
+    return {
+      preserved: true,
+      failure: {
+        phase: `temporary-state cleanup failed at ${input.temporaryRoot}`,
+        error,
+      },
+    };
+  }
 }
 
 export function resolveNativePackagedDesktopPlatform(
@@ -1429,21 +1561,11 @@ async function verifyPackagedDesktopPayload(
 
   // Capture diagnostics after cleanup attempts but before deleting isolated state.
   const logTail = logPath ? readPackagedDesktopLogTail(logPath) : "";
-  if (processCleanupFailed) {
-    failures.push({
-      phase: "temporary-state cleanup skipped",
-      error: new Error(`Preserved failed process evidence at ${temporaryRoot}.`),
-    });
-  } else {
-    try {
-      rmSync(temporaryRoot, { recursive: true, force: true });
-    } catch (error) {
-      failures.push({
-        phase: `temporary-state cleanup failed at ${temporaryRoot}`,
-        error,
-      });
-    }
-  }
+  const temporaryCleanup = cleanupPackagedStartupTemporaryRoot({
+    temporaryRoot,
+    processCleanupFailed,
+  });
+  if (temporaryCleanup.failure) failures.push(temporaryCleanup.failure);
 
   if (failures.length > 0) {
     const details = formatPackagedStartupFailures(failures, output, logTail);

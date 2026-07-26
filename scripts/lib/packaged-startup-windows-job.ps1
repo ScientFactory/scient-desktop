@@ -1,20 +1,13 @@
 param(
-  [Parameter(Mandatory = $true)][string]$ExecutablePath,
-  [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+  [string]$ExecutablePath = '',
+  [string]$WorkingDirectory = '',
+  [string]$AssemblyPath = '',
+  [string]$CompileAssemblyPath = '',
   [string]$PreResumeMarkerPath = '',
   [string]$PreResumeGatePath = ''
 )
 
 $ErrorActionPreference = 'Stop'
-
-# CreateProcess inherits this launcher's process environment. Binding the
-# verifier authority to this retained direct parent gives Windows the same
-# non-inheritable-by-accident contract as the POSIX sentinel.
-[Environment]::SetEnvironmentVariable(
-  'SCIENT_PACKAGED_STARTUP_SENTINEL_PID',
-  [string]$PID,
-  'Process'
-)
 
 $source = @'
 using System;
@@ -290,7 +283,31 @@ public static class ScientPackagedStartupJobLauncher
 }
 '@
 
-Add-Type -TypeDefinition $source -Language CSharp
+if (![string]::IsNullOrWhiteSpace($CompileAssemblyPath)) {
+  Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly $CompileAssemblyPath -OutputType Library
+  exit 0
+}
+
+if (
+  [string]::IsNullOrWhiteSpace($AssemblyPath) -or
+  [string]::IsNullOrWhiteSpace($ExecutablePath) -or
+  [string]::IsNullOrWhiteSpace($WorkingDirectory)
+) {
+  throw 'AssemblyPath, ExecutablePath, and WorkingDirectory are required for launch.'
+}
+
+# Load only the assembly compiled during the separately classified preparation
+# phase. Runtime launch must not create compiler descendants before Job authority.
+Add-Type -Path $AssemblyPath
+
+# CreateProcess inherits this launcher's process environment. Binding the
+# verifier authority to this retained direct parent gives Windows the same
+# non-inheritable-by-accident contract as the POSIX sentinel.
+[Environment]::SetEnvironmentVariable(
+  'SCIENT_PACKAGED_STARTUP_SENTINEL_PID',
+  [string]$PID,
+  'Process'
+)
 exit [ScientPackagedStartupJobLauncher]::Run(
   $ExecutablePath,
   $WorkingDirectory,

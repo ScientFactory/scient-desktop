@@ -12,17 +12,6 @@ import { isElectron } from "./env";
 
 const router = getRouter(appHistory);
 
-function PackagedStartupReadyMarker() {
-  React.useEffect(() => {
-    document.documentElement.dataset.scientRendererReady = "true";
-    return () => {
-      delete document.documentElement.dataset.scientRendererReady;
-    };
-  }, []);
-
-  return null;
-}
-
 document.title = APP_DISPLAY_NAME;
 
 if (isElectron) {
@@ -31,7 +20,6 @@ if (isElectron) {
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    <PackagedStartupReadyMarker />
     <RouterProvider router={router} />
   </React.StrictMode>,
 );

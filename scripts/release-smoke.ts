@@ -447,6 +447,14 @@ function verifyReleaseWorkflowSafety(): void {
     "\r\n",
     "\n",
   );
+  const webRendererReadiness = readFileSync(
+    resolve(repoRoot, "apps/web/src/lib/packagedStartupRendererReadiness.ts"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  const webRootRoute = readFileSync(
+    resolve(repoRoot, "apps/web/src/routes/__root.tsx"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
   const rendererReadiness = readFileSync(
     resolve(repoRoot, "apps/desktop/src/packagedStartupRendererReadiness.ts"),
     "utf8",
@@ -474,9 +482,19 @@ function verifyReleaseWorkflowSafety(): void {
     );
   }
   assertContains(
+    webRendererReadiness,
+    "await input.hydrateShell();",
+    "Expected packaged startup readiness to wait for authoritative shell hydration.",
+  );
+  assertContains(
+    webRootRoute,
+    "markPackagedStartupRendererReadyAfterShellHydration",
+    "Expected the server-welcome router lifecycle to own packaged renderer readiness.",
+  );
+  assertNotContains(
     webMain,
-    'document.documentElement.dataset.scientRendererReady = "true"',
-    "Expected packaged startup proof to depend on a renderer-owned React commit marker.",
+    "scientRendererReady",
+    "The renderer entrypoint must not certify readiness before its preload and server lifecycle complete.",
   );
   assertContains(
     rendererReadiness,
@@ -513,6 +531,22 @@ function verifyReleaseWorkflowSafety(): void {
     "taskkill",
     "Packaged startup cleanup must not restore numeric Windows process signaling authority.",
   );
+  assertContains(
+    windowsStartupJobLauncher,
+    "Add-Type -Path $AssemblyPath",
+    "Expected runtime Windows launch to load the assembly compiled during preparation.",
+  );
+  if (
+    windowsStartupJobLauncher.indexOf("Add-Type -TypeDefinition $source") < 0 ||
+    windowsStartupJobLauncher.indexOf("Add-Type -TypeDefinition $source") >
+      windowsStartupJobLauncher.indexOf("exit 0") ||
+    windowsStartupJobLauncher.indexOf("exit 0") >
+      windowsStartupJobLauncher.indexOf("Add-Type -Path $AssemblyPath")
+  ) {
+    throw new Error(
+      "Expected Windows launcher compilation to exit in preparation before runtime Job launch.",
+    );
+  }
   assertContains(
     posixStartupSentinel,
     'process.on("SIGTERM", () => undefined)',

@@ -7,6 +7,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,6 +21,7 @@ import {
   assertPackagedLaunchCommandSafety,
   assertUnsignedWindowsReleaseSignatureDetails,
   assertWindowsReleaseSignatureDetails,
+  cleanupPackagedStartupTemporaryRoot,
   createPackagedDesktopSmokeEnvironment,
   expectedPackagedDesktopStartupAssetName,
   expectedPackagedDesktopStartupAssetNames,
@@ -31,6 +33,7 @@ import {
   PackagedPreparationCleanupError,
   parsePackagedDesktopStartupArgs,
   prepareMacLaunch,
+  prepareWindowsJobLauncherAssembly,
   readWindowsExecutableArchitecture,
   readPackagedDesktopLogTail,
   readPackagedBackendProcessIds,
@@ -410,6 +413,31 @@ describe("packaged desktop startup verification", () => {
     ).rejects.toThrow("timed out");
   });
 
+  it("re-reads the native child outcome at the stability acceptance boundary", async () => {
+    let now = 0;
+    let outcomeReads = 0;
+    await expect(
+      waitForPackagedStartupProof({
+        timeoutMs: 5_000,
+        stableForMs: 1_000,
+        hasProof: () => true,
+        readOutcome: () => {
+          outcomeReads += 1;
+          return outcomeReads === 7
+            ? { exited: { code: 9, signal: null }, launchError: null }
+            : { exited: null, launchError: null };
+        },
+        isProcessAlive: () => true,
+        now: () => now,
+        delay: async (milliseconds) => {
+          now += milliseconds;
+        },
+      }),
+    ).rejects.toThrow("code=9");
+    expect(now).toBe(1_000);
+    expect(outcomeReads).toBe(7);
+  });
+
   it("turns interrupt signals into an observable cleanup request and removes its listeners", async () => {
     const source = new EventEmitter();
     const termination = monitorPackagedStartupTermination(source);
@@ -513,6 +541,34 @@ describe("packaged desktop startup verification", () => {
 
     await expect(command).rejects.toBeInstanceOf(PackagedPreparationCleanupError);
     expect(kill).toHaveBeenCalledOnce();
+  });
+
+  it("compiles the Windows Job launcher only in the classified preparation phase", async () => {
+    const root = mkdtempSync(join(tmpdir(), "scient-packaged-job-prepare-test-"));
+    temporaryRoots.push(root);
+    const runCommand = vi.fn(async (_command: string, args: ReadonlyArray<string>) => {
+      const outputIndex = args.indexOf("-CompileAssemblyPath");
+      writeFileSync(args[outputIndex + 1]!, "prepared assembly");
+      return "";
+    }) as unknown as typeof runPackagedPreparationCommand;
+
+    const assemblyPath = await prepareWindowsJobLauncherAssembly(
+      root,
+      new AbortController().signal,
+      runCommand,
+    );
+
+    expect(assemblyPath).toBe(join(root, "packaged-startup-windows-job.dll"));
+    expect(runCommand).toHaveBeenCalledWith(
+      expect.stringMatching(/powershell\.exe$/i),
+      expect.arrayContaining([
+        "-File",
+        expect.stringMatching(/packaged-startup-windows-job\.ps1$/),
+        "-CompileAssemblyPath",
+        assemblyPath,
+      ]),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("attempts to detach a partially mounted DMG after attach fails", async () => {
@@ -628,6 +684,7 @@ describe("packaged desktop startup verification", () => {
     const executableDirectory = join(extractionRoot, "Scient.app", "Contents", "MacOS");
     mkdirSync(executableDirectory, { recursive: true });
     writeFileSync(join(executableDirectory, "Scient"), "fixture");
+    writeFileSync(join(extractionRoot, "Scient.app", "Contents", "Info.plist"), "fixture");
     const runCommand = vi.fn(async (_command: string, args: ReadonlyArray<string>) => {
       if (args[0] === "attach") return "";
       if (args[0] === "detach") throw new Error(args[1] === "-force" ? "force failed" : "busy");
@@ -651,6 +708,45 @@ describe("packaged desktop startup verification", () => {
       expect.any(Object),
     );
   });
+
+  it.each(["zip", "dmg"] as const)(
+    "rejects in-root and escaping Scient.app symlinks in the %s inspection path",
+    async (extension) => {
+      for (const targetLocation of ["inside", "outside"] as const) {
+        const root = mkdtempSync(join(tmpdir(), `scient-packaged-${extension}-symlink-test-`));
+        temporaryRoots.push(root);
+        const expectedAssetName = `Scient-1.2.3-arm64.${extension}`;
+        writeFileSync(join(root, expectedAssetName), "fixture");
+        const extractionRoot = join(root, "payload");
+        mkdirSync(extractionRoot, { recursive: true });
+        const target =
+          targetLocation === "inside"
+            ? join(extractionRoot, "bundle-target")
+            : join(root, "outside-bundle-target");
+        mkdirSync(join(target, "Contents", "MacOS"), { recursive: true });
+        writeFileSync(join(target, "Contents", "Info.plist"), "fixture");
+        writeFileSync(join(target, "Contents", "MacOS", "Scient"), "fixture");
+        symlinkSync(target, join(extractionRoot, "Scient.app"), "dir");
+        const runCommandMock = vi.fn(async (_command: string, args: ReadonlyArray<string>) => {
+          if (args[0] === "detach") return "";
+          return "";
+        });
+        const runCommand = runCommandMock as unknown as typeof runPackagedPreparationCommand;
+
+        await expect(
+          prepareMacLaunch(
+            root,
+            extractionRoot,
+            expectedAssetName,
+            { arch: "arm64", version: "1.2.3" },
+            new AbortController().signal,
+            runCommand,
+          ),
+        ).rejects.toThrow("Expected the exact Scient.app bundle");
+        expect(runCommandMock.mock.calls.some(([, args]) => args[0] === "-extract")).toBe(false);
+      }
+    },
+  );
 
   it("rejects startup proof when the process handle closes before the exit event arrives", async () => {
     let now = 0;
@@ -699,6 +795,28 @@ describe("packaged desktop startup verification", () => {
     ).toContain(
       "startup verification failed: renderer froze\nprocess cleanup failed: backend survived\nPackaged process output:\nstderr detail\nPackaged desktop log tail:\ndesktop log detail",
     );
+  });
+
+  it("preserves top-level temporary evidence after process preparation cleanup fails", () => {
+    const remove = vi.fn();
+    const temporaryRoot = "/tmp/scient-packaged-smoke-preserved";
+
+    const result = cleanupPackagedStartupTemporaryRoot({
+      temporaryRoot,
+      processCleanupFailed: true,
+      remove,
+    });
+
+    expect(remove).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      preserved: true,
+      failure: {
+        phase: "temporary-state cleanup skipped",
+        error: expect.objectContaining({
+          message: `Preserved failed process evidence at ${temporaryRoot}.`,
+        }),
+      },
+    });
   });
 
   it("exports bounded redacted failure evidence for hosted runners", () => {
@@ -777,7 +895,12 @@ describe("packaged desktop startup verification", () => {
 
   it("launches Windows suspended into a kill-on-close Job Object and macOS behind a sentinel", () => {
     const spawnProcess = vi.fn(() => ({ pid: 42 }) as unknown as ChildProcess);
-    const launch = { command: "/payload/Scient", args: [], cwd: "/payload" };
+    const launch = {
+      command: "/payload/Scient",
+      args: [],
+      cwd: "/payload",
+      windowsJobAssemblyPath: "C:\\payload\\packaged-startup-windows-job.dll",
+    };
 
     spawnContainedPackagedDesktop(
       launch,
@@ -793,6 +916,8 @@ describe("packaged desktop startup verification", () => {
       expect.arrayContaining([
         "-File",
         expect.stringMatching(/packaged-startup-windows-job\.ps1$/),
+        "-AssemblyPath",
+        launch.windowsJobAssemblyPath,
       ]),
     );
     expect(windowsCall[2]).toEqual(expect.objectContaining({ detached: false }));
@@ -805,6 +930,11 @@ describe("packaged desktop startup verification", () => {
     expect(jobScript).toContain("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE");
     expect(jobScript).toContain("PROC_THREAD_ATTRIBUTE_JOB_LIST");
     expect(jobScript).toContain("SCIENT_PACKAGED_STARTUP_SENTINEL_PID");
+    expect(jobScript).toContain("Add-Type -Path $AssemblyPath");
+    expect(jobScript.indexOf("Add-Type -TypeDefinition $source")).toBeLessThan(
+      jobScript.indexOf("exit 0"),
+    );
+    expect(jobScript.indexOf("exit 0")).toBeLessThan(jobScript.indexOf("Add-Type -Path"));
     expect(jobScript).toContain("[string]$PID");
     expect(jobScript).not.toContain("AssignProcessToJobObject");
     expect(jobScript.indexOf("if (!UpdateProcThreadAttribute(")).toBeLessThan(
@@ -866,9 +996,13 @@ describe("packaged desktop startup verification", () => {
         ],
         { env: { ...process.env, SCIENT_AUTHORITY_PROBE_SOURCE: source }, stdio: "pipe" },
       );
+      const windowsJobAssemblyPath = await prepareWindowsJobLauncherAssembly(
+        root,
+        new AbortController().signal,
+      );
 
       const launcher = spawnContainedPackagedDesktop(
-        { command: executable, args: [], cwd: root },
+        { command: executable, args: [], cwd: root, windowsJobAssemblyPath },
         {
           ...process.env,
           SCIENT_HOME: join(root, "scient-home"),
@@ -903,6 +1037,10 @@ describe("packaged desktop startup verification", () => {
         "v1.0",
         "powershell.exe",
       );
+      const windowsJobAssemblyPath = await prepareWindowsJobLauncherAssembly(
+        root,
+        new AbortController().signal,
+      );
       const launcher = spawn(
         powershell,
         [
@@ -913,6 +1051,8 @@ describe("packaged desktop startup verification", () => {
           "Bypass",
           "-File",
           fileURLToPath(new URL("./lib/packaged-startup-windows-job.ps1", import.meta.url)),
+          "-AssemblyPath",
+          windowsJobAssemblyPath,
           "-ExecutablePath",
           powershell,
           "-WorkingDirectory",

@@ -38,6 +38,7 @@ import { useFocusedChatContext } from "../focusedChatContext";
 import { useFeedbackDialogStore } from "../feedbackDialogStore";
 import type { FeedbackThreadContext } from "../feedback";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { markPackagedStartupRendererReadyAfterShellHydration } from "../lib/packagedStartupRendererReadiness";
 import {
   serverConfigQueryOptions,
   serverQueryKeys,
@@ -686,6 +687,8 @@ function EventRouter() {
     let reconcileThreadSubscriptionsChain = Promise.resolve();
     let scopedSubscriptionsStarted = false;
     let scopedSubscriptionsStartInFlight: Promise<void> | null = null;
+    let clearPackagedStartupRendererReady: (() => void) | null = null;
+    let packagedStartupRendererReadinessInFlight: Promise<() => void> | null = null;
 
     const beginThreadSubscription = (threadId: ThreadId) => {
       threadSnapshotSequenceById.delete(threadId);
@@ -1164,7 +1167,24 @@ function EventRouter() {
         if (disposed) {
           return;
         }
-        await loadShellSnapshotOnce();
+        packagedStartupRendererReadinessInFlight ??=
+          markPackagedStartupRendererReadyAfterShellHydration({
+            hydrateShell: loadShellSnapshotOnce,
+            shouldMark: () => !disposed,
+          });
+        const readiness = packagedStartupRendererReadinessInFlight;
+        try {
+          clearPackagedStartupRendererReady ??= await readiness;
+        } finally {
+          if (packagedStartupRendererReadinessInFlight === readiness) {
+            packagedStartupRendererReadinessInFlight = null;
+          }
+        }
+        if (disposed) {
+          clearPackagedStartupRendererReady?.();
+          clearPackagedStartupRendererReady = null;
+          return;
+        }
 
         if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
           return;
@@ -1290,6 +1310,8 @@ function EventRouter() {
     return () => {
       flushPendingDomainEvents();
       disposed = true;
+      clearPackagedStartupRendererReady?.();
+      clearPackagedStartupRendererReady = null;
       window.clearTimeout(shellBootstrapFallbackTimer);
       window.clearInterval(threadDetailCatchupInterval);
       needsProviderInvalidation = false;
