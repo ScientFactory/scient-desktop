@@ -50,8 +50,13 @@ import {
 } from "../lib/stagedDraftNavigation";
 import { resetStudioProjectPrewarmStateForTests } from "../lib/studioProjects";
 import { newThreadNavigationRequestKey } from "../lib/threadBootstrap";
+import { splitViewPaneScopeId } from "../lib/chatPaneScope";
 import { getRouter } from "../router";
-import { useSplitViewStore } from "../splitViewStore";
+import {
+  resolveSplitViewPaneIdForThread,
+  resolveSplitViewThreadIds,
+  useSplitViewStore,
+} from "../splitViewStore";
 import { useStore } from "../store";
 import {
   createShellSnapshotFromReadModel,
@@ -4583,6 +4588,132 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("activates an occupied project draft through the owning split pane", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withOpenProjectPickerFixtures(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-project-picker-split-ownership" as MessageId,
+          targetText: "project picker split ownership",
+        }),
+      ),
+    });
+
+    try {
+      await page.getByLabelText("Create new thread in Project").click();
+      const sourcePath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a split source draft.",
+      );
+      const sourceThreadId = sourcePath.slice(1) as ThreadId;
+      useComposerDraftStore.getState().setPrompt(sourceThreadId, "preserve split source draft");
+      useComposerDraftStore.getState().setProjectDraftThreadId(OTHER_PROJECT_ID, OTHER_THREAD_ID);
+      useComposerDraftStore.getState().setPrompt(OTHER_THREAD_ID, "preserve split target draft");
+
+      const splitViewId = useSplitViewStore.getState().createFromDrop({
+        sourceThreadId,
+        ownerProjectId: PROJECT_ID,
+        droppedThreadId: THREAD_ID,
+        direction: "horizontal",
+        side: "second",
+      });
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: sourceThreadId },
+        search: () => ({ splitViewId }),
+      });
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll("[data-split-chat-pane]")).toHaveLength(2);
+        expect(mounted.router.state.location.pathname).toBe(sourcePath);
+      });
+
+      const splitSourceTrigger = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-split-chat-pane]"))
+            .find(
+              (pane) =>
+                pane.querySelector('[data-testid="empty-landing-heading-project-trigger"]') !==
+                null,
+            )
+            ?.querySelector<HTMLElement>('[data-testid="empty-landing-heading-project-trigger"]') ??
+          null,
+        "Unable to find the source project picker inside the split pane.",
+      );
+      splitSourceTrigger.click();
+      await page.getByText("other", { exact: true }).click();
+      await vi.waitFor(() => {
+        const splitView = useSplitViewStore.getState().splitViewsById[splitViewId];
+        expect(splitView).toBeDefined();
+        expect(resolveSplitViewThreadIds(splitView!)).toEqual(
+          expect.arrayContaining([THREAD_ID, OTHER_THREAD_ID]),
+        );
+        expect(resolveSplitViewThreadIds(splitView!)).not.toContain(sourceThreadId);
+        expect(mounted.router.state.location.pathname).toBe(`/${OTHER_THREAD_ID}`);
+      });
+      expect(useComposerDraftStore.getState().draftsByThreadId[sourceThreadId]?.prompt).toBe(
+        "preserve split source draft",
+      );
+      expect(useComposerDraftStore.getState().draftsByThreadId[OTHER_THREAD_ID]?.prompt).toBe(
+        "preserve split target draft",
+      );
+      await vi.waitFor(() => {
+        expect(document.activeElement?.getAttribute("data-testid")).toBe("composer-editor");
+      });
+
+      const splitAfterReplacement = useSplitViewStore.getState().splitViewsById[splitViewId]!;
+      const originalServerPaneId = resolveSplitViewPaneIdForThread(
+        splitAfterReplacement,
+        THREAD_ID,
+      );
+      expect(originalServerPaneId).not.toBeNull();
+      useSplitViewStore
+        .getState()
+        .replacePaneThread(splitViewId, originalServerPaneId!, sourceThreadId);
+      useSplitViewStore.getState().setFocusedPane(splitViewId, originalServerPaneId!);
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: sourceThreadId },
+        search: () => ({ splitViewId }),
+      });
+      await vi.waitFor(() => {
+        expect(mounted.router.state.location.pathname).toBe(sourcePath);
+        expect(
+          document.querySelector(
+            `form[data-chat-pane-scope="${splitViewPaneScopeId(splitViewId, originalServerPaneId!)}"]`,
+          ),
+        ).not.toBeNull();
+      });
+
+      const existingTargetTrigger = await waitForElement(() => {
+        const sourceComposerForm = document.querySelector<HTMLFormElement>(
+          `form[data-chat-pane-scope="${splitViewPaneScopeId(splitViewId, originalServerPaneId!)}"]`,
+        );
+        return (
+          sourceComposerForm
+            ?.closest("[data-split-chat-pane]")
+            ?.querySelector<HTMLElement>('[data-testid="empty-landing-heading-project-trigger"]') ??
+          null
+        );
+      }, "Unable to find the source picker before focusing the existing target pane.");
+      existingTargetTrigger.click();
+      await page.getByText("other", { exact: true }).click();
+      await vi.waitFor(() => {
+        const splitView = useSplitViewStore.getState().splitViewsById[splitViewId];
+        expect(splitView).toBeDefined();
+        expect(resolveSplitViewThreadIds(splitView!).toSorted()).toEqual(
+          [sourceThreadId, OTHER_THREAD_ID].toSorted(),
+        );
+        expect(mounted.router.state.location.pathname).toBe(`/${OTHER_THREAD_ID}`);
+        expect(splitView?.focusedPaneId).toBe(
+          resolveSplitViewPaneIdForThread(splitView!, OTHER_THREAD_ID),
+        );
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("coalesces repeated Studio new-chat clicks and stays in Studio after navigation settles", async () => {
     // Studio is hidden by default; this Studio-specific regression test opts in explicitly.
     localStorage.setItem(
@@ -5352,6 +5483,274 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(createCommand).toMatchObject({
             projectId: PROJECT_ID,
           });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await mounted.cleanup();
+    }
+  });
+
+  it("rejects a raw workspace choice while that draft is still in provider preflight", async () => {
+    const unavailableProvider = {
+      provider: "codex" as const,
+      status: "error" as const,
+      available: false,
+      authStatus: "unauthenticated" as const,
+      message: "Codex is temporarily unavailable.",
+      checkedAt: NOW_ISO,
+    };
+    const availableProvider = {
+      provider: "codex" as const,
+      status: "ready" as const,
+      available: true,
+      authStatus: "authenticated" as const,
+      checkedAt: NOW_ISO,
+      runtime: {
+        source: "system" as const,
+        managedVersion: null,
+        canInstall: false,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: null,
+      },
+    };
+    let resolveProviderRefresh!: (value: { providers: [typeof availableProvider] }) => void;
+    const providerRefresh = new Promise<{ providers: [typeof availableProvider] }>((resolve) => {
+      resolveProviderRefresh = resolve;
+    });
+    const refreshProviders = vi.fn<NativeApi["server"]["refreshProviders"]>(() => providerRefresh);
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: HOME_PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+          workspaceOrigin: "intentional",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [HOME_PROJECT_ID]: THREAD_ID },
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withHomeChatProject(createDraftOnlySnapshot()),
+      configureFixture: (nextFixture) => {
+        nextFixture.welcome = {
+          ...nextFixture.welcome,
+          homeDir: "/Users/tester",
+          chatWorkspaceRoot: "/Users/tester/Documents/Synara",
+        };
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [unavailableProvider],
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        projects: {
+          ...api.projects,
+          listDirectories: vi.fn(async () => ({
+            entries: [
+              {
+                path: "Race Folder",
+                name: "Race Folder",
+                kind: "directory" as const,
+                hasChildren: false,
+              },
+            ],
+          })),
+        },
+        server: { ...api.server, refreshProviders },
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      useComposerDraftStore.getState().setModelSelection(THREAD_ID, {
+        provider: "codex",
+        model: "gpt-5",
+      });
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "send from the original Home scope");
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(composerEditor.textContent ?? "").toContain("send from the original Home scope");
+      });
+
+      const workspacePickerTrigger = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-testid="workspace-picker-trigger"]'),
+        "Unable to find the Home workspace picker before the send race.",
+      );
+      workspacePickerTrigger.click();
+      const rawFolderOption = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="combobox-item"]')).find(
+            (item) => item.textContent?.trim() === "Race Folder",
+          ) ?? null,
+        "Unable to find the raw workspace option.",
+      );
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find composer form.",
+      );
+      composerForm.requestSubmit();
+      rawFolderOption.click();
+
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledOnce());
+      const pickerError = await waitForElement(
+        () => document.querySelector<HTMLElement>('[role="alert"]'),
+        "The rejected workspace mutation should reopen the picker with an error.",
+      );
+      expect(pickerError.textContent).toContain("Wait for the current message to finish preparing");
+      expect(useComposerDraftStore.getState().getDraftThread(THREAD_ID)).toMatchObject({
+        projectId: HOME_PROJECT_ID,
+        envMode: "local",
+        worktreePath: null,
+      });
+
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await vi.waitFor(
+        () => {
+          const createCommand = wsRequests
+            .map(readDispatchedCommand)
+            .find((command) => command?.type === "thread.create" && command.threadId === THREAD_ID);
+          expect(createCommand).toMatchObject({
+            envMode: "local",
+            worktreePath: null,
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await mounted.cleanup();
+    }
+  });
+
+  it("lets the next same-pane draft change projects while the previous draft send is pending", async () => {
+    const unavailableProvider = {
+      provider: "codex" as const,
+      status: "error" as const,
+      available: false,
+      authStatus: "unauthenticated" as const,
+      message: "Codex is temporarily unavailable.",
+      checkedAt: NOW_ISO,
+    };
+    const availableProvider = {
+      provider: "codex" as const,
+      status: "ready" as const,
+      available: true,
+      authStatus: "authenticated" as const,
+      checkedAt: NOW_ISO,
+      runtime: {
+        source: "system" as const,
+        managedVersion: null,
+        canInstall: false,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: null,
+      },
+    };
+    let resolveProviderRefresh!: (value: { providers: [typeof availableProvider] }) => void;
+    const providerRefresh = new Promise<{ providers: [typeof availableProvider] }>((resolve) => {
+      resolveProviderRefresh = resolve;
+    });
+    const refreshProviders = vi.fn<NativeApi["server"]["refreshProviders"]>(() => providerRefresh);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withHomeChatProject(
+        withOpenProjectPickerFixtures(
+          createSnapshotForTargetUser({
+            targetMessageId: "msg-user-project-picker-thread-owner-race" as MessageId,
+            targetText: "project picker thread owner race",
+          }),
+        ),
+      ),
+      configureFixture: (nextFixture) => {
+        nextFixture.welcome = {
+          ...nextFixture.welcome,
+          homeDir: "/Users/tester",
+          chatWorkspaceRoot: "/Users/tester/Documents/Synara",
+        };
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [unavailableProvider],
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        server: { ...api.server, refreshProviders },
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await page.getByLabelText("Create new thread in Project").click();
+      const sourcePath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to the source draft.",
+      );
+      const sourceThreadId = sourcePath.slice(1) as ThreadId;
+      useComposerDraftStore.getState().setModelSelection(sourceThreadId, {
+        provider: "codex",
+        model: "gpt-5",
+      });
+      useComposerDraftStore.getState().setPrompt(sourceThreadId, "send from source draft");
+      const sourceComposer = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(sourceComposer.textContent ?? "").toContain("send from source draft");
+      });
+      const sourceForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find source composer form.",
+      );
+      sourceForm.requestSubmit();
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledOnce());
+
+      const destinationThreadId = "00000000-0000-4000-8000-000000000129" as ThreadId;
+      useComposerDraftStore
+        .getState()
+        .setProjectDraftThreadId(HOME_PROJECT_ID, destinationThreadId);
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: destinationThreadId },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${destinationThreadId}`,
+        "The destination draft should own the pane while the source send remains pending.",
+      );
+
+      await page.getByTestId("workspace-picker-trigger").click();
+      await page.getByText("other", { exact: true }).click();
+      await vi.waitFor(() => {
+        expect(useComposerDraftStore.getState().getDraftThread(destinationThreadId)).toMatchObject({
+          projectId: OTHER_PROJECT_ID,
+          envMode: "local",
+          worktreePath: null,
+        });
+      });
+      expect(useComposerDraftStore.getState().getDraftThread(sourceThreadId)).toMatchObject({
+        projectId: PROJECT_ID,
+      });
+
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await vi.waitFor(
+        () => {
+          const createCommand = wsRequests
+            .map(readDispatchedCommand)
+            .find(
+              (command) => command?.type === "thread.create" && command.threadId === sourceThreadId,
+            );
+          expect(createCommand).toMatchObject({ projectId: PROJECT_ID });
         },
         { timeout: 8_000, interval: 16 },
       );

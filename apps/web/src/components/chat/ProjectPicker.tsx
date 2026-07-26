@@ -44,7 +44,7 @@ interface ProjectPickerProps {
   selectedProjectId?: ProjectId | null;
   selectedWorkspaceRoot?: string | null;
   onSelectProject?: ((projectId: ProjectId) => void | Promise<void>) | undefined;
-  onSelectWorkspaceRoot?: ((workspaceRoot: string) => void) | undefined;
+  onSelectWorkspaceRoot?: ((workspaceRoot: string) => void | Promise<void>) | undefined;
   onCreateProject?: (() => void | Promise<void>) | undefined;
   onResetToHome?: (() => void | Promise<void>) | undefined;
   /** Class override for the trigger button (e.g. tighter height in the composer tray). */
@@ -271,6 +271,17 @@ export const ProjectPicker = memo(function ProjectPicker({
     }
   }, []);
 
+  const reopenWithError = useCallback((error: unknown, fallback: string) => {
+    const message = error instanceof Error ? error.message : fallback;
+    // Combobox item activation can emit its own close after the item's click handler. Reopen in
+    // the next task so a rejected mutation keeps recoverable feedback visible instead of letting
+    // the primitive's trailing close erase it.
+    globalThis.setTimeout(() => {
+      setOpen(true);
+      setErrorMessage(message);
+    }, 0);
+  }, []);
+
   useEffect(() => {
     if (
       isProjectSelectionMode ||
@@ -335,15 +346,33 @@ export const ProjectPicker = memo(function ProjectPicker({
             setErrorMessage(null);
           })
           .catch((error) => {
-            setOpen(true);
-            setErrorMessage(error instanceof Error ? error.message : "Unable to select project.");
+            reopenWithError(error, "Unable to select project.");
           });
       } catch (error) {
-        setOpen(true);
-        setErrorMessage(error instanceof Error ? error.message : "Unable to select project.");
+        reopenWithError(error, "Unable to select project.");
       }
     },
-    [isProjectSelectionMode, onSelectProject, onSelectWorkspaceRoot],
+    [isProjectSelectionMode, onSelectProject, onSelectWorkspaceRoot, reopenWithError],
+  );
+
+  const handleSelectWorkspaceRoot = useCallback(
+    (workspaceRoot: string) => {
+      setOpen(false);
+      setQuery("");
+      setErrorMessage(null);
+      try {
+        void Promise.resolve(onSelectWorkspaceRoot?.(workspaceRoot))
+          .then(() => {
+            setErrorMessage(null);
+          })
+          .catch((error) => {
+            reopenWithError(error, "Unable to select folder.");
+          });
+      } catch (error) {
+        reopenWithError(error, "Unable to select folder.");
+      }
+    },
+    [onSelectWorkspaceRoot, reopenWithError],
   );
 
   const handleAddNewProject = useCallback(async () => {
@@ -371,7 +400,7 @@ export const ProjectPicker = memo(function ProjectPicker({
         setIsPicking(false);
         return;
       }
-      onSelectWorkspaceRoot?.(pickedPath);
+      await onSelectWorkspaceRoot?.(pickedPath);
       setIsPicking(false);
     } catch (error) {
       setIsPicking(false);
@@ -562,10 +591,7 @@ export const ProjectPicker = memo(function ProjectPicker({
                     key={absolutePath}
                     index={filteredActiveFolderOptions.length + index}
                     value={absolutePath}
-                    onClick={() => {
-                      onSelectWorkspaceRoot?.(absolutePath);
-                      setOpen(false);
-                    }}
+                    onClick={() => handleSelectWorkspaceRoot(absolutePath)}
                     className={cn(
                       absolutePath === selectedWorkspaceRoot &&
                         "bg-[var(--color-background-elevated-secondary)] text-[var(--color-text-foreground)]",

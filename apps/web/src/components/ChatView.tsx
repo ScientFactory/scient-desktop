@@ -1063,6 +1063,7 @@ interface ChatViewProps {
     onClick: () => void;
   } | null;
   onChangeThreadInSplitPane?: () => void;
+  onActivateThreadInSplitPane?: (threadId: ThreadId) => void;
   onCloseThreadPane?: () => void;
 }
 
@@ -1123,6 +1124,7 @@ export default function ChatView({
   onMaximizeSurface,
   viewModeAction = null,
   onChangeThreadInSplitPane,
+  onActivateThreadInSplitPane,
   onCloseThreadPane,
 }: ChatViewProps) {
   const markThreadVisited = useStore((store) => store.markThreadVisited);
@@ -1501,9 +1503,9 @@ export default function ChatView({
   const localDirectoryMenuRef = useRef<ComposerLocalDirectoryMenuHandle | null>(null);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
-  const sendInFlightRef = useRef(false);
-  const sendPreflightInFlightRef = useRef(false);
-  const sendOperationInFlightRef = useRef(false);
+  const sendInFlightThreadIdsRef = useRef(new Set<ThreadId>());
+  const sendPreflightInFlightThreadIdsRef = useRef(new Set<ThreadId>());
+  const sendOperationInFlightThreadIdsRef = useRef(new Set<ThreadId>());
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const activatedThreadIdRef = useRef<ThreadId | null>(null);
@@ -7299,8 +7301,8 @@ export default function ChatView({
       isConnecting ||
       (isVoiceTranscribing && voicePromptOverride === undefined) ||
       emptyDraftProjectRequestInFlightRef.current !== null ||
-      sendPreflightInFlightRef.current ||
-      sendInFlightRef.current
+      sendPreflightInFlightThreadIdsRef.current.has(threadId) ||
+      sendInFlightThreadIdsRef.current.has(threadId)
     ) {
       return false;
     }
@@ -7647,7 +7649,7 @@ export default function ChatView({
         setPendingAutomationConversation(null);
       }
     }
-    sendPreflightInFlightRef.current = true;
+    sendPreflightInFlightThreadIdsRef.current.add(threadId);
     const sendProviderAvailability = await (async () => {
       try {
         return await resolveProviderSendAvailabilityWithRefresh({
@@ -7656,7 +7658,7 @@ export default function ChatView({
           refreshStatuses: () => refreshProviderStatuses({ silent: true }),
         });
       } finally {
-        sendPreflightInFlightRef.current = false;
+        sendPreflightInFlightThreadIdsRef.current.delete(threadId);
       }
     })();
     if (!sendProviderAvailability.usable) {
@@ -7921,7 +7923,7 @@ export default function ChatView({
       : null;
     const worktreeSetupScriptName = setupScriptForWorktree?.name ?? null;
 
-    sendInFlightRef.current = true;
+    sendInFlightThreadIdsRef.current.add(threadIdForSend);
     beginLocalDispatch(
       baseBranchForWorktree
         ? { worktreeSetupStepId: "create-worktree", setupScriptName: worktreeSetupScriptName }
@@ -8308,7 +8310,7 @@ export default function ChatView({
         err instanceof Error ? err.message : "Failed to send message.",
       );
     });
-    sendInFlightRef.current = false;
+    sendInFlightThreadIdsRef.current.delete(threadIdForSend);
     if (!turnStartSucceeded) {
       if (baseBranchForWorktree) {
         scheduleFailedWorktreeSetupDispatchReset();
@@ -8324,15 +8326,15 @@ export default function ChatView({
     queuedTurn?: QueuedComposerChatTurn,
     voicePromptOverride?: string,
   ): Promise<boolean> => {
-    if (sendOperationInFlightRef.current) {
+    if (sendOperationInFlightThreadIdsRef.current.has(threadId)) {
       e?.preventDefault();
       return false;
     }
-    sendOperationInFlightRef.current = true;
+    sendOperationInFlightThreadIdsRef.current.add(threadId);
     try {
       return await runSend(e, dispatchMode, queuedTurn, voicePromptOverride);
     } finally {
-      sendOperationInFlightRef.current = false;
+      sendOperationInFlightThreadIdsRef.current.delete(threadId);
     }
   };
   sendVoiceTranscriptRef.current = (voicePrompt) =>
@@ -8613,7 +8615,7 @@ export default function ChatView({
       !isServerThread ||
       isSendBusy ||
       isConnecting ||
-      sendInFlightRef.current
+      sendInFlightThreadIdsRef.current.has(threadId)
     ) {
       return false;
     }
@@ -8633,7 +8635,7 @@ export default function ChatView({
       text: trimmed,
     });
 
-    sendInFlightRef.current = true;
+    sendInFlightThreadIdsRef.current.add(threadIdForSend);
     beginLocalDispatch();
     setThreadError(threadIdForSend, null);
     setOptimisticUserMessages((existing) => [
@@ -8713,7 +8715,7 @@ export default function ChatView({
         planSidebarDismissedForTurnRef.current = null;
         setPlanSidebarOpen(true);
       }
-      sendInFlightRef.current = false;
+      sendInFlightThreadIdsRef.current.delete(threadIdForSend);
       return true;
     } catch (err) {
       setOptimisticUserMessages((existing) =>
@@ -8723,7 +8725,7 @@ export default function ChatView({
         threadIdForSend,
         err instanceof Error ? err.message : "Failed to send plan follow-up.",
       );
-      sendInFlightRef.current = false;
+      sendInFlightThreadIdsRef.current.delete(threadIdForSend);
       resetLocalDispatch();
       return false;
     }
@@ -8752,7 +8754,7 @@ export default function ChatView({
         setThreadError(activeThread.id, "Only the latest rollbackable user message can be edited.");
         return false;
       }
-      if (isSendBusy || isConnecting || sendInFlightRef.current) {
+      if (isSendBusy || isConnecting || sendInFlightThreadIdsRef.current.has(activeThread.id)) {
         setThreadError(activeThread.id, "Wait for the current send to start before editing.");
         return false;
       }
@@ -8918,8 +8920,8 @@ export default function ChatView({
     }
     if (
       autoDispatchingQueuedTurnRef.current ||
-      sendInFlightRef.current ||
-      sendPreflightInFlightRef.current
+      sendInFlightThreadIdsRef.current.has(threadId) ||
+      sendPreflightInFlightThreadIdsRef.current.has(threadId)
     ) {
       // These guards are refs, so nothing re-triggers this effect once they
       // reset; poll until the in-flight send settles instead of leaving the
@@ -8965,7 +8967,7 @@ export default function ChatView({
       !isServerThread ||
       isSendBusy ||
       isConnecting ||
-      sendInFlightRef.current
+      sendInFlightThreadIdsRef.current.has(activeThread.id)
     ) {
       return;
     }
@@ -8987,10 +8989,10 @@ export default function ChatView({
       proposedPlan: activeProposedPlan,
     });
 
-    sendInFlightRef.current = true;
+    sendInFlightThreadIdsRef.current.add(activeThread.id);
     beginLocalDispatch();
     const finish = () => {
-      sendInFlightRef.current = false;
+      sendInFlightThreadIdsRef.current.delete(activeThread.id);
       resetLocalDispatch();
     };
 
@@ -9346,14 +9348,13 @@ export default function ChatView({
 
   const assertEmptyDraftProjectChangeAvailable = useCallback(() => {
     if (
-      sendOperationInFlightRef.current ||
-      sendPreflightInFlightRef.current ||
-      sendInFlightRef.current ||
-      isSendBusy
+      sendOperationInFlightThreadIdsRef.current.has(threadId) ||
+      sendPreflightInFlightThreadIdsRef.current.has(threadId) ||
+      sendInFlightThreadIdsRef.current.has(threadId)
     ) {
       throw new Error("Wait for the current message to finish preparing before changing projects.");
     }
-  }, [isSendBusy]);
+  }, [threadId]);
 
   useLayoutEffect(() => {
     // ChatView is keyed by pane scope and remains mounted when that pane changes
@@ -9393,9 +9394,14 @@ export default function ChatView({
         ? draftStore.getDraftThread(destinationThreadId)
         : null;
       if (destinationThreadId && destinationDraft && destinationThreadId !== threadId) {
+        const destinationRouteThreadId = destinationDraft.promotedTo ?? destinationThreadId;
+        if (surfaceMode === "split" && onActivateThreadInSplitPane) {
+          onActivateThreadInSplitPane(destinationRouteThreadId);
+          return;
+        }
         await navigate({
           to: "/$threadId",
-          params: { threadId: destinationDraft.promotedTo ?? destinationThreadId },
+          params: { threadId: destinationRouteThreadId },
         });
         return;
       }
@@ -9404,7 +9410,14 @@ export default function ChatView({
       }
       moveEmptyDraftToLocalProject(projectId);
     },
-    [isEmptyDraftProjectRequestCurrent, moveEmptyDraftToLocalProject, navigate, threadId],
+    [
+      isEmptyDraftProjectRequestCurrent,
+      moveEmptyDraftToLocalProject,
+      navigate,
+      onActivateThreadInSplitPane,
+      surfaceMode,
+      threadId,
+    ],
   );
 
   const handleResetWorkspaceToHome = useCallback(() => {
@@ -9526,6 +9539,7 @@ export default function ChatView({
 
   const handleSelectWorkspaceRoot = useCallback(
     (workspaceRoot: string) => {
+      assertEmptyDraftProjectChangeAvailable();
       emptyDraftProjectRequestRef.current += 1;
       if (isLocalDraftThread) {
         setDraftThreadContext(threadId, {
@@ -9546,6 +9560,7 @@ export default function ChatView({
     },
     [
       activeThread,
+      assertEmptyDraftProjectChangeAvailable,
       isLocalDraftThread,
       scheduleComposerFocus,
       setDraftThreadContext,

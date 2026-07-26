@@ -743,6 +743,7 @@ function DeferredChatView(props: {
     onClick: () => void;
   } | null;
   onChangeThread?: () => void;
+  onSelectThread?: (threadId: ThreadIdType) => void;
   onCloseThreadPane?: () => void;
   onMounted?: () => void;
 }) {
@@ -798,6 +799,7 @@ function DeferredChatView(props: {
       {...(props.onMaximize ? { onMaximizeSurface: props.onMaximize } : {})}
       {...(props.viewModeAction !== undefined ? { viewModeAction: props.viewModeAction } : {})}
       {...(props.onChangeThread ? { onChangeThreadInSplitPane: props.onChangeThread } : {})}
+      {...(props.onSelectThread ? { onActivateThreadInSplitPane: props.onSelectThread } : {})}
       {...(props.onCloseThreadPane ? { onCloseThreadPane: props.onCloseThreadPane } : {})}
     />
   );
@@ -896,6 +898,7 @@ function SplitPaneSurface(props: {
               onOpenTurnDiff={props.onOpenTurnDiff}
               onMaximize={props.onMaximize}
               onChangeThread={props.onChooseThread}
+              onSelectThread={props.onSelectThread}
               onCloseThreadPane={props.onCloseThreadPane}
               onMounted={props.onChatMounted}
             />
