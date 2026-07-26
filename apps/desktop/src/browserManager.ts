@@ -195,11 +195,44 @@ function canonicalLocalHtmlSourcePath(value: string | null | undefined): string 
   }
 }
 
+function localHtmlSourceFingerprint(sourcePath: string): string | null {
+  try {
+    const stats = statSync(sourcePath, { bigint: true });
+    return [stats.dev, stats.ino, stats.size, stats.mtimeNs, stats.ctimeNs].join(":");
+  } catch {
+    return null;
+  }
+}
+
+function captureLocalHtmlSourceFingerprints(
+  sourcePaths: readonly string[],
+): ReadonlyMap<string, string | null> {
+  return new Map(
+    [...new Set(sourcePaths)].map((sourcePath) => [
+      sourcePath,
+      localHtmlSourceFingerprint(sourcePath),
+    ]),
+  );
+}
+
+function localHtmlSourceFingerprintsChanged(
+  fingerprints: ReadonlyMap<string, string | null>,
+): boolean {
+  return [...fingerprints].some(
+    ([sourcePath, fingerprint]) => localHtmlSourceFingerprint(sourcePath) !== fingerprint,
+  );
+}
+
 function validatePreparedLocalHtmlSourceAuthority(input: {
   displayUrl: string | null | undefined;
   sourceIdentity: string | null | undefined;
   sourceRoot: string | null | undefined;
-}): { sourceIdentity: string; sourceRoot: string } {
+}): {
+  sourceIdentity: string;
+  sourceRoot: string;
+  signedSourceIdentity: string;
+  signedSourceRoot: string;
+} {
   const preparedSourceIdentity = normalizedLocalHtmlSourcePath(input.sourceIdentity);
   const preparedSourceRoot = normalizedLocalHtmlSourcePath(input.sourceRoot);
   const currentDisplayIdentity = canonicalLocalHtmlSourcePath(input.displayUrl);
@@ -216,7 +249,14 @@ function validatePreparedLocalHtmlSourceAuthority(input: {
   ) {
     throw new Error("The local HTML preview source identity changed after preparation.");
   }
-  return { sourceIdentity: preparedSourceIdentity, sourceRoot: preparedSourceRoot };
+  // Comparisons are case-folded on Windows, but the capability proof must use
+  // the exact case-preserving strings issued and signed by the server.
+  return {
+    sourceIdentity: preparedSourceIdentity,
+    sourceRoot: preparedSourceRoot,
+    signedSourceIdentity: input.sourceIdentity!.trim(),
+    signedSourceRoot: input.sourceRoot!.trim(),
+  };
 }
 
 function isSameLocalHtmlSource(left: BrowserTabState, right: BrowserTabState): boolean {
@@ -334,7 +374,11 @@ function createBrowserTab(
 ): BrowserTabState {
   const sourceAuthority =
     kind === "local-html"
-      ? validatePreparedLocalHtmlSourceAuthority({ displayUrl, sourceIdentity, sourceRoot })
+      ? validatePreparedLocalHtmlSourceAuthority({
+          displayUrl,
+          sourceIdentity,
+          sourceRoot,
+        })
       : null;
   return {
     id: Crypto.randomUUID(),
@@ -346,7 +390,12 @@ function createBrowserTab(
           previewCwd: previewCwd.trim(),
           previewSessionSlot,
           sourceChangeGeneration: 0,
-          ...(sourceAuthority ?? {}),
+          ...(sourceAuthority
+            ? {
+                sourceIdentity: sourceAuthority.sourceIdentity,
+                sourceRoot: sourceAuthority.sourceRoot,
+              }
+            : {}),
           ...(localHtmlNetworkPolicy ? { localHtmlNetworkPolicy } : {}),
         }
       : {}),
@@ -599,8 +648,8 @@ export class DesktopBrowserManager {
       .update(
         serializeLocalHtmlCapabilityAuthority({
           previewUrl: input.url,
-          sourceIdentity: sourceAuthority.sourceIdentity,
-          sourceRoot: sourceAuthority.sourceRoot,
+          sourceIdentity: sourceAuthority.signedSourceIdentity,
+          sourceRoot: sourceAuthority.signedSourceRoot,
           watchedPaths: input.watchedPaths ?? [],
           allowedExternalUrls: input.allowedExternalUrls ?? [],
           networkPolicy: input.localHtmlNetworkPolicy,
@@ -1019,17 +1068,7 @@ export class DesktopBrowserManager {
     // paths before registration, then verify them once the current turn has
     // completed so an atomic rename in that narrow startup window cannot be
     // missed. Subsequent changes are handled by the directory watchers below.
-    const sourceFingerprint = (sourcePath: string): string | null => {
-      try {
-        const stats = statSync(sourcePath, { bigint: true });
-        return [stats.dev, stats.ino, stats.size, stats.mtimeNs, stats.ctimeNs].join(":");
-      } catch {
-        return null;
-      }
-    };
-    const startupFingerprints = new Map(
-      [...normalizedPaths].map((sourcePath) => [sourcePath, sourceFingerprint(sourcePath)]),
-    );
+    const startupFingerprints = captureLocalHtmlSourceFingerprints([...normalizedPaths]);
 
     const existingWatchDirectoryCount = [...this.localHtmlSourceWatches.values()].reduce(
       (total, existingWatch) => total + existingWatch.watchers.length,
@@ -1072,11 +1111,7 @@ export class DesktopBrowserManager {
       this.localHtmlSourceWatches.set(buildRuntimeKey(threadId, tab.id), sourceWatch);
       sourceWatch.startupVerificationTimer = setTimeout(() => {
         sourceWatch.startupVerificationTimer = null;
-        if (
-          [...startupFingerprints].some(
-            ([sourcePath, fingerprint]) => sourceFingerprint(sourcePath) !== fingerprint,
-          )
-        ) {
+        if (localHtmlSourceFingerprintsChanged(startupFingerprints)) {
           notifyChanged();
         }
       }, 0);
@@ -1758,7 +1793,10 @@ export class DesktopBrowserManager {
       syncThreadLastError(state);
       this.markThreadStateChanged(input.threadId);
       this.emitState(input.threadId);
-      void this.loadTab(input.threadId, tab.id, { force: true, runtime }).finally(() => {
+      void this.loadTab(input.threadId, tab.id, {
+        force: true,
+        runtime,
+      }).finally(() => {
         if (retryPartition) {
           this.previewSessionRetries.delete(retryPartition);
         }
@@ -1922,7 +1960,9 @@ export class DesktopBrowserManager {
         ? { watchDiscoveryLimited: input.watchDiscoveryLimited }
         : {}),
       ...(input.allowedExternalUrls
-        ? { allowedExternalUrls: normalizedLocalHtmlExternalUrls(input.allowedExternalUrls) }
+        ? {
+            allowedExternalUrls: normalizedLocalHtmlExternalUrls(input.allowedExternalUrls),
+          }
         : {}),
     };
   }
@@ -2015,6 +2055,13 @@ export class DesktopBrowserManager {
       throw new Error("The local HTML preview is no longer available.");
     }
     const sourceGenerationAtStart = previousTab.sourceChangeGeneration ?? 0;
+    // Capture before any asynchronous candidate work. This closes the handoff
+    // gap where an old fs.watch event has not reached its debounce timer before
+    // the old watcher is sampled and the replacement watcher takes its baseline.
+    const sourceFingerprintsAtReplacementStart = captureLocalHtmlSourceFingerprints([
+      ...(input.sourceIdentity ? [input.sourceIdentity] : []),
+      ...input.watchedPaths,
+    ]);
 
     const nextSessionSlot = previousTab.previewSessionSlot === 1 ? 0 : 1;
     const candidateTab = createBrowserTab(
@@ -2161,6 +2208,18 @@ export class DesktopBrowserManager {
         input.watchedPaths,
         input.watchDiscoveryLimited,
       );
+      const sourceChangedWithoutWatchNotification = localHtmlSourceFingerprintsChanged(
+        sourceFingerprintsAtReplacementStart,
+      );
+      if (sourceChangedWithoutWatchNotification) {
+        candidateTab.sourceChanged = true;
+        if (
+          !pendingDebouncedSourceChange &&
+          (previousTab.sourceChangeGeneration ?? 0) <= sourceGenerationAtStart
+        ) {
+          candidateTab.sourceChangeGeneration = (candidateTab.sourceChangeGeneration ?? 0) + 1;
+        }
+      }
       if (previousSourceWatch) this.disposeLocalHtmlSourceWatch(previousSourceWatch);
 
       syncThreadLastError(state);
@@ -3041,7 +3100,10 @@ export class DesktopBrowserManager {
     }
 
     const didCreateWindow = (childWindow: BrowserWindow) => {
-      this.registerOAuthPopupWindow(childWindow, { threadId, tabId: runtime.tabId });
+      this.registerOAuthPopupWindow(childWindow, {
+        threadId,
+        tabId: runtime.tabId,
+      });
     };
     webContents.on("did-create-window", didCreateWindow);
     runtime.listenerDisposers.push(() => {

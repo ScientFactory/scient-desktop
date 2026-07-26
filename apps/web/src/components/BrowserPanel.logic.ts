@@ -122,11 +122,33 @@ export function reconcileHtmlPreviewGrants(
 ): HtmlPreviewGrantReconciliation {
   const active = new Map<string, string>();
 
+  const previewGrantOrigin = (value: string): string | null => {
+    try {
+      const url = new URL(value);
+      const hostname = url.hostname.toLowerCase();
+      return hostname === "127.0.0.1" ||
+        (hostname.startsWith("g-") && hostname.endsWith(".preview.localhost"))
+        ? url.origin
+        : null;
+    } catch {
+      return null;
+    }
+  };
+
   for (const tab of tabs) {
     if (tab.kind !== "artifact" && tab.kind !== "local-html") {
       continue;
     }
-    active.set(tab.id, previous.get(tab.id) ?? tab.url);
+    const previousUrl = previous.get(tab.id);
+    const previousOrigin = previousUrl ? previewGrantOrigin(previousUrl) : null;
+    const currentOrigin = previewGrantOrigin(tab.url);
+    // Ordinary navigation keeps the original capability grant. A successful
+    // local-preview replacement, however, installs a new capability origin on
+    // the same logical tab id; start tracking that new grant immediately.
+    active.set(
+      tab.id,
+      previousUrl && (!currentOrigin || currentOrigin === previousOrigin) ? previousUrl : tab.url,
+    );
   }
 
   const activeGrantOrigins = new Set(
@@ -139,14 +161,14 @@ export function reconcileHtmlPreviewGrants(
     }),
   );
   const revoked: string[] = [];
-  for (const [tabId, previewUrl] of previous) {
+  for (const previewUrl of previous.values()) {
     let grantOrigin = previewUrl;
     try {
       grantOrigin = new URL(previewUrl).origin;
     } catch {
       // Keep malformed values isolated by their exact string.
     }
-    if (!active.has(tabId) && !activeGrantOrigins.has(grantOrigin)) {
+    if (!activeGrantOrigins.has(grantOrigin)) {
       revoked.push(previewUrl);
     }
   }

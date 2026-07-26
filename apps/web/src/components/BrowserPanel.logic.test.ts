@@ -88,6 +88,34 @@ describe("reconcileHtmlPreviewGrants", () => {
     expect(result.active.size).toBe(0);
   });
 
+  it("rotates grant ownership when a refreshed capability keeps the logical tab id", () => {
+    const previousUrl = "http://g-old.preview.localhost:5000/index.html";
+    const replacementUrl = "http://g-new.preview.localhost:5000/index.html";
+    const result = reconcileHtmlPreviewGrants(new Map([["tab-local", previousUrl]]), [
+      { id: "tab-local", kind: "local-html", url: replacementUrl },
+    ]);
+
+    expect(result.active.get("tab-local")).toBe(replacementUrl);
+    expect(result.revoked).toEqual([previousUrl]);
+
+    const closed = reconcileHtmlPreviewGrants(result.active, []);
+    expect(closed.revoked).toEqual([replacementUrl]);
+  });
+
+  it("keeps the original preview grant when its tab navigates onto the web", () => {
+    const previousUrl = "http://g-preview.preview.localhost:5000/index.html";
+    const result = reconcileHtmlPreviewGrants(new Map([["tab-local", previousUrl]]), [
+      {
+        id: "tab-local",
+        kind: "local-html",
+        url: "https://example.com/details",
+      },
+    ]);
+
+    expect(result.active.get("tab-local")).toBe(previousUrl);
+    expect(result.revoked).toEqual([]);
+  });
+
   it("keeps a shared local-site grant until its final tab closes", () => {
     const previewUrl = "http://g-preview.preview.localhost:5000/index.html";
     const result = reconcileHtmlPreviewGrants(

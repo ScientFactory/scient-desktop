@@ -488,15 +488,30 @@ describe("DesktopBrowserManager reliability", () => {
     });
     const bounds = { x: 10, y: 20, width: 640, height: 480 };
 
-    manager.setPanelBounds({ threadId: THREAD_ID, bounds, surface: "native", occluded: false });
+    manager.setPanelBounds({
+      threadId: THREAD_ID,
+      bounds,
+      surface: "native",
+      occluded: false,
+    });
     const view = electron.createdViews.at(-1);
     expect(view).toBeDefined();
     if (!view) throw new Error("Expected a native local HTML view.");
     expect(view.setBounds).toHaveBeenLastCalledWith(bounds);
 
-    manager.setPanelBounds({ threadId: THREAD_ID, bounds, surface: "native", occluded: true });
+    manager.setPanelBounds({
+      threadId: THREAD_ID,
+      bounds,
+      surface: "native",
+      occluded: true,
+    });
     expect(view.setVisible).toHaveBeenLastCalledWith(false);
-    expect(view.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 0, width: 0, height: 0 });
+    expect(view.setBounds).toHaveBeenLastCalledWith({
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+    });
     const internals = manager as unknown as {
       activeThreadId: ThreadId | null;
       suspendTimers: Map<ThreadId, unknown>;
@@ -504,16 +519,31 @@ describe("DesktopBrowserManager reliability", () => {
     expect(internals.activeThreadId).toBe(THREAD_ID);
     expect(internals.suspendTimers.has(THREAD_ID)).toBe(false);
 
-    manager.setPanelBounds({ threadId: THREAD_ID, bounds, surface: "native", occluded: false });
+    manager.setPanelBounds({
+      threadId: THREAD_ID,
+      bounds,
+      surface: "native",
+      occluded: false,
+    });
     expect(view.setVisible).toHaveBeenLastCalledWith(true);
     expect(view.setBounds).toHaveBeenLastCalledWith(bounds);
 
-    manager.setPanelBounds({ threadId: THREAD_ID, bounds, surface: "native", occluded: true });
+    manager.setPanelBounds({
+      threadId: THREAD_ID,
+      bounds,
+      surface: "native",
+      occluded: true,
+    });
     const visibleCallsBeforeClose = view.setVisible.mock.calls.filter(
       ([visible]) => visible,
     ).length;
     manager.close({ threadId: THREAD_ID });
-    manager.setPanelBounds({ threadId: THREAD_ID, bounds, surface: "native", occluded: false });
+    manager.setPanelBounds({
+      threadId: THREAD_ID,
+      bounds,
+      surface: "native",
+      occluded: false,
+    });
     expect(view.setVisible.mock.calls.filter(([visible]) => visible)).toHaveLength(
       visibleCallsBeforeClose,
     );
@@ -683,11 +713,17 @@ describe("DesktopBrowserManager reliability", () => {
       expect.any(Function),
     );
     expect(previousSession?.removeAllListeners).not.toHaveBeenCalled();
-    expect(previousSession?.setProxy).not.toHaveBeenCalledWith({ mode: "direct" });
+    expect(previousSession?.setProxy).not.toHaveBeenCalledWith({
+      mode: "direct",
+    });
     const closingRequestGuard = previousSession?.webRequest.onBeforeRequest.mock.calls.at(-1)?.[0];
     const closingRequestResult = vi.fn();
     closingRequestGuard(
-      { url: "https://attacker.example/x.js", method: "GET", resourceType: "script" },
+      {
+        url: "https://attacker.example/x.js",
+        method: "GET",
+        resourceType: "script",
+      },
       closingRequestResult,
     );
     expect(closingRequestResult).toHaveBeenCalledWith({ cancel: true });
@@ -708,7 +744,9 @@ describe("DesktopBrowserManager reliability", () => {
     previousContents?.destroy();
     await vi.waitFor(() => {
       expect(previousSession?.clearStorageData).toHaveBeenCalledOnce();
-      expect(previousSession?.setProxy).toHaveBeenCalledWith({ mode: "direct" });
+      expect(previousSession?.setProxy).toHaveBeenCalledWith({
+        mode: "direct",
+      });
     });
     expect(previousSession?.webRequest.onBeforeRequest).toHaveBeenLastCalledWith(null);
     expect(previousSession?.webRequest.onCompleted).toHaveBeenLastCalledWith(null);
@@ -760,7 +798,9 @@ describe("DesktopBrowserManager reliability", () => {
       expect.any(Function),
     );
     expect(previewSession?.clearStorageData).not.toHaveBeenCalled();
-    expect(previewSession?.setProxy).not.toHaveBeenCalledWith({ mode: "direct" });
+    expect(previewSession?.setProxy).not.toHaveBeenCalledWith({
+      mode: "direct",
+    });
 
     electron.setHoldWebContentsDestruction(false);
     manager.close({ threadId: THREAD_ID });
@@ -1099,7 +1139,9 @@ describe("DesktopBrowserManager reliability", () => {
     await vi.waitFor(() => {
       expect(provisionalSession?.clearStorageData).toHaveBeenCalledOnce();
       expect(provisionalSession?.clearCache).toHaveBeenCalledOnce();
-      expect(provisionalSession?.setProxy).toHaveBeenCalledWith({ mode: "direct" });
+      expect(provisionalSession?.setProxy).toHaveBeenCalledWith({
+        mode: "direct",
+      });
     });
     releaseLoad?.();
     await expect(replacement).rejects.toThrow("could not be loaded");
@@ -1199,7 +1241,10 @@ describe("DesktopBrowserManager reliability", () => {
     await vi.waitFor(() => expect(releaseLoad).toBeTypeOf("function"));
     const provisionalContents = electron.createdWebContents.at(-1);
 
-    const remaining = manager.closeTab({ threadId: THREAD_ID, tabId: sourceTabId });
+    const remaining = manager.closeTab({
+      threadId: THREAD_ID,
+      tabId: sourceTabId,
+    });
 
     expect(remaining.open).toBe(true);
     expect(remaining.tabs).toHaveLength(1);
@@ -1431,7 +1476,12 @@ describe("DesktopBrowserManager reliability", () => {
       releaseLoad?.();
 
       await expect(replacement).resolves.toMatchObject({
-        tabs: [expect.objectContaining({ sourceChanged: true, sourceChangeGeneration: 1 })],
+        tabs: [
+          expect.objectContaining({
+            sourceChanged: true,
+            sourceChangeGeneration: 1,
+          }),
+        ],
       });
     } finally {
       manager.dispose();
@@ -1562,6 +1612,40 @@ describe("DesktopBrowserManager reliability", () => {
     }
   });
 
+  it("verifies a capability with the server-issued mixed-case source path", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "scient-html-case-proof-"));
+    const sourcePath = join(directory, "Report-MixedCase.HTML");
+    await writeFile(sourcePath, "<p>source</p>", "utf8");
+    const sourceIdentity = canonicalTestPath(sourcePath);
+    const sourceRoot = canonicalTestPath(directory);
+    const url = "http://g-24345678-2234-4123-8123-123456789abc.preview.localhost:43123/";
+    const manager = new NativeDesktopBrowserManager(TEST_LOCAL_HTML_CAPABILITY_KEY);
+    try {
+      expect(() =>
+        manager.open({
+          threadId: THREAD_ID,
+          initialUrl: url,
+          kind: "local-html",
+          displayUrl: sourcePath,
+          previewCwd: directory,
+          sourceIdentity,
+          sourceRoot,
+          watchedPaths: [sourceIdentity],
+          localHtmlNetworkPolicy: "sealed-interactive",
+          localHtmlCapabilityProof: localHtmlCapabilityProof({
+            url,
+            sourceIdentity,
+            sourceRoot,
+            watchedPaths: [sourceIdentity],
+          }),
+        }),
+      ).not.toThrow();
+    } finally {
+      manager.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("atomically installs a missing source and resolves stale caller tab ids by authority", async () => {
     const manager = new DesktopBrowserManager();
     const firstUrl = "http://g-30345678-2234-4123-8123-123456789abc.preview.localhost:43123/";
@@ -1588,7 +1672,10 @@ describe("DesktopBrowserManager reliability", () => {
     const first = await firstPromise;
     const concurrent = await concurrentPromise;
     const stableTabId = first.activeTabId ?? "";
-    expect(concurrent.tabs[0]).toMatchObject({ id: stableTabId, url: secondUrl });
+    expect(concurrent.tabs[0]).toMatchObject({
+      id: stableTabId,
+      url: secondUrl,
+    });
     const second = await manager.replaceLocalHtmlPreview({
       threadId: THREAD_ID,
       tabId: "retired-renderer-snapshot",
@@ -1918,6 +2005,71 @@ describe("DesktopBrowserManager reliability", () => {
         },
         { timeout: 2_000 },
       );
+    } finally {
+      manager.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("detects a source replacement while transferring watcher ownership", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "scient-html-watch-handoff-"));
+    const sourcePath = join(directory, "report.html");
+    const replacementPath = join(directory, "report.next.html");
+    await writeFile(sourcePath, "<p>before</p>", "utf8");
+    await writeFile(replacementPath, "<p>after</p>", "utf8");
+    const manager = new DesktopBrowserManager();
+    try {
+      const opened = manager.open({
+        threadId: THREAD_ID,
+        initialUrl: "http://g-73345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+        kind: "local-html",
+        displayUrl: sourcePath,
+        previewCwd: directory,
+        watchedPaths: [sourcePath],
+      });
+      let releaseLoad: (() => void) | undefined;
+      electron.setLoadURLImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseLoad = resolve;
+          }),
+      );
+      const replacement = manager.replaceLocalHtmlPreview({
+        threadId: THREAD_ID,
+        tabId: opened.activeTabId ?? "",
+        url: "http://g-74345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+        displayUrl: sourcePath,
+        previewCwd: directory,
+        watchedPaths: [sourcePath],
+      });
+      await vi.waitFor(() => expect(releaseLoad).toBeTypeOf("function"));
+
+      const internals = manager as unknown as {
+        localHtmlSourceWatches: Map<
+          string,
+          {
+            watchers: Array<{ close: () => void }>;
+            startupVerificationTimer: ReturnType<typeof setTimeout> | null;
+          }
+        >;
+      };
+      for (const sourceWatch of internals.localHtmlSourceWatches.values()) {
+        if (sourceWatch.startupVerificationTimer) {
+          clearTimeout(sourceWatch.startupVerificationTimer);
+          sourceWatch.startupVerificationTimer = null;
+        }
+        for (const watcher of sourceWatch.watchers) watcher.close();
+      }
+      // Suppress the OS event and change the source after replacement started,
+      // before the old watcher is sampled and the new watcher is configured.
+      renameSync(replacementPath, sourcePath);
+      releaseLoad?.();
+
+      const replaced = await replacement;
+      expect(replaced.tabs[0]).toMatchObject({
+        sourceChanged: true,
+        sourceChangeGeneration: 1,
+      });
     } finally {
       manager.dispose();
       await rm(directory, { recursive: true, force: true });
