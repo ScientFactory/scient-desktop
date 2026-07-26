@@ -2247,6 +2247,20 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+
+      const provenance = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-fork-provenance="true"]'),
+        "Unable to find fork provenance after navigating to the forked conversation.",
+      );
+      expect(provenance.dataset.forkSourceThreadId).toBe(THREAD_ID);
+      expect(provenance.dataset.forkSourceMessageId).toBe(sourceMessageId);
+      expect(provenance.textContent).toContain(`Forked from a message in ${THREAD_TITLE}`);
+      const sourceLink = provenance.querySelector<HTMLButtonElement>(
+        `button[aria-label="Open source conversation: ${THREAD_TITLE}"]`,
+      );
+      expect(sourceLink).not.toBeNull();
+      sourceLink?.click();
+      await vi.waitFor(() => expect(mounted.router.state.location.pathname).toBe(`/${THREAD_ID}`));
     } finally {
       await mounted.cleanup();
     }
