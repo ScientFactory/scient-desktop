@@ -392,12 +392,17 @@ export function BrowserPanel({
   const createTabInFlightRef = useRef(false);
   const localHtmlRefreshTasksRef = useRef(new Map<string, Promise<void>>());
   const pendingLocalHtmlRefreshesRef = useRef(new Set<string>());
-  const htmlPreviewGrantsRef = useRef(
-    new Map(
-      threadBrowserState?.tabs
-        .filter((tab) => tab.kind === "artifact" || tab.kind === "local-html")
-        .map((tab) => [tab.id, tab.url] as const) ?? [],
-    ),
+  const htmlPreviewGrantsByThreadRef = useRef(
+    new Map([
+      [
+        threadId,
+        new Map(
+          threadBrowserState?.tabs
+            .filter((tab) => tab.kind === "artifact" || tab.kind === "local-html")
+            .map((tab) => [tab.id, tab.url] as const) ?? [],
+        ),
+      ],
+    ]),
   );
   const lastSentBoundsRef = useRef<string | null>(null);
   const lastMeasuredBoundsKeyRef = useRef<string | null>(null);
@@ -531,15 +536,16 @@ export function BrowserPanel({
   }, []);
 
   const syncHtmlPreviewGrants = useCallback(
-    (tabs: readonly BrowserTabState[]) => {
+    (ownerThreadId: ThreadId, tabs: readonly BrowserTabState[]) => {
       if (!api) return;
-      const grants = reconcileHtmlPreviewGrants(htmlPreviewGrantsRef.current, tabs);
+      const previous = htmlPreviewGrantsByThreadRef.current.get(ownerThreadId) ?? new Map();
+      const grants = reconcileHtmlPreviewGrants(previous, tabs);
       for (const previewUrl of grants.revoked) {
         void api.projects
           .revokeHtmlArtifactPreview({ previewUrl })
           .catch(() => ({ revoked: false }));
       }
-      htmlPreviewGrantsRef.current = grants.active;
+      htmlPreviewGrantsByThreadRef.current.set(ownerThreadId, grants.active);
     },
     [api],
   );
@@ -564,77 +570,110 @@ export function BrowserPanel({
         return existing;
       }
       setRefreshingLocalHtmlSources((current) => new Set(current).add(sourceKey));
-      let failedRevisionUrl = sourceTab.url;
 
       const task = (async () => {
-        do {
-          pendingLocalHtmlRefreshesRef.current.delete(sourceKey);
-          const latestState =
-            useBrowserStateStore.getState().threadStatesByThreadId[threadId] ?? threadBrowserState;
-          const latestTab = latestState?.tabs.find(
-            (tab) =>
-              tab.kind === "local-html" &&
-              tab.displayUrl === sourceTab.displayUrl &&
-              tab.previewCwd === sourceTab.previewCwd,
-          );
-          const displayUrl = latestTab?.displayUrl;
-          const previewCwd = latestTab?.previewCwd;
-          if (!latestTab || !displayUrl || !previewCwd) {
-            return;
-          }
-          failedRevisionUrl = latestTab.url;
-
-          const prepared = await api.projects.prepareHtmlArtifactPreview({
-            cwd: previewCwd,
-            path: displayUrl,
-          });
-          const replacementUrl = prepared.previewUrl;
-          if (
-            !replacementUrl ||
-            (prepared.mode !== "static-document" && prepared.mode !== "interactive-bundle")
-          ) {
-            throw new Error(
-              prepared.mode === "dev-server-entrypoint"
-                ? "This file now needs its project development server. Reopen it from Files to run it."
-                : (prepared.reason ?? "This HTML file is no longer available for preview."),
-            );
-          }
-
-          try {
-            const nextState = await api.browser.replaceLocalHtmlPreview({
-              threadId,
-              tabId: latestTab.id,
-              url: replacementUrl,
-              displayUrl,
-              previewCwd,
-              watchedPaths: prepared.watchedPaths ?? [displayUrl],
-              ...(prepared.mode === "static-document" && prepared.allowedExternalUrls
-                ? { allowedExternalUrls: prepared.allowedExternalUrls }
-                : {}),
-              activate: latestState?.activeTabId === latestTab.id,
-            });
-            const installedRevision = nextState.tabs.find(
+        let latestError: unknown = null;
+        let failedRevisionUrl = sourceTab.url;
+        try {
+          while (true) {
+            pendingLocalHtmlRefreshesRef.current.delete(sourceKey);
+            const latestState =
+              useBrowserStateStore.getState().threadStatesByThreadId[threadId] ??
+              threadBrowserState;
+            const latestTab = latestState?.tabs.find(
               (tab) =>
                 tab.kind === "local-html" &&
-                tab.displayUrl === displayUrl &&
-                tab.previewCwd === previewCwd,
+                tab.displayUrl === sourceTab.displayUrl &&
+                tab.previewCwd === sourceTab.previewCwd,
             );
-            if (installedRevision?.url !== replacementUrl) {
-              await api.projects
-                .revokeHtmlArtifactPreview({ previewUrl: replacementUrl })
-                .catch(() => ({ revoked: false }));
+            const displayUrl = latestTab?.displayUrl;
+            const previewCwd = latestTab?.previewCwd;
+            if (!latestTab || !displayUrl || !previewCwd) {
+              latestError = null;
+              break;
             }
-            syncHtmlPreviewGrants(nextState.tabs);
-            upsertThreadState(nextState);
-          } catch (error) {
-            await api.projects
-              .revokeHtmlArtifactPreview({ previewUrl: replacementUrl })
-              .catch(() => ({ revoked: false }));
-            throw error;
+            failedRevisionUrl = latestTab.url;
+
+            try {
+              const prepared = await api.projects.prepareLiveHtmlPreview({
+                cwd: previewCwd,
+                path: displayUrl,
+              });
+              const replacementUrl = prepared.previewUrl;
+              if (
+                !replacementUrl ||
+                (prepared.mode !== "static-document" && prepared.mode !== "interactive-bundle")
+              ) {
+                throw new Error(
+                  prepared.mode === "dev-server-entrypoint"
+                    ? "This file now needs its project development server. Reopen it from Files to run it."
+                    : (prepared.reason ?? "This HTML file is no longer available for preview."),
+                );
+              }
+
+              try {
+                const nextState = await api.browser.replaceLocalHtmlPreview({
+                  threadId,
+                  tabId: latestTab.id,
+                  url: replacementUrl,
+                  displayUrl,
+                  previewCwd,
+                  watchedPaths: prepared.watchedPaths ?? [displayUrl],
+                  ...(prepared.mode === "static-document" && prepared.allowedExternalUrls
+                    ? { allowedExternalUrls: prepared.allowedExternalUrls }
+                    : {}),
+                  activate: latestState?.activeTabId === latestTab.id,
+                });
+                const installedRevision = nextState.tabs.find(
+                  (tab) =>
+                    tab.kind === "local-html" &&
+                    tab.displayUrl === displayUrl &&
+                    tab.previewCwd === previewCwd,
+                );
+                if (installedRevision?.url !== replacementUrl) {
+                  await api.projects
+                    .revokeHtmlArtifactPreview({ previewUrl: replacementUrl })
+                    .catch(() => ({ revoked: false }));
+                }
+                syncHtmlPreviewGrants(nextState.threadId, nextState.tabs);
+                upsertThreadState(nextState);
+                latestError = null;
+              } catch (error) {
+                await api.projects
+                  .revokeHtmlArtifactPreview({ previewUrl: replacementUrl })
+                  .catch(() => ({ revoked: false }));
+                throw error;
+              }
+            } catch (error) {
+              latestError = error;
+            }
+
+            if (!pendingLocalHtmlRefreshesRef.current.has(sourceKey)) {
+              break;
+            }
           }
-        } while (pendingLocalHtmlRefreshesRef.current.has(sourceKey));
-      })()
-        .then(() => {
+
+          if (latestError) {
+            const message =
+              latestError instanceof Error
+                ? latestError.message
+                : "The local HTML preview could not be refreshed.";
+            const currentSourceTab = (
+              useBrowserStateStore.getState().threadStatesByThreadId[threadId]?.tabs ?? []
+            ).find(
+              (tab) =>
+                tab.kind === "local-html" &&
+                tab.displayUrl === sourceTab.displayUrl &&
+                tab.previewCwd === sourceTab.previewCwd,
+            );
+            if (currentSourceTab?.url === failedRevisionUrl) {
+              setLocalHtmlRefreshErrors((current) =>
+                new Map(current).set(sourceKey, { message, revisionUrl: failedRevisionUrl }),
+              );
+            }
+            throw latestError;
+          }
+
           setLocalHtmlRefreshErrors((current) => {
             if (!current.has(sourceKey)) {
               return current;
@@ -643,28 +682,7 @@ export function BrowserPanel({
             next.delete(sourceKey);
             return next;
           });
-        })
-        .catch((error: unknown) => {
-          const message =
-            error instanceof Error
-              ? error.message
-              : "The local HTML preview could not be refreshed.";
-          const currentSourceTab = (
-            useBrowserStateStore.getState().threadStatesByThreadId[threadId]?.tabs ?? []
-          ).find(
-            (tab) =>
-              tab.kind === "local-html" &&
-              tab.displayUrl === sourceTab.displayUrl &&
-              tab.previewCwd === sourceTab.previewCwd,
-          );
-          if (currentSourceTab?.url === failedRevisionUrl) {
-            setLocalHtmlRefreshErrors((current) =>
-              new Map(current).set(sourceKey, { message, revisionUrl: failedRevisionUrl }),
-            );
-          }
-          throw error;
-        })
-        .finally(() => {
+        } finally {
           localHtmlRefreshTasksRef.current.delete(sourceKey);
           pendingLocalHtmlRefreshesRef.current.delete(sourceKey);
           setRefreshingLocalHtmlSources((current) => {
@@ -672,7 +690,8 @@ export function BrowserPanel({
             next.delete(sourceKey);
             return next;
           });
-        });
+        }
+      })();
       localHtmlRefreshTasksRef.current.set(sourceKey, task);
       return task;
     },
@@ -727,7 +746,7 @@ export function BrowserPanel({
 
     return api.browser.onState((state) => {
       if (state.threadId === threadId) {
-        syncHtmlPreviewGrants(state.tabs);
+        syncHtmlPreviewGrants(state.threadId, state.tabs);
       }
       upsertThreadState(state);
     });
@@ -761,7 +780,7 @@ export function BrowserPanel({
         setWorkspaceReady(true);
         return;
       }
-      syncHtmlPreviewGrants(state.tabs);
+      syncHtmlPreviewGrants(state.threadId, state.tabs);
       upsertThreadState(state);
       setWorkspaceReady(true);
     });
@@ -1501,7 +1520,7 @@ export function BrowserPanel({
         if (!state) {
           return;
         }
-        syncHtmlPreviewGrants(state.tabs);
+        syncHtmlPreviewGrants(state.threadId, state.tabs);
         upsertThreadState(state);
         const activeElement = document.activeElement;
         const shouldRestoreTabFocus =

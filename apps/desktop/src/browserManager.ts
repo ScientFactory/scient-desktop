@@ -240,13 +240,16 @@ function createBrowserTab(
   displayUrl?: string,
   allowedExternalUrls?: readonly string[],
   previewCwd?: string,
+  previewSessionSlot: 0 | 1 = 0,
 ): BrowserTabState {
   return {
     id: Crypto.randomUUID(),
     kind,
     url,
     displayUrl: displayUrl?.trim() || null,
-    ...(kind === "local-html" && previewCwd?.trim() ? { previewCwd: previewCwd.trim() } : {}),
+    ...(kind === "local-html" && previewCwd?.trim()
+      ? { previewCwd: previewCwd.trim(), previewSessionSlot }
+      : {}),
     title: defaultTitleForUrl(url),
     status: SUSPENDED_TAB_STATUS,
     isLoading: false,
@@ -261,6 +264,23 @@ function createBrowserTab(
         }
       : {}),
   };
+}
+
+function previewSessionPartitionForTab(threadId: ThreadId, tab: BrowserTabState): string {
+  if (
+    tab.kind === "local-html" &&
+    tab.previewSessionSlot !== undefined &&
+    tab.displayUrl &&
+    tab.previewCwd
+  ) {
+    const sourceIdentity = `${threadId}\0${normalizedLocalHtmlSourcePath(tab.previewCwd)}\0${normalizedLocalHtmlSourcePath(tab.displayUrl)}`;
+    const sourceHash = Crypto.createHash("sha256")
+      .update(sourceIdentity)
+      .digest("hex")
+      .slice(0, 24);
+    return `scient-local-html-preview-${threadId}-${sourceHash}-${tab.previewSessionSlot}`;
+  }
+  return browserSessionPartition(tab.kind, threadId, tab.id);
 }
 
 function defaultThreadBrowserState(threadId: ThreadId): ThreadBrowserState {
@@ -409,7 +429,11 @@ export class DesktopBrowserManager {
   private readonly previewSessionsConfigured = new Set<string>();
   private readonly previewSessionReady = new Map<string, Promise<Error | null>>();
   private readonly previewSessionRetries = new Set<string>();
-  private readonly previewSessionRetirementFinalizers = new Map<string, () => void>();
+  private readonly previewSessionOwnerIds = new Map<string, Set<number>>();
+  private readonly previewSessionRetireRequested = new Set<string>();
+  private readonly previewSessionCleanupPromises = new Map<string, Promise<void>>();
+  private readonly previewSessionAvailabilityWaiters = new Map<string, Set<() => void>>();
+  private readonly previewSessionRetirementFinalizers = new Map<number, () => void>();
   private readonly occludedThreads = new Set<ThreadId>();
   private readonly tabSuspendTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly suspendTimers = new Map<ThreadId, ReturnType<typeof setTimeout>>();
@@ -616,7 +640,7 @@ export class DesktopBrowserManager {
     if (tab.kind === "web") {
       return;
     }
-    const partition = browserSessionPartition(tab.kind, threadId, tab.id);
+    const partition = previewSessionPartitionForTab(threadId, tab);
     const previewOrigin =
       tab.kind === "artifact" || tab.kind === "local-html" ? safeUrlOrigin(tab.url) : null;
     this.ensurePreviewSessionConfigured(
@@ -633,11 +657,7 @@ export class DesktopBrowserManager {
     );
   }
 
-  private clearPreviewSession(threadId: ThreadId, tab: BrowserTabState): void {
-    if (tab.kind !== "artifact" && tab.kind !== "local-html") {
-      return;
-    }
-    const partition = browserSessionPartition(tab.kind, threadId, tab.id);
+  private async clearPreviewSession(partition: string): Promise<void> {
     const previewSession = session.fromPartition(partition);
     this.previewSessionsConfigured.delete(partition);
     this.previewSessionReady.delete(partition);
@@ -653,11 +673,71 @@ export class DesktopBrowserManager {
     previewSession.setPermissionCheckHandler(null);
     previewSession.setPermissionRequestHandler(null);
     previewSession.removeAllListeners("will-download");
-    void Promise.all([
+    await Promise.all([
       previewSession.clearStorageData(),
       previewSession.clearCache(),
       previewSession.setProxy({ mode: "direct" }),
-    ]).catch(() => undefined);
+    ]).then(
+      () => undefined,
+      () => undefined,
+    );
+  }
+
+  private registerPreviewSessionOwner(partition: string, webContentsId: number): void {
+    const owners = this.previewSessionOwnerIds.get(partition) ?? new Set<number>();
+    owners.add(webContentsId);
+    this.previewSessionOwnerIds.set(partition, owners);
+  }
+
+  private waitForPreviewSessionAvailable(partition: string): Promise<void> {
+    const owners = this.previewSessionOwnerIds.get(partition);
+    const cleanup = this.previewSessionCleanupPromises.get(partition);
+    if ((!owners || owners.size === 0) && !cleanup) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const waiters = this.previewSessionAvailabilityWaiters.get(partition) ?? new Set();
+      waiters.add(resolve);
+      this.previewSessionAvailabilityWaiters.set(partition, waiters);
+    });
+  }
+
+  private resolvePreviewSessionAvailability(partition: string): void {
+    const waiters = this.previewSessionAvailabilityWaiters.get(partition);
+    if (!waiters) return;
+    this.previewSessionAvailabilityWaiters.delete(partition);
+    for (const resolve of waiters) resolve();
+  }
+
+  private finalizePreviewSessionOwner(partition: string, webContentsId: number): void {
+    this.pendingLocalHtmlHttpErrors.delete(webContentsId);
+    const owners = this.previewSessionOwnerIds.get(partition);
+    owners?.delete(webContentsId);
+    if (owners && owners.size > 0) {
+      return;
+    }
+    this.previewSessionOwnerIds.delete(partition);
+    if (!this.previewSessionRetireRequested.delete(partition)) {
+      this.resolvePreviewSessionAvailability(partition);
+      return;
+    }
+    const cleanup = this.clearPreviewSession(partition).finally(() => {
+      if (this.previewSessionCleanupPromises.get(partition) === cleanup) {
+        this.previewSessionCleanupPromises.delete(partition);
+        this.resolvePreviewSessionAvailability(partition);
+      }
+    });
+    this.previewSessionCleanupPromises.set(partition, cleanup);
+  }
+
+  private requestPreviewSessionRetirement(partition: string): void {
+    if (this.previewSessionCleanupPromises.has(partition)) {
+      return;
+    }
+    this.previewSessionRetireRequested.add(partition);
+    if ((this.previewSessionOwnerIds.get(partition)?.size ?? 0) === 0) {
+      this.finalizePreviewSessionOwner(partition, -1);
+    }
   }
 
   private clearLocalHtmlSourceWatch(threadId: ThreadId, tabId: string): void {
@@ -1258,6 +1338,12 @@ export class DesktopBrowserManager {
         listenerDisposers: [],
       };
       this.configureRuntimeWebContents(runtime);
+      if (tab.kind === "artifact" || tab.kind === "local-html") {
+        this.registerPreviewSessionOwner(
+          previewSessionPartitionForTab(input.threadId, tab),
+          webContents.id,
+        );
+      }
       this.runtimes.set(key, runtime);
     }
 
@@ -1355,7 +1441,7 @@ export class DesktopBrowserManager {
       if (tab.allowedExternalUrls === undefined) {
         const previewOrigin = safeUrlOrigin(tab.url);
         if (previewOrigin) {
-          retryPartition = browserSessionPartition(tab.kind, input.threadId, tab.id);
+          retryPartition = previewSessionPartitionForTab(input.threadId, tab);
           if (this.previewSessionRetries.has(retryPartition)) {
             return this.snapshotThreadState(input.threadId, state);
           }
@@ -1468,13 +1554,20 @@ export class DesktopBrowserManager {
       throw new Error("The local HTML preview is no longer available.");
     }
 
+    const nextSessionSlot = previousTab.previewSessionSlot === 1 ? 0 : 1;
     const candidateTab = createBrowserTab(
       normalizeUrlInput(input.url),
       "local-html",
       input.displayUrl,
       input.allowedExternalUrls,
       input.previewCwd,
+      nextSessionSlot,
     );
+    const partition = previewSessionPartitionForTab(input.threadId, candidateTab);
+    await this.waitForPreviewSessionAvailable(partition);
+    if (state.tabs[previousTabIndex] !== previousTab) {
+      throw new Error("The local HTML preview changed while it was waiting to refresh.");
+    }
     this.configureTabSession(input.threadId, candidateTab);
     const candidateRuntime = this.createLiveRuntime(input.threadId, candidateTab.id, candidateTab);
     this.runtimes.set(candidateRuntime.key, candidateRuntime);
@@ -1486,7 +1579,6 @@ export class DesktopBrowserManager {
     });
 
     try {
-      const partition = browserSessionPartition(candidateTab.kind, input.threadId, candidateTab.id);
       const previewSessionError = await (this.previewSessionReady.get(partition) ??
         Promise.resolve(null));
       if (previewSessionError) {
@@ -1544,11 +1636,11 @@ export class DesktopBrowserManager {
       }
 
       this.closePopupWindowsForTab(input.threadId, previousTab.id);
-      this.destroyRuntime(input.threadId, previousTab.id, previousTab);
+      this.destroyRuntime(input.threadId, previousTab.id, previousTab, true);
       this.clearLocalHtmlSourceWatch(input.threadId, previousTab.id);
       for (const duplicateTab of duplicateTabs) {
         this.closePopupWindowsForTab(input.threadId, duplicateTab.id);
-        this.destroyRuntime(input.threadId, duplicateTab.id, duplicateTab);
+        this.destroyRuntime(input.threadId, duplicateTab.id, duplicateTab, true);
         this.clearLocalHtmlSourceWatch(input.threadId, duplicateTab.id);
       }
       this.configureLocalHtmlSourceWatch(input.threadId, candidateTab, input.watchedPaths);
@@ -1569,7 +1661,7 @@ export class DesktopBrowserManager {
       return this.snapshotThreadState(input.threadId, state);
     } catch (error) {
       this.pendingLocalHtmlHttpErrors.delete(candidateRuntime.webContents.id);
-      this.destroyRuntime(input.threadId, candidateTab.id, candidateTab);
+      this.destroyRuntime(input.threadId, candidateTab.id, candidateTab, true);
       this.provisionalLocalHtmlRuntimes.delete(candidateRuntime.key);
       throw error;
     }
@@ -1654,7 +1746,7 @@ export class DesktopBrowserManager {
 
     this.closePopupWindowsForTab(input.threadId, input.tabId);
     this.destroyProvisionalLocalHtmlRuntimesForSource(input.threadId, input.tabId);
-    this.destroyRuntime(input.threadId, input.tabId);
+    this.destroyRuntime(input.threadId, input.tabId, undefined, true);
     this.clearLocalHtmlSourceWatch(input.threadId, input.tabId);
     state.tabs = nextTabs;
 
@@ -2254,7 +2346,7 @@ export class DesktopBrowserManager {
   ): LiveTabRuntime {
     const state = this.ensureWorkspace(threadId);
     const tab = sourceTabOverride ?? this.resolveTab(state, tabId);
-    const partition = browserSessionPartition(tab.kind, threadId, tab.id);
+    const partition = previewSessionPartitionForTab(threadId, tab);
     if (tab.kind !== "web") {
       this.configureTabSession(threadId, tab);
     }
@@ -2280,6 +2372,9 @@ export class DesktopBrowserManager {
       listenerDisposers: [],
     };
     this.configureRuntimeWebContents(runtime, tab);
+    if (tab.kind === "artifact" || tab.kind === "local-html") {
+      this.registerPreviewSessionOwner(partition, view.webContents.id);
+    }
     return runtime;
   }
 
@@ -2577,7 +2672,7 @@ export class DesktopBrowserManager {
     try {
       const runtime = options.runtime ?? this.ensureLiveRuntime(threadId, tabId);
       if (tab.kind !== "web") {
-        const partition = browserSessionPartition(tab.kind, threadId, tab.id);
+        const partition = previewSessionPartitionForTab(threadId, tab);
         const previewSessionError = await (this.previewSessionReady.get(partition) ??
           Promise.resolve(null));
         if (previewSessionError) throw previewSessionError;
@@ -2692,7 +2787,12 @@ export class DesktopBrowserManager {
     // committed to state.tabs until their fresh capability has loaded successfully.
     for (const runtime of [...this.runtimes.values()]) {
       if (runtime.threadId === threadId) {
-        this.destroyRuntime(threadId, runtime.tabId);
+        this.destroyRuntime(threadId, runtime.tabId, undefined, true);
+      }
+    }
+    for (const tab of this.states.get(threadId)?.tabs ?? []) {
+      if (tab.kind === "artifact" || tab.kind === "local-html") {
+        this.destroyRuntime(threadId, tab.id, tab, true);
       }
     }
     for (const [key, provisional] of [...this.provisionalLocalHtmlRuntimes]) {
@@ -2718,7 +2818,7 @@ export class DesktopBrowserManager {
       if (provisional.threadId !== threadId || provisional.sourceTabId !== sourceTabId) {
         continue;
       }
-      this.destroyRuntime(threadId, provisional.tab.id, provisional.tab);
+      this.destroyRuntime(threadId, provisional.tab.id, provisional.tab, true);
       this.provisionalLocalHtmlRuntimes.delete(key);
       this.localHtmlReplacementQueuedInputs.delete(provisional.replacementTaskKey);
     }
@@ -2726,11 +2826,18 @@ export class DesktopBrowserManager {
 
   private destroyAllRuntimes(): void {
     for (const runtime of [...this.runtimes.values()]) {
-      this.destroyRuntime(runtime.threadId, runtime.tabId);
+      this.destroyRuntime(runtime.threadId, runtime.tabId, undefined, true);
     }
     for (const [key, provisional] of [...this.provisionalLocalHtmlRuntimes]) {
-      this.destroyRuntime(provisional.threadId, provisional.tab.id, provisional.tab);
+      this.destroyRuntime(provisional.threadId, provisional.tab.id, provisional.tab, true);
       this.provisionalLocalHtmlRuntimes.delete(key);
+    }
+    for (const [threadId, state] of this.states) {
+      for (const tab of state.tabs) {
+        if (tab.kind === "artifact" || tab.kind === "local-html") {
+          this.destroyRuntime(threadId, tab.id, tab, true);
+        }
+      }
     }
   }
 
@@ -2738,6 +2845,7 @@ export class DesktopBrowserManager {
     threadId: ThreadId,
     tabId: string,
     explicitPreviewTab?: BrowserTabState,
+    retirePreviewSession = false,
   ): void {
     const key = buildRuntimeKey(threadId, tabId);
     this.clearTabSuspendTimer(threadId, tabId);
@@ -2749,35 +2857,27 @@ export class DesktopBrowserManager {
       this.provisionalLocalHtmlRuntimes.get(key)?.tab;
     const previewPartition =
       previewTab && (previewTab.kind === "artifact" || previewTab.kind === "local-html")
-        ? browserSessionPartition(previewTab.kind, threadId, previewTab.id)
+        ? previewSessionPartitionForTab(threadId, previewTab)
         : null;
     const runtime = this.runtimes.get(key);
+    if (previewPartition && retirePreviewSession) {
+      this.requestPreviewSessionRetirement(previewPartition);
+    }
     if (!runtime) {
-      if (
-        previewTab &&
-        previewPartition &&
-        !this.previewSessionRetirementFinalizers.has(previewPartition)
-      ) {
-        this.clearPreviewSession(threadId, previewTab);
-      }
       return;
     }
 
     const webContents = runtime.webContents;
-    if (
-      previewTab &&
-      previewPartition &&
-      !this.previewSessionRetirementFinalizers.has(previewPartition)
-    ) {
+    if (previewPartition && !this.previewSessionRetirementFinalizers.has(webContents.id)) {
       let finalized = false;
       const finalize = () => {
         if (finalized) return;
         finalized = true;
         webContents.removeListener("destroyed", finalize);
-        this.previewSessionRetirementFinalizers.delete(previewPartition);
-        this.clearPreviewSession(threadId, previewTab);
+        this.previewSessionRetirementFinalizers.delete(webContents.id);
+        this.finalizePreviewSessionOwner(previewPartition, webContents.id);
       };
-      this.previewSessionRetirementFinalizers.set(previewPartition, finalize);
+      this.previewSessionRetirementFinalizers.set(webContents.id, finalize);
       webContents.on("destroyed", finalize);
       if (webContents.isDestroyed()) {
         finalize();
@@ -2805,7 +2905,7 @@ export class DesktopBrowserManager {
       }
     }
     if (webContents.isDestroyed() && previewPartition) {
-      this.previewSessionRetirementFinalizers.get(previewPartition)?.();
+      this.previewSessionRetirementFinalizers.get(webContents.id)?.();
     }
   }
 

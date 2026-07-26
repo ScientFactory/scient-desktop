@@ -2,15 +2,23 @@
 // Purpose: Owns additive local-HTML live-preview transport outside released migration contracts.
 // Layer: Shared desktop/web runtime overlay
 
+import {
+  ProjectPrepareHtmlArtifactPreviewInput,
+  ProjectPrepareHtmlArtifactPreviewResult,
+  TrimmedNonEmptyString,
+  WsRpcError,
+  WsRpcGroup,
+} from "@synara/contracts";
 import type {
   BrowserOpenInput,
   BrowserNewTabInput,
   DesktopBridge,
   NativeApi,
-  ProjectPrepareHtmlArtifactPreviewResult,
   ThreadBrowserState,
   ThreadId,
 } from "@synara/contracts";
+import { Schema } from "effect";
+import * as Rpc from "effect/unstable/rpc/Rpc";
 
 declare module "@synara/contracts" {
   interface BrowserTabState {
@@ -18,6 +26,8 @@ declare module "@synara/contracts" {
     previewCwd?: string;
     /** Set while a watched source revision is waiting to be re-prepared. */
     sourceChanged?: boolean;
+    /** One of the bounded session slots used for atomic local-HTML replacement. */
+    previewSessionSlot?: 0 | 1;
   }
 
   interface BrowserOpenInput {
@@ -42,9 +52,23 @@ export interface BrowserReplaceLocalHtmlPreviewInput {
   activate?: boolean;
 }
 
-export type LiveHtmlPreviewPrepareResult = ProjectPrepareHtmlArtifactPreviewResult & {
-  watchedPaths?: readonly string[];
-};
+export const LIVE_HTML_PREVIEW_PREPARE_V1_METHOD = "scient.liveHtmlPreview.prepare.v1";
+
+export const LiveHtmlPreviewPrepareResult = Schema.Struct({
+  ...ProjectPrepareHtmlArtifactPreviewResult.fields,
+  watchedPaths: Schema.optional(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
+  ),
+});
+export type LiveHtmlPreviewPrepareResult = typeof LiveHtmlPreviewPrepareResult.Type;
+
+export const LiveHtmlPreviewPrepareRpc = Rpc.make(LIVE_HTML_PREVIEW_PREPARE_V1_METHOD, {
+  payload: ProjectPrepareHtmlArtifactPreviewInput,
+  success: LiveHtmlPreviewPrepareResult,
+  error: WsRpcError,
+});
+
+export const LiveHtmlPreviewRpcGroup = WsRpcGroup.add(LiveHtmlPreviewPrepareRpc);
 
 type LiveHtmlBrowserApi<T extends NativeApi["browser"] | DesktopBridge["browser"]> = T & {
   replaceLocalHtmlPreview: (
@@ -54,8 +78,8 @@ type LiveHtmlBrowserApi<T extends NativeApi["browser"] | DesktopBridge["browser"
 
 export type LiveHtmlNativeApi = Omit<NativeApi, "browser" | "projects"> & {
   browser: LiveHtmlBrowserApi<NativeApi["browser"]>;
-  projects: Omit<NativeApi["projects"], "prepareHtmlArtifactPreview"> & {
-    prepareHtmlArtifactPreview: (
+  projects: NativeApi["projects"] & {
+    prepareLiveHtmlPreview: (
       input: Parameters<NativeApi["projects"]["prepareHtmlArtifactPreview"]>[0],
     ) => Promise<LiveHtmlPreviewPrepareResult>;
   };

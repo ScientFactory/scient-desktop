@@ -841,7 +841,7 @@ describe("BrowserPanel interactions", () => {
         },
       ],
     };
-    const prepareHtmlArtifactPreview = vi.fn(async () => ({
+    const prepareLiveHtmlPreview = vi.fn(async () => ({
       mode: "static-document" as const,
       warnings: [],
       previewUrl: replacementUrl,
@@ -858,7 +858,7 @@ describe("BrowserPanel interactions", () => {
         onState: vi.fn(() => () => undefined),
         onCopyLink: vi.fn(() => () => undefined),
       },
-      projects: { prepareHtmlArtifactPreview, revokeHtmlArtifactPreview },
+      projects: { prepareLiveHtmlPreview, revokeHtmlArtifactPreview },
     } as unknown as LiveHtmlNativeApi;
     useBrowserStateStore.getState().upsertThreadState(openState);
 
@@ -866,7 +866,7 @@ describe("BrowserPanel interactions", () => {
     ((await page.getByRole("button", { name: "Reload" }).element()) as HTMLButtonElement).click();
 
     await vi.waitFor(() => {
-      expect(prepareHtmlArtifactPreview).toHaveBeenCalledWith({
+      expect(prepareLiveHtmlPreview).toHaveBeenCalledWith({
         cwd: "/workspace",
         path: "/workspace/report.html",
       });
@@ -923,7 +923,7 @@ describe("BrowserPanel interactions", () => {
         onCopyLink: vi.fn(() => () => undefined),
       },
       projects: {
-        prepareHtmlArtifactPreview: vi.fn(async () => ({
+        prepareLiveHtmlPreview: vi.fn(async () => ({
           mode: "interactive-bundle" as const,
           warnings: [],
           previewUrl: replacementUrl,
@@ -980,7 +980,7 @@ describe("BrowserPanel interactions", () => {
         onCopyLink: vi.fn(() => () => undefined),
       },
       projects: {
-        prepareHtmlArtifactPreview: vi.fn(async () => ({
+        prepareLiveHtmlPreview: vi.fn(async () => ({
           mode: "static-document" as const,
           warnings: [],
           previewUrl: "http://g-a2345678-1234-4123-8123-123456789abc.preview.localhost:5000/",
@@ -1069,7 +1069,7 @@ describe("BrowserPanel interactions", () => {
     const firstReplacement = new Promise<ThreadBrowserState>((resolve) => {
       resolveFirstReplacement = resolve;
     });
-    const prepareHtmlArtifactPreview = vi
+    const prepareLiveHtmlPreview = vi
       .fn()
       .mockResolvedValueOnce({
         mode: "static-document" as const,
@@ -1104,7 +1104,7 @@ describe("BrowserPanel interactions", () => {
         onCopyLink: vi.fn(() => () => undefined),
       },
       projects: {
-        prepareHtmlArtifactPreview,
+        prepareLiveHtmlPreview,
         revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
       },
     } as unknown as LiveHtmlNativeApi;
@@ -1134,7 +1134,96 @@ describe("BrowserPanel interactions", () => {
           .some((element) => element.textContent?.includes("newest local HTML")),
       ).toBe(false);
     });
-    expect(prepareHtmlArtifactPreview).toHaveBeenCalledTimes(3);
+    expect(prepareLiveHtmlPreview).toHaveBeenCalledTimes(3);
+  });
+
+  it("drains a queued refresh after the in-flight revision fails", async () => {
+    const previousUrl = "http://g-drain-0.preview.localhost:5000/";
+    const failedUrl = "http://g-drain-1.preview.localhost:5000/";
+    const recoveredUrl = "http://g-drain-2.preview.localhost:5000/";
+    const openState = browserState("tab-source");
+    openState.tabs = [
+      {
+        ...openState.tabs[0]!,
+        id: "tab-source",
+        kind: "local-html",
+        url: previousUrl,
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        lastCommittedUrl: previousUrl,
+        sourceChanged: true,
+      },
+    ];
+    const recoveredState: ThreadBrowserState = {
+      ...openState,
+      version: openState.version + 1,
+      activeTabId: "tab-recovered",
+      tabs: [
+        {
+          ...openState.tabs[0]!,
+          id: "tab-recovered",
+          url: recoveredUrl,
+          lastCommittedUrl: recoveredUrl,
+          sourceChanged: false,
+        },
+      ],
+    };
+    let rejectFirst: (error: Error) => void = () => undefined;
+    const firstReplacement = new Promise<ThreadBrowserState>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    const prepareLiveHtmlPreview = vi
+      .fn()
+      .mockResolvedValueOnce({
+        mode: "static-document" as const,
+        warnings: [],
+        previewUrl: failedUrl,
+        watchedPaths: ["/workspace/report.html", "/workspace/theme.css"],
+      })
+      .mockResolvedValueOnce({
+        mode: "static-document" as const,
+        warnings: [],
+        previewUrl: recoveredUrl,
+        watchedPaths: ["/workspace/report.html", "/workspace/theme.css"],
+      });
+    const replaceLocalHtmlPreview = vi
+      .fn()
+      .mockImplementationOnce(() => firstReplacement)
+      .mockResolvedValueOnce(recoveredState);
+    nativeApiTestState.api = {
+      browser: {
+        open: vi.fn(async () => openState),
+        hide: vi.fn(async () => undefined),
+        setPanelBounds: vi.fn(async () => undefined),
+        replaceLocalHtmlPreview,
+        onState: vi.fn(() => () => undefined),
+        onCopyLink: vi.fn(() => () => undefined),
+      },
+      projects: {
+        prepareLiveHtmlPreview,
+        revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
+      },
+    } as unknown as LiveHtmlNativeApi;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+
+    await renderLivePanel(() => undefined);
+    await vi.waitFor(() => expect(replaceLocalHtmlPreview).toHaveBeenCalledOnce());
+    ((await page.getByRole("button", { name: "Reload" }).element()) as HTMLButtonElement).click();
+    rejectFirst(new Error("The first prepared revision failed."));
+
+    await vi.waitFor(() => expect(replaceLocalHtmlPreview).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => {
+      expect(useBrowserStateStore.getState().threadStatesByThreadId[THREAD_ID]?.tabs[0]?.url).toBe(
+        recoveredUrl,
+      );
+      expect(
+        page
+          .getByRole("status")
+          .elements()
+          .some((element) => element.textContent?.includes("first prepared revision")),
+      ).toBe(false);
+    });
+    expect(prepareLiveHtmlPreview).toHaveBeenCalledTimes(2);
   });
 
   it("does not retain a refresh failure that finishes after its source is closed", async () => {
@@ -1169,7 +1258,7 @@ describe("BrowserPanel interactions", () => {
         onCopyLink: vi.fn(() => () => undefined),
       },
       projects: {
-        prepareHtmlArtifactPreview: vi.fn(async () => ({
+        prepareLiveHtmlPreview: vi.fn(async () => ({
           mode: "static-document" as const,
           warnings: [],
           previewUrl: "http://g-d2345678-1234-4123-8123-123456789abc.preview.localhost:5000/",
@@ -1249,7 +1338,7 @@ describe("BrowserPanel interactions", () => {
         onCopyLink: vi.fn(() => () => undefined),
       },
       projects: {
-        prepareHtmlArtifactPreview: vi.fn(async () => ({
+        prepareLiveHtmlPreview: vi.fn(async () => ({
           mode: "interactive-bundle" as const,
           warnings: [],
           previewUrl: replacementUrl,
@@ -1304,7 +1393,7 @@ describe("BrowserPanel interactions", () => {
         },
       ],
     };
-    const prepareHtmlArtifactPreview = vi.fn(async () => ({
+    const prepareLiveHtmlPreview = vi.fn(async () => ({
       mode: "static-document" as const,
       warnings: [],
       previewUrl: replacementUrl,
@@ -1312,7 +1401,9 @@ describe("BrowserPanel interactions", () => {
     }));
     nativeApiTestState.api = {
       browser: {
-        open: vi.fn(async () => openState),
+        // Native open returns the manager's latest snapshot and therefore must not
+        // replace the completed refresh with the stale sourceChanged revision.
+        open: vi.fn(async () => replacementState),
         hide: vi.fn(async () => undefined),
         setPanelBounds: vi.fn(async () => undefined),
         replaceLocalHtmlPreview: vi.fn(async () => replacementState),
@@ -1320,14 +1411,14 @@ describe("BrowserPanel interactions", () => {
         onCopyLink: vi.fn(() => () => undefined),
       },
       projects: {
-        prepareHtmlArtifactPreview,
+        prepareLiveHtmlPreview,
         revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
       },
     } as unknown as LiveHtmlNativeApi;
     useBrowserStateStore.getState().upsertThreadState(openState);
 
     await renderLivePanel(() => undefined);
-    await vi.waitFor(() => expect(prepareHtmlArtifactPreview).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(prepareLiveHtmlPreview).toHaveBeenCalledOnce());
   });
 
   it("refreshes the next thread independently when a split pane changes ownership mid-refresh", async () => {
@@ -1382,7 +1473,7 @@ describe("BrowserPanel interactions", () => {
     const threadAPrepare = new Promise<never>((_resolve, reject) => {
       rejectThreadA = reject;
     });
-    const prepareHtmlArtifactPreview = vi
+    const prepareLiveHtmlPreview = vi
       .fn()
       .mockImplementationOnce(() => threadAPrepare)
       .mockResolvedValueOnce({
@@ -1404,7 +1495,7 @@ describe("BrowserPanel interactions", () => {
         onCopyLink: vi.fn(() => () => undefined),
       },
       projects: {
-        prepareHtmlArtifactPreview,
+        prepareLiveHtmlPreview,
         revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
       },
     } as unknown as LiveHtmlNativeApi;
@@ -1425,11 +1516,11 @@ describe("BrowserPanel interactions", () => {
     );
 
     const screen = await render(view(THREAD_ID));
-    await vi.waitFor(() => expect(prepareHtmlArtifactPreview).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(prepareLiveHtmlPreview).toHaveBeenCalledOnce());
     await screen.rerender(view(SECOND_THREAD_ID));
 
     await vi.waitFor(() => {
-      expect(prepareHtmlArtifactPreview).toHaveBeenCalledTimes(2);
+      expect(prepareLiveHtmlPreview).toHaveBeenCalledTimes(2);
       expect(replaceLocalHtmlPreview).toHaveBeenCalledWith(
         expect.objectContaining({ threadId: SECOND_THREAD_ID, tabId: "tab-source-b" }),
       );
@@ -1447,5 +1538,137 @@ describe("BrowserPanel interactions", () => {
           .some((element) => element.textContent?.includes("Thread A refresh failed")),
       ).toBe(false);
     });
+  });
+
+  it("does not let a late successful refresh revoke the next thread's installed grant", async () => {
+    const sourcePath = "/workspace/report.html";
+    const previousUrlA = "http://g-thread-a-0.preview.localhost:5000/";
+    const replacementUrlA = "http://g-thread-a-1.preview.localhost:5000/";
+    const previousUrlB = "http://g-thread-b-0.preview.localhost:5000/";
+    const replacementUrlB = "http://g-thread-b-1.preview.localhost:5000/";
+    const stateA: ThreadBrowserState = {
+      ...browserState("tab-source-a"),
+      threadId: THREAD_ID,
+      tabs: [
+        {
+          ...browserState("tab-1").tabs[0]!,
+          id: "tab-source-a",
+          kind: "local-html",
+          url: previousUrlA,
+          displayUrl: sourcePath,
+          previewCwd: "/workspace",
+          lastCommittedUrl: previousUrlA,
+          sourceChanged: true,
+        },
+      ],
+    };
+    const stateB: ThreadBrowserState = {
+      ...stateA,
+      threadId: SECOND_THREAD_ID,
+      activeTabId: "tab-source-b",
+      tabs: [
+        {
+          ...stateA.tabs[0]!,
+          id: "tab-source-b",
+          url: previousUrlB,
+          lastCommittedUrl: previousUrlB,
+        },
+      ],
+    };
+    const replacementStateA: ThreadBrowserState = {
+      ...stateA,
+      version: stateA.version + 1,
+      activeTabId: "tab-revision-a",
+      tabs: [
+        {
+          ...stateA.tabs[0]!,
+          id: "tab-revision-a",
+          url: replacementUrlA,
+          lastCommittedUrl: replacementUrlA,
+          sourceChanged: false,
+        },
+      ],
+    };
+    const replacementStateB: ThreadBrowserState = {
+      ...stateB,
+      version: stateB.version + 1,
+      activeTabId: "tab-revision-b",
+      tabs: [
+        {
+          ...stateB.tabs[0]!,
+          id: "tab-revision-b",
+          url: replacementUrlB,
+          lastCommittedUrl: replacementUrlB,
+          sourceChanged: false,
+        },
+      ],
+    };
+    let resolveThreadA: (state: ThreadBrowserState) => void = () => undefined;
+    const threadAReplacement = new Promise<ThreadBrowserState>((resolve) => {
+      resolveThreadA = resolve;
+    });
+    const prepareLiveHtmlPreview = vi
+      .fn()
+      .mockResolvedValueOnce({
+        mode: "static-document" as const,
+        warnings: [],
+        previewUrl: replacementUrlA,
+        watchedPaths: [sourcePath],
+      })
+      .mockResolvedValueOnce({
+        mode: "static-document" as const,
+        warnings: [],
+        previewUrl: replacementUrlB,
+        watchedPaths: [sourcePath],
+      });
+    const replaceLocalHtmlPreview = vi
+      .fn()
+      .mockImplementationOnce(() => threadAReplacement)
+      .mockResolvedValueOnce(replacementStateB);
+    const revokeHtmlArtifactPreview = vi.fn(async () => ({ revoked: true }));
+    nativeApiTestState.api = {
+      browser: {
+        open: vi.fn(async ({ threadId }) => (threadId === THREAD_ID ? stateA : replacementStateB)),
+        hide: vi.fn(async () => undefined),
+        setPanelBounds: vi.fn(async () => undefined),
+        replaceLocalHtmlPreview,
+        onState: vi.fn(() => () => undefined),
+        onCopyLink: vi.fn(() => () => undefined),
+      },
+      projects: { prepareLiveHtmlPreview, revokeHtmlArtifactPreview },
+    } as unknown as LiveHtmlNativeApi;
+    useBrowserStateStore.getState().upsertThreadState(stateA);
+    useBrowserStateStore.getState().upsertThreadState(stateB);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = (threadId: ThreadId) => (
+      <QueryClientProvider client={queryClient}>
+        <div className="h-[640px] w-[720px]">
+          <BrowserPanel
+            mode="inline"
+            threadId={threadId}
+            runtimeMode="live"
+            onClosePanel={() => undefined}
+          />
+        </div>
+      </QueryClientProvider>
+    );
+
+    const screen = await render(view(THREAD_ID));
+    await vi.waitFor(() => expect(replaceLocalHtmlPreview).toHaveBeenCalledOnce());
+    await screen.rerender(view(SECOND_THREAD_ID));
+    await vi.waitFor(() => expect(replaceLocalHtmlPreview).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() =>
+      expect(
+        useBrowserStateStore.getState().threadStatesByThreadId[SECOND_THREAD_ID]?.tabs[0]?.url,
+      ).toBe(replacementUrlB),
+    );
+
+    resolveThreadA(replacementStateA);
+    await vi.waitFor(() =>
+      expect(useBrowserStateStore.getState().threadStatesByThreadId[THREAD_ID]?.tabs[0]?.url).toBe(
+        replacementUrlA,
+      ),
+    );
+    expect(revokeHtmlArtifactPreview).not.toHaveBeenCalledWith({ previewUrl: replacementUrlB });
   });
 });

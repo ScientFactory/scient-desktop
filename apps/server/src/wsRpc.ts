@@ -7,7 +7,6 @@ import {
   ThreadId,
   WS_METHODS,
   WsRpcError,
-  WsRpcGroup,
   PullRequestsUnavailableError,
   ServerProviderUpdateError,
   type GitActionProgressEvent,
@@ -19,6 +18,10 @@ import {
   type ServerDiagnosticsResult,
   type ServerLifecycleStreamEvent,
 } from "@synara/contracts";
+import {
+  LIVE_HTML_PREVIEW_PREPARE_V1_METHOD,
+  LiveHtmlPreviewRpcGroup,
+} from "@synara/shared/liveHtmlPreviewTransport";
 import { clamp } from "effect/Number";
 import { Effect, FileSystem, Layer, Option, Path, Queue, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -258,7 +261,7 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 }
 
 export const makeWsRpcLayer = () =>
-  WsRpcGroup.toLayer(
+  LiveHtmlPreviewRpcGroup.toLayer(
     Effect.gen(function* () {
       const checkpointDiffQuery = yield* CheckpointDiffQuery;
       const automationService = yield* AutomationService;
@@ -590,7 +593,7 @@ export const makeWsRpcLayer = () =>
       const rpcEffect = <A, E, R>(effect: Effect.Effect<A, E, R>, fallbackMessage: string) =>
         effect.pipe(Effect.mapError((cause) => toWsRpcError(cause, fallbackMessage)));
 
-      return WsRpcGroup.of({
+      return LiveHtmlPreviewRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           rpcEffect(
             Effect.gen(function* () {
@@ -731,6 +734,8 @@ export const makeWsRpcLayer = () =>
           rpcEffect(htmlArtifactPreview.inspect(input), "Failed to inspect HTML artifact"),
         [WS_METHODS.projectsPrepareHtmlArtifactPreview]: (input) =>
           rpcEffect(htmlArtifactPreview.prepare(input), "Failed to prepare HTML artifact preview"),
+        [LIVE_HTML_PREVIEW_PREPARE_V1_METHOD]: (input) =>
+          rpcEffect(htmlArtifactPreview.prepare(input), "Failed to prepare live HTML preview"),
         [WS_METHODS.projectsRevokeHtmlArtifactPreview]: (input) =>
           rpcEffect(htmlArtifactPreview.revoke(input), "Failed to revoke HTML artifact preview"),
         [WS_METHODS.projectsWriteFile]: (input) =>
@@ -1460,7 +1465,7 @@ export const makeWsRpcLayer = () =>
     }),
   );
 
-const makeRpcWebSocketHttpEffect = RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
+const makeRpcWebSocketHttpEffect = RpcServer.toHttpEffectWebsocket(LiveHtmlPreviewRpcGroup, {
   spanPrefix: "ws.rpc",
   spanAttributes: {
     "rpc.transport": "websocket",

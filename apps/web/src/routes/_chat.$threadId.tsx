@@ -1861,7 +1861,7 @@ function SingleChatSurface(props: {
         }
         let previewUrlToRevoke: string | null = null;
         try {
-          const prepared = await api.projects.prepareHtmlArtifactPreview({
+          const prepared = await api.projects.prepareLiveHtmlPreview({
             cwd: htmlCwd,
             path: absolutePath,
           });

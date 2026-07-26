@@ -40,6 +40,7 @@ import {
 } from "@synara/contracts";
 import {
   asLiveHtmlDesktopBridge,
+  LIVE_HTML_PREVIEW_PREPARE_V1_METHOD,
   type LiveHtmlNativeApi,
 } from "@synara/shared/liveHtmlPreviewTransport";
 
@@ -516,6 +517,8 @@ export function createWsNativeApi(): LiveHtmlNativeApi {
         transport.request(WS_METHODS.projectsInspectHtmlArtifact, input),
       prepareHtmlArtifactPreview: (input) =>
         transport.request(WS_METHODS.projectsPrepareHtmlArtifactPreview, input),
+      prepareLiveHtmlPreview: (input) =>
+        transport.request(LIVE_HTML_PREVIEW_PREPARE_V1_METHOD, input),
       revokeHtmlArtifactPreview: (input) =>
         transport.request(WS_METHODS.projectsRevokeHtmlArtifactPreview, input),
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),

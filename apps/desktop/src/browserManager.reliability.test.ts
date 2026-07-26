@@ -210,6 +210,17 @@ import { DesktopBrowserManager } from "./browserManager";
 
 const THREAD_ID = "thread-close-tab" as ThreadId;
 
+function localHtmlPartitionForSlot(slot: 0 | 1): string {
+  const localHtmlPartitions = [...electron.sessions.keys()].filter((key) =>
+    key.startsWith(`scient-local-html-preview-${THREAD_ID}-`),
+  );
+  const partition =
+    localHtmlPartitions.find((key) => key.endsWith(`-${slot}`)) ??
+    (localHtmlPartitions.length === 1 ? localHtmlPartitions[0] : undefined);
+  if (!partition) throw new Error(`Expected local HTML session slot ${slot}.`);
+  return partition;
+}
+
 describe("DesktopBrowserManager reliability", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -399,7 +410,7 @@ describe("DesktopBrowserManager reliability", () => {
     const tabId = opened.activeTabId;
     expect(tabId).toBeTruthy();
 
-    const partition = `scient-local-html-preview-${THREAD_ID}-${tabId}`;
+    const partition = localHtmlPartitionForSlot(0);
     const previewSession = electron.sessions.get(partition);
     expect(previewSession).toBeDefined();
     expect(partition.startsWith("persist:")).toBe(false);
@@ -533,7 +544,7 @@ describe("DesktopBrowserManager reliability", () => {
     expect(replaced.tabs[0]?.sourceChanged).toBeUndefined();
     expect(electron.createdWebContents.at(-1)?.loadURL).toHaveBeenCalledWith(nextUrl);
     expect(previousContents?.close).toHaveBeenCalledOnce();
-    const previousPartition = `scient-local-html-preview-${THREAD_ID}-${previousTabId}`;
+    const previousPartition = localHtmlPartitionForSlot(0);
     const previousSession = electron.sessions.get(previousPartition);
     expect(previousSession?.clearStorageData).not.toHaveBeenCalled();
     expect(previousSession?.webRequest.onBeforeRequest).toHaveBeenLastCalledWith(
@@ -578,6 +589,85 @@ describe("DesktopBrowserManager reliability", () => {
     expect(previousSession?.setPermissionCheckHandler).toHaveBeenLastCalledWith(null);
     expect(previousSession?.setPermissionRequestHandler).toHaveBeenLastCalledWith(null);
     expect(previousSession?.removeAllListeners).toHaveBeenCalledWith("will-download");
+    manager.dispose();
+  });
+
+  it("keeps same-partition policy installed when a retiring runtime has a successor", async () => {
+    const manager = new DesktopBrowserManager();
+    const opened = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: "http://g-successor.preview.localhost:43123/",
+      kind: "local-html",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+    });
+    const tabId = opened.activeTabId ?? "";
+    const internals = manager as unknown as {
+      ensureLiveRuntime: (threadId: ThreadId, tabId: string) => unknown;
+      destroyRuntime: (threadId: ThreadId, tabId: string) => void;
+      pendingLocalHtmlHttpErrors: Map<number, number>;
+    };
+    internals.ensureLiveRuntime(THREAD_ID, tabId);
+    const predecessor = electron.createdWebContents.at(-1);
+    const previewSession = electron.sessions.get(localHtmlPartitionForSlot(0));
+    const completed = previewSession?.webRequest.onCompleted.mock.calls[0]?.[0];
+    electron.setHoldWebContentsDestruction(true);
+
+    internals.destroyRuntime(THREAD_ID, tabId);
+    internals.ensureLiveRuntime(THREAD_ID, tabId);
+    completed?.({
+      resourceType: "mainFrame",
+      statusCode: 404,
+      webContentsId: predecessor?.id,
+      url: "http://g-successor.preview.localhost:43123/late",
+    });
+    expect(internals.pendingLocalHtmlHttpErrors.get(predecessor?.id ?? -1)).toBe(404);
+
+    predecessor?.destroy();
+    await vi.waitFor(() => {
+      expect(internals.pendingLocalHtmlHttpErrors.has(predecessor?.id ?? -1)).toBe(false);
+    });
+    expect(previewSession?.webRequest.onBeforeRequest).toHaveBeenLastCalledWith(
+      expect.any(Function),
+    );
+    expect(previewSession?.setPermissionCheckHandler).toHaveBeenLastCalledWith(
+      expect.any(Function),
+    );
+    expect(previewSession?.clearStorageData).not.toHaveBeenCalled();
+    expect(previewSession?.setProxy).not.toHaveBeenCalledWith({ mode: "direct" });
+
+    electron.setHoldWebContentsDestruction(false);
+    manager.close({ threadId: THREAD_ID });
+    await vi.waitFor(() => expect(previewSession?.clearStorageData).toHaveBeenCalledOnce());
+    manager.dispose();
+  });
+
+  it("reuses two local HTML session slots across many successful refreshes", async () => {
+    const manager = new DesktopBrowserManager();
+    let state = manager.open({
+      threadId: THREAD_ID,
+      initialUrl: "http://g-bounded-0.preview.localhost:43123/",
+      kind: "local-html",
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+    });
+
+    for (let revision = 1; revision <= 12; revision += 1) {
+      state = await manager.replaceLocalHtmlPreview({
+        threadId: THREAD_ID,
+        tabId: state.activeTabId ?? "",
+        url: `http://g-bounded-${revision}.preview.localhost:43123/`,
+        displayUrl: "/missing/report.html",
+        previewCwd: "/missing",
+        watchedPaths: ["/missing/report.html", "/missing/theme.css"],
+      });
+    }
+
+    const localHtmlPartitions = [...electron.sessions.keys()].filter((partition) =>
+      partition.startsWith(`scient-local-html-preview-${THREAD_ID}-`),
+    );
+    expect(localHtmlPartitions).toHaveLength(2);
+    expect(state.tabs[0]?.previewSessionSlot).toBe(0);
     manager.dispose();
   });
 
@@ -797,8 +887,8 @@ describe("DesktopBrowserManager reliability", () => {
     const first = manager.replaceLocalHtmlPreview(input);
     const second = manager.replaceLocalHtmlPreview(input);
     expect(second).toBe(first);
-    expect(electron.createdWebContents).toHaveLength(1);
     await vi.waitFor(() => expect(releaseLoad).toBeTypeOf("function"));
+    expect(electron.createdWebContents).toHaveLength(1);
     releaseLoad?.();
     await expect(first).resolves.toMatchObject({ tabs: [{ url: input.url }] });
     manager.dispose();
@@ -867,9 +957,7 @@ describe("DesktopBrowserManager reliability", () => {
     };
     internals.ensureLiveRuntime(THREAD_ID, sourceTabId);
     const sourceContents = electron.createdWebContents.at(-1);
-    const sourceSession = electron.sessions.get(
-      `scient-local-html-preview-${THREAD_ID}-${sourceTabId}`,
-    );
+    const sourceSession = electron.sessions.get(localHtmlPartitionForSlot(0));
     let releaseLoad: (() => void) | undefined;
     electron.setLoadURLImplementation(
       () =>
@@ -1109,7 +1197,7 @@ describe("DesktopBrowserManager reliability", () => {
     });
     const tabId = opened.activeTabId;
     expect(tabId).toBeTruthy();
-    const partition = `scient-local-html-preview-${THREAD_ID}-${tabId}`;
+    const partition = localHtmlPartitionForSlot(0);
     expect(electron.sessions.get(partition)?.setProxy).toHaveBeenCalledWith({
       mode: "fixed_servers",
       proxyRules: "http=127.0.0.1:1;https=127.0.0.1:1;socks=127.0.0.1:1",
