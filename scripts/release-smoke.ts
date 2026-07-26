@@ -238,6 +238,10 @@ function verifyReleaseWorkflowSafety(): void {
     resolve(repoRoot, ".github/workflows/release.yml"),
     "utf8",
   ).replaceAll("\r\n", "\n");
+  const ciWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/ci.yml"), "utf8").replaceAll(
+    "\r\n",
+    "\n",
+  );
   const releaseBuildScript = readFileSync(
     resolve(repoRoot, "scripts/build-release-desktop-artifact.sh"),
     "utf8",
@@ -259,6 +263,20 @@ function verifyReleaseWorkflowSafety(): void {
       release?: { permissions?: Record<string, string> };
     };
   };
+  const parsedCiWorkflow = parseYaml(ciWorkflow) as {
+    jobs?: { windows_process?: { steps?: Array<ReleaseWorkflowStep> } };
+  };
+  const windowsProcessSteps = parsedCiWorkflow.jobs?.windows_process?.steps ?? [];
+  const windowsLauncherTest = windowsProcessSteps.find(
+    (step) => step.name === "Test packaged startup Windows launcher",
+  );
+  if (
+    windowsLauncherTest?.run !== "bun x vitest run scripts/verify-packaged-desktop-startup.test.ts"
+  ) {
+    throw new Error(
+      "Expected Windows CI to compile and exercise packaged-startup Job launcher authority and cancellation.",
+    );
+  }
   const buildSteps = parsedWorkflow.jobs?.build?.steps ?? [];
   const buildMatrix = parsedWorkflow.jobs?.build?.strategy?.matrix?.include ?? [];
   const preflightSteps = parsedWorkflow.jobs?.preflight?.steps ?? [];
