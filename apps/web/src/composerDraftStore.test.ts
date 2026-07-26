@@ -1270,6 +1270,42 @@ describe("composerDraftStore syncPersistedAttachments", () => {
     expect(pendingComposerAttachmentSyncGenerationCount()).toBe(before);
   });
 
+  it("retires an attachment sync generation when synchronous staging rejects", async () => {
+    const image = makeImage({
+      id: "appsnap-sync-generation-staging-error",
+      previewUrl: "blob:appsnap-sync-generation-staging-error",
+    });
+    const attachment = {
+      get id(): string {
+        throw new Error("attachment staging failed");
+      },
+      name: image.name,
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+      dataUrl: "data:image/png;base64,aGk=",
+    };
+    const store = useComposerDraftStore.getState();
+    store.addImage(threadId, image);
+    const before = pendingComposerAttachmentSyncGenerationCount();
+    const precedingAttachment = {
+      id: image.id,
+      name: image.name,
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+      dataUrl: "data:image/png;base64,aGk=",
+    };
+    const precedingSync = store.syncPersistedAttachments(threadId, [precedingAttachment]);
+    const failedSync = store.syncPersistedAttachments(threadId, [attachment]);
+    const rejectedSync = expect(failedSync).rejects.toThrow("attachment staging failed");
+
+    // The failed newer stage restores the still-pending prior generation rather
+    // than leaking its own marker or incorrectly making the prior sync stale.
+    expect(pendingComposerAttachmentSyncGenerationCount()).toBe(before + 1);
+    await rejectedSync;
+    await expect(precedingSync).resolves.toBe("unverified");
+    expect(pendingComposerAttachmentSyncGenerationCount()).toBe(before);
+  });
+
   it("treats malformed persisted draft storage as empty", async () => {
     const image = makeImage({
       id: "img-persisted",

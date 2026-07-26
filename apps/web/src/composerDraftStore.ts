@@ -3331,6 +3331,41 @@ export function isComposerAttachmentSyncGenerationCurrent(
   return currentGeneration === settledGeneration;
 }
 
+function retireComposerAttachmentSyncGeneration(generationKey: string, generation: number): void {
+  // A newer sync still needs its generation marker to suppress stale state
+  // writes, so an older completion must not retire that newer marker.
+  if (
+    isComposerAttachmentSyncGenerationCurrent(
+      composerAttachmentSyncGenerationByKey.get(generationKey),
+      generation,
+    )
+  ) {
+    composerAttachmentSyncGenerationByKey.delete(generationKey);
+  }
+}
+
+function restoreComposerAttachmentSyncGenerationAfterStagingFailure(
+  generationKey: string,
+  failedGeneration: number,
+  previousGeneration: number | undefined,
+): void {
+  if (
+    !isComposerAttachmentSyncGenerationCurrent(
+      composerAttachmentSyncGenerationByKey.get(generationKey),
+      failedGeneration,
+    )
+  ) {
+    return;
+  }
+  if (previousGeneration === undefined) {
+    composerAttachmentSyncGenerationByKey.delete(generationKey);
+  } else {
+    // The prior verification is still queued for this key. Restore its marker
+    // so the failed newer stage does not incorrectly suppress that valid work.
+    composerAttachmentSyncGenerationByKey.set(generationKey, previousGeneration);
+  }
+}
+
 function syncPersistedAttachmentsForSlot(
   threadId: ThreadId,
   attachments: PersistedComposerImageAttachment[],
@@ -3342,7 +3377,8 @@ function syncPersistedAttachmentsForSlot(
     return Promise.resolve("rejected");
   }
   const generationKey = `${slot.key}:${threadId}`;
-  const generation = (composerAttachmentSyncGenerationByKey.get(generationKey) ?? 0) + 1;
+  const previousGeneration = composerAttachmentSyncGenerationByKey.get(generationKey);
+  const generation = (previousGeneration ?? 0) + 1;
   composerAttachmentSyncGenerationByKey.set(generationKey, generation);
   try {
     // Stage synchronously: a reload right after this call must already see the
@@ -3377,6 +3413,11 @@ function syncPersistedAttachmentsForSlot(
     });
     deletePersistedComposerImageBlobs(supersededBlobAttachments);
   } catch (error) {
+    restoreComposerAttachmentSyncGenerationAfterStagingFailure(
+      generationKey,
+      generation,
+      previousGeneration,
+    );
     return Promise.reject(error);
   }
   // Verification stays serialized per thread (across both slots) so overlapping
@@ -3392,16 +3433,7 @@ function syncPersistedAttachmentsForSlot(
     ),
   );
   return verification.finally(() => {
-    // A newer sync still needs its generation marker to suppress stale state
-    // writes, so an older completion must not retire that newer marker.
-    if (
-      isComposerAttachmentSyncGenerationCurrent(
-        composerAttachmentSyncGenerationByKey.get(generationKey),
-        generation,
-      )
-    ) {
-      composerAttachmentSyncGenerationByKey.delete(generationKey);
-    }
+    retireComposerAttachmentSyncGeneration(generationKey, generation);
   });
 }
 
