@@ -146,13 +146,21 @@ function createFallbackTab(
   kind: BrowserTabKind = "web",
   displayUrl?: string,
   previewCwd?: string,
+  sourceIdentity?: string,
+  sourceRoot?: string,
 ): BrowserTabState {
   return {
     id: crypto.randomUUID(),
     kind,
     url,
     displayUrl: displayUrl?.trim() || null,
-    ...(kind === "local-html" && previewCwd?.trim() ? { previewCwd: previewCwd.trim() } : {}),
+    ...(kind === "local-html" && previewCwd?.trim()
+      ? {
+          previewCwd: previewCwd.trim(),
+          ...(sourceIdentity ? { sourceIdentity } : {}),
+          ...(sourceRoot ? { sourceRoot } : {}),
+        }
+      : {}),
     title: defaultBrowserTitle(url),
     status: "live" as const,
     isLoading: false,
@@ -809,6 +817,8 @@ export function createWsNativeApi(): LiveHtmlNativeApi {
               kind,
               input.displayUrl,
               input.previewCwd,
+              input.sourceIdentity,
+              input.sourceRoot,
             );
             state.tabs = [...state.tabs, tab];
             state.activeTabId = tab.id;
@@ -818,6 +828,8 @@ export function createWsNativeApi(): LiveHtmlNativeApi {
             const previewCwd = kind === "local-html" ? input.previewCwd?.trim() : undefined;
             if (previewCwd) {
               activeTab.previewCwd = previewCwd;
+              if (input.sourceIdentity) activeTab.sourceIdentity = input.sourceIdentity;
+              if (input.sourceRoot) activeTab.sourceRoot = input.sourceRoot;
             } else {
               delete activeTab.previewCwd;
             }
@@ -926,6 +938,8 @@ export function createWsNativeApi(): LiveHtmlNativeApi {
         tab.url = input.url;
         tab.displayUrl = input.displayUrl;
         tab.previewCwd = input.previewCwd;
+        if (input.sourceIdentity) tab.sourceIdentity = input.sourceIdentity;
+        if (input.sourceRoot) tab.sourceRoot = input.sourceRoot;
         if (input.allowedExternalUrls) {
           tab.allowedExternalUrls = input.allowedExternalUrls;
         } else {
@@ -962,6 +976,8 @@ export function createWsNativeApi(): LiveHtmlNativeApi {
           input.kind ?? "web",
           input.displayUrl,
           input.previewCwd,
+          input.sourceIdentity,
+          input.sourceRoot,
         );
         state.tabs = [...state.tabs, tab];
         if (input.activate !== false || !state.activeTabId) {

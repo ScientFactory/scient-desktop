@@ -1111,9 +1111,12 @@ describe("DesktopBrowserManager reliability", () => {
         allowedExternalUrls: ["https://cdn.example/second.js"],
         activate: false,
       });
-      expect(second).toBe(first);
+      expect(second).not.toBe(first);
       expect(manager.getState({ threadId: THREAD_ID }).activeTabId).toBe(webTabId);
       releaseFirstLoad?.();
+      await expect(first).resolves.toMatchObject({
+        tabs: expect.arrayContaining([expect.objectContaining({ url: firstUrl })]),
+      });
       await vi.waitFor(() => expect(releaseSecondLoad).toBeTypeOf("function"));
 
       const installedFirstTab = manager
@@ -1131,8 +1134,11 @@ describe("DesktopBrowserManager reliability", () => {
         allowedExternalUrls: ["https://cdn.example/newest.js"],
         activate: true,
       });
-      expect(newest).toBe(first);
+      expect(newest).not.toBe(second);
       releaseSecondLoad?.();
+      await expect(second).resolves.toMatchObject({
+        tabs: expect.arrayContaining([expect.objectContaining({ url: secondUrl })]),
+      });
 
       const finalState = await newest;
       const finalTab = finalState.tabs.find((tab) => tab.kind === "local-html");
@@ -1148,6 +1154,158 @@ describe("DesktopBrowserManager reliability", () => {
         localHtmlSourceWatches: Map<string, { watchers: unknown[] }>;
       };
       expect([...internals.localHtmlSourceWatches.values()].at(-1)?.watchers).toHaveLength(2);
+    } finally {
+      manager.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a successful replacement owned when the queued revision fails", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "scient-html-queued-failure-"));
+    const sourcePath = join(directory, "report.html");
+    await writeFile(sourcePath, "<p>source</p>", "utf8");
+    const manager = new DesktopBrowserManager();
+    try {
+      const opened = manager.open({
+        threadId: THREAD_ID,
+        initialUrl: "http://g-18345678-2234-4123-8123-123456789abc.preview.localhost:43123/",
+        kind: "local-html",
+        displayUrl: sourcePath,
+        previewCwd: directory,
+      });
+      let releaseFirstLoad: (() => void) | undefined;
+      let loadCount = 0;
+      electron.setLoadURLImplementation(async () => {
+        loadCount += 1;
+        if (loadCount === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirstLoad = resolve;
+          });
+          return;
+        }
+        throw new Error("queued revision failed");
+      });
+      const firstUrl = "http://g-19345678-2234-4123-8123-123456789abc.preview.localhost:43123/";
+      const failedUrl = "http://g-20345678-2234-4123-8123-123456789abc.preview.localhost:43123/";
+      const first = manager.replaceLocalHtmlPreview({
+        threadId: THREAD_ID,
+        tabId: opened.activeTabId ?? "",
+        url: firstUrl,
+        displayUrl: sourcePath,
+        previewCwd: directory,
+        watchedPaths: [sourcePath],
+      });
+      await vi.waitFor(() => expect(releaseFirstLoad).toBeTypeOf("function"));
+      const second = manager.replaceLocalHtmlPreview({
+        threadId: THREAD_ID,
+        tabId: opened.activeTabId ?? "",
+        url: failedUrl,
+        displayUrl: sourcePath,
+        previewCwd: directory,
+        watchedPaths: [sourcePath],
+      });
+
+      releaseFirstLoad?.();
+      await expect(first).resolves.toMatchObject({
+        tabs: expect.arrayContaining([expect.objectContaining({ url: firstUrl })]),
+      });
+      await expect(second).rejects.toThrow("could not be loaded");
+      expect(
+        manager.getState({ threadId: THREAD_ID }).tabs.find((tab) => tab.kind === "local-html")
+          ?.url,
+      ).toBe(firstUrl);
+    } finally {
+      manager.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects replacement URLs and dependency watches outside the owned preview authority", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "scient-html-replacement-authority-"));
+    const sourcePath = join(directory, "report.html");
+    await writeFile(sourcePath, "<p>source</p>", "utf8");
+    const manager = new DesktopBrowserManager();
+    try {
+      const opened = manager.open({
+        threadId: THREAD_ID,
+        initialUrl: "http://g-21345678-2234-4123-8123-123456789abc.preview.localhost:43123/",
+        kind: "local-html",
+        displayUrl: sourcePath,
+        previewCwd: directory,
+        sourceIdentity: sourcePath,
+        sourceRoot: directory,
+        watchedPaths: [sourcePath],
+      });
+      const commonInput = {
+        threadId: THREAD_ID,
+        tabId: opened.activeTabId ?? "",
+        displayUrl: sourcePath,
+        previewCwd: directory,
+        sourceIdentity: sourcePath,
+        sourceRoot: directory,
+      };
+
+      await expect(
+        manager.replaceLocalHtmlPreview({
+          ...commonInput,
+          url: "http://localhost:9000/private",
+          watchedPaths: [sourcePath],
+        }),
+      ).rejects.toThrow("not a local HTML preview capability");
+      await expect(
+        manager.replaceLocalHtmlPreview({
+          ...commonInput,
+          url: "http://g-22345678-2234-4123-8123-123456789abc.preview.localhost:43123/",
+          watchedPaths: [sourcePath, join(directory, "..", "private.txt")],
+        }),
+      ).rejects.toThrow("outside the local HTML source authority");
+      expect(electron.createdWebContents).toHaveLength(0);
+    } finally {
+      manager.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces and clears bounded dependency-watch degradation", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "scient-html-watch-limit-"));
+    const sourcePath = join(directory, "report.html");
+    await writeFile(sourcePath, "<p>source</p>", "utf8");
+    const dependencyPaths: string[] = [];
+    for (let index = 0; index < 65; index += 1) {
+      const dependencyDirectory = join(directory, `dependency-${index}`);
+      await mkdir(dependencyDirectory);
+      dependencyPaths.push(join(dependencyDirectory, "asset.css"));
+    }
+    const manager = new DesktopBrowserManager();
+    try {
+      const limited = manager.open({
+        threadId: THREAD_ID,
+        initialUrl: "http://g-23345678-2234-4123-8123-123456789abc.preview.localhost:43123/",
+        kind: "local-html",
+        displayUrl: sourcePath,
+        previewCwd: directory,
+        sourceIdentity: sourcePath,
+        sourceRoot: directory,
+        watchedPaths: [sourcePath, ...dependencyPaths],
+      });
+      expect(limited.tabs[0]?.sourceWatchLimited).toBe(true);
+      const internals = manager as unknown as {
+        localHtmlSourceWatches: Map<string, { watchers: unknown[] }>;
+      };
+      expect([...internals.localHtmlSourceWatches.values()][0]?.watchers).toHaveLength(64);
+
+      const recovered = manager.newTab({
+        threadId: THREAD_ID,
+        url: limited.tabs[0]?.url ?? "",
+        kind: "local-html",
+        displayUrl: sourcePath,
+        previewCwd: directory,
+        sourceIdentity: sourcePath,
+        sourceRoot: directory,
+        watchedPaths: [sourcePath],
+        activate: false,
+      });
+      expect(recovered.tabs[0]?.sourceWatchLimited).toBeUndefined();
     } finally {
       manager.dispose();
       await rm(directory, { recursive: true, force: true });
@@ -1210,6 +1368,15 @@ describe("DesktopBrowserManager reliability", () => {
     };
     internals.ensureLiveRuntime(THREAD_ID, tabId ?? "");
     const contents = electron.createdWebContents.at(-1);
+    expect(
+      contents?.windowOpenHandler?.({
+        url: `${previewUrl}popup.html`,
+        frameName: "preview-popup",
+        features: "",
+        disposition: "new-window",
+      }),
+    ).toEqual({ action: "deny" });
+    expect(manager.getState({ threadId: THREAD_ID }).tabs).toHaveLength(1);
     const navigate = contents?.handlers.get("will-frame-navigate")?.[0];
     expect(navigate).toBeTypeOf("function");
     if (!navigate) throw new Error("Expected local HTML navigation policy listener.");

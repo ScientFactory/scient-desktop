@@ -104,6 +104,8 @@ describe("HtmlArtifactPreviewLive", () => {
       expect(prepared.mode).toBe("static-document");
       expect(prepared.previewUrl).toBeDefined();
       const canonicalWorkspace = await fs.realpath(workspace);
+      expect(prepared.sourceIdentity).toBe(path.join(canonicalWorkspace, "report.html"));
+      expect(prepared.sourceRoot).toBe(canonicalWorkspace);
       expect(new Set(prepared.watchedPaths)).toEqual(
         new Set([
           path.join(canonicalWorkspace, "report.html"),

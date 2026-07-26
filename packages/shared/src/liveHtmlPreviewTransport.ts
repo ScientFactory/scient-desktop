@@ -26,6 +26,14 @@ declare module "@synara/contracts" {
     previewCwd?: string;
     /** Set while a watched source revision is waiting to be re-prepared. */
     sourceChanged?: boolean;
+    /** Monotonic filesystem generation used to consume one automatic refresh once. */
+    sourceChangeGeneration?: number;
+    /** Canonical server-established identity for source deduplication and replacement. */
+    sourceIdentity?: string;
+    /** Canonical server-established root that bounds dependency watches. */
+    sourceRoot?: string;
+    /** True when automatic dependency refresh is operating with a bounded watch set. */
+    sourceWatchLimited?: boolean;
     /** One of the bounded session slots used for atomic local-HTML replacement. */
     previewSessionSlot?: 0 | 1;
   }
@@ -33,11 +41,15 @@ declare module "@synara/contracts" {
   interface BrowserOpenInput {
     previewCwd?: string;
     watchedPaths?: readonly string[];
+    sourceIdentity?: string;
+    sourceRoot?: string;
   }
 
   interface BrowserNewTabInput {
     previewCwd?: string;
     watchedPaths?: readonly string[];
+    sourceIdentity?: string;
+    sourceRoot?: string;
   }
 }
 
@@ -47,6 +59,8 @@ export interface BrowserReplaceLocalHtmlPreviewInput {
   url: string;
   displayUrl: string;
   previewCwd: string;
+  sourceIdentity?: string;
+  sourceRoot?: string;
   watchedPaths: readonly string[];
   allowedExternalUrls?: readonly string[];
   activate?: boolean;
@@ -56,6 +70,8 @@ export const LIVE_HTML_PREVIEW_PREPARE_V1_METHOD = "scient.liveHtmlPreview.prepa
 
 export const LiveHtmlPreviewPrepareResult = Schema.Struct({
   ...ProjectPrepareHtmlArtifactPreviewResult.fields,
+  sourceIdentity: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
+  sourceRoot: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
   watchedPaths: Schema.optional(
     Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
   ),

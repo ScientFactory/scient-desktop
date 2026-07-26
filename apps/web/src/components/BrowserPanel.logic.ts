@@ -227,6 +227,7 @@ export function buildBrowserAddressSuggestions(
 // Only shows transient browser state; the address field already reflects the active URL.
 export function resolveBrowserChromeStatus(input: {
   localError: string | null;
+  localNotice?: string | null;
   threadLastError: string | null | undefined;
   activeTabStatus: string;
   hasActiveTab: boolean;
@@ -243,6 +244,13 @@ export function resolveBrowserChromeStatus(input: {
     return {
       tone: "error",
       label: input.threadLastError,
+    };
+  }
+
+  if (input.localNotice) {
+    return {
+      tone: "default",
+      label: input.localNotice,
     };
   }
 

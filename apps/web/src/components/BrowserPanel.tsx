@@ -392,6 +392,7 @@ export function BrowserPanel({
   const createTabInFlightRef = useRef(false);
   const localHtmlRefreshTasksRef = useRef(new Map<string, Promise<void>>());
   const pendingLocalHtmlRefreshesRef = useRef(new Set<string>());
+  const consumedLocalHtmlSourceGenerationRef = useRef(new Map<string, number>());
   const htmlPreviewGrantsByThreadRef = useRef(
     new Map([
       [
@@ -491,6 +492,10 @@ export function BrowserPanel({
 
   const browserChromeStatus = resolveBrowserChromeStatus({
     localError: activeLocalHtmlRefreshErrorMessage ?? localError,
+    localNotice:
+      activeTab?.kind === "local-html" && activeTab.sourceWatchLimited
+        ? "Automatic refresh is limited. Use Reload after dependency changes."
+        : null,
     threadLastError: threadBrowserState?.lastError,
     activeTabStatus: showLocalServersHome ? "live" : activeTabStatus,
     hasActiveTab: activeTab !== null,
@@ -618,6 +623,8 @@ export function BrowserPanel({
                   url: replacementUrl,
                   displayUrl,
                   previewCwd,
+                  ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
+                  ...(prepared.sourceRoot ? { sourceRoot: prepared.sourceRoot } : {}),
                   watchedPaths: prepared.watchedPaths ?? [displayUrl],
                   ...(prepared.mode === "static-document" && prepared.allowedExternalUrls
                     ? { allowedExternalUrls: prepared.allowedExternalUrls }
@@ -758,10 +765,16 @@ export function BrowserPanel({
     }
     for (const tab of threadBrowserState?.tabs ?? []) {
       if (tab.kind === "local-html" && tab.sourceChanged) {
+        const sourceKey = `${threadId}\0${tab.id}`;
+        const generation = tab.sourceChangeGeneration ?? 0;
+        if (consumedLocalHtmlSourceGenerationRef.current.get(sourceKey) === generation) {
+          continue;
+        }
+        consumedLocalHtmlSourceGenerationRef.current.set(sourceKey, generation);
         void refreshLocalHtmlPreview(tab).catch(() => undefined);
       }
     }
-  }, [isLiveRuntime, refreshLocalHtmlPreview, threadBrowserState?.tabs]);
+  }, [isLiveRuntime, refreshLocalHtmlPreview, threadBrowserState?.tabs, threadId]);
 
   useEffect(() => {
     if (!api || !isLiveRuntime) {

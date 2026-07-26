@@ -9,12 +9,16 @@ describe("live HTML preview RPC transport", () => {
       mode: "static-document",
       warnings: [],
       previewUrl: "http://g-preview.preview.localhost:5000/report.html",
+      sourceIdentity: "/workspace/report.html",
+      sourceRoot: "/workspace",
       watchedPaths: ["/workspace/report.html", "/workspace/theme.css"],
     });
     const encoded = Schema.encodeSync(LiveHtmlPreviewPrepareResult)(decoded);
     const roundTripped = Schema.decodeUnknownSync(LiveHtmlPreviewPrepareResult)(encoded);
 
     expect(decoded.watchedPaths).toEqual(["/workspace/report.html", "/workspace/theme.css"]);
+    expect(decoded.sourceIdentity).toBe("/workspace/report.html");
+    expect(decoded.sourceRoot).toBe("/workspace");
     expect(encoded.watchedPaths).toEqual(["/workspace/report.html", "/workspace/theme.css"]);
     expect(roundTripped.watchedPaths).toEqual(["/workspace/report.html", "/workspace/theme.css"]);
   });

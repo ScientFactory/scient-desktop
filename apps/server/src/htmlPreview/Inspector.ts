@@ -64,6 +64,7 @@ export interface InspectedHtmlArtifact {
   readonly baseDirectory: string | null;
   readonly siteRoot: string | null;
   readonly allowedResourcePaths: readonly string[];
+  readonly watchedPaths: readonly string[];
   readonly allowedExternalUrls: readonly string[];
 }
 
@@ -177,6 +178,7 @@ function unsupported(reason: string): InspectedHtmlArtifact {
     baseDirectory: null,
     siteRoot: null,
     allowedResourcePaths: [],
+    watchedPaths: [],
     allowedExternalUrls: [],
   };
 }
@@ -385,6 +387,7 @@ async function collectAllowedResourcePaths(
   resourceBoundary: string,
 ): Promise<{
   readonly paths: readonly string[];
+  readonly watchedPaths: readonly string[];
   readonly externalUrls: readonly string[];
   readonly hasExecutableDocument: boolean;
   readonly hasTruncatedActiveDocument: boolean;
@@ -401,7 +404,9 @@ async function collectAllowedResourcePaths(
     )
     .filter((resource): resource is string => resource !== null);
   const allowed = new Set<string>();
+  const watchedPaths = new Set<string>();
   const externalUrls = new Set<string>();
+  const canonicalResourceBoundary = await fs.realpath(resourceBoundary).catch(() => null);
   let hasExecutableDocument = false;
   let hasTruncatedActiveDocument = false;
   let hasTruncatedDependency = false;
@@ -413,11 +418,26 @@ async function collectAllowedResourcePaths(
     const candidate = pending.shift();
     if (!candidate) continue;
     const canonical = await fs.realpath(candidate).catch(() => null);
-    if (!canonical || !isPathInside(canonical, resourceBoundary) || allowed.has(canonical))
+    if (!canonical) {
+      // Missing direct dependencies still need a safe directory watch so their
+      // later creation can trigger a fresh inspection. Canonicalize the parent
+      // first so a symlinked directory cannot move the watch outside authority.
+      const canonicalParent = await fs.realpath(path.dirname(candidate)).catch(() => null);
+      if (
+        canonicalParent &&
+        canonicalResourceBoundary &&
+        isPathInside(canonicalParent, canonicalResourceBoundary) &&
+        watchedPaths.size < RESOURCE_GRAPH_MAX_FILES
+      ) {
+        watchedPaths.add(path.join(canonicalParent, path.basename(candidate)));
+      }
       continue;
+    }
+    if (!isPathInside(canonical, resourceBoundary) || allowed.has(canonical)) continue;
     const stat = await fs.stat(canonical).catch(() => null);
     if (!stat?.isFile()) continue;
     allowed.add(canonical);
+    if (watchedPaths.size < RESOURCE_GRAPH_MAX_FILES) watchedPaths.add(canonical);
 
     const extension = path.extname(canonical).toLowerCase();
     const isActiveDocument = ACTIVE_DOCUMENT_EXTENSIONS.has(extension);
@@ -516,6 +536,7 @@ async function collectAllowedResourcePaths(
 
   return {
     paths: [...allowed],
+    watchedPaths: [...watchedPaths],
     externalUrls: [...externalUrls],
     hasExecutableDocument,
     hasTruncatedActiveDocument,
@@ -794,6 +815,7 @@ export async function inspectHtmlArtifact(
     baseDirectory,
     siteRoot: commonSiteRoot(absolutePath, allowedResourcePaths, resourceBoundary),
     allowedResourcePaths,
+    watchedPaths: [absolutePath, ...collectedResources.watchedPaths],
     allowedExternalUrls: [...externalResources],
   };
 }

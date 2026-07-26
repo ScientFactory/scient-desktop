@@ -77,13 +77,15 @@ export function resolveDockDiffAvailable(input: {
 
 export function browserStateOwnsLocalHtmlRevision(
   state: ThreadBrowserState,
-  input: { url: string; displayUrl: string; previewCwd: string },
+  input: { url: string; displayUrl: string; previewCwd: string; sourceIdentity?: string },
 ): boolean {
   return state.tabs.some(
     (tab) =>
       tab.kind === "local-html" &&
       tab.url === input.url &&
-      tab.displayUrl === input.displayUrl &&
+      (input.sourceIdentity
+        ? tab.sourceIdentity === input.sourceIdentity
+        : tab.displayUrl === input.displayUrl) &&
       tab.previewCwd === input.previewCwd,
   );
 }

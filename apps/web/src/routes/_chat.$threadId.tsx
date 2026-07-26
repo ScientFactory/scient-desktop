@@ -1928,8 +1928,9 @@ function SingleChatSurface(props: {
               ? currentBrowserState.tabs.find(
                   (tab) =>
                     tab.kind === "local-html" &&
-                    tab.displayUrl === absolutePath &&
-                    tab.previewCwd === htmlCwd,
+                    (prepared.sourceIdentity
+                      ? tab.sourceIdentity === prepared.sourceIdentity
+                      : tab.displayUrl === absolutePath && tab.previewCwd === htmlCwd),
                 )
               : undefined;
           if (existingSourceTab) {
@@ -1939,6 +1940,8 @@ function SingleChatSurface(props: {
               url,
               displayUrl: absolutePath,
               previewCwd: htmlCwd,
+              ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
+              ...(prepared.sourceRoot ? { sourceRoot: prepared.sourceRoot } : {}),
               watchedPaths: prepared.watchedPaths ?? [absolutePath],
               ...(allowedExternalUrls ? { allowedExternalUrls } : {}),
               activate: true,
@@ -1948,6 +1951,7 @@ function SingleChatSurface(props: {
                 url,
                 displayUrl: absolutePath,
                 previewCwd: htmlCwd,
+                ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
               })
             ) {
               previewUrlToRevoke = null;
@@ -1961,6 +1965,8 @@ function SingleChatSurface(props: {
               ...(browserKind === "local-html"
                 ? {
                     previewCwd: htmlCwd,
+                    ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
+                    ...(prepared.sourceRoot ? { sourceRoot: prepared.sourceRoot } : {}),
                     watchedPaths: prepared.watchedPaths ?? [absolutePath],
                   }
                 : {}),
@@ -1971,6 +1977,7 @@ function SingleChatSurface(props: {
                 url,
                 displayUrl: absolutePath,
                 previewCwd: htmlCwd,
+                ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
               })
             ) {
               previewUrlToRevoke = null;

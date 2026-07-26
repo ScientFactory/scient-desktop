@@ -251,6 +251,22 @@ describe("resolveBrowserChromeStatus", () => {
     ).toBeNull();
   });
 
+  it("surfaces bounded automatic-refresh degradation without treating the page as failed", () => {
+    expect(
+      resolveBrowserChromeStatus({
+        localError: null,
+        localNotice: "Automatic refresh is limited. Use Reload after dependency changes.",
+        threadLastError: null,
+        activeTabStatus: "live",
+        hasActiveTab: true,
+        workspaceReady: true,
+      }),
+    ).toEqual({
+      tone: "default",
+      label: "Automatic refresh is limited. Use Reload after dependency changes.",
+    });
+  });
+
   it("keeps onboarding copy for empty browser states", () => {
     expect(
       resolveBrowserChromeStatus({

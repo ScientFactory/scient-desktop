@@ -26,6 +26,21 @@ afterEach(async () => {
 });
 
 describe("inspectHtmlArtifact", () => {
+  it("keeps a safe watch candidate for a referenced dependency created later", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "lesson.html");
+    const futureStylePath = path.join(workspace, "future.css");
+    await fs.writeFile(
+      sourcePath,
+      '<!doctype html><link rel="stylesheet" href="future.css"><h1>Study</h1>',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: sourcePath });
+
+    expect(inspected.allowedResourcePaths).not.toContain(futureStylePath);
+    expect(inspected.watchedPaths).toContain(path.join(await fs.realpath(workspace), "future.css"));
+  });
+
   it("classifies a standalone document with local presentation assets", async () => {
     const workspace = await makeWorkspace();
     await fs.writeFile(path.join(workspace, "lesson.css"), "body { color: green; }");

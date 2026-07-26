@@ -1421,6 +1421,59 @@ describe("BrowserPanel interactions", () => {
     await vi.waitFor(() => expect(prepareLiveHtmlPreview).toHaveBeenCalledOnce());
   });
 
+  it("consumes a failed automatic refresh once until a new filesystem generation arrives", async () => {
+    const previousUrl = "http://g-63345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const openState = browserState("tab-source");
+    openState.tabs = [
+      {
+        ...openState.tabs[0]!,
+        id: "tab-source",
+        kind: "local-html",
+        url: previousUrl,
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        lastCommittedUrl: previousUrl,
+        sourceChanged: true,
+        sourceChangeGeneration: 1,
+      },
+    ];
+    const prepareLiveHtmlPreview = vi.fn(async () => {
+      throw new Error("The HTML file no longer exists.");
+    });
+    nativeApiTestState.api = {
+      browser: {
+        open: vi.fn(async () => openState),
+        hide: vi.fn(async () => undefined),
+        setPanelBounds: vi.fn(async () => undefined),
+        replaceLocalHtmlPreview: vi.fn(),
+        onState: vi.fn(() => () => undefined),
+        onCopyLink: vi.fn(() => () => undefined),
+      },
+      projects: {
+        prepareLiveHtmlPreview,
+        revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
+      },
+    } as unknown as LiveHtmlNativeApi;
+    useBrowserStateStore.getState().upsertThreadState(openState);
+
+    await renderLivePanel(() => undefined);
+    await vi.waitFor(() => expect(prepareLiveHtmlPreview).toHaveBeenCalledOnce());
+    useBrowserStateStore.getState().upsertThreadState({
+      ...openState,
+      version: openState.version + 1,
+      tabs: [{ ...openState.tabs[0]!, title: "Unrelated title update" }],
+    });
+    await expect.element(page.getByRole("tab", { name: /Unrelated title update/ })).toBeVisible();
+    expect(prepareLiveHtmlPreview).toHaveBeenCalledOnce();
+
+    useBrowserStateStore.getState().upsertThreadState({
+      ...openState,
+      version: openState.version + 2,
+      tabs: [{ ...openState.tabs[0]!, sourceChangeGeneration: 2 }],
+    });
+    await vi.waitFor(() => expect(prepareLiveHtmlPreview).toHaveBeenCalledTimes(2));
+  });
+
   it("refreshes the next thread independently when a split pane changes ownership mid-refresh", async () => {
     const sourcePath = "/workspace/report.html";
     const previousUrlA = "http://g-17345678-2234-4123-8123-123456789abc.preview.localhost:5000/";
