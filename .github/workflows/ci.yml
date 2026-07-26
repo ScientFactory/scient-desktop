@@ -64,6 +64,12 @@ jobs:
       - name: Verify immutable workflow actions
         run: bun run workflow:check
 
+      - name: Fetch official release lineage
+        run: git fetch --no-tags origin +refs/heads/release/stable:refs/remotes/origin/release/stable
+
+      - name: Verify append-only migration lineage
+        run: bun run migration:check
+
       - name: Format
         run: bun run fmt:check
 
