@@ -36,7 +36,6 @@ import {
   legacyThreadCompletionActivityKeys,
   shouldShowThreadNotificationToast,
   staleAttentionActivityKeys,
-  threadCompletionDeliveryPolicy,
 } from "./taskCompletion.logic";
 
 export type BrowserNotificationPermissionState =
@@ -274,10 +273,6 @@ export function TaskCompletionNotifications() {
     }
 
     const windowForeground = isWindowForeground();
-    const threadCompletionDelivery = threadCompletionDeliveryPolicy({
-      systemNotificationsEnabled: settings.enableSystemTaskCompletionNotifications,
-      windowForeground,
-    });
     const shouldAttemptSystemNotification =
       settings.enableSystemTaskCompletionNotifications && !windowForeground;
 
@@ -285,7 +280,7 @@ export function TaskCompletionNotifications() {
       const copy = buildTaskCompletionCopy(completion);
       // The completed reply and unread state already live in the thread/sidebar. Only the
       // optional OS notification crosses surfaces when Scient is not foregrounded.
-      if (threadCompletionDelivery.showSystemNotification) {
+      if (shouldAttemptSystemNotification) {
         void showSystemThreadNotification(copy, completion.threadId, navigate);
       }
     }

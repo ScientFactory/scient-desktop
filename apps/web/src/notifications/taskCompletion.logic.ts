@@ -61,16 +61,6 @@ export interface TerminalAttentionCandidate {
 export const ACTIVITY_CENTER_ALERTS_DESCRIPTION =
   "Keep off-screen chat attention requests and managed terminal completions or attention requests in the in-app Activity Center.";
 
-export function threadCompletionDeliveryPolicy(input: {
-  systemNotificationsEnabled: boolean;
-  windowForeground: boolean;
-}): { readonly publishActivity: false; readonly showSystemNotification: boolean } {
-  return {
-    publishActivity: false,
-    showSystemNotification: input.systemNotificationsEnabled && !input.windowForeground,
-  };
-}
-
 export function activeThreadAttentionActivityKeys(threads: readonly Thread[]): ReadonlySet<string> {
   const keys = new Set<string>();
   for (const thread of threads) {

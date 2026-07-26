@@ -18,7 +18,6 @@ import {
   legacyThreadCompletionActivityKeys,
   shouldShowThreadNotificationToast,
   staleAttentionActivityKeys,
-  threadCompletionDeliveryPolicy,
 } from "./taskCompletion.logic";
 import type { Thread } from "../types";
 
@@ -631,46 +630,6 @@ describe("legacyThreadCompletionActivityKeys", () => {
         { dedupeKey: "thread:thread-2:completed:today", source: "system" },
       ]),
     ).toEqual(["thread:thread-1:completed:today"]);
-  });
-});
-
-describe("threadCompletionDeliveryPolicy", () => {
-  it.each([
-    { name: "visible foreground", windowForeground: true, systemEnabled: true },
-    { name: "off-screen foreground", windowForeground: true, systemEnabled: true },
-    { name: "hidden with system alerts disabled", windowForeground: false, systemEnabled: false },
-    { name: "hidden with system alerts enabled", windowForeground: false, systemEnabled: true },
-  ])(
-    "never duplicates completed replies in Activity for $name",
-    ({ windowForeground, systemEnabled }) => {
-      expect(
-        threadCompletionDeliveryPolicy({
-          systemNotificationsEnabled: systemEnabled,
-          windowForeground,
-        }).publishActivity,
-      ).toBe(false);
-    },
-  );
-
-  it("keeps OS completion alerts for enabled background work only", () => {
-    expect(
-      threadCompletionDeliveryPolicy({
-        systemNotificationsEnabled: true,
-        windowForeground: false,
-      }).showSystemNotification,
-    ).toBe(true);
-    expect(
-      threadCompletionDeliveryPolicy({
-        systemNotificationsEnabled: true,
-        windowForeground: true,
-      }).showSystemNotification,
-    ).toBe(false);
-    expect(
-      threadCompletionDeliveryPolicy({
-        systemNotificationsEnabled: false,
-        windowForeground: false,
-      }).showSystemNotification,
-    ).toBe(false);
   });
 });
 
