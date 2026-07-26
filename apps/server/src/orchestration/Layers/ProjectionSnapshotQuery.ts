@@ -69,6 +69,7 @@ import {
 
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeShellSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapshot);
+const decodeProjectShells = Schema.decodeUnknownEffect(Schema.Array(OrchestrationProjectShell));
 const decodeThreadDetail = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeThreadDetailSnapshot = Schema.decodeUnknownEffect(OrchestrationThreadDetailSnapshot);
 const decodeModelSelection = Schema.decodeUnknownEffect(ModelSelection);
@@ -2036,7 +2037,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           "ProjectionSnapshotQuery.listActiveProjectShells:decodeModelSelections",
         ),
       ),
-      Effect.map((rows) => rows.map(toProjectedProjectShell)),
+      Effect.flatMap((rows) =>
+        decodeProjectShells(rows.map(toProjectedProjectShell)).pipe(
+          Effect.mapError(
+            toPersistenceDecodeError(
+              "ProjectionSnapshotQuery.listActiveProjectShells:decodeProjectShells",
+            ),
+          ),
+        ),
+      ),
     );
 
   const getSnapshotSequence: ProjectionSnapshotQueryShape["getSnapshotSequence"] = () =>

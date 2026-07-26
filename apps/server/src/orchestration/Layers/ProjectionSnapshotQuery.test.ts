@@ -1021,8 +1021,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           (
             'project-polling-active',
             'project',
-            'Polling Active',
-            '/tmp/polling-active',
+            ' Polling Active ',
+            ' /tmp/polling-active ',
             '{"provider":"codex","model":"gpt-5-codex"}',
             '[]',
             '2026-02-25T00:00:00.000Z',
@@ -1065,11 +1065,48 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       const projects = yield* snapshotQuery.listActiveProjectShells();
       assert.deepEqual(
-        projects.map((project) => project.id),
-        [asProjectId("project-polling-active")],
+        projects.map((project) => ({
+          id: project.id,
+          title: project.title,
+          workspaceRoot: project.workspaceRoot,
+        })),
+        [
+          {
+            id: asProjectId("project-polling-active"),
+            title: "Polling Active",
+            workspaceRoot: "/tmp/polling-active",
+          },
+        ],
       );
 
       yield* Effect.flip(snapshotQuery.getShellSnapshot());
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          kind,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-polling-invalid',
+          'project',
+          'Invalid root',
+          '   ',
+          NULL,
+          '[]',
+          '2026-02-25T00:00:07.000Z',
+          '2026-02-25T00:00:08.000Z',
+          NULL
+        )
+      `;
+
+      yield* Effect.flip(snapshotQuery.listActiveProjectShells());
     }),
   );
 
