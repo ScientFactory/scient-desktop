@@ -199,9 +199,10 @@ function validatePreparedLocalHtmlSourceAuthority(input: {
   const currentDisplayIdentity = canonicalLocalHtmlSourcePath(input.displayUrl);
   const currentPreparedIdentity = canonicalLocalHtmlSourcePath(input.sourceIdentity);
   const currentPreparedRoot = canonicalLocalHtmlSourcePath(input.sourceRoot);
+  if (!preparedSourceIdentity || !preparedSourceRoot) {
+    throw new Error("The local HTML preview is missing its prepared source authority.");
+  }
   if (
-    !preparedSourceIdentity ||
-    !preparedSourceRoot ||
     currentDisplayIdentity !== preparedSourceIdentity ||
     currentPreparedIdentity !== preparedSourceIdentity ||
     currentPreparedRoot !== preparedSourceRoot ||

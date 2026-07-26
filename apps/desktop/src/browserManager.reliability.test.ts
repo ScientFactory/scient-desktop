@@ -1426,6 +1426,24 @@ describe("DesktopBrowserManager reliability", () => {
     }
   });
 
+  it("requires prepared canonical source authority for a local HTML open", () => {
+    const manager = new NativeDesktopBrowserManager();
+    try {
+      expect(() =>
+        manager.open({
+          threadId: THREAD_ID,
+          initialUrl: "http://g-23345678-2234-4123-8123-123456789abc.preview.localhost:43123/",
+          kind: "local-html",
+          displayUrl: "/tmp/report.html",
+          previewCwd: "/tmp",
+        }),
+      ).toThrow("prepared source authority");
+      expect(electron.createdWebContents).toHaveLength(0);
+    } finally {
+      manager.dispose();
+    }
+  });
+
   it("rejects a prepared source after its displayed symlink retargets", async () => {
     const directory = await mkdtemp(join(tmpdir(), "scient-html-symlink-open-"));
     const sourceA = join(directory, "source-a");
