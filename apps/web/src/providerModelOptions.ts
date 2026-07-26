@@ -51,10 +51,27 @@ export interface ProviderModelOptionGroup {
   options: ProviderModelOption[];
 }
 
+type RuntimeModelIdentity = {
+  readonly slug: string;
+  readonly resolvedModel?: string | null | undefined;
+};
+
+function runtimeCatalogAdvertisesClaudeOpus5(
+  runtimeModels: ReadonlyArray<RuntimeModelIdentity> | null | undefined,
+): boolean {
+  return (
+    runtimeModels?.some((model) => {
+      const exactIdentity = model.resolvedModel?.trim() || model.slug.trim();
+      return normalizeDynamicModelSlug("claudeAgent", exactIdentity) === "claude-opus-5";
+    }) === true
+  );
+}
+
 function providerModelIsSupportedByRuntime(input: {
   provider: ProviderKind;
   slug: string;
   providerVersion?: string | null | undefined;
+  runtimeModels?: ReadonlyArray<RuntimeModelIdentity> | null | undefined;
 }): boolean {
   if (
     input.provider !== "claudeAgent" ||
@@ -62,12 +79,19 @@ function providerModelIsSupportedByRuntime(input: {
   ) {
     return true;
   }
-  return isClaudeOpus5RuntimeSupported(input.providerVersion);
+  // A sufficiently new binary is necessary but not sufficient: availability
+  // is account/project scoped. Never surface the static Opus 5 row until the
+  // exact runtime catalog also advertises that exact resolved model.
+  return (
+    isClaudeOpus5RuntimeSupported(input.providerVersion) &&
+    runtimeCatalogAdvertisesClaudeOpus5(input.runtimeModels)
+  );
 }
 
 export function filterProviderModelOptionsForRuntime(input: {
   provider: ProviderKind;
   providerVersion?: string | null | undefined;
+  runtimeModels?: ReadonlyArray<RuntimeModelIdentity> | null | undefined;
   options: ReadonlyArray<ProviderModelOption & { isCustom?: boolean }>;
 }): ReadonlyArray<ProviderModelOption & { isCustom?: boolean }> {
   return input.options.filter((option) =>
@@ -75,6 +99,7 @@ export function filterProviderModelOptionsForRuntime(input: {
       provider: input.provider,
       slug: option.slug,
       providerVersion: input.providerVersion,
+      runtimeModels: input.runtimeModels,
     }),
   );
 }
@@ -166,6 +191,7 @@ export function mergeDynamicModelOptions(input: {
   const eligibleStaticOptions = filterProviderModelOptionsForRuntime({
     provider: input.provider,
     providerVersion: input.providerVersion,
+    runtimeModels: input.dynamicModels,
     options: input.staticOptions,
   });
   const staticNameBySlug = new Map(eligibleStaticOptions.map((model) => [model.slug, model.name]));
@@ -180,6 +206,20 @@ export function mergeDynamicModelOptions(input: {
   const normalizedClaudeResolvedDefaultSlug = claudeResolvedDefaultSlug
     ? normalizeDynamicModelSlug("claudeAgent", claudeResolvedDefaultSlug)
     : undefined;
+  const claudeResolvedModelByAlias = new Map<string, string>();
+  if (input.provider === "claudeAgent") {
+    for (const model of input.dynamicModels) {
+      const resolvedModel = model.resolvedModel?.trim();
+      if (!resolvedModel) continue;
+      claudeResolvedModelByAlias.set(
+        model.slug
+          .trim()
+          .toLowerCase()
+          .replace(/\[[^\]]+\]$/u, ""),
+        resolvedModel,
+      );
+    }
+  }
   const dynamicNormalizedSlugs = new Set<string>();
   const normalizedDynamicOptions: ProviderModelOption[] = [];
 
@@ -198,8 +238,15 @@ export function mergeDynamicModelOptions(input: {
     // the installed CLI. Prefer that exact model identity so an older catalog row
     // cannot be relabeled when Scient advances the fallback alias.
     const slugToNormalize =
-      input.provider === "claudeAgent" && dynamicModel.resolvedModel?.trim()
-        ? dynamicModel.resolvedModel
+      input.provider === "claudeAgent"
+        ? (dynamicModel.resolvedModel?.trim() ??
+          claudeResolvedModelByAlias.get(
+            dynamicModel.slug
+              .trim()
+              .toLowerCase()
+              .replace(/\[[^\]]+\]$/u, ""),
+          ) ??
+          dynamicModel.slug)
         : dynamicModel.slug;
     const normalizedSlug = normalizeDynamicModelSlug(input.provider, slugToNormalize);
     if (
@@ -207,6 +254,7 @@ export function mergeDynamicModelOptions(input: {
         provider: input.provider,
         slug: normalizedSlug,
         providerVersion: input.providerVersion,
+        runtimeModels: input.dynamicModels,
       })
     ) {
       continue;
@@ -264,7 +312,7 @@ export function mergeDynamicModelOptions(input: {
   );
   const runtimeCatalogOwnsBuiltIns =
     input.provider === "claudeAgent"
-      ? input.providerVersion != null
+      ? input.dynamicModels.length > 0
       : (input.provider === "antigravity" ||
           input.provider === "kilo" ||
           input.provider === "opencode" ||

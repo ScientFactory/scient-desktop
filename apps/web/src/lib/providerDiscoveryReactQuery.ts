@@ -242,7 +242,16 @@ export function providerModelsQueryOptions(input: {
     retry: input.provider === "droid" || input.provider === "cursor" ? 0 : 3,
     staleTime: input.provider === "droid" ? 5 * 60_000 : 60_000,
     refetchOnWindowFocus: PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS,
-    placeholderData: (previous) => previous ?? EMPTY_MODELS_RESULT,
+    // Never carry a Claude catalog across an executable/cwd cache-key change.
+    // That placeholder can carry an older runtimeVersion and briefly authorize
+    // an Opus 5 row for a different binary or project while fresh discovery is
+    // still pending. Other providers retain the anti-flicker behavior from #103.
+    ...(input.provider === "claudeAgent"
+      ? {}
+      : {
+          placeholderData: (previous: ProviderListModelsResult | undefined) =>
+            previous ?? EMPTY_MODELS_RESULT,
+        }),
   });
 }
 

@@ -82,6 +82,7 @@ describe("providerModelsQueryOptions", () => {
     const pathOptions = providerModelsQueryOptions({ provider: "claudeAgent" });
 
     expect(configuredOptions.queryKey).not.toEqual(pathOptions.queryKey);
+    expect(configuredOptions.placeholderData).toBeUndefined();
 
     const queryClient = new QueryClient();
     await queryClient.fetchQuery(configuredOptions);

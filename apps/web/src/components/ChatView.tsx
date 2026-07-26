@@ -2367,6 +2367,7 @@ export default function ChatView({
       claudeAgent: filterProviderModelOptionsForRuntime({
         provider: "claudeAgent",
         providerVersion: claudeProviderVersion,
+        runtimeModels: claudeDynamicModelsQuery.data?.models,
         options: getAppModelOptions(
           "claudeAgent",
           customModelsByProvider.claudeAgent,

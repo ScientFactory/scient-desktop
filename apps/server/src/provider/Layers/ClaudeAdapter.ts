@@ -311,8 +311,7 @@ export interface ClaudeAdapterLiveOptions {
   readonly discoveryTimeoutMs?: number;
 }
 
-async function runTemporaryClaudeDiscovery<A>(
-  query: ClaudeQueryRuntime,
+async function runBoundedClaudeDiscovery<A>(
   kind: "command" | "model" | "agent",
   timeoutMs: number,
   discover: () => Promise<A>,
@@ -331,6 +330,18 @@ async function runTemporaryClaudeDiscovery<A>(
     if (timeout !== undefined) {
       clearTimeout(timeout);
     }
+  }
+}
+
+async function runTemporaryClaudeDiscovery<A>(
+  query: ClaudeQueryRuntime,
+  kind: "command" | "model" | "agent",
+  timeoutMs: number,
+  discover: () => Promise<A>,
+): Promise<A> {
+  try {
+    return await runBoundedClaudeDiscovery(kind, timeoutMs, discover);
+  } finally {
     query.close();
   }
 }
@@ -4122,12 +4133,17 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           );
           if (unsupportedModel) return yield* unsupportedModel;
           if (needsExactRuntimeVersion) {
-            const opus5Available =
-              context.claudeOpus5Available ??
-              (yield* Effect.tryPromise({
-                try: () => context.query.supportedModels(),
+            let opus5Available = context.claudeOpus5Available;
+            if (opus5Available === undefined) {
+              const catalog = yield* Effect.tryPromise({
+                try: () =>
+                  runBoundedClaudeDiscovery("model", discoveryTimeoutMs, () =>
+                    context.query.supportedModels(),
+                  ),
                 catch: (cause) => toRequestError(input.threadId, "turn/supportedModels", cause),
-              }).pipe(Effect.map(claudeCatalogAdvertisesOpus5)));
+              });
+              opus5Available = claudeCatalogAdvertisesOpus5(catalog);
+            }
             context.claudeOpus5Available = opus5Available;
             if (!opus5Available) {
               return yield* new ProviderAdapterRequestError({

@@ -928,7 +928,11 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string,
   claudeAgent: {
     fable: "claude-fable-5",
     "fable-5": "claude-fable-5",
-    opus: "claude-opus-5",
+    // Keep the historical short alias stable for persisted threads. Runtime
+    // discovery resolves the moving upstream `opus` alias to an exact model,
+    // but reinterpreting already-persisted `opus` selections would silently
+    // move existing conversations to a different model generation.
+    opus: "claude-opus-4-8",
     "opus-5": "claude-opus-5",
     "claude-opus-5": "claude-opus-5",
     "claude-opus-5.0": "claude-opus-5",

@@ -69,7 +69,7 @@ describe("normalizeModelSlug", () => {
 
   it("uses provider-specific aliases", () => {
     expect(normalizeModelSlug("sonnet", "claudeAgent")).toBe("claude-sonnet-5");
-    expect(normalizeModelSlug("opus", "claudeAgent")).toBe("claude-opus-5");
+    expect(normalizeModelSlug("opus", "claudeAgent")).toBe("claude-opus-4-8");
     expect(normalizeModelSlug("opus-5", "claudeAgent")).toBe("claude-opus-5");
     expect(normalizeModelSlug("claude-opus-5", "claudeAgent")).toBe("claude-opus-5");
     expect(normalizeModelSlug("claude-opus-5.0", "claudeAgent")).toBe("claude-opus-5");
@@ -800,19 +800,25 @@ describe("normalizeClaudeModelOptions", () => {
 });
 
 describe("normalizeClaudeModelSelectionForRuntime", () => {
-  it("normalizes the Opus alias while preserving its native context suffix", () => {
-    expect(
-      normalizeClaudeModelSelectionForRuntime({
+  it.each([
+    ["opus[1m]", "claude-opus-4-8[1m]"],
+    ["opus-5[1m]", "claude-opus-5[1m]"],
+  ])(
+    "normalizes the Opus alias %s while preserving its native context suffix",
+    (model, expected) => {
+      expect(
+        normalizeClaudeModelSelectionForRuntime({
+          provider: "claudeAgent",
+          model,
+          options: { fastMode: true },
+        }),
+      ).toEqual({
         provider: "claudeAgent",
-        model: "opus[1m]",
+        model: expected,
         options: { fastMode: true },
-      }),
-    ).toEqual({
-      provider: "claudeAgent",
-      model: "claude-opus-5[1m]",
-      options: { fastMode: true },
-    });
-  });
+      });
+    },
+  );
 });
 
 describe("resolveApiModelId", () => {

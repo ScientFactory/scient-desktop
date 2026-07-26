@@ -9,6 +9,7 @@ import {
   buildModelSelection,
   buildNextProviderOptions,
   buildProviderOptionPatch,
+  filterProviderModelOptionsForRuntime,
   formatProviderModelOptionName,
   groupProviderModelOptions,
   groupProviderModelOptionsWithFavorites,
@@ -275,6 +276,23 @@ describe("mergeDynamicModelOptions", () => {
         dynamicModels: [],
       }),
     ).toEqual([]);
+  });
+
+  it("keeps Opus 5 hidden until both the exact runtime version and catalog authorize it", () => {
+    const opus5 = { slug: "claude-opus-5", name: "Claude Opus 5" };
+    const opus48 = { slug: "claude-opus-4-8", name: "Claude Opus 4.8" };
+    const staticOptions = [opus5, opus48];
+    const filter = (runtimeModels: ReadonlyArray<{ slug: string; resolvedModel?: string }>) =>
+      filterProviderModelOptionsForRuntime({
+        provider: "claudeAgent",
+        providerVersion: "2.1.219",
+        runtimeModels,
+        options: staticOptions,
+      });
+
+    expect(filter([])).toEqual([opus48]);
+    expect(filter([{ slug: "sonnet", resolvedModel: "claude-sonnet-5" }])).toEqual([opus48]);
+    expect(filter([{ slug: "opus", resolvedModel: "claude-opus-5" }])).toEqual(staticOptions);
   });
 });
 
