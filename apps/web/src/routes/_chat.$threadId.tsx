@@ -1943,7 +1943,9 @@ function SingleChatSurface(props: {
               ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
               ...(prepared.sourceRoot ? { sourceRoot: prepared.sourceRoot } : {}),
               watchedPaths: prepared.watchedPaths ?? [absolutePath],
-              watchDiscoveryLimited: prepared.watchDiscoveryLimited,
+              ...(prepared.watchDiscoveryLimited !== undefined
+                ? { watchDiscoveryLimited: prepared.watchDiscoveryLimited }
+                : {}),
               ...(allowedExternalUrls ? { allowedExternalUrls } : {}),
               activate: true,
             });
@@ -1969,7 +1971,9 @@ function SingleChatSurface(props: {
                     ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
                     ...(prepared.sourceRoot ? { sourceRoot: prepared.sourceRoot } : {}),
                     watchedPaths: prepared.watchedPaths ?? [absolutePath],
-                    watchDiscoveryLimited: prepared.watchDiscoveryLimited,
+                    ...(prepared.watchDiscoveryLimited !== undefined
+                      ? { watchDiscoveryLimited: prepared.watchDiscoveryLimited }
+                      : {}),
                   }
                 : {}),
               ...(allowedExternalUrls ? { allowedExternalUrls } : {}),

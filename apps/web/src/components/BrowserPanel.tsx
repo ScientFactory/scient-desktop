@@ -635,7 +635,9 @@ export function BrowserPanel({
                   ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
                   ...(prepared.sourceRoot ? { sourceRoot: prepared.sourceRoot } : {}),
                   watchedPaths: prepared.watchedPaths ?? [displayUrl],
-                  watchDiscoveryLimited: prepared.watchDiscoveryLimited,
+                  ...(prepared.watchDiscoveryLimited !== undefined
+                    ? { watchDiscoveryLimited: prepared.watchDiscoveryLimited }
+                    : {}),
                   ...(prepared.mode === "static-document" && prepared.allowedExternalUrls
                     ? { allowedExternalUrls: prepared.allowedExternalUrls }
                     : {}),
