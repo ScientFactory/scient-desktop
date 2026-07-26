@@ -4,12 +4,14 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const electronPath = join(desktopRoot, "node_modules", ".bin", "electron");
+const require = createRequire(import.meta.url);
+const electronPath = require("electron");
 const harnessPath = join(desktopRoot, "scripts", "backend-crash-breaker-acceptance-harness.mjs");
 
 if (process.platform !== "darwin") {
@@ -142,32 +144,28 @@ async function waitForAccessibleDialog(inspect, timeoutMs = 15_000) {
   );
 }
 
-async function stopFixture(child, nativeProcessId) {
-  const processIds = new Set(
-    [child.pid, nativeProcessId].filter(
-      (processId) => Number.isInteger(processId) && processId > 0,
-    ),
-  );
-  const signal = (signalName) => {
-    for (const processId of processIds) {
-      try {
-        process.kill(processId, signalName);
-      } catch {
-        // The fixture process already exited.
-      }
-    }
-  };
+async function waitForFixtureExit(child, timeoutMs) {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
+  return await new Promise((resolveExit) => {
+    const timeout = setTimeout(() => {
+      child.off("exit", onExit);
+      resolveExit(false);
+    }, timeoutMs);
+    const onExit = () => {
+      clearTimeout(timeout);
+      resolveExit(true);
+    };
+    child.once("exit", onExit);
+  });
+}
 
-  signal("SIGTERM");
-  if (child.exitCode === null && child.signalCode === null) {
-    await Promise.race([
-      new Promise((resolveExit) => child.once("exit", resolveExit)),
-      new Promise((resolveDelay) => setTimeout(resolveDelay, 2_000)),
-    ]);
-  }
-  if (child.exitCode === null && child.signalCode === null) {
-    signal("SIGKILL");
-    await new Promise((resolveExit) => child.once("exit", resolveExit));
+async function stopFixture(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
+  if (await waitForFixtureExit(child, 2_000)) return;
+  child.kill("SIGKILL");
+  if (!(await waitForFixtureExit(child, 2_000))) {
+    throw new Error("Electron fixture did not terminate after SIGKILL.");
   }
 }
 
@@ -224,6 +222,7 @@ async function runScenario(scenario, drive) {
     );
     const nativeProcessId = dialogState.processId;
     assert.ok(Number.isInteger(nativeProcessId) && nativeProcessId > 0);
+    assert.equal(nativeProcessId, child.pid, "Electron fixture identity changed unexpectedly.");
     const inspectLive = () =>
       JSON.parse(runAppleScript(AX_INSPECTION_SCRIPT, String(nativeProcessId)));
     const initialSnapshot =
@@ -267,8 +266,7 @@ async function runScenario(scenario, drive) {
     });
     return finalState;
   } catch (error) {
-    const nativeProcessId = readState(root)?.processId;
-    await stopFixture(child, nativeProcessId);
+    await stopFixture(child);
     throw new Error(`${error.message}\nElectron stderr:\n${stderr.join("")}`, { cause: error });
   } finally {
     rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
