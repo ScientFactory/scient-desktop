@@ -66,6 +66,18 @@ import { resolvePackageManagedProviderMaintenance } from "../providerMaintenance
 
 const encoder = new TextEncoder();
 
+function kiloRuntimeSnapshot(executable: string) {
+  return {
+    provider: "kilo" as const,
+    managedExecutablePath: executable,
+    managedVersion: "1.0.0",
+    previousReleaseAvailable: false,
+    bundled: false,
+    canInstall: false,
+    installationState: null,
+  };
+}
+
 describe("provider health probe cwd", () => {
   it("isolates background provider runtimes under Scient private state", () => {
     const stateDir = NodePath.join("root", "scient-state");
@@ -536,16 +548,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
         const binaryB = path.join(baseDir, "b", ".local", "bin", "kilo");
         let runtimeExecutable = binaryA;
         let updateSpawnCount = 0;
-        const runtimeSnapshot = (executable: string) => ({
-          provider: "kilo" as const,
-          managedExecutablePath: executable,
-          managedVersion: "1.0.0",
-          previousReleaseAvailable: false,
-          bundled: false,
-          canInstall: false,
-          installationState: null,
-        });
-        type RuntimeChange = ReadonlyMap<ProviderKind, ReturnType<typeof runtimeSnapshot>>;
+        type RuntimeChange = ReadonlyMap<ProviderKind, ReturnType<typeof kiloRuntimeSnapshot>>;
         const runtimeQueueReady =
           yield* Deferred.make<Queue.Queue<RuntimeChange, Cause.Done<void>>>();
         const runtimeChanges = Stream.callback<RuntimeChange>((queue) =>
@@ -575,7 +578,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
                 canRemove: false,
                 message: null,
               }),
-            getSnapshot: () => Effect.succeed(runtimeSnapshot(runtimeExecutable)),
+            getSnapshot: () => Effect.succeed(kiloRuntimeSnapshot(runtimeExecutable)),
             streamChanges: runtimeChanges as ProviderRuntimeManagerShape["streamChanges"],
           },
         }).pipe(
@@ -599,7 +602,10 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
 
           const runtimeQueue = yield* Deferred.await(runtimeQueueReady);
           runtimeExecutable = binaryB;
-          yield* Queue.offer(runtimeQueue, new Map([["kilo", runtimeSnapshot(runtimeExecutable)]]));
+          yield* Queue.offer(
+            runtimeQueue,
+            new Map([["kilo", kiloRuntimeSnapshot(runtimeExecutable)]]),
+          );
           const emitted = yield* providerHealth.streamChanges.pipe(
             Stream.map((statuses) => statuses.find((provider) => provider.provider === "kilo")),
             Stream.filter((status) => status?.versionAdvisory?.status === "unknown"),
