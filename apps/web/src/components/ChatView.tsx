@@ -353,6 +353,10 @@ import {
   useEffectiveComposerModelState,
 } from "../composerDraftStore";
 import { useTemporaryThreadStore } from "../temporaryThreadStore";
+import {
+  type OwnedOptimisticUserMessage,
+  useOptimisticUserMessageStore,
+} from "../optimisticUserMessageStore";
 import { useComposerFocusRequestStore } from "../composerFocusRequestStore";
 import { appendComposerPromptText } from "../lib/chatReferences";
 import {
@@ -584,6 +588,7 @@ import {
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_MESSAGES: ChatMessage[] = [];
+const EMPTY_OPTIMISTIC_USER_MESSAGES: OwnedOptimisticUserMessage[] = [];
 const EMPTY_PINNED_MESSAGES: readonly PinnedMessage[] = [];
 const EMPTY_THREAD_MARKERS: readonly ThreadMarker[] = [];
 const EMPTY_PINNED_TEXT: ReadonlyMap<MessageId, string> = new Map();
@@ -607,10 +612,6 @@ const SETUP_SCRIPT_TERMINAL_MAX_RUNTIME_MS = 10 * 60 * 1000;
 const sendInFlightThreadIds = new Set<ThreadId>();
 const sendPreflightInFlightThreadIds = new Set<ThreadId>();
 const sendOperationInFlightThreadIds = new Set<ThreadId>();
-
-type OwnedOptimisticUserMessage = ChatMessage & {
-  ownerThreadId: ThreadId;
-};
 
 function terminalHasRunningSubprocess(threadId: ThreadId, terminalId: string): boolean {
   const terminalState = selectThreadTerminalState(
@@ -1350,11 +1351,11 @@ export default function ChatView({
   const emptyDraftProjectRequestInFlightRef = useRef<number | null>(null);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
-  const [optimisticUserMessages, setOptimisticUserMessages] = useState<
-    OwnedOptimisticUserMessage[]
-  >([]);
-  const optimisticUserMessagesRef = useRef(optimisticUserMessages);
-  optimisticUserMessagesRef.current = optimisticUserMessages;
+  const optimisticUserMessages = useOptimisticUserMessageStore(
+    (store) => store.messagesByThreadId[threadId] ?? EMPTY_OPTIMISTIC_USER_MESSAGES,
+  );
+  const addOptimisticUserMessage = useOptimisticUserMessageStore((store) => store.addMessage);
+  const removeOptimisticUserMessage = useOptimisticUserMessageStore((store) => store.removeMessage);
   const composerAssistantSelectionsRef = useRef<ComposerAssistantSelectionAttachment[]>(
     composerAssistantSelections,
   );
@@ -3077,9 +3078,6 @@ export default function ChatView({
   useEffect(() => {
     return () => {
       clearAttachmentPreviewHandoffs();
-      for (const message of optimisticUserMessagesRef.current) {
-        revokeUserMessagePreviewUrls(message);
-      }
     };
   }, [clearAttachmentPreviewHandoffs]);
   const handoffAttachmentPreviews = useCallback((messageId: MessageId, previewUrls: string[]) => {
@@ -5578,25 +5576,23 @@ export default function ChatView({
     if (removedMessages.length === 0) {
       return;
     }
-    const timer = window.setTimeout(() => {
-      setOptimisticUserMessages((existing) =>
-        existing.filter(
-          (message) => message.ownerThreadId !== activeThread.id || !serverIds.has(message.id),
-        ),
-      );
-    }, 0);
     for (const removedMessage of removedMessages) {
-      const previewUrls = collectUserMessageBlobPreviewUrls(removedMessage);
+      const removed = removeOptimisticUserMessage(activeThread.id, removedMessage.id);
+      if (!removed) continue;
+      const previewUrls = collectUserMessageBlobPreviewUrls(removed);
       if (previewUrls.length > 0) {
-        handoffAttachmentPreviews(removedMessage.id, previewUrls);
+        handoffAttachmentPreviews(removed.id, previewUrls);
         continue;
       }
-      revokeUserMessagePreviewUrls(removedMessage);
+      revokeUserMessagePreviewUrls(removed);
     }
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [activeThread?.id, activeThread?.messages, handoffAttachmentPreviews, optimisticUserMessages]);
+  }, [
+    activeThread?.id,
+    activeThread?.messages,
+    handoffAttachmentPreviews,
+    optimisticUserMessages,
+    removeOptimisticUserMessage,
+  ]);
 
   useEffect(() => {
     promptRef.current = prompt;
@@ -8096,24 +8092,21 @@ export default function ChatView({
       );
     }
     if (sendOwnsActivePane()) {
-      setOptimisticUserMessages((existing) => [
-        ...existing,
-        {
-          ownerThreadId: threadIdForSend,
-          id: messageIdForSend,
-          role: "user",
-          text: outgoingMessageText,
-          dispatchMode,
-          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-          ...(mentionedSkillsForSend.length > 0 ? { skills: mentionedSkillsForSend } : {}),
-          ...(mentionedPluginMentionsForSend.length > 0
-            ? { mentions: mentionedPluginMentionsForSend }
-            : {}),
-          createdAt: messageCreatedAt,
-          streaming: false,
-          source: "native",
-        },
-      ]);
+      addOptimisticUserMessage({
+        ownerThreadId: threadIdForSend,
+        id: messageIdForSend,
+        role: "user",
+        text: outgoingMessageText,
+        dispatchMode,
+        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+        ...(mentionedSkillsForSend.length > 0 ? { skills: mentionedSkillsForSend } : {}),
+        ...(mentionedPluginMentionsForSend.length > 0
+          ? { mentions: mentionedPluginMentionsForSend }
+          : {}),
+        createdAt: messageCreatedAt,
+        streaming: false,
+        source: "native",
+      });
     }
     // Mark the transcript as anchored before the optimistic row lands so the
     // re-snap effect on row count change pulls us to the new tail.
@@ -8156,12 +8149,113 @@ export default function ChatView({
     let promotedServerThreadForLocalDraft = false;
     let turnStartSucceeded = false;
     let createdWorktreeForSend: { cwd: string; path: string; branch: string } | null = null;
+    let createdWorktreeRecoveryThreadId: ThreadId | null = null;
     let createdWorktreeCleanupIsSafe = true;
     let createdWorktreeCleanupInFlight = false;
+    const failedSendDraftIsEmpty = (ownerThreadId: ThreadId): boolean => {
+      const failedSendDraft =
+        useComposerDraftStore.getState().draftsByThreadId[ownerThreadId] ?? null;
+      return (
+        (failedSendDraft?.prompt ?? "").length === 0 &&
+        (failedSendDraft?.images.length ?? 0) === 0 &&
+        (failedSendDraft?.files.length ?? 0) === 0 &&
+        (failedSendDraft?.assistantSelections.length ?? 0) === 0 &&
+        (failedSendDraft?.fileComments.length ?? 0) === 0 &&
+        (failedSendDraft?.terminalContexts.length ?? 0) === 0 &&
+        (failedSendDraft?.pastedTexts.length ?? 0) === 0
+      );
+    };
+    const restoreFailedSendDraftContent = (ownerThreadId: ThreadId): void => {
+      if (queuedChatTurn !== null || turnStartSucceeded || !failedSendDraftIsEmpty(ownerThreadId)) {
+        return;
+      }
+      removeOptimisticUserMessage(threadIdForSend, messageIdForSend, { revokePreviews: true });
+      setComposerDraftPrompt(ownerThreadId, promptForSend);
+      if (sourceProposedPlanForSend) {
+        setRestoredQueuedSourceProposedPlan(ownerThreadId, {
+          threadId: ownerThreadId,
+          restoredPrompt: promptForSend,
+          sourceProposedPlan: sourceProposedPlanForSend,
+        });
+      }
+      addComposerDraftImages(
+        ownerThreadId,
+        composerImagesSnapshot.map(cloneComposerImageAttachment),
+      );
+      addComposerDraftFiles(ownerThreadId, composerFilesSnapshot);
+      for (const selection of composerAssistantSelectionsSnapshot) {
+        addComposerDraftAssistantSelection(ownerThreadId, selection);
+      }
+      for (const comment of composerFileCommentsSnapshot) {
+        addComposerDraftFileComment(ownerThreadId, comment);
+      }
+      addComposerDraftTerminalContexts(ownerThreadId, composerTerminalContextsSnapshot);
+      addComposerDraftPastedTexts(ownerThreadId, composerPastedTextsSnapshot);
+      setComposerDraftSkills(ownerThreadId, composerSkillsSnapshot);
+      setComposerDraftMentions(ownerThreadId, composerMentionsSnapshot);
+    };
+    const ensureCreatedWorktreeRecoveryOwner = (): ThreadId | null => {
+      const worktree = createdWorktreeForSend;
+      if (!worktree) return null;
+      const draftStore = useComposerDraftStore.getState();
+      const sourceWasDeleted = useStore.getState().deletedThreadIdsById?.[threadIdForSend] === true;
+      const ownerThreadId = sourceWasDeleted
+        ? (createdWorktreeRecoveryThreadId ?? newThreadId())
+        : threadIdForSend;
+      createdWorktreeRecoveryThreadId = ownerThreadId;
+      const existing = draftStore.getDraftThread(ownerThreadId);
+      if (existing?.promotedTo === threadIdForSend) {
+        draftStore.rollbackDraftThreadPromotion(ownerThreadId, threadIdForSend, {
+          branch: worktree.branch,
+          worktreePath: worktree.path,
+        });
+      } else if (existing) {
+        draftStore.setDraftThreadContext(ownerThreadId, {
+          envMode: "worktree",
+          workspaceOrigin: "intentional",
+          branch: worktree.branch,
+          worktreePath: worktree.path,
+        });
+      } else {
+        const entryPoint = draftThread?.entryPoint ?? "chat";
+        const registration = {
+          createdAt: messageCreatedAt,
+          branch: worktree.branch,
+          worktreePath: worktree.path,
+          envMode: "worktree" as const,
+          workspaceOrigin: "intentional" as const,
+          runtimeMode: nextRuntimeModeForSend,
+          interactionMode: interactionModeForSend,
+          entryPoint,
+        };
+        if (!draftStore.getDraftThreadByProjectId(targetProjectIdForSend, entryPoint)) {
+          draftStore.setProjectDraftThreadId(targetProjectIdForSend, ownerThreadId, registration);
+        } else {
+          draftStore.registerDraftThread(ownerThreadId, {
+            projectId: targetProjectIdForSend,
+            ...registration,
+          });
+        }
+      }
+      const recovered = useComposerDraftStore.getState().getDraftThread(ownerThreadId);
+      if (
+        !recovered ||
+        recovered.promotedTo !== undefined ||
+        recovered.branch !== worktree.branch ||
+        recovered.worktreePath !== worktree.path
+      ) {
+        throw new Error("Failed to record the generated worktree recovery draft.");
+      }
+      restoreFailedSendDraftContent(ownerThreadId);
+      return ownerThreadId;
+    };
     const removeUntouchedCreatedWorktree = async (): Promise<boolean> => {
       const worktree = createdWorktreeForSend;
       if (!worktree) return true;
-      if (!createdWorktreeCleanupIsSafe || createdWorktreeCleanupInFlight) return false;
+      if (!createdWorktreeCleanupIsSafe || createdWorktreeCleanupInFlight) {
+        ensureCreatedWorktreeRecoveryOwner();
+        return false;
+      }
       createdWorktreeCleanupInFlight = true;
       try {
         await api.git.removeWorktree({
@@ -8177,6 +8271,7 @@ export default function ChatView({
           worktreePath: worktree.path,
           cleanupError,
         });
+        ensureCreatedWorktreeRecoveryOwner();
         return false;
       } finally {
         createdWorktreeCleanupInFlight = false;
@@ -8453,60 +8548,13 @@ export default function ChatView({
       if (!sendSourceExistsAfterFailure && !turnStartSucceeded && promotedThreadRollbackSucceeded) {
         await removeUntouchedCreatedWorktree();
       }
-      const failedSendDraft = sendSourceExistsAfterFailure
-        ? (useComposerDraftStore.getState().draftsByThreadId[threadIdForSend] ?? null)
-        : null;
-      const failedSendDraftStillEmpty =
-        (failedSendDraft?.prompt ?? "").length === 0 &&
-        (failedSendDraft?.images.length ?? 0) === 0 &&
-        (failedSendDraft?.files.length ?? 0) === 0 &&
-        (failedSendDraft?.assistantSelections.length ?? 0) === 0 &&
-        (failedSendDraft?.fileComments.length ?? 0) === 0 &&
-        (failedSendDraft?.terminalContexts.length ?? 0) === 0 &&
-        (failedSendDraft?.pastedTexts.length ?? 0) === 0;
       if (
         sendSourceExistsAfterFailure &&
         queuedChatTurn === null &&
         !turnStartSucceeded &&
-        failedSendDraftStillEmpty
+        failedSendDraftIsEmpty(threadIdForSend)
       ) {
-        setOptimisticUserMessages((existing) => {
-          const removed = existing.filter(
-            (message) =>
-              message.ownerThreadId === threadIdForSend && message.id === messageIdForSend,
-          );
-          for (const message of removed) {
-            revokeUserMessagePreviewUrls(message);
-          }
-          const next = existing.filter(
-            (message) =>
-              message.ownerThreadId !== threadIdForSend || message.id !== messageIdForSend,
-          );
-          return next.length === existing.length ? existing : next;
-        });
-        setComposerDraftPrompt(threadIdForSend, promptForSend);
-        if (sourceProposedPlanForSend) {
-          setRestoredQueuedSourceProposedPlan(threadIdForSend, {
-            threadId: threadIdForSend,
-            restoredPrompt: promptForSend,
-            sourceProposedPlan: sourceProposedPlanForSend,
-          });
-        }
-        addComposerDraftImages(
-          threadIdForSend,
-          composerImagesSnapshot.map(cloneComposerImageAttachment),
-        );
-        addComposerDraftFiles(threadIdForSend, composerFilesSnapshot);
-        for (const selection of composerAssistantSelectionsSnapshot) {
-          addComposerDraftAssistantSelection(threadIdForSend, selection);
-        }
-        for (const comment of composerFileCommentsSnapshot) {
-          addComposerDraftFileComment(threadIdForSend, comment);
-        }
-        addComposerDraftTerminalContexts(threadIdForSend, composerTerminalContextsSnapshot);
-        addComposerDraftPastedTexts(threadIdForSend, composerPastedTextsSnapshot);
-        setComposerDraftSkills(threadIdForSend, composerSkillsSnapshot);
-        setComposerDraftMentions(threadIdForSend, composerMentionsSnapshot);
+        restoreFailedSendDraftContent(threadIdForSend);
         if (sendOwnsActivePane()) {
           promptRef.current = promptForSend;
           setComposerCursor(collapseExpandedComposerCursor(promptForSend, promptForSend.length));
@@ -8853,19 +8901,16 @@ export default function ChatView({
     sendInFlightThreadIds.add(threadIdForSend);
     beginLocalDispatch(threadIdForSend);
     setThreadError(threadIdForSend, null);
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        ownerThreadId: threadIdForSend,
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        dispatchMode,
-        createdAt: messageCreatedAt,
-        streaming: false,
-        source: "native",
-      },
-    ]);
+    addOptimisticUserMessage({
+      ownerThreadId: threadIdForSend,
+      id: messageIdForSend,
+      role: "user",
+      text: outgoingMessageText,
+      dispatchMode,
+      createdAt: messageCreatedAt,
+      streaming: false,
+      source: "native",
+    });
     armTranscriptAutoFollow(threadIdForSend, true);
 
     try {
@@ -8941,11 +8986,7 @@ export default function ChatView({
       sendInFlightThreadIds.delete(threadIdForSend);
       return true;
     } catch (err) {
-      setOptimisticUserMessages((existing) =>
-        existing.filter(
-          (message) => message.ownerThreadId !== threadIdForSend || message.id !== messageIdForSend,
-        ),
-      );
+      removeOptimisticUserMessage(threadIdForSend, messageIdForSend, { revokePreviews: true });
       if (threadSourceStillExists(threadIdForSend, true)) {
         setThreadError(
           threadIdForSend,

@@ -69,6 +69,7 @@ import {
   sendEffectRpcExit,
 } from "../test/effectRpcWebSocketMock";
 import { useTemporaryThreadStore } from "../temporaryThreadStore";
+import { useOptimisticUserMessageStore } from "../optimisticUserMessageStore";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { resetRetainedThreadDetailSubscriptionsForTests } from "../threadDetailSubscriptionRetention";
 import { resetWsNativeApiForTest } from "../wsNativeApi";
@@ -2057,6 +2058,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     useTemporaryThreadStore.setState({
       temporaryThreadIds: {},
     });
+    useOptimisticUserMessageStore.getState().clearAll();
     useTerminalStateStore.setState({
       terminalStateByThreadId: {},
     });
@@ -2067,6 +2069,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   afterEach(async () => {
+    useOptimisticUserMessageStore.getState().clearAll();
     await resetHomeChatProjectPrewarmStateForTests();
     await resetStudioProjectPrewarmStateForTests();
     resetRetainedThreadDetailSubscriptionsForTests();
@@ -5922,6 +5925,41 @@ describe("ChatView timeline estimator parity (full app)", () => {
         expect(document.querySelector(`img[src="${sourcePreviewUrl}"]`)).not.toBeNull();
       });
 
+      const acknowledgedMessage = getSourceAcknowledgedMessage();
+      if (!acknowledgedMessage) {
+        throw new Error("Source turn acknowledgement was not captured.");
+      }
+
+      const splitViewId = useSplitViewStore.getState().createFromDrop({
+        sourceThreadId: THREAD_ID,
+        ownerProjectId: PROJECT_ID,
+        droppedThreadId: OTHER_THREAD_ID,
+        direction: "horizontal",
+        side: "second",
+      });
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: THREAD_ID },
+        search: () => ({ splitViewId }),
+      });
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll("[data-split-chat-pane]")).toHaveLength(2);
+        const sourceRows = document.querySelectorAll(
+          `[data-message-id="${acknowledgedMessage.id}"]`,
+        );
+        expect(sourceRows).toHaveLength(1);
+        const sourcePane = sourceRows[0]!.closest<HTMLElement>("[data-split-chat-pane]");
+        expect(sourcePane?.textContent ?? "").toContain(sourcePrompt);
+        expect(sourcePane?.querySelector(`img[src="${sourcePreviewUrl}"]`)).not.toBeNull();
+        const destinationPane = Array.from(
+          document.querySelectorAll<HTMLElement>("[data-split-chat-pane]"),
+        ).find((pane) => pane !== sourcePane);
+        expect(destinationPane).toBeDefined();
+        expect(destinationPane?.textContent ?? "").not.toContain(sourcePrompt);
+        expect(destinationPane?.querySelector(`img[src="${sourcePreviewUrl}"]`)).toBeNull();
+        expect(revokeObjectUrl).not.toHaveBeenCalledWith(sourcePreviewUrl);
+      });
+
       releaseSourceTurn();
       await vi.waitFor(() => {
         expect(
@@ -5932,10 +5970,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
             ),
         ).toBe(true);
       });
-      const acknowledgedMessage = getSourceAcknowledgedMessage();
-      if (!acknowledgedMessage) {
-        throw new Error("Source turn acknowledgement was not captured.");
-      }
       useStore.setState((state) => {
         const existingMessageIds = state.messageIdsByThreadId?.[THREAD_ID] ?? [];
         const existingMessagesById = state.messageByThreadId?.[THREAD_ID] ?? {};
@@ -5962,34 +5996,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
-
-      const splitViewId = useSplitViewStore.getState().createFromDrop({
-        sourceThreadId: THREAD_ID,
-        ownerProjectId: PROJECT_ID,
-        droppedThreadId: OTHER_THREAD_ID,
-        direction: "horizontal",
-        side: "second",
-      });
-      await mounted.router.navigate({
-        to: "/$threadId",
-        params: { threadId: THREAD_ID },
-        search: () => ({ splitViewId }),
-      });
-      await vi.waitFor(() => {
-        expect(document.querySelectorAll("[data-split-chat-pane]")).toHaveLength(2);
-      });
-      await vi.waitFor(() => {
-        const sourcePane = document
-          .querySelector(`[data-message-id="${acknowledgedMessage.id}"]`)
-          ?.closest<HTMLElement>("[data-split-chat-pane]");
-        expect(sourcePane).not.toBeNull();
-        expect(sourcePane?.textContent ?? "").toContain(sourcePrompt);
-        const destinationPane = Array.from(
-          document.querySelectorAll<HTMLElement>("[data-split-chat-pane]"),
-        ).find((pane) => pane !== sourcePane);
-        expect(destinationPane).toBeDefined();
-        expect(destinationPane?.textContent ?? "").not.toContain(sourcePrompt);
-      });
+      expect(revokeObjectUrl.mock.calls.filter(([url]) => url === sourcePreviewUrl)).toHaveLength(
+        1,
+      );
     } finally {
       releaseSourceTurn();
       revokeObjectUrl.mockRestore();
@@ -6670,14 +6679,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("removes a newly-created worktree when its thread is deleted during metadata persistence", async () => {
+  it("records a recovery draft when dirty worktree cleanup refuses after source deletion", async () => {
     type CreateWorktreeResult = Awaited<ReturnType<NativeApi["git"]["createWorktree"]>>;
     let resolveCreateWorktree!: (value: CreateWorktreeResult) => void;
     const createWorktreeResult = new Promise<CreateWorktreeResult>((resolve) => {
       resolveCreateWorktree = resolve;
     });
     const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(() => createWorktreeResult);
-    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => undefined);
+    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => {
+      throw new Error("worktree contains external changes");
+    });
     let resolveMetadata!: () => void;
     const metadataGate = new Promise<void>((resolve) => {
       resolveMetadata = resolve;
@@ -6773,7 +6784,21 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      expect(useComposerDraftStore.getState().getDraftThread(OTHER_THREAD_ID)).toBeNull();
+      const recoveryDrafts = Object.entries(
+        useComposerDraftStore.getState().draftThreadsByThreadId,
+      ).filter(([, draft]) => draft.worktreePath === "/repo/.codex/worktrees/project/deleted-send");
+      expect(recoveryDrafts).toHaveLength(1);
+      const recoveryThreadId = recoveryDrafts[0]![0] as ThreadId;
+      expect(recoveryThreadId).not.toBe(OTHER_THREAD_ID);
+      expect(recoveryDrafts[0]![1]).toMatchObject({
+        branch: "scient/deleted-send",
+        worktreePath: "/repo/.codex/worktrees/project/deleted-send",
+        envMode: "worktree",
+      });
+      expect(recoveryDrafts[0]![1].promotedTo).toBeUndefined();
+      expect(useComposerDraftStore.getState().draftsByThreadId[recoveryThreadId]?.prompt).toBe(
+        "do not keep this worktree",
+      );
       expect(
         wsRequests
           .slice(requestStart)
@@ -6782,6 +6807,27 @@ describe("ChatView timeline estimator parity (full app)", () => {
             (command) => command && "threadId" in command && command.threadId === OTHER_THREAD_ID,
           ),
       ).toEqual([]);
+
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: recoveryThreadId },
+      });
+      const recoveryEditor = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(recoveryEditor.textContent ?? "").toContain("do not keep this worktree");
+      });
+      (await waitForSendButton()).click();
+      await vi.waitFor(() => {
+        expect(
+          wsRequests
+            .map(readDispatchedCommand)
+            .some(
+              (command) =>
+                command?.type === "thread.turn.start" && command.threadId === recoveryThreadId,
+            ),
+        ).toBe(true);
+      });
+      expect(createWorktree).toHaveBeenCalledOnce();
     } finally {
       resolveCreateWorktree({
         worktree: {
@@ -6795,7 +6841,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("rolls back a promoted thread and its worktree when its local draft is deleted during promotion", async () => {
+  it("restores exact worktree ownership when dirty cleanup refuses after promotion draft clear", async () => {
     let resolvePromotion!: () => void;
     const promotionGate = new Promise<void>((resolve) => {
       resolvePromotion = resolve;
@@ -6807,7 +6853,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         branch: "scient/deleted-draft",
       },
     }));
-    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => undefined);
+    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => {
+      throw new Error("worktree contains external changes");
+    });
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
@@ -6884,7 +6932,17 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toBeNull();
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        branch: "scient/deleted-draft",
+        worktreePath: "/repo/.codex/worktrees/project/deleted-draft",
+        envMode: "worktree",
+      });
+      expect(
+        useComposerDraftStore.getState().getDraftThread(newThreadId)?.promotedTo,
+      ).toBeUndefined();
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt).toBe(
+        "do not promote this draft",
+      );
       const dispatchedCommands = wsRequests
         .slice(requestStart)
         .map(readDispatchedCommand)
@@ -6897,6 +6955,19 @@ describe("ChatView timeline estimator parity (full app)", () => {
           (command) => command?.type === "thread.turn.start" && command.threadId === newThreadId,
         ),
       ).toBe(false);
+
+      await (await waitForSendButton()).click();
+      await vi.waitFor(() => {
+        expect(
+          wsRequests
+            .map(readDispatchedCommand)
+            .some(
+              (command) =>
+                command?.type === "thread.turn.start" && command.threadId === newThreadId,
+            ),
+        ).toBe(true);
+      });
+      expect(createWorktree).toHaveBeenCalledOnce();
     } finally {
       resolvePromotion();
       await mounted.cleanup();
@@ -7022,6 +7093,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
   it("removes a generated worktree and restores an owned draft after pre-turn failure", async () => {
     const newThreadId = ThreadId.makeUnsafe("thread-owned-promotion-failure");
+    const restoredPreviewUrl = "blob:restored-after-pre-turn-failure";
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL");
     useComposerDraftStore.setState({
       draftThreadsByThreadId: {
         [newThreadId]: {
@@ -7069,6 +7142,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       useComposerDraftStore.getState().setPrompt(newThreadId, "retry this send");
+      useComposerDraftStore.getState().addImages(newThreadId, [
+        createComposerImage({
+          id: "restored-after-pre-turn-failure",
+          previewUrl: restoredPreviewUrl,
+          name: "restored-after-failure.png",
+        }),
+      ]);
       const composerEditor = await waitForComposerEditor();
       await vi.waitFor(() => {
         expect(composerEditor.textContent ?? "").toContain("retry this send");
@@ -7118,6 +7198,14 @@ describe("ChatView timeline estimator parity (full app)", () => {
       expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt).toBe(
         "retry this send",
       );
+      const restoredImage =
+        useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.images[0];
+      expect(restoredImage?.previewUrl).toMatch(/^blob:/);
+      expect(restoredImage?.previewUrl).not.toBe(restoredPreviewUrl);
+      expect(document.querySelector(`img[src="${restoredImage!.previewUrl}"]`)).not.toBeNull();
+      expect(revokeObjectUrl.mock.calls.filter(([url]) => url === restoredPreviewUrl)).toHaveLength(
+        1,
+      );
 
       await (await waitForSendButton()).click();
       await vi.waitFor(() => expect(createWorktree).toHaveBeenCalledTimes(2));
@@ -7143,6 +7231,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         force: false,
       });
     } finally {
+      revokeObjectUrl.mockRestore();
       await mounted.cleanup();
     }
   });
