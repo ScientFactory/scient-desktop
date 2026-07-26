@@ -568,6 +568,43 @@ describe("DesktopBackendSupervisor", () => {
     expect(harness.restarts.map(({ attempt }) => attempt)).toEqual([0, 1]);
   });
 
+  it("restarts a late exit after a failed updater stop without forgiving earlier failures", async () => {
+    const harness = makeHarness({
+      restartBaseDelayMs: 1,
+      restartMaxFailures: 3,
+      gracefulShutdownTimeoutMs: 10,
+      forcedExitTimeoutMs: 10,
+      forceTerminateTree: vi.fn(async () => undefined),
+    });
+    await harness.supervisor.start();
+    harness.children[0]!.exit(1);
+    await vi.advanceTimersByTimeAsync(1);
+    const retained = harness.children[1]!;
+
+    const stopping = harness.supervisor.stop("updater handoff");
+    await vi.advanceTimersByTimeAsync(20);
+    await expect(stopping).rejects.toBeInstanceOf(DesktopBackendTerminationError);
+    expect(harness.supervisor.currentGeneration?.number).toBe(2);
+
+    await harness.supervisor.resume();
+    retained.exit(1);
+    await settleLifecycle();
+
+    expect(harness.exits.at(-1)?.expected).toBe(false);
+    expect(harness.restarts.map(({ attempt }) => attempt)).toEqual([0, 1]);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(harness.supervisor.currentGeneration?.number).toBe(3);
+
+    harness.children[2]!.exit(1);
+    await settleLifecycle();
+
+    expect(harness.restartLimits).toEqual([
+      expect.objectContaining({ failures: 3, maxFailures: 3 }),
+    ]);
+    expect(harness.supervisor.desiredRunning).toBe(false);
+    expect(harness.children).toHaveLength(3);
+  });
+
   it("does not revive a backend when updater failure overlaps desktop shutdown", async () => {
     const harness = makeHarness();
     const recoveryLatch = new UpdateBackendRecoveryLatch();

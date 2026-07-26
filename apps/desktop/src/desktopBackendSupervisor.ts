@@ -188,6 +188,10 @@ export class DesktopBackendSupervisor {
     return this.#enqueue(async () => {
       const active = this.#active;
       if (await this.#stopActive(reason)) return;
+      // The supervisor retains the live child when termination cannot be proven, but the failed
+      // stop no longer owns a future exit. This matters when an updater failure resumes the
+      // backend: a later exit must be eligible for normal unexpected-exit recovery.
+      this.#stoppingGenerations.delete(active!.number);
       throw new DesktopBackendTerminationError(active!, reason);
     });
   }
