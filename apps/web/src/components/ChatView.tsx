@@ -3461,11 +3461,13 @@ export default function ChatView({
       cwd: composerSkillCwd,
       threadId,
       binaryPath:
-        (selectedProvider === "opencode"
-          ? providerOptionsForDispatch?.opencode?.binaryPath
-          : selectedProvider === "kilo"
-            ? providerOptionsForDispatch?.kilo?.binaryPath
-            : null) ?? null,
+        (selectedProvider === "claudeAgent"
+          ? providerOptionsForDispatch?.claudeAgent?.binaryPath
+          : selectedProvider === "opencode"
+            ? providerOptionsForDispatch?.opencode?.binaryPath
+            : selectedProvider === "kilo"
+              ? providerOptionsForDispatch?.kilo?.binaryPath
+              : null) ?? null,
       serverUrl:
         (selectedProvider === "opencode"
           ? providerOptionsForDispatch?.opencode?.serverUrl
@@ -9795,6 +9797,7 @@ export default function ChatView({
     fastModeEnabled,
     providerNativeCommands,
     providerCommandDiscoveryCwd: composerSkillCwd,
+    providerCommandDiscoveryBinaryPath: settings.claudeBinaryPath || null,
     selectedProvider,
     currentProviderModelOptions,
     selectedModelSelection,

@@ -802,6 +802,88 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("separates in-flight command discovery across provider auth generations", () => {
+    const queries: FakeClaudeQuery[] = [];
+    const commandResolvers: Array<(commands: SlashCommand[]) => void> = [];
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => {
+        const query = new FakeClaudeQuery();
+        const commands = new Promise<SlashCommand[]>((resolve) => commandResolvers.push(resolve));
+        Object.assign(query, { supportedCommands: () => commands });
+        queries.push(query);
+        return query;
+      },
+    }).pipe(
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-command-generation", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listCommands) {
+        return assert.fail("Claude adapter should support command discovery.");
+      }
+      const input = {
+        provider: "claudeAgent" as const,
+        cwd: "/tmp/claude-command-generation",
+        binaryPath: "/managed/claude",
+      };
+      const oldFirst = yield* adapter
+        .listCommands({ ...input, discoveryGeneration: "signed-out:1" })
+        .pipe(Effect.forkChild);
+      const oldSecond = yield* adapter
+        .listCommands({ ...input, discoveryGeneration: "signed-out:1" })
+        .pipe(Effect.forkChild);
+      const intermediate = yield* adapter
+        .listCommands({ ...input, discoveryGeneration: "signed-in" })
+        .pipe(Effect.forkChild);
+      const current = yield* adapter
+        .listCommands({ ...input, discoveryGeneration: "signed-out:2" })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      // The two "signed-out:1" callers share one in-flight discovery; the other
+      // generations each get their own, so a later auth generation never joins an
+      // older CLI. Each generation still completes independently.
+      assert.equal(queries.length, 3);
+      commandResolvers[0]?.([{ name: "old", description: "old" }] as unknown as SlashCommand[]);
+      commandResolvers[1]?.([
+        { name: "intermediate", description: "middle" },
+      ] as unknown as SlashCommand[]);
+      commandResolvers[2]?.([{ name: "current", description: "new" }] as unknown as SlashCommand[]);
+      const [oldFirstResult, oldSecondResult, intermediateResult, currentResult] =
+        yield* Effect.all([
+          Fiber.join(oldFirst),
+          Fiber.join(oldSecond),
+          Fiber.join(intermediate),
+          Fiber.join(current),
+        ]);
+      assert.deepEqual(
+        oldFirstResult.commands.map((command) => command.name),
+        ["old"],
+      );
+      assert.deepEqual(
+        oldSecondResult.commands.map((command) => command.name),
+        ["old"],
+      );
+      assert.deepEqual(
+        intermediateResult.commands.map((command) => command.name),
+        ["intermediate"],
+      );
+      assert.deepEqual(
+        currentResult.commands.map((command) => command.name),
+        ["current"],
+      );
+      assert.deepEqual(
+        queries.map((query) => query.closeCalls),
+        [1, 1, 1],
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
   it.effect("closes an isolated temporary command query after discovery failure", () => {
     const harness = makeHarness();
     (

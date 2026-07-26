@@ -38,6 +38,13 @@ function mockListAgents(listAgents: ReturnType<typeof vi.fn>) {
   return listAgents;
 }
 
+function mockListCommands(listCommands: ReturnType<typeof vi.fn>) {
+  vi.spyOn(nativeApi, "ensureNativeApi").mockReturnValue({
+    provider: { listCommands },
+  } as unknown as NativeApi);
+  return listCommands;
+}
+
 afterEach(() => {
   setProviderDiscoveryGeneration("initial");
   vi.restoreAllMocks();
@@ -327,6 +334,84 @@ describe("providerAgentsQueryOptions", () => {
 
     await expect(pending).rejects.toThrow(/stale Claude agent catalog/u);
     expect(listAgents).toHaveBeenCalledTimes(1);
+    expect(queryClient.getQueryData(options.queryKey)).toBeUndefined();
+  });
+});
+
+describe("providerCommandsQueryOptions", () => {
+  it("preserves non-Claude command cache identity and placeholder behavior across generations", () => {
+    setProviderDiscoveryGeneration("generation-a");
+    const first = providerCommandsQueryOptions({ provider: "codex", cwd: "/repo" });
+    setProviderDiscoveryGeneration("generation-b");
+    const second = providerCommandsQueryOptions({ provider: "codex", cwd: "/repo" });
+
+    expect(second.queryKey).toEqual(first.queryKey);
+    expect(first.placeholderData).toBeTypeOf("function");
+    // Non-Claude command discovery keeps the default retry policy.
+    expect(first.retry).toBeUndefined();
+  });
+
+  it("scopes Claude command discovery and its cache identity to the configured executable", async () => {
+    const discoveryGeneration = setProviderDiscoveryGeneration("auth-generation-b");
+    const listCommands = mockListCommands(vi.fn().mockResolvedValue({ commands: [] }));
+    const configuredOptions = providerCommandsQueryOptions({
+      provider: "claudeAgent",
+      cwd: "/repo",
+      binaryPath: "/opt/claude-custom",
+    });
+    const pathOptions = providerCommandsQueryOptions({ provider: "claudeAgent", cwd: "/repo" });
+
+    expect(configuredOptions.queryKey).not.toEqual(pathOptions.queryKey);
+    // Claude drops the anti-flicker placeholder so a stale list never lingers.
+    expect(configuredOptions.placeholderData).toBeUndefined();
+    // A stale-generation discard must fail fast, not retry (each retry respawns
+    // a temporary Claude discovery process).
+    expect(configuredOptions.retry).toBeTypeOf("function");
+
+    const queryClient = new QueryClient();
+    await queryClient.fetchQuery(configuredOptions);
+    expect(listCommands).toHaveBeenCalledWith({
+      provider: "claudeAgent",
+      cwd: "/repo",
+      binaryPath: "/opt/claude-custom",
+      discoveryGeneration,
+    });
+
+    setProviderDiscoveryGeneration("auth-generation-c");
+    const nextGenerationOptions = providerCommandsQueryOptions({
+      provider: "claudeAgent",
+      cwd: "/repo",
+      binaryPath: "/opt/claude-custom",
+    });
+    expect(nextGenerationOptions.queryKey).not.toEqual(configuredOptions.queryKey);
+  });
+
+  it("discards a Claude command catalog that resolves after the provider generation changes", async () => {
+    let resolveCommands: ((result: { commands: [] }) => void) | undefined;
+    const listCommands = mockListCommands(
+      vi.fn(
+        () =>
+          new Promise<{ commands: [] }>((resolve) => {
+            resolveCommands = resolve;
+          }),
+      ),
+    );
+    const staleGeneration = setProviderDiscoveryGeneration("signed-out");
+    const options = providerCommandsQueryOptions({ provider: "claudeAgent", cwd: "/repo" });
+    setProviderDiscoveryGeneration("signed-in");
+    const queryClient = new QueryClient();
+    const pending = queryClient.fetchQuery(options);
+
+    await vi.waitFor(() => expect(listCommands).toHaveBeenCalledTimes(1));
+    expect(listCommands).toHaveBeenCalledWith({
+      provider: "claudeAgent",
+      cwd: "/repo",
+      discoveryGeneration: staleGeneration,
+    });
+    resolveCommands?.({ commands: [] });
+
+    await expect(pending).rejects.toThrow(/stale Claude command catalog/u);
+    expect(listCommands).toHaveBeenCalledTimes(1);
     expect(queryClient.getQueryData(options.queryKey)).toBeUndefined();
   });
 });

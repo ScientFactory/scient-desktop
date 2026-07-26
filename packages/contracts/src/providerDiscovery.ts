@@ -137,6 +137,8 @@ export const ProviderListCommandsInput = Schema.Struct({
   experimentalWebSockets: Schema.optional(Schema.Boolean),
   agentDir: Schema.optional(TrimmedNonEmptyString),
   forceReload: Schema.optional(Schema.Boolean),
+  /** Renderer-owned generation used to separate discovery across auth/runtime changes. */
+  discoveryGeneration: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderListCommandsInput = typeof ProviderListCommandsInput.Type;
 

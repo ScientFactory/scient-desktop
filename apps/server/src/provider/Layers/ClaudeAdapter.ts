@@ -4631,7 +4631,8 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
     ) =>
       Effect.gen(function* () {
         const binaryPath = input.binaryPath ?? "claude";
-        const cacheKey = JSON.stringify({ cwd: input.cwd, binaryPath });
+        const discoveryGeneration = input.discoveryGeneration ?? "initial";
+        const cacheKey = JSON.stringify({ cwd: input.cwd, binaryPath, discoveryGeneration });
         // Reuse only a session with the exact discovery ownership. An arbitrary
         // active Claude session may use different project resources or binary.
         const context = input.threadId
@@ -4657,7 +4658,8 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         }
 
         // React Query owns the bounded completed-result cache. The server only
-        // deduplicates discovery already in flight for this exact cwd/binary.
+        // deduplicates discovery already in flight for this exact cwd/binary/
+        // generation, so a later auth generation never joins an older CLI.
         const claudeSdkEnv = yield* resolveClaudeSdkEnv;
         const discoveryPromise = getOrCreatePendingDiscovery(
           pendingCommandDiscoveries,

@@ -53,7 +53,7 @@ const EMPTY_PLUGINS_RESULT: ProviderListPluginsResult = {
 const PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS = false;
 
 class StaleProviderDiscoveryGenerationError extends Error {
-  constructor(kind: "model" | "agent") {
+  constructor(kind: "model" | "agent" | "command") {
     super(`Discarded a stale Claude ${kind} catalog from an earlier provider state.`);
     this.name = "StaleProviderDiscoveryGenerationError";
   }
@@ -67,12 +67,20 @@ export const providerDiscoveryQueryKeys = {
   all: ["provider-discovery"] as const,
   composerCapabilities: (provider: ProviderKind) =>
     ["provider-discovery", "composer-capabilities", provider] as const,
+  commandsForProvider: (provider: ProviderKind) =>
+    ["provider-discovery", "commands", provider] as const,
   commands: (
     provider: ProviderKind,
     cwd: string | null,
     agentDir: string | null,
     connectionKey: string | null,
-  ) => ["provider-discovery", "commands", provider, cwd, agentDir, connectionKey] as const,
+  ) =>
+    [
+      ...providerDiscoveryQueryKeys.commandsForProvider(provider),
+      cwd,
+      agentDir,
+      connectionKey,
+    ] as const,
   // The skill list is query-independent (filtering is client-side), so the key
   // deliberately excludes the typed filter to avoid a refetch per keystroke.
   skills: (provider: ProviderKind, cwd: string | null, agentDir: string | null) =>
@@ -177,19 +185,25 @@ export function providerCommandsQueryOptions(input: {
     hasServerPassword: Boolean(input.serverPassword),
     experimentalWebSockets: input.experimentalWebSockets ?? null,
   });
+  const discoveryGeneration =
+    input.provider === "claudeAgent" ? getProviderDiscoveryGeneration() : null;
+  const baseQueryKey = providerDiscoveryQueryKeys.commands(
+    input.provider,
+    input.cwd,
+    input.agentDir ?? null,
+    connectionKey,
+  );
   return queryOptions({
-    queryKey: providerDiscoveryQueryKeys.commands(
-      input.provider,
-      input.cwd,
-      input.agentDir ?? null,
-      connectionKey,
-    ),
+    queryKey:
+      discoveryGeneration === null
+        ? baseQueryKey
+        : ([...baseQueryKey, discoveryGeneration] as const),
     queryFn: async () => {
       const api = ensureNativeApi();
       if (!input.cwd) {
         throw new Error("Command discovery is unavailable.");
       }
-      return api.provider.listCommands({
+      const result = await api.provider.listCommands({
         provider: input.provider,
         cwd: input.cwd,
         ...(input.threadId ? { threadId: input.threadId } : {}),
@@ -200,12 +214,32 @@ export function providerCommandsQueryOptions(input: {
           ? { experimentalWebSockets: input.experimentalWebSockets }
           : {}),
         ...(input.agentDir ? { agentDir: input.agentDir } : {}),
+        ...(discoveryGeneration ? { discoveryGeneration } : {}),
       });
+      if (
+        discoveryGeneration !== null &&
+        discoveryGeneration !== getProviderDiscoveryGeneration()
+      ) {
+        throw new StaleProviderDiscoveryGenerationError("command");
+      }
+      return result;
     },
     enabled: (input.enabled ?? true) && input.cwd !== null,
+    // A stale-generation discard is terminal, not a transient failure: retrying it
+    // would re-throw and, worse, spawn another temporary Claude discovery process
+    // per attempt. Fail fast on it for claudeAgent, as models/agents already do.
+    ...(input.provider === "claudeAgent" ? { retry: shouldRetryProviderDiscovery } : {}),
     staleTime: 30_000,
     refetchOnWindowFocus: PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS,
-    placeholderData: (previous) => previous ?? EMPTY_COMMANDS_RESULT,
+    // Never carry a Claude command list across a discovery-generation change: a
+    // stale list from an earlier account/runtime must not linger while fresh
+    // discovery is pending. Other providers keep the anti-flicker placeholder.
+    ...(input.provider === "claudeAgent"
+      ? {}
+      : {
+          placeholderData: (previous: ProviderListCommandsResult | undefined) =>
+            previous ?? EMPTY_COMMANDS_RESULT,
+        }),
   });
 }
 

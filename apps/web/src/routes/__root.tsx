@@ -1258,8 +1258,14 @@ function EventRouter() {
         }
         for (const provider of AUTH_SENSITIVE_AGENT_DISCOVERY_PROVIDERS) {
           if (!changedProviders.has(provider)) continue;
+          // Agent and native slash-command discovery both depend on the provider's
+          // auth/runtime generation, so an auth or account change must drop their
+          // cached results together and refetch under the new generation.
           void queryClient.invalidateQueries({
             queryKey: providerDiscoveryQueryKeys.agentsForProvider(provider),
+          });
+          void queryClient.invalidateQueries({
+            queryKey: providerDiscoveryQueryKeys.commandsForProvider(provider),
           });
         }
       }
