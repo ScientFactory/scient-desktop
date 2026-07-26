@@ -246,7 +246,11 @@ const LayerLive = (input: CliInput) => {
   const providerHealthLayer = Effect.gen(function* () {
     const providerRuntimeManager = yield* ProviderRuntimeManager;
     return makeProviderHealthLive({
-      resolveProviderRuntime: providerRuntimeManager.resolve,
+      providerRuntime: {
+        resolve: providerRuntimeManager.resolve,
+        getSnapshot: providerRuntimeManager.getSnapshot,
+        streamChanges: providerRuntimeManager.streamChanges,
+      },
     }).pipe(
       // Provider health reads persisted provider settings while constructing its
       // cache, so build it with the same runtime services layer exposed to Server.

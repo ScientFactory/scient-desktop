@@ -10,6 +10,7 @@ import {
   getVisibleProviderUpdateStatuses,
   hasConfirmedProviderUpdate,
   isProviderUpdateActive,
+  providerUpdateSummaryStatus,
   providerUpdateNotificationKey,
   shouldOfferProviderUpdateAction,
   shouldShowProviderUpdateStatus,
@@ -421,5 +422,83 @@ describe("hasConfirmedProviderUpdate", () => {
         }),
       ),
     ).toBe(true);
+  });
+});
+
+describe("providerUpdateSummaryStatus", () => {
+  it("distinguishes pending, unconfirmed, current, available, manual-only, and active states", () => {
+    const settings = serverSettings();
+    expect(
+      providerUpdateSummaryStatus({ providers: [], serverSettings: null, loading: true }),
+    ).toBe("Checking provider updates…");
+    expect(
+      providerUpdateSummaryStatus({
+        providers: [
+          providerStatus("cursor", {
+            versionAdvisory: {
+              ...providerStatus("cursor").versionAdvisory!,
+              status: "unknown",
+              latestVersion: null,
+            },
+          }),
+        ],
+        serverSettings: settings,
+      }),
+    ).toBe("Update status not yet confirmed");
+    expect(
+      providerUpdateSummaryStatus({
+        providers: [
+          providerStatus("cursor", {
+            versionAdvisory: {
+              ...providerStatus("cursor").versionAdvisory!,
+              status: "current",
+              latestVersion: "1.0.0",
+            },
+          }),
+        ],
+        serverSettings: settings,
+      }),
+    ).toBe("Provider tools are current");
+    expect(
+      providerUpdateSummaryStatus({
+        providers: [providerStatus("cursor")],
+        serverSettings: settings,
+      }),
+    ).toBe("1 update available");
+    expect(
+      providerUpdateSummaryStatus({
+        providers: [
+          providerStatus("pi", {
+            versionAdvisory: {
+              ...providerStatus("pi").versionAdvisory!,
+              canUpdate: false,
+              updateCommand: null,
+            },
+          }),
+        ],
+        serverSettings: settings,
+      }),
+    ).toBe("1 update available");
+    expect(
+      providerUpdateSummaryStatus({
+        providers: [
+          providerStatus("antigravity", {
+            updateState: {
+              status: "running",
+              startedAt: "2026-07-26T09:01:00.000Z",
+              finishedAt: null,
+              message: "Updating provider.",
+              output: null,
+            },
+            versionAdvisory: {
+              ...providerStatus("antigravity").versionAdvisory!,
+              status: "unknown",
+              latestVersion: null,
+            },
+          }),
+        ],
+        serverSettings: settings,
+      }),
+    ).toBe("1 update in progress");
   });
 });

@@ -142,6 +142,78 @@ export function getVisibleProviderUpdateStatuses(
   );
 }
 
+export function getVisibleProviderUpdateRows(
+  input: ProviderUpdateFilterInput & {
+    readonly locallyUpdatingProviders?: ReadonlySet<ProviderKind>;
+  },
+): ServerProviderStatus[] {
+  const hiddenProviderSet = new Set(input.hiddenProviders ?? []);
+  return input.providers.filter((provider) => {
+    if (
+      hiddenProviderSet.has(provider.provider) ||
+      !isProviderEnabled(provider.provider, input.serverSettings)
+    ) {
+      return false;
+    }
+    return (
+      shouldShowProviderUpdateStatus({
+        provider,
+        serverSettings: input.serverSettings,
+        hiddenProviderSet,
+      }) ||
+      isProviderUpdateActive(provider) ||
+      input.locallyUpdatingProviders?.has(provider.provider) === true
+    );
+  });
+}
+
+export function providerUpdateSummaryStatus(
+  input: ProviderUpdateFilterInput & {
+    readonly loading?: boolean;
+    readonly locallyUpdatingProviders?: ReadonlySet<ProviderKind>;
+  },
+): string {
+  if (input.loading || !input.serverSettings) {
+    return "Checking provider updates…";
+  }
+
+  const hiddenProviderSet = new Set(input.hiddenProviders ?? []);
+  const relevantProviders = input.providers.filter(
+    (provider) =>
+      !hiddenProviderSet.has(provider.provider) &&
+      isProviderEnabled(provider.provider, input.serverSettings),
+  );
+  const activeCount = relevantProviders.filter(
+    (provider) =>
+      isProviderUpdateActive(provider) || input.locallyUpdatingProviders?.has(provider.provider),
+  ).length;
+  if (activeCount > 0) {
+    return `${activeCount} ${activeCount === 1 ? "update" : "updates"} in progress`;
+  }
+  if (input.serverSettings.enableProviderUpdateChecks === false) {
+    return "Automatic checks off";
+  }
+
+  const updateCount = getVisibleProviderUpdateStatuses(input).length;
+  if (updateCount > 0) {
+    return `${updateCount} ${updateCount === 1 ? "update" : "updates"} available`;
+  }
+
+  const allChecksCurrent =
+    relevantProviders.length > 0 &&
+    relevantProviders.every((provider) => {
+      const advisory = provider.versionAdvisory;
+      return (
+        provider.available &&
+        advisory?.status === "current" &&
+        advisory.currentVersion !== null &&
+        advisory.latestVersion !== null &&
+        advisory.checkedAt !== null
+      );
+    });
+  return allChecksCurrent ? "Provider tools are current" : "Update status not yet confirmed";
+}
+
 export function providerUpdateNotificationKey(
   providers: ReadonlyArray<ServerProviderStatus>,
 ): string | null {

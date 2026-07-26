@@ -1,9 +1,22 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodePath from "node:path";
-import type { ServerProviderStatus } from "@synara/contracts";
+import type { ProviderKind, ServerProviderStatus } from "@synara/contracts";
 import { DEFAULT_SERVER_SETTINGS, ServerProviderUpdateError } from "@synara/contracts";
 import { describe, it, assert } from "@effect/vitest";
-import { Duration, Effect, Fiber, FileSystem, Layer, Path, Sink, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Duration,
+  Effect,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Queue,
+  Sink,
+  Stream,
+} from "effect";
 import { TestClock } from "effect/testing";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -13,6 +26,7 @@ import { SYNARA_CODEX_HOME_OVERLAY_DIR } from "../../codexHomePaths";
 import { ServerConfig } from "../../config";
 import { ServerSettingsService } from "../../serverSettings";
 import { ProviderHealth } from "../Services/ProviderHealth";
+import type { ProviderRuntimeManagerShape } from "../Services/ProviderRuntimeManager";
 import {
   readProviderStatusCache,
   resolveProviderStatusCachePath,
@@ -132,6 +146,15 @@ function failingSpawnerLayer(description: string) {
 
 function hangingSpawnerLayer(input: {
   readonly onKill: () => void;
+  readonly onSpawn?: () => void;
+  readonly fallback?: (
+    args: ReadonlyArray<string>,
+    command: string,
+  ) => {
+    readonly stdout: string;
+    readonly stderr: string;
+    readonly code: number;
+  };
   readonly shouldHang: (args: ReadonlyArray<string>, command: string) => boolean;
 }) {
   const handle = ChildProcessSpawner.makeHandle({
@@ -153,9 +176,13 @@ function hangingSpawnerLayer(input: {
         command: string;
         args: ReadonlyArray<string>;
       };
-      return input.shouldHang(cmd.args, cmd.command)
-        ? Effect.succeed(handle)
-        : Effect.succeed(mockHandle({ stdout: "", stderr: "", code: 0 }));
+      if (input.shouldHang(cmd.args, cmd.command)) {
+        input.onSpawn?.();
+        return Effect.succeed(handle);
+      }
+      return Effect.succeed(
+        mockHandle(input.fallback?.(cmd.args, cmd.command) ?? { stdout: "", stderr: "", code: 0 }),
+      );
     }),
   );
 }
@@ -260,6 +287,26 @@ function withTempCodexHome(configContent?: string) {
   });
 }
 
+function stubLatestProviderVersion(version: string) {
+  const originalFetch = globalThis.fetch;
+  return Effect.acquireRelease(
+    Effect.sync(() => {
+      globalThis.fetch = vi.fn(async () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ version }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      ) as unknown as typeof fetch;
+    }),
+    () =>
+      Effect.sync(() => {
+        globalThis.fetch = originalFetch;
+      }),
+  );
+}
+
 it.layer(NodeServices.layer)("ProviderHealth", (it) => {
   describe("provider update commands", () => {
     it("registers Antigravity's native updater", () => {
@@ -308,8 +355,478 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
       });
     });
 
+    it.effect("rejects a direct update RPC when no current check confirms an update", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "provider-update-unconfirmed-rpc-",
+        });
+        let updateSpawnCount = 0;
+        const settings = {
+          ...allProvidersDisabledServerSettings,
+          providers: {
+            ...allProvidersDisabledServerSettings.providers,
+            kilo: {
+              ...DEFAULT_SERVER_SETTINGS.providers.kilo,
+              enabled: true,
+              binaryPath: path.join(baseDir, ".local", "bin", "kilo"),
+            },
+          },
+        } satisfies typeof DEFAULT_SERVER_SETTINGS;
+        const layer = makeProviderHealthLive().pipe(
+          Layer.provideMerge(ServerSettingsService.layerTest(settings)),
+          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+          Layer.provideMerge(
+            mockSpawnerLayer((args) => {
+              if (args.join(" ") === "upgrade") updateSpawnCount += 1;
+              return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            }),
+          ),
+        );
+
+        const error = yield* Effect.gen(function* () {
+          const providerHealth = yield* ProviderHealth;
+          return yield* Effect.flip(providerHealth.updateProvider({ provider: "kilo" }));
+        }).pipe(Effect.provide(layer));
+
+        assert.match(error.reason, /not confirmed for the current installation/i);
+        assert.strictEqual(updateSpawnCount, 0);
+      }),
+    );
+
+    it.effect("constructs without waiting for server settings startup", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "provider-health-pending-settings-",
+        });
+        const settings = allProvidersDisabledServerSettings;
+        const pendingSettingsLayer = Layer.succeed(ServerSettingsService, {
+          start: Effect.void,
+          ready: Effect.never,
+          getSettings: Effect.succeed(settings),
+          getSnapshot: Effect.succeed({ settings, revision: 0 }),
+          updateSettings: () => Effect.succeed(settings),
+          streamChanges: Stream.never,
+        });
+        const layer = makeProviderHealthLive().pipe(
+          Layer.provideMerge(pendingSettingsLayer),
+          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+          Layer.provideMerge(mockSpawnerLayer(() => ({ stdout: "", stderr: "", code: 0 }))),
+        );
+
+        yield* Layer.build(layer).pipe(Effect.scoped);
+      }),
+    );
+
+    it.effect("rejects direct update RPCs as soon as automatic checks are disabled", () =>
+      Effect.gen(function* () {
+        yield* stubLatestProviderVersion("2.0.0");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "provider-update-checks-disabled-rpc-",
+        });
+        let updateSpawnCount = 0;
+        const settings = {
+          ...allProvidersDisabledServerSettings,
+          providers: {
+            ...allProvidersDisabledServerSettings.providers,
+            kilo: {
+              ...DEFAULT_SERVER_SETTINGS.providers.kilo,
+              enabled: true,
+              binaryPath: path.join(baseDir, ".local", "bin", "kilo"),
+            },
+          },
+        } satisfies typeof DEFAULT_SERVER_SETTINGS;
+        const layer = makeProviderHealthLive().pipe(
+          Layer.provideMerge(ServerSettingsService.layerTest(settings)),
+          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+          Layer.provideMerge(
+            mockSpawnerLayer((args) => {
+              if (args.join(" ") === "upgrade") updateSpawnCount += 1;
+              return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            }),
+          ),
+        );
+
+        const error = yield* Effect.gen(function* () {
+          const providerHealth = yield* ProviderHealth;
+          const serverSettings = yield* ServerSettingsService;
+          const refreshed = yield* providerHealth.refresh;
+          assert.strictEqual(
+            refreshed.find((provider) => provider.provider === "kilo")?.versionAdvisory?.status,
+            "behind_latest",
+          );
+          yield* serverSettings.updateSettings({ enableProviderUpdateChecks: false });
+          return yield* Effect.flip(providerHealth.updateProvider({ provider: "kilo" }));
+        }).pipe(Effect.provide(layer));
+
+        assert.match(error.reason, /automatic update checks are disabled/i);
+        assert.strictEqual(updateSpawnCount, 0);
+      }),
+    );
+
+    it.effect("rejects confirmed target A after the configured executable changes to B", () =>
+      Effect.gen(function* () {
+        yield* stubLatestProviderVersion("2.0.0");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "provider-update-target-change-",
+        });
+        const binaryA = path.join(baseDir, "a", ".local", "bin", "kilo");
+        const binaryB = path.join(baseDir, "b", ".local", "bin", "kilo");
+        let updateSpawnCount = 0;
+        const settings = {
+          ...allProvidersDisabledServerSettings,
+          providers: {
+            ...allProvidersDisabledServerSettings.providers,
+            kilo: {
+              ...DEFAULT_SERVER_SETTINGS.providers.kilo,
+              enabled: true,
+              binaryPath: binaryA,
+            },
+          },
+        } satisfies typeof DEFAULT_SERVER_SETTINGS;
+        const layer = makeProviderHealthLive().pipe(
+          Layer.provideMerge(ServerSettingsService.layerTest(settings)),
+          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+          Layer.provideMerge(
+            mockSpawnerLayer((args) => {
+              if (args.join(" ") === "upgrade") updateSpawnCount += 1;
+              return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            }),
+          ),
+        );
+
+        const error = yield* Effect.gen(function* () {
+          const providerHealth = yield* ProviderHealth;
+          const serverSettings = yield* ServerSettingsService;
+          const refreshed = yield* providerHealth.refresh;
+          assert.strictEqual(
+            refreshed.find((provider) => provider.provider === "kilo")?.versionAdvisory?.status,
+            "behind_latest",
+          );
+          yield* serverSettings.updateSettings({ providers: { kilo: { binaryPath: binaryB } } });
+          yield* serverSettings.updateSettings({ providers: { kilo: { binaryPath: binaryA } } });
+          const invalidated = (yield* providerHealth.getStatuses).find(
+            (provider) => provider.provider === "kilo",
+          );
+          assert.strictEqual(invalidated?.versionAdvisory?.status, "unknown");
+          assert.strictEqual(invalidated?.versionAdvisory?.latestVersion, null);
+          return yield* Effect.flip(providerHealth.updateProvider({ provider: "kilo" }));
+        }).pipe(Effect.provide(layer));
+
+        assert.match(error.reason, /not confirmed for the current installation/i);
+        assert.strictEqual(updateSpawnCount, 0);
+      }),
+    );
+
+    it.effect("suppresses confirmed evidence when the resolved runtime target changes", () =>
+      Effect.gen(function* () {
+        yield* stubLatestProviderVersion("2.0.0");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "provider-update-runtime-target-change-",
+        });
+        const binaryA = path.join(baseDir, "a", ".local", "bin", "kilo");
+        const binaryB = path.join(baseDir, "b", ".local", "bin", "kilo");
+        let runtimeExecutable = binaryA;
+        let updateSpawnCount = 0;
+        const runtimeSnapshot = (executable: string) => ({
+          provider: "kilo" as const,
+          managedExecutablePath: executable,
+          managedVersion: "1.0.0",
+          previousReleaseAvailable: false,
+          bundled: false,
+          canInstall: false,
+          installationState: null,
+        });
+        type RuntimeChange = ReadonlyMap<ProviderKind, ReturnType<typeof runtimeSnapshot>>;
+        const runtimeQueueReady =
+          yield* Deferred.make<Queue.Queue<RuntimeChange, Cause.Done<void>>>();
+        const runtimeChanges = Stream.callback<RuntimeChange>((queue) =>
+          Deferred.succeed(runtimeQueueReady, queue),
+        );
+        const settings = {
+          ...allProvidersDisabledServerSettings,
+          providers: {
+            ...allProvidersDisabledServerSettings.providers,
+            kilo: {
+              ...DEFAULT_SERVER_SETTINGS.providers.kilo,
+              enabled: true,
+              binaryPath: "kilo",
+            },
+          },
+        } satisfies typeof DEFAULT_SERVER_SETTINGS;
+        const layer = makeProviderHealthLive({
+          providerRuntime: {
+            resolve: () =>
+              Effect.succeed({
+                source: "system" as const,
+                executable: runtimeExecutable,
+                managedVersion: null,
+                canInstall: false,
+                canRepair: false,
+                canRollback: false,
+                canRemove: false,
+                message: null,
+              }),
+            getSnapshot: () => Effect.succeed(runtimeSnapshot(runtimeExecutable)),
+            streamChanges: runtimeChanges as ProviderRuntimeManagerShape["streamChanges"],
+          },
+        }).pipe(
+          Layer.provideMerge(ServerSettingsService.layerTest(settings)),
+          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+          Layer.provideMerge(
+            mockSpawnerLayer((args) => {
+              if (args.join(" ") === "upgrade") updateSpawnCount += 1;
+              return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            }),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const providerHealth = yield* ProviderHealth;
+          const refreshed = yield* providerHealth.refresh;
+          assert.strictEqual(
+            refreshed.find((provider) => provider.provider === "kilo")?.versionAdvisory?.status,
+            "behind_latest",
+          );
+
+          const runtimeQueue = yield* Deferred.await(runtimeQueueReady);
+          runtimeExecutable = binaryB;
+          yield* Queue.offer(runtimeQueue, new Map([["kilo", runtimeSnapshot(runtimeExecutable)]]));
+          const emitted = yield* providerHealth.streamChanges.pipe(
+            Stream.map((statuses) => statuses.find((provider) => provider.provider === "kilo")),
+            Stream.filter((status) => status?.versionAdvisory?.status === "unknown"),
+            Stream.map((status) => status!),
+            Stream.runHead,
+          );
+          assert.ok(Option.isSome(emitted));
+          const emittedStatus = Option.getOrThrow(emitted);
+          assert.strictEqual(emittedStatus.versionAdvisory?.status, "unknown");
+          assert.strictEqual(emittedStatus.versionAdvisory?.latestVersion, null);
+          assert.strictEqual(emittedStatus.versionAdvisory?.canUpdate, false);
+
+          const invalidated = (yield* providerHealth.getStatuses).find(
+            (provider) => provider.provider === "kilo",
+          );
+          assert.strictEqual(invalidated?.versionAdvisory?.status, "unknown");
+          const error = yield* Effect.flip(providerHealth.updateProvider({ provider: "kilo" }));
+          assert.match(error.reason, /not confirmed for the current installation/i);
+          assert.strictEqual(updateSpawnCount, 0);
+        }).pipe(Effect.provide(layer));
+      }),
+    );
+
+    it.effect("rechecks confirmed target evidence after waiting for the provider update lock", () =>
+      Effect.gen(function* () {
+        yield* stubLatestProviderVersion("2.0.0");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "provider-update-lock-recheck-",
+        });
+        const npmPrefixA = path.join(baseDir, "a");
+        const npmPrefixB = path.join(baseDir, "b");
+        const claudeBinary = path.join(
+          npmPrefixA,
+          "lib",
+          "node_modules",
+          "@anthropic-ai",
+          "claude-code",
+          "bin",
+          "claude",
+        );
+        const binaryA = path.join(
+          npmPrefixA,
+          "lib",
+          "node_modules",
+          "@kilocode",
+          "cli",
+          "bin",
+          "kilo",
+        );
+        const binaryB = path.join(
+          npmPrefixB,
+          "lib",
+          "node_modules",
+          "@kilocode",
+          "cli",
+          "bin",
+          "kilo",
+        );
+        let claudeUpdateSpawnCount = 0;
+        let kiloUpdateSpawnCount = 0;
+        const settings = {
+          ...allProvidersDisabledServerSettings,
+          providers: {
+            ...allProvidersDisabledServerSettings.providers,
+            kilo: {
+              ...DEFAULT_SERVER_SETTINGS.providers.kilo,
+              enabled: true,
+              binaryPath: binaryA,
+            },
+            claudeAgent: {
+              ...DEFAULT_SERVER_SETTINGS.providers.claudeAgent,
+              enabled: true,
+              binaryPath: claudeBinary,
+            },
+          },
+        } satisfies typeof DEFAULT_SERVER_SETTINGS;
+        const layer = makeProviderHealthLive({ providerUpdateTimeoutMs: 60_000 }).pipe(
+          Layer.provideMerge(ServerSettingsService.layerTest(settings)),
+          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+          Layer.provideMerge(
+            hangingSpawnerLayer({
+              onKill: () => undefined,
+              onSpawn: () => {
+                claudeUpdateSpawnCount += 1;
+              },
+              shouldHang: (args) => args.includes("@anthropic-ai/claude-code@latest"),
+              fallback: (args) => {
+                if (args.includes("@kilocode/cli@latest")) kiloUpdateSpawnCount += 1;
+                return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              },
+            }),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const providerHealth = yield* ProviderHealth;
+          const serverSettings = yield* ServerSettingsService;
+          const refreshed = yield* providerHealth.refresh;
+          assert.strictEqual(
+            refreshed.find((provider) => provider.provider === "kilo")?.versionAdvisory?.status,
+            "behind_latest",
+          );
+          assert.strictEqual(
+            refreshed.find((provider) => provider.provider === "claudeAgent")?.versionAdvisory
+              ?.status,
+            "behind_latest",
+          );
+
+          const firstUpdateFiber = yield* TestClock.withLive(
+            providerHealth.updateProvider({ provider: "claudeAgent" }),
+          ).pipe(Effect.forkChild);
+          yield* TestClock.withLive(Effect.sleep(10));
+          assert.strictEqual(
+            (yield* providerHealth.getStatuses).find(
+              (provider) => provider.provider === "claudeAgent",
+            )?.updateState?.status,
+            "running",
+          );
+          const queuedUpdateFiber = yield* TestClock.withLive(
+            Effect.flip(providerHealth.updateProvider({ provider: "kilo" })),
+          ).pipe(Effect.forkChild);
+          yield* TestClock.withLive(Effect.sleep(10));
+          assert.strictEqual(
+            (yield* providerHealth.getStatuses).find((provider) => provider.provider === "kilo")
+              ?.updateState?.status,
+            "queued",
+          );
+
+          yield* serverSettings.updateSettings({ providers: { kilo: { binaryPath: binaryB } } });
+          const invalidated = (yield* providerHealth.getStatuses).find(
+            (provider) => provider.provider === "kilo",
+          );
+          assert.strictEqual(invalidated?.versionAdvisory?.status, "unknown");
+          assert.strictEqual(invalidated?.updateState?.status, "queued");
+
+          yield* Fiber.interrupt(firstUpdateFiber);
+          const queuedError = yield* Fiber.join(queuedUpdateFiber);
+          assert.match(queuedError.reason, /not confirmed for the current installation/i);
+          assert.strictEqual(
+            (yield* providerHealth.getStatuses).find((provider) => provider.provider === "kilo")
+              ?.updateState?.status,
+            "failed",
+          );
+          assert.strictEqual(claudeUpdateSpawnCount, 1);
+          assert.strictEqual(kiloUpdateSpawnCount, 0);
+        }).pipe(Effect.provide(layer));
+      }),
+    );
+
+    it.effect(
+      "keeps active update state but withholds stale behind evidence across checks off and on",
+      () =>
+        Effect.gen(function* () {
+          yield* stubLatestProviderVersion("2.0.0");
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "provider-update-toggle-lifecycle-",
+          });
+          const binaryPath = path.join(baseDir, ".local", "bin", "kilo");
+          let currentVersion = "1.0.0";
+          let resolveUpdateStarted!: () => void;
+          const updateStarted = new Promise<void>((resolve) => {
+            resolveUpdateStarted = resolve;
+          });
+          const settings = {
+            ...allProvidersDisabledServerSettings,
+            providers: {
+              ...allProvidersDisabledServerSettings.providers,
+              kilo: {
+                ...DEFAULT_SERVER_SETTINGS.providers.kilo,
+                enabled: true,
+                binaryPath,
+              },
+            },
+          } satisfies typeof DEFAULT_SERVER_SETTINGS;
+          const layer = makeProviderHealthLive({ providerUpdateTimeoutMs: 60_000 }).pipe(
+            Layer.provideMerge(ServerSettingsService.layerTest(settings)),
+            Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+            Layer.provideMerge(
+              hangingSpawnerLayer({
+                onKill: () => undefined,
+                onSpawn: resolveUpdateStarted,
+                shouldHang: (args) => args.join(" ") === "upgrade",
+                fallback: () => ({ stdout: `${currentVersion}\n`, stderr: "", code: 0 }),
+              }),
+            ),
+          );
+
+          yield* Effect.gen(function* () {
+            const providerHealth = yield* ProviderHealth;
+            const serverSettings = yield* ServerSettingsService;
+            const refreshed = yield* providerHealth.refresh;
+            assert.strictEqual(
+              refreshed.find((provider) => provider.provider === "kilo")?.versionAdvisory?.status,
+              "behind_latest",
+            );
+
+            const updateFiber = yield* TestClock.withLive(
+              providerHealth.updateProvider({ provider: "kilo" }),
+            ).pipe(Effect.forkChild);
+            yield* Effect.promise(() => updateStarted);
+            yield* serverSettings.updateSettings({ enableProviderUpdateChecks: false });
+            currentVersion = "2.0.0";
+            yield* serverSettings.updateSettings({ enableProviderUpdateChecks: true });
+
+            const beforeRefresh = yield* providerHealth.getStatuses;
+            const staleKilo = beforeRefresh.find((provider) => provider.provider === "kilo");
+            assert.strictEqual(staleKilo?.versionAdvisory?.status, "unknown");
+            assert.strictEqual(staleKilo?.versionAdvisory?.latestVersion, null);
+            assert.strictEqual(staleKilo?.updateState?.status, "running");
+
+            yield* Fiber.interrupt(updateFiber);
+            const current = yield* providerHealth.refresh;
+            assert.strictEqual(
+              current.find((provider) => provider.provider === "kilo")?.versionAdvisory?.status,
+              "current",
+            );
+          }).pipe(Effect.provide(layer));
+        }),
+    );
+
     it.effect("stops a hung provider process and persists a failed update state", () =>
       Effect.gen(function* () {
+        yield* stubLatestProviderVersion("2.0.0");
         let killed = false;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -328,7 +845,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
             authStatus: "authenticated",
             checkedAt: "2026-07-15T12:00:00.000Z",
             message: "Kilo CLI is installed and authenticated.",
-            version: "7.3.46",
+            version: "1.0.0",
           },
         });
         const settings = {
@@ -353,12 +870,18 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
                 command === "npm" &&
                 args.join(" ") ===
                   "install -g --prefix /Users/test/.nvm/versions/node/v24.13.0 @kilocode/cli@latest",
+              fallback: () => ({ stdout: "1.0.0\n", stderr: "", code: 0 }),
             }),
           ),
         );
 
         const result = yield* Effect.gen(function* () {
           const providerHealth = yield* ProviderHealth;
+          const refreshed = yield* providerHealth.refresh;
+          assert.strictEqual(
+            refreshed.find((provider) => provider.provider === "kilo")?.versionAdvisory?.status,
+            "behind_latest",
+          );
           return yield* TestClock.withLive(providerHealth.updateProvider({ provider: "kilo" }));
         }).pipe(Effect.provide(layer));
         const kilo = result.providers.find((provider) => provider.provider === "kilo");

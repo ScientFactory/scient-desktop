@@ -38,6 +38,10 @@ export interface ServerSettingsShape {
   readonly start: Effect.Effect<void, ServerSettingsError>;
   readonly ready: Effect.Effect<void, ServerSettingsError>;
   readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
+  readonly getSnapshot: Effect.Effect<
+    { readonly settings: ServerSettings; readonly revision: number },
+    ServerSettingsError
+  >;
   readonly updateSettings: (
     patch: ServerSettingsPatch,
   ) => Effect.Effect<ServerSettings, ServerSettingsError>;
@@ -52,9 +56,10 @@ export class ServerSettingsService extends ServiceMap.Service<
     Layer.effect(
       ServerSettingsService,
       Effect.gen(function* () {
-        const currentSettingsRef = yield* Ref.make<ServerSettings>(
-          deepMerge(DEFAULT_SERVER_SETTINGS, overrides),
-        );
+        const currentSettingsRef = yield* Ref.make({
+          settings: deepMerge(DEFAULT_SERVER_SETTINGS, overrides),
+          revision: 0,
+        });
         const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
         const emitChange = (settings: ServerSettings) =>
           PubSub.publish(changesPubSub, settings).pipe(Effect.asVoid);
@@ -62,15 +67,30 @@ export class ServerSettingsService extends ServiceMap.Service<
         return {
           start: Effect.void,
           ready: Effect.void,
-          getSettings: Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
+          getSettings: Ref.get(currentSettingsRef).pipe(
+            Effect.map(({ settings }) => resolveTextGenerationProvider(settings)),
+          ),
+          getSnapshot: Ref.get(currentSettingsRef).pipe(
+            Effect.map(({ settings, revision }) => ({
+              settings: resolveTextGenerationProvider(settings),
+              revision,
+            })),
+          ),
           updateSettings: (patch) =>
             Ref.get(currentSettingsRef).pipe(
-              Effect.flatMap((currentSettings) =>
-                normalizeSettings("<memory>", currentSettings, patch),
+              Effect.flatMap(({ settings, revision }) =>
+                normalizeSettings("<memory>", settings, patch).pipe(
+                  Effect.map((nextSettings) => ({ nextSettings, revision })),
+                ),
               ),
-              Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
-              Effect.tap(emitChange),
-              Effect.map(resolveTextGenerationProvider),
+              Effect.tap(({ nextSettings, revision }) =>
+                Ref.set(currentSettingsRef, {
+                  settings: nextSettings,
+                  revision: revision + 1,
+                }),
+              ),
+              Effect.tap(({ nextSettings }) => emitChange(nextSettings)),
+              Effect.map(({ nextSettings }) => resolveTextGenerationProvider(nextSettings)),
             ),
           get streamChanges() {
             return Stream.fromPubSub(changesPubSub).pipe(Stream.map(resolveTextGenerationProvider));
@@ -181,7 +201,7 @@ const makeServerSettings = Effect.gen(function* () {
   const path = yield* Path.Path;
   const writeSemaphore = yield* Semaphore.make(1);
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
-  const settingsRef = yield* Ref.make<ServerSettings>(DEFAULT_SERVER_SETTINGS);
+  const settingsRef = yield* Ref.make({ settings: DEFAULT_SERVER_SETTINGS, revision: 0 });
   const startedRef = yield* Ref.make(false);
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
 
@@ -260,7 +280,7 @@ const makeServerSettings = Effect.gen(function* () {
         ),
       );
       const settings = yield* loadSettingsFromDisk;
-      yield* Ref.set(settingsRef, settings);
+      yield* Ref.update(settingsRef, ({ revision }) => ({ settings, revision: revision + 1 }));
     });
 
     const startupExit = yield* Effect.exit(startup);
@@ -275,14 +295,25 @@ const makeServerSettings = Effect.gen(function* () {
   return {
     start,
     ready: Deferred.await(startedDeferred),
-    getSettings: Ref.get(settingsRef).pipe(Effect.map(resolveTextGenerationProvider)),
+    getSettings: Ref.get(settingsRef).pipe(
+      Effect.map(({ settings }) => resolveTextGenerationProvider(settings)),
+    ),
+    getSnapshot: Ref.get(settingsRef).pipe(
+      Effect.map(({ settings, revision }) => ({
+        settings: resolveTextGenerationProvider(settings),
+        revision,
+      })),
+    ),
     updateSettings: (patch) =>
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* Ref.get(settingsRef);
-          const next = yield* normalizeSettings(settingsPath, current, patch);
+          const next = yield* normalizeSettings(settingsPath, current.settings, patch);
           yield* writeSettingsAtomically(next);
-          yield* Ref.set(settingsRef, next);
+          yield* Ref.set(settingsRef, {
+            settings: next,
+            revision: current.revision + 1,
+          });
           yield* emitChange(next);
           return resolveTextGenerationProvider(next);
         }),

@@ -99,6 +99,7 @@ import {
 } from "../components/settings/SettingsPanelPrimitives";
 import { ProviderUsageSettingsPanel } from "../components/settings/ProviderUsageSettingsPanel";
 import { ProviderUpdateActionButton } from "../components/settings/ProviderUpdateActionButton";
+import { ProviderUpdatesSettingsRow } from "../components/settings/ProviderUpdatesSettingsRow";
 import { ProfileSettingsPanel } from "../components/settings/ProfileSettingsPanel";
 import { KeyboardShortcutsSettingsPanel } from "../components/settings/KeyboardShortcutsSettingsPanel";
 import { SkillsSettingsPanel } from "../components/settings/SkillsSettingsPanel";
@@ -176,8 +177,7 @@ import { formatRelativeTime } from "../lib/relativeTime";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { sameProviderOrder } from "../providerOrdering";
 import {
-  getVisibleProviderUpdateStatuses,
-  shouldOfferProviderUpdateAction,
+  providerUpdateSummaryStatus,
   shouldShowProviderUpdateStatus,
   withProviderUpdateTimeout,
 } from "../providerUpdates";
@@ -976,16 +976,22 @@ function SettingsRouteView() {
         : null,
     [serverSettingsQuery.data, settings.enableProviderUpdateChecks],
   );
-  const outdatedProviderStatuses = useMemo(
+  const providerUpdateSummary = useMemo(
     () =>
-      getVisibleProviderUpdateStatuses({
+      providerUpdateSummaryStatus({
         providers: serverConfigQuery.data?.providers ?? [],
         hiddenProviders: settings.hiddenProviders,
         serverSettings: providerUpdateServerSettings,
+        loading: serverConfigQuery.data === undefined,
+        locallyUpdatingProviders: updatingProviders,
       }),
-    [providerUpdateServerSettings, serverConfigQuery.data?.providers, settings.hiddenProviders],
+    [
+      providerUpdateServerSettings,
+      serverConfigQuery.data,
+      settings.hiddenProviders,
+      updatingProviders,
+    ],
   );
-  const outdatedProviderCount = outdatedProviderStatuses.length;
   useSettingsTargetScroll(
     activeSection === "providers" && settingsTarget === SETTINGS_TARGETS.providerUpdates,
     providerUpdatesRef,
@@ -3452,55 +3458,14 @@ function SettingsRouteView() {
           ariaLabel: "Automatic CLI update checks",
         })}
 
-        <SettingsRow
-          title="Provider updates"
-          description="Review installed provider tools that Scient can safely update."
-          status={
-            !settings.enableProviderUpdateChecks
-              ? "Automatic checks off"
-              : outdatedProviderCount > 0
-                ? `${outdatedProviderCount} ${pluralize(outdatedProviderCount, "update")} available`
-                : "No provider updates detected"
-          }
+        <ProviderUpdatesSettingsRow
+          providers={serverConfigQuery.data?.providers ?? []}
+          hiddenProviders={settings.hiddenProviders}
+          serverSettings={providerUpdateServerSettings}
+          loading={serverConfigQuery.data === undefined}
+          locallyUpdatingProviders={updatingProviders}
+          onUpdate={(providerStatus) => void runProviderUpdate(providerStatus)}
         >
-          {settings.enableProviderUpdateChecks && outdatedProviderStatuses.length > 0 ? (
-            <div
-              className={cn(
-                "mt-4",
-                SETTINGS_INSET_LIST_CLASS_NAME,
-                "divide-y divide-[color:var(--color-border)]",
-              )}
-            >
-              {outdatedProviderStatuses.map((providerStatus) => {
-                const updateState = providerStatus.updateState?.status;
-                const isProviderUpdateActive =
-                  updateState === "queued" ||
-                  updateState === "running" ||
-                  updatingProviders.has(providerStatus.provider);
-                const updateLabel = providerUpdateStatusLabel(providerStatus);
-
-                return (
-                  <SettingsListRow
-                    key={providerStatus.provider}
-                    title={PROVIDER_DISPLAY_NAMES[providerStatus.provider]}
-                    description={updateLabel || undefined}
-                    actions={
-                      shouldOfferProviderUpdateAction(providerStatus) || isProviderUpdateActive ? (
-                        <ProviderUpdateActionButton
-                          providerStatus={providerStatus}
-                          confirmedUpdateVisible
-                          locallyUpdating={updatingProviders.has(providerStatus.provider)}
-                          onUpdate={() => void runProviderUpdate(providerStatus)}
-                        />
-                      ) : (
-                        <span className="text-[11px] text-muted-foreground">Manual update</span>
-                      )
-                    }
-                  />
-                );
-              })}
-            </div>
-          ) : null}
           {PROVIDER_SELECT_OPTIONS.map((provider) => {
             const feedback = providerUpdateFeedbackByProvider[provider];
             if (!feedback) return null;
@@ -3534,7 +3499,7 @@ function SettingsRouteView() {
               </SettingsInlineFeedback>
             );
           })}
-        </SettingsRow>
+        </ProviderUpdatesSettingsRow>
       </SettingsSection>
     </div>
   );
@@ -3545,13 +3510,7 @@ function SettingsRouteView() {
         <SettingsRow
           title="Installed CLIs"
           description="Review provider versions and update tools. Open a row only when you need binary overrides."
-          status={
-            !settings.enableProviderUpdateChecks
-              ? "Automatic checks off"
-              : outdatedProviderCount > 0
-                ? `${outdatedProviderCount} ${pluralize(outdatedProviderCount, "update")} available`
-                : "No provider updates detected"
-          }
+          status={providerUpdateSummary}
           resetAction={
             isInstallSettingsDirty ? (
               <SettingResetButton
