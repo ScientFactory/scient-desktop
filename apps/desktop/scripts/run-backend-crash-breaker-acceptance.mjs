@@ -254,16 +254,9 @@ async function runScenario(scenario, drive) {
     assert.equal(finalState.failure, undefined, finalState.failure);
     assert.equal(finalState.crashes, 5);
     assert.equal(finalState.breakerTrips, 1);
-    await new Promise((resolveExit, rejectExit) => {
-      const timeout = setTimeout(
-        () => rejectExit(new Error("Electron fixture did not exit.")),
-        5_000,
-      );
-      child.once("exit", () => {
-        clearTimeout(timeout);
-        resolveExit();
-      });
-    });
+    if (!(await waitForFixtureExit(child, 5_000))) {
+      throw new Error("Electron fixture did not exit.");
+    }
     return finalState;
   } catch (error) {
     await stopFixture(child);

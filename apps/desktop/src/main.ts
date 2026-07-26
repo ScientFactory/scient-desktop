@@ -68,8 +68,11 @@ import {
 } from "./backendRestartRecovery";
 import {
   coordinateBackendRecoveryAfterUpdaterFailure,
+  coordinateUpdaterFailureContinuation,
   resolveQuittingAfterUpdaterFailure,
+  routeDesktopQuitRequest,
   UpdateBackendRecoveryLatch,
+  UpdateQuitAuthorityLatch,
 } from "./updateBackendRecovery";
 import { resolveBackendNodeArgs } from "./backendNodeOptions";
 import {
@@ -323,6 +326,7 @@ let isQuitting = false;
 let isUpdaterInstallPreparing = false;
 let isUpdaterQuitAndInstallInFlight = false;
 const updateBackendRecovery = new UpdateBackendRecoveryLatch();
+const updateQuitAuthority = new UpdateQuitAuthorityLatch();
 let pendingBackendRestartRecovery: {
   failures: number;
   windowMs: number;
@@ -782,15 +786,29 @@ function resolveUpdaterErrorContext(): DesktopUpdateErrorContext {
   return updateState.errorContext;
 }
 
-function clearUpdaterInstallInFlightAfterError(): void {
+function clearUpdaterInstallInFlightAfterError(): string | null {
   if (!isUpdaterInstallPreparing && !isUpdaterQuitAndInstallInFlight) {
-    return;
+    return null;
   }
+  const pendingQuitReason = updateQuitAuthority.consume();
   isUpdaterInstallPreparing = false;
   isUpdaterQuitAndInstallInFlight = false;
   isQuitting = resolveQuittingAfterUpdaterFailure({
     desktopShutdownInFlight: desktopShutdownPromise !== null,
     desktopShutdownComplete,
+    pendingQuitRequest: pendingQuitReason !== null,
+  });
+  return pendingQuitReason;
+}
+
+function continueAfterUpdaterFailure(pendingQuitReason: string | null): void {
+  coordinateUpdaterFailureContinuation({
+    pendingQuitReason,
+    requestQuit: requestGracefulAppQuit,
+    recover: () => {
+      restoreBackendAfterUpdaterFailure();
+      scheduleUpdatePoll();
+    },
   });
 }
 
@@ -884,14 +902,7 @@ function armInstallWatchdog(): void {
     if (!isUpdaterQuitAndInstallInFlight) {
       return;
     }
-    clearUpdaterInstallInFlightAfterError();
-    // The backend was already stopped before quitAndInstall(); since the app is
-    // not actually quitting, bring it back so the recovered app is functional
-    // (renderer reconnects) instead of a zombie window with a dead backend.
-    restoreBackendAfterUpdaterFailure();
-    // Polling was stopped before the install attempt; resume it so background
-    // update checks keep running after this recovery.
-    scheduleUpdatePoll();
+    const pendingQuitReason = clearUpdaterInstallInFlightAfterError();
     const consecutiveFailures = recordInstallMarkerFailure(new Date().toISOString());
     setUpdateState({
       ...reduceDesktopUpdateStateOnInstallFailure(
@@ -903,6 +914,9 @@ function armInstallWatchdog(): void {
     console.error(
       "[desktop-updater] quitAndInstall did not exit the app within the watchdog window; surfacing manual-download fallback.",
     );
+    // Restore the backend only when updater recovery still owns the lifecycle.
+    // A deferred user or operating-system quit continues shutdown instead.
+    continueAfterUpdaterFailure(pendingQuitReason);
   }, AUTO_UPDATE_INSTALL_WATCHDOG_MS);
 }
 
@@ -2593,17 +2607,16 @@ async function installDownloadedUpdate(): Promise<{
     return { accepted: true, completed: false };
   } catch (error: unknown) {
     const message = formatErrorMessage(error);
-    clearUpdaterInstallInFlightAfterError();
+    const pendingQuitReason = clearUpdaterInstallInFlightAfterError();
     const consecutiveFailures = markerWritten
       ? recordInstallMarkerFailure(new Date().toISOString())
       : updateState.installFailureCount;
-    restoreBackendAfterUpdaterFailure();
-    scheduleUpdatePoll();
     setUpdateState({
       ...reduceDesktopUpdateStateOnInstallFailure(updateState, message),
       installFailureCount: consecutiveFailures,
     });
     console.error(`[desktop-updater] Failed to install update: ${message}`);
+    continueAfterUpdaterFailure(pendingQuitReason);
     return { accepted: true, completed: false };
   }
 }
@@ -2718,15 +2731,11 @@ function configureAutoUpdater(): void {
       console.warn("[desktop-updater] Ignored expected cancellation after stalled download.");
       return;
     }
-    clearUpdaterInstallInFlightAfterError();
+    const pendingQuitReason = clearUpdaterInstallInFlightAfterError();
     const installFailureCount =
       errorContext === "install"
         ? recordInstallMarkerFailure(new Date().toISOString())
         : updateState.installFailureCount;
-    if (errorContext === "install") {
-      restoreBackendAfterUpdaterFailure();
-      scheduleUpdatePoll();
-    }
     if (!updateCheckInFlight && !updateDownloadInFlight) {
       setUpdateState({
         status: "error",
@@ -2739,6 +2748,9 @@ function configureAutoUpdater(): void {
       });
     }
     console.error(`[desktop-updater] Updater error: ${message}`);
+    if (errorContext === "install") {
+      continueAfterUpdaterFailure(pendingQuitReason);
+    }
   });
   autoUpdater.on("download-progress", (progress) => {
     const percent = Math.floor(progress.percent);
@@ -3146,24 +3158,29 @@ async function shutdownDesktopRuntime(reason: string): Promise<void> {
 }
 
 function requestGracefulAppQuit(reason: string): void {
-  if (isUpdaterInstallPreparing) {
+  const action = routeDesktopQuitRequest({
+    reason,
+    updaterInstallPreparing: isUpdaterInstallPreparing,
+    quitAuthority: updateQuitAuthority,
+    startShutdown: (shutdownReason) => {
+      void shutdownDesktopRuntime(shutdownReason)
+        .then(() => {
+          app.quit();
+        })
+        .catch((error: unknown) => {
+          const message = formatErrorMessage(error);
+          writeDesktopLogHeader(`${shutdownReason} shutdown failed message=${message}`);
+          console.warn(`[desktop] Shutdown failed during ${shutdownReason}: ${message}`);
+          dialog.showErrorBox(
+            `${SCIENT_APP_NAME} could not close safely`,
+            `Scient stayed open because its backend did not stop. Retry after checking running tasks.\n\n${message}`,
+          );
+        });
+    },
+  });
+  if (action === "deferred") {
     writeDesktopLogHeader(`${reason} waiting for updater quit-and-install`);
-    return;
   }
-
-  void shutdownDesktopRuntime(reason)
-    .then(() => {
-      app.quit();
-    })
-    .catch((error: unknown) => {
-      const message = formatErrorMessage(error);
-      writeDesktopLogHeader(`${reason} shutdown failed message=${message}`);
-      console.warn(`[desktop] Shutdown failed during ${reason}: ${message}`);
-      dialog.showErrorBox(
-        `${SCIENT_APP_NAME} could not close safely`,
-        `Scient stayed open because its backend did not stop. Retry after checking running tasks.\n\n${message}`,
-      );
-    });
 }
 
 function registerIpcHandlers(): void {
@@ -3790,8 +3807,8 @@ app.on("before-quit", (event) => {
 
   if (isUpdaterInstallPreparing) {
     // Keep user/system quits from preempting the pending updater install with a plain app.quit().
-    writeDesktopLogHeader("before-quit waiting for updater quit-and-install");
     event.preventDefault();
+    requestGracefulAppQuit("before-quit");
     return;
   }
 
