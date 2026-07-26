@@ -220,18 +220,22 @@ export function providerModelsQueryOptions(input: {
   cwd?: string | null;
   enabled?: boolean;
 }) {
+  const discoveryGeneration =
+    input.provider === "claudeAgent" ? getProviderDiscoveryGeneration() : null;
+  const baseQueryKey = providerDiscoveryQueryKeys.models(
+    input.provider,
+    input.binaryPath ?? null,
+    input.apiEndpoint ?? null,
+    input.agentDir ?? null,
+    input.cwd ?? null,
+  );
   return queryOptions({
-    queryKey: providerDiscoveryQueryKeys.models(
-      input.provider,
-      input.binaryPath ?? null,
-      input.apiEndpoint ?? null,
-      input.agentDir ?? null,
-      input.cwd ?? null,
-    ),
+    queryKey:
+      discoveryGeneration === null
+        ? baseQueryKey
+        : ([...baseQueryKey, discoveryGeneration] as const),
     queryFn: async (): Promise<ProviderListModelsResult> => {
       const api = ensureNativeApi();
-      const discoveryGeneration =
-        input.provider === "claudeAgent" ? getProviderDiscoveryGeneration() : null;
       const result = await api.provider.listModels({
         provider: input.provider,
         ...(input.binaryPath ? { binaryPath: input.binaryPath } : {}),
@@ -273,16 +277,20 @@ export function providerAgentsQueryOptions(input: {
   cwd?: string | null;
   enabled?: boolean;
 }) {
+  const discoveryGeneration =
+    input.provider === "claudeAgent" ? getProviderDiscoveryGeneration() : null;
+  const baseQueryKey = providerDiscoveryQueryKeys.agents(
+    input.provider,
+    input.binaryPath ?? null,
+    input.cwd ?? null,
+  );
   return queryOptions({
-    queryKey: providerDiscoveryQueryKeys.agents(
-      input.provider,
-      input.binaryPath ?? null,
-      input.cwd ?? null,
-    ),
+    queryKey:
+      discoveryGeneration === null
+        ? baseQueryKey
+        : ([...baseQueryKey, discoveryGeneration] as const),
     queryFn: async () => {
       const api = ensureNativeApi();
-      const discoveryGeneration =
-        input.provider === "claudeAgent" ? getProviderDiscoveryGeneration() : null;
       const result = await api.provider.listAgents({
         provider: input.provider,
         ...(input.binaryPath ? { binaryPath: input.binaryPath } : {}),
@@ -300,7 +308,12 @@ export function providerAgentsQueryOptions(input: {
     enabled: input.enabled ?? true,
     staleTime: 60_000,
     refetchOnWindowFocus: PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS,
-    placeholderData: (previous) => previous ?? EMPTY_AGENTS_RESULT,
+    ...(input.provider === "claudeAgent"
+      ? {}
+      : {
+          placeholderData: (previous: ProviderListAgentsResult | undefined) =>
+            previous ?? EMPTY_AGENTS_RESULT,
+        }),
   });
 }
 

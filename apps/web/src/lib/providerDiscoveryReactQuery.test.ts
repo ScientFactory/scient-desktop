@@ -94,6 +94,13 @@ describe("providerModelsQueryOptions", () => {
       binaryPath: "/opt/claude-custom",
       discoveryGeneration: "auth-generation-a",
     });
+
+    setProviderDiscoveryGeneration("auth-generation-b");
+    const nextGenerationOptions = providerModelsQueryOptions({
+      provider: "claudeAgent",
+      binaryPath: "/opt/claude-custom",
+    });
+    expect(nextGenerationOptions.queryKey).not.toEqual(configuredOptions.queryKey);
   });
 
   it("discards a Claude model catalog that resolves after the provider generation changes", async () => {
@@ -108,11 +115,15 @@ describe("providerModelsQueryOptions", () => {
     );
     setProviderDiscoveryGeneration("signed-out");
     const options = providerModelsQueryOptions({ provider: "claudeAgent" });
+    setProviderDiscoveryGeneration("signed-in");
     const queryClient = new QueryClient();
     const pending = queryClient.fetchQuery({ ...options, retry: false });
 
     await vi.waitFor(() => expect(listModels).toHaveBeenCalledTimes(1));
-    setProviderDiscoveryGeneration("signed-in");
+    expect(listModels).toHaveBeenCalledWith({
+      provider: "claudeAgent",
+      discoveryGeneration: "signed-out",
+    });
     resolveModels?.({ models: [] });
 
     await expect(pending).rejects.toThrow(/stale Claude model catalog/u);
@@ -216,6 +227,16 @@ describe("providerModelsQueryOptions", () => {
 });
 
 describe("providerAgentsQueryOptions", () => {
+  it("preserves non-Claude agent cache identity and placeholder behavior across generations", () => {
+    setProviderDiscoveryGeneration("generation-a");
+    const first = providerAgentsQueryOptions({ provider: "codex" });
+    setProviderDiscoveryGeneration("generation-b");
+    const second = providerAgentsQueryOptions({ provider: "codex" });
+
+    expect(second.queryKey).toEqual(first.queryKey);
+    expect(first.placeholderData).toBeTypeOf("function");
+  });
+
   it("scopes Claude subagents and their cache identity to the configured executable", async () => {
     setProviderDiscoveryGeneration("auth-generation-b");
     const listAgents = mockListAgents(vi.fn().mockResolvedValue({ agents: [] }));
@@ -226,6 +247,7 @@ describe("providerAgentsQueryOptions", () => {
     const pathOptions = providerAgentsQueryOptions({ provider: "claudeAgent" });
 
     expect(configuredOptions.queryKey).not.toEqual(pathOptions.queryKey);
+    expect(configuredOptions.placeholderData).toBeUndefined();
 
     const queryClient = new QueryClient();
     await queryClient.fetchQuery(configuredOptions);
@@ -234,6 +256,13 @@ describe("providerAgentsQueryOptions", () => {
       binaryPath: "/opt/claude-custom",
       discoveryGeneration: "auth-generation-b",
     });
+
+    setProviderDiscoveryGeneration("auth-generation-c");
+    const nextGenerationOptions = providerAgentsQueryOptions({
+      provider: "claudeAgent",
+      binaryPath: "/opt/claude-custom",
+    });
+    expect(nextGenerationOptions.queryKey).not.toEqual(configuredOptions.queryKey);
   });
 
   it("discards a Claude agent catalog that resolves after the provider generation changes", async () => {
@@ -248,11 +277,15 @@ describe("providerAgentsQueryOptions", () => {
     );
     setProviderDiscoveryGeneration("signed-out");
     const options = providerAgentsQueryOptions({ provider: "claudeAgent" });
+    setProviderDiscoveryGeneration("signed-in");
     const queryClient = new QueryClient();
     const pending = queryClient.fetchQuery({ ...options, retry: false });
 
     await vi.waitFor(() => expect(listAgents).toHaveBeenCalledTimes(1));
-    setProviderDiscoveryGeneration("signed-in");
+    expect(listAgents).toHaveBeenCalledWith({
+      provider: "claudeAgent",
+      discoveryGeneration: "signed-out",
+    });
     resolveAgents?.({ agents: [] });
 
     await expect(pending).rejects.toThrow(/stale Claude agent catalog/u);
