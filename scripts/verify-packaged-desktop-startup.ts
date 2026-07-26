@@ -833,13 +833,13 @@ export async function terminateProcessTree(
     (dependencies.childIsAlive ?? childProcessHandleIsAlive)(child) &&
     child.exitCode === null &&
     child.signalCode === null;
-  const rootTarget =
+  const rootTarget: ProcessTerminationTarget | null =
     child.pid && childCanStillOwnProcesses
       ? { pid: child.pid, processGroup: platform !== "win32" }
       : null;
   // The verifier creates this POSIX process group and keeps authority over it
   // while any descendant remains, even after its original leader exits.
-  const exitedRootGroupTarget =
+  const exitedRootGroupTarget: ProcessTerminationTarget | null =
     platform !== "win32" && child.pid && !rootTarget
       ? { pid: child.pid, processGroup: true }
       : null;
