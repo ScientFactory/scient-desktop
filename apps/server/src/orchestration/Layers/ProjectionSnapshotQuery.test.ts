@@ -997,6 +997,119 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
     }),
   );
 
+  it.effect("lists active project shells without consulting unrelated thread rows", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_threads`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          kind,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES
+          (
+            'project-polling-active',
+            'project',
+            ' Polling Active ',
+            ' /tmp/polling-active ',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            '[]',
+            '2026-02-25T00:00:00.000Z',
+            '2026-02-25T00:00:01.000Z',
+            NULL
+          ),
+          (
+            'project-polling-deleted',
+            'project',
+            'Polling Deleted',
+            '/tmp/polling-deleted',
+            '{"provider":"codex","model":"gpt-5-codex"}',
+            '[]',
+            '2026-02-25T00:00:02.000Z',
+            '2026-02-25T00:00:03.000Z',
+            '2026-02-25T00:00:04.000Z'
+          )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-polling-malformed',
+          'project-polling-active',
+          'Malformed unrelated thread',
+          'not-json',
+          '2026-02-25T00:00:05.000Z',
+          '2026-02-25T00:00:06.000Z',
+          NULL
+        )
+      `;
+
+      const projects = yield* snapshotQuery.listActiveProjectShells();
+      assert.deepEqual(
+        projects.map((project) => ({
+          id: project.id,
+          title: project.title,
+          workspaceRoot: project.workspaceRoot,
+        })),
+        [
+          {
+            id: asProjectId("project-polling-active"),
+            title: "Polling Active",
+            workspaceRoot: "/tmp/polling-active",
+          },
+        ],
+      );
+
+      yield* Effect.flip(snapshotQuery.getShellSnapshot());
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          kind,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-polling-invalid',
+          'project',
+          'Invalid root',
+          '   ',
+          NULL,
+          '[]',
+          '2026-02-25T00:00:07.000Z',
+          '2026-02-25T00:00:08.000Z',
+          NULL
+        )
+      `;
+
+      yield* Effect.flip(snapshotQuery.listActiveProjectShells());
+    }),
+  );
+
   it.effect("decodes persisted lastKnownPr JSON in read and shell snapshots", () =>
     Effect.gen(function* () {
       const snapshotQuery = yield* ProjectionSnapshotQuery;
