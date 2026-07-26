@@ -46,7 +46,10 @@ import { autoUpdater, BaseUpdater, CancellationToken } from "electron-updater";
 
 import type { ContextMenuItem } from "@synara/contracts";
 import { makeScientBackendShutdownMessage } from "@synara/shared/backendControl";
-import { recordPackagedStartupOwnedProcess } from "@synara/shared/packagedStartupProcessOwnership";
+import {
+  readWindowsProcessInstanceId,
+  recordPackagedStartupOwnedProcess,
+} from "@synara/shared/packagedStartupProcessOwnership";
 import { getMacTrafficLightPosition } from "@synara/shared/desktopChrome";
 import {
   SCIENT_APP_NAME,
@@ -2863,24 +2866,35 @@ function spawnBackendGeneration(generation: number): ChildProcess.ChildProcess {
     ...backendEnv(),
     ELECTRON_RUN_AS_NODE: "1",
   };
-  // The verifier-only capability authorizes cleanup of this backend after an
-  // Electron crash. The desktop writes the ownership record itself; neither
-  // the backend nor provider subprocesses need to inherit that capability.
+  // Windows records an authenticated process-creation identity so the verifier
+  // can reap this backend after an Electron crash without trusting a reused PID.
+  // POSIX smoke backends inherit the verifier-created Electron process group.
+  // Neither backend nor provider subprocesses inherit the verifier capability.
   delete environment.SCIENT_PACKAGED_STARTUP_CLEANUP_TOKEN;
   const child = ChildProcess.spawn(process.execPath, [...backendNodeArgs(), backendEntry], {
     cwd: resolveBackendCwd(),
     // In Electron main, process.execPath points to the Electron binary.
     // Run the child in Node mode so this backend process does not become a GUI app instance.
     env: environment,
-    // POSIX force termination targets this dedicated process group. Windows
-    // uses taskkill /T after the same graceful IPC deadline.
-    ...backendProcessContainmentOptions(captureBackendLogs),
+    // Normal POSIX launches retain their dedicated backend process group. The
+    // packaged smoke keeps the backend in Electron's verifier-owned group.
+    // Windows uses taskkill /T after the same graceful IPC deadline.
+    ...backendProcessContainmentOptions(
+      captureBackendLogs,
+      process.platform,
+      process.env.SCIENT_PACKAGED_STARTUP_SMOKE !== "1",
+    ),
   });
   try {
-    if (child.pid) {
+    if (child.pid && process.platform === "win32") {
+      const instanceId = readWindowsProcessInstanceId(child.pid, process.env);
+      if (!instanceId) {
+        throw new Error("Could not establish the packaged backend process instance identity.");
+      }
       recordPackagedStartupOwnedProcess(process.env, {
         pid: child.pid,
-        processGroup: process.platform !== "win32",
+        processGroup: false,
+        instanceId,
       });
     }
   } catch (error) {

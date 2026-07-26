@@ -750,7 +750,7 @@ describe("packaged desktop startup verification", () => {
     expect(exitWaits).toEqual([12_000]);
   });
 
-  it("uses spawn-recorded POSIX ownership when the desktop exits before escalation", async () => {
+  it("keeps the verifier-created POSIX group authoritative when its leader exits", async () => {
     const childState: {
       exitCode: number | null;
       pid: number;
@@ -782,6 +782,7 @@ describe("packaged desktop startup verification", () => {
     ).rejects.toThrow("survived authoritative");
     expect(signals).toEqual([
       { pid: 42, signal: "SIGTERM" },
+      { pid: 42, signal: "SIGKILL" },
       { pid: 84, signal: "SIGKILL" },
     ]);
   });
@@ -794,19 +795,20 @@ describe("packaged desktop startup verification", () => {
       child,
       {
         platform: "win32",
+        readWindowsProcessInstanceId: () => "638891234567890123",
         runTaskkill,
         targetIsAlive: () => true,
         waitForTargetsExit: async (_targets, timeoutMs) =>
           timeoutMs === 5_000 && runTaskkill.mock.calls.length > 0,
       },
       [84],
-      [{ pid: 84, processGroup: false }],
+      [{ pid: 84, processGroup: false, instanceId: "638891234567890123" }],
     );
 
     expect(runTaskkill).toHaveBeenCalledWith(84, 5_000);
   });
 
-  it("observes an orphaned POSIX process group without signaling it", async () => {
+  it("reaps an orphaned verifier-created POSIX process group", async () => {
     const child = {
       exitCode: 0,
       pid: 42,
@@ -815,18 +817,43 @@ describe("packaged desktop startup verification", () => {
     const observed: Array<ReadonlyArray<{ pid: number; processGroup: boolean }>> = [];
     const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
 
+    await terminateProcessTree(child, {
+      platform: "darwin",
+      sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
+      targetIsAlive: () => true,
+      waitForTargetsExit: async (targets, timeoutMs) => {
+        observed.push(targets);
+        return timeoutMs === 2_000;
+      },
+    });
+    expect(observed).toEqual([
+      [{ pid: 42, processGroup: true }],
+      [{ pid: 42, processGroup: true }],
+    ]);
+    expect(signals).toEqual([
+      { pid: 42, signal: "SIGTERM" },
+      { pid: 42, signal: "SIGKILL" },
+    ]);
+  });
+
+  it("refuses a Windows backend record whose process instance was reused", async () => {
+    const child = { exitCode: 0, pid: 42, signalCode: null } as unknown as ChildProcess;
+    const runTaskkill = vi.fn(() => ({ status: 0 }));
+
     await expect(
-      terminateProcessTree(child, {
-        platform: "darwin",
-        sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
-        waitForTargetsExit: async (targets) => {
-          observed.push(targets);
-          return false;
+      terminateProcessTree(
+        child,
+        {
+          platform: "win32",
+          readWindowsProcessInstanceId: () => "638891234567890999",
+          runTaskkill,
+          waitForTargetsExit: async () => false,
         },
-      }),
-    ).rejects.toThrow("refusing to signal unverified PIDs or process groups");
-    expect(observed).toEqual([[{ pid: 42, processGroup: true }]]);
-    expect(signals).toEqual([]);
+        [84],
+        [{ pid: 84, processGroup: false, instanceId: "638891234567890123" }],
+      ),
+    ).rejects.toThrow("survived Windows cleanup");
+    expect(runTaskkill).not.toHaveBeenCalled();
   });
 
   it("fails closed without signaling a recorded PID when the root is already gone", async () => {

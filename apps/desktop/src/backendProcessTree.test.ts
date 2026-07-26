@@ -21,6 +21,10 @@ describe("forceTerminateBackendProcessTree", () => {
       detached: false,
       stdio: ["ignore", "inherit", "inherit", "ipc"],
     });
+    expect(backendProcessContainmentOptions(false, "darwin", false)).toEqual({
+      detached: false,
+      stdio: ["ignore", "inherit", "inherit", "ipc"],
+    });
   });
 
   it("kills the detached POSIX process group", async () => {

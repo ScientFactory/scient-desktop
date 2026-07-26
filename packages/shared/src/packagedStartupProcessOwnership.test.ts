@@ -2,10 +2,11 @@ import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   readPackagedStartupOwnedProcesses,
+  readWindowsProcessInstanceId,
   recordPackagedStartupOwnedProcess,
   resolvePackagedStartupProcessOwnershipPath,
 } from "./packagedStartupProcessOwnership";
@@ -29,6 +30,7 @@ describe("packaged startup process ownership", () => {
     recordPackagedStartupOwnedProcess(environment, {
       pid: 42,
       processGroup: true,
+      instanceId: "638891234567890123",
     });
 
     expect(readPackagedStartupOwnedProcesses(environment)).toEqual([
@@ -36,6 +38,7 @@ describe("packaged startup process ownership", () => {
         schemaVersion: 2,
         pid: 42,
         processGroup: true,
+        instanceId: "638891234567890123",
         authenticator: expect.stringMatching(/^[0-9a-f]{64}$/),
       },
     ]);
@@ -61,6 +64,7 @@ describe("packaged startup process ownership", () => {
     recordPackagedStartupOwnedProcess(environment, {
       pid: 84,
       processGroup: false,
+      instanceId: "638891234567890456",
     });
     const path = resolvePackagedStartupProcessOwnershipPath(root);
     const validRecord = readFileSync(path, "utf8").trim();
@@ -72,6 +76,7 @@ describe("packaged startup process ownership", () => {
           schemaVersion: 2,
           pid: 126,
           processGroup: false,
+          instanceId: "638891234567890789",
           authenticator: "0".repeat(64),
         }),
         "{truncated",
@@ -83,6 +88,7 @@ describe("packaged startup process ownership", () => {
         schemaVersion: 2,
         pid: 84,
         processGroup: false,
+        instanceId: "638891234567890456",
         authenticator: expect.stringMatching(/^[0-9a-f]{64}$/),
       },
     ]);
@@ -92,7 +98,10 @@ describe("packaged startup process ownership", () => {
     const root = mkdtempSync(join(tmpdir(), "scient-packaged-ownership-test-"));
     roots.push(root);
 
-    recordPackagedStartupOwnedProcess({ SCIENT_HOME: root }, { pid: 42, processGroup: true });
+    recordPackagedStartupOwnedProcess(
+      { SCIENT_HOME: root },
+      { pid: 42, processGroup: true, instanceId: "638891234567890123" },
+    );
 
     expect(readPackagedStartupOwnedProcesses({ SCIENT_HOME: root })).toEqual([]);
   });
@@ -110,6 +119,7 @@ describe("packaged startup process ownership", () => {
       recordPackagedStartupOwnedProcess(environment, {
         pid: 42,
         processGroup: true,
+        instanceId: "638891234567890123",
       }),
     ).toThrow("cleanup token");
     expect(() =>
@@ -118,8 +128,38 @@ describe("packaged startup process ownership", () => {
           ...environment,
           SCIENT_PACKAGED_STARTUP_CLEANUP_TOKEN: "d".repeat(64),
         },
-        { pid: 0, processGroup: true },
+        { pid: 0, processGroup: true, instanceId: "638891234567890123" },
       ),
     ).toThrow("positive PID");
+    expect(() =>
+      recordPackagedStartupOwnedProcess(
+        {
+          ...environment,
+          SCIENT_PACKAGED_STARTUP_CLEANUP_TOKEN: "d".repeat(64),
+        },
+        { pid: 42, processGroup: false, instanceId: "not-a-process-instance" },
+      ),
+    ).toThrow("process instance id");
+  });
+
+  it("reads the Windows process creation identity without invoking a shell", () => {
+    const runProcess = vi.fn(() => ({
+      error: undefined,
+      status: 0,
+      stdout: "638891234567890123\r\n",
+    }));
+
+    expect(
+      readWindowsProcessInstanceId(
+        42,
+        { SystemRoot: "D:\\Windows" },
+        runProcess as unknown as typeof import("node:child_process").spawnSync,
+      ),
+    ).toBe("638891234567890123");
+    expect(runProcess).toHaveBeenCalledWith(
+      "D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      expect.arrayContaining(["-NonInteractive", "-Command"]),
+      expect.objectContaining({ shell: false, timeout: 5_000, windowsHide: true }),
+    );
   });
 });

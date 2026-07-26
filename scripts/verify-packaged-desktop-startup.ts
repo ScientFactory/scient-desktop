@@ -25,7 +25,10 @@ import {
   WINDOWS_AUTHENTICODE_READER_FUNCTION_LINES,
   type WindowsAuthenticodeSignatureDetails,
 } from "./lib/windows-authenticode";
-import { readPackagedStartupOwnedProcesses } from "@synara/shared/packagedStartupProcessOwnership";
+import {
+  readPackagedStartupOwnedProcesses,
+  readWindowsProcessInstanceId,
+} from "@synara/shared/packagedStartupProcessOwnership";
 
 export type PackagedDesktopPlatform = "mac" | "win";
 
@@ -745,6 +748,7 @@ export function resolvePackagedDesktopLogPath(environment: NodeJS.ProcessEnv): s
 export interface ProcessTerminationTarget {
   readonly pid: number;
   readonly processGroup: boolean;
+  readonly instanceId?: string;
 }
 
 export interface ProcessTerminationDependencies {
@@ -757,6 +761,7 @@ export interface ProcessTerminationDependencies {
     readonly error?: Error;
     readonly status: number | null;
   };
+  readonly readWindowsProcessInstanceId?: (pid: number) => string | null;
   readonly sendSignal?: (target: ProcessTerminationTarget, signal: NodeJS.Signals) => void;
   readonly targetIsAlive?: (target: ProcessTerminationTarget) => boolean;
   readonly waitForTargetsExit?: (
@@ -832,9 +837,8 @@ export async function terminateProcessTree(
     child.pid && childCanStillOwnProcesses
       ? { pid: child.pid, processGroup: platform !== "win32" }
       : null;
-  // A POSIX process group can outlive its leader. Once the ChildProcess reports
-  // exit we no longer have durable signal authority, but we must still observe
-  // that original group before declaring cleanup complete and deleting evidence.
+  // The verifier creates this POSIX process group and keeps authority over it
+  // while any descendant remains, even after its original leader exits.
   const exitedRootGroupTarget =
     platform !== "win32" && child.pid && !rootTarget
       ? { pid: child.pid, processGroup: true }
@@ -848,7 +852,7 @@ export async function terminateProcessTree(
       ) === index,
   );
   // Backend PIDs recovered from logs/runtime state are observation-only. A
-  // matching tokened ownership record written synchronously at spawn is the
+  // matching HMAC record with the Windows process creation identity is the
   // separate authority that permits signaling a backend after Electron exits.
   const observedTargets = additionalProcessIds
     .map((pid) => ({ pid, processGroup: false }))
@@ -878,7 +882,7 @@ export async function terminateProcessTree(
     return;
   }
   const awaitTargetsExit = dependencies.waitForTargetsExit ?? waitForProcessTerminationTargets;
-  if (!rootTarget) {
+  if (!rootTarget && platform === "win32") {
     if (await awaitTargetsExit(targets, 5_000)) return;
     if (ownedTargets.length === 0) {
       throw new Error(
@@ -887,15 +891,24 @@ export async function terminateProcessTree(
     }
   }
   if (platform === "win32") {
-    // A live ChildProcess handle owns the root. Tokened records written by that
-    // root at backend spawn retain equivalent authority if Electron exits first.
-    const authoritativeWindowsRoots = [
+    // A live ChildProcess handle owns the root. Authenticated backend records
+    // retain authority only while their Windows process creation identity matches.
+    const candidateWindowsRoots = [
       ...(rootTarget ? [rootTarget] : []),
       ...ownedTargets.filter((target) => target.pid !== rootTarget?.pid),
     ];
-    const targetIsAlive = dependencies.targetIsAlive ?? processTerminationTargetIsAlive;
-    for (const target of authoritativeWindowsRoots) {
-      if (target !== rootTarget && !targetIsAlive({ ...target, processGroup: false })) continue;
+    const authoritativeWindowsRoots: ProcessTerminationTarget[] = [];
+    const readInstanceId =
+      dependencies.readWindowsProcessInstanceId ??
+      ((pid: number) => readWindowsProcessInstanceId(pid));
+    for (const target of candidateWindowsRoots) {
+      if (
+        target !== rootTarget &&
+        (!target.instanceId || readInstanceId(target.pid) !== target.instanceId)
+      ) {
+        continue;
+      }
+      authoritativeWindowsRoots.push(target);
       const taskkillResult =
         dependencies.runTaskkill?.(target.pid, WINDOWS_TASKKILL_TIMEOUT_MS) ??
         spawnSync("taskkill", ["/pid", String(target.pid), "/t", "/f"], {
@@ -918,22 +931,17 @@ export async function terminateProcessTree(
     );
   }
   const sendSignal = dependencies.sendSignal ?? sendProcessTreeSignal;
-  if (rootTarget) {
-    sendSignal(rootTarget, "SIGTERM");
+  const authoritativeRootGroup = rootTarget ?? exitedRootGroupTarget;
+  if (authoritativeRootGroup) {
+    sendSignal(authoritativeRootGroup, "SIGTERM");
     // The desktop owns a bounded backend shutdown that can legitimately take
     // up to ten seconds. Preserve its supervisor for that complete deadline.
     if (await awaitTargetsExit(targets, POSIX_DESKTOP_GRACEFUL_SHUTDOWN_TIMEOUT_MS)) return;
   }
   const targetIsAlive = dependencies.targetIsAlive ?? processTerminationTargetIsAlive;
-  const rootStillOwned =
-    rootTarget !== null &&
-    child.pid === rootTarget.pid &&
-    child.exitCode === null &&
-    child.signalCode === null &&
-    (dependencies.childIsAlive ?? childProcessHandleIsAlive)(child);
   const authoritativePosixTargets = [
-    ...(rootStillOwned && rootTarget ? [rootTarget] : []),
-    ...ownedTargets.filter((target) => target.pid !== rootTarget?.pid),
+    ...(authoritativeRootGroup ? [authoritativeRootGroup] : []),
+    ...ownedTargets.filter((target) => target.pid !== authoritativeRootGroup?.pid),
   ];
   for (const target of authoritativePosixTargets) {
     if (targetIsAlive(target)) sendSignal(target, "SIGKILL");
@@ -1221,10 +1229,13 @@ async function verifyPackagedDesktopPayload(
   try {
     if (child) {
       const ownedTargets = environment
-        ? readPackagedStartupOwnedProcesses(environment).map(({ pid, processGroup }) => ({
-            pid,
-            processGroup,
-          }))
+        ? readPackagedStartupOwnedProcesses(environment).map(
+            ({ pid, processGroup, instanceId }) => ({
+              pid,
+              processGroup,
+              instanceId,
+            }),
+          )
         : [];
       await terminateProcessTree(
         child,

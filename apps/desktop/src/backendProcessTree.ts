@@ -14,9 +14,10 @@ export interface ForceTerminateBackendProcessTreeOptions {
 export function backendProcessContainmentOptions(
   captureLogs: boolean,
   platform: NodeJS.Platform = process.platform,
+  isolatePosixProcessGroup = true,
 ): Pick<SpawnOptions, "detached" | "stdio"> {
   return {
-    detached: platform !== "win32",
+    detached: platform !== "win32" && isolatePosixProcessGroup,
     stdio: captureLogs
       ? ["ignore", "pipe", "pipe", "ipc"]
       : ["ignore", "inherit", "inherit", "ipc"],
