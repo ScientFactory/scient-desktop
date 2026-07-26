@@ -56,6 +56,8 @@ const TURN_ID = TurnId.makeUnsafe("turn-completion-runtime");
 const MESSAGE_ID = MessageId.makeUnsafe("message-completion-runtime");
 const BASE_ISO = "2026-07-26T12:00:00.000Z";
 const LEGACY_COMPLETION_KEY = `thread:${THREAD_ID}:completed:legacy`;
+const TRANSITION_SYNC_REQUEST_ID = "completion-transition-sync";
+const TRANSITION_SYNC_KEY = `thread:${THREAD_ID}:attention:${TRANSITION_SYNC_REQUEST_ID}`;
 
 type ReadModelThread = OrchestrationReadModel["threads"][number];
 
@@ -156,6 +158,32 @@ function publishLegacyCompletion(): void {
     status: "recent",
     tone: "success",
     title: "Old duplicate completion",
+    destination: { type: "thread", threadId: THREAD_ID },
+  });
+}
+
+function approvalActivity(): ReadModelThread["activities"][number] {
+  return {
+    id: EventId.makeUnsafe("approval-completion-transition-sync"),
+    tone: "approval",
+    kind: "approval.requested",
+    summary: "Completion transition synchronization",
+    payload: {
+      requestId: TRANSITION_SYNC_REQUEST_ID,
+      requestKind: "command",
+    },
+    turnId: TURN_ID,
+    createdAt: BASE_ISO,
+  };
+}
+
+function publishTransitionSyncAttention(): void {
+  activityManager.publish({
+    dedupeKey: TRANSITION_SYNC_KEY,
+    source: "thread",
+    status: "needs_attention",
+    tone: "warning",
+    title: "Completion transition synchronization",
     destination: { type: "thread", threadId: THREAD_ID },
   });
 }
@@ -265,8 +293,9 @@ describe("TaskCompletionNotifications runtime ownership", () => {
       runtime.activeThreadId = activeThreadId;
       runtime.foreground = foreground;
       runtime.settings.enableSystemTaskCompletionNotifications = systemEnabled;
-      installThread(makeThread());
+      installThread(makeThread({ activities: [approvalActivity()] }));
       publishLegacyCompletion();
+      publishTransitionSyncAttention();
 
       const screen = await render(<TaskCompletionNotifications />);
       try {
@@ -276,20 +305,31 @@ describe("TaskCompletionNotifications runtime ownership", () => {
               .getState()
               .items.some((item) => item.dedupeKey === LEGACY_COMPLETION_KEY),
           ).toBe(false);
+          expect(
+            useActivityStore
+              .getState()
+              .items.some((item) => item.dedupeKey === TRANSITION_SYNC_KEY),
+          ).toBe(true);
         });
 
         completeThread();
 
         await vi.waitFor(() => {
-          expect(runtime.showSystemNotification).toHaveBeenCalledTimes(systemCalls);
           expect(
             useActivityStore
               .getState()
-              .items.some(
-                (item) => item.source === "thread" && item.dedupeKey.includes(":completed:"),
-              ),
+              .items.some((item) => item.dedupeKey === TRANSITION_SYNC_KEY),
           ).toBe(false);
         });
+
+        expect(runtime.showSystemNotification).toHaveBeenCalledTimes(systemCalls);
+        expect(
+          useActivityStore
+            .getState()
+            .items.some(
+              (item) => item.source === "thread" && item.dedupeKey.includes(":completed:"),
+            ),
+        ).toBe(false);
       } finally {
         await screen.unmount();
       }
