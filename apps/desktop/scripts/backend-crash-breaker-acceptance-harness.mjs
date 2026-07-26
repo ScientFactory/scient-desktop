@@ -10,7 +10,7 @@ import { app, BrowserWindow, dialog, shell } from "electron";
 import {
   buildBackendRestartRecoveryDialog,
   handleBackendRestartRecoveryAction,
-  shouldShowBackendRestartRecovery,
+  shouldAttemptBackendRestartRecovery,
   showBackendRestartRecoveryDialog,
 } from "../src/backendRestartRecovery.ts";
 import { DesktopBackendSupervisor } from "../src/desktopBackendSupervisor.ts";
@@ -114,7 +114,13 @@ function finish(patch = {}) {
 }
 
 async function showRecovery(input) {
-  if (!shouldShowBackendRestartRecovery(shutdownRequested())) {
+  if (
+    !shouldAttemptBackendRestartRecovery({
+      recoveryPending: true,
+      recoveryDialogOpen: false,
+      isQuitting: shutdownRequested(),
+    })
+  ) {
     result.suppressed = true;
     finish();
     return;
@@ -195,7 +201,11 @@ async function runCrashSequence() {
     onRestartLimitReached: ({ failures, windowMs }) => {
       result.breakerTrips += 1;
       publish({
-        phase: shouldShowBackendRestartRecovery(shutdownRequested())
+        phase: shouldAttemptBackendRestartRecovery({
+          recoveryPending: true,
+          recoveryDialogOpen: false,
+          isQuitting: shutdownRequested(),
+        })
           ? "breaker-paused"
           : "breaker-suppressed",
       });

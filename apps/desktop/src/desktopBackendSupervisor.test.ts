@@ -9,8 +9,10 @@ import {
   type DesktopBackendChild,
   type DesktopBackendSupervisorOptions,
 } from "./desktopBackendSupervisor";
-import { handleBackendRecoveryAfterUpdaterFailure } from "./backendRestartRecovery";
-import { UpdateBackendRecoveryLatch } from "./updateBackendRecovery";
+import {
+  coordinateBackendRecoveryAfterUpdaterFailure,
+  UpdateBackendRecoveryLatch,
+} from "./updateBackendRecovery";
 
 class FakeBackendChild extends EventEmitter implements DesktopBackendChild {
   pid: number | undefined;
@@ -541,8 +543,10 @@ describe("DesktopBackendSupervisor", () => {
     harness.children[2]!.exit(0);
     await stopping;
     let resumed: Promise<void> | null = null;
-    const action = handleBackendRecoveryAfterUpdaterFailure({
-      restartWasRequired: recoveryLatch.consume(),
+    const action = coordinateBackendRecoveryAfterUpdaterFailure({
+      recoveryLatch,
+      desktopShutdownInFlight: false,
+      desktopShutdownComplete: false,
       recoveryPending: false,
       recoveryDialogOpen: false,
       resume: () => {
@@ -562,6 +566,36 @@ describe("DesktopBackendSupervisor", () => {
     ]);
     expect(harness.supervisor.desiredRunning).toBe(false);
     expect(harness.restarts.map(({ attempt }) => attempt)).toEqual([0, 1]);
+  });
+
+  it("does not revive a backend when updater failure overlaps desktop shutdown", async () => {
+    const harness = makeHarness();
+    const recoveryLatch = new UpdateBackendRecoveryLatch();
+    await harness.supervisor.start();
+    recoveryLatch.capture(harness.supervisor.desiredRunning);
+
+    const stopping = harness.supervisor.stop("Windows session end");
+    await settleLifecycle();
+    const action = coordinateBackendRecoveryAfterUpdaterFailure({
+      recoveryLatch,
+      desktopShutdownInFlight: true,
+      desktopShutdownComplete: false,
+      recoveryPending: false,
+      recoveryDialogOpen: false,
+      resume: () => {
+        void harness.supervisor.resume();
+      },
+      showRecovery: () => {
+        throw new Error("unexpected recovery dialog");
+      },
+    });
+    harness.children[0]!.exit(0);
+    await stopping;
+
+    expect(action).toBe("none");
+    expect(harness.children).toHaveLength(1);
+    expect(harness.supervisor.desiredRunning).toBe(false);
+    expect(recoveryLatch.consume()).toBe(true);
   });
 
   it("forgives retained failures only when the user explicitly starts again", async () => {

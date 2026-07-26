@@ -62,12 +62,15 @@ import { isBackendReadinessAborted, waitForHttpReady } from "./backendReadiness"
 import {
   buildBackendRestartRecoveryDialog,
   ensureBackendRestartRecoveryOwner,
-  handleBackendRecoveryAfterUpdaterFailure,
   handleBackendRestartRecoveryAction,
   showBackendRestartRecoveryDialog,
   shouldAttemptBackendRestartRecovery,
 } from "./backendRestartRecovery";
-import { UpdateBackendRecoveryLatch } from "./updateBackendRecovery";
+import {
+  coordinateBackendRecoveryAfterUpdaterFailure,
+  resolveQuittingAfterUpdaterFailure,
+  UpdateBackendRecoveryLatch,
+} from "./updateBackendRecovery";
 import { resolveBackendNodeArgs } from "./backendNodeOptions";
 import {
   backendProcessContainmentOptions,
@@ -785,12 +788,17 @@ function clearUpdaterInstallInFlightAfterError(): void {
   }
   isUpdaterInstallPreparing = false;
   isUpdaterQuitAndInstallInFlight = false;
-  isQuitting = false;
+  isQuitting = resolveQuittingAfterUpdaterFailure({
+    desktopShutdownInFlight: desktopShutdownPromise !== null,
+    desktopShutdownComplete,
+  });
 }
 
 function restoreBackendAfterUpdaterFailure(): void {
-  handleBackendRecoveryAfterUpdaterFailure({
-    restartWasRequired: updateBackendRecovery.consume(),
+  coordinateBackendRecoveryAfterUpdaterFailure({
+    recoveryLatch: updateBackendRecovery,
+    desktopShutdownInFlight: desktopShutdownPromise !== null,
+    desktopShutdownComplete,
     recoveryPending: pendingBackendRestartRecovery !== null,
     recoveryDialogOpen: backendRestartRecoveryDialogOpen,
     resume: resumeBackend,
@@ -2585,9 +2593,7 @@ async function installDownloadedUpdate(): Promise<{
     return { accepted: true, completed: false };
   } catch (error: unknown) {
     const message = formatErrorMessage(error);
-    isUpdaterInstallPreparing = false;
-    isUpdaterQuitAndInstallInFlight = false;
-    isQuitting = false;
+    clearUpdaterInstallInFlightAfterError();
     const consecutiveFailures = markerWritten
       ? recordInstallMarkerFailure(new Date().toISOString())
       : updateState.installFailureCount;

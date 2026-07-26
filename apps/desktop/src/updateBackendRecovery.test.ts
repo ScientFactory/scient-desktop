@@ -1,6 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { UpdateBackendRecoveryLatch } from "./updateBackendRecovery";
+import {
+  coordinateBackendRecoveryAfterUpdaterFailure,
+  resolveQuittingAfterUpdaterFailure,
+  UpdateBackendRecoveryLatch,
+} from "./updateBackendRecovery";
 
 describe("UpdateBackendRecoveryLatch", () => {
   it("restores a previously running backend exactly once", () => {
@@ -18,5 +22,48 @@ describe("UpdateBackendRecoveryLatch", () => {
     latch.capture(false);
 
     expect(latch.consume()).toBe(false);
+  });
+
+  it("never lets updater failure cancel concurrent desktop shutdown authority", () => {
+    expect(
+      resolveQuittingAfterUpdaterFailure({
+        desktopShutdownInFlight: false,
+        desktopShutdownComplete: false,
+      }),
+    ).toBe(false);
+    expect(
+      resolveQuittingAfterUpdaterFailure({
+        desktopShutdownInFlight: true,
+        desktopShutdownComplete: false,
+      }),
+    ).toBe(true);
+    expect(
+      resolveQuittingAfterUpdaterFailure({
+        desktopShutdownInFlight: false,
+        desktopShutdownComplete: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("preserves the recovery latch while desktop shutdown owns the lifecycle", () => {
+    const latch = new UpdateBackendRecoveryLatch();
+    const resume = vi.fn();
+    const showRecovery = vi.fn();
+    latch.capture(true);
+
+    expect(
+      coordinateBackendRecoveryAfterUpdaterFailure({
+        recoveryLatch: latch,
+        desktopShutdownInFlight: true,
+        desktopShutdownComplete: false,
+        recoveryPending: false,
+        recoveryDialogOpen: false,
+        resume,
+        showRecovery,
+      }),
+    ).toBe("none");
+    expect(resume).not.toHaveBeenCalled();
+    expect(showRecovery).not.toHaveBeenCalled();
+    expect(latch.consume()).toBe(true);
   });
 });
