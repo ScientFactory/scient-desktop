@@ -1999,6 +1999,78 @@ describe("composerDraftStore project draft thread mapping", () => {
     );
   });
 
+  it("persists and deduplicates surfaced worktree recoveries without replacing the primary draft", () => {
+    const store = useComposerDraftStore.getState();
+    const recoveryThreadId = ThreadId.makeUnsafe("thread-recovery");
+    const duplicateCandidateId = ThreadId.makeUnsafe("thread-recovery-duplicate");
+    store.setProjectDraftThreadId(projectId, threadId, { branch: "primary-draft" });
+
+    expect(
+      store.upsertWorktreeRecoveryDraft(recoveryThreadId, {
+        projectId,
+        createdAt: "2026-07-26T12:00:00.000Z",
+        branch: "scient/recovered-worktree",
+        worktreePath: "/tmp/recovered-worktree",
+      }),
+    ).toBe(recoveryThreadId);
+    expect(
+      useComposerDraftStore.getState().upsertWorktreeRecoveryDraft(duplicateCandidateId, {
+        projectId,
+        branch: "scient/recovered-worktree",
+        worktreePath: "/tmp/recovered-worktree",
+      }),
+    ).toBe(recoveryThreadId);
+
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)?.threadId).toBe(
+      threadId,
+    );
+    expect(useComposerDraftStore.getState().getDraftThread(recoveryThreadId)).toMatchObject({
+      projectId,
+      branch: "scient/recovered-worktree",
+      worktreePath: "/tmp/recovered-worktree",
+      recoveryReason: "worktree-cleanup-refused",
+    });
+    expect(useComposerDraftStore.getState().getDraftThread(duplicateCandidateId)).toBeNull();
+    useComposerDraftStore.getState().setDraftThreadContext(recoveryThreadId, {
+      interactionMode: "plan",
+      projectId: otherProjectId,
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+    });
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)?.threadId).toBe(
+      threadId,
+    );
+    expect(useComposerDraftStore.getState().getDraftThread(recoveryThreadId)).toMatchObject({
+      interactionMode: "plan",
+      projectId,
+      branch: "scient/recovered-worktree",
+      worktreePath: "/tmp/recovered-worktree",
+      envMode: "worktree",
+      recoveryReason: "worktree-cleanup-refused",
+    });
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const persistedState = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    const mergedState = persistApi
+      .getOptions()
+      .merge(persistedState, useComposerDraftStore.getInitialState());
+
+    expect(mergedState.projectDraftThreadIdByProjectId[projectId]).toBe(threadId);
+    expect(mergedState.draftThreadsByThreadId[recoveryThreadId]).toMatchObject({
+      branch: "scient/recovered-worktree",
+      worktreePath: "/tmp/recovered-worktree",
+      recoveryReason: "worktree-cleanup-refused",
+    });
+  });
+
   it("tracks chat and terminal draft threads independently for the same project", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectId, threadId, { entryPoint: "chat" });

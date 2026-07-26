@@ -8169,7 +8169,6 @@ export default function ChatView({
       if (queuedChatTurn !== null || turnStartSucceeded || !failedSendDraftIsEmpty(ownerThreadId)) {
         return;
       }
-      removeOptimisticUserMessage(threadIdForSend, messageIdForSend, { revokePreviews: true });
       setComposerDraftPrompt(ownerThreadId, promptForSend);
       if (sourceProposedPlanForSend) {
         setRestoredQueuedSourceProposedPlan(ownerThreadId, {
@@ -8199,44 +8198,26 @@ export default function ChatView({
       if (!worktree) return null;
       const draftStore = useComposerDraftStore.getState();
       const sourceWasDeleted = useStore.getState().deletedThreadIdsById?.[threadIdForSend] === true;
-      const ownerThreadId = sourceWasDeleted
+      const preferredOwnerThreadId = sourceWasDeleted
         ? (createdWorktreeRecoveryThreadId ?? newThreadId())
         : threadIdForSend;
-      createdWorktreeRecoveryThreadId = ownerThreadId;
-      const existing = draftStore.getDraftThread(ownerThreadId);
+      const existing = draftStore.getDraftThread(preferredOwnerThreadId);
       if (existing?.promotedTo === threadIdForSend) {
-        draftStore.rollbackDraftThreadPromotion(ownerThreadId, threadIdForSend, {
+        draftStore.rollbackDraftThreadPromotion(preferredOwnerThreadId, threadIdForSend, {
           branch: worktree.branch,
           worktreePath: worktree.path,
         });
-      } else if (existing) {
-        draftStore.setDraftThreadContext(ownerThreadId, {
-          envMode: "worktree",
-          workspaceOrigin: "intentional",
-          branch: worktree.branch,
-          worktreePath: worktree.path,
-        });
-      } else {
-        const entryPoint = draftThread?.entryPoint ?? "chat";
-        const registration = {
-          createdAt: messageCreatedAt,
-          branch: worktree.branch,
-          worktreePath: worktree.path,
-          envMode: "worktree" as const,
-          workspaceOrigin: "intentional" as const,
-          runtimeMode: nextRuntimeModeForSend,
-          interactionMode: interactionModeForSend,
-          entryPoint,
-        };
-        if (!draftStore.getDraftThreadByProjectId(targetProjectIdForSend, entryPoint)) {
-          draftStore.setProjectDraftThreadId(targetProjectIdForSend, ownerThreadId, registration);
-        } else {
-          draftStore.registerDraftThread(ownerThreadId, {
-            projectId: targetProjectIdForSend,
-            ...registration,
-          });
-        }
       }
+      const ownerThreadId = draftStore.upsertWorktreeRecoveryDraft(preferredOwnerThreadId, {
+        projectId: targetProjectIdForSend,
+        createdAt: messageCreatedAt,
+        branch: worktree.branch,
+        worktreePath: worktree.path,
+        runtimeMode: nextRuntimeModeForSend,
+        interactionMode: interactionModeForSend,
+        entryPoint: draftThread?.entryPoint ?? "chat",
+      });
+      createdWorktreeRecoveryThreadId = ownerThreadId;
       const recovered = useComposerDraftStore.getState().getDraftThread(ownerThreadId);
       if (
         !recovered ||
@@ -8516,6 +8497,9 @@ export default function ChatView({
       // Surface the failure on whichever setup step was active (no-op for
       // sends without a worktree setup in flight).
       failLocalDispatchWorktreeSetup(threadIdForSend);
+      if (!turnStartSucceeded) {
+        removeOptimisticUserMessage(threadIdForSend, messageIdForSend, { revokePreviews: true });
+      }
       let promotedThreadRollbackSucceeded = true;
       if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
         // This rollback cleans up a retryable draft promotion; do not tombstone the draft id.

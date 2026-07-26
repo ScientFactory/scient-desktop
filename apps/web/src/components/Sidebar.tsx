@@ -168,6 +168,10 @@ import {
   prewarmStudioProject,
 } from "../lib/studioProjects";
 import { useComposerDraftStore } from "../composerDraftStore";
+import {
+  coordinateExternalRouteNavigation,
+  draftNavigationSlotKey,
+} from "../lib/stagedDraftNavigation";
 import { resolveThreadEnvironmentPresentation } from "../lib/threadEnvironment";
 import { dispatchThreadRename } from "../lib/threadRename";
 import { quotePosixShellArgument } from "../lib/shellQuote";
@@ -4119,6 +4123,32 @@ export default function Sidebar() {
     splitViewsById,
     terminalStateByThreadId,
   });
+  const activateWorktreeRecoveryDraft = useCallback(
+    async (threadId: ThreadId) => {
+      const mayActivate = await coordinateExternalRouteNavigation(draftNavigationSlotKey());
+      if (!mayActivate) return;
+      setOptimisticActiveThreadId(threadId);
+      if (selectedThreadIds.size > 0) {
+        clearSelection();
+      }
+      setSelectionAnchor(threadId);
+      openChatThreadPage(threadId);
+      rememberLastThreadRouteNow({ threadId });
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+        search: (previous) => ({ ...previous, splitViewId: undefined }),
+      });
+    },
+    [
+      clearSelection,
+      navigate,
+      openChatThreadPage,
+      rememberLastThreadRouteNow,
+      selectedThreadIds.size,
+      setSelectionAnchor,
+    ],
+  );
 
   const handleStartProjectRun = useCallback(
     async (projectId: ProjectId, commandOverride?: string) => {
@@ -4479,6 +4509,34 @@ export default function Sidebar() {
     }
     return byProjectId;
   }, [appSettings.sidebarThreadSortOrder, sidebarThreadsByProjectId]);
+  const worktreeRecoveryDraftsByProjectId = useMemo(() => {
+    const byProjectId = new Map<
+      ProjectId,
+      Array<{ threadId: ThreadId; branch: string; worktreePath: string; createdAt: string }>
+    >();
+    for (const [rawThreadId, draft] of Object.entries(draftThreadsByThreadId)) {
+      if (
+        draft.recoveryReason !== "worktree-cleanup-refused" ||
+        draft.promotedTo !== undefined ||
+        !draft.branch ||
+        !draft.worktreePath
+      ) {
+        continue;
+      }
+      const recoveries = byProjectId.get(draft.projectId) ?? [];
+      recoveries.push({
+        threadId: rawThreadId as ThreadId,
+        branch: draft.branch,
+        worktreePath: draft.worktreePath,
+        createdAt: draft.createdAt,
+      });
+      byProjectId.set(draft.projectId, recoveries);
+    }
+    for (const recoveries of byProjectId.values()) {
+      recoveries.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    }
+    return byProjectId;
+  }, [draftThreadsByThreadId]);
   const handleProjectTitlePointerDownCapture = useCallback(() => {
     suppressProjectClickAfterDragRef.current = false;
   }, []);
@@ -5957,6 +6015,7 @@ export default function Sidebar() {
       canShowMoreThreads,
       canShowLessThreads,
     } = projectSidebarData;
+    const worktreeRecoveryDrafts = worktreeRecoveryDraftsByProjectId.get(project.id) ?? [];
     const projectFolderIconClassName = isProjectPinned
       ? "opacity-0"
       : sidebarHoverRevealHideClassName("project-header");
@@ -6154,6 +6213,32 @@ export default function Sidebar() {
                 disclosureContentClassName(project.expanded),
               )}
             >
+              {worktreeRecoveryDrafts.length > 0 ? (
+                <>
+                  <SidebarMenuSubItem className="w-full" aria-hidden="true">
+                    <div className="px-8 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground/70 uppercase">
+                      Recovered worktrees
+                    </div>
+                  </SidebarMenuSubItem>
+                  {worktreeRecoveryDrafts.map((recovery) => (
+                    <SidebarMenuSubItem key={recovery.threadId} className="w-full">
+                      <SidebarMenuSubButton
+                        render={<button type="button" />}
+                        data-thread-selection-safe
+                        data-testid="recovered-worktree-row"
+                        aria-label={`Open recovered worktree ${recovery.branch} at ${recovery.worktreePath}`}
+                        title={recovery.worktreePath}
+                        size="sm"
+                        className="h-8 translate-x-0 justify-start rounded-lg pr-2 pl-8 text-left text-[length:var(--app-font-size-ui,12px)] hover:bg-[var(--sidebar-accent)]"
+                        onClick={() => void activateWorktreeRecoveryDraft(recovery.threadId)}
+                      >
+                        <WorktreeIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                        <span className="min-w-0 flex-1 truncate">{recovery.branch}</span>
+                      </SidebarMenuSubButton>
+                    </SidebarMenuSubItem>
+                  ))}
+                </>
+              ) : null}
               {visibleEntries.map((entry) =>
                 renderThreadRow(
                   entry.thread,

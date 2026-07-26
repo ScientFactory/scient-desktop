@@ -6006,6 +6006,89 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("removes a failed optimistic send without overwriting newer composer content", async () => {
+    const failedPreviewUrl = "blob:failed-send-preview";
+    const newerPreviewUrl = "blob:newer-composer-preview";
+    let releaseTurnStart!: () => void;
+    const turnStartGate = new Promise<void>((resolve) => {
+      releaseTurnStart = resolve;
+    });
+    let turnStartHeld = false;
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-failed-optimistic-owner" as MessageId,
+        targetText: "existing message",
+      }),
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            if (command.type === "thread.turn.start" && command.threadId === THREAD_ID) {
+              turnStartHeld = true;
+              await turnStartGate;
+              throw new Error("deterministic held pre-turn failure");
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "failed outgoing prompt");
+      useComposerDraftStore.getState().addImages(THREAD_ID, [
+        createComposerImage({
+          id: "failed-send-image",
+          previewUrl: failedPreviewUrl,
+          name: "failed-send.png",
+        }),
+      ]);
+      (
+        await waitForElement(
+          () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+          "Unable to find the composer before the held failure.",
+        )
+      ).requestSubmit();
+
+      await vi.waitFor(() => {
+        expect(turnStartHeld).toBe(true);
+        expect(useOptimisticUserMessageStore.getState().messagesByThreadId[THREAD_ID]).toHaveLength(
+          1,
+        );
+      });
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "newer untouched prompt");
+      useComposerDraftStore.getState().addImages(THREAD_ID, [
+        createComposerImage({
+          id: "newer-composer-image",
+          previewUrl: newerPreviewUrl,
+          name: "newer.png",
+        }),
+      ]);
+
+      releaseTurnStart();
+      await vi.waitFor(() => {
+        expect(
+          useOptimisticUserMessageStore.getState().messagesByThreadId[THREAD_ID],
+        ).toBeUndefined();
+        expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]).toMatchObject({
+          prompt: "newer untouched prompt",
+          images: [{ id: "newer-composer-image", previewUrl: newerPreviewUrl }],
+        });
+      });
+      expect(revokeObjectUrl.mock.calls.filter(([url]) => url === failedPreviewUrl)).toHaveLength(
+        1,
+      );
+      expect(revokeObjectUrl).not.toHaveBeenCalledWith(newerPreviewUrl);
+    } finally {
+      releaseTurnStart();
+      revokeObjectUrl.mockRestore();
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps the same-thread send gate when provider preflight crosses a split remount", async () => {
     const unavailableProvider = {
       provider: "codex" as const,
@@ -6680,6 +6763,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
   });
 
   it("records a recovery draft when dirty worktree cleanup refuses after source deletion", async () => {
+    const existingPrimaryDraftId = ThreadId.makeUnsafe("thread-existing-primary-draft");
     type CreateWorktreeResult = Awaited<ReturnType<NativeApi["git"]["createWorktree"]>>;
     let resolveCreateWorktree!: (value: CreateWorktreeResult) => void;
     const createWorktreeResult = new Promise<CreateWorktreeResult>((resolve) => {
@@ -6733,6 +6817,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       await waitForComposerEditor();
+      useComposerDraftStore.getState().setProjectDraftThreadId(PROJECT_ID, existingPrimaryDraftId);
+      useComposerDraftStore.getState().setPrompt(existingPrimaryDraftId, "existing primary prompt");
       useStore.getState().setThreadWorkspace(OTHER_THREAD_ID, {
         envMode: "worktree",
         branch: "main",
@@ -6784,21 +6870,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      const recoveryDrafts = Object.entries(
-        useComposerDraftStore.getState().draftThreadsByThreadId,
-      ).filter(([, draft]) => draft.worktreePath === "/repo/.codex/worktrees/project/deleted-send");
-      expect(recoveryDrafts).toHaveLength(1);
-      const recoveryThreadId = recoveryDrafts[0]![0] as ThreadId;
-      expect(recoveryThreadId).not.toBe(OTHER_THREAD_ID);
-      expect(recoveryDrafts[0]![1]).toMatchObject({
-        branch: "scient/deleted-send",
-        worktreePath: "/repo/.codex/worktrees/project/deleted-send",
-        envMode: "worktree",
+      const recoveryRow = page.getByRole("button", {
+        name: "Open recovered worktree scient/deleted-send at /repo/.codex/worktrees/project/deleted-send",
       });
-      expect(recoveryDrafts[0]![1].promotedTo).toBeUndefined();
-      expect(useComposerDraftStore.getState().draftsByThreadId[recoveryThreadId]?.prompt).toBe(
-        "do not keep this worktree",
+      await expect.element(recoveryRow).toBeInTheDocument();
+      expect(useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID)?.threadId).toBe(
+        existingPrimaryDraftId,
       );
+      expect(
+        useComposerDraftStore.getState().draftsByThreadId[existingPrimaryDraftId]?.prompt,
+      ).toBe("existing primary prompt");
       expect(
         wsRequests
           .slice(requestStart)
@@ -6808,10 +6889,29 @@ describe("ChatView timeline estimator parity (full app)", () => {
           ),
       ).toEqual([]);
 
-      await mounted.router.navigate({
-        to: "/$threadId",
-        params: { threadId: recoveryThreadId },
+      await page.getByTestId("new-thread-button").click();
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${existingPrimaryDraftId}`,
+        "The existing primary draft should remain reachable from its project action.",
+      );
+      await expect.element(recoveryRow).toBeInTheDocument();
+      await recoveryRow.click();
+      const recoveryPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path) && path !== `/${existingPrimaryDraftId}`,
+        "The surfaced recovery row should open its draft.",
+      );
+      const recoveryThreadId = recoveryPath.slice(1) as ThreadId;
+      expect(useComposerDraftStore.getState().getDraftThread(recoveryThreadId)).toMatchObject({
+        branch: "scient/deleted-send",
+        worktreePath: "/repo/.codex/worktrees/project/deleted-send",
+        envMode: "worktree",
+        recoveryReason: "worktree-cleanup-refused",
       });
+      expect(useComposerDraftStore.getState().draftsByThreadId[recoveryThreadId]?.prompt).toBe(
+        "do not keep this worktree",
+      );
       const recoveryEditor = await waitForComposerEditor();
       await vi.waitFor(() => {
         expect(recoveryEditor.textContent ?? "").toContain("do not keep this worktree");
@@ -6828,6 +6928,18 @@ describe("ChatView timeline estimator parity (full app)", () => {
         ).toBe(true);
       });
       expect(createWorktree).toHaveBeenCalledOnce();
+      await vi.waitFor(() => {
+        expect(
+          Object.values(useComposerDraftStore.getState().draftThreadsByThreadId).filter(
+            (draft) =>
+              draft.recoveryReason === "worktree-cleanup-refused" && draft.promotedTo === undefined,
+          ),
+        ).toHaveLength(0);
+      });
+      await expect.element(recoveryRow).not.toBeInTheDocument();
+      expect(useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID)?.threadId).toBe(
+        existingPrimaryDraftId,
+      );
     } finally {
       resolveCreateWorktree({
         worktree: {
@@ -7187,6 +7299,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         expect(useComposerDraftStore.getState().getDraftThread(newThreadId)?.promotedTo).toBe(
           undefined,
         );
+        expect(
+          useOptimisticUserMessageStore.getState().messagesByThreadId[newThreadId],
+        ).toBeUndefined();
       });
       expect(useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID)?.threadId).toBe(
         newThreadId,
