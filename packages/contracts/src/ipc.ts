@@ -47,12 +47,14 @@ import type {
   GitInitInput,
   GitListBranchesInput,
   GitListBranchesResult,
+  GitPullInput,
   GitPullResult,
   GitReadWorkingTreeDiffInput,
   GitReadWorkingTreeDiffResult,
   GitRemoveIndexLockInput,
   GitRemoveWorktreeInput,
   GitResolvePullRequestResult,
+  GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStageFilesInput,
   GitStageFilesResult,
@@ -67,10 +69,6 @@ import type {
   GitUnstageFilesInput,
   GitUnstageFilesResult,
 } from "./git";
-import type {
-  AuthorizedGitPullInput,
-  AuthorizedGitRunStackedActionInput,
-} from "./gitActionAuthority";
 import type {
   PullRequestActionInput,
   PullRequestActionResult,
@@ -678,15 +676,13 @@ export interface NativeApi {
       input: GitPreparePullRequestThreadInput,
     ) => Promise<GitPreparePullRequestThreadResult>;
     // Stacked action API
-    pull: (input: AuthorizedGitPullInput) => Promise<GitPullResult>;
+    pull: (input: GitPullInput) => Promise<GitPullResult>;
     status: (input: GitStatusInput) => Promise<GitStatusResult>;
     readWorkingTreeDiff: (
       input: GitReadWorkingTreeDiffInput,
     ) => Promise<GitReadWorkingTreeDiffResult>;
     summarizeDiff: (input: GitSummarizeDiffInput) => Promise<GitSummarizeDiffResult>;
-    runStackedAction: (
-      input: AuthorizedGitRunStackedActionInput,
-    ) => Promise<GitRunStackedActionResult>;
+    runStackedAction: (input: GitRunStackedActionInput) => Promise<GitRunStackedActionResult>;
     onActionProgress: (callback: (event: GitActionProgressEvent) => void) => () => void;
   };
   pullRequests: {

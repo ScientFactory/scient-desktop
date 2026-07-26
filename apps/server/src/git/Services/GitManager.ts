@@ -7,7 +7,6 @@
  * @module GitManager
  */
 import {
-  AuthorizedGitRunStackedActionInput,
   GitActionProgressEvent,
   GitHandoffThreadInput,
   GitHandoffThreadResult,
@@ -25,6 +24,7 @@ import {
   GitSummarizeDiffInput,
   GitSummarizeDiffResult,
 } from "@synara/contracts";
+import type { AuthorizedGitRunStackedActionInput } from "@synara/shared/gitMutationRpc";
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 import type { GitManagerServiceError } from "../Errors.ts";

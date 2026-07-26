@@ -5,6 +5,10 @@ import type {
   NativeApi,
   ProviderStartOptions,
 } from "@synara/contracts";
+import type {
+  AuthorizedGitPullInput,
+  AuthorizedGitRunStackedActionInput,
+} from "@synara/shared/gitMutationRpc";
 import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureNativeApi } from "../nativeApi";
 import { buildPatchCacheKey } from "./diffRendering";
@@ -20,6 +24,19 @@ const GIT_BRANCHES_REFETCH_INTERVAL_MS = 300_000;
 const GIT_DIFF_SUMMARY_GC_TIME_MS = 30 * 60_000;
 const GIT_WORKING_TREE_DIFF_STALE_TIME_MS = 5_000;
 export const GIT_WORKING_TREE_DIFF_LIVE_REFETCH_INTERVAL_MS = 4_000;
+
+type AuthorizedGitMutations = {
+  pull: (input: AuthorizedGitPullInput) => ReturnType<NativeApi["git"]["pull"]>;
+  runStackedAction: (
+    input: AuthorizedGitRunStackedActionInput,
+  ) => ReturnType<NativeApi["git"]["runStackedAction"]>;
+};
+
+function authorizedGitMutations(api: NativeApi): AuthorizedGitMutations {
+  // The released NativeApi declaration is frozen by migration dependency lineage.
+  // The live RPC group overlays the stronger request schemas at the same method tags.
+  return api.git as NativeApi["git"] & AuthorizedGitMutations;
+}
 
 export const gitQueryKeys = {
   all: ["git"] as const,
@@ -414,7 +431,7 @@ export function gitRunStackedActionMutationOptions(input: {
       cwd,
       { actionId, action, expectedBranch, commitMessage, featureBranch, filePaths },
     ) =>
-      api.git.runStackedAction({
+      authorizedGitMutations(api).runStackedAction({
         actionId,
         cwd,
         action,
@@ -439,7 +456,8 @@ export function gitPullMutationOptions(input: { cwd: string | null; queryClient:
     queryClient: input.queryClient,
     mutationKey: gitMutationKeys.pull(input.cwd),
     unavailableMessage: "Git pull is unavailable.",
-    run: (api, cwd, { expectedBranch }) => api.git.pull({ cwd, expectedBranch }),
+    run: (api, cwd, { expectedBranch }) =>
+      authorizedGitMutations(api).pull({ cwd, expectedBranch }),
   });
 }
 

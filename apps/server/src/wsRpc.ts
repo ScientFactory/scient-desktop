@@ -23,6 +23,11 @@ import { clamp } from "effect/Number";
 import { Effect, FileSystem, Layer, Option, Path, Queue, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
+import {
+  GitMutationRpcGroup,
+  type AuthorizedGitPullInput,
+  type AuthorizedGitRunStackedActionInput,
+} from "@synara/shared/gitMutationRpc";
 
 import { AutomationService } from "./automation/Services/AutomationService";
 import { authErrorResponse, makeEffectAuthRequest } from "./auth/http";
@@ -87,6 +92,7 @@ import { cloneProjectSource, getRepositorySourceStatuses } from "./projectSource
 
 const MAX_DIAGNOSTIC_CHILD_PROCESSES = 80;
 const MAX_DIAGNOSTIC_ARGS_CHARS = 500;
+const ScientWsRpcGroup = WsRpcGroup.merge(GitMutationRpcGroup);
 
 // Relative subdirectories scaffolded under a freshly created chat container workspace root.
 // The Studio layout lives in studioWorkspaceScaffold.ts alongside its instruction files.
@@ -258,7 +264,7 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 }
 
 export const makeWsRpcLayer = () =>
-  WsRpcGroup.toLayer(
+  ScientWsRpcGroup.toLayer(
     Effect.gen(function* () {
       const checkpointDiffQuery = yield* CheckpointDiffQuery;
       const automationService = yield* AutomationService;
@@ -590,7 +596,7 @@ export const makeWsRpcLayer = () =>
       const rpcEffect = <A, E, R>(effect: Effect.Effect<A, E, R>, fallbackMessage: string) =>
         effect.pipe(Effect.mapError((cause) => toWsRpcError(cause, fallbackMessage)));
 
-      return WsRpcGroup.of({
+      return ScientWsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           rpcEffect(
             Effect.gen(function* () {
@@ -855,28 +861,34 @@ export const makeWsRpcLayer = () =>
           rpcEffect(gitManager.readWorkingTreeDiff(input), "Failed to read working tree diff"),
         [WS_METHODS.gitSummarizeDiff]: (input) =>
           rpcEffect(gitManager.summarizeDiff(input), "Failed to summarize diff"),
-        [WS_METHODS.gitPull]: (input) =>
-          rpcEffect(
+        [WS_METHODS.gitPull]: (input) => {
+          // The merged live group replaces this released method tag with the
+          // authority-bearing schema. RpcGroup keeps the duplicate tag union in
+          // its TypeScript surface even though the runtime map uses this schema.
+          const authorizedInput = input as AuthorizedGitPullInput;
+          return rpcEffect(
             git.withActionLock(
-              input.cwd,
+              authorizedInput.cwd,
               git
-                .pullCurrentBranch(input.cwd, input.expectedBranch)
-                .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+                .pullCurrentBranch(authorizedInput.cwd, authorizedInput.expectedBranch)
+                .pipe(Effect.tap(() => refreshGitStatus(authorizedInput.cwd))),
             ),
             "Failed to pull branch",
-          ),
-        [WS_METHODS.gitRunStackedAction]: (input) =>
-          bufferLiveUiStream(
+          );
+        },
+        [WS_METHODS.gitRunStackedAction]: (input) => {
+          const authorizedInput = input as AuthorizedGitRunStackedActionInput;
+          return bufferLiveUiStream(
             Stream.callback<GitActionProgressEvent, WsRpcError>((queue) =>
               gitManager
-                .runStackedAction(input, {
-                  actionId: input.actionId,
+                .runStackedAction(authorizedInput, {
+                  actionId: authorizedInput.actionId,
                   progressReporter: {
                     publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
                   },
                 })
                 .pipe(
-                  Effect.tap(() => refreshGitStatus(input.cwd)),
+                  Effect.tap(() => refreshGitStatus(authorizedInput.cwd)),
                   Effect.matchCauseEffect({
                     onFailure: (cause) =>
                       Queue.fail(queue, toWsRpcError(cause, "Git action failed")),
@@ -885,7 +897,8 @@ export const makeWsRpcLayer = () =>
                 ),
             ),
             { label: "git.stacked-action" },
-          ),
+          );
+        },
         [WS_METHODS.gitResolvePullRequest]: (input) =>
           rpcEffect(gitManager.resolvePullRequest(input), "Failed to resolve pull request"),
         [WS_METHODS.gitPullRequestSnapshot]: (input) =>
@@ -1504,7 +1517,7 @@ export const makeWsRpcLayer = () =>
     }),
   );
 
-const makeRpcWebSocketHttpEffect = RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
+const makeRpcWebSocketHttpEffect = RpcServer.toHttpEffectWebsocket(ScientWsRpcGroup, {
   spanPrefix: "ws.rpc",
   spanAttributes: {
     "rpc.transport": "websocket",
