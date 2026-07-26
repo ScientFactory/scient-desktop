@@ -44,6 +44,7 @@ declare module "@synara/contracts" {
     sourceIdentity?: string;
     sourceRoot?: string;
     watchDiscoveryLimited?: boolean;
+    localHtmlCapabilityProof?: string;
   }
 
   interface BrowserNewTabInput {
@@ -52,6 +53,7 @@ declare module "@synara/contracts" {
     sourceIdentity?: string;
     sourceRoot?: string;
     watchDiscoveryLimited?: boolean;
+    localHtmlCapabilityProof?: string;
   }
 }
 
@@ -64,6 +66,7 @@ export interface BrowserReplaceLocalHtmlPreviewInput {
   sourceIdentity?: string;
   sourceRoot?: string;
   watchDiscoveryLimited?: boolean;
+  localHtmlCapabilityProof?: string;
   watchedPaths: readonly string[];
   allowedExternalUrls?: readonly string[];
   activate?: boolean;
@@ -79,8 +82,30 @@ export const LiveHtmlPreviewPrepareResult = Schema.Struct({
     Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
   ),
   watchDiscoveryLimited: Schema.optional(Schema.Boolean),
+  localHtmlCapabilityProof: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
 });
 export type LiveHtmlPreviewPrepareResult = typeof LiveHtmlPreviewPrepareResult.Type;
+
+export interface LocalHtmlCapabilityAuthority {
+  readonly previewUrl: string;
+  readonly sourceIdentity: string;
+  readonly sourceRoot: string;
+  readonly watchedPaths: readonly string[];
+  readonly allowedExternalUrls: readonly string[];
+}
+
+export function serializeLocalHtmlCapabilityAuthority(
+  authority: LocalHtmlCapabilityAuthority,
+): string {
+  return JSON.stringify({
+    version: 1,
+    previewUrl: authority.previewUrl,
+    sourceIdentity: authority.sourceIdentity,
+    sourceRoot: authority.sourceRoot,
+    watchedPaths: [...authority.watchedPaths],
+    allowedExternalUrls: [...authority.allowedExternalUrls],
+  });
+}
 
 export const LiveHtmlPreviewPrepareRpc = Rpc.make(LIVE_HTML_PREVIEW_PREPARE_V1_METHOD, {
   payload: ProjectPrepareHtmlArtifactPreviewInput,

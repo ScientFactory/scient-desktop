@@ -2,12 +2,14 @@
 // Purpose: Rendering, navigation, and lifecycle coverage for full local HTML sites.
 
 import fs from "node:fs/promises";
+import { createHmac } from "node:crypto";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
+import { serializeLocalHtmlCapabilityAuthority } from "@synara/shared/liveHtmlPreviewTransport";
 
 import {
   HtmlArtifactPreview,
@@ -83,6 +85,35 @@ function withPreviewService<A>(
 }
 
 describe("HtmlArtifactPreviewLive", () => {
+  it("attests the exact server-issued local HTML capability authority", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "report.html");
+    await fs.writeFile(sourcePath, "<h1>Report</h1>");
+    const capabilitySigningKey = "scient-preview-server-test-key";
+
+    await withPreviewService(async (service) => {
+      const prepared = await Effect.runPromise(
+        service.prepare({ cwd: workspace, path: sourcePath }),
+      );
+      expect(prepared.previewUrl).toBeDefined();
+      expect(prepared.sourceIdentity).toBeDefined();
+      expect(prepared.sourceRoot).toBeDefined();
+      expect(prepared.localHtmlCapabilityProof).toBe(
+        createHmac("sha256", capabilitySigningKey)
+          .update(
+            serializeLocalHtmlCapabilityAuthority({
+              previewUrl: prepared.previewUrl!,
+              sourceIdentity: prepared.sourceIdentity!,
+              sourceRoot: prepared.sourceRoot!,
+              watchedPaths: prepared.watchedPaths ?? [],
+              allowedExternalUrls: prepared.allowedExternalUrls ?? [],
+            }),
+          )
+          .digest("base64url"),
+      );
+    }, makeHtmlArtifactPreviewLayer({ capabilitySigningKey }));
+  });
+
   it("serves static HTML and ordinary sibling assets without an injected CSP", async () => {
     const workspace = await makeWorkspace();
     await fs.writeFile(

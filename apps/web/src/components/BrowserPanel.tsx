@@ -624,6 +624,9 @@ export function BrowserPanel({
                     : (prepared.reason ?? "This HTML file is no longer available for preview."),
                 );
               }
+              if (!prepared.localHtmlCapabilityProof) {
+                throw new Error("This HTML preview is missing its server-issued capability proof.");
+              }
 
               try {
                 const nextState = await api.browser.replaceLocalHtmlPreview({
@@ -638,6 +641,7 @@ export function BrowserPanel({
                   ...(prepared.watchDiscoveryLimited !== undefined
                     ? { watchDiscoveryLimited: prepared.watchDiscoveryLimited }
                     : {}),
+                  localHtmlCapabilityProof: prepared.localHtmlCapabilityProof,
                   ...(prepared.mode === "static-document" && prepared.allowedExternalUrls
                     ? { allowedExternalUrls: prepared.allowedExternalUrls }
                     : {}),

@@ -268,6 +268,7 @@ const LOG_DIR = SCIENT_DATA_DIRECTORIES.logsDir;
 const LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const LOG_FILE_MAX_FILES = 10;
 const APP_RUN_ID = Crypto.randomBytes(6).toString("hex");
+const LOCAL_HTML_CAPABILITY_KEY = Crypto.randomBytes(32).toString("base64url");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
@@ -323,7 +324,7 @@ let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
 let unreadBackgroundNotificationCount = 0;
 let browserPerfInterval: ReturnType<typeof setInterval> | null = null;
-const browserManager = new DesktopBrowserManager();
+const browserManager = new DesktopBrowserManager(LOCAL_HTML_CAPABILITY_KEY);
 let browserUsePipeServer: BrowserUsePipeServer | null = null;
 let appSnapManager: DesktopAppSnapManager | null = null;
 let configuredGitHubUpdateSource: ReturnType<typeof resolveGitHubUpdateSource> = null;
@@ -2783,6 +2784,7 @@ function backendEnv(): NodeJS.ProcessEnv {
     // Its value is always Scient's isolated base directory, never Synara's home.
     SYNARA_HOME: BASE_DIR,
     SYNARA_AUTH_TOKEN: backendAuthToken,
+    SCIENT_LOCAL_HTML_CAPABILITY_KEY: LOCAL_HTML_CAPABILITY_KEY,
     [SYNARA_BROWSER_USE_PIPE_ENV]: SYNARA_BROWSER_USE_PIPE_PATH,
   };
 }

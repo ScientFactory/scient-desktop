@@ -845,6 +845,7 @@ describe("BrowserPanel interactions", () => {
       mode: "static-document" as const,
       warnings: [],
       previewUrl: replacementUrl,
+      localHtmlCapabilityProof: "server-issued-proof",
       watchedPaths: ["/workspace/report.html", "/workspace/theme.css"],
     }));
     const replaceLocalHtmlPreview = vi.fn(async () => replacementState);
@@ -877,6 +878,7 @@ describe("BrowserPanel interactions", () => {
         displayUrl: "/workspace/report.html",
         previewCwd: "/workspace",
         watchedPaths: ["/workspace/report.html", "/workspace/theme.css"],
+        localHtmlCapabilityProof: "server-issued-proof",
         activate: true,
       });
       expect(revokeHtmlArtifactPreview).toHaveBeenCalledWith({ previewUrl: previousUrl });
@@ -927,6 +929,7 @@ describe("BrowserPanel interactions", () => {
           mode: "interactive-bundle" as const,
           warnings: [],
           previewUrl: replacementUrl,
+          localHtmlCapabilityProof: "server-issued-proof",
           watchedPaths: ["/workspace/report.html"],
           allowedExternalUrls: ["https://cdn.example/script.js"],
         })),
@@ -946,6 +949,7 @@ describe("BrowserPanel interactions", () => {
         displayUrl: "/workspace/report.html",
         previewCwd: "/workspace",
         watchedPaths: ["/workspace/report.html"],
+        localHtmlCapabilityProof: "server-issued-proof",
         activate: true,
       });
     });
@@ -984,6 +988,7 @@ describe("BrowserPanel interactions", () => {
           mode: "static-document" as const,
           warnings: [],
           previewUrl: "http://g-a2345678-1234-4123-8123-123456789abc.preview.localhost:5000/",
+          localHtmlCapabilityProof: "server-issued-proof",
           watchedPaths: ["/workspace/report.html"],
         })),
         revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
@@ -1075,18 +1080,21 @@ describe("BrowserPanel interactions", () => {
         mode: "static-document" as const,
         warnings: [],
         previewUrl: firstReplacementUrl,
+        localHtmlCapabilityProof: "server-issued-proof",
         watchedPaths: ["/workspace/report.html"],
       })
       .mockResolvedValueOnce({
         mode: "static-document" as const,
         warnings: [],
         previewUrl: secondReplacementUrl,
+        localHtmlCapabilityProof: "server-issued-proof",
         watchedPaths: ["/workspace/report.html"],
       })
       .mockResolvedValueOnce({
         mode: "static-document" as const,
         warnings: [],
         previewUrl: recoveredReplacementUrl,
+        localHtmlCapabilityProof: "server-issued-proof",
         watchedPaths: ["/workspace/report.html"],
       });
     const replaceLocalHtmlPreview = vi
@@ -1178,12 +1186,14 @@ describe("BrowserPanel interactions", () => {
         mode: "static-document" as const,
         warnings: [],
         previewUrl: failedUrl,
+        localHtmlCapabilityProof: "server-issued-proof",
         watchedPaths: ["/workspace/report.html", "/workspace/theme.css"],
       })
       .mockResolvedValueOnce({
         mode: "static-document" as const,
         warnings: [],
         previewUrl: recoveredUrl,
+        localHtmlCapabilityProof: "server-issued-proof",
         watchedPaths: ["/workspace/report.html", "/workspace/theme.css"],
       });
     const replaceLocalHtmlPreview = vi
@@ -1262,6 +1272,7 @@ describe("BrowserPanel interactions", () => {
           mode: "static-document" as const,
           warnings: [],
           previewUrl: "http://g-d2345678-1234-4123-8123-123456789abc.preview.localhost:5000/",
+          localHtmlCapabilityProof: "server-issued-proof",
           watchedPaths: ["/workspace/report.html"],
         })),
         revokeHtmlArtifactPreview,
@@ -1342,6 +1353,7 @@ describe("BrowserPanel interactions", () => {
           mode: "interactive-bundle" as const,
           warnings: [],
           previewUrl: replacementUrl,
+          localHtmlCapabilityProof: "server-issued-proof",
           watchedPaths: ["/workspace/report.html"],
         })),
         revokeHtmlArtifactPreview,
@@ -1397,6 +1409,7 @@ describe("BrowserPanel interactions", () => {
       mode: "static-document" as const,
       warnings: [],
       previewUrl: replacementUrl,
+      localHtmlCapabilityProof: "server-issued-proof",
       watchedPaths: ["/workspace/report.html"],
     }));
     nativeApiTestState.api = {
@@ -1533,6 +1546,7 @@ describe("BrowserPanel interactions", () => {
         mode: "static-document" as const,
         warnings: [],
         previewUrl: replacementUrlB,
+        localHtmlCapabilityProof: "server-issued-proof",
         watchedPaths: [sourcePath],
       });
     const replaceLocalHtmlPreview = vi.fn(async () => replacementStateB);
@@ -1666,12 +1680,14 @@ describe("BrowserPanel interactions", () => {
         mode: "static-document" as const,
         warnings: [],
         previewUrl: replacementUrlA,
+        localHtmlCapabilityProof: "server-issued-proof",
         watchedPaths: [sourcePath],
       })
       .mockResolvedValueOnce({
         mode: "static-document" as const,
         warnings: [],
         previewUrl: replacementUrlB,
+        localHtmlCapabilityProof: "server-issued-proof",
         watchedPaths: [sourcePath],
       });
     const replaceLocalHtmlPreview = vi

@@ -1904,6 +1904,9 @@ function SingleChatSurface(props: {
           if (!url) {
             throw new Error("This HTML file is not available for preview.");
           }
+          if (browserKind === "local-html" && !prepared.localHtmlCapabilityProof) {
+            throw new Error("This HTML preview is missing its server-issued capability proof.");
+          }
           if (prepared.warnings.length > 0) {
             transientAlertManager.add({
               type: "warning",
@@ -1946,6 +1949,9 @@ function SingleChatSurface(props: {
               ...(prepared.watchDiscoveryLimited !== undefined
                 ? { watchDiscoveryLimited: prepared.watchDiscoveryLimited }
                 : {}),
+              ...(prepared.localHtmlCapabilityProof
+                ? { localHtmlCapabilityProof: prepared.localHtmlCapabilityProof }
+                : {}),
               ...(allowedExternalUrls ? { allowedExternalUrls } : {}),
               activate: true,
             });
@@ -1973,6 +1979,9 @@ function SingleChatSurface(props: {
                     watchedPaths: prepared.watchedPaths ?? [absolutePath],
                     ...(prepared.watchDiscoveryLimited !== undefined
                       ? { watchDiscoveryLimited: prepared.watchDiscoveryLimited }
+                      : {}),
+                    ...(prepared.localHtmlCapabilityProof
+                      ? { localHtmlCapabilityProof: prepared.localHtmlCapabilityProof }
                       : {}),
                   }
                 : {}),

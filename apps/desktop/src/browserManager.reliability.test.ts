@@ -4,6 +4,7 @@
 // Depends on: DesktopBrowserManager with a minimal Electron session mock
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createHmac } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -207,6 +208,7 @@ vi.mock("electron", () => ({
 
 import type { BrowserNewTabInput, BrowserOpenInput, ThreadId } from "@synara/contracts";
 import type { BrowserReplaceLocalHtmlPreviewInput } from "@synara/shared/liveHtmlPreviewTransport";
+import { serializeLocalHtmlCapabilityAuthority } from "@synara/shared/liveHtmlPreviewTransport";
 
 import { DesktopBrowserManager as NativeDesktopBrowserManager } from "./browserManager";
 
@@ -218,38 +220,97 @@ function canonicalTestPath(value: string): string {
   }
 }
 
+const TEST_LOCAL_HTML_CAPABILITY_KEY = "scient-local-html-capability-test-key";
+
+function localHtmlCapabilityProof(input: {
+  url: string;
+  sourceIdentity: string;
+  sourceRoot: string;
+  watchedPaths?: readonly string[];
+  allowedExternalUrls?: readonly string[];
+}): string {
+  return createHmac("sha256", TEST_LOCAL_HTML_CAPABILITY_KEY)
+    .update(
+      serializeLocalHtmlCapabilityAuthority({
+        previewUrl: input.url,
+        sourceIdentity: input.sourceIdentity,
+        sourceRoot: input.sourceRoot,
+        watchedPaths: input.watchedPaths ?? [],
+        allowedExternalUrls: input.allowedExternalUrls ?? [],
+      }),
+    )
+    .digest("base64url");
+}
+
 class DesktopBrowserManager extends NativeDesktopBrowserManager {
+  constructor() {
+    super(TEST_LOCAL_HTML_CAPABILITY_KEY);
+  }
+
   override open(input: BrowserOpenInput) {
     if (input.kind !== "local-html") return super.open(input);
+    const initialUrl =
+      input.initialUrl ?? "http://g-00345678-2234-4123-8123-123456789abc.preview.localhost:43123/";
     const displayUrl = input.displayUrl ?? "/missing/report.html";
     const previewCwd = input.previewCwd ?? "/missing";
+    const sourceIdentity = canonicalTestPath(input.sourceIdentity ?? displayUrl);
+    const sourceRoot = canonicalTestPath(input.sourceRoot ?? previewCwd);
     return super.open({
       ...input,
+      initialUrl,
       displayUrl,
       previewCwd,
-      sourceIdentity: canonicalTestPath(input.sourceIdentity ?? displayUrl),
-      sourceRoot: canonicalTestPath(input.sourceRoot ?? previewCwd),
+      sourceIdentity,
+      sourceRoot,
+      localHtmlCapabilityProof: localHtmlCapabilityProof({
+        url: initialUrl,
+        sourceIdentity,
+        sourceRoot,
+        ...(input.watchedPaths ? { watchedPaths: input.watchedPaths } : {}),
+        ...(input.allowedExternalUrls ? { allowedExternalUrls: input.allowedExternalUrls } : {}),
+      }),
     });
   }
 
   override newTab(input: BrowserNewTabInput) {
     if (input.kind !== "local-html") return super.newTab(input);
+    const url =
+      input.url ?? "http://g-01345678-2234-4123-8123-123456789abc.preview.localhost:43123/";
     const displayUrl = input.displayUrl ?? "/missing/report.html";
     const previewCwd = input.previewCwd ?? "/missing";
+    const sourceIdentity = canonicalTestPath(input.sourceIdentity ?? displayUrl);
+    const sourceRoot = canonicalTestPath(input.sourceRoot ?? previewCwd);
     return super.newTab({
       ...input,
+      url,
       displayUrl,
       previewCwd,
-      sourceIdentity: canonicalTestPath(input.sourceIdentity ?? displayUrl),
-      sourceRoot: canonicalTestPath(input.sourceRoot ?? previewCwd),
+      sourceIdentity,
+      sourceRoot,
+      localHtmlCapabilityProof: localHtmlCapabilityProof({
+        url,
+        sourceIdentity,
+        sourceRoot,
+        ...(input.watchedPaths ? { watchedPaths: input.watchedPaths } : {}),
+        ...(input.allowedExternalUrls ? { allowedExternalUrls: input.allowedExternalUrls } : {}),
+      }),
     });
   }
 
   override replaceLocalHtmlPreview(input: BrowserReplaceLocalHtmlPreviewInput) {
+    const sourceIdentity = canonicalTestPath(input.sourceIdentity ?? input.displayUrl);
+    const sourceRoot = canonicalTestPath(input.sourceRoot ?? input.previewCwd);
     return super.replaceLocalHtmlPreview({
       ...input,
-      sourceIdentity: canonicalTestPath(input.sourceIdentity ?? input.displayUrl),
-      sourceRoot: canonicalTestPath(input.sourceRoot ?? input.previewCwd),
+      sourceIdentity,
+      sourceRoot,
+      localHtmlCapabilityProof: localHtmlCapabilityProof({
+        url: input.url,
+        sourceIdentity,
+        sourceRoot,
+        watchedPaths: input.watchedPaths,
+        ...(input.allowedExternalUrls ? { allowedExternalUrls: input.allowedExternalUrls } : {}),
+      }),
     });
   }
 }
@@ -1427,7 +1488,7 @@ describe("DesktopBrowserManager reliability", () => {
   });
 
   it("requires prepared canonical source authority for a local HTML open", () => {
-    const manager = new NativeDesktopBrowserManager();
+    const manager = new NativeDesktopBrowserManager(TEST_LOCAL_HTML_CAPABILITY_KEY);
     try {
       expect(() =>
         manager.open({
@@ -1441,6 +1502,80 @@ describe("DesktopBrowserManager reliability", () => {
       expect(electron.createdWebContents).toHaveLength(0);
     } finally {
       manager.dispose();
+    }
+  });
+
+  it("rejects renderer-forged local HTML capabilities on open, new tab, and replacement", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "scient-html-capability-proof-"));
+    const sourcePath = join(directory, "report.html");
+    await writeFile(sourcePath, "<p>source</p>", "utf8");
+    const canonicalSourcePath = canonicalTestPath(sourcePath);
+    const canonicalDirectory = canonicalTestPath(directory);
+    const validUrl = "http://g-34345678-2234-4123-8123-123456789abc.preview.localhost:43123/";
+    const validProof = localHtmlCapabilityProof({
+      url: validUrl,
+      sourceIdentity: canonicalSourcePath,
+      sourceRoot: canonicalDirectory,
+      watchedPaths: [canonicalSourcePath],
+    });
+    const manager = new NativeDesktopBrowserManager(TEST_LOCAL_HTML_CAPABILITY_KEY);
+    const forgedUrls = [
+      "https://public.example/private",
+      "http://192.168.1.20/private",
+      "http://127.0.0.1:6553/private",
+      "http://g-35345678-2234-4123-8123-123456789abc.preview.localhost:43123/",
+    ];
+    const common = {
+      threadId: THREAD_ID,
+      kind: "local-html" as const,
+      displayUrl: sourcePath,
+      previewCwd: directory,
+      sourceIdentity: canonicalSourcePath,
+      sourceRoot: canonicalDirectory,
+      watchedPaths: [canonicalSourcePath],
+      localHtmlCapabilityProof: validProof,
+    };
+    try {
+      for (const initialUrl of forgedUrls) {
+        expect(() => manager.open({ ...common, initialUrl })).toThrow();
+      }
+
+      const opened = manager.open({ ...common, initialUrl: validUrl });
+      for (const url of forgedUrls) {
+        expect(() => manager.newTab({ ...common, url })).toThrow();
+        await expect(
+          manager.replaceLocalHtmlPreview({
+            ...common,
+            tabId: opened.activeTabId ?? "",
+            url,
+          }),
+        ).rejects.toThrow();
+      }
+      expect(() =>
+        manager.newTab({
+          ...common,
+          url: validUrl,
+          allowedExternalUrls: ["https://attacker.example/"],
+        }),
+      ).toThrow("capability proof is invalid");
+      const dedicatedUrl = "http://127.0.0.1:43124/";
+      expect(() =>
+        manager.newTab({
+          ...common,
+          url: dedicatedUrl,
+          localHtmlCapabilityProof: localHtmlCapabilityProof({
+            url: dedicatedUrl,
+            sourceIdentity: canonicalSourcePath,
+            sourceRoot: canonicalDirectory,
+            watchedPaths: [canonicalSourcePath],
+          }),
+        }),
+      ).not.toThrow();
+      expect(manager.getState({ threadId: THREAD_ID }).tabs).toHaveLength(1);
+      expect(electron.createdWebContents).toHaveLength(0);
+    } finally {
+      manager.dispose();
+      await rm(directory, { recursive: true, force: true });
     }
   });
 

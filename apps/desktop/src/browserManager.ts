@@ -47,7 +47,10 @@ import type {
   ThreadId,
 } from "@synara/contracts";
 import { isBrowserCopyLinkChord } from "@synara/shared/browserShortcuts";
-import type { BrowserReplaceLocalHtmlPreviewInput } from "@synara/shared/liveHtmlPreviewTransport";
+import {
+  serializeLocalHtmlCapabilityAuthority,
+  type BrowserReplaceLocalHtmlPreviewInput,
+} from "@synara/shared/liveHtmlPreviewTransport";
 import {
   BROWSER_BLANK_URL as ABOUT_BLANK_URL,
   BROWSER_WEB_SESSION_PARTITION,
@@ -491,6 +494,7 @@ function browserBoundsSignature(bounds: BrowserPanelBounds | null): string {
 }
 
 export class DesktopBrowserManager {
+  private readonly localHtmlCapabilityKey: string | null;
   private window: BrowserWindow | null = null;
   private activeThreadId: ThreadId | null = null;
   private activeBounds: BrowserPanelBounds | null = null;
@@ -552,6 +556,52 @@ export class DesktopBrowserManager {
     inactiveTabBudgetEvictions: 0,
     warmInactiveRuntimeCount: 0,
   };
+
+  constructor(localHtmlCapabilityKey?: string) {
+    this.localHtmlCapabilityKey = localHtmlCapabilityKey?.trim() || null;
+  }
+
+  private requireLocalHtmlCapability(input: {
+    readonly url: string;
+    readonly displayUrl: string | null | undefined;
+    readonly sourceIdentity: string | null | undefined;
+    readonly sourceRoot: string | null | undefined;
+    readonly watchedPaths: readonly string[] | undefined;
+    readonly allowedExternalUrls: readonly string[] | undefined;
+    readonly localHtmlCapabilityProof: string | null | undefined;
+  }): void {
+    const sourceAuthority = validatePreparedLocalHtmlSourceAuthority(input);
+    const suppliedProof = input.localHtmlCapabilityProof?.trim();
+    if (!this.localHtmlCapabilityKey || !suppliedProof) {
+      throw new Error("The local HTML preview is missing its server-issued capability proof.");
+    }
+    if (suppliedProof.length > 256) {
+      throw new Error("The local HTML preview capability proof is invalid.");
+    }
+    const expectedProof = Crypto.createHmac("sha256", this.localHtmlCapabilityKey)
+      .update(
+        serializeLocalHtmlCapabilityAuthority({
+          previewUrl: input.url,
+          sourceIdentity: sourceAuthority.sourceIdentity,
+          sourceRoot: sourceAuthority.sourceRoot,
+          watchedPaths: input.watchedPaths ?? [],
+          allowedExternalUrls: input.allowedExternalUrls ?? [],
+        }),
+      )
+      .digest();
+    let suppliedProofBytes: Buffer;
+    try {
+      suppliedProofBytes = Buffer.from(suppliedProof, "base64url");
+    } catch {
+      throw new Error("The local HTML preview capability proof is invalid.");
+    }
+    if (
+      suppliedProofBytes.length !== expectedProof.length ||
+      !Crypto.timingSafeEqual(suppliedProofBytes, expectedProof)
+    ) {
+      throw new Error("The local HTML preview capability proof is invalid.");
+    }
+  }
 
   setWindow(window: BrowserWindow | null): void {
     this.window = window;
@@ -1259,6 +1309,20 @@ export class DesktopBrowserManager {
 
   open(input: BrowserOpenInput): ThreadBrowserState {
     const requestedKind = input.kind ?? "web";
+    if (requestedKind === "local-html") {
+      if (!input.initialUrl || !isLocalHtmlPreviewUrl(input.initialUrl)) {
+        throw new Error("The initial URL is not a local HTML preview capability.");
+      }
+      this.requireLocalHtmlCapability({
+        url: input.initialUrl,
+        displayUrl: input.displayUrl,
+        sourceIdentity: input.sourceIdentity,
+        sourceRoot: input.sourceRoot,
+        watchedPaths: input.watchedPaths,
+        allowedExternalUrls: input.allowedExternalUrls,
+        localHtmlCapabilityProof: input.localHtmlCapabilityProof,
+      });
+    }
     const state = this.ensureWorkspace(
       input.threadId,
       input.initialUrl,
@@ -1293,6 +1357,9 @@ export class DesktopBrowserManager {
         ...(input.sourceRoot ? { sourceRoot: input.sourceRoot } : {}),
         ...(input.watchDiscoveryLimited !== undefined
           ? { watchDiscoveryLimited: input.watchDiscoveryLimited }
+          : {}),
+        ...(input.localHtmlCapabilityProof
+          ? { localHtmlCapabilityProof: input.localHtmlCapabilityProof }
           : {}),
         ...(input.allowedExternalUrls ? { allowedExternalUrls: input.allowedExternalUrls } : {}),
         activate: true,
@@ -1692,6 +1759,16 @@ export class DesktopBrowserManager {
       throw new Error("The replacement URL is not a local HTML preview capability.");
     }
 
+    this.requireLocalHtmlCapability({
+      url: input.url,
+      displayUrl: input.displayUrl,
+      sourceIdentity: input.sourceIdentity,
+      sourceRoot: input.sourceRoot,
+      watchedPaths: input.watchedPaths,
+      allowedExternalUrls: input.allowedExternalUrls,
+      localHtmlCapabilityProof: input.localHtmlCapabilityProof,
+    });
+
     const currentDisplayUrl = normalizedLocalHtmlSourcePath(currentTab.displayUrl);
     const currentPreviewCwd = canonicalLocalHtmlSourcePath(currentTab.previewCwd);
     const currentSourceIdentity = normalizedLocalHtmlSourcePath(currentTab.sourceIdentity);
@@ -1983,6 +2060,21 @@ export class DesktopBrowserManager {
   }
 
   newTab(input: BrowserNewTabInput): ThreadBrowserState {
+    if (input.kind === "local-html") {
+      const localHtmlUrl = input.url;
+      if (!localHtmlUrl || !isLocalHtmlPreviewUrl(localHtmlUrl)) {
+        throw new Error("The new-tab URL is not a local HTML preview capability.");
+      }
+      this.requireLocalHtmlCapability({
+        url: localHtmlUrl,
+        displayUrl: input.displayUrl,
+        sourceIdentity: input.sourceIdentity,
+        sourceRoot: input.sourceRoot,
+        watchedPaths: input.watchedPaths,
+        allowedExternalUrls: input.allowedExternalUrls,
+        localHtmlCapabilityProof: input.localHtmlCapabilityProof,
+      });
+    }
     const state = this.ensureWorkspace(input.threadId);
     const tab = createBrowserTab(
       normalizeUrlInput(input.url),

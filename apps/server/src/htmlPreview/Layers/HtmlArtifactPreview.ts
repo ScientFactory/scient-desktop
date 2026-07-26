@@ -15,6 +15,7 @@ import type {
   ProjectPrepareHtmlArtifactPreviewInput,
   ProjectRevokeHtmlArtifactPreviewInput,
 } from "@synara/contracts";
+import { serializeLocalHtmlCapabilityAuthority } from "@synara/shared/liveHtmlPreviewTransport";
 import { Effect, Layer } from "effect";
 
 import { inspectHtmlArtifact } from "../Inspector";
@@ -275,10 +276,18 @@ export function makeHtmlArtifactPreviewLayer(
   options: {
     readonly maxActiveGrants?: number;
     readonly useDedicatedServers?: boolean;
+    readonly capabilitySigningKey?: string;
   } = {},
 ) {
   const maxActiveGrants = options.maxActiveGrants ?? PREVIEW_MAX_ACTIVE_GRANTS;
   const useDedicatedServers = options.useDedicatedServers ?? process.platform === "win32";
+  const inheritedCapabilitySigningKey = process.env.SCIENT_LOCAL_HTML_CAPABILITY_KEY?.trim();
+  const capabilitySigningKey = options.capabilitySigningKey ?? inheritedCapabilitySigningKey;
+  // Capture the one-run attestation key in this service closure, then remove it
+  // before the backend can propagate its environment to provider subprocesses.
+  if (!options.capabilitySigningKey && inheritedCapabilitySigningKey) {
+    delete process.env.SCIENT_LOCAL_HTML_CAPABILITY_KEY;
+  }
   return Layer.effect(
     HtmlArtifactPreview,
     Effect.gen(function* () {
@@ -445,16 +454,37 @@ export function makeHtmlArtifactPreviewLayer(
                 ...(dedicatedServer ? { dedicatedServer } : {}),
               });
               releaseGrantReservation();
+              const watchedPaths = [...new Set(inspected.watchedPaths)];
+              const allowedExternalUrls =
+                inspected.result.mode === "static-document"
+                  ? (inspected.allowedExternalUrls ?? [])
+                  : [];
+              const previewUrl = dedicatedServer
+                ? `http://127.0.0.1:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`
+                : `http://g-${id}${PREVIEW_HOST_SUFFIX}:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`;
+              const localHtmlCapabilityProof = capabilitySigningKey
+                ? crypto
+                    .createHmac("sha256", capabilitySigningKey)
+                    .update(
+                      serializeLocalHtmlCapabilityAuthority({
+                        previewUrl,
+                        sourceIdentity: inspected.absolutePath,
+                        sourceRoot: canonicalSiteRoot,
+                        watchedPaths,
+                        allowedExternalUrls,
+                      }),
+                    )
+                    .digest("base64url")
+                : undefined;
               return {
                 ...inspected.result,
-                allowedExternalUrls: inspected.allowedExternalUrls,
+                allowedExternalUrls,
                 sourceIdentity: inspected.absolutePath,
                 sourceRoot: canonicalSiteRoot,
-                watchedPaths: [...new Set(inspected.watchedPaths)],
+                watchedPaths,
                 watchDiscoveryLimited: inspected.watchDiscoveryLimited,
-                previewUrl: dedicatedServer
-                  ? `http://127.0.0.1:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`
-                  : `http://g-${id}${PREVIEW_HOST_SUFFIX}:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`,
+                previewUrl,
+                ...(localHtmlCapabilityProof ? { localHtmlCapabilityProof } : {}),
               };
             } catch (cause) {
               releaseGrantReservation();
