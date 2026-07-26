@@ -153,8 +153,8 @@ export class DesktopBackendSupervisor {
     this.#options = options;
     this.#setTimer = options.setTimer ?? setTimeout;
     this.#clearTimer = options.clearTimer ?? clearTimeout;
-    // Restart windows measure elapsed process time. Wall-clock corrections must not forgive a
-    // crash loop early or retain failures beyond the configured window.
+    // Restart diagnostics measure elapsed process time. Wall-clock corrections must not forgive
+    // a crash loop early; failures remain retained until proven stability or explicit retry.
     this.#now = options.now ?? (() => performance.now());
   }
 
@@ -170,6 +170,13 @@ export class DesktopBackendSupervisor {
     const deliberateStart = !this.#desiredRunning;
     this.#desiredRunning = true;
     if (deliberateStart) this.#resetRestartState();
+    return this.#enqueue(() => this.#ensureStarted());
+  }
+
+  resume(): Promise<void> {
+    // Expected lifecycle interruptions, such as a failed updater handoff, must not erase
+    // instability that has not yet been forgiven by a stable generation or explicit retry.
+    this.#desiredRunning = true;
     return this.#enqueue(() => this.#ensureStarted());
   }
 

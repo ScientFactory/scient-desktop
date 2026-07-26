@@ -183,6 +183,25 @@ describe("backend restart recovery", () => {
     expect(showUnowned).not.toHaveBeenCalled();
   });
 
+  it("surfaces a native dialog failure so the retained recovery can retry on focus", async () => {
+    const failure = new Error("native dialog unavailable");
+    await expect(
+      showBackendRestartRecoveryDialog({
+        owner: { id: 42 },
+        options: buildBackendRestartRecoveryDialog({
+          appName: "Scient",
+          failures: 5,
+          windowMs: 60_000,
+          logFilePath: "/tmp/scient/server-child.log",
+        }),
+        showOwned: vi.fn(async () => {
+          throw failure;
+        }),
+        showUnowned: vi.fn(async () => ({ response: 2 })),
+      }),
+    ).rejects.toBe(failure);
+  });
+
   it.each(["retry", "open-logs"] as const)(
     "suppresses %s when quit or updater shutdown begins while the dialog is open",
     async (action) => {

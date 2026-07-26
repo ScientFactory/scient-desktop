@@ -795,7 +795,7 @@ function restoreBackendAfterUpdaterFailure(): void {
     recoveryDialogOpen: backendRestartRecoveryDialogOpen,
   });
   if (action === "restart") {
-    startBackend();
+    resumeBackend();
   } else if (action === "show-recovery") {
     void showBackendRestartRecovery();
   }
@@ -3067,6 +3067,15 @@ function startBackend(): void {
     });
 }
 
+function resumeBackend(): void {
+  if (isQuitting) return;
+  void getBackendSupervisor()
+    .resume()
+    .catch((error: unknown) => {
+      safeConsoleError(`[desktop] backend resume failed: ${formatErrorMessage(error)}`);
+    });
+}
+
 function stopBackend(reason = "desktop stop"): void {
   cancelBackendReadinessWait();
   if (!backendSupervisor) return;
@@ -3817,6 +3826,7 @@ if (hasSingleInstanceLock) {
       app.on("browser-window-focus", () => {
         handleDesktopAppForegrounded();
         emitDesktopConnectionWake("window-focus");
+        void showBackendRestartRecovery();
       });
 
       powerMonitor.on("resume", () => {
@@ -3826,6 +3836,7 @@ if (hasSingleInstanceLock) {
       app.on("activate", () => {
         handleDesktopAppForegrounded();
         emitDesktopConnectionWake("app-activate");
+        void showBackendRestartRecovery();
         if (BrowserWindow.getAllWindows().length === 0) {
           if (!isDevelopment) {
             ensureInitialBackendWindowOpen(

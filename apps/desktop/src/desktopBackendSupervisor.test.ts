@@ -519,4 +519,48 @@ describe("DesktopBackendSupervisor", () => {
     expect(harness.supervisor.currentGeneration?.number).toBe(2);
     expect(harness.restarts).toHaveLength(0);
   });
+
+  it("preserves unstable failure history across an updater stop and resume", async () => {
+    const harness = makeHarness({
+      restartBaseDelayMs: 1,
+      restartMaxFailures: 3,
+    });
+    await harness.supervisor.start();
+
+    harness.children[0]!.exit(1);
+    await vi.advanceTimersByTimeAsync(1);
+    harness.children[1]!.exit(1);
+    await vi.advanceTimersByTimeAsync(2);
+
+    const stopping = harness.supervisor.stop("updater handoff");
+    await settleLifecycle();
+    harness.children[2]!.exit(0);
+    await stopping;
+    await harness.supervisor.resume();
+    harness.children[3]!.exit(1);
+    await settleLifecycle();
+
+    expect(harness.restartLimits).toEqual([
+      expect.objectContaining({ failures: 3, maxFailures: 3 }),
+    ]);
+    expect(harness.supervisor.desiredRunning).toBe(false);
+    expect(harness.restarts.map(({ attempt }) => attempt)).toEqual([0, 1]);
+  });
+
+  it("forgives retained failures only when the user explicitly starts again", async () => {
+    const harness = makeHarness({ restartBaseDelayMs: 1, restartMaxFailures: 2 });
+    await harness.supervisor.start();
+    harness.children[0]!.exit(1);
+    await vi.advanceTimersByTimeAsync(1);
+    harness.children[1]!.exit(1);
+    await settleLifecycle();
+
+    await harness.supervisor.start();
+    harness.children[2]!.exit(1);
+    await settleLifecycle();
+
+    expect(harness.restartLimits).toHaveLength(1);
+    expect(harness.restarts.map(({ attempt }) => attempt)).toEqual([0, 0]);
+    expect(harness.supervisor.desiredRunning).toBe(true);
+  });
 });
