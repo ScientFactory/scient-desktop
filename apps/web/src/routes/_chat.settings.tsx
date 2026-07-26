@@ -151,6 +151,7 @@ import {
   readBrowserNotificationPermissionState,
   requestBrowserNotificationPermission,
 } from "../notifications/taskCompletion";
+import { ACTIVITY_CENTER_ALERTS_DESCRIPTION } from "../notifications/taskCompletion.logic";
 import { activityManager } from "../notifications/activityStore";
 import {
   normalizeSettingsSection,
@@ -2569,8 +2570,7 @@ function SettingsRouteView() {
         {renderBooleanSettingRow({
           settingKey: "enableTaskCompletionToasts",
           title: "Activity Center alerts",
-          description:
-            "Keep off-screen chat and managed terminal completions or attention requests in the in-app Activity Center.",
+          description: ACTIVITY_CENTER_ALERTS_DESCRIPTION,
           resetLabel: "Activity Center alerts",
           ariaLabel: "Activity Center alerts",
         })}
