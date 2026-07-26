@@ -991,6 +991,17 @@ function formatPastedTextTitleSeed(pastedTexts: ReadonlyArray<PastedTextDraft>):
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const VOICE_RECORDER_ACTION_ARM_DELAY_MS = 250;
 
+function threadSourceStillExists(threadId: ThreadId, sourceWasServerThread: boolean): boolean {
+  if (sourceWasServerThread) {
+    const store = useStore.getState();
+    return (
+      store.deletedThreadIdsById?.[threadId] !== true &&
+      store.threads.some((candidate) => candidate.id === threadId)
+    );
+  }
+  return useComposerDraftStore.getState().getDraftThread(threadId) !== null;
+}
+
 function warnVoiceGuard(event: string, details?: Record<string, unknown>) {
   if (!import.meta.env.DEV) {
     return;
@@ -7350,16 +7361,8 @@ export default function ChatView({
     }
     const threadIdForSend = activeThread.id;
     const sendSourceWasServerThread = isServerThread;
-    const sendSourceStillExists = (): boolean => {
-      if (sendSourceWasServerThread) {
-        const store = useStore.getState();
-        return (
-          store.deletedThreadIdsById?.[threadIdForSend] !== true &&
-          store.threads.some((candidate) => candidate.id === threadIdForSend)
-        );
-      }
-      return useComposerDraftStore.getState().getDraftThread(threadIdForSend) !== null;
-    };
+    const sendSourceStillExists = (): boolean =>
+      threadSourceStillExists(threadIdForSend, sendSourceWasServerThread);
     const sendOwnsActivePane = () => activeThreadIdRef.current === threadIdForSend;
     if (
       shouldRouteComposerSendToPendingInput({
@@ -7740,6 +7743,13 @@ export default function ChatView({
           image: null,
         }),
       );
+    // Browser state and screenshot capture cross the native boundary. Deletion
+    // owns the source after either await, so discard the captured object URL and
+    // stop before feedback, project creation, or queued-draft mutation.
+    if (!sendSourceStillExists()) {
+      revokeBlobPreviewUrl(browserPromptAttachment.image?.previewUrl);
+      return false;
+    }
     if (browserPromptAttachment.image) {
       const nextAttachmentCount =
         composerImagesForSend.length +
@@ -7749,6 +7759,7 @@ export default function ChatView({
       if (nextAttachmentCount <= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
         composerImagesForSend = [...composerImagesForSend, browserPromptAttachment.image];
       } else {
+        revokeBlobPreviewUrl(browserPromptAttachment.image.previewUrl);
         reportComposerFeedback({
           type: "warning",
           title: `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} references per message.`,
@@ -7787,6 +7798,10 @@ export default function ChatView({
           }
         }),
       );
+      if (!sendSourceStillExists()) {
+        revokeBlobPreviewUrl(browserPromptAttachment.image?.previewUrl);
+        return false;
+      }
       enqueueQueuedComposerTurn(activeThread.id, {
         id: randomUUID(),
         kind: "chat",
@@ -7936,6 +7951,10 @@ export default function ChatView({
             recoveredProject.defaultModelSelection ??
             firstSendTarget.creation.defaultModelSelection;
         }
+      }
+
+      if (!sendSourceStillExists()) {
+        return false;
       }
 
       clearProjectDraftThreadId(targetProjectIdForSend);
@@ -8140,6 +8159,25 @@ export default function ChatView({
           branch: baseBranchForWorktree,
           newBranch: buildTemporaryWorktreeBranchName(),
         });
+        if (!sendSourceStillExists()) {
+          // No setup action or user turn has run in this freshly-created
+          // worktree, so forced removal is safe and prevents an ownerless
+          // worktree from surviving deletion of the source thread.
+          await api.git
+            .removeWorktree({
+              cwd: targetProjectCwdForSend,
+              path: result.worktree.path,
+              force: true,
+            })
+            .catch((cleanupError: unknown) => {
+              console.error("Failed to remove worktree after its source thread was deleted", {
+                threadId: threadIdForSend,
+                worktreePath: result.worktree.path,
+                cleanupError,
+              });
+            });
+          throw new Error("Thread was deleted before the message could be sent.");
+        }
         beginLocalDispatch(threadIdForSend, {
           worktreeSetupStepId: "prepare-thread",
           setupScriptName: worktreeSetupScriptName,
@@ -8760,6 +8798,9 @@ export default function ChatView({
         runtimeMode: queuedTurn?.runtimeMode ?? runtimeMode,
         interactionMode: nextInteractionMode,
       });
+      if (!threadSourceStillExists(threadIdForSend, true)) {
+        throw new Error("Thread was deleted before the plan follow-up could be sent.");
+      }
 
       // Keep the mode toggle and plan-follow-up banner in sync immediately
       // while the same-thread implementation turn is starting.
@@ -8825,10 +8866,12 @@ export default function ChatView({
       setOptimisticUserMessages((existing) =>
         existing.filter((message) => message.id !== messageIdForSend),
       );
-      setThreadError(
-        threadIdForSend,
-        err instanceof Error ? err.message : "Failed to send plan follow-up.",
-      );
+      if (threadSourceStillExists(threadIdForSend, true)) {
+        setThreadError(
+          threadIdForSend,
+          err instanceof Error ? err.message : "Failed to send plan follow-up.",
+        );
+      }
       sendInFlightThreadIds.delete(threadIdForSend);
       resetLocalDispatch(threadIdForSend);
       return false;
@@ -8893,6 +8936,9 @@ export default function ChatView({
           runtimeMode,
           interactionMode,
         });
+        if (!threadSourceStillExists(threadIdForEdit, true)) {
+          return false;
+        }
         await api.orchestration.dispatchCommand({
           type: "thread.message.edit-and-resend",
           commandId: newCommandId(),
@@ -8908,10 +8954,12 @@ export default function ChatView({
         });
         return true;
       } catch (err) {
-        setThreadError(
-          activeThread.id,
-          err instanceof Error ? err.message : "Failed to edit message.",
-        );
+        if (threadSourceStillExists(threadIdForEdit, true)) {
+          setThreadError(
+            threadIdForEdit,
+            err instanceof Error ? err.message : "Failed to edit message.",
+          );
+        }
         return false;
       } finally {
         setIsRevertingCheckpoint(false);

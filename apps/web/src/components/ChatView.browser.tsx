@@ -6016,6 +6016,99 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("abandons browser capture when its source thread is deleted", async () => {
+    let resolveCapture!: (value: {
+      name: string;
+      mimeType: "image/png";
+      sizeBytes: number;
+      bytes: Uint8Array;
+    }) => void;
+    const capture = new Promise<{
+      name: string;
+      mimeType: "image/png";
+      sizeBytes: number;
+      bytes: Uint8Array;
+    }>((resolve) => {
+      resolveCapture = resolve;
+    });
+    const captureScreenshot = vi.fn<NativeApi["browser"]["captureScreenshot"]>(() => capture);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-deleted-browser-capture" as MessageId,
+        targetText: "deleted browser capture",
+        sessionStatus: "running",
+      }),
+      configureNativeApi: (api) => ({
+        ...api,
+        browser: {
+          ...api.browser,
+          getState: vi.fn(async () => ({
+            threadId: THREAD_ID,
+            version: 1,
+            open: true,
+            activeTabId: "tab-active",
+            tabs: [
+              {
+                id: "tab-active",
+                kind: "web" as const,
+                url: "https://example.test",
+                displayUrl: null,
+                title: "Example",
+                status: "live" as const,
+                isLoading: false,
+                canGoBack: false,
+                canGoForward: false,
+                faviconUrl: null,
+                lastCommittedUrl: "https://example.test",
+                lastError: null,
+              },
+            ],
+            lastError: null,
+          })),
+          captureScreenshot,
+        },
+      }),
+    });
+    const deletedThreadIdsBeforeTest = useStore.getState().deletedThreadIdsById ?? {};
+
+    try {
+      await waitForServerConfigToApply();
+      useComposerDraftStore
+        .getState()
+        .setPrompt(THREAD_ID, "look at the active tab in the in-app browser");
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the composer before the browser-capture deletion race.",
+      );
+      const requestStart = wsRequests.length;
+      composerForm.requestSubmit();
+      await vi.waitFor(() => expect(captureScreenshot).toHaveBeenCalledOnce());
+
+      useStore.getState().removeDeletedThreadFromClientState(THREAD_ID);
+      useComposerDraftStore.getState().clearDraftThread(THREAD_ID);
+      resolveCapture({
+        name: "captured-browser.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+        bytes: new Uint8Array([1, 2, 3, 4]),
+      });
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 64));
+
+      expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]).toBeUndefined();
+      expect(wsRequests.slice(requestStart).map(readDispatchedCommand).filter(Boolean)).toEqual([]);
+    } finally {
+      resolveCapture({
+        name: "captured-browser.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+        bytes: new Uint8Array([1, 2, 3, 4]),
+      });
+      useStore.setState({ deletedThreadIdsById: deletedThreadIdsBeforeTest });
+      await mounted.cleanup();
+    }
+  });
+
   it("rejects edit-and-resend while a normal send owns the thread preflight", async () => {
     const unavailableProvider = {
       provider: "codex" as const,
@@ -6126,6 +6219,155 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("abandons a plan follow-up when settings persistence outlives thread deletion", async () => {
+    let resolveSettings!: () => void;
+    const settingsGate = new Promise<void>((resolve) => {
+      resolveSettings = resolve;
+    });
+    let delayedSettingsStarted = false;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSettledPlanAwaitingFollowUp(),
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            if (command.type === "thread.interaction-mode.set") {
+              delayedSettingsStarted = true;
+              await settingsGate;
+              return { sequence: fixture.snapshot.snapshotSequence + 1 };
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+    const deletedThreadIdsBeforeTest = useStore.getState().deletedThreadIdsById ?? {};
+
+    try {
+      await waitForServerConfigToApply();
+      const requestStart = wsRequests.length;
+      const implementButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+            (button) => button.textContent?.trim() === "Implement",
+          ) ?? null,
+        "Unable to find the plan implementation action.",
+      );
+      implementButton.click();
+      await vi.waitFor(() => expect(delayedSettingsStarted).toBe(true));
+
+      useStore.getState().removeDeletedThreadFromClientState(THREAD_ID);
+      useComposerDraftStore.getState().clearDraftThread(THREAD_ID);
+      resolveSettings();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 64));
+
+      expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]).toBeUndefined();
+      expect(
+        wsRequests
+          .slice(requestStart)
+          .map(readDispatchedCommand)
+          .some((command) => command?.type === "thread.turn.start"),
+      ).toBe(false);
+    } finally {
+      resolveSettings();
+      useStore.setState({ deletedThreadIdsById: deletedThreadIdsBeforeTest });
+      await mounted.cleanup();
+    }
+  });
+
+  it("abandons edit-and-resend when settings persistence outlives thread deletion", async () => {
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-edit-deletion-race" as MessageId,
+      targetText: "edit deletion race",
+    });
+    const snapshot: OrchestrationReadModel = {
+      ...baseSnapshot,
+      threads: baseSnapshot.threads.map((thread) => ({
+        ...thread,
+        messages: thread.messages.map((message, index) =>
+          index >= thread.messages.length - 2
+            ? { ...message, turnId: "turn-edit-deletion-race" as TurnId }
+            : message,
+        ),
+      })),
+    };
+    let resolveSettings!: () => void;
+    const settingsGate = new Promise<void>((resolve) => {
+      resolveSettings = resolve;
+    });
+    let delayedSettingsStarted = false;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            if (command.type === "thread.meta.update" && command.modelSelection !== undefined) {
+              delayedSettingsStarted = true;
+              await settingsGate;
+              return { sequence: fixture.snapshot.snapshotSequence + 1 };
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+    const deletedThreadIdsBeforeTest = useStore.getState().deletedThreadIdsById ?? {};
+
+    try {
+      await waitForServerConfigToApply();
+      useComposerDraftStore.getState().setModelSelection(THREAD_ID, {
+        provider: "codex",
+        model: "gpt-5.3-codex",
+      });
+      await vi.waitFor(() => {
+        expect(
+          useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.modelSelectionByProvider
+            .codex,
+        ).toEqual({
+          provider: "codex",
+          model: "gpt-5.3-codex",
+        });
+      });
+      const requestStart = wsRequests.length;
+      const editButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Edit message"]'),
+        "Unable to find the edit action before the deletion race.",
+      );
+      editButton.click();
+      const editTextArea = await waitForElement(
+        () => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Edit message"]'),
+        "Unable to find the edit textarea before the deletion race.",
+      );
+      await userEvent.fill(editTextArea, "edited text must not outlive deletion");
+      const editForm = editTextArea.closest("form");
+      expect(editForm).not.toBeNull();
+      editForm!.requestSubmit();
+      await vi.waitFor(() => expect(delayedSettingsStarted).toBe(true));
+
+      useStore.getState().removeDeletedThreadFromClientState(THREAD_ID);
+      useComposerDraftStore.getState().clearDraftThread(THREAD_ID);
+      resolveSettings();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 64));
+
+      expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]).toBeUndefined();
+      expect(
+        wsRequests
+          .slice(requestStart)
+          .map(readDispatchedCommand)
+          .some((command) => command?.type === "thread.message.edit-and-resend"),
+      ).toBe(false);
+    } finally {
+      resolveSettings();
+      useStore.setState({ deletedThreadIdsById: deletedThreadIdsBeforeTest });
+      await mounted.cleanup();
+    }
+  });
+
   it("snapshots sticky codex settings into a new draft thread", async () => {
     useComposerDraftStore.setState({
       stickyModelSelectionByProvider: {
@@ -6226,6 +6468,104 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
     } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("removes a newly-created worktree when its thread is deleted before creation settles", async () => {
+    type CreateWorktreeResult = Awaited<ReturnType<NativeApi["git"]["createWorktree"]>>;
+    let resolveCreateWorktree!: (value: CreateWorktreeResult) => void;
+    const createWorktreeResult = new Promise<CreateWorktreeResult>((resolve) => {
+      resolveCreateWorktree = resolve;
+    });
+    const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(() => createWorktreeResult);
+    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => undefined);
+    const snapshot = addThreadToSnapshot(
+      createSnapshotForTargetUser({
+        targetMessageId: "msg-user-deleted-worktree-send" as MessageId,
+        targetText: "deleted worktree send",
+      }),
+      OTHER_THREAD_ID,
+    );
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+      initialEntry: `/${OTHER_THREAD_ID}`,
+      configureNativeApi: (api) => ({
+        ...api,
+        git: {
+          ...api.git,
+          createWorktree,
+          removeWorktree,
+        },
+      }),
+    });
+    const deletedThreadIdsBeforeTest = useStore.getState().deletedThreadIdsById ?? {};
+
+    try {
+      await waitForComposerEditor();
+      useStore.getState().setThreadWorkspace(OTHER_THREAD_ID, {
+        envMode: "worktree",
+        branch: "main",
+        worktreePath: null,
+      });
+      useComposerDraftStore.getState().setPrompt(OTHER_THREAD_ID, "do not keep this worktree");
+      await vi.waitFor(() => {
+        const thread = useStore
+          .getState()
+          .threads.find((candidate) => candidate.id === OTHER_THREAD_ID);
+        expect(thread).toMatchObject({ envMode: "worktree", branch: "main", worktreePath: null });
+      });
+
+      const requestStart = wsRequests.length;
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the composer before the worktree-deletion race.",
+      );
+      composerForm.requestSubmit();
+      await vi.waitFor(() => expect(createWorktree).toHaveBeenCalledOnce());
+
+      useStore.setState((state) => ({
+        deletedThreadIdsById: {
+          ...(state.deletedThreadIdsById ?? {}),
+          [OTHER_THREAD_ID]: true,
+        },
+      }));
+      useComposerDraftStore.getState().clearDraftThread(OTHER_THREAD_ID);
+      resolveCreateWorktree({
+        worktree: {
+          path: "/repo/.codex/worktrees/project/deleted-send",
+          branch: "scient/deleted-send",
+        },
+      });
+      await vi.waitFor(
+        () => {
+          expect(removeWorktree).toHaveBeenCalledWith({
+            cwd: "/repo/project",
+            path: "/repo/.codex/worktrees/project/deleted-send",
+            force: true,
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(useComposerDraftStore.getState().getDraftThread(OTHER_THREAD_ID)).toBeNull();
+      expect(
+        wsRequests
+          .slice(requestStart)
+          .map(readDispatchedCommand)
+          .filter(
+            (command) => command && "threadId" in command && command.threadId === OTHER_THREAD_ID,
+          ),
+      ).toEqual([]);
+    } finally {
+      resolveCreateWorktree({
+        worktree: {
+          path: "/repo/.codex/worktrees/project/deleted-send",
+          branch: "scient/deleted-send",
+        },
+      });
+      useStore.setState({ deletedThreadIdsById: deletedThreadIdsBeforeTest });
       await mounted.cleanup();
     }
   });
