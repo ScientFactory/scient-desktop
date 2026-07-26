@@ -1,18 +1,30 @@
 import { ProjectId } from "@synara/contracts";
 import type { OrchestrationProject } from "@synara/contracts";
-import { Deferred, Effect, Fiber } from "effect";
+import { Deferred, Effect, Fiber, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { ServerConfig, type ServerConfigShape } from "../../config";
 import { GitHubCliError } from "../../git/Errors";
-import type {
-  GitHubCliShape,
-  GitHubPullRequestListBatch,
-  GitHubPullRequestListItem,
+import { GitCore, type GitCoreShape } from "../../git/Services/GitCore";
+import {
+  GitHubCli,
+  type GitHubCliShape,
+  type GitHubPullRequestListBatch,
+  type GitHubPullRequestListItem,
 } from "../../git/Services/GitHubCli";
 import { createGitHubCliWithFakeGh } from "../../git/testing/fakeGitHubCli";
-import type { ProjectPullRequestPinsShape } from "../../persistence/Services/ProjectPullRequestPins";
+import {
+  ProjectionSnapshotQuery,
+  type ProjectionSnapshotQueryShape,
+} from "../../orchestration/Services/ProjectionSnapshotQuery";
+import {
+  ProjectPullRequestPins,
+  type ProjectPullRequestPinsShape,
+} from "../../persistence/Services/ProjectPullRequestPins";
+import { PullRequestService } from "../Services/PullRequestService";
 import {
   PULL_REQUEST_PIN_RECOVERY_LIMIT,
+  PullRequestServiceLive,
   isDefinitivePullRequestNotFound,
   listLiveProjectsForPullRequests,
   liveProjectFromShell,
@@ -167,6 +179,42 @@ describe("PullRequestService", () => {
 
     expect(projectReads).toBe(1);
     expect(projects).toEqual([{ ...shell, deletedAt: null }]);
+  });
+
+  it("wires the live service to the project-only projection seam", async () => {
+    const { deletedAt: _deletedAt, ...chatShell } = {
+      ...makeProject("project-live-layer", "Home", "/tmp/home"),
+      kind: "chat" as const,
+    };
+    let projectReads = 0;
+    const projection = {
+      listActiveProjectShells: () =>
+        Effect.sync(() => {
+          projectReads += 1;
+          return [chatShell];
+        }),
+      getShellSnapshot: () => Effect.die("PR polling must not read the shell snapshot"),
+      getSnapshot: () => Effect.die("PR polling must not read the full snapshot"),
+    } as unknown as ProjectionSnapshotQueryShape;
+    const layer = PullRequestServiceLive.pipe(
+      Layer.provideMerge(Layer.succeed(ServerConfig, { homeDir: "/tmp" } as ServerConfigShape)),
+      Layer.provideMerge(Layer.succeed(GitCore, {} as GitCoreShape)),
+      Layer.provideMerge(Layer.succeed(GitHubCli, createGitHubCliWithFakeGh().service)),
+      Layer.provideMerge(Layer.succeed(ProjectPullRequestPins, makePins())),
+      Layer.provideMerge(Layer.succeed(ProjectionSnapshotQuery, projection)),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* PullRequestService;
+          return yield* service.reviewRequestCount({ projectId: null });
+        }).pipe(Effect.provide(layer)),
+      ),
+    );
+
+    expect(projectReads).toBe(1);
+    expect(result).toEqual({ count: 0, incomplete: false });
   });
 
   it("returns one repository-level row for projects sharing a repository", async () => {
