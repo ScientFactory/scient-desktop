@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import type { DesktopBridge } from "@synara/contracts";
+import type { LiveHtmlDesktopBridge } from "@synara/shared/liveHtmlPreviewTransport";
 import { BROWSER_IPC_CHANNELS } from "./browserIpc";
 import {
   DESKTOP_WS_URL_CHANNEL,
@@ -211,6 +211,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     executeCdp: (input) => ipcRenderer.invoke(BROWSER_IPC_CHANNELS.executeCdp, input),
     navigate: (input) => ipcRenderer.invoke(BROWSER_IPC_CHANNELS.navigate, input),
     reload: (input) => ipcRenderer.invoke(BROWSER_IPC_CHANNELS.reload, input),
+    replaceLocalHtmlPreview: (input) =>
+      ipcRenderer.invoke(BROWSER_IPC_CHANNELS.replaceLocalHtmlPreview, input),
     goBack: (input) => ipcRenderer.invoke(BROWSER_IPC_CHANNELS.goBack, input),
     goForward: (input) => ipcRenderer.invoke(BROWSER_IPC_CHANNELS.goForward, input),
     newTab: (input) => ipcRenderer.invoke(BROWSER_IPC_CHANNELS.newTab, input),
@@ -246,4 +248,4 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       };
     },
   },
-} satisfies DesktopBridge);
+} satisfies LiveHtmlDesktopBridge);

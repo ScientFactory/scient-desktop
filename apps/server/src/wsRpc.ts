@@ -7,7 +7,6 @@ import {
   ThreadId,
   WS_METHODS,
   WsRpcError,
-  WsRpcGroup,
   PullRequestsUnavailableError,
   ServerProviderUpdateError,
   type GitActionProgressEvent,
@@ -19,6 +18,10 @@ import {
   type ServerDiagnosticsResult,
   type ServerLifecycleStreamEvent,
 } from "@synara/contracts";
+import {
+  LIVE_HTML_PREVIEW_PREPARE_V1_METHOD,
+  LiveHtmlPreviewRpcGroup,
+} from "@synara/shared/liveHtmlPreviewTransport";
 import { clamp } from "effect/Number";
 import { Effect, FileSystem, Layer, Option, Path, Queue, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -92,7 +95,7 @@ import { cloneProjectSource, getRepositorySourceStatuses } from "./projectSource
 
 const MAX_DIAGNOSTIC_CHILD_PROCESSES = 80;
 const MAX_DIAGNOSTIC_ARGS_CHARS = 500;
-const ScientWsRpcGroup = WsRpcGroup.merge(GitMutationRpcGroup);
+const ScientWsRpcGroup = LiveHtmlPreviewRpcGroup.merge(GitMutationRpcGroup);
 
 // Relative subdirectories scaffolded under a freshly created chat container workspace root.
 // The Studio layout lives in studioWorkspaceScaffold.ts alongside its instruction files.
@@ -737,6 +740,8 @@ export const makeWsRpcLayer = () =>
           rpcEffect(htmlArtifactPreview.inspect(input), "Failed to inspect HTML artifact"),
         [WS_METHODS.projectsPrepareHtmlArtifactPreview]: (input) =>
           rpcEffect(htmlArtifactPreview.prepare(input), "Failed to prepare HTML artifact preview"),
+        [LIVE_HTML_PREVIEW_PREPARE_V1_METHOD]: (input) =>
+          rpcEffect(htmlArtifactPreview.prepare(input), "Failed to prepare live HTML preview"),
         [WS_METHODS.projectsRevokeHtmlArtifactPreview]: (input) =>
           rpcEffect(htmlArtifactPreview.revoke(input), "Failed to revoke HTML artifact preview"),
         [WS_METHODS.projectsWriteFile]: (input) =>

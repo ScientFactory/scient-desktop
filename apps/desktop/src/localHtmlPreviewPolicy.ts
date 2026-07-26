@@ -82,13 +82,19 @@ export function localHtmlPreviewRequestAllowed(input: {
   try {
     const requestUrl = new URL(input.url);
     if (requestUrl.origin === input.allowedOrigin) return true;
+    if (
+      input.resourceType === "mainFrame" ||
+      input.resourceType === "subFrame" ||
+      input.resourceType === "object"
+    )
+      return false;
     if (requestUrl.protocol === "data:" || requestUrl.protocol === "blob:") return true;
     if (requestUrl.protocol !== "http:" && requestUrl.protocol !== "https:") {
       return false;
     }
     const method = input.method?.toUpperCase() ?? "GET";
     if (method !== "GET" && method !== "HEAD") return false;
-    if (input.resourceType === "mainFrame" || input.resourceType === "xhr") return false;
+    if (input.resourceType === "xhr") return false;
     if (input.resourceType === "ping" || input.resourceType === "webSocket") return false;
     const normalizedRequestUrl = new URL(requestUrl.toString());
     normalizedRequestUrl.hash = "";
@@ -120,7 +126,6 @@ export function localHtmlPreviewNavigationDisposition(input: {
   allowedOrigin: string;
   isMainFrame: boolean;
 }): LocalHtmlPreviewNavigationDisposition {
-  if (!input.isMainFrame) return "allow";
   try {
     const target = new URL(input.url);
     if (target.origin === input.allowedOrigin) return "allow";

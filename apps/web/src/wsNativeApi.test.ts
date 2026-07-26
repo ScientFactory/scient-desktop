@@ -23,6 +23,7 @@ import {
   type WsPush,
   type ServerProviderStatus,
 } from "@synara/contracts";
+import { LIVE_HTML_PREVIEW_PREPARE_V1_METHOD } from "@synara/shared/liveHtmlPreviewTransport";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestMock = vi.fn<(...args: Array<unknown>) => Promise<unknown>>();
@@ -625,6 +626,22 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("uses the versioned live-preview RPC for watched resources", async () => {
+    requestMock.mockResolvedValueOnce({
+      mode: "static-document",
+      warnings: [],
+      previewUrl: "http://g-test.preview.localhost:5000/",
+      watchedPaths: ["/tmp/project/report.html", "/tmp/project/theme.css"],
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    const input = { cwd: "/tmp/project", path: "report.html" };
+
+    await api.projects.prepareLiveHtmlPreview(input);
+
+    expect(requestMock).toHaveBeenCalledWith(LIVE_HTML_PREVIEW_PREPARE_V1_METHOD, input);
+  });
+
   it("forwards project source status and clone requests", async () => {
     requestMock.mockResolvedValueOnce({ sources: [] }).mockResolvedValueOnce({ path: "/tmp/repo" });
     const { createWsNativeApi } = await import("./wsNativeApi");
@@ -834,6 +851,37 @@ describe("wsNativeApi", () => {
     expect(nextState.open).toBe(false);
     expect(nextState.tabs).toEqual([]);
     expect(nextState.activeTabId).toBeNull();
+  });
+
+  it("does not activate a background fallback local HTML replacement", async () => {
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    const threadId = ThreadId.makeUnsafe("thread-background-preview");
+    const opened = await api.browser.open({ threadId, initialUrl: "https://example.com/" });
+    const activeWebTabId = opened.activeTabId;
+    const withPreview = await api.browser.newTab({
+      threadId,
+      url: "http://g-12345678-1234-4123-8123-123456789abc.preview.localhost:5000/",
+      kind: "local-html",
+      displayUrl: "/workspace/report.html",
+      previewCwd: "/workspace",
+      watchedPaths: ["/workspace/report.html"],
+      activate: false,
+    });
+    const previewTab = withPreview.tabs.find((tab) => tab.kind === "local-html");
+
+    const replaced = await api.browser.replaceLocalHtmlPreview({
+      threadId,
+      tabId: previewTab?.id ?? "",
+      url: "http://g-22345678-1234-4123-8123-123456789abc.preview.localhost:5000/",
+      displayUrl: "/workspace/report.html",
+      previewCwd: "/workspace",
+      watchedPaths: ["/workspace/report.html"],
+      activate: false,
+    });
+
+    expect(replaced.activeTabId).toBe(activeWebTabId);
+    expect(replaced.tabs.find((tab) => tab.kind === "local-html")?.url).toContain("g-22345678");
   });
 
   it("forwards context menu metadata to desktop bridge", async () => {

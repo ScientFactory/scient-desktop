@@ -8,7 +8,6 @@ import {
   ORCHESTRATION_WS_METHODS,
   WS_CHANNELS,
   WS_METHODS,
-  WsRpcGroup,
   type AutomationStreamEvent,
   type GitActionProgressEvent,
   type GitRunStackedActionResult,
@@ -26,6 +25,7 @@ import {
   type WsPushMessage,
 } from "@synara/contracts";
 import { GitMutationRpcGroup } from "@synara/shared/gitMutationRpc";
+import { LiveHtmlPreviewRpcGroup } from "@synara/shared/liveHtmlPreviewTransport";
 import {
   Cause,
   Data,
@@ -86,7 +86,7 @@ class WsTransportRpcError extends Data.TaggedError("WsTransportRpcError")<{
   readonly cause?: unknown;
 }> {}
 
-const ScientWsRpcGroup = WsRpcGroup.merge(GitMutationRpcGroup);
+const ScientWsRpcGroup = LiveHtmlPreviewRpcGroup.merge(GitMutationRpcGroup);
 const makeRpcClient = RpcClient.make(ScientWsRpcGroup);
 
 // Every RPC promise must settle: React Query (and any other awaiting caller)

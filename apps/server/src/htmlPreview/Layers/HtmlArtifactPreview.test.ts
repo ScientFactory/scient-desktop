@@ -2,17 +2,20 @@
 // Purpose: Rendering, navigation, and lifecycle coverage for full local HTML sites.
 
 import fs from "node:fs/promises";
+import { createHmac } from "node:crypto";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
 import { Effect } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
+import { serializeLocalHtmlCapabilityAuthority } from "@synara/shared/liveHtmlPreviewTransport";
 
 import {
   HtmlArtifactPreview,
   type HtmlArtifactPreviewShape,
 } from "../Services/HtmlArtifactPreview";
+import { inspectHtmlArtifact } from "../Inspector";
 import { HtmlArtifactPreviewLive, makeHtmlArtifactPreviewLayer } from "./HtmlArtifactPreview";
 
 const temporaryDirectories: string[] = [];
@@ -21,6 +24,17 @@ async function makeWorkspace(): Promise<string> {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "scient-html-preview-"));
   temporaryDirectories.push(workspace);
   return workspace;
+}
+
+async function replaceFileAtomically(filePath: string, contents: string): Promise<void> {
+  const replacementPath = `${filePath}.replacement`;
+  await fs.writeFile(replacementPath, contents);
+  await fs.rename(replacementPath, filePath);
+}
+
+function sameLengthHtml(left: string, right: string): readonly [string, string] {
+  const length = Math.max(left.length, right.length);
+  return [left.padEnd(length, " "), right.padEnd(length, " ")];
 }
 
 afterEach(async () => {
@@ -83,6 +97,216 @@ function withPreviewService<A>(
 }
 
 describe("HtmlArtifactPreviewLive", () => {
+  it("reinspects an entry document atomically replaced before route pinning", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "report.html");
+    const externalScript = "https://cdn.example/report.js";
+    await fs.writeFile(sourcePath, `<link rel="preload" href="${externalScript}" as="image">`);
+    let inspectionCount = 0;
+
+    await withPreviewService(
+      async (service) => {
+        const prepared = await Effect.runPromise(
+          service.prepare({ cwd: workspace, path: sourcePath }),
+        );
+
+        expect(inspectionCount).toBe(2);
+        expect(prepared.mode).toBe("interactive-bundle");
+        expect(prepared.localHtmlNetworkPolicy).toBe("sealed-interactive");
+        expect(prepared.allowedExternalUrls).toEqual([]);
+        await expect(requestPreview(prepared.previewUrl!)).resolves.toMatchObject({
+          status: 200,
+          body: `<script src="${externalScript}"></script>`,
+        });
+      },
+      makeHtmlArtifactPreviewLayer({
+        inspectArtifact: async (input) => {
+          const inspected = await inspectHtmlArtifact(input);
+          inspectionCount += 1;
+          if (inspectionCount === 1) {
+            await replaceFileAtomically(sourcePath, `<script src="${externalScript}"></script>`);
+          }
+          return inspected;
+        },
+      }),
+    );
+  });
+
+  it("reinspects a linked active document atomically replaced before route pinning", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "report.html");
+    const childPath = path.join(workspace, "child.html");
+    await fs.writeFile(sourcePath, '<iframe src="child.html"></iframe>');
+    await fs.writeFile(childPath, "<p>Inert child</p>");
+    let inspectionCount = 0;
+
+    await withPreviewService(
+      async (service) => {
+        const prepared = await Effect.runPromise(
+          service.prepare({ cwd: workspace, path: sourcePath }),
+        );
+
+        expect(inspectionCount).toBe(2);
+        expect(prepared.mode).toBe("interactive-bundle");
+        expect(prepared.localHtmlNetworkPolicy).toBe("sealed-interactive");
+        await expect(requestPreview(prepared.previewUrl!, "/child.html")).resolves.toMatchObject({
+          status: 200,
+          body: "<script>window.changed = true</script>",
+        });
+      },
+      makeHtmlArtifactPreviewLayer({
+        inspectArtifact: async (input) => {
+          const inspected = await inspectHtmlArtifact(input);
+          inspectionCount += 1;
+          if (inspectionCount === 1) {
+            await replaceFileAtomically(childPath, "<script>window.changed = true</script>");
+          }
+          return inspected;
+        },
+      }),
+    );
+  });
+
+  it("reinspects a same-length entry rewrite before route pinning", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "report.html");
+    const [inertSource, activeSource] = sameLengthHtml(
+      "<p>Inert entry</p>",
+      "<script>window.changed = true</script>",
+    );
+    await fs.writeFile(sourcePath, inertSource);
+    let inspectionCount = 0;
+
+    await withPreviewService(
+      async (service) => {
+        const prepared = await Effect.runPromise(
+          service.prepare({ cwd: workspace, path: sourcePath }),
+        );
+
+        expect(inspectionCount).toBe(2);
+        expect(prepared.mode).toBe("interactive-bundle");
+        expect(prepared.localHtmlNetworkPolicy).toBe("sealed-interactive");
+        await expect(requestPreview(prepared.previewUrl!)).resolves.toMatchObject({
+          status: 200,
+          body: activeSource,
+        });
+      },
+      makeHtmlArtifactPreviewLayer({
+        inspectArtifact: async (input) => {
+          const inspected = await inspectHtmlArtifact(input);
+          inspectionCount += 1;
+          if (inspectionCount === 1) await fs.writeFile(sourcePath, activeSource);
+          return inspected;
+        },
+      }),
+    );
+  });
+
+  it("reinspects a same-length linked-document rewrite before route pinning", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "report.html");
+    const childPath = path.join(workspace, "child.html");
+    const [inertChild, activeChild] = sameLengthHtml(
+      "<p>Inert child</p>",
+      "<script>window.changed = true</script>",
+    );
+    await fs.writeFile(sourcePath, '<iframe src="child.html"></iframe>');
+    await fs.writeFile(childPath, inertChild);
+    let inspectionCount = 0;
+
+    await withPreviewService(
+      async (service) => {
+        const prepared = await Effect.runPromise(
+          service.prepare({ cwd: workspace, path: sourcePath }),
+        );
+
+        expect(inspectionCount).toBe(2);
+        expect(prepared.mode).toBe("interactive-bundle");
+        expect(prepared.localHtmlNetworkPolicy).toBe("sealed-interactive");
+        await expect(requestPreview(prepared.previewUrl!, "/child.html")).resolves.toMatchObject({
+          status: 200,
+          body: activeChild,
+        });
+      },
+      makeHtmlArtifactPreviewLayer({
+        inspectArtifact: async (input) => {
+          const inspected = await inspectHtmlArtifact(input);
+          inspectionCount += 1;
+          if (inspectionCount === 1) await fs.writeFile(childPath, activeChild);
+          return inspected;
+        },
+      }),
+    );
+  });
+
+  it("fails after one retry when preparation keeps changing without leaking capacity", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "report.html");
+    await fs.writeFile(sourcePath, "<p>Revision zero</p>");
+    let mutateAfterInspection = true;
+    let inspectionCount = 0;
+
+    await withPreviewService(
+      async (service) => {
+        await expect(
+          Effect.runPromise(service.prepare({ cwd: workspace, path: sourcePath })),
+        ).rejects.toThrow("kept changing while its preview was being prepared");
+        expect(inspectionCount).toBe(2);
+
+        mutateAfterInspection = false;
+        const prepared = await Effect.runPromise(
+          service.prepare({ cwd: workspace, path: sourcePath }),
+        );
+        expect(prepared.previewUrl).toBeDefined();
+        await expect(requestPreview(prepared.previewUrl!)).resolves.toMatchObject({ status: 200 });
+      },
+      makeHtmlArtifactPreviewLayer({
+        maxActiveGrants: 1,
+        inspectArtifact: async (input) => {
+          const inspected = await inspectHtmlArtifact(input);
+          inspectionCount += 1;
+          if (mutateAfterInspection) {
+            await replaceFileAtomically(
+              sourcePath,
+              `<p>Revision ${inspectionCount % 2 === 0 ? "even" : "odd"}</p>`,
+            );
+          }
+          return inspected;
+        },
+      }),
+    );
+  });
+
+  it("attests the exact server-issued local HTML capability authority", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "report.html");
+    await fs.writeFile(sourcePath, "<h1>Report</h1>");
+    const capabilitySigningKey = "scient-preview-server-test-key";
+
+    await withPreviewService(async (service) => {
+      const prepared = await Effect.runPromise(
+        service.prepare({ cwd: workspace, path: sourcePath }),
+      );
+      expect(prepared.previewUrl).toBeDefined();
+      expect(prepared.sourceIdentity).toBeDefined();
+      expect(prepared.sourceRoot).toBeDefined();
+      expect(prepared.localHtmlCapabilityProof).toBe(
+        createHmac("sha256", capabilitySigningKey)
+          .update(
+            serializeLocalHtmlCapabilityAuthority({
+              previewUrl: prepared.previewUrl!,
+              sourceIdentity: prepared.sourceIdentity!,
+              sourceRoot: prepared.sourceRoot!,
+              watchedPaths: prepared.watchedPaths ?? [],
+              allowedExternalUrls: prepared.allowedExternalUrls ?? [],
+              networkPolicy: prepared.localHtmlNetworkPolicy!,
+            }),
+          )
+          .digest("base64url"),
+      );
+    }, makeHtmlArtifactPreviewLayer({ capabilitySigningKey }));
+  });
+
   it("serves static HTML and ordinary sibling assets without an injected CSP", async () => {
     const workspace = await makeWorkspace();
     await fs.writeFile(
@@ -102,7 +326,18 @@ describe("HtmlArtifactPreviewLive", () => {
         service.prepare({ cwd: workspace, path: "report.html" }),
       );
       expect(prepared.mode).toBe("static-document");
+      expect(prepared.localHtmlNetworkPolicy).toBe("reviewed-static");
       expect(prepared.previewUrl).toBeDefined();
+      const canonicalWorkspace = await fs.realpath(workspace);
+      expect(prepared.sourceIdentity).toBe(path.join(canonicalWorkspace, "report.html"));
+      expect(prepared.sourceRoot).toBe(canonicalWorkspace);
+      expect(new Set(prepared.watchedPaths)).toEqual(
+        new Set([
+          path.join(canonicalWorkspace, "report.html"),
+          path.join(canonicalWorkspace, "report.css"),
+          path.join(canonicalWorkspace, "paper.png"),
+        ]),
+      );
 
       const document = await requestPreview(prepared.previewUrl!);
       expect(document.status).toBe(200);
@@ -123,6 +358,54 @@ describe("HtmlArtifactPreviewLive", () => {
       await expect(requestPreview(prepared.previewUrl!, "/ignored.js")).resolves.toMatchObject({
         status: 404,
       });
+    });
+  });
+
+  it("re-prepares and serves an asset created under a previously absent directory", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "report.html");
+    const assetsDirectory = path.join(workspace, "assets");
+    const assetPath = path.join(assetsDirectory, "theme.css");
+    await fs.writeFile(
+      sourcePath,
+      '<link rel="stylesheet" href="assets/theme.css"><h1>Report</h1>',
+    );
+
+    await withPreviewService(async (service) => {
+      const before = await Effect.runPromise(service.prepare({ cwd: workspace, path: sourcePath }));
+      expect(before.watchedPaths).toContain(path.join(await fs.realpath(workspace), "assets"));
+      await expect(requestPreview(before.previewUrl!, "/assets/theme.css")).resolves.toMatchObject({
+        status: 404,
+      });
+
+      await fs.mkdir(assetsDirectory);
+      await fs.writeFile(assetPath, "body { color: navy; }");
+      const after = await Effect.runPromise(service.prepare({ cwd: workspace, path: sourcePath }));
+      expect(after.watchedPaths).toContain(await fs.realpath(assetPath));
+      await expect(requestPreview(after.previewUrl!, "/assets/theme.css")).resolves.toMatchObject({
+        status: 200,
+        body: expect.stringContaining("color: navy"),
+      });
+    });
+  });
+
+  it("reports when dependency discovery exceeds its bounded graph", async () => {
+    const workspace = await makeWorkspace();
+    const references: string[] = [];
+    for (let index = 0; index < 251; index += 1) {
+      const name = `asset-${index}.png`;
+      references.push(`<img src="${name}">`);
+      await fs.writeFile(path.join(workspace, name), `asset-${index}`);
+    }
+    const sourcePath = path.join(workspace, "report.html");
+    await fs.writeFile(sourcePath, references.join(""));
+
+    await withPreviewService(async (service) => {
+      const prepared = await Effect.runPromise(
+        service.prepare({ cwd: workspace, path: sourcePath }),
+      );
+      expect(prepared.watchDiscoveryLimited).toBe(true);
+      expect(prepared.watchedPaths).toHaveLength(251);
     });
   });
 
@@ -196,6 +479,7 @@ describe("HtmlArtifactPreviewLive", () => {
         service.prepare({ cwd: workspace, path: "index.html" }),
       );
       expect(prepared.mode).toBe("interactive-bundle");
+      expect(prepared.localHtmlNetworkPolicy).toBe("sealed-interactive");
       const document = await requestPreview(prepared.previewUrl!);
       expect(document.headers["content-security-policy"]).toBeUndefined();
       expect(document.headers["x-dns-prefetch-control"]).toBe("off");
@@ -370,6 +654,152 @@ describe("HtmlArtifactPreviewLive", () => {
       expect(response.status).toBe(404);
       expect(response.body).not.toContain("Secret");
     });
+  });
+
+  it("prepares a fresh capability after an atomic save replaces the source inode", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "index.html");
+    const replacementPath = path.join(workspace, "index.next.html");
+    await fs.writeFile(sourcePath, "<p>Before</p>");
+
+    await withPreviewService(async (service) => {
+      const previous = await Effect.runPromise(
+        service.prepare({ cwd: workspace, path: "index.html" }),
+      );
+      await expect(requestPreview(previous.previewUrl!)).resolves.toMatchObject({
+        status: 200,
+        body: expect.stringContaining("Before"),
+      });
+
+      await fs.writeFile(replacementPath, "<p>After</p>");
+      await fs.rename(replacementPath, sourcePath);
+      await expect(requestPreview(previous.previewUrl!)).resolves.toMatchObject({ status: 404 });
+
+      const refreshed = await Effect.runPromise(
+        service.prepare({ cwd: workspace, path: "index.html" }),
+      );
+      expect(refreshed.previewUrl).not.toBe(previous.previewUrl);
+      await expect(requestPreview(refreshed.previewUrl!)).resolves.toMatchObject({
+        status: 200,
+        body: expect.stringContaining("After"),
+      });
+    });
+  });
+
+  it("invalidates entry and linked routes after same-inode same-length rewrites", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "index.html");
+    const childPath = path.join(workspace, "child.html");
+    const [entryBefore, entryAfter] = sameLengthHtml(
+      '<iframe src="child.html"></iframe><p>Before</p>',
+      '<iframe src="child.html"></iframe><p>After</p>',
+    );
+    const [childBefore, childAfter] = sameLengthHtml("<p>Child before</p>", "<p>Child after</p>");
+    await fs.writeFile(sourcePath, entryBefore);
+    await fs.writeFile(childPath, childBefore);
+
+    await withPreviewService(async (service) => {
+      const prepared = await Effect.runPromise(
+        service.prepare({ cwd: workspace, path: sourcePath }),
+      );
+      await expect(requestPreview(prepared.previewUrl!)).resolves.toMatchObject({ status: 200 });
+      await expect(requestPreview(prepared.previewUrl!, "/child.html")).resolves.toMatchObject({
+        status: 200,
+      });
+
+      await fs.writeFile(childPath, childAfter);
+      await expect(requestPreview(prepared.previewUrl!, "/child.html")).resolves.toMatchObject({
+        status: 404,
+      });
+      await expect(requestPreview(prepared.previewUrl!)).resolves.toMatchObject({ status: 200 });
+
+      await fs.writeFile(sourcePath, entryAfter);
+      await expect(requestPreview(prepared.previewUrl!)).resolves.toMatchObject({ status: 404 });
+    });
+  });
+
+  it("never streams classified bytes mutated after the request fingerprint check", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "index.html");
+    const [inertSource, activeSource] = sameLengthHtml(
+      "<p>Inspected static document</p>",
+      "<script>window.uninspected = true</script>",
+    );
+    await fs.writeFile(sourcePath, inertSource);
+    const canonicalSourcePath = await fs.realpath(sourcePath);
+    let mutateOnRequest = false;
+
+    await withPreviewService(
+      async (service) => {
+        const prepared = await Effect.runPromise(
+          service.prepare({ cwd: workspace, path: sourcePath }),
+        );
+        expect(prepared.mode).toBe("static-document");
+        expect(prepared.localHtmlNetworkPolicy).toBe("reviewed-static");
+
+        mutateOnRequest = true;
+        const response = await requestPreview(prepared.previewUrl!);
+        expect(response.status).toBe(404);
+        expect(response.body).not.toContain("uninspected");
+      },
+      makeHtmlArtifactPreviewLayer({
+        afterGrantedFileFingerprint: async (filePath) => {
+          if (!mutateOnRequest || filePath !== canonicalSourcePath) return;
+          mutateOnRequest = false;
+          await fs.writeFile(sourcePath, activeSource);
+        },
+      }),
+    );
+  });
+
+  it("buffers linked classified documents for full and ranged responses", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "index.html");
+    const childPath = path.join(workspace, "child.html");
+    const [inertChild, activeChild] = sameLengthHtml(
+      "<p>Inspected linked document</p>",
+      "<script>window.uninspected = true</script>",
+    );
+    await fs.writeFile(sourcePath, '<iframe src="child.html"></iframe>');
+    await fs.writeFile(childPath, inertChild);
+    const canonicalChildPath = await fs.realpath(childPath);
+    let mutateOnRequest = false;
+
+    await withPreviewService(
+      async (service) => {
+        const prepared = await Effect.runPromise(
+          service.prepare({ cwd: workspace, path: sourcePath }),
+        );
+        expect(prepared.mode).toBe("static-document");
+
+        await expect(requestPreview(prepared.previewUrl!, "/child.html")).resolves.toMatchObject({
+          status: 200,
+          body: inertChild,
+        });
+        await expect(
+          requestPreview(prepared.previewUrl!, "/child.html", {
+            headers: { Range: "bytes=0-9" },
+          }),
+        ).resolves.toMatchObject({
+          status: 206,
+          body: Buffer.from(inertChild).subarray(0, 10).toString("utf8"),
+        });
+
+        mutateOnRequest = true;
+        const ranged = await requestPreview(prepared.previewUrl!, "/child.html", {
+          headers: { Range: "bytes=0-9" },
+        });
+        expect(ranged.status).toBe(404);
+        expect(ranged.body).not.toContain("uninspect");
+      },
+      makeHtmlArtifactPreviewLayer({
+        afterGrantedFileFingerprint: async (filePath) => {
+          if (!mutateOnRequest || filePath !== canonicalChildPath) return;
+          mutateOnRequest = false;
+          await fs.writeFile(childPath, activeChild);
+        },
+      }),
+    );
   });
 
   it("revokes a capability explicitly and refuses every later request", async () => {
