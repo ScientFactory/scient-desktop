@@ -8148,6 +8148,30 @@ export default function ChatView({
 
     let createdServerThreadForLocalDraft = false;
     let turnStartSucceeded = false;
+    let createdWorktreeForSend: { cwd: string; path: string } | null = null;
+    let createdWorktreeCleanupIsSafe = true;
+    let createdWorktreeCleanupInFlight = false;
+    const removeCreatedWorktreeAfterSourceDeletion = async () => {
+      const worktree = createdWorktreeForSend;
+      if (!worktree || !createdWorktreeCleanupIsSafe || createdWorktreeCleanupInFlight) return;
+      createdWorktreeCleanupInFlight = true;
+      try {
+        await api.git.removeWorktree({
+          cwd: worktree.cwd,
+          path: worktree.path,
+          force: true,
+        });
+        createdWorktreeForSend = null;
+      } catch (cleanupError: unknown) {
+        console.error("Failed to remove worktree after its source thread was deleted", {
+          threadId: threadIdForSend,
+          worktreePath: worktree.path,
+          cleanupError,
+        });
+      } finally {
+        createdWorktreeCleanupInFlight = false;
+      }
+    };
     await (async () => {
       if (!sendSourceStillExists()) {
         throw new Error("Thread was deleted before the message could be sent.");
@@ -8159,23 +8183,15 @@ export default function ChatView({
           branch: baseBranchForWorktree,
           newBranch: buildTemporaryWorktreeBranchName(),
         });
+        createdWorktreeForSend = {
+          cwd: targetProjectCwdForSend,
+          path: result.worktree.path,
+        };
         if (!sendSourceStillExists()) {
           // No setup action or user turn has run in this freshly-created
           // worktree, so forced removal is safe and prevents an ownerless
           // worktree from surviving deletion of the source thread.
-          await api.git
-            .removeWorktree({
-              cwd: targetProjectCwdForSend,
-              path: result.worktree.path,
-              force: true,
-            })
-            .catch((cleanupError: unknown) => {
-              console.error("Failed to remove worktree after its source thread was deleted", {
-                threadId: threadIdForSend,
-                worktreePath: result.worktree.path,
-                cleanupError,
-              });
-            });
+          await removeCreatedWorktreeAfterSourceDeletion();
           throw new Error("Thread was deleted before the message could be sent.");
         }
         beginLocalDispatch(threadIdForSend, {
@@ -8200,6 +8216,9 @@ export default function ChatView({
             associatedWorktreeBranch: nextAssociatedWorktree.associatedWorktreeBranch,
             associatedWorktreeRef: nextAssociatedWorktree.associatedWorktreeRef,
           });
+          if (!sendSourceStillExists()) {
+            throw new Error("Thread was deleted before the message could be sent.");
+          }
           // Keep local thread state in sync immediately so terminal drawer opens
           // with the worktree cwd/env instead of briefly using the project root.
           setStoreThreadWorkspace(threadIdForSend, {
@@ -8245,6 +8264,10 @@ export default function ChatView({
           },
           api,
         );
+        createdServerThreadForLocalDraft = true;
+        if (!sendSourceStillExists()) {
+          throw new Error("Thread was deleted before the message could be sent.");
+        }
         // `thread.create` does not carry notes, so seed the freshly created
         // server thread's notepad with the inherited project instructions via a
         // dedicated meta update. Best-effort: a failure here must not abort the turn.
@@ -8256,6 +8279,9 @@ export default function ChatView({
             // into the notepad manually from the Environment panel.
           }
         }
+        if (!sendSourceStillExists()) {
+          throw new Error("Thread was deleted before the message could be sent.");
+        }
         if (targetProjectKindForSend === "chat") {
           await api.orchestration.dispatchCommand({
             type: "project.meta.update",
@@ -8264,10 +8290,12 @@ export default function ChatView({
             title,
           });
         }
-        createdServerThreadForLocalDraft = true;
       }
 
       const setupScript = setupScriptForWorktree;
+      if (!sendSourceStillExists()) {
+        throw new Error("Thread was deleted before the message could be sent.");
+      }
       if (setupScript) {
         let shouldRunSetupScript = false;
         if (isServerThread) {
@@ -8290,12 +8318,22 @@ export default function ChatView({
           if (nextThreadWorktreePath) {
             setupScriptOptions.cwd = nextThreadWorktreePath;
           }
+          // Once a project-owned setup action starts, the worktree may contain
+          // unique changes. Leave later cleanup to the normal deletion path
+          // rather than force-removing data from this send continuation.
+          createdWorktreeCleanupIsSafe = false;
           const setupTerminal = await runProjectScript(setupScript, setupScriptOptions);
+          if (!sendSourceStillExists()) {
+            throw new Error("Thread was deleted before the message could be sent.");
+          }
           if (setupTerminal) {
             await waitForSetupScriptTerminalActivity({
               threadId: threadIdForSend,
               terminalId: setupTerminal.terminalId,
             });
+            if (!sendSourceStillExists()) {
+              throw new Error("Thread was deleted before the message could be sent.");
+            }
           }
         }
       }
@@ -8371,17 +8409,24 @@ export default function ChatView({
       // Surface the failure on whichever setup step was active (no-op for
       // sends without a worktree setup in flight).
       failLocalDispatchWorktreeSetup(threadIdForSend);
+      let promotedThreadRollbackSucceeded = true;
       if (createdServerThreadForLocalDraft && !turnStartSucceeded) {
         // This rollback cleans up a retryable draft promotion; do not tombstone the draft id.
-        await api.orchestration
+        promotedThreadRollbackSucceeded = await api.orchestration
           .dispatchCommand({
             type: "thread.delete",
             commandId: newCommandId(),
             threadId: threadIdForSend,
           })
-          .catch(() => undefined);
+          .then(
+            () => true,
+            () => false,
+          );
       }
       const sendSourceExistsAfterFailure = sendSourceStillExists();
+      if (!sendSourceExistsAfterFailure && !turnStartSucceeded && promotedThreadRollbackSucceeded) {
+        await removeCreatedWorktreeAfterSourceDeletion();
+      }
       const failedSendDraft = sendSourceExistsAfterFailure
         ? (useComposerDraftStore.getState().draftsByThreadId[threadIdForSend] ?? null)
         : null;

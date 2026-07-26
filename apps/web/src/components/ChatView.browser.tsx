@@ -6472,7 +6472,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("removes a newly-created worktree when its thread is deleted before creation settles", async () => {
+  it("removes a newly-created worktree when its thread is deleted during metadata persistence", async () => {
     type CreateWorktreeResult = Awaited<ReturnType<NativeApi["git"]["createWorktree"]>>;
     let resolveCreateWorktree!: (value: CreateWorktreeResult) => void;
     const createWorktreeResult = new Promise<CreateWorktreeResult>((resolve) => {
@@ -6480,6 +6480,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
     const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(() => createWorktreeResult);
     const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => undefined);
+    let resolveMetadata!: () => void;
+    const metadataGate = new Promise<void>((resolve) => {
+      resolveMetadata = resolve;
+    });
+    let metadataStarted = false;
     const snapshot = addThreadToSnapshot(
       createSnapshotForTargetUser({
         targetMessageId: "msg-user-deleted-worktree-send" as MessageId,
@@ -6493,6 +6498,21 @@ describe("ChatView timeline estimator parity (full app)", () => {
       initialEntry: `/${OTHER_THREAD_ID}`,
       configureNativeApi: (api) => ({
         ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            if (
+              command.type === "thread.meta.update" &&
+              command.threadId === OTHER_THREAD_ID &&
+              command.envMode === "worktree"
+            ) {
+              metadataStarted = true;
+              await metadataGate;
+              return { sequence: fixture.snapshot.snapshotSequence + 1 };
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
         git: {
           ...api.git,
           createWorktree,
@@ -6525,6 +6545,17 @@ describe("ChatView timeline estimator parity (full app)", () => {
       composerForm.requestSubmit();
       await vi.waitFor(() => expect(createWorktree).toHaveBeenCalledOnce());
 
+      resolveCreateWorktree({
+        worktree: {
+          path: "/repo/.codex/worktrees/project/deleted-send",
+          branch: "scient/deleted-send",
+        },
+      });
+      await vi.waitFor(() => expect(metadataStarted).toBe(true), {
+        timeout: 12_000,
+        interval: 16,
+      });
+
       useStore.setState((state) => ({
         deletedThreadIdsById: {
           ...(state.deletedThreadIdsById ?? {}),
@@ -6532,12 +6563,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
       }));
       useComposerDraftStore.getState().clearDraftThread(OTHER_THREAD_ID);
-      resolveCreateWorktree({
-        worktree: {
-          path: "/repo/.codex/worktrees/project/deleted-send",
-          branch: "scient/deleted-send",
-        },
-      });
+      resolveMetadata();
       await vi.waitFor(
         () => {
           expect(removeWorktree).toHaveBeenCalledWith({
@@ -6565,7 +6591,116 @@ describe("ChatView timeline estimator parity (full app)", () => {
           branch: "scient/deleted-send",
         },
       });
+      resolveMetadata();
       useStore.setState({ deletedThreadIdsById: deletedThreadIdsBeforeTest });
+      await mounted.cleanup();
+    }
+  });
+
+  it("rolls back a promoted thread and its worktree when its local draft is deleted during promotion", async () => {
+    let resolvePromotion!: () => void;
+    const promotionGate = new Promise<void>((resolve) => {
+      resolvePromotion = resolve;
+    });
+    let promotedThreadId: ThreadId | null = null;
+    const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(async () => ({
+      worktree: {
+        path: "/repo/.codex/worktrees/project/deleted-draft",
+        branch: "scient/deleted-draft",
+      },
+    }));
+    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => undefined);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-deleted-draft-promotion" as MessageId,
+        targetText: "deleted draft promotion",
+      }),
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            if (command.type === "thread.create") {
+              promotedThreadId = command.threadId;
+              await promotionGate;
+              return { sequence: fixture.snapshot.snapshotSequence + 1 };
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+        git: {
+          ...api.git,
+          createWorktree,
+          removeWorktree,
+        },
+      }),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+      await newThreadButton.click();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a draft before the promotion-deletion race.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+      const envPickerTrigger = await waitForEnvironmentModeButton("Local");
+      envPickerTrigger.click();
+      const newWorktreeOption = page.getByText("New worktree");
+      await expect.element(newWorktreeOption).toBeInTheDocument();
+      await newWorktreeOption.click();
+
+      useComposerDraftStore.getState().setPrompt(newThreadId, "do not promote this draft");
+      await vi.waitFor(() => {
+        expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+          envMode: "worktree",
+          branch: "main",
+        });
+      });
+      const requestStart = wsRequests.length;
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      await sendButton.click();
+      await vi.waitFor(
+        () => {
+          expect(createWorktree).toHaveBeenCalledOnce();
+          expect(promotedThreadId).toBe(newThreadId);
+        },
+        { timeout: 12_000, interval: 16 },
+      );
+
+      useComposerDraftStore.getState().clearDraftThread(newThreadId);
+      resolvePromotion();
+      await vi.waitFor(
+        () => {
+          expect(removeWorktree).toHaveBeenCalledWith({
+            cwd: "/repo/project",
+            path: "/repo/.codex/worktrees/project/deleted-draft",
+            force: true,
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toBeNull();
+      const dispatchedCommands = wsRequests
+        .slice(requestStart)
+        .map(readDispatchedCommand)
+        .filter(Boolean);
+      expect(dispatchedCommands).toContainEqual(
+        expect.objectContaining({ type: "thread.delete", threadId: newThreadId }),
+      );
+      expect(
+        dispatchedCommands.some(
+          (command) => command?.type === "thread.turn.start" && command.threadId === newThreadId,
+        ),
+      ).toBe(false);
+    } finally {
+      resolvePromotion();
       await mounted.cleanup();
     }
   });
