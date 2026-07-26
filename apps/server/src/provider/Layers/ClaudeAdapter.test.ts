@@ -563,6 +563,70 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("continues shutdown when one temporary discovery close throws", () => {
+    const throwingDiscovery = new FakeClaudeQuery();
+    const hangingDiscovery = new FakeClaudeQuery();
+    let throwingCloseAttempts = 0;
+    Object.assign(throwingDiscovery, {
+      supportedCommands: () => new Promise<SlashCommand[]>(() => undefined),
+      close: () => {
+        throwingCloseAttempts += 1;
+        throwingDiscovery.finish();
+        throw new Error("simulated discovery close failure");
+      },
+    });
+    Object.assign(hangingDiscovery, {
+      supportedAgents: () => new Promise<AgentInfo[]>(() => undefined),
+    });
+    const queries = [throwingDiscovery, hangingDiscovery];
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => {
+        const next = queries.shift();
+        if (!next) throw new Error("Unexpected Claude query creation.");
+        return next;
+      },
+      discoveryTimeoutMs: 30_000,
+    }).pipe(
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-discovery-close-failure", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listCommands || !adapter.listAgents) {
+        return assert.fail("Claude adapter should support temporary discovery.");
+      }
+      const throwingFiber = yield* adapter
+        .listCommands({ provider: "claudeAgent", cwd: "/tmp/claude-discovery-close-failure" })
+        .pipe(Effect.forkChild);
+      const hangingFiber = yield* adapter
+        .listAgents({ provider: "claudeAgent", cwd: "/tmp/claude-discovery-close-failure" })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      yield* adapter.stopAll();
+
+      assert.equal(throwingCloseAttempts, 1);
+      assert.equal(hangingDiscovery.closeCalls, 1);
+      assert.ok(Exit.isFailure(yield* Fiber.await(throwingFiber)));
+      assert.ok(Exit.isFailure(yield* Fiber.await(hangingFiber)));
+      assert.ok(
+        Exit.isFailure(
+          yield* Effect.exit(
+            adapter.listAgents({
+              provider: "claudeAgent",
+              cwd: "/tmp/claude-discovery-close-failure",
+            }),
+          ),
+        ),
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
   it.effect("closes a hung temporary discovery when the adapter layer finalizes", () => {
     const query = new FakeClaudeQuery();
     Object.assign(query, {
@@ -895,6 +959,8 @@ describe("ClaudeAdapterLive", () => {
             { value: "xhigh", label: "Extra High" },
             { value: "max", label: "Max" },
           ],
+          supportsReasoningEffort: true,
+          supportsThinkingToggle: true,
           supportsFastMode: true,
         },
       ]);

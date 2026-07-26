@@ -305,6 +305,9 @@ export const ProviderModelDescriptor = Schema.Struct({
   // Codex model/list results are normalized here so the web app can consume both
   // the legacy string array and Remodex-style reasoning objects uniformly.
   supportedReasoningEfforts: Schema.optional(Schema.Array(ProviderReasoningEffortDescriptor)),
+  // Distinguishes runtime metadata that explicitly disables effort controls from
+  // an older provider response that does not report effort capability at all.
+  supportsReasoningEffort: Schema.optional(Schema.Boolean),
   defaultReasoningEffort: Schema.optional(TrimmedNonEmptyString),
   supportsFastMode: Schema.optional(Schema.Boolean),
   supportsThinkingToggle: Schema.optional(Schema.Boolean),

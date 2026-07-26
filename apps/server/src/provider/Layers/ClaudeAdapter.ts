@@ -369,7 +369,17 @@ function mapClaudeModelInfo(model: ModelInfo): ProviderModelDescriptor {
     ...(resolvedModel ? { resolvedModel } : {}),
     ...(model.value === "default" ? { isDefault: true as const } : {}),
     ...(description ? { description } : {}),
-    ...(supportedReasoningEfforts?.length ? { supportedReasoningEfforts } : {}),
+    ...(model.supportsEffort !== undefined
+      ? {
+          supportsReasoningEffort: model.supportsEffort,
+          supportedReasoningEfforts: model.supportsEffort ? (supportedReasoningEfforts ?? []) : [],
+        }
+      : supportedReasoningEfforts
+        ? { supportedReasoningEfforts }
+        : {}),
+    ...(model.supportsAdaptiveThinking !== undefined
+      ? { supportsThinkingToggle: model.supportsAdaptiveThinking }
+      : {}),
     ...(model.supportsFastMode !== undefined ? { supportsFastMode: model.supportsFastMode } : {}),
   };
 }
@@ -1581,15 +1591,27 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       activeTemporaryDiscoveries.add(control);
       return control;
     };
-    const stopTemporaryDiscoveries = (): void => {
+    const stopTemporaryDiscoveries = (): ReadonlyArray<unknown> => {
       temporaryDiscoveriesStopped = true;
       const cause = new Error("Claude discovery stopped because the adapter is shutting down.");
-      for (const control of activeTemporaryDiscoveries) {
-        control.cancel(cause);
+      const closeFailures: unknown[] = [];
+      try {
+        for (const control of [...activeTemporaryDiscoveries]) {
+          try {
+            control.cancel(cause);
+          } catch (closeFailure) {
+            closeFailures.push(closeFailure);
+          }
+        }
+      } finally {
+        // A provider SDK close failure must never preserve shared ownership or
+        // prevent later sessions from completing their own shutdown.
+        activeTemporaryDiscoveries.clear();
+        pendingCommandDiscoveries.clear();
+        pendingModelDiscoveries.clear();
+        pendingAgentDiscoveries.clear();
       }
-      pendingCommandDiscoveries.clear();
-      pendingModelDiscoveries.clear();
-      pendingAgentDiscoveries.clear();
+      return closeFailures;
     };
     const getOrCreatePendingDiscovery = <A>(
       pending: Map<string, Promise<A>>,
@@ -4665,8 +4687,21 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         cached: false,
       } satisfies ProviderListSkillsResult);
 
+    const stopTemporaryDiscoveriesForShutdown = Effect.sync(stopTemporaryDiscoveries).pipe(
+      Effect.tap((closeFailures) =>
+        Effect.forEach(
+          closeFailures,
+          (closeFailure) =>
+            Effect.logWarning("claude.discovery.close_failed", {
+              cause: toMessage(closeFailure, "Failed to close a temporary Claude discovery."),
+            }),
+          { discard: true },
+        ),
+      ),
+    );
+
     const stopAll: ClaudeAdapterShape["stopAll"] = () =>
-      Effect.sync(stopTemporaryDiscoveries).pipe(
+      stopTemporaryDiscoveriesForShutdown.pipe(
         Effect.andThen(
           Effect.forEach(
             sessions,
@@ -4680,7 +4715,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       );
 
     yield* Effect.addFinalizer(() =>
-      Effect.sync(stopTemporaryDiscoveries).pipe(
+      stopTemporaryDiscoveriesForShutdown.pipe(
         Effect.andThen(
           Effect.forEach(
             sessions,
@@ -4691,7 +4726,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             { discard: true },
           ),
         ),
-        Effect.tap(() => Queue.shutdown(runtimeEventQueue)),
+        Effect.ensuring(Queue.shutdown(runtimeEventQueue)),
       ),
     );
 

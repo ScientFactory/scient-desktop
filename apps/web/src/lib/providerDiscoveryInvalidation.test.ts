@@ -107,4 +107,28 @@ describe("providerModelDiscoveryInvalidationFingerprint", () => {
       providerModelDiscoveryInvalidationFingerprint([codexStatus, BASE_PROVIDER_STATUS]),
     );
   });
+
+  it("keeps one provider's generation stable when another provider changes", () => {
+    const claudeStatus = {
+      ...BASE_PROVIDER_STATUS,
+      provider: "claudeAgent",
+      authStatus: "authenticated",
+    } satisfies ServerProviderStatus;
+    const codexStatus = {
+      ...BASE_PROVIDER_STATUS,
+      provider: "codex",
+      authStatus: "unauthenticated",
+    } satisfies ServerProviderStatus;
+
+    const previousClaude = providerModelDiscoveryInvalidationFingerprint(
+      [claudeStatus, codexStatus],
+      "claudeAgent",
+    );
+    const nextClaude = providerModelDiscoveryInvalidationFingerprint(
+      [{ ...codexStatus, authStatus: "authenticated" }, claudeStatus],
+      "claudeAgent",
+    );
+
+    expect(nextClaude).toBe(previousClaude);
+  });
 });

@@ -48,8 +48,10 @@ type ProviderModelDiscoveryFingerprintEntry = readonly [
 
 export function providerModelDiscoveryInvalidationFingerprint(
   providers: ReadonlyArray<ServerProviderStatus>,
+  provider?: ServerProviderStatus["provider"],
 ): string {
   const entries = providers
+    .filter((status) => provider === undefined || status.provider === provider)
     .map(
       (provider): ProviderModelDiscoveryFingerprintEntry => [
         provider.provider,

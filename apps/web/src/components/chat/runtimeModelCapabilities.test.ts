@@ -65,4 +65,40 @@ describe("Claude runtime model capabilities", () => {
     ]);
     expect(capabilities.supportsFastMode).toBe(true);
   });
+
+  it("treats explicit runtime capability denial as authoritative", () => {
+    const capabilities = getRuntimeAwareModelCapabilities({
+      provider: "claudeAgent",
+      model: "claude-opus-4-8",
+      runtimeModel: {
+        slug: "opus",
+        name: "Opus",
+        resolvedModel: "claude-opus-4-8",
+        supportsReasoningEffort: false,
+        supportedReasoningEfforts: [],
+        supportsThinkingToggle: false,
+      },
+    });
+
+    expect(capabilities.reasoningEffortLevels).toEqual([]);
+    expect(capabilities.supportsThinkingToggle).toBe(false);
+  });
+
+  it("exposes runtime capabilities for a model absent from the static catalog", () => {
+    const capabilities = getRuntimeAwareModelCapabilities({
+      provider: "claudeAgent",
+      model: "claude-future-1",
+      runtimeModel: {
+        slug: "future",
+        name: "Claude Future",
+        resolvedModel: "claude-future-1",
+        supportsReasoningEffort: true,
+        supportedReasoningEfforts: [{ value: "high" }],
+        supportsThinkingToggle: true,
+      },
+    });
+
+    expect(capabilities.reasoningEffortLevels.map((effort) => effort.value)).toEqual(["high"]);
+    expect(capabilities.supportsThinkingToggle).toBe(true);
+  });
 });

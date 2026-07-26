@@ -100,7 +100,14 @@ export function getRuntimeAwareModelCapabilities(input: {
     })) ?? staticCapabilities.contextWindowOptions;
   const optionDescriptors =
     input.runtimeModel?.optionDescriptors ?? staticCapabilities.optionDescriptors;
-  const runtimeEfforts = input.runtimeModel?.supportedReasoningEfforts;
+  const hasRuntimeEffortMetadata =
+    input.runtimeModel !== undefined &&
+    (input.runtimeModel.supportsReasoningEffort !== undefined ||
+      input.runtimeModel.supportedReasoningEfforts !== undefined);
+  const runtimeEfforts =
+    input.runtimeModel?.supportsReasoningEffort === false
+      ? []
+      : (input.runtimeModel?.supportedReasoningEfforts ?? []);
   // Providers with dynamic catalogs, including Droid, expose model-specific effort ladders here.
   if (
     (input.provider !== "claudeAgent" &&
@@ -112,8 +119,7 @@ export function getRuntimeAwareModelCapabilities(input: {
       input.provider !== "kilo" &&
       input.provider !== "opencode" &&
       input.provider !== "pi") ||
-    !runtimeEfforts ||
-    runtimeEfforts.length === 0
+    !hasRuntimeEffortMetadata
   ) {
     return {
       ...staticCapabilities,
@@ -147,7 +153,9 @@ export function getRuntimeAwareModelCapabilities(input: {
   // eventually learn about it.
   const runtimeOptionValues = new Set(runtimeOptions.map((option) => option.value));
   const staticClaudeControls =
-    input.provider === "claudeAgent"
+    input.provider === "claudeAgent" &&
+    input.runtimeModel?.supportsReasoningEffort !== false &&
+    runtimeOptions.length > 0
       ? staticCapabilities.reasoningEffortLevels.filter(
           (option) =>
             (option.controlSource === "provider-setting" ||

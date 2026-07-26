@@ -1053,6 +1053,7 @@ export function makeProviderConnectionLive(options?: {
                 provider,
                 binaryPath: command.executable,
                 cwd: providerConnectionCwd,
+                discoveryGeneration: `provider-connection:${operationId}`,
               })
               .pipe(Effect.timeoutOption(Duration.seconds(30)), Effect.result);
             if (

@@ -31,6 +31,34 @@ describe("ProviderListModelsResult", () => {
     expect(result.models[1]?.description).toBeUndefined();
     expect(result.runtimeVersion).toBe("2.1.219");
   });
+
+  it("preserves explicit runtime capability support and denial", () => {
+    const result = decodeProviderListModelsResult({
+      models: [
+        {
+          slug: "runtime-supported",
+          name: "Runtime supported",
+          supportsReasoningEffort: true,
+          supportedReasoningEfforts: [{ value: "high", label: "High" }],
+          supportsThinkingToggle: true,
+        },
+        {
+          slug: "runtime-disabled",
+          name: "Runtime disabled",
+          supportsReasoningEffort: false,
+          supportedReasoningEfforts: [],
+          supportsThinkingToggle: false,
+        },
+      ],
+      source: "sdk",
+    });
+
+    expect(result.models[0]?.supportsReasoningEffort).toBe(true);
+    expect(result.models[0]?.supportsThinkingToggle).toBe(true);
+    expect(result.models[1]?.supportsReasoningEffort).toBe(false);
+    expect(result.models[1]?.supportedReasoningEfforts).toEqual([]);
+    expect(result.models[1]?.supportsThinkingToggle).toBe(false);
+  });
 });
 
 describe("Claude provider discovery generation", () => {

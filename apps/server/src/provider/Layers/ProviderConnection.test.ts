@@ -1,5 +1,6 @@
 import type {
   ProviderKind,
+  ProviderListModelsResult,
   ServerProviderConnectionState,
   ServerProviderInstallationState,
   ServerProviderRuntimeSource,
@@ -158,6 +159,7 @@ function makeConnectionTestLayer(input?: {
   readonly modelsAvailable?: boolean;
   readonly listModelsHanging?: boolean;
   readonly initiallyAuthenticated?: boolean;
+  readonly authenticatedAfterRefresh?: (refreshCall: number) => boolean;
   readonly requiresProviderAccount?: boolean | null;
   readonly installationState?:
     | ServerProviderInstallationState
@@ -166,7 +168,14 @@ function makeConnectionTestLayer(input?: {
     readonly provider: ProviderKind;
     readonly binaryPath?: string;
     readonly cwd?: string;
+    readonly discoveryGeneration?: string;
   }) => void;
+  readonly listModelsEffect?: (input: {
+    readonly provider: ProviderKind;
+    readonly binaryPath?: string;
+    readonly cwd?: string;
+    readonly discoveryGeneration?: string;
+  }) => Effect.Effect<ProviderListModelsResult>;
 }) {
   let connectionState: ServerProviderConnectionState | undefined;
   const connectionStateWaiters = new Set<
@@ -195,7 +204,11 @@ function makeConnectionTestLayer(input?: {
       refreshCalls += 1;
       // The first refresh is the preflight. A completed sign-in is verified by
       // the following refresh, unless the fixture began authenticated.
-      if (refreshCalls > 1 && input?.hanging !== true) authenticated = true;
+      if (input?.authenticatedAfterRefresh) {
+        authenticated = input.authenticatedAfterRefresh(refreshCalls);
+      } else if (refreshCalls > 1 && input?.hanging !== true) {
+        authenticated = true;
+      }
       return [status()];
     }),
     updateProvider: () => Effect.die("unused"),
@@ -213,15 +226,18 @@ function makeConnectionTestLayer(input?: {
     listSkills: () => Effect.die("unused"),
     listPlugins: () => Effect.die("unused"),
     readPlugin: () => Effect.die("unused"),
-    listModels: ({ provider, binaryPath, cwd }) =>
-      input?.listModelsHanging
+    listModels: ({ provider, binaryPath, cwd, discoveryGeneration }) => {
+      const discoveryInput = {
+        provider,
+        ...(binaryPath ? { binaryPath } : {}),
+        ...(cwd ? { cwd } : {}),
+        ...(discoveryGeneration ? { discoveryGeneration } : {}),
+      };
+      input?.onListModels?.(discoveryInput);
+      if (input?.listModelsEffect) return input.listModelsEffect(discoveryInput);
+      return input?.listModelsHanging
         ? Effect.never
         : Effect.sync(() => {
-            input?.onListModels?.({
-              provider,
-              ...(binaryPath ? { binaryPath } : {}),
-              ...(cwd ? { cwd } : {}),
-            });
             return {
               models:
                 input?.modelsAvailable === false
@@ -230,7 +246,8 @@ function makeConnectionTestLayer(input?: {
               source: "test",
               cached: false,
             };
-          }),
+          });
+    },
     listAgents: () => Effect.die("unused"),
   } satisfies ProviderDiscoveryServiceShape);
   const spawnerLayer = Layer.succeed(
@@ -859,6 +876,7 @@ describe("ProviderConnectionLive", () => {
       provider: "antigravity",
       binaryPath: "agy",
       cwd: TEST_PROVIDER_PROBE_CWD,
+      discoveryGeneration: expect.stringMatching(/^provider-connection:/u),
     });
   });
 
@@ -1556,7 +1574,69 @@ describe("ProviderConnectionLive", () => {
       provider: "claudeAgent",
       binaryPath: "claude",
       cwd: TEST_PROVIDER_PROBE_CWD,
+      discoveryGeneration: expect.stringMatching(/^provider-connection:/u),
     });
+  });
+
+  it("isolates retried sign-in discovery when the old catalog resolves last", async () => {
+    const discoveryInputs: Array<{ discoveryGeneration?: string }> = [];
+    const modelResolvers: Array<(result: ProviderListModelsResult) => void> = [];
+    const fixture = makeConnectionTestLayer({
+      // Each operation observes signed-out during preflight and signed-in after
+      // its authentication process completes.
+      authenticatedAfterRefresh: (refreshCall) => refreshCall % 2 === 0,
+      onListModels: (input) => discoveryInputs.push(input),
+      listModelsEffect: () =>
+        Effect.promise(
+          () =>
+            new Promise<ProviderListModelsResult>((resolve) => {
+              modelResolvers.push(resolve);
+            }),
+        ),
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const first = yield* connection.start({
+          provider: "claudeAgent",
+          method: "claude_account",
+        });
+        const firstOperationId = first.providers[0]?.connectionState?.operationId;
+        yield* Effect.sleep(Duration.millis(10));
+        expect(discoveryInputs).toHaveLength(1);
+
+        yield* connection.cancel({ provider: "claudeAgent", operationId: firstOperationId! });
+        const second = yield* connection.start({
+          provider: "claudeAgent",
+          method: "claude_sso",
+        });
+        const secondOperationId = second.providers[0]?.connectionState?.operationId;
+        yield* Effect.sleep(Duration.millis(10));
+        expect(discoveryInputs).toHaveLength(2);
+        expect(discoveryInputs[0]?.discoveryGeneration).toBe(
+          `provider-connection:${firstOperationId}`,
+        );
+        expect(discoveryInputs[1]?.discoveryGeneration).toBe(
+          `provider-connection:${secondOperationId}`,
+        );
+        expect(discoveryInputs[1]?.discoveryGeneration).not.toBe(
+          discoveryInputs[0]?.discoveryGeneration,
+        );
+
+        modelResolvers[1]?.({
+          models: [{ slug: "current-account-model", name: "Current account model" }],
+          source: "test",
+          cached: false,
+        });
+        yield* Effect.sleep(Duration.millis(10));
+        expect(fixture.getConnectionState()?.status).toBe("connected");
+
+        modelResolvers[0]?.({ models: [], source: "test", cached: false });
+        yield* Effect.sleep(Duration.millis(10));
+        expect(fixture.getConnectionState()?.status).toBe("connected");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
   });
 
   it("does not report connected when authenticated model discovery is empty", async () => {
