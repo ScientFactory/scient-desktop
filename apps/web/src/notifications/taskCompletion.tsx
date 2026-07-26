@@ -1,5 +1,5 @@
 // FILE: taskCompletion.tsx
-// Purpose: Bridges thread completion and attention-needed events to Activity and OS notifications.
+// Purpose: Bridges thread and terminal lifecycle events to their owned notification surfaces.
 // Layer: Notification runtime
 // Exports: TaskCompletionNotifications and browser permission helpers
 
@@ -33,8 +33,10 @@ import {
   collectInputNeededThreadCandidates,
   collectTerminalAttentionCandidates,
   isNotificationRuntimeFreshTimestamp,
+  legacyThreadCompletionActivityKeys,
   shouldShowThreadNotificationToast,
   staleAttentionActivityKeys,
+  threadCompletionDeliveryPolicy,
 } from "./taskCompletion.logic";
 
 export type BrowserNotificationPermissionState =
@@ -152,7 +154,7 @@ function publishThreadActivity(
   });
 }
 
-function reconcilePersistedAttentionActivity(
+function reconcilePersistedTaskActivity(
   threads: readonly Thread[],
   terminalStateByThreadId: Parameters<typeof activeTerminalAttentionActivityKeys>[0],
 ): void {
@@ -164,6 +166,9 @@ function reconcilePersistedAttentionActivity(
     useActivityStore.getState().items,
     activeKeys,
   )) {
+    activityManager.remove(dedupeKey);
+  }
+  for (const dedupeKey of legacyThreadCompletionActivityKeys(useActivityStore.getState().items)) {
     activityManager.remove(dedupeKey);
   }
 }
@@ -220,7 +225,7 @@ export function TaskCompletionNotifications() {
     if (!readyRef.current) {
       previousThreadsRef.current = threads;
       previousTerminalStateRef.current = terminalStateByThreadId;
-      reconcilePersistedAttentionActivity(threads, terminalStateByThreadId);
+      reconcilePersistedTaskActivity(threads, terminalStateByThreadId);
       readyRef.current = true;
       return;
     }
@@ -269,28 +274,18 @@ export function TaskCompletionNotifications() {
     }
 
     const windowForeground = isWindowForeground();
+    const threadCompletionDelivery = threadCompletionDeliveryPolicy({
+      systemNotificationsEnabled: settings.enableSystemTaskCompletionNotifications,
+      windowForeground,
+    });
     const shouldAttemptSystemNotification =
       settings.enableSystemTaskCompletionNotifications && !windowForeground;
 
     for (const completion of completions) {
       const copy = buildTaskCompletionCopy(completion);
-      if (
-        settings.enableTaskCompletionToasts &&
-        (!windowForeground ||
-          shouldShowThreadNotificationToast({
-            threadId: completion.threadId,
-            visibleThreadIds,
-          }))
-      ) {
-        publishThreadActivity(copy, completion.threadId, {
-          dedupeKey: `thread:${completion.threadId}:completed:${completion.completedAt}`,
-          occurredAt: completion.completedAt,
-          status: "recent",
-          tone: "success",
-        });
-      }
-
-      if (shouldAttemptSystemNotification) {
+      // The completed reply and unread state already live in the thread/sidebar. Only the
+      // optional OS notification crosses surfaces when Scient is not foregrounded.
+      if (threadCompletionDelivery.showSystemNotification) {
         void showSystemThreadNotification(copy, completion.threadId, navigate);
       }
     }
