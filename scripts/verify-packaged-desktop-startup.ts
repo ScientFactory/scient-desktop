@@ -948,7 +948,12 @@ export async function terminateProcessTree(
   }
 
   if (!rootTarget) {
-    if (await awaitTargetsExit(targets, 2_000)) return;
+    if (await awaitTargetsExit(targets, 2_000)) {
+      if (dependencies.posixPayloadCompletionProven?.() === true) return;
+      throw new Error(
+        "Packaged POSIX sentinel vanished without a native-child outcome; preserving evidence because unobserved descendants may remain.",
+      );
+    }
     throw new Error(
       `Packaged POSIX sentinel exited before cleanup while observed descendants ${targets.map(({ pid }) => pid).join(", ")} remained; refusing numeric signaling authority.`,
     );
@@ -956,7 +961,12 @@ export async function terminateProcessTree(
   const sendSignal = dependencies.sendSignal ?? sendProcessTreeSignal;
   const targetIsAlive = dependencies.targetIsAlive ?? processTerminationTargetIsAlive;
   if (!targetIsAlive(rootTarget)) {
-    if (await awaitTargetsExit(targets, 2_000)) return;
+    if (await awaitTargetsExit(targets, 2_000)) {
+      if (dependencies.posixPayloadCompletionProven?.() === true) return;
+      throw new Error(
+        "Packaged POSIX sentinel vanished without a native-child outcome; preserving evidence because unobserved descendants may remain.",
+      );
+    }
     throw new Error("Packaged POSIX sentinel disappeared before its descendants were reaped.");
   }
   sendSignal(rootTarget, "SIGTERM");
@@ -1062,15 +1072,20 @@ export interface PackagedDesktopChildOutcome {
   readonly launchError: Error | null;
 }
 
+interface InspectedPackagedDesktopChildOutcome {
+  readonly evidence: "pending" | "proven" | "invalid";
+  readonly outcome: PackagedDesktopChildOutcome;
+}
+
 export function resolvePackagedNativeChildOutcomePath(environment: NodeJS.ProcessEnv): string {
   const scientHome = environment.SCIENT_HOME?.trim();
   if (!scientHome) throw new Error("Packaged startup smoke requires an isolated SCIENT_HOME.");
   return join(scientHome, PACKAGED_NATIVE_CHILD_OUTCOME_FILE);
 }
 
-export function readPackagedNativeChildOutcome(
+function inspectPackagedNativeChildOutcome(
   environment: NodeJS.ProcessEnv,
-): PackagedDesktopChildOutcome {
+): InspectedPackagedDesktopChildOutcome {
   try {
     const parsed = JSON.parse(
       readFileSync(resolvePackagedNativeChildOutcomePath(environment), "utf8"),
@@ -1087,26 +1102,51 @@ export function readPackagedNativeChildOutcome(
       launchError === null
     ) {
       return {
-        exited: {
-          code: exited.code,
-          signal: exited.signal as NodeJS.Signals | null,
+        evidence: "proven",
+        outcome: {
+          exited: {
+            code: exited.code,
+            signal: exited.signal as NodeJS.Signals | null,
+          },
+          launchError: null,
         },
-        launchError: null,
       };
     }
     if (exited === null && launchError && typeof launchError.message === "string") {
-      return { exited: null, launchError: new Error(launchError.message) };
-    }
-    return { exited: null, launchError: new Error("Malformed packaged native child outcome.") };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { exited: null, launchError: null };
+      return {
+        evidence: "proven",
+        outcome: { exited: null, launchError: new Error(launchError.message) },
+      };
     }
     return {
-      exited: null,
-      launchError: error instanceof Error ? error : new Error(String(error)),
+      evidence: "invalid",
+      outcome: {
+        exited: null,
+        launchError: new Error("Malformed packaged native child outcome."),
+      },
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { evidence: "pending", outcome: { exited: null, launchError: null } };
+    }
+    return {
+      evidence: "invalid",
+      outcome: {
+        exited: null,
+        launchError: error instanceof Error ? error : new Error(String(error)),
+      },
     };
   }
+}
+
+export function readPackagedNativeChildOutcome(
+  environment: NodeJS.ProcessEnv,
+): PackagedDesktopChildOutcome {
+  return inspectPackagedNativeChildOutcome(environment).outcome;
+}
+
+export function hasProvenPackagedNativeChildOutcome(environment: NodeJS.ProcessEnv): boolean {
+  return inspectPackagedNativeChildOutcome(environment).evidence === "proven";
 }
 
 async function waitForPackagedNativeChildOutcome(
@@ -1115,8 +1155,7 @@ async function waitForPackagedNativeChildOutcome(
 ): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const outcome = readPackagedNativeChildOutcome(environment);
-    if (outcome.exited || outcome.launchError) return true;
+    if (hasProvenPackagedNativeChildOutcome(environment)) return true;
     await delay(Math.min(100, Math.max(1, deadline - Date.now())));
   }
   return false;
@@ -1315,8 +1354,7 @@ async function verifyPackagedDesktopPayload(
           ...(process.platform !== "win32" && environment
             ? {
                 posixPayloadCompletionProven: () => {
-                  const outcome = readPackagedNativeChildOutcome(environment!);
-                  return Boolean(outcome.exited || outcome.launchError);
+                  return hasProvenPackagedNativeChildOutcome(environment!);
                 },
                 waitForPosixPayloadExit: (timeoutMs: number) =>
                   waitForPackagedNativeChildOutcome(environment!, timeoutMs),

@@ -1,4 +1,4 @@
-import type { ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import {
   existsSync,
@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -23,6 +24,7 @@ import {
   expectedPackagedDesktopStartupAssetName,
   expectedPackagedDesktopStartupAssetNames,
   formatPackagedStartupFailures,
+  hasProvenPackagedNativeChildOutcome,
   hasPackagedStartupProof,
   isScientWindowsExecutable,
   monitorPackagedStartupTermination,
@@ -659,8 +661,14 @@ describe("packaged desktop startup verification", () => {
     ]!;
     const jobScript = readFileSync(jobScriptPath, "utf8");
     expect(jobScript).toContain("CREATE_SUSPENDED");
+    expect(jobScript).toContain("EXTENDED_STARTUPINFO_PRESENT");
     expect(jobScript).toContain("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE");
-    expect(jobScript.indexOf("AssignProcessToJobObject(job, child.hProcess)")).toBeLessThan(
+    expect(jobScript).toContain("PROC_THREAD_ATTRIBUTE_JOB_LIST");
+    expect(jobScript).not.toContain("AssignProcessToJobObject");
+    expect(jobScript.indexOf("if (!UpdateProcThreadAttribute(")).toBeLessThan(
+      jobScript.indexOf("if (!CreateProcess("),
+    );
+    expect(jobScript.indexOf("if (!CreateProcess(")).toBeLessThan(
       jobScript.indexOf("ResumeThread(child.hThread)"),
     );
 
@@ -681,6 +689,78 @@ describe("packaged desktop startup verification", () => {
     expect(posixCall[2]).toEqual(expect.objectContaining({ detached: true }));
   });
 
+  it.skipIf(process.platform !== "win32")(
+    "atomically kills the suspended Windows payload when its launcher is interrupted pre-resume",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "scient-packaged-job-cancel-test-"));
+      temporaryRoots.push(root);
+      const markerPath = join(root, "pre-resume.marker");
+      const gatePath = join(root, "pre-resume.gate");
+      const powershell = join(
+        process.env.SystemRoot ?? "C:\\Windows",
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe",
+      );
+      const launcher = spawn(
+        powershell,
+        [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          fileURLToPath(new URL("./lib/packaged-startup-windows-job.ps1", import.meta.url)),
+          "-ExecutablePath",
+          powershell,
+          "-WorkingDirectory",
+          root,
+          "-PreResumeMarkerPath",
+          markerPath,
+          "-PreResumeGatePath",
+          gatePath,
+        ],
+        { stdio: "ignore" },
+      );
+
+      const waitUntil = async (predicate: () => boolean, timeoutMs: number): Promise<boolean> => {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          if (predicate()) return true;
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+        }
+        return predicate();
+      };
+      const markerAppeared = await waitUntil(() => existsSync(markerPath), 15_000);
+      const payloadProcessId = markerAppeared ? Number(readFileSync(markerPath, "utf8")) : null;
+      const launcherTerminated = launcher.kill();
+      const launcherExited = await waitUntil(
+        () => launcher.exitCode !== null || launcher.signalCode !== null,
+        5_000,
+      );
+
+      expect(markerAppeared).toBe(true);
+      expect(
+        payloadProcessId !== null && Number.isInteger(payloadProcessId) && payloadProcessId > 0,
+      ).toBe(true);
+      expect(launcherTerminated).toBe(true);
+      expect(launcherExited).toBe(true);
+      expect(
+        await waitUntil(() => {
+          try {
+            process.kill(payloadProcessId!, 0);
+            return false;
+          } catch (error) {
+            return (error as NodeJS.ErrnoException).code === "ESRCH";
+          }
+        }, 5_000),
+      ).toBe(true);
+    },
+    30_000,
+  );
+
   it("reads the POSIX sentinel native-child outcome from isolated state", () => {
     const root = mkdtempSync(join(tmpdir(), "scient-packaged-outcome-test-"));
     temporaryRoots.push(root);
@@ -698,8 +778,14 @@ describe("packaged desktop startup verification", () => {
       exited: { code: 7, signal: null },
       launchError: null,
     });
+    expect(hasProvenPackagedNativeChildOutcome(environment)).toBe(true);
     writeFileSync(join(root, "packaged-native-child-outcome.json"), "{malformed");
     expect(readPackagedNativeChildOutcome(environment).launchError).toBeInstanceOf(Error);
+    expect(hasProvenPackagedNativeChildOutcome(environment)).toBe(false);
+    rmSync(join(root, "packaged-native-child-outcome.json"));
+    mkdirSync(join(root, "packaged-native-child-outcome.json"));
+    expect(readPackagedNativeChildOutcome(environment).launchError).toBeInstanceOf(Error);
+    expect(hasProvenPackagedNativeChildOutcome(environment)).toBe(false);
   });
 
   it("recovers every spawned backend PID before runtime state is durable", () => {
@@ -865,6 +951,48 @@ describe("packaged desktop startup verification", () => {
         platform: "darwin",
         posixPayloadCompletionProven: () => false,
       }),
+    ).rejects.toThrow("sentinel vanished without a native-child outcome");
+  });
+
+  it("fails closed after observed POSIX descendants exit without proven native completion", async () => {
+    const child = {
+      exitCode: 1,
+      pid: 42,
+      signalCode: null,
+    } as unknown as ChildProcess;
+
+    await expect(
+      terminateProcessTree(
+        child,
+        {
+          platform: "darwin",
+          posixPayloadCompletionProven: () => false,
+          waitForTargetsExit: async () => true,
+        },
+        [84],
+      ),
+    ).rejects.toThrow("sentinel vanished without a native-child outcome");
+  });
+
+  it("fails closed when the POSIX sentinel disappears while cleanup is starting", async () => {
+    const child = {
+      exitCode: null,
+      pid: 42,
+      signalCode: null,
+    } as unknown as ChildProcess;
+
+    await expect(
+      terminateProcessTree(
+        child,
+        {
+          platform: "darwin",
+          childIsAlive: () => true,
+          posixPayloadCompletionProven: () => false,
+          targetIsAlive: () => false,
+          waitForTargetsExit: async () => true,
+        },
+        [84],
+      ),
     ).rejects.toThrow("sentinel vanished without a native-child outcome");
   });
 

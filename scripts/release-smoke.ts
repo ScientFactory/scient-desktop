@@ -461,13 +461,25 @@ function verifyReleaseWorkflowSafety(): void {
     "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE",
     "Expected Windows startup proof to use kill-on-close Job Object containment.",
   );
+  assertContains(
+    windowsStartupJobLauncher,
+    "PROC_THREAD_ATTRIBUTE_JOB_LIST",
+    "Expected Windows startup proof to assign the native process to its Job Object atomically at creation.",
+  );
+  assertNotContains(
+    windowsStartupJobLauncher,
+    "AssignProcessToJobObject",
+    "Windows startup proof must not restore a pre-containment process-creation window.",
+  );
   if (
-    windowsStartupJobLauncher.indexOf("AssignProcessToJobObject(job, child.hProcess)") < 0 ||
-    windowsStartupJobLauncher.indexOf("AssignProcessToJobObject(job, child.hProcess)") >
+    windowsStartupJobLauncher.indexOf("if (!UpdateProcThreadAttribute(") < 0 ||
+    windowsStartupJobLauncher.indexOf("if (!UpdateProcThreadAttribute(") >
+      windowsStartupJobLauncher.indexOf("if (!CreateProcess(") ||
+    windowsStartupJobLauncher.indexOf("if (!CreateProcess(") >
       windowsStartupJobLauncher.indexOf("ResumeThread(child.hThread)")
   ) {
     throw new Error(
-      "Expected Windows startup proof to assign the suspended Electron process before resume.",
+      "Expected Windows startup proof to create Electron atomically inside the Job Object before resume.",
     );
   }
   assertContains(

@@ -1,6 +1,8 @@
 param(
   [Parameter(Mandatory = $true)][string]$ExecutablePath,
-  [Parameter(Mandatory = $true)][string]$WorkingDirectory
+  [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+  [string]$PreResumeMarkerPath = '',
+  [string]$PreResumeGatePath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -8,15 +10,21 @@ $ErrorActionPreference = 'Stop'
 $source = @'
 using System;
 using System.ComponentModel;
+using System.Globalization;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 public static class ScientPackagedStartupJobLauncher
 {
     private const uint CREATE_SUSPENDED = 0x00000004;
+    private const uint EXTENDED_STARTUPINFO_PRESENT = 0x00080000;
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+    private const int ERROR_INSUFFICIENT_BUFFER = 122;
     private const int JobObjectExtendedLimitInformation = 9;
     private const uint INFINITE = 0xFFFFFFFF;
+    private static readonly IntPtr PROC_THREAD_ATTRIBUTE_JOB_LIST = new IntPtr(0x0002000D);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct STARTUPINFO
@@ -39,6 +47,13 @@ public static class ScientPackagedStartupJobLauncher
         public IntPtr hStdInput;
         public IntPtr hStdOutput;
         public IntPtr hStdError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct STARTUPINFOEX
+    {
+        public STARTUPINFO StartupInfo;
+        public IntPtr lpAttributeList;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -97,9 +112,6 @@ public static class ScientPackagedStartupJobLauncher
         uint informationLength
     );
 
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
-
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CreateProcess(
         string applicationName,
@@ -110,9 +122,31 @@ public static class ScientPackagedStartupJobLauncher
         uint creationFlags,
         IntPtr environment,
         string currentDirectory,
-        ref STARTUPINFO startupInfo,
+        ref STARTUPINFOEX startupInfo,
         out PROCESS_INFORMATION processInformation
     );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool InitializeProcThreadAttributeList(
+        IntPtr attributeList,
+        int attributeCount,
+        int flags,
+        ref IntPtr size
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool UpdateProcThreadAttribute(
+        IntPtr attributeList,
+        uint flags,
+        IntPtr attribute,
+        IntPtr value,
+        IntPtr size,
+        IntPtr previousValue,
+        IntPtr returnSize
+    );
+
+    [DllImport("kernel32.dll")]
+    private static extern void DeleteProcThreadAttributeList(IntPtr attributeList);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern uint ResumeThread(IntPtr thread);
@@ -124,9 +158,6 @@ public static class ScientPackagedStartupJobLauncher
     private static extern bool GetExitCodeProcess(IntPtr process, out uint exitCode);
 
     [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool TerminateProcess(IntPtr process, uint exitCode);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr handle);
 
     private static void ThrowLastError(string operation)
@@ -134,16 +165,37 @@ public static class ScientPackagedStartupJobLauncher
         throw new Win32Exception(Marshal.GetLastWin32Error(), operation);
     }
 
-    public static int Run(string executablePath, string workingDirectory)
+    private static void AwaitPreResumeGate(
+        string markerPath,
+        string gatePath,
+        uint childProcessId
+    )
+    {
+        bool hasMarker = !String.IsNullOrWhiteSpace(markerPath);
+        bool hasGate = !String.IsNullOrWhiteSpace(gatePath);
+        if (!hasMarker && !hasGate) return;
+        if (!hasMarker || !hasGate)
+            throw new ArgumentException("Pre-resume marker and gate paths must be supplied together.");
+
+        File.WriteAllText(markerPath, childProcessId.ToString(CultureInfo.InvariantCulture));
+        while (!File.Exists(gatePath)) Thread.Sleep(20);
+    }
+
+    public static int Run(
+        string executablePath,
+        string workingDirectory,
+        string preResumeMarkerPath,
+        string preResumeGatePath
+    )
     {
         if (executablePath.IndexOf('"') >= 0)
             throw new ArgumentException("Executable path contains an invalid quote.", "executablePath");
 
         IntPtr job = IntPtr.Zero;
         IntPtr information = IntPtr.Zero;
+        IntPtr attributeList = IntPtr.Zero;
+        IntPtr jobList = IntPtr.Zero;
         PROCESS_INFORMATION child = new PROCESS_INFORMATION();
-        bool childCreated = false;
-        bool childAssigned = false;
         try
         {
             job = CreateJobObject(IntPtr.Zero, null);
@@ -162,8 +214,31 @@ public static class ScientPackagedStartupJobLauncher
                 (uint)informationSize
             )) ThrowLastError("SetInformationJobObject failed");
 
-            STARTUPINFO startup = new STARTUPINFO();
-            startup.cb = (uint)Marshal.SizeOf(typeof(STARTUPINFO));
+            IntPtr attributeListSize = IntPtr.Zero;
+            InitializeProcThreadAttributeList(IntPtr.Zero, 1, 0, ref attributeListSize);
+            if (
+                Marshal.GetLastWin32Error() != ERROR_INSUFFICIENT_BUFFER ||
+                attributeListSize == IntPtr.Zero
+            ) ThrowLastError("InitializeProcThreadAttributeList sizing failed");
+            attributeList = Marshal.AllocHGlobal(attributeListSize);
+            if (!InitializeProcThreadAttributeList(attributeList, 1, 0, ref attributeListSize))
+                ThrowLastError("InitializeProcThreadAttributeList failed");
+
+            jobList = Marshal.AllocHGlobal(IntPtr.Size);
+            Marshal.WriteIntPtr(jobList, job);
+            if (!UpdateProcThreadAttribute(
+                attributeList,
+                0,
+                PROC_THREAD_ATTRIBUTE_JOB_LIST,
+                jobList,
+                new IntPtr(IntPtr.Size),
+                IntPtr.Zero,
+                IntPtr.Zero
+            )) ThrowLastError("UpdateProcThreadAttribute for Job Object failed");
+
+            STARTUPINFOEX startup = new STARTUPINFOEX();
+            startup.StartupInfo.cb = (uint)Marshal.SizeOf(typeof(STARTUPINFOEX));
+            startup.lpAttributeList = attributeList;
             StringBuilder commandLine = new StringBuilder("\"" + executablePath + "\"");
             if (!CreateProcess(
                 executablePath,
@@ -171,17 +246,16 @@ public static class ScientPackagedStartupJobLauncher
                 IntPtr.Zero,
                 IntPtr.Zero,
                 false,
-                CREATE_SUSPENDED,
+                CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT,
                 IntPtr.Zero,
                 workingDirectory,
                 ref startup,
                 out child
             )) ThrowLastError("CreateProcess failed");
-            childCreated = true;
-
-            if (!AssignProcessToJobObject(job, child.hProcess))
-                ThrowLastError("AssignProcessToJobObject failed");
-            childAssigned = true;
+            // PROC_THREAD_ATTRIBUTE_JOB_LIST makes Job membership atomic with
+            // process creation, before this launcher can be interrupted and
+            // before any native payload instruction is allowed to execute.
+            AwaitPreResumeGate(preResumeMarkerPath, preResumeGatePath, child.dwProcessId);
             if (ResumeThread(child.hThread) == UInt32.MaxValue)
                 ThrowLastError("ResumeThread failed");
 
@@ -193,13 +267,11 @@ public static class ScientPackagedStartupJobLauncher
         }
         finally
         {
-            if (childCreated && !childAssigned && child.hProcess != IntPtr.Zero)
-            {
-                TerminateProcess(child.hProcess, 1);
-                WaitForSingleObject(child.hProcess, INFINITE);
-            }
             if (child.hThread != IntPtr.Zero) CloseHandle(child.hThread);
             if (child.hProcess != IntPtr.Zero) CloseHandle(child.hProcess);
+            if (attributeList != IntPtr.Zero) DeleteProcThreadAttributeList(attributeList);
+            if (jobList != IntPtr.Zero) Marshal.FreeHGlobal(jobList);
+            if (attributeList != IntPtr.Zero) Marshal.FreeHGlobal(attributeList);
             if (information != IntPtr.Zero) Marshal.FreeHGlobal(information);
             // Closing the final job handle atomically terminates every process
             // that Electron created inside the kill-on-close job.
@@ -210,4 +282,9 @@ public static class ScientPackagedStartupJobLauncher
 '@
 
 Add-Type -TypeDefinition $source -Language CSharp
-exit [ScientPackagedStartupJobLauncher]::Run($ExecutablePath, $WorkingDirectory)
+exit [ScientPackagedStartupJobLauncher]::Run(
+  $ExecutablePath,
+  $WorkingDirectory,
+  $PreResumeMarkerPath,
+  $PreResumeGatePath
+)
