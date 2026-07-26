@@ -1,19 +1,33 @@
 import { ProjectId } from "@synara/contracts";
-import type { OrchestrationProject, OrchestrationReadModel } from "@synara/contracts";
-import { Deferred, Effect, Fiber } from "effect";
+import type { OrchestrationProject } from "@synara/contracts";
+import { Deferred, Effect, Fiber, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 
+import { ServerConfig, type ServerConfigShape } from "../../config";
 import { GitHubCliError } from "../../git/Errors";
-import type {
-  GitHubCliShape,
-  GitHubPullRequestListBatch,
-  GitHubPullRequestListItem,
+import { GitCore, type GitCoreShape } from "../../git/Services/GitCore";
+import {
+  GitHubCli,
+  type GitHubCliShape,
+  type GitHubPullRequestListBatch,
+  type GitHubPullRequestListItem,
 } from "../../git/Services/GitHubCli";
 import { createGitHubCliWithFakeGh } from "../../git/testing/fakeGitHubCli";
-import type { ProjectPullRequestPinsShape } from "../../persistence/Services/ProjectPullRequestPins";
+import {
+  ProjectionSnapshotQuery,
+  type ProjectionSnapshotQueryShape,
+} from "../../orchestration/Services/ProjectionSnapshotQuery";
+import {
+  ProjectPullRequestPins,
+  type ProjectPullRequestPinsShape,
+} from "../../persistence/Services/ProjectPullRequestPins";
+import { PullRequestService } from "../Services/PullRequestService";
 import {
   PULL_REQUEST_PIN_RECOVERY_LIMIT,
+  PullRequestServiceLive,
   isDefinitivePullRequestNotFound,
+  listLiveProjectsForPullRequests,
+  liveProjectFromShell,
   makePullRequestService,
 } from "./PullRequestService";
 
@@ -62,10 +76,6 @@ function makeBatch(
   return { entries, rawCount };
 }
 
-function makeSnapshot(projects: OrchestrationProject[]): OrchestrationReadModel {
-  return { snapshotSequence: 1, projects, threads: [], updatedAt: now };
-}
-
 function makePins(
   rows: ReadonlyArray<{ projectId: ProjectId; repositoryKey: string; number: number }> = [],
   onSetPinned?: (input: {
@@ -92,7 +102,7 @@ function makeDependencies(input: {
     homeDir: "/tmp",
     github: input.github,
     pins: input.pins ?? makePins(),
-    getSnapshot: () => Effect.succeed(makeSnapshot(input.projects)),
+    listProjects: () => Effect.succeed(input.projects),
     resolveRepositories: (project: OrchestrationProject) => {
       const repository = input.repositories.get(project.id);
       return Effect.succeed({
@@ -106,6 +116,107 @@ function makeDependencies(input: {
 }
 
 describe("PullRequestService", () => {
+  it("uses lightweight live projects without hydrating the full orchestration snapshot", async () => {
+    const liveProject = makeProject("project-live", "Live", "/tmp/live");
+    const deletedProject = {
+      ...makeProject("project-deleted", "Deleted", "/tmp/deleted"),
+      deletedAt: "2026-07-15T01:00:00.000Z",
+    };
+    const nonProject = {
+      ...makeProject("project-chat", "Chat", "/tmp/chat"),
+      kind: "chat" as const,
+    };
+    const resolvedProjectIds: ProjectId[] = [];
+    const dependencies = makeDependencies({
+      projects: [liveProject, deletedProject, nonProject],
+      repositories: new Map([[liveProject.id, "acme/live"]]),
+      github: createGitHubCliWithFakeGh().service,
+    });
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* makePullRequestService({
+            ...dependencies,
+            listProjects: () => Effect.succeed([liveProject, deletedProject, nonProject]),
+            resolveRepositories: (project) => {
+              resolvedProjectIds.push(project.id);
+              return dependencies.resolveRepositories(project);
+            },
+          });
+          return yield* service.list({ state: "open", involvement: "authored" });
+        }),
+      ),
+    );
+
+    expect(resolvedProjectIds).toEqual([liveProject.id]);
+    expect(result.repositoryBatches).toHaveLength(1);
+  });
+
+  it("restores only the known live deletion marker on project shell rows", () => {
+    const { deletedAt: _deletedAt, ...shell } = makeProject("project-shell", "Shell", "/tmp/shell");
+
+    expect(liveProjectFromShell(shell)).toEqual({ ...shell, deletedAt: null });
+  });
+
+  it("loads polling projects only through the project-only projection seam", async () => {
+    const { deletedAt: _deletedAt, ...shell } = makeProject(
+      "project-polling-shell",
+      "Polling",
+      "/tmp/polling",
+    );
+    let projectReads = 0;
+
+    const projects = await Effect.runPromise(
+      listLiveProjectsForPullRequests({
+        listActiveProjectShells: () =>
+          Effect.sync(() => {
+            projectReads += 1;
+            return [shell];
+          }),
+      }),
+    );
+
+    expect(projectReads).toBe(1);
+    expect(projects).toEqual([{ ...shell, deletedAt: null }]);
+  });
+
+  it("wires the live service to the project-only projection seam", async () => {
+    const { deletedAt: _deletedAt, ...chatShell } = {
+      ...makeProject("project-live-layer", "Home", "/tmp/home"),
+      kind: "chat" as const,
+    };
+    let projectReads = 0;
+    const projection = {
+      listActiveProjectShells: () =>
+        Effect.sync(() => {
+          projectReads += 1;
+          return [chatShell];
+        }),
+      getShellSnapshot: () => Effect.die("PR polling must not read the shell snapshot"),
+      getSnapshot: () => Effect.die("PR polling must not read the full snapshot"),
+    } as unknown as ProjectionSnapshotQueryShape;
+    const layer = PullRequestServiceLive.pipe(
+      Layer.provideMerge(Layer.succeed(ServerConfig, { homeDir: "/tmp" } as ServerConfigShape)),
+      Layer.provideMerge(Layer.succeed(GitCore, {} as GitCoreShape)),
+      Layer.provideMerge(Layer.succeed(GitHubCli, createGitHubCliWithFakeGh().service)),
+      Layer.provideMerge(Layer.succeed(ProjectPullRequestPins, makePins())),
+      Layer.provideMerge(Layer.succeed(ProjectionSnapshotQuery, projection)),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const service = yield* PullRequestService;
+          return yield* service.reviewRequestCount({ projectId: null });
+        }).pipe(Effect.provide(layer)),
+      ),
+    );
+
+    expect(projectReads).toBe(1);
+    expect(result).toEqual({ count: 0, incomplete: false });
+  });
+
   it("returns one repository-level row for projects sharing a repository", async () => {
     const projectA = makeProject("project-list-a", "List A", "/tmp/list-a");
     const projectB = makeProject("project-list-b", "feature-1", "/tmp/list-b");
