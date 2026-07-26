@@ -3,6 +3,7 @@
 set -euo pipefail
 
 apple_key_path=""
+windows_signed="false"
 cleanup_sensitive_files() {
   if [[ -n "$apple_key_path" ]]; then
     rm -f -- "$apple_key_path"
@@ -85,9 +86,11 @@ elif [[ "$platform" == "win" ]]; then
 
   if has_all "${certificate_values[@]}" && ! has_any "${azure_values[@]}"; then
     echo "Windows signing enabled (standard Authenticode certificate)."
+    windows_signed="true"
     args+=(--signed)
   elif has_all "${azure_values[@]}" && ! has_any "${certificate_values[@]}"; then
     echo "Windows signing enabled (Azure Trusted Signing)."
+    windows_signed="true"
     args+=(--signed)
   elif has_any "${certificate_values[@]}" || has_any "${azure_values[@]}"; then
     if [[ "$PUBLISH_RELEASE" == "true" ]]; then
@@ -105,6 +108,10 @@ elif [[ "$platform" == "win" ]]; then
   fi
 else
   echo "Signing disabled for $platform."
+fi
+
+if [[ "$platform" == "win" && -n "${GITHUB_OUTPUT:-}" ]]; then
+  printf 'windows_signed=%s\n' "$windows_signed" >> "$GITHUB_OUTPUT"
 fi
 
 # Do not retry the whole macOS build: once notarization starts, a broad retry can

@@ -271,6 +271,48 @@ describe("ProviderRuntimeManager managed integrity", () => {
     },
   );
 
+  it.runIf(process.platform === "win32")(
+    "does not inspect persistent Windows environment when sync is disabled",
+    async () => {
+      const baseDir = mkdtempSync(path.join(os.tmpdir(), "scient-windows-isolated-env-"));
+      const previousDisabled = process.env.SCIENT_DISABLE_SHELL_ENV_SYNC;
+      const previousPath = process.env.PATH;
+      shellMocks.readWindowsPersistentEnvironmentAsync.mockClear();
+      try {
+        process.env.SCIENT_DISABLE_SHELL_ENV_SYNC = "1";
+        process.env.PATH = path.join(baseDir, "isolated-empty");
+        mkdirSync(process.env.PATH);
+
+        const configLayer = ServerConfig.layerTest(baseDir, baseDir).pipe(
+          Layer.provide(NodeServices.layer),
+        );
+        const runtimeLayer = ProviderRuntimeManagerLive.pipe(Layer.provide(configLayer));
+        const layer = Layer.mergeAll(configLayer, runtimeLayer).pipe(
+          Layer.provide(NodeServices.layer),
+        );
+        await Effect.runPromise(
+          Effect.gen(function* () {
+            const manager = yield* ProviderRuntimeManager;
+            yield* manager.resolve("codex");
+          }).pipe(Effect.provide(layer), Effect.scoped),
+        );
+
+        expect(shellMocks.readWindowsPersistentEnvironmentAsync).not.toHaveBeenCalled();
+      } finally {
+        shellMocks.readWindowsPersistentEnvironmentAsync.mockImplementation(
+          async (): Promise<Partial<Record<string, string>>> => ({
+            ...process.env,
+          }),
+        );
+        if (previousDisabled === undefined) delete process.env.SCIENT_DISABLE_SHELL_ENV_SYNC;
+        else process.env.SCIENT_DISABLE_SHELL_ENV_SYNC = previousDisabled;
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+        rmSync(baseDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("revalidates the executable after restart and rejects later corruption", async () => {
     const baseDir = mkdtempSync(path.join(os.tmpdir(), "scient-runtime-integrity-"));
     const previousPath = process.env.PATH;

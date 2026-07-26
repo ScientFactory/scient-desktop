@@ -205,6 +205,9 @@ jobs:
           bun run --cwd apps/desktop test src/desktopBackendSupervisor.test.ts src/backendProcessTree.test.ts
           bun run --cwd apps/server test src/desktopParentShutdown.test.ts
 
+      - name: Test packaged startup Windows launcher
+        run: bun x vitest run scripts/verify-packaged-desktop-startup.test.ts
+
       - name: Exercise Windows release staging
         run: bun run release:smoke
 
