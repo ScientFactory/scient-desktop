@@ -1,0 +1,57 @@
+// FILE: forkProvenance.ts
+// Purpose: Resolve stable, truthful presentation data for a forked conversation's transcript marker.
+// Layer: Web chat presentation helpers
+
+import type { MessageId, ThreadId } from "@synara/contracts";
+
+export interface ForkProvenance {
+  sourceThreadId: ThreadId;
+  sourceMessageId: MessageId | null;
+  sourceTitle: string | null;
+  sourceAvailable: boolean;
+}
+
+interface ForkProvenanceThread {
+  id: ThreadId;
+  forkSourceThreadId?: ThreadId | null;
+  forkSourceMessageId?: MessageId | null;
+  forkTitleBase?: string | null;
+  sidechatSourceThreadId?: ThreadId | null;
+}
+
+interface ForkSourceThread {
+  id: ThreadId;
+  title: string;
+}
+
+function normalizedTitle(value: string | null | undefined): string | null {
+  const title = value?.trim();
+  return title ? title : null;
+}
+
+/**
+ * Uses only metadata already carried by the fork plus the lightweight source
+ * thread summary. The stored title base remains a truthful fallback after the
+ * source is deleted; no message hydration or cross-thread lookup is required.
+ */
+export function resolveForkProvenance(
+  thread: ForkProvenanceThread,
+  sourceThread: ForkSourceThread | null | undefined,
+): ForkProvenance | null {
+  const sourceThreadId = thread.forkSourceThreadId ?? null;
+  // Sidechats share fork metadata internally but are presented through their
+  // own "Side" identity. Do not mislabel them as user-created conversation forks.
+  if (!sourceThreadId || thread.sidechatSourceThreadId) {
+    return null;
+  }
+
+  const sourceAvailable = sourceThread?.id === sourceThreadId && sourceThreadId !== thread.id;
+  return {
+    sourceThreadId,
+    sourceMessageId: thread.forkSourceMessageId ?? null,
+    sourceTitle:
+      normalizedTitle(sourceAvailable ? sourceThread.title : null) ??
+      normalizedTitle(thread.forkTitleBase),
+    sourceAvailable,
+  };
+}
