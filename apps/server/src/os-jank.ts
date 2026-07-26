@@ -29,6 +29,7 @@ export function fixPath(
   if (platform !== "darwin" && platform !== "linux") return;
 
   const env = options.env ?? process.env;
+  if (env.SCIENT_DISABLE_SHELL_ENV_SYNC === "1") return;
   const logWarning = options.logWarning ?? logPathHydrationWarning;
   const readPath = options.readPath ?? readPathFromLoginShell;
 

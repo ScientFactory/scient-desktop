@@ -59,6 +59,23 @@ import { NetService } from "@synara/shared/Net";
 import { RotatingFileSink } from "@synara/shared/logging";
 import { ensureStaticSnapshot, findAsarArchivePath } from "@synara/shared/staticSnapshot";
 import { isBackendReadinessAborted, waitForHttpReady } from "./backendReadiness";
+import {
+  buildBackendRestartRecoveryDialog,
+  ensureBackendRestartRecoveryOwner,
+  handleBackendRestartRecoveryAction,
+  showBackendRestartRecoveryDialog,
+  shouldAttemptBackendRestartRecovery,
+} from "./backendRestartRecovery";
+import {
+  coordinateBackendRecoveryAfterUpdaterFailure,
+  coordinateUpdaterFailureContinuation,
+  resolveQuittingAfterUpdaterFailure,
+  routeDesktopQuitRequest,
+  UpdateBackendRecoveryLatch,
+  UpdateQuitAuthorityLatch,
+} from "./updateBackendRecovery";
+import { waitForPackagedBackendResponsiveness } from "./packagedStartupResponsiveness";
+import { isVerifierOwnedPackagedStartupSmoke } from "./packagedStartupSmokeAuthority";
 import { resolveBackendNodeArgs } from "./backendNodeOptions";
 import {
   backendProcessContainmentOptions,
@@ -92,13 +109,15 @@ import {
 import { collectMacUpdateDiagnostics } from "./macUpdateDiagnostics";
 import { openInitialBackendWindow } from "./initialBackendWindowOpen";
 import { shouldAllowMediaPermissionRequest } from "./mediaPermissions";
+import { PACKAGED_RENDERER_READINESS_EXPRESSION } from "./packagedStartupRendererReadiness";
+import { attachPackagedStartupWindowLifecycleProof } from "./packagedStartupWindowLifecycle";
 import {
   installResumableUpdateDownloader,
   type ResumableDownloaderTarget,
 } from "./resumableUpdateDownload";
 import { hardenElectronUpdater } from "./electronUpdaterSecurity";
 import { ServerListeningDetector } from "./serverListeningDetector";
-import { syncShellEnvironment } from "./syncShellEnvironment";
+import { shouldSynchronizeShellEnvironment, syncShellEnvironment } from "./syncShellEnvironment";
 import {
   type DownloadProgressSample,
   getAutoUpdateDisabledReason,
@@ -201,7 +220,7 @@ import {
 // baseline, so a replacement during startup cannot silently become "normal."
 const startupBundleIdentity = captureStartupBundleIdentity();
 
-syncShellEnvironment();
+if (shouldSynchronizeShellEnvironment()) syncShellEnvironment();
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const SAVE_FILE_CHANNEL = "desktop:save-file";
@@ -263,6 +282,7 @@ const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const APP_DISPLAY_NAME = isDevelopment ? `${SCIENT_APP_NAME} (Dev)` : SCIENT_APP_NAME;
 const APP_USER_MODEL_ID = scientBundleId(isDevelopment);
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
+const FULL_COMMIT_HASH_PATTERN = /^[0-9a-f]{40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
 const LOG_DIR = SCIENT_DATA_DIRECTORIES.logsDir;
 const LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
@@ -310,12 +330,24 @@ let backendListeningDetector: ServerListeningDetector | null = null;
 let isQuitting = false;
 let isUpdaterInstallPreparing = false;
 let isUpdaterQuitAndInstallInFlight = false;
+const updateBackendRecovery = new UpdateBackendRecoveryLatch();
+const updateQuitAuthority = new UpdateQuitAuthorityLatch();
+let pendingBackendRestartRecovery: {
+  failures: number;
+  windowMs: number;
+  openLogsErrorMessage?: string | null;
+} | null = null;
+let backendRestartRecoveryDialogOpen = false;
 let desktopShutdownPromise: Promise<void> | null = null;
 let desktopShutdownComplete = false;
 let desktopProtocolRegistered = false;
 let aboutCommitHashCache: string | null | undefined;
 let embeddedReleaseMetadataCache:
-  | { readonly commitHash: string | null; readonly signed: boolean | null }
+  | {
+      readonly commitHash: string | null;
+      readonly fullCommitHash: string | null;
+      readonly signed: boolean | null;
+    }
   | undefined;
 let appUpdateYmlCache: Record<string, string> | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
@@ -576,6 +608,9 @@ async function waitForBackendWindowReady(baseUrl: string): Promise<"listening" |
       }),
     onHttpReady: () => {
       if (generation !== null) backendSupervisor?.markReady(generation);
+      writeDesktopLogHeader(
+        `backend semantic ready generation=${generation === null ? "unknown" : generation}`,
+      );
     },
     onHttpFailure: (error) => {
       if (generation === null) return;
@@ -763,13 +798,44 @@ function resolveUpdaterErrorContext(): DesktopUpdateErrorContext {
   return updateState.errorContext;
 }
 
-function clearUpdaterInstallInFlightAfterError(): void {
+function clearUpdaterInstallInFlightAfterError(): string | null {
   if (!isUpdaterInstallPreparing && !isUpdaterQuitAndInstallInFlight) {
-    return;
+    return null;
   }
+  const pendingQuitReason = updateQuitAuthority.consume();
   isUpdaterInstallPreparing = false;
   isUpdaterQuitAndInstallInFlight = false;
-  isQuitting = false;
+  isQuitting = resolveQuittingAfterUpdaterFailure({
+    desktopShutdownInFlight: desktopShutdownPromise !== null,
+    desktopShutdownComplete,
+    pendingQuitRequest: pendingQuitReason !== null,
+  });
+  return pendingQuitReason;
+}
+
+function continueAfterUpdaterFailure(pendingQuitReason: string | null): void {
+  coordinateUpdaterFailureContinuation({
+    pendingQuitReason,
+    requestQuit: requestGracefulAppQuit,
+    recover: () => {
+      restoreBackendAfterUpdaterFailure();
+      scheduleUpdatePoll();
+    },
+  });
+}
+
+function restoreBackendAfterUpdaterFailure(): void {
+  coordinateBackendRecoveryAfterUpdaterFailure({
+    recoveryLatch: updateBackendRecovery,
+    desktopShutdownInFlight: desktopShutdownPromise !== null,
+    desktopShutdownComplete,
+    recoveryPending: pendingBackendRestartRecovery !== null,
+    recoveryDialogOpen: backendRestartRecoveryDialogOpen,
+    resume: resumeBackend,
+    showRecovery: () => {
+      void showBackendRestartRecovery();
+    },
+  });
 }
 
 function clearUpdateInstallWatchdogTimer(): void {
@@ -848,14 +914,7 @@ function armInstallWatchdog(): void {
     if (!isUpdaterQuitAndInstallInFlight) {
       return;
     }
-    clearUpdaterInstallInFlightAfterError();
-    // The backend was already stopped before quitAndInstall(); since the app is
-    // not actually quitting, bring it back so the recovered app is functional
-    // (renderer reconnects) instead of a zombie window with a dead backend.
-    startBackend();
-    // Polling was stopped before the install attempt; resume it so background
-    // update checks keep running after this recovery.
-    scheduleUpdatePoll();
+    const pendingQuitReason = clearUpdaterInstallInFlightAfterError();
     const consecutiveFailures = recordInstallMarkerFailure(new Date().toISOString());
     setUpdateState({
       ...reduceDesktopUpdateStateOnInstallFailure(
@@ -867,6 +926,9 @@ function armInstallWatchdog(): void {
     console.error(
       "[desktop-updater] quitAndInstall did not exit the app within the watchdog window; surfacing manual-download fallback.",
     );
+    // Restore the backend only when updater recovery still owns the lifecycle.
+    // A deferred user or operating-system quit continues shutdown instead.
+    continueAfterUpdaterFailure(pendingQuitReason);
   }, AUTO_UPDATE_INSTALL_WATCHDOG_MS);
 }
 
@@ -933,18 +995,27 @@ function parseAppUpdateYml(): Record<string, string> | null {
 }
 
 function normalizeCommitHash(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return COMMIT_HASH_PATTERN.test(trimmed)
+    ? trimmed.slice(0, COMMIT_HASH_DISPLAY_LENGTH).toLowerCase()
+    : null;
+}
+
+function normalizeFullCommitHash(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
   const trimmed = value.trim();
-  if (!COMMIT_HASH_PATTERN.test(trimmed)) {
+  if (!FULL_COMMIT_HASH_PATTERN.test(trimmed)) {
     return null;
   }
-  return trimmed.slice(0, COMMIT_HASH_DISPLAY_LENGTH).toLowerCase();
+  return trimmed.toLowerCase();
 }
 
 function resolveEmbeddedReleaseMetadata(): {
   readonly commitHash: string | null;
+  readonly fullCommitHash: string | null;
   readonly signed: boolean | null;
 } {
   if (embeddedReleaseMetadataCache !== undefined) {
@@ -953,7 +1024,11 @@ function resolveEmbeddedReleaseMetadata(): {
 
   const packageJsonPath = Path.join(resolveAppRoot(), "package.json");
   if (!FS.existsSync(packageJsonPath)) {
-    embeddedReleaseMetadataCache = { commitHash: null, signed: null };
+    embeddedReleaseMetadataCache = {
+      commitHash: null,
+      fullCommitHash: null,
+      signed: null,
+    };
     return embeddedReleaseMetadataCache;
   }
 
@@ -965,10 +1040,15 @@ function resolveEmbeddedReleaseMetadata(): {
     };
     embeddedReleaseMetadataCache = {
       commitHash: normalizeCommitHash(parsed.scientCommitHash),
+      fullCommitHash: normalizeFullCommitHash(parsed.scientCommitHash),
       signed: typeof parsed.scientSigned === "boolean" ? parsed.scientSigned : null,
     };
   } catch {
-    embeddedReleaseMetadataCache = { commitHash: null, signed: null };
+    embeddedReleaseMetadataCache = {
+      commitHash: null,
+      fullCommitHash: null,
+      signed: null,
+    };
   }
 
   return embeddedReleaseMetadataCache;
@@ -976,6 +1056,14 @@ function resolveEmbeddedReleaseMetadata(): {
 
 function resolveEmbeddedCommitHash(): string | null {
   return resolveEmbeddedReleaseMetadata().commitHash;
+}
+
+function writePackagedStartupSmokeIdentity(): void {
+  if (!isVerifierOwnedPackagedStartupSmoke(process.env, process.ppid, app.isPackaged)) return;
+  const commit = resolveEmbeddedReleaseMetadata().fullCommitHash ?? "unknown";
+  writeDesktopLogHeader(
+    `packaged identity name=${app.getName()} version=${app.getVersion()} commit=${commit}`,
+  );
 }
 
 function resolveAboutCommitHash(): string | null {
@@ -2547,6 +2635,7 @@ async function installDownloadedUpdate(): Promise<{
     markerWritten = true;
     isQuitting = true;
     isUpdaterInstallPreparing = true;
+    updateBackendRecovery.capture(backendSupervisor?.desiredRunning ?? false);
     clearUpdatePollTimer();
     await stopBackendAndWaitForExit("updater install handoff");
     await logMacUpdateDiagnostics("before install handoff");
@@ -2556,19 +2645,16 @@ async function installDownloadedUpdate(): Promise<{
     return { accepted: true, completed: false };
   } catch (error: unknown) {
     const message = formatErrorMessage(error);
-    isUpdaterInstallPreparing = false;
-    isUpdaterQuitAndInstallInFlight = false;
-    isQuitting = false;
+    const pendingQuitReason = clearUpdaterInstallInFlightAfterError();
     const consecutiveFailures = markerWritten
       ? recordInstallMarkerFailure(new Date().toISOString())
       : updateState.installFailureCount;
-    startBackend();
-    scheduleUpdatePoll();
     setUpdateState({
       ...reduceDesktopUpdateStateOnInstallFailure(updateState, message),
       installFailureCount: consecutiveFailures,
     });
     console.error(`[desktop-updater] Failed to install update: ${message}`);
+    continueAfterUpdaterFailure(pendingQuitReason);
     return { accepted: true, completed: false };
   }
 }
@@ -2683,15 +2769,11 @@ function configureAutoUpdater(): void {
       console.warn("[desktop-updater] Ignored expected cancellation after stalled download.");
       return;
     }
-    clearUpdaterInstallInFlightAfterError();
+    const pendingQuitReason = clearUpdaterInstallInFlightAfterError();
     const installFailureCount =
       errorContext === "install"
         ? recordInstallMarkerFailure(new Date().toISOString())
         : updateState.installFailureCount;
-    if (errorContext === "install") {
-      startBackend();
-      scheduleUpdatePoll();
-    }
     if (!updateCheckInFlight && !updateDownloadInFlight) {
       setUpdateState({
         status: "error",
@@ -2704,6 +2786,9 @@ function configureAutoUpdater(): void {
       });
     }
     console.error(`[desktop-updater] Updater error: ${message}`);
+    if (errorContext === "install") {
+      continueAfterUpdaterFailure(pendingQuitReason);
+    }
   });
   autoUpdater.on("download-progress", (progress) => {
     const percent = Math.floor(progress.percent);
@@ -2800,6 +2885,7 @@ class MissingBackendEntryError extends Error {
 }
 
 const backendGenerationRuntimes = new Map<number, BackendGenerationRuntime>();
+const externallyContainedBackendChildren = new WeakSet<ChildProcess.ChildProcess>();
 
 function spawnBackendGeneration(generation: number): ChildProcess.ChildProcess {
   const backendEntry = resolveBackendEntry();
@@ -2808,18 +2894,39 @@ function spawnBackendGeneration(generation: number): ChildProcess.ChildProcess {
   }
 
   const captureBackendLogs = app.isPackaged && backendLogSink !== null;
+  const environment: NodeJS.ProcessEnv = {
+    ...backendEnv(),
+    ELECTRON_RUN_AS_NODE: "1",
+  };
+  // Packaged-smoke descendants remain inside the verifier-owned POSIX process
+  // group or Windows Job Object. Normal application launches retain their
+  // existing dedicated backend containment.
+  // Authenticate outer containment once for this generation. Recomputing after
+  // reparenting would lose authority and could incorrectly fall back to a
+  // backend PID or process-group signal that this child never owned.
+  const retainedByExternalContainment = isVerifierOwnedPackagedStartupSmoke(
+    process.env,
+    process.ppid,
+    app.isPackaged,
+  );
   const child = ChildProcess.spawn(process.execPath, [...backendNodeArgs(), backendEntry], {
     cwd: resolveBackendCwd(),
     // In Electron main, process.execPath points to the Electron binary.
     // Run the child in Node mode so this backend process does not become a GUI app instance.
-    env: {
-      ...backendEnv(),
-      ELECTRON_RUN_AS_NODE: "1",
-    },
-    // POSIX force termination targets this dedicated process group. Windows
-    // uses taskkill /T after the same graceful IPC deadline.
-    ...backendProcessContainmentOptions(captureBackendLogs),
+    env: environment,
+    // Normal POSIX launches retain their dedicated backend process group. The
+    // packaged smoke keeps the backend in Electron's verifier-owned group.
+    // Windows uses taskkill /T after the same graceful IPC deadline.
+    ...backendProcessContainmentOptions(
+      captureBackendLogs,
+      process.platform,
+      !retainedByExternalContainment,
+    ),
   });
+  if (retainedByExternalContainment) externallyContainedBackendChildren.add(child);
+  writeDesktopLogHeader(
+    `backend process spawned generation=${generation} pid=${child.pid ?? "unknown"}`,
+  );
   const listeningDetector = new ServerListeningDetector();
   backendListeningDetector = listeningDetector;
   let backendSessionClosed = false;
@@ -2881,6 +2988,9 @@ function handleBackendGenerationStarted(generation: DesktopBackendGeneration): v
 }
 
 function handleBackendGenerationExited(exit: DesktopBackendExit): void {
+  writeDesktopLogHeader(
+    `backend process exited generation=${exit.generation} pid=${exit.pid ?? "unknown"} reason=${exit.reason}`,
+  );
   cancelBackendReadinessWait();
   const runtime = backendGenerationRuntimes.get(exit.generation);
   backendGenerationRuntimes.delete(exit.generation);
@@ -2894,6 +3004,79 @@ function handleBackendGenerationExited(exit: DesktopBackendExit): void {
     runtime.closeSession(
       `pid=${exit.pid ?? "unknown"} generation=${exit.generation} ${exit.reason}`,
     );
+  }
+}
+
+async function showBackendRestartRecovery(input?: {
+  failures: number;
+  windowMs: number;
+  openLogsErrorMessage?: string | null;
+}): Promise<void> {
+  if (input) pendingBackendRestartRecovery = input;
+  if (
+    !shouldAttemptBackendRestartRecovery({
+      recoveryPending: pendingBackendRestartRecovery !== null,
+      recoveryDialogOpen: backendRestartRecoveryDialogOpen,
+      isQuitting,
+    })
+  ) {
+    return;
+  }
+  const recovery = pendingBackendRestartRecovery!;
+  backendRestartRecoveryDialogOpen = true;
+  let reopenAfterClose = false;
+  try {
+    const options = buildBackendRestartRecoveryDialog({
+      appName: SCIENT_APP_NAME,
+      failures: recovery.failures,
+      windowMs: recovery.windowMs,
+      logFilePath: Path.join(LOG_DIR, "server-child.log"),
+      ...(recovery.openLogsErrorMessage !== undefined
+        ? { openLogsErrorMessage: recovery.openLogsErrorMessage }
+        : {}),
+    });
+    const owner = ensureBackendRestartRecoveryOwner({
+      currentOwner: mainWindow,
+      existingOwners: BrowserWindow.getAllWindows(),
+      isDestroyed: (window) => window.isDestroyed(),
+      createOwner: () => createWindow(),
+    });
+    mainWindow = owner;
+    const action = await showBackendRestartRecoveryDialog({
+      owner,
+      options,
+      focusOwner: () => focusMainWindow({ stealAppFocus: true }),
+      showOwned: (window, dialogOptions) => dialog.showMessageBox(window, dialogOptions),
+      showUnowned: (dialogOptions) => dialog.showMessageBox(dialogOptions),
+    });
+    const actionSuppressedByShutdown = isQuitting;
+    if (!actionSuppressedByShutdown && action !== "open-logs") {
+      pendingBackendRestartRecovery = null;
+    }
+    let openLogsErrorMessage: string | null = null;
+    await handleBackendRestartRecoveryAction({
+      action,
+      retry: startBackend,
+      openLogs: () => openDesktopLogsDirectory(LOG_DIR, (path) => shell.openPath(path)),
+      onOpenLogsError: (error) => {
+        openLogsErrorMessage = formatErrorMessage(error);
+        pendingBackendRestartRecovery = { ...recovery, openLogsErrorMessage };
+        safeConsoleError(`[desktop] unable to open backend logs: ${openLogsErrorMessage}`);
+      },
+      isQuitting: () => isQuitting,
+      reopen: () => {
+        pendingBackendRestartRecovery = { ...recovery, openLogsErrorMessage };
+        reopenAfterClose = true;
+      },
+    });
+    if (actionSuppressedByShutdown) reopenAfterClose = true;
+  } catch (error: unknown) {
+    safeConsoleError(`[desktop] backend recovery dialog failed: ${formatErrorMessage(error)}`);
+  } finally {
+    backendRestartRecoveryDialogOpen = false;
+    if (reopenAfterClose && pendingBackendRestartRecovery && !isQuitting) {
+      void showBackendRestartRecovery();
+    }
   }
 }
 
@@ -2917,13 +3100,28 @@ function getBackendSupervisor(): DesktopBackendSupervisor {
         }
       });
     },
-    forceTerminateTree: (child) => forceTerminateBackendProcessTree(child),
+    forceTerminateTree: (child) => {
+      return forceTerminateBackendProcessTree(child, {
+        retainedByExternalContainment: externallyContainedBackendChildren.has(
+          child as ChildProcess.ChildProcess,
+        ),
+      });
+    },
     onGenerationStarted: handleBackendGenerationStarted,
     onGenerationExited: handleBackendGenerationExited,
-    onRestartScheduled: ({ delayMs, reason }) => {
+    onRestartScheduled: ({ attempt, delayMs, reason }) => {
       safeConsoleError(
-        `[desktop] backend exited unexpectedly (${reason}); restarting in ${delayMs}ms`,
+        `[desktop] backend exited unexpectedly (${reason}); restarting in ${delayMs}ms ` +
+          `(failure ${attempt + 1})`,
       );
+    },
+    onRestartLimitReached: ({ error, failures, maxFailures, reason, windowMs }) => {
+      cancelBackendReadinessWait();
+      writeDesktopLogHeader(
+        `backend automatic restart paused failures=${failures}/${maxFailures} ` +
+          `windowMs=${windowMs} reason=${reason} message=${formatErrorMessage(error)}`,
+      );
+      void showBackendRestartRecovery({ failures, windowMs });
     },
     onError: (error, context) => {
       safeConsoleError(`[desktop] ${context}: ${formatErrorMessage(error)}`);
@@ -2954,6 +3152,15 @@ function startBackend(): void {
     .start()
     .catch((error: unknown) => {
       safeConsoleError(`[desktop] backend start failed: ${formatErrorMessage(error)}`);
+    });
+}
+
+function resumeBackend(): void {
+  if (isQuitting) return;
+  void getBackendSupervisor()
+    .resume()
+    .catch((error: unknown) => {
+      safeConsoleError(`[desktop] backend resume failed: ${formatErrorMessage(error)}`);
     });
 }
 
@@ -3020,24 +3227,29 @@ async function shutdownDesktopRuntime(reason: string): Promise<void> {
 }
 
 function requestGracefulAppQuit(reason: string): void {
-  if (isUpdaterInstallPreparing) {
+  const action = routeDesktopQuitRequest({
+    reason,
+    updaterInstallPreparing: isUpdaterInstallPreparing,
+    quitAuthority: updateQuitAuthority,
+    startShutdown: (shutdownReason) => {
+      void shutdownDesktopRuntime(shutdownReason)
+        .then(() => {
+          app.quit();
+        })
+        .catch((error: unknown) => {
+          const message = formatErrorMessage(error);
+          writeDesktopLogHeader(`${shutdownReason} shutdown failed message=${message}`);
+          console.warn(`[desktop] Shutdown failed during ${shutdownReason}: ${message}`);
+          dialog.showErrorBox(
+            `${SCIENT_APP_NAME} could not close safely`,
+            `Scient stayed open because its backend did not stop. Retry after checking running tasks.\n\n${message}`,
+          );
+        });
+    },
+  });
+  if (action === "deferred") {
     writeDesktopLogHeader(`${reason} waiting for updater quit-and-install`);
-    return;
   }
-
-  void shutdownDesktopRuntime(reason)
-    .then(() => {
-      app.quit();
-    })
-    .catch((error: unknown) => {
-      const message = formatErrorMessage(error);
-      writeDesktopLogHeader(`${reason} shutdown failed message=${message}`);
-      console.warn(`[desktop] Shutdown failed during ${reason}: ${message}`);
-      dialog.showErrorBox(
-        `${SCIENT_APP_NAME} could not close safely`,
-        `Scient stayed open because its backend did not stop. Retry after checking running tasks.\n\n${message}`,
-      );
-    });
 }
 
 function registerIpcHandlers(): void {
@@ -3462,6 +3674,15 @@ function createWindow(): BrowserWindow {
       backgroundThrottling: true,
     },
   });
+  let resolvePackagedWindowVisibility!: (visible: boolean) => void;
+  const packagedWindowVisibility = new Promise<boolean>((resolveVisibility) => {
+    resolvePackagedWindowVisibility = resolveVisibility;
+  });
+  const verifierOwnedPackagedStartupSmoke = isVerifierOwnedPackagedStartupSmoke(
+    process.env,
+    process.ppid,
+    app.isPackaged,
+  );
   browserManager.setWindow(window);
   attachDesktopZoomFactorSync(window);
 
@@ -3514,8 +3735,69 @@ function createWindow(): BrowserWindow {
     window.setTitle(APP_DISPLAY_NAME);
   });
   window.webContents.on("did-finish-load", () => {
+    writeDesktopLogHeader("renderer main frame loaded");
     window.setTitle(APP_DISPLAY_NAME);
     emitUpdateState();
+    if (verifierOwnedPackagedStartupSmoke) {
+      setTimeout(() => {
+        const generation = getBackendSupervisor().currentGeneration;
+        void Promise.all([
+          window.webContents.executeJavaScript(
+            `new Promise((resolve) => requestAnimationFrame(() => resolve(${PACKAGED_RENDERER_READINESS_EXPRESSION})))`,
+            true,
+          ),
+          waitForPackagedBackendResponsiveness(backendHttpUrl).then(() => true),
+          packagedWindowVisibility,
+        ])
+          .then(([rendererReady, backendReady, windowVisible]) => {
+            const currentGeneration = getBackendSupervisor().currentGeneration;
+            const sameLiveGeneration =
+              generation !== null &&
+              currentGeneration?.number === generation.number &&
+              currentGeneration.child.exitCode === null &&
+              currentGeneration.child.signalCode === null;
+            if (
+              rendererReady !== true ||
+              backendReady !== true ||
+              !sameLiveGeneration ||
+              windowVisible !== true ||
+              !window.isVisible()
+            ) {
+              throw new Error("renderer or backend failed the delayed responsiveness check");
+            }
+            writeDesktopLogHeader(
+              `packaged responsiveness confirmed generation=${generation.number}`,
+            );
+          })
+          .catch((error: unknown) => {
+            writeDesktopLogHeader(
+              `packaged responsiveness failed message=${formatErrorMessage(error)}`,
+            );
+          });
+      }, 1_500);
+    }
+  });
+  window.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, _validatedUrl, isMainFrame) => {
+      if (!isMainFrame) return;
+      writeDesktopLogHeader(
+        `renderer main frame load failed code=${errorCode} message=${errorDescription}`,
+      );
+    },
+  );
+  window.webContents.on("render-process-gone", (_event, details) => {
+    writeDesktopLogHeader(
+      `renderer main process gone reason=${details.reason} exitCode=${details.exitCode}`,
+    );
+  });
+  window.on("unresponsive", () => {
+    writeDesktopLogHeader("renderer main window unresponsive");
+  });
+  attachPackagedStartupWindowLifecycleProof({
+    window,
+    enabled: verifierOwnedPackagedStartupSmoke,
+    writeFailureMarker: writeDesktopLogHeader,
   });
   window.once("ready-to-show", () => {
     // Preserve the original first-launch behavior, then respect the state saved
@@ -3525,6 +3807,10 @@ function createWindow(): BrowserWindow {
       window.maximize();
     }
     window.show();
+    if (window.isVisible()) {
+      writeDesktopLogHeader("packaged main window visible");
+      resolvePackagedWindowVisibility(true);
+    }
     emitDesktopWindowState(window);
   });
 
@@ -3664,8 +3950,8 @@ app.on("before-quit", (event) => {
 
   if (isUpdaterInstallPreparing) {
     // Keep user/system quits from preempting the pending updater install with a plain app.quit().
-    writeDesktopLogHeader("before-quit waiting for updater quit-and-install");
     event.preventDefault();
+    requestGracefulAppQuit("before-quit");
     return;
   }
 
@@ -3677,8 +3963,9 @@ if (hasSingleInstanceLock) {
   app
     .whenReady()
     .then(async () => {
-      writeDesktopLogHeader("app ready");
       configureAppIdentity();
+      writeDesktopLogHeader("app ready");
+      writePackagedStartupSmokeIdentity();
       applyLegacyMacDockIcon();
       refreshMacIconCacheOnVersionChange();
       configureMediaPermissions();
@@ -3707,6 +3994,7 @@ if (hasSingleInstanceLock) {
       app.on("browser-window-focus", () => {
         handleDesktopAppForegrounded();
         emitDesktopConnectionWake("window-focus");
+        void showBackendRestartRecovery();
       });
 
       powerMonitor.on("resume", () => {
@@ -3716,6 +4004,7 @@ if (hasSingleInstanceLock) {
       app.on("activate", () => {
         handleDesktopAppForegrounded();
         emitDesktopConnectionWake("app-activate");
+        void showBackendRestartRecovery();
         if (BrowserWindow.getAllWindows().length === 0) {
           if (!isDevelopment) {
             ensureInitialBackendWindowOpen(

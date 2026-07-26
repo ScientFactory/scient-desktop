@@ -15,6 +15,11 @@ This document covers build-only native validation, promotion through the protect
   - macOS `x64` DMG
   - Linux `x64` AppImage
   - Windows `x64` NSIS installer
+- Before upload, launches the exact collected macOS and Windows payloads from
+  isolated Scient state and requires stable app readiness, semantic backend
+  readiness, successful renderer main-frame loading, and no intervening native
+  renderer or backend process failure or renderer unresponsiveness. The smoke
+  also prevents login-shell and Windows-registry environment rehydration.
 - Publishes one versioned GitHub Release with all produced files.
   - Versions with a suffix after `X.Y.Z` (for example `1.2.3-alpha.1`) are published as GitHub prereleases.
   - Stable 0.5.x releases are GitHub Latest; the 0.4.x compatibility release remains historical.
@@ -258,6 +263,16 @@ Public releases require exactly one complete Windows signing provider by default
 Build-only validation may continue with an unsigned NSIS installer when neither
 provider is configured; a deliberate unsigned early-access dispatch may publish
 that installer with its operating-system warning.
+
+Set the repository variable `SCIENT_WINDOWS_PUBLISHER_SUBJECT` to the exact
+Authenticode certificate subject (for example, the complete `CN=..., O=..., C=...`
+value reported by `Get-AuthenticodeSignature`). Before upload, native Windows
+startup proof requires both the collected NSIS installer and its extracted
+`Scient.exe` to have valid timestamped signatures from that exact subject. The
+same check inspects an explicitly unsigned artifact and requires both files to
+report exactly `NotSigned`; invalid, hash-mismatched, or unexpectedly signed
+files fail verification. Unsigned output is permitted only for build-only
+validation or an explicitly authorized unsigned early-access publication.
 
 ### Option A: standard Authenticode certificate
 
