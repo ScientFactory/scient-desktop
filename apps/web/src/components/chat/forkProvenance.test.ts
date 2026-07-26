@@ -18,7 +18,6 @@ describe("resolveForkProvenance", () => {
           id: FORK_ID,
           forkSourceThreadId: SOURCE_ID,
           forkSourceMessageId: MessageId.makeUnsafe("source-message"),
-          forkTitleBase: "Title when forked",
         },
         { id: SOURCE_ID, title: "Renamed source" },
       ),
@@ -30,33 +29,33 @@ describe("resolveForkProvenance", () => {
     });
   });
 
-  it("uses persisted fork metadata without linking when the source is unavailable", () => {
+  it("uses truthful generic copy without linking when the source is unavailable", () => {
     expect(
       resolveForkProvenance(
         {
           id: FORK_ID,
           forkSourceThreadId: SOURCE_ID,
           forkSourceMessageId: null,
-          forkTitleBase: "Deleted source",
         },
         undefined,
       ),
     ).toEqual({
       sourceThreadId: SOURCE_ID,
       sourceMessageId: null,
-      sourceTitle: "Deleted source",
+      sourceTitle: null,
       sourceAvailable: false,
     });
   });
 
-  it("falls back to generic truthful copy when old restored metadata has no title", () => {
+  it("does not mistake the automatic fork title family for the unavailable source title", () => {
     expect(
       resolveForkProvenance(
         {
           id: FORK_ID,
           forkSourceThreadId: SOURCE_ID,
           forkSourceMessageId: null,
-          forkTitleBase: "  ",
+          // A child of "Experiment (2)" can carry only this family base.
+          forkTitleBase: "Experiment",
         },
         null,
       ),

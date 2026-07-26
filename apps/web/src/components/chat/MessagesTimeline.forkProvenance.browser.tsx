@@ -96,44 +96,13 @@ describe("MessagesTimeline fork provenance", () => {
   it("identifies and opens the source of a message-boundary fork with keyboard access", async () => {
     const screen = await render(
       <ForkTimeline
+        width={300}
         messageCount={1}
         provenance={{
           sourceThreadId: SOURCE_ID,
           sourceMessageId: MessageId.makeUnsafe("source-message"),
-          sourceTitle: "Source experiment",
+          sourceTitle: "Source-experiment-with-a-deliberately-unbroken-long-title",
           sourceAvailable: true,
-        }}
-      />,
-    );
-
-    try {
-      const note = page.getByRole("note", { name: "Fork provenance" });
-      await expect.element(note).toBeVisible();
-      await expect.element(note).toHaveTextContent("Forked from a message in Source experiment");
-
-      const sourceButtonElement = document.querySelector<HTMLButtonElement>(
-        'button[aria-label="Open source conversation: Source experiment"]',
-      );
-      expect(sourceButtonElement).not.toBeNull();
-      sourceButtonElement?.focus();
-      expect(document.activeElement).toBe(sourceButtonElement);
-      await userEvent.keyboard("{Enter}");
-      await expect.element(page.getByTestId("opened-source")).toHaveTextContent(SOURCE_ID);
-    } finally {
-      await screen.unmount();
-    }
-  });
-
-  it("renders a non-interactive deleted-source fallback without horizontal overflow", async () => {
-    const screen = await render(
-      <ForkTimeline
-        width={300}
-        messageCount={0}
-        provenance={{
-          sourceThreadId: SOURCE_ID,
-          sourceMessageId: null,
-          sourceTitle: "A-source-conversation-with-a-deliberately-unbroken-long-title",
-          sourceAvailable: false,
         }}
       />,
     );
@@ -144,8 +113,47 @@ describe("MessagesTimeline fork provenance", () => {
       await expect
         .element(note)
         .toHaveTextContent(
-          "Forked from A-source-conversation-with-a-deliberately-unbroken-long-title · Source unavailable",
+          "Forked from a message in Source-experiment-with-a-deliberately-unbroken-long-title",
         );
+
+      const sourceButtonElement = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Open source conversation: Source-experiment-with-a-deliberately-unbroken-long-title"]',
+      );
+      expect(sourceButtonElement).not.toBeNull();
+      sourceButtonElement?.focus();
+      expect(document.activeElement).toBe(sourceButtonElement);
+      await userEvent.keyboard("{Enter}");
+      await expect.element(page.getByTestId("opened-source")).toHaveTextContent(SOURCE_ID);
+      const scrollContainer = document.querySelector<HTMLElement>(
+        '[data-chat-scroll-container="true"]',
+      );
+      expect(scrollContainer).not.toBeNull();
+      expect(scrollContainer!.scrollWidth).toBeLessThanOrEqual(scrollContainer!.clientWidth);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("renders a non-interactive unavailable-source fallback without horizontal overflow", async () => {
+    const screen = await render(
+      <ForkTimeline
+        width={300}
+        messageCount={0}
+        provenance={{
+          sourceThreadId: SOURCE_ID,
+          sourceMessageId: null,
+          sourceTitle: null,
+          sourceAvailable: false,
+        }}
+      />,
+    );
+
+    try {
+      const note = page.getByRole("note", { name: "Fork provenance" });
+      await expect.element(note).toBeVisible();
+      await expect
+        .element(note)
+        .toHaveTextContent("Forked from another conversation · Source unavailable");
       expect(document.querySelector('[data-fork-provenance="true"] button')).toBeNull();
       const scrollContainer = document.querySelector<HTMLElement>(
         '[data-chat-scroll-container="true"]',

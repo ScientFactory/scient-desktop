@@ -29,11 +29,7 @@ function normalizedTitle(value: string | null | undefined): string | null {
   return title ? title : null;
 }
 
-/**
- * Uses only metadata already carried by the fork plus the lightweight source
- * thread summary. The stored title base remains a truthful fallback after the
- * source is deleted; no message hydration or cross-thread lookup is required.
- */
+/** Uses only fork metadata plus the lightweight source thread summary. */
 export function resolveForkProvenance(
   thread: ForkProvenanceThread,
   sourceThread: ForkSourceThread | null | undefined,
@@ -49,9 +45,11 @@ export function resolveForkProvenance(
   return {
     sourceThreadId,
     sourceMessageId: thread.forkSourceMessageId ?? null,
-    sourceTitle:
-      normalizedTitle(sourceAvailable ? sourceThread.title : null) ??
-      normalizedTitle(thread.forkTitleBase),
+    // `forkTitleBase` is intentionally not a fallback here: for a fork of an
+    // automatically titled fork it names the title family (for example,
+    // "Experiment"), not necessarily the immediate source ("Experiment (2)").
+    // Generic unavailable copy is more truthful than a plausible wrong title.
+    sourceTitle: normalizedTitle(sourceAvailable ? sourceThread.title : null),
     sourceAvailable,
   };
 }
