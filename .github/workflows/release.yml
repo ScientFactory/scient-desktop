@@ -134,6 +134,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Fetch official release lineage
+        run: git fetch --no-tags origin +refs/heads/release/stable:refs/remotes/origin/release/stable
+
+      - name: Verify append-only migration lineage
+        run: bun run migration:check
+
       - id: release_meta
         name: Resolve release policy
         env:
