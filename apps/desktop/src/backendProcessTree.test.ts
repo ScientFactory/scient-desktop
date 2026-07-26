@@ -21,6 +21,10 @@ describe("forceTerminateBackendProcessTree", () => {
       detached: false,
       stdio: ["ignore", "inherit", "inherit", "ipc"],
     });
+    expect(backendProcessContainmentOptions(false, "darwin", false)).toEqual({
+      detached: false,
+      stdio: ["ignore", "inherit", "inherit", "ipc"],
+    });
   });
 
   it("kills the detached POSIX process group", async () => {
@@ -73,6 +77,28 @@ describe("forceTerminateBackendProcessTree", () => {
       },
     );
   });
+
+  it.each(["darwin", "win32"] as const)(
+    "never signals a backend PID when external containment owns cleanup on %s",
+    async (platform) => {
+      const killProcessGroup = vi.fn();
+      const spawnProcess = vi.fn();
+
+      await expect(
+        forceTerminateBackendProcessTree(
+          { pid: 4321 },
+          {
+            platform,
+            retainedByExternalContainment: true,
+            killProcessGroup,
+            spawnProcess: spawnProcess as never,
+          },
+        ),
+      ).rejects.toThrow("External packaged-startup containment retains cleanup authority");
+      expect(killProcessGroup).not.toHaveBeenCalled();
+      expect(spawnProcess).not.toHaveBeenCalled();
+    },
+  );
 
   it("does not treat a missing Windows root as successful descendant cleanup", async () => {
     const process = new EventEmitter();

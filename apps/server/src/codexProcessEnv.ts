@@ -334,7 +334,10 @@ export async function buildCodexProcessEnv(
       : baseEnv;
   const platform = input.platform ?? process.platform;
 
-  if (platform === "darwin" || platform === "linux") {
+  if (
+    effectiveEnv.SCIENT_DISABLE_SHELL_ENV_SYNC !== "1" &&
+    (platform === "darwin" || platform === "linux")
+  ) {
     try {
       const shell = resolveLoginShell(platform, effectiveEnv.SHELL);
       const providerEnvKey = readActiveCodexProviderEnvKey(effectiveEnv);

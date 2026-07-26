@@ -4460,7 +4460,8 @@ export default function ChatView({
             commandId: newCommandId(),
             threadId: activeThreadId,
           });
-          void reconcileDeletedThreadFromClient({
+          await reconcileDeletedThreadFromClient({
+            api,
             threadId: activeThreadId,
             removeDeletedThreadFromClientState:
               useStore.getState().removeDeletedThreadFromClientState,
@@ -4502,7 +4503,6 @@ export default function ChatView({
       removeThreadFromSplitViews,
       storeClearTerminalState,
       storeCloseTerminal,
-      syncServerShellSnapshot,
       settings.confirmTerminalTabClose,
       terminalState.entryPoint,
       terminalState.runningTerminalIds,
@@ -9295,7 +9295,8 @@ export default function ChatView({
           .then(() => true)
           .catch(() => false);
         if (deletedOnServer) {
-          void reconcileDeletedThreadFromClient({
+          await reconcileDeletedThreadFromClient({
+            api,
             threadId: nextThreadId,
             removeDeletedThreadFromClientState:
               useStore.getState().removeDeletedThreadFromClientState,

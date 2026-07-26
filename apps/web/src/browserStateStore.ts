@@ -189,7 +189,10 @@ export const useBrowserStateStore = create<BrowserStateStore>()(
         }),
       removeThreadState: (threadId) =>
         set((current) => {
-          if (!Object.hasOwn(current.threadStatesByThreadId, threadId)) {
+          if (
+            !Object.hasOwn(current.threadStatesByThreadId, threadId) &&
+            !Object.hasOwn(current.recentHistoryByThreadId, threadId)
+          ) {
             return current;
           }
           const nextThreadStatesByThreadId = {

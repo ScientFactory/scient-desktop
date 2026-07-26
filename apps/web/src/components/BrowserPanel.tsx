@@ -40,6 +40,7 @@ import {
   resolveCopyableBrowserTabUrl,
 } from "@synara/shared/browserSession";
 import { isBrowserCopyLinkChord } from "@synara/shared/browserShortcuts";
+import { asLiveHtmlNativeApi } from "@synara/shared/liveHtmlPreviewTransport";
 
 import { isElectron } from "~/env";
 import { readNativeApi } from "~/nativeApi";
@@ -64,7 +65,10 @@ import {
   browserCopyFeedbackMatches,
   buildBrowserAddressSuggestions,
   normalizeBrowserAddressInput,
+  localHtmlSourceKey,
+  localHtmlTabsShareSource,
   reconcileHtmlPreviewGrants,
+  pruneConsumedLocalHtmlSourceGenerations,
   resolveBrowserChromeStatus,
   resolveBrowserAddressSync,
   shouldCloseBrowserPanelAfterTabClose,
@@ -360,7 +364,8 @@ export function BrowserPanel({
   runtimeMode = "live",
   onRequestLive,
 }: BrowserPanelProps) {
-  const api = readNativeApi();
+  const nativeApi = readNativeApi();
+  const api = nativeApi ? asLiveHtmlNativeApi(nativeApi) : undefined;
   const isLiveRuntime = runtimeMode === "live";
   const threadBrowserState = useBrowserStateStore(selectThreadBrowserState(threadId));
   const recentHistory = useBrowserStateStore(selectThreadBrowserHistory(threadId));
@@ -388,12 +393,20 @@ export function BrowserPanel({
   const previousActiveTabIdRef = useRef<string | null>(null);
   const pendingCreateTabRef = useRef(false);
   const createTabInFlightRef = useRef(false);
-  const htmlPreviewGrantsRef = useRef(
-    new Map(
-      threadBrowserState?.tabs
-        .filter((tab) => tab.kind === "artifact" || tab.kind === "local-html")
-        .map((tab) => [tab.id, tab.url] as const) ?? [],
-    ),
+  const localHtmlRefreshTasksRef = useRef(new Map<string, Promise<void>>());
+  const pendingLocalHtmlRefreshesRef = useRef(new Set<string>());
+  const consumedLocalHtmlSourceGenerationRef = useRef(new Map<string, number>());
+  const htmlPreviewGrantsByThreadRef = useRef(
+    new Map([
+      [
+        threadId,
+        new Map(
+          threadBrowserState?.tabs
+            .filter((tab) => tab.kind === "artifact" || tab.kind === "local-html")
+            .map((tab) => [tab.id, tab.url] as const) ?? [],
+        ),
+      ],
+    ]),
   );
   const lastSentBoundsRef = useRef<string | null>(null);
   const lastMeasuredBoundsKeyRef = useRef<string | null>(null);
@@ -418,7 +431,13 @@ export function BrowserPanel({
   const [isAddressFocused, setIsAddressFocused] = useState(false);
   const [workspaceReady, setWorkspaceReady] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [localHtmlRefreshErrors, setLocalHtmlRefreshErrors] = useState<
+    ReadonlyMap<string, { message: string; revisionUrl: string }>
+  >(() => new Map());
   const [isCreatingTab, setIsCreatingTab] = useState(false);
+  const [refreshingLocalHtmlSources, setRefreshingLocalHtmlSources] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const browserTabsId = useId();
   const runtimeReady = isLiveRuntime ? workspaceReady : true;
   const activeTab =
@@ -439,18 +458,61 @@ export function BrowserPanel({
     : null;
   const copiedBrowserItem =
     visibleCopyFeedback?.tone === "success" ? visibleCopyFeedback.item : null;
-  const loading = activeTab?.isLoading ?? false;
+  const activeLocalHtmlSourceKey =
+    activeTab?.kind === "local-html" ? localHtmlSourceKey(threadId, activeTab) : null;
+  const loading =
+    (activeTab?.isLoading ?? false) ||
+    (activeLocalHtmlSourceKey ? refreshingLocalHtmlSources.has(activeLocalHtmlSourceKey) : false);
   const activeTabIsBlank = isBlankBrowserTabUrl(activeTab);
   const showLocalServersHome = isLiveRuntime && workspaceReady && (!activeTab || activeTabIsBlank);
   const localServersQuery = useQuery(serverLocalServersQueryOptions(showLocalServersHome));
   const activeTabStatus = activeTab?.status ?? "suspended";
+  const activeLocalHtmlRefreshError = activeLocalHtmlSourceKey
+    ? (localHtmlRefreshErrors.get(activeLocalHtmlSourceKey) ?? null)
+    : null;
+  const activeLocalHtmlRefreshErrorMessage =
+    activeLocalHtmlRefreshError && activeLocalHtmlRefreshError.revisionUrl === activeTab?.url
+      ? activeLocalHtmlRefreshError.message
+      : null;
+
+  useEffect(() => {
+    const openLocalHtmlSources = new Set(
+      (threadBrowserState?.tabs ?? [])
+        .filter(
+          (tab) => tab.kind === "local-html" && Boolean(tab.displayUrl) && Boolean(tab.previewCwd),
+        )
+        .flatMap((tab) => {
+          const key = localHtmlSourceKey(threadId, tab);
+          return key ? [key] : [];
+        }),
+    );
+    setLocalHtmlRefreshErrors((current) => {
+      const next = new Map(
+        [...current].filter(([sourceKey]) => openLocalHtmlSources.has(sourceKey)),
+      );
+      return next.size === current.size ? current : next;
+    });
+  }, [threadBrowserState?.tabs, threadId]);
+
   const browserChromeStatus = resolveBrowserChromeStatus({
-    localError,
+    localError: activeLocalHtmlRefreshErrorMessage ?? localError,
+    localNotice:
+      activeTab?.kind === "local-html" && activeTab.sourceWatchLimited
+        ? "Automatic refresh is limited. Use Reload after dependency changes."
+        : null,
     threadLastError: threadBrowserState?.lastError,
     activeTabStatus: showLocalServersHome ? "live" : activeTabStatus,
     hasActiveTab: activeTab !== null,
     workspaceReady: runtimeReady,
   });
+
+  useEffect(() => {
+    pruneConsumedLocalHtmlSourceGenerations(
+      consumedLocalHtmlSourceGenerationRef.current,
+      threadId,
+      threadBrowserState?.tabs ?? [],
+    );
+  }, [threadBrowserState?.tabs, threadId]);
   const browserAddressSuggestions = buildBrowserAddressSuggestions({
     query: addressValue,
     activeTabId: activeTab?.id ?? null,
@@ -491,17 +553,187 @@ export function BrowserPanel({
   }, []);
 
   const syncHtmlPreviewGrants = useCallback(
-    (tabs: readonly BrowserTabState[]) => {
+    (ownerThreadId: ThreadId, tabs: readonly BrowserTabState[]) => {
       if (!api) return;
-      const grants = reconcileHtmlPreviewGrants(htmlPreviewGrantsRef.current, tabs);
+      const previous = htmlPreviewGrantsByThreadRef.current.get(ownerThreadId) ?? new Map();
+      const grants = reconcileHtmlPreviewGrants(previous, tabs);
       for (const previewUrl of grants.revoked) {
         void api.projects
           .revokeHtmlArtifactPreview({ previewUrl })
           .catch(() => ({ revoked: false }));
       }
-      htmlPreviewGrantsRef.current = grants.active;
+      htmlPreviewGrantsByThreadRef.current.set(ownerThreadId, grants.active);
     },
     [api],
+  );
+
+  const refreshLocalHtmlPreview = useCallback(
+    (sourceTab: BrowserTabState): Promise<void> => {
+      if (
+        !api ||
+        sourceTab.kind !== "local-html" ||
+        !sourceTab.displayUrl ||
+        !sourceTab.previewCwd
+      ) {
+        return Promise.reject(new Error("This local HTML preview cannot be refreshed."));
+      }
+      // BrowserPanel is reused when a split pane switches threads. Keep async refresh
+      // ownership thread-scoped so the next thread cannot join or display the previous
+      // thread's in-flight work merely because both tabs reference the same file path.
+      const sourceKey = localHtmlSourceKey(threadId, sourceTab);
+      if (!sourceKey) {
+        return Promise.reject(new Error("This local HTML preview cannot be refreshed."));
+      }
+      const existing = localHtmlRefreshTasksRef.current.get(sourceKey);
+      if (existing) {
+        pendingLocalHtmlRefreshesRef.current.add(sourceKey);
+        return existing;
+      }
+      setRefreshingLocalHtmlSources((current) => new Set(current).add(sourceKey));
+
+      const task = (async () => {
+        let latestError: unknown = null;
+        let failedRevisionUrl = sourceTab.url;
+        try {
+          while (true) {
+            pendingLocalHtmlRefreshesRef.current.delete(sourceKey);
+            const latestState =
+              useBrowserStateStore.getState().threadStatesByThreadId[threadId] ??
+              threadBrowserState;
+            const latestTab = latestState?.tabs.find(
+              (tab) => tab.kind === "local-html" && localHtmlTabsShareSource(tab, sourceTab),
+            );
+            const displayUrl = latestTab?.displayUrl;
+            const previewCwd = latestTab?.previewCwd;
+            if (!latestTab || !displayUrl || !previewCwd) {
+              latestError = null;
+              break;
+            }
+            failedRevisionUrl = latestTab.url;
+
+            try {
+              const prepared = await api.projects.prepareLiveHtmlPreview({
+                cwd: previewCwd,
+                path: displayUrl,
+              });
+              const replacementUrl = prepared.previewUrl;
+              let replacementInstalled = false;
+              try {
+                if (
+                  !replacementUrl ||
+                  (prepared.mode !== "static-document" && prepared.mode !== "interactive-bundle")
+                ) {
+                  throw new Error(
+                    prepared.mode === "dev-server-entrypoint"
+                      ? "This file now needs its project development server. Reopen it from Files to run it."
+                      : (prepared.reason ?? "This HTML file is no longer available for preview."),
+                  );
+                }
+                if (!prepared.localHtmlCapabilityProof || !prepared.localHtmlNetworkPolicy) {
+                  throw new Error(
+                    "This HTML preview is missing its server-issued capability proof.",
+                  );
+                }
+                const nextState = await api.browser.replaceLocalHtmlPreview({
+                  threadId,
+                  tabId: latestTab.id,
+                  url: replacementUrl,
+                  displayUrl,
+                  previewCwd,
+                  ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
+                  ...(prepared.sourceRoot ? { sourceRoot: prepared.sourceRoot } : {}),
+                  watchedPaths: prepared.watchedPaths ?? [displayUrl],
+                  ...(prepared.watchDiscoveryLimited !== undefined
+                    ? { watchDiscoveryLimited: prepared.watchDiscoveryLimited }
+                    : {}),
+                  localHtmlCapabilityProof: prepared.localHtmlCapabilityProof,
+                  localHtmlNetworkPolicy: prepared.localHtmlNetworkPolicy,
+                  ...(prepared.mode === "static-document" && prepared.allowedExternalUrls
+                    ? { allowedExternalUrls: prepared.allowedExternalUrls }
+                    : {}),
+                  activate: latestState?.activeTabId === latestTab.id,
+                });
+                const installedRevision = nextState.tabs.find(
+                  (tab) => tab.kind === "local-html" && localHtmlTabsShareSource(tab, latestTab),
+                );
+                replacementInstalled = installedRevision?.url === replacementUrl;
+                if (replacementInstalled && latestTab.url !== replacementUrl) {
+                  await api.projects
+                    .revokeHtmlArtifactPreview({ previewUrl: latestTab.url })
+                    .catch(() => ({ revoked: false }));
+                }
+                syncHtmlPreviewGrants(nextState.threadId, nextState.tabs);
+                upsertThreadState(nextState);
+                latestError = null;
+              } finally {
+                if (replacementUrl && !replacementInstalled) {
+                  await api.projects
+                    .revokeHtmlArtifactPreview({ previewUrl: replacementUrl })
+                    .catch(() => ({ revoked: false }));
+                }
+              }
+            } catch (error) {
+              latestError = error;
+            }
+
+            if (!pendingLocalHtmlRefreshesRef.current.has(sourceKey)) {
+              break;
+            }
+          }
+
+          if (latestError) {
+            const message =
+              latestError instanceof Error
+                ? latestError.message
+                : "The local HTML preview could not be refreshed.";
+            const currentSourceTab = (
+              useBrowserStateStore.getState().threadStatesByThreadId[threadId]?.tabs ?? []
+            ).find((tab) => tab.kind === "local-html" && localHtmlTabsShareSource(tab, sourceTab));
+            if (currentSourceTab?.url === failedRevisionUrl) {
+              setLocalHtmlRefreshErrors((current) =>
+                new Map(current).set(sourceKey, { message, revisionUrl: failedRevisionUrl }),
+              );
+            }
+            throw latestError;
+          }
+
+          setLocalHtmlRefreshErrors((current) => {
+            if (!current.has(sourceKey)) {
+              return current;
+            }
+            const next = new Map(current);
+            next.delete(sourceKey);
+            return next;
+          });
+        } finally {
+          localHtmlRefreshTasksRef.current.delete(sourceKey);
+          pendingLocalHtmlRefreshesRef.current.delete(sourceKey);
+          setRefreshingLocalHtmlSources((current) => {
+            const next = new Set(current);
+            next.delete(sourceKey);
+            return next;
+          });
+        }
+      })();
+      localHtmlRefreshTasksRef.current.set(sourceKey, task);
+      return task;
+    },
+    [api, syncHtmlPreviewGrants, threadBrowserState, threadId, upsertThreadState],
+  );
+
+  const reloadBrowserTab = useCallback(
+    async (tab: BrowserTabState): Promise<void> => {
+      if (!api) {
+        return;
+      }
+      if (tab.kind === "local-html") {
+        await refreshLocalHtmlPreview(tab);
+        return;
+      }
+      const nextState = await api.browser.reload({ threadId, tabId: tab.id });
+      upsertThreadState(nextState);
+    },
+    [api, refreshLocalHtmlPreview, threadId, upsertThreadState],
   );
 
   // Renderer-owned <webview>s are adopted by the desktop manager. Always detach before
@@ -537,11 +769,28 @@ export function BrowserPanel({
 
     return api.browser.onState((state) => {
       if (state.threadId === threadId) {
-        syncHtmlPreviewGrants(state.tabs);
+        syncHtmlPreviewGrants(state.threadId, state.tabs);
       }
       upsertThreadState(state);
     });
   }, [api, isLiveRuntime, syncHtmlPreviewGrants, threadId, upsertThreadState]);
+
+  useEffect(() => {
+    if (!isLiveRuntime) {
+      return;
+    }
+    for (const tab of threadBrowserState?.tabs ?? []) {
+      if (tab.kind === "local-html" && tab.sourceChanged) {
+        const sourceKey = `${threadId}\0${tab.id}`;
+        const generation = tab.sourceChangeGeneration ?? 0;
+        if (consumedLocalHtmlSourceGenerationRef.current.get(sourceKey) === generation) {
+          continue;
+        }
+        consumedLocalHtmlSourceGenerationRef.current.set(sourceKey, generation);
+        void refreshLocalHtmlPreview(tab).catch(() => undefined);
+      }
+    }
+  }, [isLiveRuntime, refreshLocalHtmlPreview, threadBrowserState?.tabs, threadId]);
 
   useEffect(() => {
     if (!api || !isLiveRuntime) {
@@ -560,7 +809,7 @@ export function BrowserPanel({
         setWorkspaceReady(true);
         return;
       }
-      syncHtmlPreviewGrants(state.tabs);
+      syncHtmlPreviewGrants(state.threadId, state.tabs);
       upsertThreadState(state);
       setWorkspaceReady(true);
     });
@@ -1300,7 +1549,7 @@ export function BrowserPanel({
         if (!state) {
           return;
         }
-        syncHtmlPreviewGrants(state.tabs);
+        syncHtmlPreviewGrants(state.threadId, state.tabs);
         upsertThreadState(state);
         const activeElement = document.activeElement;
         const shouldRestoreTabFocus =
@@ -1389,13 +1638,12 @@ export function BrowserPanel({
             onClick={() => {
               if (!ensureLiveRuntime()) return;
               if (!api || !activeTab) return;
-              void runBrowserAction(() =>
-                api.browser.reload({ threadId, tabId: activeTab.id }),
-              ).then((state) => {
-                if (state) {
-                  upsertThreadState(state);
-                }
-              });
+              if (activeTab.kind === "local-html") {
+                setLocalError(null);
+                void reloadBrowserTab(activeTab).catch(() => undefined);
+                return;
+              }
+              void runBrowserAction(() => reloadBrowserTab(activeTab));
             }}
           >
             {loading ? (
@@ -1733,6 +1981,8 @@ export function BrowserPanel({
           </Button>
           {browserChromeStatus ? (
             <div
+              role="status"
+              aria-live={browserChromeStatus.tone === "error" ? "assertive" : "polite"}
               className={cn(
                 "max-w-[13rem] shrink-0 truncate rounded-full border px-2.5 py-1 text-[11px] leading-none sm:max-w-[16rem]",
                 browserChromeStatus.tone === "error"
@@ -1797,11 +2047,12 @@ export function BrowserPanel({
                     size="sm"
                     onClick={() => {
                       if (!api) return;
-                      void runBrowserAction(() =>
-                        api.browser.reload({ threadId, tabId: activeTab.id }),
-                      ).then((state) => {
-                        if (state) upsertThreadState(state);
-                      });
+                      if (activeTab.kind === "local-html") {
+                        setLocalError(null);
+                        void reloadBrowserTab(activeTab).catch(() => undefined);
+                        return;
+                      }
+                      void runBrowserAction(() => reloadBrowserTab(activeTab));
                     }}
                   >
                     <RefreshCwIcon className="size-3.5" aria-hidden="true" />

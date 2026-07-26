@@ -21,6 +21,7 @@ import {
   isSupportedLocalHtmlPath,
   localFileViewerKindForPath,
 } from "@synara/shared/localPreviewFiles";
+import { asLiveHtmlNativeApi } from "@synara/shared/liveHtmlPreviewTransport";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
@@ -172,12 +173,15 @@ import {
   DialogTitle,
 } from "../components/ui/dialog";
 import {
+  browserStateOwnsLocalHtmlRevision,
+  localHtmlPreviewPathsEqual,
   resolveDockDiffAvailable,
   resolveFilePreviewWorkspaceRoot,
   resolveRoutePanelBootstrap,
   resolveSplitPaneCloseDecision,
   resolveSplitPaneMaximizeDecision,
   resolveThreadPickerTitle,
+  retiredLocalHtmlPreviewUrl,
   resolveToggledChatPanelPatch,
 } from "./-chatThreadRoute.logic";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
@@ -1817,7 +1821,8 @@ function SingleChatSurface(props: {
       if (inspection.mode !== "static-document") {
         return null;
       }
-      const api = readNativeApi();
+      const nativeApi = readNativeApi();
+      const api = nativeApi ? asLiveHtmlNativeApi(nativeApi) : undefined;
       if (!api) {
         return null;
       }
@@ -1843,7 +1848,8 @@ function SingleChatSurface(props: {
         return false;
       }
       void (async () => {
-        const api = readNativeApi();
+        const nativeApi = readNativeApi();
+        const api = nativeApi ? asLiveHtmlNativeApi(nativeApi) : undefined;
         if (!api) {
           throw new Error("The file opener is not available.");
         }
@@ -1860,7 +1866,7 @@ function SingleChatSurface(props: {
         }
         let previewUrlToRevoke: string | null = null;
         try {
-          const prepared = await api.projects.prepareHtmlArtifactPreview({
+          const prepared = await api.projects.prepareLiveHtmlPreview({
             cwd: htmlCwd,
             path: absolutePath,
           });
@@ -1903,6 +1909,12 @@ function SingleChatSurface(props: {
           if (!url) {
             throw new Error("This HTML file is not available for preview.");
           }
+          if (
+            browserKind === "local-html" &&
+            (!prepared.localHtmlCapabilityProof || !prepared.localHtmlNetworkPolicy)
+          ) {
+            throw new Error("This HTML preview is missing its server-issued capability proof.");
+          }
           if (prepared.warnings.length > 0) {
             transientAlertManager.add({
               type: "warning",
@@ -1915,18 +1927,87 @@ function SingleChatSurface(props: {
           }
           requestImmediateDockHydration("browser");
           openPane(props.threadId, { kind: "browser" });
-          await api.browser.open({
-            threadId: props.threadId,
-            initialUrl: url,
-            kind: browserKind,
-            displayUrl: absolutePath,
-            ...(browserKind === "local-html" &&
+          const allowedExternalUrls =
+            browserKind === "local-html" &&
             prepared.mode === "static-document" &&
             prepared.allowedExternalUrls
-              ? { allowedExternalUrls: prepared.allowedExternalUrls }
-              : {}),
-          });
-          previewUrlToRevoke = null;
+              ? prepared.allowedExternalUrls
+              : undefined;
+          const currentBrowserState = await api.browser.getState({ threadId: props.threadId });
+          const existingSourceTab =
+            browserKind === "local-html"
+              ? currentBrowserState.tabs.find(
+                  (tab) =>
+                    tab.kind === "local-html" &&
+                    (prepared.sourceIdentity
+                      ? localHtmlPreviewPathsEqual(tab.sourceIdentity, prepared.sourceIdentity) &&
+                        localHtmlPreviewPathsEqual(tab.sourceRoot, prepared.sourceRoot)
+                      : localHtmlPreviewPathsEqual(tab.displayUrl, absolutePath) &&
+                        localHtmlPreviewPathsEqual(tab.previewCwd, htmlCwd)),
+                )
+              : undefined;
+          if (browserKind === "local-html") {
+            const retiredPreviewUrl = existingSourceTab?.url ?? null;
+            const nextBrowserState = await api.browser.replaceLocalHtmlPreview({
+              threadId: props.threadId,
+              tabId: existingSourceTab?.id ?? "",
+              url,
+              displayUrl: absolutePath,
+              previewCwd: htmlCwd,
+              ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
+              ...(prepared.sourceRoot ? { sourceRoot: prepared.sourceRoot } : {}),
+              watchedPaths: prepared.watchedPaths ?? [absolutePath],
+              ...(prepared.watchDiscoveryLimited !== undefined
+                ? { watchDiscoveryLimited: prepared.watchDiscoveryLimited }
+                : {}),
+              ...(prepared.localHtmlCapabilityProof
+                ? { localHtmlCapabilityProof: prepared.localHtmlCapabilityProof }
+                : {}),
+              ...(prepared.localHtmlNetworkPolicy
+                ? { localHtmlNetworkPolicy: prepared.localHtmlNetworkPolicy }
+                : {}),
+              ...(allowedExternalUrls ? { allowedExternalUrls } : {}),
+              activate: true,
+            });
+            const installedRevision = {
+              url,
+              displayUrl: absolutePath,
+              previewCwd: htmlCwd,
+              ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
+              ...(prepared.sourceRoot ? { sourceRoot: prepared.sourceRoot } : {}),
+            };
+            const retiredUrl = retiredLocalHtmlPreviewUrl({
+              previousUrl: retiredPreviewUrl,
+              nextState: nextBrowserState,
+              installed: installedRevision,
+            });
+            if (browserStateOwnsLocalHtmlRevision(nextBrowserState, installedRevision)) {
+              previewUrlToRevoke = null;
+              if (retiredUrl) {
+                await api.projects
+                  .revokeHtmlArtifactPreview({ previewUrl: retiredUrl })
+                  .catch(() => undefined);
+              }
+            }
+          } else {
+            const nextBrowserState = await api.browser.open({
+              threadId: props.threadId,
+              initialUrl: url,
+              kind: browserKind,
+              displayUrl: absolutePath,
+              ...(allowedExternalUrls ? { allowedExternalUrls } : {}),
+            });
+            if (
+              browserStateOwnsLocalHtmlRevision(nextBrowserState, {
+                url,
+                displayUrl: absolutePath,
+                previewCwd: htmlCwd,
+                ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
+              })
+            ) {
+              previewUrlToRevoke = null;
+            }
+          }
         } finally {
           if (previewUrlToRevoke) {
             await api.projects

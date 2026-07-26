@@ -484,6 +484,7 @@ export const ProviderRuntimeManagerLive = Layer.effect(
 
     const currentSystemEnvironment = async (): Promise<Partial<Record<string, string>>> => {
       if (process.platform !== "win32") return process.env;
+      if (process.env.SCIENT_DISABLE_SHELL_ENV_SYNC === "1") return process.env;
       if (
         windowsEnvironmentCache &&
         Date.now() - windowsEnvironmentReadAt < WINDOWS_ENVIRONMENT_CACHE_MS

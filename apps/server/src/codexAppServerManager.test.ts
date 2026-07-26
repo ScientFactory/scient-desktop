@@ -424,6 +424,45 @@ describe("buildCodexProcessEnv", () => {
     expect(env.AZURE_OPENAI_API_KEY).toBe("existing-secret");
   });
 
+  it("keeps provider discovery isolated when shell environment synchronization is disabled", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "synara-codex-env-isolated-"));
+    try {
+      writeFileSync(
+        path.join(tempDir, "config.toml"),
+        [
+          'model_provider = "my-company-proxy"',
+          "",
+          '[model_providers."my-company-proxy"]',
+          'env_key = "MY_COMPANY_PROXY_KEY"',
+        ].join("\n"),
+        "utf8",
+      );
+      const readEnvironment = vi.fn(() => ({
+        PATH: "/host/private/bin:/usr/bin",
+        SSH_AUTH_SOCK: "/host/private/ssh.sock",
+        MY_COMPANY_PROXY_KEY: "host-secret",
+      }));
+
+      const env = await buildCodexProcessEnv({
+        env: {
+          SHELL: "/bin/zsh",
+          PATH: "/usr/bin",
+          SCIENT_DISABLE_SHELL_ENV_SYNC: "1",
+        },
+        homePath: tempDir,
+        platform: "darwin",
+        readEnvironment,
+      });
+
+      expect(readEnvironment).not.toHaveBeenCalled();
+      expect(env.PATH).toBe("/usr/bin");
+      expect(env.SSH_AUTH_SOCK).toBeUndefined();
+      expect(env.MY_COMPANY_PROXY_KEY).toBeUndefined();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("allows the configured desktop browser-use socket in the Codex sandbox", async () => {
     const env = await buildCodexProcessEnv({
       env: {

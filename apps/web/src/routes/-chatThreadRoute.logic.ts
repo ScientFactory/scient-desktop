@@ -3,7 +3,13 @@
 // Layer: Route UI logic helpers.
 // Exports: thread title fallback, deep-link bootstrap replay handling, and panel toggle helpers.
 
-import type { ThreadEnvironmentMode, ThreadId, TurnId } from "@synara/contracts";
+import type {
+  ThreadBrowserState,
+  ThreadEnvironmentMode,
+  ThreadId,
+  TurnId,
+} from "@synara/contracts";
+import { isWindowsAbsolutePath } from "@synara/shared/path";
 import { resolveThreadWorkspaceCwd } from "@synara/shared/threadEnvironment";
 
 import type { ChatRightPanel, DiffRouteSearch } from "../diffRouteSearch";
@@ -68,6 +74,64 @@ export function resolveDockDiffAvailable(input: {
   readonly hasWorkingTreeChanges: boolean;
 }): boolean {
   return input.turnDiffCount > 0 || input.hasWorkingTreeChanges;
+}
+
+function localHtmlPathForComparison(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  if (!isWindowsAbsolutePath(trimmed)) return trimmed;
+  const withForwardSlashes = trimmed.replace(/\\/g, "/");
+  const withoutTrailingSeparators = withForwardSlashes.replace(/\/+$/, "");
+  return withoutTrailingSeparators || withForwardSlashes;
+}
+
+export function localHtmlPreviewPathsEqual(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  const normalizedLeft = localHtmlPathForComparison(left);
+  const normalizedRight = localHtmlPathForComparison(right);
+  return normalizedLeft !== null && normalizedLeft === normalizedRight;
+}
+
+export function browserStateOwnsLocalHtmlRevision(
+  state: ThreadBrowserState,
+  input: {
+    url: string;
+    displayUrl: string;
+    previewCwd: string;
+    sourceIdentity?: string;
+    sourceRoot?: string;
+  },
+): boolean {
+  return state.tabs.some(
+    (tab) =>
+      tab.kind === "local-html" &&
+      tab.url === input.url &&
+      (input.sourceIdentity
+        ? localHtmlPreviewPathsEqual(tab.sourceIdentity, input.sourceIdentity) &&
+          localHtmlPreviewPathsEqual(tab.sourceRoot, input.sourceRoot)
+        : localHtmlPreviewPathsEqual(tab.displayUrl, input.displayUrl)) &&
+      localHtmlPreviewPathsEqual(tab.previewCwd, input.previewCwd),
+  );
+}
+
+export function retiredLocalHtmlPreviewUrl(input: {
+  previousUrl: string | null;
+  nextState: ThreadBrowserState;
+  installed: {
+    url: string;
+    displayUrl: string;
+    previewCwd: string;
+    sourceIdentity?: string;
+    sourceRoot?: string;
+  };
+}): string | null {
+  return input.previousUrl &&
+    input.previousUrl !== input.installed.url &&
+    browserStateOwnsLocalHtmlRevision(input.nextState, input.installed)
+    ? input.previousUrl
+    : null;
 }
 
 function createRoutePanelSearchKey(input: {

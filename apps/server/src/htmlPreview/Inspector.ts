@@ -3,6 +3,9 @@
 // Layer: Server HTML-preview domain logic
 
 import fs from "node:fs/promises";
+import type { BigIntStats } from "node:fs";
+import type { FileHandle } from "node:fs/promises";
+import crypto from "node:crypto";
 import path from "node:path";
 
 import type {
@@ -25,6 +28,7 @@ const RESOURCE_GRAPH_PARSE_MAX_BYTES = 1_000_000;
 const DEV_SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".jsx"]);
 const BROWSER_SCRIPT_EXTENSIONS = new Set([".js", ".mjs"]);
 const ACTIVE_DOCUMENT_EXTENSIONS = new Set([".html", ".htm", ".xhtml", ".svg"]);
+const ACTIVE_EMBEDDED_DOCUMENT_ELEMENTS = new Set(["embed", "frame", "iframe", "object"]);
 const SVG_HREF_RESOURCE_ELEMENTS = new Set(["feimage", "image", "mpath", "use"]);
 const SVG_ARBITRARY_ATTRIBUTE_MUTATION_ELEMENTS = new Set(["animate", "set"]);
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
@@ -64,12 +68,147 @@ export interface InspectedHtmlArtifact {
   readonly baseDirectory: string | null;
   readonly siteRoot: string | null;
   readonly allowedResourcePaths: readonly string[];
+  readonly watchedPaths: readonly string[];
+  readonly watchDiscoveryLimited: boolean;
   readonly allowedExternalUrls: readonly string[];
+  readonly fileFingerprints: ReadonlyMap<string, HtmlArtifactFileFingerprint>;
+  readonly classifiedDocumentDigests: ReadonlyMap<string, string>;
+}
+
+export interface HtmlArtifactFileFingerprint {
+  readonly device: bigint;
+  readonly inode: bigint;
+  readonly size: bigint;
+  readonly mtimeNs: bigint;
+  readonly ctimeNs: bigint;
+}
+
+export class HtmlArtifactChangedDuringPreparationError extends Error {
+  constructor() {
+    super("The HTML artifact changed while its preview was being prepared.");
+    this.name = "HtmlArtifactChangedDuringPreparationError";
+  }
+}
+
+export function htmlArtifactFileFingerprint(
+  stat: Pick<BigIntStats, "dev" | "ino" | "size" | "mtimeNs" | "ctimeNs">,
+): HtmlArtifactFileFingerprint {
+  return {
+    device: stat.dev,
+    inode: stat.ino,
+    size: stat.size,
+    mtimeNs: stat.mtimeNs,
+    ctimeNs: stat.ctimeNs,
+  };
+}
+
+export function htmlArtifactFileFingerprintsEqual(
+  left: HtmlArtifactFileFingerprint,
+  right: HtmlArtifactFileFingerprint,
+): boolean {
+  return (
+    left.device === right.device &&
+    left.inode === right.inode &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs
+  );
+}
+
+interface InspectedFileSnapshot {
+  readonly fingerprint: HtmlArtifactFileFingerprint;
+  readonly contents?: string;
+  readonly contentDigest?: string;
+}
+
+export type HtmlArtifactReadChunk = (
+  handle: FileHandle,
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  position: number,
+) => Promise<{ bytesRead: number }>;
+
+export interface HtmlArtifactInspectionOptions {
+  readonly readChunk?: HtmlArtifactReadChunk;
+}
+
+export function htmlArtifactContentDigest(contents: Uint8Array): string {
+  return crypto.createHash("sha256").update(contents).digest("base64url");
+}
+
+export async function readExactPositionedBytes(
+  handle: FileHandle,
+  requestedBytes: number,
+  readChunk: HtmlArtifactReadChunk = (source, buffer, offset, length, position) =>
+    source.read(buffer, offset, length, position),
+): Promise<Buffer> {
+  const buffer = Buffer.allocUnsafe(requestedBytes);
+  let totalBytesRead = 0;
+  while (totalBytesRead < requestedBytes) {
+    const remainingBytes = requestedBytes - totalBytesRead;
+    const { bytesRead } = await readChunk(
+      handle,
+      buffer,
+      totalBytesRead,
+      remainingBytes,
+      totalBytesRead,
+    );
+    if (!Number.isInteger(bytesRead) || bytesRead <= 0 || bytesRead > remainingBytes) {
+      throw new HtmlArtifactChangedDuringPreparationError();
+    }
+    totalBytesRead += bytesRead;
+  }
+  return buffer;
+}
+
+async function inspectFileSnapshot(
+  filePath: string,
+  readMaxBytes?: number,
+  options: HtmlArtifactInspectionOptions = {},
+): Promise<InspectedFileSnapshot | null> {
+  const handle = await fs.open(filePath, "r").catch(() => null);
+  if (!handle) return null;
+  try {
+    const before = await handle.stat({ bigint: true });
+    if (!before.isFile()) return null;
+    let contents: string | undefined;
+    let contentDigest: string | undefined;
+    if (readMaxBytes !== undefined) {
+      const requestedBytes = Number(
+        before.size < BigInt(readMaxBytes) ? before.size : BigInt(readMaxBytes),
+      );
+      const buffer = await readExactPositionedBytes(handle, requestedBytes, options.readChunk);
+      contents = buffer.toString("utf8");
+      contentDigest = htmlArtifactContentDigest(buffer);
+    }
+    const after = await handle.stat({ bigint: true });
+    const beforeFingerprint = htmlArtifactFileFingerprint(before);
+    if (!htmlArtifactFileFingerprintsEqual(beforeFingerprint, htmlArtifactFileFingerprint(after))) {
+      throw new HtmlArtifactChangedDuringPreparationError();
+    }
+    const canonicalAfterRead = await fs.realpath(filePath).catch(() => null);
+    if (canonicalAfterRead !== filePath) {
+      throw new HtmlArtifactChangedDuringPreparationError();
+    }
+    return {
+      fingerprint: beforeFingerprint,
+      ...(contents !== undefined ? { contents } : {}),
+      ...(contentDigest !== undefined ? { contentDigest } : {}),
+    };
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
 }
 
 function isPathInside(candidate: string, root: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  const normalizedCandidate = path.normalize(candidate);
+  const normalizedRoot = path.normalize(root);
+  if (normalizedCandidate === normalizedRoot) return true;
+  const rootPrefix = normalizedRoot.endsWith(path.sep)
+    ? normalizedRoot
+    : `${normalizedRoot}${path.sep}`;
+  return normalizedCandidate.startsWith(rootPrefix);
 }
 
 function isElement(node: Node): node is Element {
@@ -177,7 +316,11 @@ function unsupported(reason: string): InspectedHtmlArtifact {
     baseDirectory: null,
     siteRoot: null,
     allowedResourcePaths: [],
+    watchedPaths: [],
+    watchDiscoveryLimited: false,
     allowedExternalUrls: [],
+    fileFingerprints: new Map(),
+    classifiedDocumentDigests: new Map(),
   };
 }
 
@@ -322,6 +465,12 @@ function isExecutableUrlAttribute(name: string, value: string): boolean {
 function markupHasExecutableContent(source: string, srcdocDepth = 0): boolean {
   const document = parse(source) as DocumentNode;
   let executable = false;
+  let baseHref: string | null = null;
+  visit(document, (element) => {
+    if (baseHref === null && element.tagName.toLowerCase() === "base") {
+      baseHref = attributeOf(element, "href");
+    }
+  });
   visit(document, (element) => {
     if (executable) return;
     const tagName = element.tagName.toLowerCase();
@@ -336,6 +485,16 @@ function markupHasExecutableContent(source: string, srcdocDepth = 0): boolean {
     if (elementCanMutateSvgAtRuntime(element)) {
       executable = true;
       return;
+    }
+    if (ACTIVE_EMBEDDED_DOCUMENT_ELEMENTS.has(tagName)) {
+      const documentUrl = attributeOf(element, tagName === "object" ? "data" : "src");
+      if (documentUrl && normalizedExternalResourceUrl(documentUrl, baseHref)) {
+        // Remote framed documents are active content even when the local entry
+        // contains no script of its own. Their response can execute arbitrary
+        // JavaScript and must inherit the sealed interactive policy.
+        executable = true;
+        return;
+      }
     }
     if (
       element.attrs.some(
@@ -383,14 +542,20 @@ async function collectAllowedResourcePaths(
   entryPath: string,
   entryBaseHref: string | null,
   resourceBoundary: string,
+  options: HtmlArtifactInspectionOptions,
 ): Promise<{
   readonly paths: readonly string[];
+  readonly fileFingerprints: ReadonlyMap<string, HtmlArtifactFileFingerprint>;
+  readonly classifiedDocumentDigests: ReadonlyMap<string, string>;
+  readonly watchedPaths: readonly string[];
+  readonly watchDiscoveryLimited: boolean;
   readonly externalUrls: readonly string[];
   readonly hasExecutableDocument: boolean;
   readonly hasTruncatedActiveDocument: boolean;
   readonly hasTruncatedDependency: boolean;
 }> {
   const pending = resources
+    .slice(0, RESOURCE_GRAPH_MAX_FILES)
     .map((resource) =>
       resolveHtmlDocumentResourcePath({
         value: resource,
@@ -401,40 +566,98 @@ async function collectAllowedResourcePaths(
     )
     .filter((resource): resource is string => resource !== null);
   const allowed = new Set<string>();
+  const fileFingerprints = new Map<string, HtmlArtifactFileFingerprint>();
+  const classifiedDocumentDigests = new Map<string, string>();
+  const watchedPaths = new Set<string>();
   const externalUrls = new Set<string>();
+  const canonicalResourceBoundary = await fs.realpath(resourceBoundary).catch(() => null);
   let hasExecutableDocument = false;
   let hasTruncatedActiveDocument = false;
   let hasTruncatedDependency = false;
+  let watchDiscoveryLimited = resources.length > RESOURCE_GRAPH_MAX_FILES;
+  const inspectedCandidates = new Set<string>();
+  const queuedCandidates = new Set(pending);
+  let missingAncestorProbes = 0;
+  const queueCandidate = (candidate: string | null) => {
+    if (!candidate || inspectedCandidates.has(candidate) || queuedCandidates.has(candidate)) return;
+    if (inspectedCandidates.size + queuedCandidates.size >= RESOURCE_GRAPH_MAX_FILES) {
+      watchDiscoveryLimited = true;
+      return;
+    }
+    queuedCandidates.add(candidate);
+    pending.push(candidate);
+  };
   const addExternalUrl = (url: string) => {
     if (externalUrls.size < RESOURCE_GRAPH_MAX_FILES) externalUrls.add(url);
   };
+  const missingPathWatchCandidate = async (candidate: string): Promise<string | null> => {
+    if (!canonicalResourceBoundary) return null;
+    let firstMissingPath = candidate;
+    while (true) {
+      if (missingAncestorProbes >= RESOURCE_GRAPH_MAX_FILES) {
+        watchDiscoveryLimited = true;
+        return null;
+      }
+      missingAncestorProbes += 1;
+      const parent = path.dirname(firstMissingPath);
+      if (parent === firstMissingPath) return null;
+      const canonicalParent = await fs.realpath(parent).catch(() => null);
+      if (canonicalParent) {
+        return isPathInside(canonicalParent, canonicalResourceBoundary)
+          ? path.join(canonicalParent, path.basename(firstMissingPath))
+          : null;
+      }
+      firstMissingPath = parent;
+    }
+  };
 
-  while (pending.length > 0 && allowed.size < RESOURCE_GRAPH_MAX_FILES) {
+  while (pending.length > 0 && inspectedCandidates.size < RESOURCE_GRAPH_MAX_FILES) {
     const candidate = pending.shift();
     if (!candidate) continue;
+    queuedCandidates.delete(candidate);
+    if (inspectedCandidates.has(candidate)) continue;
+    inspectedCandidates.add(candidate);
     const canonical = await fs.realpath(candidate).catch(() => null);
-    if (!canonical || !isPathInside(canonical, resourceBoundary) || allowed.has(canonical))
+    if (!canonical) {
+      // Watch the first missing component below the nearest canonical existing
+      // ancestor. This sees both a missing file in an existing directory and a
+      // later-created directory tree without trusting a lexical path through a
+      // symlink. The next inspection replaces this trigger with a more precise one.
+      const watchCandidate = await missingPathWatchCandidate(candidate);
+      if (watchCandidate) {
+        if (watchedPaths.size < RESOURCE_GRAPH_MAX_FILES) watchedPaths.add(watchCandidate);
+        else watchDiscoveryLimited = true;
+      }
       continue;
-    const stat = await fs.stat(canonical).catch(() => null);
-    if (!stat?.isFile()) continue;
-    allowed.add(canonical);
-
+    }
+    if (!isPathInside(canonical, resourceBoundary) || allowed.has(canonical)) continue;
     const extension = path.extname(canonical).toLowerCase();
     const isActiveDocument = ACTIVE_DOCUMENT_EXTENSIONS.has(extension);
     const isInspectableDependency =
       extension === ".css" || extension === ".js" || extension === ".mjs";
+    const snapshot = await inspectFileSnapshot(
+      canonical,
+      isActiveDocument || isInspectableDependency ? RESOURCE_GRAPH_PARSE_MAX_BYTES : undefined,
+      options,
+    );
+    if (!snapshot) continue;
+    allowed.add(canonical);
+    fileFingerprints.set(canonical, snapshot.fingerprint);
+    if (isActiveDocument && snapshot.contentDigest) {
+      classifiedDocumentDigests.set(canonical, snapshot.contentDigest);
+    }
+    if (watchedPaths.size < RESOURCE_GRAPH_MAX_FILES) watchedPaths.add(canonical);
+    else watchDiscoveryLimited = true;
+
     if (!isActiveDocument && !isInspectableDependency) {
       continue;
     }
-    if (!isActiveDocument && stat.size > RESOURCE_GRAPH_PARSE_MAX_BYTES) {
+    if (!isActiveDocument && snapshot.fingerprint.size > BigInt(RESOURCE_GRAPH_PARSE_MAX_BYTES)) {
       hasTruncatedDependency = true;
     }
-    const contents =
-      stat.size > RESOURCE_GRAPH_PARSE_MAX_BYTES
-        ? await readInspectionPrefix(canonical)
-        : await fs.readFile(canonical, "utf8");
+    const contents = snapshot.contents ?? "";
     if (isActiveDocument) {
-      if (stat.size > RESOURCE_GRAPH_PARSE_MAX_BYTES) {
+      if (snapshot.fingerprint.size > BigInt(RESOURCE_GRAPH_PARSE_MAX_BYTES)) {
         // The complete served document was not classified, so it must never
         // inherit static-mode network access even when its inspected prefix is inert.
         hasExecutableDocument = true;
@@ -454,7 +677,7 @@ async function collectAllowedResourcePaths(
           siteRoot: resourceBoundary,
           baseHref: linkedDocument.baseHref,
         });
-        if (resolved) pending.push(resolved);
+        queueCandidate(resolved);
       }
       continue;
     }
@@ -472,7 +695,7 @@ async function collectAllowedResourcePaths(
               dependency.startsWith("/") ? resourceBoundary : dependencyDirectory,
             )
           : null;
-        if (resolved) pending.push(resolved);
+        queueCandidate(resolved);
       }
       continue;
     }
@@ -487,7 +710,7 @@ async function collectAllowedResourcePaths(
         dependency,
         dependency.startsWith("/") ? resourceBoundary : dependencyDirectory,
       );
-      if (resolved) pending.push(resolved);
+      queueCandidate(resolved);
     }
 
     await initializeModuleLexer;
@@ -506,7 +729,7 @@ async function collectAllowedResourcePaths(
               dependency.startsWith("/") ? resourceBoundary : dependencyDirectory,
             )
           : null;
-        if (resolved) pending.push(resolved);
+        queueCandidate(resolved);
       }
     } catch {
       // A bounded prefix can end in the middle of a token. Literal-reference
@@ -516,6 +739,10 @@ async function collectAllowedResourcePaths(
 
   return {
     paths: [...allowed],
+    fileFingerprints,
+    classifiedDocumentDigests,
+    watchedPaths: [...watchedPaths],
+    watchDiscoveryLimited: watchDiscoveryLimited || pending.length > 0,
     externalUrls: [...externalUrls],
     hasExecutableDocument,
     hasTruncatedActiveDocument,
@@ -539,19 +766,9 @@ function commonSiteRoot(
   return isPathInside(common, resourceBoundary) ? common : resourceBoundary;
 }
 
-async function readInspectionPrefix(filePath: string): Promise<string> {
-  const handle = await fs.open(filePath, "r");
-  try {
-    const buffer = Buffer.allocUnsafe(HTML_INSPECTION_MAX_BYTES);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    return buffer.subarray(0, bytesRead).toString("utf8");
-  } finally {
-    await handle.close();
-  }
-}
-
 export async function inspectHtmlArtifact(
   input: ProjectInspectHtmlArtifactInput,
+  options: HtmlArtifactInspectionOptions = {},
 ): Promise<InspectedHtmlArtifact> {
   const canonicalWorkspaceRoot = await fs.realpath(path.resolve(input.cwd)).catch(() => null);
   if (!canonicalWorkspaceRoot) {
@@ -575,11 +792,11 @@ export async function inspectHtmlArtifact(
     return unsupported("Only HTML files can be inspected for browser preview.");
   }
 
-  const stat = await fs.stat(absolutePath).catch(() => null);
-  if (!stat?.isFile()) {
+  const entrySnapshot = await inspectFileSnapshot(absolutePath, HTML_INSPECTION_MAX_BYTES, options);
+  if (!entrySnapshot) {
     return unsupported("The HTML artifact is not a file.");
   }
-  const source = await readInspectionPrefix(absolutePath);
+  const source = entrySnapshot.contents ?? "";
   const document = parse(source) as DocumentNode;
   const baseDirectory = path.dirname(absolutePath);
   // Opening one HTML document authorizes only its containing site directory.
@@ -587,7 +804,7 @@ export async function inspectHtmlArtifact(
   // never allowed to nominate arbitrary files elsewhere in the workspace.
   const resourceBoundary = baseDirectory;
   const warnings: ProjectHtmlArtifactWarning[] = [];
-  if (stat.size > HTML_INSPECTION_MAX_BYTES) {
+  if (entrySnapshot.fingerprint.size > BigInt(HTML_INSPECTION_MAX_BYTES)) {
     warnings.push({
       code: "inspection-truncated",
       message:
@@ -633,6 +850,12 @@ export async function inspectHtmlArtifact(
     const srcdoc = attributeOf(element, "srcdoc");
     if (srcdoc && markupHasExecutableContent(srcdoc)) {
       hasInlineScript = true;
+    }
+    if (ACTIVE_EMBEDDED_DOCUMENT_ELEMENTS.has(tagName)) {
+      const documentUrl = attributeOf(element, tagName === "object" ? "data" : "src");
+      if (documentUrl && normalizedExternalResourceUrl(documentUrl, documentBaseHref)) {
+        hasInlineScript = true;
+      }
     }
     if (tagName === "base") {
       return;
@@ -736,6 +959,7 @@ export async function inspectHtmlArtifact(
     absolutePath,
     documentBaseHref,
     resourceBoundary,
+    options,
   );
   const allowedResourcePaths = collectedResources.paths;
   for (const externalUrl of collectedResources.externalUrls) addExternalResource(externalUrl);
@@ -766,7 +990,7 @@ export async function inspectHtmlArtifact(
           hasBrowserScript ||
           hasUnsupportedExecutable ||
           collectedResources.hasExecutableDocument ||
-          stat.size > HTML_INSPECTION_MAX_BYTES
+          entrySnapshot.fingerprint.size > BigInt(HTML_INSPECTION_MAX_BYTES)
         ? "interactive-bundle"
         : "static-document";
   const reason =
@@ -794,6 +1018,16 @@ export async function inspectHtmlArtifact(
     baseDirectory,
     siteRoot: commonSiteRoot(absolutePath, allowedResourcePaths, resourceBoundary),
     allowedResourcePaths,
+    watchedPaths: [absolutePath, ...collectedResources.watchedPaths],
+    watchDiscoveryLimited: collectedResources.watchDiscoveryLimited,
     allowedExternalUrls: [...externalResources],
+    fileFingerprints: new Map([
+      ...collectedResources.fileFingerprints,
+      [absolutePath, entrySnapshot.fingerprint],
+    ]),
+    classifiedDocumentDigests: new Map([
+      ...collectedResources.classifiedDocumentDigests,
+      [absolutePath, entrySnapshot.contentDigest!],
+    ]),
   };
 }

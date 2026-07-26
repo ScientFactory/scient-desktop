@@ -692,6 +692,17 @@ export const makeGitManager = Effect.gen(function* () {
   const gitHubCli = yield* GitHubCli;
   const textGeneration = yield* TextGeneration;
 
+  const assertBranchAuthority = (cwd: string, expectedBranch: string, operation: string) =>
+    Effect.gen(function* () {
+      const actualBranch = (yield* gitCore.statusDetails(cwd)).branch;
+      if (actualBranch !== expectedBranch) {
+        return yield* gitManagerError(
+          operation,
+          `The current branch changed from '${expectedBranch}' to '${actualBranch ?? "detached HEAD"}'. Review the current branch and try again.`,
+        );
+      }
+    });
+
   const createProgressEmitter = (
     input: { cwd: string; action: GitStackedAction },
     options?: GitRunStackedActionOptions,
@@ -1125,6 +1136,10 @@ export const makeGitManager = Effect.gen(function* () {
 
       let suggestion: CommitAndBranchSuggestion | null | undefined = preResolvedSuggestion;
       if (!suggestion) {
+        if (!branch) {
+          return yield* gitManagerError("runCommitStep", "Cannot commit from detached HEAD.");
+        }
+        yield* assertBranchAuthority(cwd, branch, "runCommitStep");
         const needsGeneration = !commitMessage?.trim();
         if (needsGeneration) {
           yield* emit({
@@ -1144,6 +1159,11 @@ export const makeGitManager = Effect.gen(function* () {
       if (!suggestion) {
         return { status: "skipped_no_changes" as const };
       }
+
+      if (!branch) {
+        return yield* gitManagerError("runCommitStep", "Cannot commit from detached HEAD.");
+      }
+      yield* assertBranchAuthority(cwd, branch, "runCommitStep");
 
       yield* emit({
         kind: "phase_started",
@@ -2446,8 +2466,17 @@ The local stash entry was kept for recovery.`,
         committedHeadBranchBase,
       );
 
+      if (!branch) {
+        return yield* gitManagerError(
+          "runFeatureBranchStep",
+          "Cannot create a feature branch from detached HEAD.",
+        );
+      }
+      yield* assertBranchAuthority(cwd, branch, "runFeatureBranchStep");
       yield* gitCore.createBranch({ cwd, branch: resolvedBranch });
+      yield* assertBranchAuthority(cwd, branch, "runFeatureBranchStep");
       yield* Effect.scoped(gitCore.checkoutBranch({ cwd, branch: resolvedBranch }));
+      yield* assertBranchAuthority(cwd, resolvedBranch, "runFeatureBranchStep");
       if (options?.restoreOriginalBranchRef && branch) {
         // Move the original branch back to its trusted remote/upstream ref so
         // "create feature branch and continue" actually removes the commits
@@ -2537,6 +2566,12 @@ The local stash entry was kept for recovery.`,
 
       const runAction = Effect.gen(function* () {
         const initialStatus = yield* gitCore.statusDetails(input.cwd);
+        if (initialStatus.branch !== input.expectedBranch) {
+          return yield* gitManagerError(
+            "runStackedAction",
+            `The current branch changed from '${input.expectedBranch}' to '${initialStatus.branch ?? "detached HEAD"}'. Review the current branch and try again.`,
+          );
+        }
         const textGenerationParams: GitTextGenerationParams = {
           textGenerationModel: input.textGenerationModel,
           textGenerationModelSelection: input.textGenerationModelSelection,
@@ -2651,6 +2686,13 @@ The local stash entry was kept for recovery.`,
                 Effect.flatMap(() =>
                   Effect.gen(function* () {
                     currentPhase = "push";
+                    if (!currentBranch) {
+                      return yield* gitManagerError(
+                        "runStackedAction",
+                        "Cannot push from detached HEAD.",
+                      );
+                    }
+                    yield* assertBranchAuthority(input.cwd, currentBranch, "runStackedAction");
                     return yield* gitCore.pushCurrentBranch(input.cwd, currentBranch);
                   }),
                 ),
@@ -2668,6 +2710,13 @@ The local stash entry was kept for recovery.`,
                 Effect.flatMap(() =>
                   Effect.gen(function* () {
                     currentPhase = "pr";
+                    if (!currentBranch) {
+                      return yield* gitManagerError(
+                        "runStackedAction",
+                        "Cannot create a pull request from detached HEAD.",
+                      );
+                    }
+                    yield* assertBranchAuthority(input.cwd, currentBranch, "runStackedAction");
                     return yield* runPrStep(input.cwd, currentBranch, textGenerationParams);
                   }),
                 ),
@@ -2688,7 +2737,7 @@ The local stash entry was kept for recovery.`,
         return result;
       });
 
-      return yield* runAction.pipe(
+      return yield* gitCore.withActionLock(input.cwd, runAction).pipe(
         Effect.catch((error) =>
           progress
             .emit({

@@ -6,10 +6,10 @@ import type {
   ProjectInspectHtmlArtifactInput,
   ProjectInspectHtmlArtifactResult,
   ProjectPrepareHtmlArtifactPreviewInput,
-  ProjectPrepareHtmlArtifactPreviewResult,
   ProjectRevokeHtmlArtifactPreviewInput,
   ProjectRevokeHtmlArtifactPreviewResult,
 } from "@synara/contracts";
+import type { LiveHtmlPreviewPrepareResult } from "@synara/shared/liveHtmlPreviewTransport";
 import { Data, Effect, ServiceMap } from "effect";
 
 export class HtmlArtifactPreviewError extends Data.TaggedError("HtmlArtifactPreviewError")<{
@@ -23,7 +23,7 @@ export interface HtmlArtifactPreviewShape {
   ) => Effect.Effect<ProjectInspectHtmlArtifactResult, HtmlArtifactPreviewError>;
   readonly prepare: (
     input: ProjectPrepareHtmlArtifactPreviewInput,
-  ) => Effect.Effect<ProjectPrepareHtmlArtifactPreviewResult, HtmlArtifactPreviewError>;
+  ) => Effect.Effect<LiveHtmlPreviewPrepareResult, HtmlArtifactPreviewError>;
   readonly revoke: (
     input: ProjectRevokeHtmlArtifactPreviewInput,
   ) => Effect.Effect<ProjectRevokeHtmlArtifactPreviewResult>;
