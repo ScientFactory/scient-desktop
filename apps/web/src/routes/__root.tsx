@@ -38,7 +38,10 @@ import { useFocusedChatContext } from "../focusedChatContext";
 import { useFeedbackDialogStore } from "../feedbackDialogStore";
 import type { FeedbackThreadContext } from "../feedback";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { markPackagedStartupRendererReadyAfterShellHydration } from "../lib/packagedStartupRendererReadiness";
+import {
+  createPackagedStartupRendererReadinessState,
+  hydrateShellForPackagedStartupRenderer,
+} from "../lib/packagedStartupRendererReadiness";
 import {
   serverConfigQueryOptions,
   serverQueryKeys,
@@ -687,8 +690,7 @@ function EventRouter() {
     let reconcileThreadSubscriptionsChain = Promise.resolve();
     let scopedSubscriptionsStarted = false;
     let scopedSubscriptionsStartInFlight: Promise<void> | null = null;
-    let clearPackagedStartupRendererReady: (() => void) | null = null;
-    let packagedStartupRendererReadinessInFlight: Promise<() => void> | null = null;
+    const packagedStartupRendererReadiness = createPackagedStartupRendererReadinessState();
 
     const beginThreadSubscription = (threadId: ThreadId) => {
       threadSnapshotSequenceById.delete(threadId);
@@ -1167,22 +1169,14 @@ function EventRouter() {
         if (disposed) {
           return;
         }
-        packagedStartupRendererReadinessInFlight ??=
-          markPackagedStartupRendererReadyAfterShellHydration({
-            hydrateShell: loadShellSnapshotOnce,
-            shouldMark: () => !disposed,
-          });
-        const readiness = packagedStartupRendererReadinessInFlight;
-        try {
-          clearPackagedStartupRendererReady ??= await readiness;
-        } finally {
-          if (packagedStartupRendererReadinessInFlight === readiness) {
-            packagedStartupRendererReadinessInFlight = null;
-          }
-        }
+        await hydrateShellForPackagedStartupRenderer({
+          hydrateShell: loadShellSnapshotOnce,
+          state: packagedStartupRendererReadiness,
+          shouldMark: () => !disposed,
+        });
         if (disposed) {
-          clearPackagedStartupRendererReady?.();
-          clearPackagedStartupRendererReady = null;
+          packagedStartupRendererReadiness.clear?.();
+          packagedStartupRendererReadiness.clear = null;
           return;
         }
 
@@ -1310,8 +1304,8 @@ function EventRouter() {
     return () => {
       flushPendingDomainEvents();
       disposed = true;
-      clearPackagedStartupRendererReady?.();
-      clearPackagedStartupRendererReady = null;
+      packagedStartupRendererReadiness.clear?.();
+      packagedStartupRendererReadiness.clear = null;
       window.clearTimeout(shellBootstrapFallbackTimer);
       window.clearInterval(threadDetailCatchupInterval);
       needsProviderInvalidation = false;

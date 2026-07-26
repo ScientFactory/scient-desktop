@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { markPackagedStartupRendererReadyAfterShellHydration } from "./packagedStartupRendererReadiness";
+import {
+  createPackagedStartupRendererReadinessState,
+  hydrateShellForPackagedStartupRenderer,
+  markPackagedStartupRendererReadyAfterShellHydration,
+} from "./packagedStartupRendererReadiness";
 
 describe("packaged startup renderer readiness", () => {
   it("marks readiness only after the authoritative shell snapshot hydrates", async () => {
@@ -45,5 +49,63 @@ describe("packaged startup renderer readiness", () => {
     });
 
     expect(element.dataset.scientRendererReady).toBeUndefined();
+  });
+
+  it("awaits shell hydration again on a later server welcome", async () => {
+    const element = { dataset: {} as DOMStringMap };
+    const state = createPackagedStartupRendererReadinessState();
+    const firstHydration = vi.fn(async () => undefined);
+    await hydrateShellForPackagedStartupRenderer({
+      hydrateShell: firstHydration,
+      state,
+      element,
+    });
+
+    let resolveReconnect!: () => void;
+    const reconnectHydration = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveReconnect = resolve;
+        }),
+    );
+    let reconnectSettled = false;
+    const reconnect = hydrateShellForPackagedStartupRenderer({
+      hydrateShell: reconnectHydration,
+      state,
+      element,
+    }).then(() => {
+      reconnectSettled = true;
+    });
+
+    await Promise.resolve();
+    expect(firstHydration).toHaveBeenCalledTimes(1);
+    expect(reconnectHydration).toHaveBeenCalledTimes(1);
+    expect(reconnectSettled).toBe(false);
+    resolveReconnect();
+    await reconnect;
+    expect(reconnectSettled).toBe(true);
+    expect(element.dataset.scientRendererReady).toBe("true");
+  });
+
+  it("propagates a later server-welcome hydration failure to its awaiting caller", async () => {
+    const element = { dataset: {} as DOMStringMap };
+    const state = createPackagedStartupRendererReadinessState();
+    await hydrateShellForPackagedStartupRenderer({
+      hydrateShell: async () => undefined,
+      state,
+      element,
+    });
+
+    await expect(
+      hydrateShellForPackagedStartupRenderer({
+        hydrateShell: async () => {
+          throw new Error("reconnect shell unavailable");
+        },
+        state,
+        element,
+      }),
+    ).rejects.toThrow("reconnect shell unavailable");
+    expect(state.inFlight).toBeNull();
+    expect(element.dataset.scientRendererReady).toBe("true");
   });
 });
