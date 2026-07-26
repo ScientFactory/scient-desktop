@@ -671,20 +671,55 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
     const path = yield* Path.Path;
     const { worktreesDir } = yield* ServerConfig;
     const actionLocks = new Map<string, Semaphore.Semaphore>();
-    const withActionLock: GitCoreShape["withActionLock"] = (cwd, effect) => {
-      let key: string;
+    const canonicalPath = (candidate: string) => {
       try {
-        key = realpathSync.native(cwd);
+        return realpathSync.native(candidate);
       } catch {
-        key = nodePath.resolve(cwd);
+        return nodePath.resolve(candidate);
       }
-      let lock = actionLocks.get(key);
-      if (!lock) {
-        lock = Semaphore.makeUnsafe(1);
-        actionLocks.set(key, lock);
-      }
-      return lock.withPermits(1)(effect);
     };
+
+    const fallbackActionLockKey = (cwd: string) => canonicalPath(cwd);
+
+    let execute: GitCoreShape["execute"];
+
+    const resolveActionLockKey = (cwd: string) =>
+      Effect.suspend(() =>
+        execute({
+          operation: "GitCore.resolveActionLockKey",
+          cwd,
+          args: ["rev-parse", "--git-common-dir"],
+          allowNonZeroExit: true,
+        }),
+      ).pipe(
+        Effect.map((result) => {
+          if (result.code !== 0) {
+            return fallbackActionLockKey(cwd);
+          }
+          const commonDirectory = result.stdout.trim();
+          if (commonDirectory.length === 0) {
+            return fallbackActionLockKey(cwd);
+          }
+          return canonicalPath(
+            nodePath.isAbsolute(commonDirectory)
+              ? commonDirectory
+              : nodePath.resolve(cwd, commonDirectory),
+          );
+        }),
+        Effect.catch(() => Effect.succeed(fallbackActionLockKey(cwd))),
+      );
+
+    const withActionLock: GitCoreShape["withActionLock"] = (cwd, effect) =>
+      resolveActionLockKey(cwd).pipe(
+        Effect.flatMap((key) => {
+          let lock = actionLocks.get(key);
+          if (!lock) {
+            lock = Semaphore.makeUnsafe(1);
+            actionLocks.set(key, lock);
+          }
+          return lock.withPermits(1)(effect);
+        }),
+      );
 
     const buildGeneratedDetachedWorktreePath = (cwd: string) =>
       Effect.gen(function* () {
@@ -706,8 +741,6 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
         yield* fileSystem.makeDirectory(fallbackParent, { recursive: true });
         return path.join(fallbackParent, AUTO_DETACHED_WORKTREE_DIRNAME);
       });
-
-    let execute: GitCoreShape["execute"];
 
     if (options?.executeOverride) {
       execute = options.executeOverride;

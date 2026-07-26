@@ -226,7 +226,7 @@ const makeCheckpointStore = Effect.gen(function* () {
         Effect.gen(function* () {
           const exit = yield* Effect.exit(
             restore(
-              captureCheckpointOnce(input).pipe(
+              git.withActionLock(input.cwd, captureCheckpointOnce(input)).pipe(
                 Effect.timeoutOption(CHECKPOINT_CAPTURE_TIMEOUT_MS),
                 Effect.flatMap((completed) =>
                   Option.isSome(completed)
@@ -268,57 +268,63 @@ const makeCheckpointStore = Effect.gen(function* () {
     );
 
   const copyCheckpointRef: CheckpointStoreShape["copyCheckpointRef"] = (input) =>
-    Effect.gen(function* () {
-      const operation = "CheckpointStore.copyCheckpointRef";
-      const commitOid = yield* resolveCheckpointCommit(input.cwd, input.fromCheckpointRef);
-      if (!commitOid) {
-        return false;
-      }
+    git.withActionLock(
+      input.cwd,
+      Effect.gen(function* () {
+        const operation = "CheckpointStore.copyCheckpointRef";
+        const commitOid = yield* resolveCheckpointCommit(input.cwd, input.fromCheckpointRef);
+        if (!commitOid) {
+          return false;
+        }
 
-      yield* git.execute({
-        operation,
-        cwd: input.cwd,
-        args: ["update-ref", input.toCheckpointRef, commitOid],
-      });
-      return true;
-    });
-
-  const restoreCheckpoint: CheckpointStoreShape["restoreCheckpoint"] = (input) =>
-    Effect.gen(function* () {
-      const operation = "CheckpointStore.restoreCheckpoint";
-
-      let commitOid = yield* resolveCheckpointCommit(input.cwd, input.checkpointRef);
-
-      if (!commitOid && input.fallbackToHead === true) {
-        commitOid = yield* resolveHeadCommit(input.cwd);
-      }
-
-      if (!commitOid) {
-        return false;
-      }
-
-      yield* git.execute({
-        operation,
-        cwd: input.cwd,
-        args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
-      });
-      yield* git.execute({
-        operation,
-        cwd: input.cwd,
-        args: ["clean", "-fd", "--", "."],
-      });
-
-      const headExists = yield* hasHeadCommit(input.cwd);
-      if (headExists) {
         yield* git.execute({
           operation,
           cwd: input.cwd,
-          args: ["reset", "--quiet", "--", "."],
+          args: ["update-ref", input.toCheckpointRef, commitOid],
         });
-      }
+        return true;
+      }),
+    );
 
-      return true;
-    });
+  const restoreCheckpoint: CheckpointStoreShape["restoreCheckpoint"] = (input) =>
+    git.withActionLock(
+      input.cwd,
+      Effect.gen(function* () {
+        const operation = "CheckpointStore.restoreCheckpoint";
+
+        let commitOid = yield* resolveCheckpointCommit(input.cwd, input.checkpointRef);
+
+        if (!commitOid && input.fallbackToHead === true) {
+          commitOid = yield* resolveHeadCommit(input.cwd);
+        }
+
+        if (!commitOid) {
+          return false;
+        }
+
+        yield* git.execute({
+          operation,
+          cwd: input.cwd,
+          args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
+        });
+        yield* git.execute({
+          operation,
+          cwd: input.cwd,
+          args: ["clean", "-fd", "--", "."],
+        });
+
+        const headExists = yield* hasHeadCommit(input.cwd);
+        if (headExists) {
+          yield* git.execute({
+            operation,
+            cwd: input.cwd,
+            args: ["reset", "--quiet", "--", "."],
+          });
+        }
+
+        return true;
+      }),
+    );
 
   const diffCheckpoints: CheckpointStoreShape["diffCheckpoints"] = (input) =>
     Effect.gen(function* () {
@@ -369,9 +375,11 @@ const makeCheckpointStore = Effect.gen(function* () {
     });
 
   const reverseCheckpointDiff: CheckpointStoreShape["reverseCheckpointDiff"] = (input) =>
-    Effect.gen(function* () {
-      const operation = "CheckpointStore.reverseCheckpointDiff";
-      const [fromCommitOid, toCommitOid] = yield* Effect.all(
+    git.withActionLock(
+      input.cwd,
+      Effect.gen(function* () {
+        const operation = "CheckpointStore.reverseCheckpointDiff";
+        const [fromCommitOid, toCommitOid] = yield* Effect.all(
         [
           resolveCheckpointCommit(input.cwd, input.fromCheckpointRef),
           resolveCheckpointCommit(input.cwd, input.toCheckpointRef),
@@ -379,11 +387,11 @@ const makeCheckpointStore = Effect.gen(function* () {
         { concurrency: "unbounded" },
       );
 
-      if (!fromCommitOid || !toCommitOid) {
-        return false;
-      }
+        if (!fromCommitOid || !toCommitOid) {
+          return false;
+        }
 
-      const diff = yield* git.execute({
+        const diff = yield* git.execute({
         operation,
         cwd: input.cwd,
         args: [
@@ -399,19 +407,19 @@ const makeCheckpointStore = Effect.gen(function* () {
         ],
         maxOutputBytes: input.maxOutputBytes ?? CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
       });
-      if (diff.stdout.length === 0) {
-        return true;
-      }
+        if (diff.stdout.length === 0) {
+          return true;
+        }
 
-      const changedPaths = yield* git.execute({
+        const changedPaths = yield* git.execute({
         operation,
         cwd: input.cwd,
         args: ["diff", "--name-only", "--no-renames", "-z", fromCommitOid, toCommitOid],
         maxOutputBytes: input.maxOutputBytes ?? CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
       });
-      const affectedPaths = changedPaths.stdout.split("\0").filter((entry) => entry.length > 0);
+        const affectedPaths = changedPaths.stdout.split("\0").filter((entry) => entry.length > 0);
 
-      return yield* Effect.acquireUseRelease(
+        return yield* Effect.acquireUseRelease(
         fs.makeTempDirectory({ prefix: "scient-checkpoint-undo-" }),
         (tempDir) =>
           Effect.gen(function* () {
@@ -442,37 +450,41 @@ const makeCheckpointStore = Effect.gen(function* () {
             return true;
           }),
         (tempDir) => fs.remove(tempDir, { recursive: true }),
-      ).pipe(
-        Effect.catchTag("PlatformError", (error) =>
-          Effect.fail(
-            new CheckpointInvariantError({
-              operation,
-              detail: "Failed to prepare the checkpoint patch for undo.",
-              cause: error,
-            }),
+        ).pipe(
+          Effect.catchTag("PlatformError", (error) =>
+            Effect.fail(
+              new CheckpointInvariantError({
+                operation,
+                detail: "Failed to prepare the checkpoint patch for undo.",
+                cause: error,
+              }),
+            ),
           ),
-        ),
-      );
-    });
+        );
+      }),
+    );
 
   const deleteCheckpointRefs: CheckpointStoreShape["deleteCheckpointRefs"] = (input) =>
-    Effect.gen(function* () {
-      const operation = "CheckpointStore.deleteCheckpointRefs";
+    git.withActionLock(
+      input.cwd,
+      Effect.gen(function* () {
+        const operation = "CheckpointStore.deleteCheckpointRefs";
 
-      // Ref deletion writes contend on packed-refs.lock, so keep these writes
-      // explicitly sequential; allowNonZeroExit would otherwise hide a race.
-      yield* Effect.forEach(
-        input.checkpointRefs,
-        (checkpointRef) =>
-          git.execute({
-            operation,
-            cwd: input.cwd,
-            args: ["update-ref", "-d", checkpointRef],
-            allowNonZeroExit: true,
-          }),
-        { concurrency: 1, discard: true },
-      );
-    });
+        // Ref deletion writes contend on packed-refs.lock, so keep these writes
+        // explicitly sequential; allowNonZeroExit would otherwise hide a race.
+        yield* Effect.forEach(
+          input.checkpointRefs,
+          (checkpointRef) =>
+            git.execute({
+              operation,
+              cwd: input.cwd,
+              args: ["update-ref", "-d", checkpointRef],
+              allowNonZeroExit: true,
+            }),
+          { concurrency: 1, discard: true },
+        );
+      }),
+    );
 
   return {
     isGitRepository,

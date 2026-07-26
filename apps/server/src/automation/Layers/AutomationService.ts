@@ -569,7 +569,10 @@ export const AutomationServiceLive = Layer.effect(
             )
         : Effect.void;
 
-      return removeWorktree.pipe(Effect.flatMap(() => deleteBranch));
+      return git.withActionLock(
+        input.project.workspaceRoot,
+        removeWorktree.pipe(Effect.flatMap(() => deleteBranch)),
+      );
     };
 
     const requireDefinition = (id: AutomationId) =>
@@ -747,53 +750,59 @@ export const AutomationServiceLive = Layer.effect(
         return requireLocalCheckoutAcknowledgement().pipe(Effect.as(localThreadEnvironment));
       }
 
-      return git.statusDetails(project.workspaceRoot).pipe(
-        Effect.mapError(toServiceError("Failed to inspect project Git status.")),
-        Effect.flatMap((status) => {
-          if (!status.isRepo || !status.branch) {
-            return definition.worktreeMode === "worktree"
-              ? Effect.fail(
-                  new AutomationServiceError({
-                    message:
-                      "Automation requires a Git worktree, but the project is not on a branch.",
-                  }),
-                )
-              : requireLocalCheckoutAcknowledgement().pipe(Effect.as(localThreadEnvironment));
-          }
+      return git
+        .withActionLock(
+          project.workspaceRoot,
+          git.statusDetails(project.workspaceRoot).pipe(
+            Effect.mapError(toServiceError("Failed to inspect project Git status.")),
+            Effect.flatMap((status) => {
+              if (!status.isRepo || !status.branch) {
+                return definition.worktreeMode === "worktree"
+                  ? Effect.fail(
+                      new AutomationServiceError({
+                        message:
+                          "Automation requires a Git worktree, but the project is not on a branch.",
+                      }),
+                    )
+                  : requireLocalCheckoutAcknowledgement().pipe(Effect.as(localThreadEnvironment));
+              }
 
-          const sourceBranch = status.branch;
-          const branch = makeAutomationBranchName(definition, runId);
-          return beforeWorktreeCreate().pipe(
-            Effect.flatMap(() =>
-              git
-                .createWorktree({
-                  cwd: project.workspaceRoot,
-                  branch: sourceBranch,
-                  newBranch: branch,
-                  path: null,
-                })
-                .pipe(
-                  Effect.mapError(toServiceError("Failed to create automation worktree.")),
-                  Effect.map(
-                    (result): ThreadEnvironment => ({
-                      envMode: "worktree",
-                      branch: result.worktree.branch,
-                      worktreePath: result.worktree.path,
-                      associatedWorktreePath: result.worktree.path,
-                      associatedWorktreeBranch: result.worktree.branch,
-                      associatedWorktreeRef: result.worktree.branch,
-                    }),
-                  ),
+              const sourceBranch = status.branch;
+              const branch = makeAutomationBranchName(definition, runId);
+              return beforeWorktreeCreate().pipe(
+                Effect.flatMap(() =>
+                  git
+                    .createWorktree({
+                      cwd: project.workspaceRoot,
+                      branch: sourceBranch,
+                      newBranch: branch,
+                      path: null,
+                    })
+                    .pipe(
+                      Effect.mapError(toServiceError("Failed to create automation worktree.")),
+                      Effect.map(
+                        (result): ThreadEnvironment => ({
+                          envMode: "worktree",
+                          branch: result.worktree.branch,
+                          worktreePath: result.worktree.path,
+                          associatedWorktreePath: result.worktree.path,
+                          associatedWorktreeBranch: result.worktree.branch,
+                          associatedWorktreeRef: result.worktree.branch,
+                        }),
+                      ),
+                    ),
                 ),
-            ),
-          );
-        }),
+              );
+            }),
+          ),
+        )
+        .pipe(
         Effect.catch((error) =>
           definition.worktreeMode === "auto"
             ? requireLocalCheckoutAcknowledgement().pipe(Effect.as(localThreadEnvironment))
             : Effect.fail(error),
         ),
-      );
+        );
     };
 
     // Heartbeat runs reuse busy user threads, so reconcile only against the turn created

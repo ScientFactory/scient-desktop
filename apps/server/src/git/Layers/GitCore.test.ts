@@ -186,10 +186,22 @@ function commitWithDate(
 
 it.layer(TestLayer)("git integration", (it) => {
   describe("repository action lock", () => {
-    it.effect("serializes canonical aliases of the same repository", () =>
+    it.effect("serializes subdirectories and linked worktrees by Git common directory", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const core = yield* GitCore;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const { initialBranch } = yield* initRepoWithCommit(tmp);
+        const nestedDirectory = path.join(tmp, "nested");
+        const linkedWorktreeParent = yield* makeTmpDir("git-action-lock-linked-");
+        const linkedWorktreePath = path.join(linkedWorktreeParent, "worktree");
+        yield* fileSystem.makeDirectory(nestedDirectory);
+        yield* core.createWorktree({
+          cwd: tmp,
+          branch: initialBranch,
+          newBranch: "lock-linked-worktree",
+          path: linkedWorktreePath,
+        });
         const events = yield* Ref.make<string[]>([]);
         const firstEntered = yield* Deferred.make<void>();
         const releaseFirst = yield* Deferred.make<void>();
@@ -205,15 +217,24 @@ it.layer(TestLayer)("git integration", (it) => {
         );
         const firstFiber = yield* Effect.forkChild(first);
         yield* Deferred.await(firstEntered);
-        const secondFiber = yield* Effect.forkChild(
-          core.withActionLock(path.join(tmp, "."), append("second:start")),
+        const nestedFiber = yield* Effect.forkChild(
+          core.withActionLock(nestedDirectory, append("nested:start")),
+        );
+        const linkedWorktreeFiber = yield* Effect.forkChild(
+          core.withActionLock(linkedWorktreePath, append("linked:start")),
         );
 
         expect(yield* Ref.get(events)).toEqual(["first:start"]);
         yield* Deferred.succeed(releaseFirst, undefined);
         yield* Fiber.join(firstFiber);
-        yield* Fiber.join(secondFiber);
-        expect(yield* Ref.get(events)).toEqual(["first:start", "first:end", "second:start"]);
+        yield* Fiber.join(nestedFiber);
+        yield* Fiber.join(linkedWorktreeFiber);
+        const finalEvents = yield* Ref.get(events);
+        expect(finalEvents.slice(0, 2)).toEqual(["first:start", "first:end"]);
+        expect(new Set(finalEvents.slice(2))).toEqual(
+          new Set(["nested:start", "linked:start"]),
+        );
+        yield* core.removeWorktree({ cwd: tmp, path: linkedWorktreePath, force: true });
       }),
     );
   });
