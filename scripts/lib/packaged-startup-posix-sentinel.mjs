@@ -35,7 +35,12 @@ process.on("SIGTERM", () => undefined);
 
 const child = spawn(command, parsedArgs, {
   cwd,
-  env: process.env,
+  env: {
+    ...process.env,
+    // The desktop accepts smoke-only containment changes only from its direct
+    // retained sentinel parent; an inherited public flag is not authority.
+    SCIENT_PACKAGED_STARTUP_SENTINEL_PID: String(process.pid),
+  },
   detached: false,
   stdio: ["ignore", "inherit", "inherit"],
 });

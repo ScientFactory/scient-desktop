@@ -14,7 +14,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { constants as osConstants, tmpdir } from "node:os";
 import { basename, dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -167,6 +167,13 @@ export function parsePackagedDesktopStartupArgs(
 const PREPARATION_OUTPUT_LIMIT_BYTES = 8 * 1024 * 1024;
 const PREPARATION_CLOSE_TIMEOUT_MS = 2_000;
 
+export class PackagedPreparationCleanupError extends Error {
+  constructor(message: string, cleanupCause: unknown) {
+    super(message, { cause: cleanupCause });
+    this.name = "PackagedPreparationCleanupError";
+  }
+}
+
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 }
@@ -234,19 +241,26 @@ export async function runPackagedPreparationCommand(
       try {
         await abortCleanup;
       } catch (cleanupError) {
-        throw new AggregateError(
-          [abortReason, cleanupError],
+        throw new PackagedPreparationCleanupError(
           `${command} preparation was interrupted and cleanup failed.`,
+          new AggregateError([abortReason, cleanupError]),
         );
       }
-      exitOutcome = await Promise.race([
-        closed,
-        delay(PREPARATION_CLOSE_TIMEOUT_MS).then(() => {
-          throw new Error(
-            `${command} did not close its stdio within ${PREPARATION_CLOSE_TIMEOUT_MS}ms after cleanup.`,
-          );
-        }),
-      ]);
+      try {
+        exitOutcome = await Promise.race([
+          closed,
+          delay(PREPARATION_CLOSE_TIMEOUT_MS).then(() => {
+            throw new Error(
+              `${command} did not close its stdio within ${PREPARATION_CLOSE_TIMEOUT_MS}ms after cleanup.`,
+            );
+          }),
+        ]);
+      } catch (cleanupError) {
+        throw new PackagedPreparationCleanupError(
+          `${command} preparation cleanup did not complete safely.`,
+          cleanupError,
+        );
+      }
       throw abortReason;
     }
     exitOutcome ??= await closed;
@@ -406,9 +420,14 @@ export async function attachMacDiskImageForInspection(
       await runCommand("hdiutil", ["detach", "-force", mountPoint], {
         signal: AbortSignal.timeout(30_000),
       });
-    } catch {
-      // A detach failure is expected when the image never mounted. Preserve
-      // the authoritative attach/cancellation error.
+    } catch (detachError) {
+      const message = detachError instanceof Error ? detachError.message : String(detachError);
+      if (!/not currently mounted|no such file or directory/i.test(message)) {
+        throw new PackagedPreparationCleanupError(
+          `Failed to establish that interrupted disk-image mount ${mountPoint} was detached.`,
+          new AggregateError([attachError, detachError]),
+        );
+      }
     }
     throw attachError;
   }
@@ -830,7 +849,6 @@ export interface ProcessTerminationDependencies {
   readonly terminateRoot?: (child: ChildProcess) => boolean;
   readonly sendSignal?: (target: ProcessTerminationTarget, signal: NodeJS.Signals) => void;
   readonly targetIsAlive?: (target: ProcessTerminationTarget) => boolean;
-  readonly posixPayloadCompletionProven?: () => boolean;
   readonly waitForPosixPayloadExit?: (timeoutMs: number) => Promise<boolean>;
   readonly waitForTargetsExit?: (
     targets: ReadonlyArray<ProcessTerminationTarget>,
@@ -919,13 +937,9 @@ export async function terminateProcessTree(
     ...observedTargets.filter((target) => target.pid !== rootTarget?.pid),
   ];
   if (targets.length === 0) {
-    if (
-      platform !== "win32" &&
-      child.pid &&
-      dependencies.posixPayloadCompletionProven?.() !== true
-    ) {
+    if (platform !== "win32" && child.pid) {
       throw new Error(
-        "Packaged POSIX sentinel vanished without a native-child outcome; preserving evidence because unobserved descendants may remain.",
+        "Packaged POSIX sentinel vanished before authoritative whole-group cleanup; preserving evidence because unobserved descendants may remain.",
       );
     }
     return;
@@ -948,26 +962,18 @@ export async function terminateProcessTree(
   }
 
   if (!rootTarget) {
-    if (await awaitTargetsExit(targets, 2_000)) {
-      if (dependencies.posixPayloadCompletionProven?.() === true) return;
-      throw new Error(
-        "Packaged POSIX sentinel vanished without a native-child outcome; preserving evidence because unobserved descendants may remain.",
-      );
-    }
+    await awaitTargetsExit(targets, 2_000);
     throw new Error(
-      `Packaged POSIX sentinel exited before cleanup while observed descendants ${targets.map(({ pid }) => pid).join(", ")} remained; refusing numeric signaling authority.`,
+      `Packaged POSIX sentinel exited before authoritative whole-group cleanup; preserving evidence and refusing numeric signaling authority for observed descendants ${targets.map(({ pid }) => pid).join(", ")}.`,
     );
   }
   const sendSignal = dependencies.sendSignal ?? sendProcessTreeSignal;
   const targetIsAlive = dependencies.targetIsAlive ?? processTerminationTargetIsAlive;
   if (!targetIsAlive(rootTarget)) {
-    if (await awaitTargetsExit(targets, 2_000)) {
-      if (dependencies.posixPayloadCompletionProven?.() === true) return;
-      throw new Error(
-        "Packaged POSIX sentinel vanished without a native-child outcome; preserving evidence because unobserved descendants may remain.",
-      );
-    }
-    throw new Error("Packaged POSIX sentinel disappeared before its descendants were reaped.");
+    await awaitTargetsExit(targets, 2_000);
+    throw new Error(
+      "Packaged POSIX sentinel disappeared before authoritative whole-group cleanup; preserving evidence because its group can no longer be signaled safely.",
+    );
   }
   sendSignal(rootTarget, "SIGTERM");
   // The sentinel ignores TERM and remains the original process-group member
@@ -1077,6 +1083,8 @@ interface InspectedPackagedDesktopChildOutcome {
   readonly outcome: PackagedDesktopChildOutcome;
 }
 
+const PACKAGED_NATIVE_CHILD_SIGNALS = new Set(Object.keys(osConstants.signals));
+
 export function resolvePackagedNativeChildOutcomePath(environment: NodeJS.ProcessEnv): string {
   const scientHome = environment.SCIENT_HOME?.trim();
   if (!scientHome) throw new Error("Packaged startup smoke requires an isolated SCIENT_HOME.");
@@ -1095,10 +1103,13 @@ function inspectPackagedNativeChildOutcome(
     };
     const exited = parsed.exited;
     const launchError = parsed.launchError;
+    const validExitCode =
+      typeof exited?.code === "number" && Number.isSafeInteger(exited.code) && exited.code >= 0;
+    const validSignal =
+      typeof exited?.signal === "string" && PACKAGED_NATIVE_CHILD_SIGNALS.has(exited.signal);
     if (
       exited &&
-      (typeof exited.code === "number" || exited.code === null) &&
-      (typeof exited.signal === "string" || exited.signal === null) &&
+      ((validExitCode && exited.signal === null) || (exited.code === null && validSignal)) &&
       launchError === null
     ) {
       return {
@@ -1112,7 +1123,12 @@ function inspectPackagedNativeChildOutcome(
         },
       };
     }
-    if (exited === null && launchError && typeof launchError.message === "string") {
+    if (
+      exited === null &&
+      launchError &&
+      typeof launchError.message === "string" &&
+      launchError.message.trim().length > 0
+    ) {
       return {
         evidence: "proven",
         outcome: { exited: null, launchError: new Error(launchError.message) },
@@ -1295,6 +1311,7 @@ async function verifyPackagedDesktopPayload(
   let logPath: string | null = null;
   let output = "";
   const failures: Array<{ phase: string; error: unknown }> = [];
+  let processCleanupFailed = false;
   const termination = monitorPackagedStartupTermination();
   try {
     const preparationSignal = AbortSignal.any([
@@ -1342,10 +1359,14 @@ async function verifyPackagedDesktopPayload(
       }),
     ]);
   } catch (error) {
-    failures.push({ phase: "startup verification failed", error });
+    if (error instanceof PackagedPreparationCleanupError) {
+      processCleanupFailed = true;
+      failures.push({ phase: "preparation process cleanup failed", error });
+    } else {
+      failures.push({ phase: "startup verification failed", error });
+    }
   }
 
-  let processCleanupFailed = false;
   try {
     if (child) {
       await terminateProcessTree(
@@ -1353,9 +1374,6 @@ async function verifyPackagedDesktopPayload(
         {
           ...(process.platform !== "win32" && environment
             ? {
-                posixPayloadCompletionProven: () => {
-                  return hasProvenPackagedNativeChildOutcome(environment!);
-                },
                 waitForPosixPayloadExit: (timeoutMs: number) =>
                   waitForPackagedNativeChildOutcome(environment!, timeoutMs),
               }

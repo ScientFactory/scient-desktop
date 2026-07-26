@@ -249,16 +249,55 @@ function verifyReleaseWorkflowSafety(): void {
   const parsedWorkflow = parseYaml(workflow) as {
     permissions?: Record<string, string>;
     jobs?: {
-      build?: { permissions?: Record<string, string>; steps?: Array<ReleaseWorkflowStep> };
+      build?: {
+        permissions?: Record<string, string>;
+        steps?: Array<ReleaseWorkflowStep>;
+        strategy?: { matrix?: { include?: Array<Record<string, unknown>> } };
+      };
       preflight?: { steps?: Array<ReleaseWorkflowStep> };
       publish_cli?: { permissions?: Record<string, string> };
       release?: { permissions?: Record<string, string> };
     };
   };
   const buildSteps = parsedWorkflow.jobs?.build?.steps ?? [];
+  const buildMatrix = parsedWorkflow.jobs?.build?.strategy?.matrix?.include ?? [];
   const preflightSteps = parsedWorkflow.jobs?.preflight?.steps ?? [];
   const buildPermissions = parsedWorkflow.jobs?.build?.permissions ?? {};
   const buildCheckout = buildSteps.find((step) => step.name === "Checkout");
+  const requiredNativeBuildMatrix = [
+    {
+      label: "macOS arm64",
+      runner: "macos-14",
+      platform: "mac",
+      target: "dmg",
+      arch: "arm64",
+      timeout_minutes: 120,
+    },
+    {
+      label: "macOS x64",
+      runner: "macos-15-intel",
+      platform: "mac",
+      target: "dmg",
+      arch: "x64",
+      timeout_minutes: 120,
+    },
+    {
+      label: "Linux x64",
+      runner: "ubuntu-24.04",
+      platform: "linux",
+      target: "AppImage",
+      arch: "x64",
+      timeout_minutes: 30,
+    },
+    {
+      label: "Windows x64",
+      runner: "windows-2022",
+      platform: "win",
+      target: "nsis",
+      arch: "x64",
+      timeout_minutes: 30,
+    },
+  ];
   if (
     parsedWorkflow.permissions?.contents !== "read" ||
     Object.keys(parsedWorkflow.permissions ?? {}).length !== 1 ||
@@ -270,6 +309,11 @@ function verifyReleaseWorkflowSafety(): void {
   ) {
     throw new Error(
       "Expected native payload execution to have read-only contents, no OIDC, and no persisted checkout credential.",
+    );
+  }
+  if (JSON.stringify(buildMatrix) !== JSON.stringify(requiredNativeBuildMatrix)) {
+    throw new Error(
+      "Expected the exact macOS arm64, macOS x64, Linux x64, and Windows x64 native release matrix and runners.",
     );
   }
   const requireBuildStep = (name: string) => {

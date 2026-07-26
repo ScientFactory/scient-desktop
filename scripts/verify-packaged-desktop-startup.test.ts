@@ -28,6 +28,7 @@ import {
   hasPackagedStartupProof,
   isScientWindowsExecutable,
   monitorPackagedStartupTermination,
+  PackagedPreparationCleanupError,
   parsePackagedDesktopStartupArgs,
   readWindowsExecutableArchitecture,
   readPackagedDesktopLogTail,
@@ -440,6 +441,32 @@ describe("packaged desktop startup verification", () => {
     termination.dispose();
   });
 
+  it("classifies failed preparation termination as cleanup failure", async () => {
+    const abortController = new AbortController();
+    const spawnProcess = vi.fn(() => {
+      const child = new EventEmitter() as ChildProcess;
+      Object.assign(child, {
+        exitCode: null,
+        pid: 42,
+        signalCode: null,
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+      });
+      return child;
+    }) as unknown as typeof import("node:child_process").spawn;
+    const command = runPackagedPreparationCommand("ditto", ["hung.zip"], {
+      signal: abortController.signal,
+      spawnProcess,
+      terminateProcess: async () => {
+        throw new Error("tree survived");
+      },
+    });
+
+    abortController.abort(new Error("interrupted"));
+
+    await expect(command).rejects.toBeInstanceOf(PackagedPreparationCleanupError);
+  });
+
   it("attempts to detach a partially mounted DMG after attach fails", async () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
     const attachError = new Error("attach interrupted");
@@ -471,6 +498,39 @@ describe("packaged desktop startup verification", () => {
       },
       { command: "hdiutil", args: ["detach", "-force", "/tmp/scient-mount"] },
     ]);
+  });
+
+  it("reports an unknown forced-detach failure after interrupted DMG attach", async () => {
+    const runCommand = vi.fn(async (_command: string, args: ReadonlyArray<string>) => {
+      if (args[0] === "attach") throw new Error("attach interrupted");
+      throw new Error("resource still busy");
+    }) as unknown as typeof runPackagedPreparationCommand;
+
+    await expect(
+      attachMacDiskImageForInspection(
+        "/tmp/Scient.dmg",
+        "/tmp/scient-mount",
+        new AbortController().signal,
+        runCommand,
+      ),
+    ).rejects.toBeInstanceOf(PackagedPreparationCleanupError);
+  });
+
+  it("preserves the attach error when forced detach proves no mount exists", async () => {
+    const attachError = new Error("attach interrupted");
+    const runCommand = vi.fn(async (_command: string, args: ReadonlyArray<string>) => {
+      if (args[0] === "attach") throw attachError;
+      throw new Error("hdiutil: detach failed - No such file or directory");
+    }) as unknown as typeof runPackagedPreparationCommand;
+
+    await expect(
+      attachMacDiskImageForInspection(
+        "/tmp/Scient.dmg",
+        "/tmp/scient-mount",
+        new AbortController().signal,
+        runCommand,
+      ),
+    ).rejects.toBe(attachError);
   });
 
   it("force-detaches a mounted DMG when ordinary cleanup reports it busy", async () => {
@@ -779,6 +839,19 @@ describe("packaged desktop startup verification", () => {
       launchError: null,
     });
     expect(hasProvenPackagedNativeChildOutcome(environment)).toBe(true);
+    for (const invalidOutcome of [
+      { exited: { code: null, signal: null }, launchError: null },
+      { exited: { code: 0, signal: "SIGKILL" }, launchError: null },
+      { exited: { code: 0.5, signal: null }, launchError: null },
+      { exited: { code: null, signal: "NOT_A_SIGNAL" }, launchError: null },
+      { exited: null, launchError: { message: "   " } },
+    ]) {
+      writeFileSync(
+        join(root, "packaged-native-child-outcome.json"),
+        JSON.stringify(invalidOutcome),
+      );
+      expect(hasProvenPackagedNativeChildOutcome(environment)).toBe(false);
+    }
     writeFileSync(join(root, "packaged-native-child-outcome.json"), "{malformed");
     expect(readPackagedNativeChildOutcome(environment).launchError).toBeInstanceOf(Error);
     expect(hasProvenPackagedNativeChildOutcome(environment)).toBe(false);
@@ -920,7 +993,7 @@ describe("packaged desktop startup verification", () => {
     expect(events).toEqual(["SIGTERM", "wait:12000", "SIGKILL", "reap:2000"]);
   });
 
-  it("accepts an already-gone POSIX sentinel only with proven native completion", async () => {
+  it("fails closed when a POSIX sentinel is gone even after observed processes exit", async () => {
     const child = {
       exitCode: 0,
       pid: 42,
@@ -928,13 +1001,14 @@ describe("packaged desktop startup verification", () => {
     } as unknown as ChildProcess;
     const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
 
-    await terminateProcessTree(child, {
-      platform: "darwin",
-      posixPayloadCompletionProven: () => true,
-      sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
-      targetIsAlive: () => false,
-      waitForTargetsExit: async () => true,
-    });
+    await expect(
+      terminateProcessTree(child, {
+        platform: "darwin",
+        sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
+        targetIsAlive: () => false,
+        waitForTargetsExit: async () => true,
+      }),
+    ).rejects.toThrow("before authoritative whole-group cleanup");
 
     expect(signals).toEqual([]);
   });
@@ -949,9 +1023,8 @@ describe("packaged desktop startup verification", () => {
     await expect(
       terminateProcessTree(child, {
         platform: "darwin",
-        posixPayloadCompletionProven: () => false,
       }),
-    ).rejects.toThrow("sentinel vanished without a native-child outcome");
+    ).rejects.toThrow("before authoritative whole-group cleanup");
   });
 
   it("fails closed after observed POSIX descendants exit without proven native completion", async () => {
@@ -966,12 +1039,11 @@ describe("packaged desktop startup verification", () => {
         child,
         {
           platform: "darwin",
-          posixPayloadCompletionProven: () => false,
           waitForTargetsExit: async () => true,
         },
         [84],
       ),
-    ).rejects.toThrow("sentinel vanished without a native-child outcome");
+    ).rejects.toThrow("before authoritative whole-group cleanup");
   });
 
   it("fails closed when the POSIX sentinel disappears while cleanup is starting", async () => {
@@ -987,13 +1059,12 @@ describe("packaged desktop startup verification", () => {
         {
           platform: "darwin",
           childIsAlive: () => true,
-          posixPayloadCompletionProven: () => false,
           targetIsAlive: () => false,
           waitForTargetsExit: async () => true,
         },
         [84],
       ),
-    ).rejects.toThrow("sentinel vanished without a native-child outcome");
+    ).rejects.toThrow("before authoritative whole-group cleanup");
   });
 
   it("refuses numeric POSIX signaling after the retained sentinel exits early", async () => {

@@ -60,6 +60,7 @@ import { RotatingFileSink } from "@synara/shared/logging";
 import { ensureStaticSnapshot, findAsarArchivePath } from "@synara/shared/staticSnapshot";
 import { isBackendReadinessAborted, waitForHttpReady } from "./backendReadiness";
 import { waitForPackagedBackendResponsiveness } from "./packagedStartupResponsiveness";
+import { isVerifierOwnedPackagedStartupSmoke } from "./packagedStartupSmokeAuthority";
 import { resolveBackendNodeArgs } from "./backendNodeOptions";
 import {
   backendProcessContainmentOptions,
@@ -1007,7 +1008,7 @@ function resolveEmbeddedCommitHash(): string | null {
 }
 
 function writePackagedStartupSmokeIdentity(): void {
-  if (process.env.SCIENT_PACKAGED_STARTUP_SMOKE !== "1") return;
+  if (!isVerifierOwnedPackagedStartupSmoke(process.env, process.ppid, app.isPackaged)) return;
   const commit = resolveEmbeddedReleaseMetadata().fullCommitHash ?? "unknown";
   writeDesktopLogHeader(
     `packaged identity name=${app.getName()} version=${app.getVersion()} commit=${commit}`,
@@ -2876,7 +2877,7 @@ function spawnBackendGeneration(generation: number): ChildProcess.ChildProcess {
     ...backendProcessContainmentOptions(
       captureBackendLogs,
       process.platform,
-      process.env.SCIENT_PACKAGED_STARTUP_SMOKE !== "1",
+      !isVerifierOwnedPackagedStartupSmoke(process.env, process.ppid, app.isPackaged),
     ),
   });
   writeDesktopLogHeader(
@@ -2982,7 +2983,17 @@ function getBackendSupervisor(): DesktopBackendSupervisor {
         }
       });
     },
-    forceTerminateTree: (child) => forceTerminateBackendProcessTree(child),
+    forceTerminateTree: (child) => {
+      if (
+        process.platform !== "win32" &&
+        isVerifierOwnedPackagedStartupSmoke(process.env, process.ppid, app.isPackaged)
+      ) {
+        throw new Error(
+          "Verifier-owned packaged startup retains process-group cleanup authority; refusing unsafe backend PID-group signaling.",
+        );
+      }
+      return forceTerminateBackendProcessTree(child);
+    },
     onGenerationStarted: handleBackendGenerationStarted,
     onGenerationExited: handleBackendGenerationExited,
     onRestartScheduled: ({ delayMs, reason }) => {
@@ -3588,7 +3599,7 @@ function createWindow(): BrowserWindow {
     writeDesktopLogHeader("renderer main frame loaded");
     window.setTitle(APP_DISPLAY_NAME);
     emitUpdateState();
-    if (process.env.SCIENT_PACKAGED_STARTUP_SMOKE === "1") {
+    if (isVerifierOwnedPackagedStartupSmoke(process.env, process.ppid, app.isPackaged)) {
       setTimeout(() => {
         const generation = getBackendSupervisor().currentGeneration;
         void Promise.all([
