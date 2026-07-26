@@ -70,6 +70,7 @@ const TEST_CONFIG: ServerConfigShape = {
   autoBootstrapProjectFromCwd: false,
   logProviderEvents: false,
   logWebSocketEvents: false,
+  agentGatewayEnabled: false,
   stateDir: "/tmp/scient-test/state",
   secretsDir: "/tmp/scient-test/secrets",
   dbPath: "/tmp/scient-test/state.sqlite",

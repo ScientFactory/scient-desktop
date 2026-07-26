@@ -87,6 +87,11 @@ import {
 } from "effect";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import {
+  buildClaudeMcpServers,
+  type ClaudeMcpHttpServerConfig,
+} from "../../agentGateway/mcpInjection.ts";
+import { AgentGatewayCredentials } from "../../agentGateway/Services/AgentGatewayCredentials.ts";
 import { ServerConfig } from "../../config.ts";
 import { buildIsolatedClaudeDiscoveryOptions } from "../claudeDiscoveryIsolation.ts";
 import { buildFileAttachmentsPromptBlock } from "../attachmentProjection.ts";
@@ -260,6 +265,9 @@ interface ClaudeSessionContext {
   // Context-size warnings already emitted for this session (once per threshold).
   readonly emittedContextUsageWarnings: Set<string>;
   stopped: boolean;
+  // Agent-gateway bearer token minted for this session (when the feature flag is
+  // enabled), revoked on teardown so a retired session cannot keep coordinating.
+  readonly agentGatewayToken: string | undefined;
   // Unrecognized SDK message kinds already surfaced as a runtime warning. Newer
   // Claude SDKs stream high-frequency telemetry (e.g. `thinking_tokens`); de-duping
   // here keeps a single unknown kind from flooding the conversation timeline.
@@ -1424,6 +1432,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
   return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const serverConfig = yield* ServerConfig;
+    const agentGatewayCredentials = yield* AgentGatewayCredentials;
     const nativeEventLogger =
       options?.nativeEventLogger ??
       (options?.nativeEventLogPath !== undefined
@@ -3232,6 +3241,14 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
 
         context.stopped = true;
 
+        // Revoke first so a retired session's bearer token stops verifying even
+        // if later teardown steps fail. Idempotent: revoking an unknown token is
+        // a no-op.
+        if (context.agentGatewayToken !== undefined) {
+          const revokedToken = context.agentGatewayToken;
+          yield* Effect.sync(() => agentGatewayCredentials.revokeSessionToken(revokedToken));
+        }
+
         for (const [requestId, pending] of context.pendingApprovals) {
           yield* Deferred.succeed(pending.decision, "cancel");
           const stamp = yield* makeEventStamp();
@@ -3336,6 +3353,11 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         const startedAt = yield* nowIso;
         const resumeState = readClaudeResumeState(input.resumeCursor);
         const threadId = input.threadId;
+        // Minted just before the SDK query is built (below); stashed on the
+        // session context for revoke-on-teardown and revoked directly if session
+        // installation fails before a context exists.
+        let agentGatewayToken: string | undefined;
+        let agentGatewayMcpServers: Record<string, ClaudeMcpHttpServerConfig> | undefined;
         const existingResumeSessionId = resumeState?.resume;
         const newSessionId =
           existingResumeSessionId === undefined ? yield* Random.nextUUIDv4 : undefined;
@@ -3710,6 +3732,18 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           claudeExecutable,
         );
 
+        // Host-served agent gateway MCP injection (cross-thread coordination).
+        // The bearer token rides an HTTP `Authorization` header, never the
+        // process env, so exec subprocesses cannot inherit it. The token is
+        // revoked on session teardown (stopSessionInternal) and on failed
+        // installation (the `Effect.ensuring` cleanup below). Gated by the
+        // feature flag so the injection is absent unless the operator opts in.
+        if (agentGatewayToken === undefined && serverConfig.agentGatewayEnabled) {
+          const connection = agentGatewayCredentials.connectionForThread(threadId, PROVIDER);
+          agentGatewayToken = connection.bearerToken;
+          agentGatewayMcpServers = buildClaudeMcpServers(connection);
+        }
+
         const queryOptions: ClaudeQueryOptions = {
           ...(input.cwd ? { cwd: input.cwd } : {}),
           // Keep Claude context-window selection model-driven so session start
@@ -3734,6 +3768,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           settings,
           ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
           ...(newSessionId ? { sessionId: newSessionId } : {}),
+          ...(agentGatewayMcpServers ? { mcpServers: agentGatewayMcpServers } : {}),
           includePartialMessages: true,
           canUseTool,
           env: claudeSdkEnv,
@@ -3862,6 +3897,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             rerouteOriginalApiModelId: resumedRerouteOriginalApiModelId,
             emittedContextUsageWarnings: new Set(),
             stopped: false,
+            agentGatewayToken,
             warnedUnhandledSdkKinds: new Set(),
           };
           installationContext = context;
@@ -3962,9 +3998,16 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
                 return Effect.void;
               }
               if (installationContext !== undefined) {
+                // stopSessionInternal revokes the gateway token via the context.
                 return stopSessionInternal(installationContext, { emitExitEvent: false });
               }
               return Effect.gen(function* () {
+                // No context was installed, so revoke the minted token directly
+                // (e.g. the SDK query failed to construct after minting).
+                if (agentGatewayToken !== undefined) {
+                  const revokedToken = agentGatewayToken;
+                  yield* Effect.sync(() => agentGatewayCredentials.revokeSessionToken(revokedToken));
+                }
                 yield* Queue.shutdown(promptQueue);
                 const closeExit = yield* Effect.exit(Effect.sync(() => queryRuntime.close()));
                 if (Exit.isFailure(closeExit)) {

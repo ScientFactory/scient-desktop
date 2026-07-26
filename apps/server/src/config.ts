@@ -61,6 +61,11 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly autoBootstrapProjectFromCwd: boolean;
   readonly logProviderEvents: boolean;
   readonly logWebSocketEvents: boolean;
+  /**
+   * Enables the host-served Synara agent gateway MCP endpoint and its provider
+   * injection. Disabled by default; gated by `SYNARA_AGENT_GATEWAY_ENABLED`.
+   */
+  readonly agentGatewayEnabled: boolean;
 }
 
 export const deriveServerPaths = Effect.fn(function* (
@@ -188,6 +193,7 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
           autoBootstrapProjectFromCwd: false,
           logProviderEvents: false,
           logWebSocketEvents: false,
+          agentGatewayEnabled: false,
           port: 0,
           host: undefined,
           authToken: undefined,

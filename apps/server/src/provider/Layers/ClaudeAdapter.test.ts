@@ -22,6 +22,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Exit, Fiber, Layer, Random, Stream } from "effect";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
+import { AgentGatewayCredentialsWithSecretsLive } from "../../agentGateway/Layers/AgentGatewayCredentials.ts";
 import { ServerConfig } from "../../config.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
@@ -205,6 +206,7 @@ function makeHarness(config?: {
 
   return {
     layer: makeClaudeAdapterLive(adapterOptions).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(
         ServerConfig.layerTest(
           config?.cwd ?? "/tmp/claude-adapter-test",
@@ -235,6 +237,7 @@ function makeMultiQueryHarness(config?: { readonly failCreateAt?: number }) {
       return query;
     },
   }).pipe(
+    Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
     Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -1985,6 +1988,7 @@ describe("ClaudeAdapterLive", () => {
         return query;
       },
     }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -4731,6 +4735,7 @@ describe("ClaudeAdapterLive", () => {
       throw new Error("simulated post-spawn setup failure");
     };
     const layer = makeClaudeAdapterLive({ createQuery: () => query }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );
