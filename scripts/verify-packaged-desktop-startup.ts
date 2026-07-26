@@ -34,6 +34,9 @@ const POSIX_SENTINEL_PATH = fileURLToPath(
 const WINDOWS_JOB_LAUNCHER_PATH = fileURLToPath(
   new URL("./lib/packaged-startup-windows-job.ps1", import.meta.url),
 );
+const POSIX_SENTINEL_SHUTDOWN_MESSAGE = {
+  type: "scient-packaged-startup-shutdown",
+} as const;
 
 export type PackagedDesktopPlatform = "mac" | "win";
 
@@ -453,7 +456,7 @@ export function spawnContainedPackagedDesktop(
       cwd: launch.cwd,
       env: environment,
       detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
       windowsHide: true,
     },
   );
@@ -967,6 +970,7 @@ export interface ProcessTerminationDependencies {
   readonly platform?: NodeJS.Platform;
   readonly childIsAlive?: (child: ChildProcess) => boolean;
   readonly terminateRoot?: (child: ChildProcess) => boolean;
+  readonly requestPosixShutdown?: (child: ChildProcess) => boolean | Promise<boolean>;
   readonly waitForTargetsExit?: (
     targets: ReadonlyArray<ProcessTerminationTarget>,
     timeoutMs: number,
@@ -985,6 +989,17 @@ function childProcessHandleIsAlive(child: ChildProcess): boolean {
   } catch {
     return false;
   }
+}
+
+function requestPosixSentinelShutdown(child: ChildProcess): Promise<boolean> {
+  if (!child.connected || !child.send) return Promise.resolve(false);
+  return new Promise((resolveRequest) => {
+    try {
+      child.send!(POSIX_SENTINEL_SHUTDOWN_MESSAGE, (error) => resolveRequest(error === null));
+    } catch {
+      resolveRequest(false);
+    }
+  });
 }
 
 function processTerminationTargetIsAlive(target: ProcessTerminationTarget): boolean {
@@ -1024,9 +1039,11 @@ export async function terminateProcessTree(
 ): Promise<void> {
   const platform = dependencies.platform ?? process.platform;
   const childCanStillOwnProcesses =
-    (dependencies.childIsAlive ?? childProcessHandleIsAlive)(child) &&
     child.exitCode === null &&
-    child.signalCode === null;
+    child.signalCode === null &&
+    (platform === "win32"
+      ? (dependencies.childIsAlive ?? childProcessHandleIsAlive)(child)
+      : child.connected === true);
   const rootTarget: ProcessTerminationTarget | null =
     child.pid && childCanStillOwnProcesses ? { pid: child.pid, processGroup: false } : null;
   // Backend PIDs recovered from logs/runtime state are observation-only. The
@@ -1074,14 +1091,15 @@ export async function terminateProcessTree(
       `Packaged POSIX sentinel exited before authoritative whole-group cleanup; preserving evidence and refusing numeric signaling authority for observed descendants ${targets.map(({ pid }) => pid).join(", ")}.`,
     );
   }
-  // Signal only the still-retained direct ChildProcess. The sentinel itself
+  // Request cleanup only over the retained IPC channel. The sentinel itself
   // owns graceful whole-group termination and escalation from its unrecycled
-  // process-group identity. If it disappears, the verifier never falls back to
-  // a delayed numeric PID or process-group signal.
-  const terminated = dependencies.terminateRoot?.(child) ?? child.kill("SIGTERM");
-  if (!terminated) {
+  // process-group identity. A disconnected channel fails closed without any
+  // numeric PID or process-group signal from the verifier.
+  const requested = await (dependencies.requestPosixShutdown?.(child) ??
+    requestPosixSentinelShutdown(child));
+  if (!requested) {
     throw new Error(
-      "Packaged POSIX sentinel could not accept handle-bound cleanup; preserving evidence and refusing numeric fallback signaling.",
+      "Packaged POSIX sentinel control channel could not accept cleanup; preserving evidence and refusing numeric fallback signaling.",
     );
   }
   if (await awaitTargetsExit(targets, POSIX_SENTINEL_SHUTDOWN_TIMEOUT_MS)) return;

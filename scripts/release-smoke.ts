@@ -564,6 +564,21 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     posixStartupSentinel,
+    'process.on("message", (message)',
+    "Expected POSIX cleanup requests to use the retained sentinel IPC channel.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    'stdio: ["ignore", "pipe", "pipe", "ipc"]',
+    "Expected the POSIX sentinel launch to retain a cleanup control channel.",
+  );
+  assertNotContains(
+    packagedStartupVerifier,
+    'child.kill("SIGTERM")',
+    "POSIX verifier cleanup must never signal a reusable numeric sentinel PID.",
+  );
+  assertContains(
+    posixStartupSentinel,
     "process.ppid !== verifierParentPid",
     "Expected the POSIX sentinel to terminate its group when its verifier parent dies.",
   );

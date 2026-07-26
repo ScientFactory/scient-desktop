@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 const OUTCOME_FILE = "packaged-native-child-outcome.json";
 const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 12_000;
 const VERIFIER_LIVENESS_POLL_MS = 250;
+const SHUTDOWN_MESSAGE_TYPE = "scient-packaged-startup-shutdown";
 let outcomeWritten = false;
 
 function writeOutcome(value) {
@@ -72,6 +73,16 @@ function beginSentinelOwnedShutdown(immediate = false) {
 }
 
 process.on("SIGTERM", () => beginSentinelOwnedShutdown(false));
+process.on("message", (message) => {
+  if (
+    message &&
+    typeof message === "object" &&
+    message.type === SHUTDOWN_MESSAGE_TYPE &&
+    Object.keys(message).length === 1
+  ) {
+    beginSentinelOwnedShutdown(false);
+  }
+});
 
 const child = spawn(command, parsedArgs, {
   cwd,

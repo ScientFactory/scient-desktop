@@ -1024,6 +1024,90 @@ describe("packaged desktop startup verification", () => {
     15_000,
   );
 
+  it.skipIf(process.platform === "win32")(
+    "cleans up the retained POSIX sentinel group through IPC without verifier PID signaling",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "scient-packaged-sentinel-ipc-cleanup-test-"));
+      temporaryRoots.push(root);
+      const payloadMarkerPath = join(root, "payload.pid");
+      const payloadSource = [
+        'const { writeFileSync } = require("node:fs");',
+        `writeFileSync(${JSON.stringify(payloadMarkerPath)}, String(process.pid));`,
+        "setInterval(() => undefined, 60000);",
+      ].join("");
+      const sentinel = spawnContainedPackagedDesktop(
+        { command: process.execPath, args: ["-e", payloadSource], cwd: root },
+        { ...process.env, SCIENT_HOME: root },
+        process.platform,
+      );
+
+      expect(await waitUntil(() => existsSync(payloadMarkerPath), 5_000)).toBe(true);
+      const payloadPid = Number(readFileSync(payloadMarkerPath, "utf8"));
+      await terminateProcessTree(sentinel, {}, [payloadPid]);
+
+      expect(processHasExited(sentinel.pid!)).toBe(true);
+      expect(processHasExited(payloadPid)).toBe(true);
+      expect(hasProvenPackagedNativeChildOutcome({ SCIENT_HOME: root })).toBe(true);
+    },
+    15_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "fails closed after native POSIX IPC loss and leaves cleanup to verifier-death authority",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "scient-packaged-sentinel-ipc-loss-test-"));
+      temporaryRoots.push(root);
+      const sentinelMarkerPath = join(root, "sentinel.pid");
+      const payloadMarkerPath = join(root, "payload.pid");
+      const resultMarkerPath = join(root, "cleanup-result.txt");
+      const verifierModuleUrl = new URL("./verify-packaged-desktop-startup.ts", import.meta.url)
+        .href;
+      const payloadSource = [
+        'const { writeFileSync } = require("node:fs");',
+        `writeFileSync(${JSON.stringify(payloadMarkerPath)}, String(process.pid));`,
+        "setInterval(() => undefined, 60000);",
+      ].join("");
+      const verifierSource = [
+        'const { existsSync, readFileSync, writeFileSync } = require("node:fs");',
+        "void (async () => {",
+        `const verification = await import(${JSON.stringify(verifierModuleUrl)});`,
+        `const sentinel = verification.spawnContainedPackagedDesktop({ command: process.execPath, args: ["-e", ${JSON.stringify(payloadSource)}], cwd: ${JSON.stringify(root)} }, { ...process.env, SCIENT_HOME: ${JSON.stringify(root)} }, process.platform);`,
+        `writeFileSync(${JSON.stringify(sentinelMarkerPath)}, String(sentinel.pid));`,
+        `while (!existsSync(${JSON.stringify(payloadMarkerPath)})) await new Promise((resolve) => setTimeout(resolve, 25));`,
+        `const payloadPid = Number(readFileSync(${JSON.stringify(payloadMarkerPath)}, "utf8"));`,
+        "sentinel.disconnect();",
+        "try { await verification.terminateProcessTree(sentinel, {}, [payloadPid]);",
+        `writeFileSync(${JSON.stringify(resultMarkerPath)}, "unexpected success");`,
+        `} catch (error) { writeFileSync(${JSON.stringify(resultMarkerPath)}, error instanceof Error ? error.message : String(error)); }`,
+        "setInterval(() => undefined, 60000);",
+        "})();",
+      ].join("");
+      const verifier = spawn(process.execPath, ["-e", verifierSource], { stdio: "ignore" });
+
+      expect(
+        await waitUntil(
+          () =>
+            existsSync(sentinelMarkerPath) &&
+            existsSync(payloadMarkerPath) &&
+            existsSync(resultMarkerPath),
+          8_000,
+        ),
+      ).toBe(true);
+      const sentinelPid = Number(readFileSync(sentinelMarkerPath, "utf8"));
+      const payloadPid = Number(readFileSync(payloadMarkerPath, "utf8"));
+      expect(readFileSync(resultMarkerPath, "utf8")).toContain(
+        "refusing numeric signaling authority",
+      );
+      expect(processHasExited(sentinelPid)).toBe(false);
+      expect(processHasExited(payloadPid)).toBe(false);
+
+      expect(verifier.kill("SIGKILL")).toBe(true);
+      expect(await waitUntil(() => processHasExited(sentinelPid), 5_000)).toBe(true);
+      expect(await waitUntil(() => processHasExited(payloadPid), 5_000)).toBe(true);
+    },
+    20_000,
+  );
+
   it.skipIf(process.platform !== "win32")(
     "passes authenticated direct-parent authority through the actual Windows Job launcher",
     async () => {
@@ -1335,38 +1419,39 @@ describe("packaged desktop startup verification", () => {
     expect(readPackagedBackendProcessIds(env)).toEqual([84]);
   });
 
-  it("requests POSIX cleanup once through the retained sentinel handle", async () => {
+  it("requests POSIX cleanup once through the retained sentinel IPC channel", async () => {
     const child = {
+      connected: true,
       exitCode: null,
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
-    const terminateRoot = vi.fn(() => true);
+    const requestPosixShutdown = vi.fn(() => true);
     await expect(
       terminateProcessTree(
         child,
         {
           platform: "darwin",
-          childIsAlive: () => true,
-          terminateRoot,
+          requestPosixShutdown,
           waitForTargetsExit: async () => false,
         },
         [84],
       ),
     ).rejects.toThrow("survived sentinel-owned cleanup");
-    expect(terminateRoot).toHaveBeenCalledOnce();
-    expect(terminateRoot).toHaveBeenCalledWith(child);
+    expect(requestPosixShutdown).toHaveBeenCalledOnce();
+    expect(requestPosixShutdown).toHaveBeenCalledWith(child);
   });
 
   it("waits for sentinel-owned POSIX cleanup without verifier-side escalation", async () => {
     const child = {
+      connected: true,
       exitCode: null,
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
     const events: string[] = [];
-    const terminateRoot = vi.fn(() => {
-      events.push("terminate-root");
+    const requestPosixShutdown = vi.fn(() => {
+      events.push("request-ipc-shutdown");
       return true;
     });
 
@@ -1374,8 +1459,7 @@ describe("packaged desktop startup verification", () => {
       child,
       {
         platform: "darwin",
-        childIsAlive: () => true,
-        terminateRoot,
+        requestPosixShutdown,
         waitForTargetsExit: async (_targets, timeoutMs) => {
           events.push(`reap:${timeoutMs}`);
           return true;
@@ -1384,8 +1468,8 @@ describe("packaged desktop startup verification", () => {
       [84],
     );
 
-    expect(terminateRoot).toHaveBeenCalledOnce();
-    expect(events).toEqual(["terminate-root", "reap:14000"]);
+    expect(requestPosixShutdown).toHaveBeenCalledOnce();
+    expect(events).toEqual(["request-ipc-shutdown", "reap:14000"]);
   });
 
   it("fails closed when a POSIX sentinel is gone even after observed processes exit", async () => {
@@ -1394,17 +1478,17 @@ describe("packaged desktop startup verification", () => {
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
-    const terminateRoot = vi.fn(() => true);
+    const requestPosixShutdown = vi.fn(() => true);
 
     await expect(
       terminateProcessTree(child, {
         platform: "darwin",
-        terminateRoot,
+        requestPosixShutdown,
         waitForTargetsExit: async () => true,
       }),
     ).rejects.toThrow("before authoritative whole-group cleanup");
 
-    expect(terminateRoot).not.toHaveBeenCalled();
+    expect(requestPosixShutdown).not.toHaveBeenCalled();
   });
 
   it("fails closed when the POSIX sentinel vanished without any native outcome", async () => {
@@ -1440,27 +1524,50 @@ describe("packaged desktop startup verification", () => {
     ).rejects.toThrow("before authoritative whole-group cleanup");
   });
 
-  it("never performs numeric fallback when the POSIX sentinel disappears during cleanup", async () => {
+  it("fails closed when the POSIX sentinel channel disappears during the cleanup request", async () => {
     const child = {
+      connected: true,
       exitCode: null,
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
 
-    const terminateRoot = vi.fn(() => true);
+    const requestPosixShutdown = vi.fn(() => false);
     await expect(
       terminateProcessTree(
         child,
         {
           platform: "darwin",
-          childIsAlive: () => true,
-          terminateRoot,
+          requestPosixShutdown,
           waitForTargetsExit: async () => false,
         },
         [84],
       ),
-    ).rejects.toThrow("survived sentinel-owned cleanup");
-    expect(terminateRoot).toHaveBeenCalledOnce();
+    ).rejects.toThrow("control channel could not accept cleanup");
+    expect(requestPosixShutdown).toHaveBeenCalledOnce();
+  });
+
+  it("never requests or signals by PID after the POSIX sentinel channel is disconnected", async () => {
+    const child = {
+      connected: false,
+      exitCode: null,
+      pid: 42,
+      signalCode: null,
+    } as unknown as ChildProcess;
+    const requestPosixShutdown = vi.fn(() => true);
+
+    await expect(
+      terminateProcessTree(
+        child,
+        {
+          platform: "darwin",
+          requestPosixShutdown,
+          waitForTargetsExit: async () => false,
+        },
+        [84],
+      ),
+    ).rejects.toThrow("refusing numeric signaling authority");
+    expect(requestPosixShutdown).not.toHaveBeenCalled();
   });
 
   it("refuses numeric POSIX signaling after the retained sentinel exits early", async () => {
@@ -1469,20 +1576,20 @@ describe("packaged desktop startup verification", () => {
       pid: 42,
       signalCode: null,
     } as unknown as ChildProcess;
-    const terminateRoot = vi.fn(() => true);
+    const requestPosixShutdown = vi.fn(() => true);
 
     await expect(
       terminateProcessTree(
         child,
         {
           platform: "darwin",
-          terminateRoot,
+          requestPosixShutdown,
           waitForTargetsExit: async () => false,
         },
         [84],
       ),
     ).rejects.toThrow("refusing numeric signaling authority");
-    expect(terminateRoot).not.toHaveBeenCalled();
+    expect(requestPosixShutdown).not.toHaveBeenCalled();
   });
 
   it("fails closed when the Windows launcher exited but a Job Object descendant survived", async () => {
