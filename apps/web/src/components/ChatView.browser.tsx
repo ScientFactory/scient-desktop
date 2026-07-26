@@ -5570,7 +5570,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
         server: { ...api.server, refreshProviders },
       }),
     });
-
     try {
       await waitForServerConfigToApply();
       useComposerDraftStore.getState().setModelSelection(THREAD_ID, {
@@ -5938,6 +5937,81 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
     } finally {
       resolveProviderRefresh({ providers: [availableProvider] });
+      await mounted.cleanup();
+    }
+  });
+
+  it("abandons provider preflight when its source thread is deleted", async () => {
+    const unavailableProvider = {
+      provider: "codex" as const,
+      status: "error" as const,
+      available: false,
+      authStatus: "unauthenticated" as const,
+      message: "Codex is temporarily unavailable.",
+      checkedAt: NOW_ISO,
+    };
+    const availableProvider = {
+      provider: "codex" as const,
+      status: "ready" as const,
+      available: true,
+      authStatus: "authenticated" as const,
+      checkedAt: NOW_ISO,
+      runtime: {
+        source: "system" as const,
+        managedVersion: null,
+        canInstall: false,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: null,
+      },
+    };
+    let resolveProviderRefresh!: (value: { providers: [typeof availableProvider] }) => void;
+    const providerRefresh = new Promise<{ providers: [typeof availableProvider] }>((resolve) => {
+      resolveProviderRefresh = resolve;
+    });
+    const refreshProviders = vi.fn<NativeApi["server"]["refreshProviders"]>(() => providerRefresh);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-deleted-provider-preflight" as MessageId,
+        targetText: "deleted provider preflight",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [unavailableProvider],
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        server: { ...api.server, refreshProviders },
+      }),
+    });
+    const deletedThreadIdsBeforeTest = useStore.getState().deletedThreadIdsById ?? {};
+
+    try {
+      await waitForServerConfigToApply();
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, "do not resurrect this draft");
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the composer before deleting its pending send.",
+      );
+      const requestStart = wsRequests.length;
+      composerForm.requestSubmit();
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledOnce());
+
+      useStore.getState().removeDeletedThreadFromClientState(THREAD_ID);
+      useComposerDraftStore.getState().clearDraftThread(THREAD_ID);
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 64));
+
+      expect(useStore.getState().deletedThreadIdsById?.[THREAD_ID]).toBe(true);
+      expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]).toBeUndefined();
+      expect(wsRequests.slice(requestStart).map(readDispatchedCommand).filter(Boolean)).toEqual([]);
+    } finally {
+      resolveProviderRefresh({ providers: [availableProvider] });
+      useStore.setState({ deletedThreadIdsById: deletedThreadIdsBeforeTest });
       await mounted.cleanup();
     }
   });

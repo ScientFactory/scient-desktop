@@ -7349,6 +7349,17 @@ export default function ChatView({
       return false;
     }
     const threadIdForSend = activeThread.id;
+    const sendSourceWasServerThread = isServerThread;
+    const sendSourceStillExists = (): boolean => {
+      if (sendSourceWasServerThread) {
+        const store = useStore.getState();
+        return (
+          store.deletedThreadIdsById?.[threadIdForSend] !== true &&
+          store.threads.some((candidate) => candidate.id === threadIdForSend)
+        );
+      }
+      return useComposerDraftStore.getState().getDraftThread(threadIdForSend) !== null;
+    };
     const sendOwnsActivePane = () => activeThreadIdRef.current === threadIdForSend;
     if (
       shouldRouteComposerSendToPendingInput({
@@ -7706,6 +7717,11 @@ export default function ChatView({
         sendPreflightInFlightThreadIds.delete(threadId);
       }
     })();
+    // Provider discovery can outlive the source thread. Do not let a stale
+    // continuation target a thread the user deleted while discovery was pending.
+    if (!sendSourceStillExists()) {
+      return false;
+    }
     if (!sendProviderAvailability.usable) {
       useProviderConnectionDialogStore
         .getState()
@@ -7967,6 +7983,11 @@ export default function ChatView({
       : null;
     const worktreeSetupScriptName = setupScriptForWorktree?.name ?? null;
 
+    // Browser-context capture and first-send target resolution can also yield.
+    // Revalidate before clearing draft content or starting any send-side effects.
+    if (!sendSourceStillExists()) {
+      return false;
+    }
     sendInFlightThreadIds.add(threadIdForSend);
     beginLocalDispatch(
       threadIdForSend,
@@ -8109,6 +8130,9 @@ export default function ChatView({
     let createdServerThreadForLocalDraft = false;
     let turnStartSucceeded = false;
     await (async () => {
+      if (!sendSourceStillExists()) {
+        throw new Error("Thread was deleted before the message could be sent.");
+      }
       // On first message: lock in branch + create worktree if needed.
       if (baseBranchForWorktree) {
         const result = await createWorktreeMutation.mutateAsync({
@@ -8260,6 +8284,9 @@ export default function ChatView({
         provider: selectedModelSelectionForSend.provider,
         providerOptions: providerOptionsForDispatchForSend,
       });
+      if (!sendSourceStillExists()) {
+        throw new Error("Thread was deleted before the message could be sent.");
+      }
       await api.orchestration.dispatchCommand({
         type: "thread.turn.start",
         commandId: newCommandId(),
@@ -8316,8 +8343,10 @@ export default function ChatView({
           })
           .catch(() => undefined);
       }
-      const failedSendDraft =
-        useComposerDraftStore.getState().draftsByThreadId[threadIdForSend] ?? null;
+      const sendSourceExistsAfterFailure = sendSourceStillExists();
+      const failedSendDraft = sendSourceExistsAfterFailure
+        ? (useComposerDraftStore.getState().draftsByThreadId[threadIdForSend] ?? null)
+        : null;
       const failedSendDraftStillEmpty =
         (failedSendDraft?.prompt ?? "").length === 0 &&
         (failedSendDraft?.images.length ?? 0) === 0 &&
@@ -8326,7 +8355,12 @@ export default function ChatView({
         (failedSendDraft?.fileComments.length ?? 0) === 0 &&
         (failedSendDraft?.terminalContexts.length ?? 0) === 0 &&
         (failedSendDraft?.pastedTexts.length ?? 0) === 0;
-      if (queuedChatTurn === null && !turnStartSucceeded && failedSendDraftStillEmpty) {
+      if (
+        sendSourceExistsAfterFailure &&
+        queuedChatTurn === null &&
+        !turnStartSucceeded &&
+        failedSendDraftStillEmpty
+      ) {
         setOptimisticUserMessages((existing) => {
           const removed = existing.filter((message) => message.id === messageIdForSend);
           for (const message of removed) {
@@ -8364,10 +8398,12 @@ export default function ChatView({
           setComposerTrigger(detectComposerTrigger(promptForSend, promptForSend.length));
         }
       }
-      setThreadError(
-        threadIdForSend,
-        err instanceof Error ? err.message : "Failed to send message.",
-      );
+      if (sendSourceExistsAfterFailure) {
+        setThreadError(
+          threadIdForSend,
+          err instanceof Error ? err.message : "Failed to send message.",
+        );
+      }
     });
     sendInFlightThreadIds.delete(threadIdForSend);
     if (!turnStartSucceeded) {
