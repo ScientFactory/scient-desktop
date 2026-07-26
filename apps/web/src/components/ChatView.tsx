@@ -601,6 +601,12 @@ const DRAFT_PROJECT_SYNC_MAX_ATTEMPTS = 6;
 const DRAFT_PROJECT_SYNC_DELAY_MS = 50;
 const SETUP_SCRIPT_TERMINAL_ACTIVITY_START_TIMEOUT_MS = 1_000;
 const SETUP_SCRIPT_TERMINAL_MAX_RUNTIME_MS = 10 * 60 * 1000;
+// A thread can move between single, split, editor, and dock pane scopes while
+// async preflight is still pending. Keep same-thread dispatch ownership outside
+// any one ChatView instance so a scope remount cannot lose the gate.
+const sendInFlightThreadIds = new Set<ThreadId>();
+const sendPreflightInFlightThreadIds = new Set<ThreadId>();
+const sendOperationInFlightThreadIds = new Set<ThreadId>();
 
 function terminalHasRunningSubprocess(threadId: ThreadId, terminalId: string): boolean {
   const terminalState = selectThreadTerminalState(
@@ -1508,9 +1514,6 @@ export default function ChatView({
   const localDirectoryMenuRef = useRef<ComposerLocalDirectoryMenuHandle | null>(null);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewHandoffTimeoutByMessageIdRef = useRef<Record<string, number>>({});
-  const sendInFlightThreadIdsRef = useRef(new Set<ThreadId>());
-  const sendPreflightInFlightThreadIdsRef = useRef(new Set<ThreadId>());
-  const sendOperationInFlightThreadIdsRef = useRef(new Set<ThreadId>());
   const dragDepthRef = useRef(0);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
   const activatedThreadIdRef = useRef<ThreadId | null>(null);
@@ -7311,18 +7314,18 @@ export default function ChatView({
 
   const beginExclusiveSendOperation = useCallback((ownerThreadId: ThreadId): boolean => {
     if (
-      sendOperationInFlightThreadIdsRef.current.has(ownerThreadId) ||
-      sendPreflightInFlightThreadIdsRef.current.has(ownerThreadId) ||
-      sendInFlightThreadIdsRef.current.has(ownerThreadId)
+      sendOperationInFlightThreadIds.has(ownerThreadId) ||
+      sendPreflightInFlightThreadIds.has(ownerThreadId) ||
+      sendInFlightThreadIds.has(ownerThreadId)
     ) {
       return false;
     }
-    sendOperationInFlightThreadIdsRef.current.add(ownerThreadId);
+    sendOperationInFlightThreadIds.add(ownerThreadId);
     return true;
   }, []);
 
   const finishExclusiveSendOperation = useCallback((ownerThreadId: ThreadId): void => {
-    sendOperationInFlightThreadIdsRef.current.delete(ownerThreadId);
+    sendOperationInFlightThreadIds.delete(ownerThreadId);
   }, []);
 
   const runSend = async (
@@ -7340,8 +7343,8 @@ export default function ChatView({
       isConnecting ||
       (isVoiceTranscribing && voicePromptOverride === undefined) ||
       emptyDraftProjectRequestInFlightRef.current !== null ||
-      sendPreflightInFlightThreadIdsRef.current.has(threadId) ||
-      sendInFlightThreadIdsRef.current.has(threadId)
+      sendPreflightInFlightThreadIds.has(threadId) ||
+      sendInFlightThreadIds.has(threadId)
     ) {
       return false;
     }
@@ -7691,7 +7694,7 @@ export default function ChatView({
         setPendingAutomationConversation(null);
       }
     }
-    sendPreflightInFlightThreadIdsRef.current.add(threadId);
+    sendPreflightInFlightThreadIds.add(threadId);
     const sendProviderAvailability = await (async () => {
       try {
         return await resolveProviderSendAvailabilityWithRefresh({
@@ -7700,7 +7703,7 @@ export default function ChatView({
           refreshStatuses: () => refreshProviderStatuses({ silent: true }),
         });
       } finally {
-        sendPreflightInFlightThreadIdsRef.current.delete(threadId);
+        sendPreflightInFlightThreadIds.delete(threadId);
       }
     })();
     if (!sendProviderAvailability.usable) {
@@ -7964,7 +7967,7 @@ export default function ChatView({
       : null;
     const worktreeSetupScriptName = setupScriptForWorktree?.name ?? null;
 
-    sendInFlightThreadIdsRef.current.add(threadIdForSend);
+    sendInFlightThreadIds.add(threadIdForSend);
     beginLocalDispatch(
       threadIdForSend,
       baseBranchForWorktree
@@ -8366,7 +8369,7 @@ export default function ChatView({
         err instanceof Error ? err.message : "Failed to send message.",
       );
     });
-    sendInFlightThreadIdsRef.current.delete(threadIdForSend);
+    sendInFlightThreadIds.delete(threadIdForSend);
     if (!turnStartSucceeded) {
       if (baseBranchForWorktree) {
         scheduleFailedWorktreeSetupDispatchReset(threadIdForSend);
@@ -8672,7 +8675,7 @@ export default function ChatView({
       !isServerThread ||
       isSendBusy ||
       isConnecting ||
-      sendInFlightThreadIdsRef.current.has(threadId)
+      sendInFlightThreadIds.has(threadId)
     ) {
       return false;
     }
@@ -8696,7 +8699,7 @@ export default function ChatView({
       text: trimmed,
     });
 
-    sendInFlightThreadIdsRef.current.add(threadIdForSend);
+    sendInFlightThreadIds.add(threadIdForSend);
     beginLocalDispatch(threadIdForSend);
     setThreadError(threadIdForSend, null);
     setOptimisticUserMessages((existing) => [
@@ -8780,7 +8783,7 @@ export default function ChatView({
         planSidebarDismissedForTurnRef.current = null;
         setPlanSidebarOpen(true);
       }
-      sendInFlightThreadIdsRef.current.delete(threadIdForSend);
+      sendInFlightThreadIds.delete(threadIdForSend);
       return true;
     } catch (err) {
       setOptimisticUserMessages((existing) =>
@@ -8790,7 +8793,7 @@ export default function ChatView({
         threadIdForSend,
         err instanceof Error ? err.message : "Failed to send plan follow-up.",
       );
-      sendInFlightThreadIdsRef.current.delete(threadIdForSend);
+      sendInFlightThreadIds.delete(threadIdForSend);
       resetLocalDispatch(threadIdForSend);
       return false;
     } finally {
@@ -8823,7 +8826,7 @@ export default function ChatView({
         setThreadError(activeThread.id, "Only the latest rollbackable user message can be edited.");
         return false;
       }
-      if (isSendBusy || isConnecting || sendInFlightThreadIdsRef.current.has(activeThread.id)) {
+      if (isSendBusy || isConnecting || sendInFlightThreadIds.has(activeThread.id)) {
         setThreadError(activeThread.id, "Wait for the current send to start before editing.");
         return false;
       }
@@ -8997,9 +9000,9 @@ export default function ChatView({
     }
     if (
       autoDispatchingQueuedTurnRef.current ||
-      sendOperationInFlightThreadIdsRef.current.has(threadId) ||
-      sendInFlightThreadIdsRef.current.has(threadId) ||
-      sendPreflightInFlightThreadIdsRef.current.has(threadId)
+      sendOperationInFlightThreadIds.has(threadId) ||
+      sendInFlightThreadIds.has(threadId) ||
+      sendPreflightInFlightThreadIds.has(threadId)
     ) {
       // These guards are refs, so nothing re-triggers this effect once they
       // reset; poll until the in-flight send settles instead of leaving the
@@ -9045,7 +9048,7 @@ export default function ChatView({
       !isServerThread ||
       isSendBusy ||
       isConnecting ||
-      sendInFlightThreadIdsRef.current.has(activeThread.id)
+      sendInFlightThreadIds.has(activeThread.id)
     ) {
       return;
     }
@@ -9070,10 +9073,10 @@ export default function ChatView({
     if (!beginExclusiveSendOperation(activeThread.id)) {
       return;
     }
-    sendInFlightThreadIdsRef.current.add(activeThread.id);
+    sendInFlightThreadIds.add(activeThread.id);
     beginLocalDispatch(activeThread.id);
     const finish = () => {
-      sendInFlightThreadIdsRef.current.delete(activeThread.id);
+      sendInFlightThreadIds.delete(activeThread.id);
       resetLocalDispatch(activeThread.id);
       finishExclusiveSendOperation(activeThread.id);
     };
@@ -9432,9 +9435,9 @@ export default function ChatView({
 
   const assertEmptyDraftProjectChangeAvailable = useCallback(() => {
     if (
-      sendOperationInFlightThreadIdsRef.current.has(threadId) ||
-      sendPreflightInFlightThreadIdsRef.current.has(threadId) ||
-      sendInFlightThreadIdsRef.current.has(threadId)
+      sendOperationInFlightThreadIds.has(threadId) ||
+      sendPreflightInFlightThreadIds.has(threadId) ||
+      sendInFlightThreadIds.has(threadId)
     ) {
       throw new Error("Wait for the current message to finish preparing before changing projects.");
     }

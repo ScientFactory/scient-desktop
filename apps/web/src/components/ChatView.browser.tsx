@@ -5800,6 +5800,148 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps the same-thread send gate when provider preflight crosses a split remount", async () => {
+    const unavailableProvider = {
+      provider: "codex" as const,
+      status: "error" as const,
+      available: false,
+      authStatus: "unauthenticated" as const,
+      message: "Codex is temporarily unavailable.",
+      checkedAt: NOW_ISO,
+    };
+    const availableProvider = {
+      provider: "codex" as const,
+      status: "ready" as const,
+      available: true,
+      authStatus: "authenticated" as const,
+      checkedAt: NOW_ISO,
+      runtime: {
+        source: "system" as const,
+        managedVersion: null,
+        canInstall: false,
+        canRepair: false,
+        canRollback: false,
+        canRemove: false,
+        message: null,
+      },
+    };
+    let resolveProviderRefresh!: (value: { providers: [typeof availableProvider] }) => void;
+    const providerRefresh = new Promise<{ providers: [typeof availableProvider] }>((resolve) => {
+      resolveProviderRefresh = resolve;
+    });
+    const refreshProviders = vi.fn<NativeApi["server"]["refreshProviders"]>(() => providerRefresh);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withOpenProjectPickerFixtures(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-project-picker-split-preflight" as MessageId,
+          targetText: "project picker split preflight",
+        }),
+      ),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [unavailableProvider],
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        server: { ...api.server, refreshProviders },
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await page.getByLabelText("Create new thread in Project").click();
+      const sourcePath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to the split-preflight source draft.",
+      );
+      const sourceThreadId = sourcePath.slice(1) as ThreadId;
+      useComposerDraftStore.getState().setModelSelection(sourceThreadId, {
+        provider: "codex",
+        model: "gpt-5",
+      });
+      useComposerDraftStore
+        .getState()
+        .setPrompt(sourceThreadId, "one send must survive the split remount");
+      const sourceForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the source composer before splitting during preflight.",
+      );
+      sourceForm.requestSubmit();
+      await vi.waitFor(() => expect(refreshProviders).toHaveBeenCalledOnce());
+
+      const splitViewId = useSplitViewStore.getState().createFromThread({
+        sourceThreadId,
+        ownerProjectId: PROJECT_ID,
+      });
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: sourceThreadId },
+        search: () => ({ splitViewId }),
+      });
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll("[data-split-chat-pane]")).toHaveLength(2);
+      });
+
+      const remountedSourcePane = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("[data-split-chat-pane]")).find(
+            (pane) =>
+              pane.querySelector('[data-testid="empty-landing-heading-project-trigger"]') !== null,
+          ) ?? null,
+        "Unable to find the remounted source pane.",
+      );
+      remountedSourcePane
+        .querySelector<HTMLElement>('[data-testid="empty-landing-heading-project-trigger"]')!
+        .click();
+      await page.getByText("other", { exact: true }).click();
+      await vi.waitFor(() => {
+        expect(document.querySelector<HTMLElement>('[role="alert"]')?.textContent ?? "").toContain(
+          "Wait for the current message to finish preparing",
+        );
+      });
+      expect(useComposerDraftStore.getState().getDraftThread(sourceThreadId)).toMatchObject({
+        projectId: PROJECT_ID,
+      });
+
+      const remountedSourceForm = remountedSourcePane.querySelector<HTMLFormElement>(
+        'form[data-chat-composer-form="true"]',
+      );
+      expect(remountedSourceForm).not.toBeNull();
+      remountedSourceForm!.requestSubmit();
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 64));
+      expect(refreshProviders).toHaveBeenCalledOnce();
+      expect(
+        wsRequests
+          .map(readDispatchedCommand)
+          .filter(
+            (command) =>
+              command?.type === "thread.turn.start" && command.threadId === sourceThreadId,
+          ),
+      ).toHaveLength(0);
+
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await vi.waitFor(
+        () => {
+          const turnStarts = wsRequests
+            .map(readDispatchedCommand)
+            .filter(
+              (command) =>
+                command?.type === "thread.turn.start" && command.threadId === sourceThreadId,
+            );
+          expect(turnStarts).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      resolveProviderRefresh({ providers: [availableProvider] });
+      await mounted.cleanup();
+    }
+  });
+
   it("rejects edit-and-resend while a normal send owns the thread preflight", async () => {
     const unavailableProvider = {
       provider: "codex" as const,
