@@ -3,6 +3,7 @@ import "../index.css";
 
 import {
   AutomationId,
+  CommandId,
   DEFAULT_SERVER_SETTINGS,
   type AutomationCreateInput,
   type AutomationDefinition,
@@ -50,6 +51,7 @@ import {
 } from "../lib/stagedDraftNavigation";
 import { resetStudioProjectPrewarmStateForTests } from "../lib/studioProjects";
 import { newThreadNavigationRequestKey } from "../lib/threadBootstrap";
+import { promoteThreadCreate } from "../lib/threadCreatePromotion";
 import { splitViewPaneScopeId } from "../lib/chatPaneScope";
 import { getRouter } from "../router";
 import {
@@ -6701,6 +6703,358 @@ describe("ChatView timeline estimator parity (full app)", () => {
       ).toBe(false);
     } finally {
       resolvePromotion();
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not delete a thread created by a concurrent draft promoter when send later fails", async () => {
+    const newThreadId = ThreadId.makeUnsafe("thread-concurrent-promotion-failure");
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [newThreadId]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: "main",
+          worktreePath: null,
+          envMode: "local",
+          workspaceOrigin: "default",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [PROJECT_ID]: newThreadId },
+    });
+    let resolvePromotion!: () => void;
+    const promotionGate = new Promise<void>((resolve) => {
+      resolvePromotion = resolve;
+    });
+    const dispatchedCommands: Array<Parameters<NativeApi["orchestration"]["dispatchCommand"]>[0]> =
+      [];
+    let nativeApi: NativeApi | null = null;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      initialEntry: `/${newThreadId}`,
+      configureNativeApi: (api) => {
+        const configuredApi: NativeApi = {
+          ...api,
+          orchestration: {
+            ...api.orchestration,
+            dispatchCommand: vi.fn(async (command) => {
+              dispatchedCommands.push(command);
+              if (command.type === "thread.create") {
+                await promotionGate;
+              }
+              if (command.type === "thread.turn.start") {
+                throw new Error("deterministic pre-turn failure");
+              }
+              return { sequence: fixture.snapshot.snapshotSequence + 1 };
+            }),
+          },
+        };
+        nativeApi = configuredApi;
+        return configuredApi;
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(newThreadId, "keep the concurrent thread");
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(composerEditor.textContent ?? "").toContain("keep the concurrent thread");
+      });
+      expect(nativeApi).not.toBeNull();
+
+      const competingPromotion = promoteThreadCreate(
+        {
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("command-concurrent-promoter"),
+          threadId: newThreadId,
+          projectId: PROJECT_ID,
+          title: "Concurrent owner",
+          modelSelection: { provider: "codex", model: "gpt-5" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          envMode: "local",
+          branch: "main",
+          worktreePath: null,
+          lastKnownPr: null,
+          createdAt: NOW_ISO,
+        },
+        nativeApi!,
+      );
+      await vi.waitFor(() => {
+        expect(
+          dispatchedCommands.filter((command) => command.type === "thread.create"),
+        ).toHaveLength(1);
+      });
+
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the composer before the concurrent promotion race.",
+      );
+      composerForm.requestSubmit();
+      await vi.waitFor(() => {
+        expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt ?? "").toBe(
+          "",
+        );
+        expect(
+          dispatchedCommands.filter((command) => command.type === "thread.create"),
+        ).toHaveLength(1);
+      });
+      resolvePromotion();
+      await expect(competingPromotion).resolves.toBe("created");
+      await vi.waitFor(() => {
+        expect(dispatchedCommands.some((command) => command.type === "thread.turn.start")).toBe(
+          true,
+        );
+      });
+
+      expect(dispatchedCommands.filter((command) => command.type === "thread.create")).toHaveLength(
+        1,
+      );
+      expect(dispatchedCommands.some((command) => command.type === "thread.delete")).toBe(false);
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)?.promotedTo).toBe(
+        newThreadId,
+      );
+    } finally {
+      resolvePromotion();
+      await mounted.cleanup();
+    }
+  });
+
+  it("removes a generated worktree and restores an owned draft after pre-turn failure", async () => {
+    const newThreadId = ThreadId.makeUnsafe("thread-owned-promotion-failure");
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [newThreadId]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+          workspaceOrigin: "intentional",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [PROJECT_ID]: newThreadId },
+    });
+    const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(async (input) => ({
+      worktree: {
+        path: `/repo/.codex/worktrees/project/${input.newBranch}`,
+        branch: input.newBranch!,
+      },
+    }));
+    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => undefined);
+    let failNextTurn = true;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      initialEntry: `/${newThreadId}`,
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            const result = await api.orchestration.dispatchCommand(command);
+            if (command.type === "thread.turn.start" && failNextTurn) {
+              failNextTurn = false;
+              throw new Error("deterministic pre-turn failure");
+            }
+            return result;
+          }),
+        },
+        git: { ...api.git, createWorktree, removeWorktree },
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(newThreadId, "retry this send");
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(composerEditor.textContent ?? "").toContain("retry this send");
+        expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+          envMode: "worktree",
+          branch: "main",
+          worktreePath: null,
+        });
+      });
+
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the composer before the owned rollback test.",
+      );
+      composerForm.requestSubmit();
+      await vi.waitFor(() => expect(createWorktree).toHaveBeenCalledOnce());
+      await vi.waitFor(
+        () => {
+          const commandTypes = wsRequests
+            .map(readDispatchedCommand)
+            .filter((command) => command && command.threadId === newThreadId)
+            .map((command) => command!.type);
+          expect(
+            commandTypes,
+            `Expected owned rollback; saw ${commandTypes.join(", ")}; draft=${JSON.stringify(
+              useComposerDraftStore.getState().getDraftThread(newThreadId),
+            )}; error=${JSON.stringify(
+              useStore.getState().threads.find((thread) => thread.id === newThreadId)?.error,
+            )}`,
+          ).toContain("thread.delete");
+        },
+        { timeout: 20_000, interval: 16 },
+      );
+      await vi.waitFor(() => {
+        expect(removeWorktree).toHaveBeenCalledOnce();
+        expect(useComposerDraftStore.getState().getDraftThread(newThreadId)?.promotedTo).toBe(
+          undefined,
+        );
+      });
+      expect(useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID)?.threadId).toBe(
+        newThreadId,
+      );
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        envMode: "worktree",
+        worktreePath: null,
+      });
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt).toBe(
+        "retry this send",
+      );
+
+      await (await waitForSendButton()).click();
+      await vi.waitFor(() => expect(createWorktree).toHaveBeenCalledTimes(2));
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests
+              .map(readDispatchedCommand)
+              .filter(
+                (command) =>
+                  command?.type === "thread.turn.start" && command.threadId === newThreadId,
+              ),
+          ).toHaveLength(2);
+        },
+        { timeout: 20_000, interval: 16 },
+      );
+      const firstPath = (await createWorktree.mock.results[0]!.value).worktree.path;
+      const secondPath = (await createWorktree.mock.results[1]!.value).worktree.path;
+      expect(firstPath).not.toBe(secondPath);
+      expect(removeWorktree).toHaveBeenCalledWith({
+        cwd: "/repo/project",
+        path: firstPath,
+        force: true,
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("adopts a generated worktree after setup starts so retry creates no duplicate", async () => {
+    const newThreadId = ThreadId.makeUnsafe("thread-setup-started-promotion-failure");
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [newThreadId]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+          workspaceOrigin: "intentional",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [PROJECT_ID]: newThreadId },
+    });
+    const createdPath = "/repo/.codex/worktrees/project/setup-started";
+    const createdBranch = "scient/setup-started";
+    const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(async () => ({
+      worktree: { path: createdPath, branch: createdBranch },
+    }));
+    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => undefined);
+    let failSetupOpen = true;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withProjectScripts(createDraftOnlySnapshot(), [
+        {
+          id: "setup",
+          name: "Setup",
+          command: "printf setup",
+          icon: "configure",
+          runOnWorktreeCreate: true,
+        },
+      ]),
+      initialEntry: `/${newThreadId}`,
+      configureNativeApi: (api) => ({
+        ...api,
+        terminal: {
+          ...api.terminal,
+          open: vi.fn(async (input) => {
+            if (failSetupOpen) {
+              failSetupOpen = false;
+              throw new Error("deterministic setup failure");
+            }
+            return api.terminal.open(input);
+          }),
+        },
+        git: { ...api.git, createWorktree, removeWorktree },
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(newThreadId, "retry without another worktree");
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(composerEditor.textContent ?? "").toContain("retry without another worktree");
+        expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+          envMode: "worktree",
+          branch: "main",
+          worktreePath: null,
+        });
+      });
+
+      const composerForm = await waitForElement(
+        () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+        "Unable to find the composer before the setup rollback test.",
+      );
+      composerForm.requestSubmit();
+      await vi.waitFor(() => expect(createWorktree).toHaveBeenCalledOnce());
+      await vi.waitFor(
+        () => {
+          expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+            envMode: "worktree",
+            branch: createdBranch,
+            worktreePath: createdPath,
+          });
+          expect(
+            useComposerDraftStore.getState().getDraftThread(newThreadId)?.promotedTo,
+          ).toBeUndefined();
+        },
+        { timeout: 20_000, interval: 16 },
+      );
+      expect(removeWorktree).not.toHaveBeenCalled();
+      expect(useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID)?.threadId).toBe(
+        newThreadId,
+      );
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt).toBe(
+        "retry without another worktree",
+      );
+
+      await (await waitForSendButton()).click();
+      await vi.waitFor(() => {
+        expect(
+          wsRequests.some((candidate) => {
+            const command = readDispatchedCommand(candidate);
+            return command?.type === "thread.turn.start" && command.threadId === newThreadId;
+          }),
+        ).toBe(true);
+      });
+      expect(createWorktree).toHaveBeenCalledOnce();
+      expect(removeWorktree).not.toHaveBeenCalled();
+    } finally {
       await mounted.cleanup();
     }
   });

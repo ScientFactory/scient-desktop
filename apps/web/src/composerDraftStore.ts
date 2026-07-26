@@ -602,6 +602,14 @@ export interface ComposerDraftStoreState {
   clearProjectDraftThreads: (projectId: ProjectId) => void;
   clearProjectDraftThreadById: (projectId: ProjectId, threadId: ThreadId) => void;
   markDraftThreadPromoting: (threadId: ThreadId, promotedTo?: ThreadId) => void;
+  rollbackDraftThreadPromotion: (
+    threadId: ThreadId,
+    expectedPromotedTo: ThreadId,
+    workspace?: {
+      branch: string;
+      worktreePath: string;
+    },
+  ) => boolean;
   finalizePromotedDraftThread: (threadId: ThreadId) => void;
   clearDraftThread: (threadId: ThreadId) => void;
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
@@ -3923,6 +3931,35 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             },
           };
         });
+      },
+      rollbackDraftThreadPromotion: (threadId, expectedPromotedTo, workspace) => {
+        if (threadId.length === 0 || expectedPromotedTo.length === 0) {
+          return false;
+        }
+        let rolledBack = false;
+        set((state) => {
+          const existing = state.draftThreadsByThreadId[threadId];
+          if (!existing || existing.promotedTo !== expectedPromotedTo) {
+            return state;
+          }
+          const { promotedTo: _promotedTo, ...unpromoted } = existing;
+          rolledBack = true;
+          return {
+            draftThreadsByThreadId: {
+              ...state.draftThreadsByThreadId,
+              [threadId]: workspace
+                ? {
+                    ...unpromoted,
+                    envMode: "worktree",
+                    workspaceOrigin: "intentional",
+                    branch: workspace.branch,
+                    worktreePath: workspace.worktreePath,
+                  }
+                : unpromoted,
+            },
+          };
+        });
+        return rolledBack;
       },
       finalizePromotedDraftThread: (threadId) => {
         const draftThread = get().draftThreadsByThreadId[threadId];

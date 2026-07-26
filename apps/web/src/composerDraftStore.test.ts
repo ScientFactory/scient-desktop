@@ -2167,6 +2167,42 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
   });
 
+  it("rolls back only the expected promotion and atomically adopts a surviving worktree", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId, {
+      branch: "main",
+      worktreePath: null,
+      envMode: "worktree",
+    });
+    store.setPrompt(threadId, "retry me");
+    store.markDraftThreadPromoting(threadId);
+
+    expect(
+      store.rollbackDraftThreadPromotion(threadId, otherThreadId, {
+        branch: "scient/wrong-owner",
+        worktreePath: "/tmp/wrong-owner",
+      }),
+    ).toBe(false);
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)?.promotedTo).toBe(threadId);
+
+    expect(
+      store.rollbackDraftThreadPromotion(threadId, threadId, {
+        branch: "scient/recovered",
+        worktreePath: "/tmp/recovered",
+      }),
+    ).toBe(true);
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)).toMatchObject({
+      threadId,
+      envMode: "worktree",
+      workspaceOrigin: "intentional",
+      branch: "scient/recovered",
+      worktreePath: "/tmp/recovered",
+    });
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)?.promotedTo).toBeUndefined();
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.prompt).toBe("retry me");
+    expect(store.rollbackDraftThreadPromotion(threadId, threadId)).toBe(false);
+  });
+
   it("updates branch context on an existing draft thread", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectId, threadId, {

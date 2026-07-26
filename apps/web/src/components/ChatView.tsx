@@ -8147,13 +8147,15 @@ export default function ChatView({
     }
 
     let createdServerThreadForLocalDraft = false;
+    let promotedServerThreadForLocalDraft = false;
     let turnStartSucceeded = false;
-    let createdWorktreeForSend: { cwd: string; path: string } | null = null;
+    let createdWorktreeForSend: { cwd: string; path: string; branch: string } | null = null;
     let createdWorktreeCleanupIsSafe = true;
     let createdWorktreeCleanupInFlight = false;
-    const removeCreatedWorktreeAfterSourceDeletion = async () => {
+    const removeUntouchedCreatedWorktree = async (): Promise<boolean> => {
       const worktree = createdWorktreeForSend;
-      if (!worktree || !createdWorktreeCleanupIsSafe || createdWorktreeCleanupInFlight) return;
+      if (!worktree) return true;
+      if (!createdWorktreeCleanupIsSafe || createdWorktreeCleanupInFlight) return false;
       createdWorktreeCleanupInFlight = true;
       try {
         await api.git.removeWorktree({
@@ -8162,12 +8164,14 @@ export default function ChatView({
           force: true,
         });
         createdWorktreeForSend = null;
+        return true;
       } catch (cleanupError: unknown) {
-        console.error("Failed to remove worktree after its source thread was deleted", {
+        console.error("Failed to remove untouched worktree after send rollback", {
           threadId: threadIdForSend,
           worktreePath: worktree.path,
           cleanupError,
         });
+        return false;
       } finally {
         createdWorktreeCleanupInFlight = false;
       }
@@ -8186,12 +8190,13 @@ export default function ChatView({
         createdWorktreeForSend = {
           cwd: targetProjectCwdForSend,
           path: result.worktree.path,
+          branch: result.worktree.branch,
         };
         if (!sendSourceStillExists()) {
           // No setup action or user turn has run in this freshly-created
           // worktree, so forced removal is safe and prevents an ownerless
           // worktree from surviving deletion of the source thread.
-          await removeCreatedWorktreeAfterSourceDeletion();
+          await removeUntouchedCreatedWorktree();
           throw new Error("Thread was deleted before the message could be sent.");
         }
         beginLocalDispatch(threadIdForSend, {
@@ -8246,7 +8251,7 @@ export default function ChatView({
           threadNotes,
           projectInstructions: inheritedProjectInstructions,
         });
-        await promoteThreadCreate(
+        const promotionResult = await promoteThreadCreate(
           {
             type: "thread.create",
             commandId: newCommandId(),
@@ -8264,7 +8269,8 @@ export default function ChatView({
           },
           api,
         );
-        createdServerThreadForLocalDraft = true;
+        createdServerThreadForLocalDraft = promotionResult === "created";
+        promotedServerThreadForLocalDraft = promotionResult !== "unavailable";
         if (!sendSourceStillExists()) {
           throw new Error("Thread was deleted before the message could be sent.");
         }
@@ -8301,7 +8307,7 @@ export default function ChatView({
         if (isServerThread) {
           shouldRunSetupScript = true;
         } else {
-          if (createdServerThreadForLocalDraft) {
+          if (promotedServerThreadForLocalDraft) {
             shouldRunSetupScript = true;
           }
         }
@@ -8422,10 +8428,24 @@ export default function ChatView({
             () => true,
             () => false,
           );
+        if (promotedThreadRollbackSucceeded) {
+          const createdWorktreeWasRemoved = await removeUntouchedCreatedWorktree();
+          const survivingWorktree = createdWorktreeWasRemoved ? null : createdWorktreeForSend;
+          useComposerDraftStore.getState().rollbackDraftThreadPromotion(
+            threadIdForSend,
+            threadIdForSend,
+            survivingWorktree
+              ? {
+                  branch: survivingWorktree.branch,
+                  worktreePath: survivingWorktree.path,
+                }
+              : undefined,
+          );
+        }
       }
       const sendSourceExistsAfterFailure = sendSourceStillExists();
       if (!sendSourceExistsAfterFailure && !turnStartSucceeded && promotedThreadRollbackSucceeded) {
-        await removeCreatedWorktreeAfterSourceDeletion();
+        await removeUntouchedCreatedWorktree();
       }
       const failedSendDraft = sendSourceExistsAfterFailure
         ? (useComposerDraftStore.getState().draftsByThreadId[threadIdForSend] ?? null)
