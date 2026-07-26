@@ -4441,7 +4441,12 @@ export default function Sidebar() {
         };
         if (blockRemovalForRecoveries()) return;
 
-        const projectThreads = sidebarThreads.filter((thread) => thread.projectId === projectId);
+        // Build the confirmation from the live thread set (`getThreadsFromState`) rather than the
+        // captured `sidebarThreads` render snapshot, so the count the user consents to reflects the
+        // store at click time and never lags a stale render.
+        const projectThreads = getThreadsFromState(useStore.getState()).filter(
+          (thread) => thread.projectId === projectId,
+        );
         const confirmed = await api.dialogs.confirm(
           projectThreads.length > 0
             ? [
@@ -4451,6 +4456,10 @@ export default function Sidebar() {
             : `Remove project "${project.name}"?`,
         );
         if (!confirmed) return;
+
+        // Drain already-admitted project operations only after consent so in-flight creators flush
+        // before deletion. `deleteProjectThreads` re-derives the live post-drain set, so a thread
+        // admitted before removal that finalizes during the drain is still cleared.
         if (!(await waitForProjectOperationsToDrain(removalReservation))) return;
         if (blockRemovalForRecoveries()) return;
 
@@ -4511,7 +4520,6 @@ export default function Sidebar() {
       projectById,
       requestProjectInitializationDecision,
       removeDeletedProjectFromClientState,
-      sidebarThreads,
       toggleProjectPinned,
     ],
   );

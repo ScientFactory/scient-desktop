@@ -4612,6 +4612,20 @@ export const useStore = create<AppStore>((set) => ({
     set((state) => setThreadWorkspace(state, threadId, patch)),
 }));
 
+/**
+ * Test-only reset of every data field to its empty initial value. Actions live on the same object
+ * as the data (`AppStore extends AppState`), so this must be a shallow merge — never a replace, or
+ * the store loses its methods. A partial reset is unsafe: tests that dispatch a real `project.delete`
+ * / `thread.delete` tombstone ids in `deletedProjectIdsById` / `deletedThreadIdsById`, and tests that
+ * seed the normalized projection write `threadIds` / `threadShellById` (and siblings). Left behind,
+ * a tombstoned project makes the next test's route resolve to "deleted" and its data never loads.
+ */
+export function resetAppStoreForTests(): void {
+  // `structuredClone` gives every reset its own empty containers instead of aliasing the
+  // module-level `initialState` collections across tests.
+  useStore.setState(structuredClone(initialState));
+}
+
 // Persist state changes with debouncing to avoid localStorage thrashing
 useStore.subscribe((state) => {
   rememberProjectUiState(state.projects);

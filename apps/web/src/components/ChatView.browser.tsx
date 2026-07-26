@@ -69,7 +69,7 @@ import {
   resolveSplitViewThreadIds,
   useSplitViewStore,
 } from "../splitViewStore";
-import { useStore } from "../store";
+import { resetAppStoreForTests, useStore } from "../store";
 import {
   createShellSnapshotFromReadModel,
   createTestEnvironmentDescriptor,
@@ -83,6 +83,7 @@ import { useOptimisticUserMessageStore } from "../optimisticUserMessageStore";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { resetRetainedThreadDetailSubscriptionsForTests } from "../threadDetailSubscriptionRetention";
 import { resetWsNativeApiForTest } from "../wsNativeApi";
+import { resetChatViewDispatchGatesForTests } from "./ChatView";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
 import type { ChatMessage } from "../types";
 
@@ -2074,6 +2075,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     await resetHomeChatProjectPrewarmStateForTests();
     await resetStudioProjectPrewarmStateForTests();
     resetProjectRemovalCoordinationForTests();
+    resetChatViewDispatchGatesForTests();
     await setViewport(DEFAULT_VIEWPORT);
     attachmentResponseDelayMs = 0;
     localStorage.clear();
@@ -2086,12 +2088,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
       stickyModelSelectionByProvider: {},
       stickyActiveProvider: null,
     });
-    useStore.setState({
-      projects: [],
-      threads: [],
-      sidebarThreadSummaryById: {},
-      threadsHydrated: false,
-    });
+    // Full reset (not just `projects`/`threads`): tests that dispatch a real `project.delete`
+    // tombstone ids in `deletedProjectIdsById` and seed the normalized projection
+    // (`threadIds`/`threadShellById`); leaving those behind makes the next test's project route
+    // resolve to "deleted" so its thread data never loads.
+    resetAppStoreForTests();
     useTemporaryThreadStore.setState({
       temporaryThreadIds: {},
     });
@@ -2111,6 +2112,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     await resetStudioProjectPrewarmStateForTests();
     resetRetainedThreadDetailSubscriptionsForTests();
     resetProjectRemovalCoordinationForTests();
+    resetChatViewDispatchGatesForTests();
     resetWsNativeApiForTest();
     document.body.innerHTML = "";
   });
@@ -2392,6 +2394,69 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("blocks a registered Side creator during removal even while a concurrent lease is held", async () => {
+    // Regression guard for the removed `projectOperationAlreadyHeld` bypass. A creator used to
+    // skip the removal turnstile whenever *any* project-operation lease was already active for
+    // the project, which let it race a concurrent removal and orphan the thread it created.
+    // Every creator now re-acquires its own lease through `tryBeginProjectOperation`, which
+    // refuses once removal is reserved — regardless of other in-flight leases.
+    const sourceSnapshot = createSnapshotForTargetUser({
+      targetMessageId: MessageId.makeUnsafe("msg-user-held-lease-removal-bypass"),
+      targetText: "A concurrent lease must not bypass the removal turnstile",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: sourceSnapshot,
+    });
+    let concurrentLease: ReturnType<typeof tryBeginProjectOperation> = null;
+    let reservation: ReturnType<typeof reserveProjectRemoval> = null;
+
+    try {
+      await vi.waitFor(() => expect(getSidechatCreator(THREAD_ID)).toBeDefined());
+      await vi.waitFor(() => expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false));
+
+      // A concurrent project operation is already holding a lease at the moment removal begins;
+      // acquiring it before the reservation mirrors the real race the bypass exposed.
+      concurrentLease = tryBeginProjectOperation(PROJECT_ID);
+      expect(concurrentLease).not.toBeNull();
+
+      reservation = reserveProjectRemoval(PROJECT_ID);
+      expect(reservation).not.toBeNull();
+
+      const requestStart = wsRequests.length;
+      const createSidechat = getSidechatCreator(THREAD_ID);
+      expect(createSidechat).toBeDefined();
+      // The held lease must not let the creator through: it refuses and dispatches nothing.
+      await expect(createSidechat?.()).resolves.toBe(false);
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+
+      // Assert the refusal came from the removal turnstile, not the creator's "Side is
+      // unavailable" early guard — otherwise this test would pass even with the bypass restored.
+      const feedback = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-composer-local-feedback="true"]'),
+        "A removal-blocked Side creator should surface inline composer feedback.",
+      );
+      expect(feedback.textContent).toContain("Project removal in progress");
+
+      expect(
+        wsRequests
+          .slice(requestStart)
+          .map(readDispatchedCommand)
+          .some(
+            (command) =>
+              command?.type === "thread.fork.create" || command?.type === "thread.create",
+          ),
+      ).toBe(false);
+      // The refused creator neither acquired nor released a lease; the concurrent lease we hold
+      // remains the sole active operation, so the count is unchanged (still active, not drained).
+      expect(hasActiveProjectOperations(PROJECT_ID)).toBe(true);
+    } finally {
+      if (concurrentLease) finishProjectOperation(concurrentLease);
+      if (reservation) releaseProjectRemoval(reservation);
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps the Side command when admitted Side creation fails", async () => {
     const sidePrompt = "/side";
     useComposerDraftStore.getState().setPrompt(THREAD_ID, sidePrompt);
@@ -2416,14 +2481,18 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
+      // The composer hydrates the `/side` draft asynchronously after mount; wait for it so the
+      // send actually carries the slash command rather than an empty prompt.
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => expect(composerEditor.textContent ?? "").toContain("/side"));
       await userEvent.click(await waitForSendButton());
-      await waitForElement(
-        () =>
-          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="toast-title"]')).find(
-            (element) => element.textContent === "Could not start Side",
-          ) ?? null,
+      // A failed Side creation surfaces through the inline composer feedback affordance
+      // (`data-composer-local-feedback`), not the global toast stack.
+      const feedback = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-composer-local-feedback="true"]'),
         "Side creation failure should be reported without consuming its prompt.",
       );
+      expect(feedback.textContent).toContain("Could not start Side");
       expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt).toBe(sidePrompt);
       await vi.waitFor(() => expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false));
       expect(hasDispatchedCommandType("thread.turn.start")).toBe(false);
@@ -5242,6 +5311,27 @@ describe("ChatView timeline estimator parity (full app)", () => {
           chatWorkspaceRoot: "/Users/tester/Documents/Synara",
         };
       },
+      configureNativeApi: (api) => ({
+        ...api,
+        projects: {
+          ...api.projects,
+          // The workspace picker lists home-directory folders on open. Without a resolving mock the
+          // load rejects, and its "Unable to load folders." error (plus the effect's `setErrorMessage(null)`
+          // reset when it re-runs on reopen) would clobber the project-removal feedback this test asserts.
+          // Return a non-project folder so `directoryEntries` stays populated and the reopen effect
+          // short-circuits, mirroring a real home directory that has folders.
+          listDirectories: vi.fn(async () => ({
+            entries: [
+              {
+                path: "Reference",
+                name: "Reference",
+                kind: "directory" as const,
+                hasChildren: false,
+              },
+            ],
+          })),
+        },
+      }),
     });
     const reservation = reserveProjectRemoval(PROJECT_ID);
     expect(reservation).not.toBeNull();
@@ -5250,7 +5340,25 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await page.getByTestId("workspace-picker-trigger").click();
       const projectSearch = page.getByPlaceholder("Search projects");
       await projectSearch.fill("project");
-      await userEvent.keyboard("{ArrowDown}{Enter}");
+      // The base-ui combobox registers its highlight a tick after ArrowDown, so split the
+      // keystrokes and wait for `aria-activedescendant`/`data-highlighted` before Enter — firing
+      // them back-to-back lets Enter run before any item is highlighted, selecting nothing.
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll('[data-slot="combobox-item"]')).toHaveLength(1);
+      });
+      await userEvent.keyboard("{ArrowDown}");
+      await vi.waitFor(() => {
+        const searchInput = document.querySelector<HTMLInputElement>(
+          'input[placeholder="Search projects"]',
+        );
+        expect(document.activeElement).toBe(searchInput);
+        expect(searchInput?.getAttribute("aria-activedescendant")).toBeTruthy();
+        expect(
+          document.querySelector<HTMLElement>('[data-slot="combobox-item"][data-highlighted]')
+            ?.textContent,
+        ).toContain("project");
+      });
+      await userEvent.keyboard("{Enter}");
 
       await expect
         .element(
@@ -7383,7 +7491,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       await page.getByLabelText("Create new thread in Project").click();
       await page.getByLabelText("Create new terminal thread in Project").click();
-      await expect.element(page.getByText("Project removal in progress")).toBeInTheDocument();
+      // Each blocked entry point raises its own "Project removal in progress" warning, so match a
+      // toast by text instead of a single-element locator — two identical toasts would trip the
+      // locator's strict single-match and hang until the test times out.
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="toast-title"]')).find(
+            (element) => element.textContent === "Project removal in progress",
+          ) ?? null,
+        "Blocked New Thread entry points should surface a project-removal warning.",
+      );
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
 
       expect(mounted.router.state.location.pathname).toBe(originalPath);
@@ -7434,10 +7551,18 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await vi.waitFor(() => expect(isProjectRemovalReserved(PROJECT_ID)).toBe(true));
       expect(dispatchedCommands.some((command) => command.type === "thread.delete")).toBe(false);
 
-      const sourceThread = useStore.getState().threads.find((thread) => thread.id === THREAD_ID);
-      expect(sourceThread).toBeDefined();
+      const sourceShell = useStore.getState().threadShellById?.[THREAD_ID];
+      expect(sourceShell).toBeDefined();
+      // Admit the thread the way real thread creation does: into the normalized projection
+      // (`threadIds` + `threadShellById`) that `getThreadsFromState`/`getThreadFromState` read.
+      // Writing only the legacy `threads` array leaves it invisible to the removal deletion
+      // path, so the post-drain snapshot would never see it (the regression this guards).
       useStore.setState((state) => ({
-        threads: [...state.threads, { ...sourceThread!, id: lateThreadId, title: "Late thread" }],
+        threadIds: [...(state.threadIds ?? []), lateThreadId],
+        threadShellById: {
+          ...state.threadShellById,
+          [lateThreadId]: { ...sourceShell!, id: lateThreadId, title: "Late thread" },
+        },
       }));
       finishProjectOperation(admittedOperation!);
 
@@ -7454,6 +7579,15 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 20_000, interval: 16 },
       );
+
+      // The confirmation count is read from the live normalized store at consent time (one
+      // thread) rather than a stale render snapshot — the regression guard for Codex's P1 #2.
+      // Confirmation runs before the drain so the dialog never hangs behind an in-flight send;
+      // the thread admitted before reservation finalizes during the drain, so it is outside the
+      // count the user saw, yet deletion re-derives the authoritative post-drain set (asserted
+      // above), so it is still cleared rather than orphaned.
+      const confirmMessages = confirm.mock.calls.map((call) => String(call[0]));
+      expect(confirmMessages.some((message) => message.includes("delete 1 thread"))).toBe(true);
     } finally {
       finishProjectOperation(admittedOperation!);
       await mounted.cleanup();

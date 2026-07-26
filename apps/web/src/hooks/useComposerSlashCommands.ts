@@ -59,19 +59,18 @@ function wasPromptReplacementApplied(result: number | false): boolean {
   return result !== false;
 }
 
-type ProjectMutationAdmission = { lease: ProjectOperationLease | null };
+type ProjectMutationAdmission = { lease: ProjectOperationLease };
 
-function tryAdmitProjectMutation(
-  projectId: Project["id"],
-  projectOperationAlreadyHeld: boolean,
-): ProjectMutationAdmission | null {
-  if (projectOperationAlreadyHeld) return { lease: null };
+// Every project-mutating creator acquires its own removal-coordination lease. Concurrent
+// leases per project are allowed, so callers never assert "already held" — that assertion
+// was a footgun that let a creator skip the turnstile and race a concurrent removal.
+function tryAdmitProjectMutation(projectId: Project["id"]): ProjectMutationAdmission | null {
   const lease = tryBeginProjectOperation(projectId);
   return lease ? { lease } : null;
 }
 
 function finishProjectMutation(admission: ProjectMutationAdmission): void {
-  if (admission.lease) finishProjectOperation(admission.lease);
+  finishProjectOperation(admission.lease);
 }
 
 export function useComposerSlashCommands(input: {
@@ -275,10 +274,7 @@ export function useComposerSlashCommands(input: {
   );
 
   const createForkThreadFromSlashCommand = useCallback(
-    async (
-      inputOptions?: { target?: ForkSlashCommandTarget; sourceMessageId?: MessageId },
-      executionOptions?: { projectOperationAlreadyHeld?: boolean },
-    ) => {
+    async (inputOptions?: { target?: ForkSlashCommandTarget; sourceMessageId?: MessageId }) => {
       const api = readNativeApi();
       if (!api || !activeProject || !activeThread || !isServerThread) {
         reportComposerFeedback({
@@ -289,10 +285,7 @@ export function useComposerSlashCommands(input: {
         return false;
       }
 
-      const admission = tryAdmitProjectMutation(
-        activeProject.id,
-        executionOptions?.projectOperationAlreadyHeld === true,
-      );
+      const admission = tryAdmitProjectMutation(activeProject.id);
       if (!admission) {
         reportComposerFeedback({
           type: "warning",
@@ -372,10 +365,7 @@ export function useComposerSlashCommands(input: {
     ],
   );
   const createSidechatFromSlashCommand = useCallback(
-    async (
-      inputOptions?: { initialPrompt?: string },
-      executionOptions?: { projectOperationAlreadyHeld?: boolean },
-    ) => {
+    async (inputOptions?: { initialPrompt?: string }) => {
       const api = readNativeApi();
       if (!api || !activeProject || !activeThread || !isServerThread || !canOfferSideCommand) {
         reportComposerFeedback({
@@ -386,10 +376,7 @@ export function useComposerSlashCommands(input: {
         return false;
       }
 
-      const admission = tryAdmitProjectMutation(
-        activeProject.id,
-        executionOptions?.projectOperationAlreadyHeld === true,
-      );
+      const admission = tryAdmitProjectMutation(activeProject.id);
       if (!admission) {
         reportComposerFeedback({
           type: "warning",
@@ -482,10 +469,7 @@ export function useComposerSlashCommands(input: {
   }, [canOfferSideCommand, createSidechatFromSlashCommand, threadId]);
 
   const runCodexReviewStart = useCallback(
-    async (
-      target: "changes" | "base-branch",
-      executionOptions?: { projectOperationAlreadyHeld?: boolean },
-    ) => {
+    async (target: "changes" | "base-branch") => {
       const api = readNativeApi();
       if (!api || !activeThread || !activeProject) {
         reportComposerFeedback({
@@ -505,10 +489,7 @@ export function useComposerSlashCommands(input: {
         return false;
       }
 
-      const admission = tryAdmitProjectMutation(
-        activeProject.id,
-        executionOptions?.projectOperationAlreadyHeld === true,
-      );
+      const admission = tryAdmitProjectMutation(activeProject.id);
       if (!admission) {
         reportComposerFeedback({
           type: "warning",
@@ -834,8 +815,8 @@ export function useComposerSlashCommands(input: {
             });
             return true;
           }
-          editorActions.clearComposerSlashDraft();
-          await runCodexReviewStart(target, { projectOperationAlreadyHeld: true });
+          const started = await runCodexReviewStart(target);
+          if (started) editorActions.clearComposerSlashDraft();
           return true;
         }
         if (supportsTextNativeReviewCommand && slashInvocation.args.length === 0) {
@@ -870,10 +851,7 @@ export function useComposerSlashCommands(input: {
             openForkTargetPicker();
             return true;
           }
-          const created = await createForkThreadFromSlashCommand(
-            { target },
-            { projectOperationAlreadyHeld: true },
-          );
+          const created = await createForkThreadFromSlashCommand({ target });
           if (created) editorActions.clearComposerSlashDraft();
         } catch (error) {
           reportComposerFeedback({
@@ -889,10 +867,9 @@ export function useComposerSlashCommands(input: {
       }
       if (slashInvocation.command === "side") {
         try {
-          const created = await createSidechatFromSlashCommand(
-            { initialPrompt: slashInvocation.args },
-            { projectOperationAlreadyHeld: true },
-          );
+          const created = await createSidechatFromSlashCommand({
+            initialPrompt: slashInvocation.args,
+          });
           if (created) editorActions.clearComposerSlashDraft();
         } catch (error) {
           reportComposerFeedback({

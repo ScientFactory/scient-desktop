@@ -624,6 +624,17 @@ const sendPreflightInFlightThreadIds = new Set<ThreadId>();
 const sendOperationInFlightThreadIds = new Set<ThreadId>();
 const projectOperationLeasesByThreadId = new Map<ThreadId, Map<ProjectId, ProjectOperationLease>>();
 
+// These dispatch gates live outside React so a scope remount cannot lose them, which also means
+// they survive a component unmount. Tests that abort mid-send (e.g. via `testTimeout`) never reach
+// their gate-clearing paths, so without an explicit reset a stuck `threadId` would block every
+// later test that dispatches with the same id. Reset between tests to keep the suite isolated.
+export function resetChatViewDispatchGatesForTests(): void {
+  sendInFlightThreadIds.clear();
+  sendPreflightInFlightThreadIds.clear();
+  sendOperationInFlightThreadIds.clear();
+  projectOperationLeasesByThreadId.clear();
+}
+
 function terminalHasRunningSubprocess(threadId: ThreadId, terminalId: string): boolean {
   const terminalState = selectThreadTerminalState(
     useTerminalStateStore.getState().terminalStateByThreadId,
