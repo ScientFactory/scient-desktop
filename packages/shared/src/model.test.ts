@@ -263,9 +263,14 @@ describe("recommended provider defaults", () => {
     });
   });
 
-  it("does not silently upgrade the Claude default through the moving Opus alias", () => {
+  it("keeps Opus 4.8 preferred when the exact Claude catalog still advertises it", () => {
     expect(
       resolveRecommendedModelSelection("claudeAgent", [
+        {
+          slug: "opus-4.8",
+          name: "Claude Opus 4.8",
+          resolvedModel: "claude-opus-4-8",
+        },
         {
           slug: "opus",
           name: "Claude Opus 5",
@@ -276,6 +281,24 @@ describe("recommended provider defaults", () => {
     ).toEqual({
       provider: "claudeAgent",
       model: "claude-opus-4-8",
+      options: { effort: "high" },
+    });
+  });
+
+  it("uses Claude's exact advertised default when Opus 4.8 is unavailable", () => {
+    expect(
+      resolveRecommendedModelSelection("claudeAgent", [
+        {
+          slug: "opus",
+          name: "Claude Opus 5",
+          resolvedModel: "claude-opus-5",
+          isDefault: true,
+          supportedReasoningEfforts: [{ value: "high" }],
+        },
+      ]),
+    ).toEqual({
+      provider: "claudeAgent",
+      model: "claude-opus-5",
       options: { effort: "high" },
     });
   });

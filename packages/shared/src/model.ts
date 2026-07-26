@@ -203,11 +203,6 @@ export function resolveRecommendedModelSelection(
   }
 
   const recommendedCandidate = findRecommendedCandidate(provider, candidates);
-  if (provider === "claudeAgent" && !recommendedCandidate) {
-    // `opus` is a moving SDK alias and can resolve to a newer model. Keep the
-    // explicit Scient default stable rather than silently upgrading a fresh composer.
-    return getRecommendedDefaultModelSelection(provider);
-  }
   const candidate =
     recommendedCandidate ?? candidates.find((option) => option.isDefault === true) ?? candidates[0];
   return candidate ? recommendedModelSelection(provider, candidate) : null;
