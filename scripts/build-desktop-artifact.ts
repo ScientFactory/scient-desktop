@@ -151,7 +151,7 @@ class BuildScriptError extends Data.TaggedError("BuildScriptError")<{
 }> {}
 
 function resolveGitCommitHash(repoRoot: string): string {
-  const result = spawnSync("git", ["rev-parse", "--short=12", "HEAD"], {
+  const result = spawnSync("git", ["rev-parse", "HEAD"], {
     cwd: repoRoot,
     encoding: "utf8",
   });
@@ -159,7 +159,7 @@ function resolveGitCommitHash(repoRoot: string): string {
     return "unknown";
   }
   const hash = result.stdout.trim();
-  if (!/^[0-9a-f]{7,40}$/i.test(hash)) {
+  if (!/^[0-9a-f]{40}$/i.test(hash)) {
     return "unknown";
   }
   return hash.toLowerCase();

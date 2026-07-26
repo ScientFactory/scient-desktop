@@ -74,6 +74,8 @@ import {
   UpdateBackendRecoveryLatch,
   UpdateQuitAuthorityLatch,
 } from "./updateBackendRecovery";
+import { waitForPackagedBackendResponsiveness } from "./packagedStartupResponsiveness";
+import { isVerifierOwnedPackagedStartupSmoke } from "./packagedStartupSmokeAuthority";
 import { resolveBackendNodeArgs } from "./backendNodeOptions";
 import {
   backendProcessContainmentOptions,
@@ -107,13 +109,15 @@ import {
 import { collectMacUpdateDiagnostics } from "./macUpdateDiagnostics";
 import { openInitialBackendWindow } from "./initialBackendWindowOpen";
 import { shouldAllowMediaPermissionRequest } from "./mediaPermissions";
+import { PACKAGED_RENDERER_READINESS_EXPRESSION } from "./packagedStartupRendererReadiness";
+import { attachPackagedStartupWindowLifecycleProof } from "./packagedStartupWindowLifecycle";
 import {
   installResumableUpdateDownloader,
   type ResumableDownloaderTarget,
 } from "./resumableUpdateDownload";
 import { hardenElectronUpdater } from "./electronUpdaterSecurity";
 import { ServerListeningDetector } from "./serverListeningDetector";
-import { syncShellEnvironment } from "./syncShellEnvironment";
+import { shouldSynchronizeShellEnvironment, syncShellEnvironment } from "./syncShellEnvironment";
 import {
   type DownloadProgressSample,
   getAutoUpdateDisabledReason,
@@ -216,7 +220,7 @@ import {
 // baseline, so a replacement during startup cannot silently become "normal."
 const startupBundleIdentity = captureStartupBundleIdentity();
 
-syncShellEnvironment();
+if (shouldSynchronizeShellEnvironment()) syncShellEnvironment();
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const SAVE_FILE_CHANNEL = "desktop:save-file";
@@ -278,6 +282,7 @@ const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const APP_DISPLAY_NAME = isDevelopment ? `${SCIENT_APP_NAME} (Dev)` : SCIENT_APP_NAME;
 const APP_USER_MODEL_ID = scientBundleId(isDevelopment);
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
+const FULL_COMMIT_HASH_PATTERN = /^[0-9a-f]{40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
 const LOG_DIR = SCIENT_DATA_DIRECTORIES.logsDir;
 const LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
@@ -338,7 +343,11 @@ let desktopShutdownComplete = false;
 let desktopProtocolRegistered = false;
 let aboutCommitHashCache: string | null | undefined;
 let embeddedReleaseMetadataCache:
-  | { readonly commitHash: string | null; readonly signed: boolean | null }
+  | {
+      readonly commitHash: string | null;
+      readonly fullCommitHash: string | null;
+      readonly signed: boolean | null;
+    }
   | undefined;
 let appUpdateYmlCache: Record<string, string> | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
@@ -599,6 +608,9 @@ async function waitForBackendWindowReady(baseUrl: string): Promise<"listening" |
       }),
     onHttpReady: () => {
       if (generation !== null) backendSupervisor?.markReady(generation);
+      writeDesktopLogHeader(
+        `backend semantic ready generation=${generation === null ? "unknown" : generation}`,
+      );
     },
     onHttpFailure: (error) => {
       if (generation === null) return;
@@ -983,18 +995,27 @@ function parseAppUpdateYml(): Record<string, string> | null {
 }
 
 function normalizeCommitHash(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return COMMIT_HASH_PATTERN.test(trimmed)
+    ? trimmed.slice(0, COMMIT_HASH_DISPLAY_LENGTH).toLowerCase()
+    : null;
+}
+
+function normalizeFullCommitHash(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
   }
   const trimmed = value.trim();
-  if (!COMMIT_HASH_PATTERN.test(trimmed)) {
+  if (!FULL_COMMIT_HASH_PATTERN.test(trimmed)) {
     return null;
   }
-  return trimmed.slice(0, COMMIT_HASH_DISPLAY_LENGTH).toLowerCase();
+  return trimmed.toLowerCase();
 }
 
 function resolveEmbeddedReleaseMetadata(): {
   readonly commitHash: string | null;
+  readonly fullCommitHash: string | null;
   readonly signed: boolean | null;
 } {
   if (embeddedReleaseMetadataCache !== undefined) {
@@ -1003,7 +1024,11 @@ function resolveEmbeddedReleaseMetadata(): {
 
   const packageJsonPath = Path.join(resolveAppRoot(), "package.json");
   if (!FS.existsSync(packageJsonPath)) {
-    embeddedReleaseMetadataCache = { commitHash: null, signed: null };
+    embeddedReleaseMetadataCache = {
+      commitHash: null,
+      fullCommitHash: null,
+      signed: null,
+    };
     return embeddedReleaseMetadataCache;
   }
 
@@ -1015,10 +1040,15 @@ function resolveEmbeddedReleaseMetadata(): {
     };
     embeddedReleaseMetadataCache = {
       commitHash: normalizeCommitHash(parsed.scientCommitHash),
+      fullCommitHash: normalizeFullCommitHash(parsed.scientCommitHash),
       signed: typeof parsed.scientSigned === "boolean" ? parsed.scientSigned : null,
     };
   } catch {
-    embeddedReleaseMetadataCache = { commitHash: null, signed: null };
+    embeddedReleaseMetadataCache = {
+      commitHash: null,
+      fullCommitHash: null,
+      signed: null,
+    };
   }
 
   return embeddedReleaseMetadataCache;
@@ -1026,6 +1056,14 @@ function resolveEmbeddedReleaseMetadata(): {
 
 function resolveEmbeddedCommitHash(): string | null {
   return resolveEmbeddedReleaseMetadata().commitHash;
+}
+
+function writePackagedStartupSmokeIdentity(): void {
+  if (!isVerifierOwnedPackagedStartupSmoke(process.env, process.ppid, app.isPackaged)) return;
+  const commit = resolveEmbeddedReleaseMetadata().fullCommitHash ?? "unknown";
+  writeDesktopLogHeader(
+    `packaged identity name=${app.getName()} version=${app.getVersion()} commit=${commit}`,
+  );
 }
 
 function resolveAboutCommitHash(): string | null {
@@ -2847,6 +2885,7 @@ class MissingBackendEntryError extends Error {
 }
 
 const backendGenerationRuntimes = new Map<number, BackendGenerationRuntime>();
+const externallyContainedBackendChildren = new WeakSet<ChildProcess.ChildProcess>();
 
 function spawnBackendGeneration(generation: number): ChildProcess.ChildProcess {
   const backendEntry = resolveBackendEntry();
@@ -2855,18 +2894,39 @@ function spawnBackendGeneration(generation: number): ChildProcess.ChildProcess {
   }
 
   const captureBackendLogs = app.isPackaged && backendLogSink !== null;
+  const environment: NodeJS.ProcessEnv = {
+    ...backendEnv(),
+    ELECTRON_RUN_AS_NODE: "1",
+  };
+  // Packaged-smoke descendants remain inside the verifier-owned POSIX process
+  // group or Windows Job Object. Normal application launches retain their
+  // existing dedicated backend containment.
+  // Authenticate outer containment once for this generation. Recomputing after
+  // reparenting would lose authority and could incorrectly fall back to a
+  // backend PID or process-group signal that this child never owned.
+  const retainedByExternalContainment = isVerifierOwnedPackagedStartupSmoke(
+    process.env,
+    process.ppid,
+    app.isPackaged,
+  );
   const child = ChildProcess.spawn(process.execPath, [...backendNodeArgs(), backendEntry], {
     cwd: resolveBackendCwd(),
     // In Electron main, process.execPath points to the Electron binary.
     // Run the child in Node mode so this backend process does not become a GUI app instance.
-    env: {
-      ...backendEnv(),
-      ELECTRON_RUN_AS_NODE: "1",
-    },
-    // POSIX force termination targets this dedicated process group. Windows
-    // uses taskkill /T after the same graceful IPC deadline.
-    ...backendProcessContainmentOptions(captureBackendLogs),
+    env: environment,
+    // Normal POSIX launches retain their dedicated backend process group. The
+    // packaged smoke keeps the backend in Electron's verifier-owned group.
+    // Windows uses taskkill /T after the same graceful IPC deadline.
+    ...backendProcessContainmentOptions(
+      captureBackendLogs,
+      process.platform,
+      !retainedByExternalContainment,
+    ),
   });
+  if (retainedByExternalContainment) externallyContainedBackendChildren.add(child);
+  writeDesktopLogHeader(
+    `backend process spawned generation=${generation} pid=${child.pid ?? "unknown"}`,
+  );
   const listeningDetector = new ServerListeningDetector();
   backendListeningDetector = listeningDetector;
   let backendSessionClosed = false;
@@ -2928,6 +2988,9 @@ function handleBackendGenerationStarted(generation: DesktopBackendGeneration): v
 }
 
 function handleBackendGenerationExited(exit: DesktopBackendExit): void {
+  writeDesktopLogHeader(
+    `backend process exited generation=${exit.generation} pid=${exit.pid ?? "unknown"} reason=${exit.reason}`,
+  );
   cancelBackendReadinessWait();
   const runtime = backendGenerationRuntimes.get(exit.generation);
   backendGenerationRuntimes.delete(exit.generation);
@@ -3037,7 +3100,13 @@ function getBackendSupervisor(): DesktopBackendSupervisor {
         }
       });
     },
-    forceTerminateTree: (child) => forceTerminateBackendProcessTree(child),
+    forceTerminateTree: (child) => {
+      return forceTerminateBackendProcessTree(child, {
+        retainedByExternalContainment: externallyContainedBackendChildren.has(
+          child as ChildProcess.ChildProcess,
+        ),
+      });
+    },
     onGenerationStarted: handleBackendGenerationStarted,
     onGenerationExited: handleBackendGenerationExited,
     onRestartScheduled: ({ attempt, delayMs, reason }) => {
@@ -3605,6 +3674,15 @@ function createWindow(): BrowserWindow {
       backgroundThrottling: true,
     },
   });
+  let resolvePackagedWindowVisibility!: (visible: boolean) => void;
+  const packagedWindowVisibility = new Promise<boolean>((resolveVisibility) => {
+    resolvePackagedWindowVisibility = resolveVisibility;
+  });
+  const verifierOwnedPackagedStartupSmoke = isVerifierOwnedPackagedStartupSmoke(
+    process.env,
+    process.ppid,
+    app.isPackaged,
+  );
   browserManager.setWindow(window);
   attachDesktopZoomFactorSync(window);
 
@@ -3657,8 +3735,69 @@ function createWindow(): BrowserWindow {
     window.setTitle(APP_DISPLAY_NAME);
   });
   window.webContents.on("did-finish-load", () => {
+    writeDesktopLogHeader("renderer main frame loaded");
     window.setTitle(APP_DISPLAY_NAME);
     emitUpdateState();
+    if (verifierOwnedPackagedStartupSmoke) {
+      setTimeout(() => {
+        const generation = getBackendSupervisor().currentGeneration;
+        void Promise.all([
+          window.webContents.executeJavaScript(
+            `new Promise((resolve) => requestAnimationFrame(() => resolve(${PACKAGED_RENDERER_READINESS_EXPRESSION})))`,
+            true,
+          ),
+          waitForPackagedBackendResponsiveness(backendHttpUrl).then(() => true),
+          packagedWindowVisibility,
+        ])
+          .then(([rendererReady, backendReady, windowVisible]) => {
+            const currentGeneration = getBackendSupervisor().currentGeneration;
+            const sameLiveGeneration =
+              generation !== null &&
+              currentGeneration?.number === generation.number &&
+              currentGeneration.child.exitCode === null &&
+              currentGeneration.child.signalCode === null;
+            if (
+              rendererReady !== true ||
+              backendReady !== true ||
+              !sameLiveGeneration ||
+              windowVisible !== true ||
+              !window.isVisible()
+            ) {
+              throw new Error("renderer or backend failed the delayed responsiveness check");
+            }
+            writeDesktopLogHeader(
+              `packaged responsiveness confirmed generation=${generation.number}`,
+            );
+          })
+          .catch((error: unknown) => {
+            writeDesktopLogHeader(
+              `packaged responsiveness failed message=${formatErrorMessage(error)}`,
+            );
+          });
+      }, 1_500);
+    }
+  });
+  window.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, _validatedUrl, isMainFrame) => {
+      if (!isMainFrame) return;
+      writeDesktopLogHeader(
+        `renderer main frame load failed code=${errorCode} message=${errorDescription}`,
+      );
+    },
+  );
+  window.webContents.on("render-process-gone", (_event, details) => {
+    writeDesktopLogHeader(
+      `renderer main process gone reason=${details.reason} exitCode=${details.exitCode}`,
+    );
+  });
+  window.on("unresponsive", () => {
+    writeDesktopLogHeader("renderer main window unresponsive");
+  });
+  attachPackagedStartupWindowLifecycleProof({
+    window,
+    enabled: verifierOwnedPackagedStartupSmoke,
+    writeFailureMarker: writeDesktopLogHeader,
   });
   window.once("ready-to-show", () => {
     // Preserve the original first-launch behavior, then respect the state saved
@@ -3668,6 +3807,10 @@ function createWindow(): BrowserWindow {
       window.maximize();
     }
     window.show();
+    if (window.isVisible()) {
+      writeDesktopLogHeader("packaged main window visible");
+      resolvePackagedWindowVisibility(true);
+    }
     emitDesktopWindowState(window);
   });
 
@@ -3820,8 +3963,9 @@ if (hasSingleInstanceLock) {
   app
     .whenReady()
     .then(async () => {
-      writeDesktopLogHeader("app ready");
       configureAppIdentity();
+      writeDesktopLogHeader("app ready");
+      writePackagedStartupSmokeIdentity();
       applyLegacyMacDockIcon();
       refreshMacIconCacheOnVersionChange();
       configureMediaPermissions();
