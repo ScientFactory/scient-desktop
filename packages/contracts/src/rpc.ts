@@ -43,7 +43,6 @@ import {
   GitListBranchesResult,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
-  GitPullInput,
   GitPullRequestRefInput,
   GitPullRequestSnapshotInput,
   GitPullRequestSnapshotResult,
@@ -53,7 +52,6 @@ import {
   GitRemoveIndexLockInput,
   GitRemoveWorktreeInput,
   GitResolvePullRequestResult,
-  GitRunStackedActionInput,
   GitStageFilesInput,
   GitStageFilesResult,
   GitStashAndCheckoutInput,
@@ -67,6 +65,11 @@ import {
   GitUnstageFilesInput,
   GitUnstageFilesResult,
 } from "./git";
+import { AuthorizedGitPullInput, AuthorizedGitRunStackedActionInput } from "./gitActionAuthority";
+export type {
+  AuthorizedGitPullInput,
+  AuthorizedGitRunStackedActionInput,
+} from "./gitActionAuthority";
 import {
   PullRequestActionInput,
   PullRequestCommentInput,
@@ -516,13 +519,13 @@ export const WsGitSummarizeDiffRpc = Rpc.make(WS_METHODS.gitSummarizeDiff, {
 });
 
 export const WsGitPullRpc = Rpc.make(WS_METHODS.gitPull, {
-  payload: GitPullInput,
+  payload: AuthorizedGitPullInput,
   success: GitPullResult,
   error: WsRpcError,
 });
 
 export const WsGitRunStackedActionRpc = Rpc.make(WS_METHODS.gitRunStackedAction, {
-  payload: GitRunStackedActionInput,
+  payload: AuthorizedGitRunStackedActionInput,
   success: GitActionProgressEvent,
   error: WsRpcError,
   stream: true,

@@ -42,13 +42,11 @@ import {
   GitCreateWorktreeInput,
   GitInitInput,
   GitListBranchesInput,
-  GitPullInput,
   GitPullRequestRefInput,
   GitPullRequestSnapshotInput,
   GitReadWorkingTreeDiffInput,
   GitRemoveWorktreeInput,
   GitRemoveIndexLockInput,
-  GitRunStackedActionInput,
   GitStageFilesInput,
   GitStashAndCheckoutInput,
   GitStashDropInput,
@@ -57,6 +55,7 @@ import {
   GitSummarizeDiffInput,
   GitUnstageFilesInput,
 } from "./git";
+import { AuthorizedGitPullInput, AuthorizedGitRunStackedActionInput } from "./gitActionAuthority";
 import {
   TerminalAckOutputInput,
   TerminalClearInput,
@@ -376,12 +375,12 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),
 
   // Git methods
-  tagRequestBody(WS_METHODS.gitPull, GitPullInput),
+  tagRequestBody(WS_METHODS.gitPull, AuthorizedGitPullInput),
   tagRequestBody(WS_METHODS.gitGithubRepository, GitHubRepositoryInput),
   tagRequestBody(WS_METHODS.gitStatus, GitStatusInput),
   tagRequestBody(WS_METHODS.gitReadWorkingTreeDiff, GitReadWorkingTreeDiffInput),
   tagRequestBody(WS_METHODS.gitSummarizeDiff, GitSummarizeDiffInput),
-  tagRequestBody(WS_METHODS.gitRunStackedAction, GitRunStackedActionInput),
+  tagRequestBody(WS_METHODS.gitRunStackedAction, AuthorizedGitRunStackedActionInput),
   tagRequestBody(WS_METHODS.gitListBranches, GitListBranchesInput),
   tagRequestBody(WS_METHODS.gitCreateWorktree, GitCreateWorktreeInput),
   tagRequestBody(WS_METHODS.gitCreateDetachedWorktree, GitCreateDetachedWorktreeInput),

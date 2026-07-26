@@ -138,7 +138,6 @@ export type GitReadWorkingTreeDiffInput = typeof GitReadWorkingTreeDiffInput.Typ
 
 export const GitPullInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
-  expectedBranch: TrimmedNonEmptyStringSchema,
 });
 export type GitPullInput = typeof GitPullInput.Type;
 
@@ -159,7 +158,6 @@ export const GitRunStackedActionInput = Schema.Struct({
   actionId: TrimmedNonEmptyStringSchema,
   cwd: TrimmedNonEmptyStringSchema,
   action: GitStackedAction,
-  expectedBranch: TrimmedNonEmptyStringSchema,
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
   filePaths: Schema.optional(

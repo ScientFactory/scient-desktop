@@ -7,6 +7,7 @@
  * @module GitManager
  */
 import {
+  AuthorizedGitRunStackedActionInput,
   GitActionProgressEvent,
   GitHandoffThreadInput,
   GitHandoffThreadResult,
@@ -18,7 +19,6 @@ import {
   GitReadWorkingTreeDiffInput,
   GitReadWorkingTreeDiffResult,
   GitResolvePullRequestResult,
-  GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStatusInput,
   GitStatusResult,
@@ -96,7 +96,7 @@ export interface GitManagerShape {
    * When `featureBranch` is set, creates and checks out a feature branch first.
    */
   readonly runStackedAction: (
-    input: GitRunStackedActionInput,
+    input: AuthorizedGitRunStackedActionInput,
     options?: GitRunStackedActionOptions,
   ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
 }
