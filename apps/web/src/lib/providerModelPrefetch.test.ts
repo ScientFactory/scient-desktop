@@ -14,6 +14,7 @@ import {
   resolveNewThreadModelPrefetchProvider,
   type ProviderModelPrefetchSettings,
 } from "./providerModelPrefetch";
+import { getProviderDiscoveryGeneration } from "./providerDiscoveryInvalidation";
 import { providerDiscoveryQueryKeys } from "./providerDiscoveryReactQuery";
 
 afterEach(() => {
@@ -120,15 +121,16 @@ describe("providerModelsPrefetchQueryOptions", () => {
       settings,
       cwd: "/tmp/project",
     });
-    expect(claudeOptions.queryKey).toEqual(
-      providerDiscoveryQueryKeys.models(
+    expect(claudeOptions.queryKey).toEqual([
+      ...providerDiscoveryQueryKeys.models(
         "claudeAgent",
         "/bin/claude-custom",
         null,
         null,
         "/tmp/project",
       ),
-    );
+      getProviderDiscoveryGeneration(),
+    ]);
 
     const cursorOptions = providerModelsPrefetchQueryOptions({
       provider: "cursor",
@@ -193,18 +195,20 @@ describe("prefetchProviderModelsForNewThread", () => {
     });
 
     expect(prefetchQuery).toHaveBeenCalledTimes(2);
-    expect(prefetchQuery.mock.calls[0]?.[0].queryKey).toEqual(
-      providerDiscoveryQueryKeys.models(
+    expect(prefetchQuery.mock.calls[0]?.[0].queryKey).toEqual([
+      ...providerDiscoveryQueryKeys.models(
         "claudeAgent",
         "/bin/claude-custom",
         null,
         null,
         "/tmp/project",
       ),
-    );
-    expect(prefetchQuery.mock.calls[1]?.[0].queryKey).toEqual(
-      providerDiscoveryQueryKeys.agents("claudeAgent", "/bin/claude-custom", "/tmp/project"),
-    );
+      getProviderDiscoveryGeneration(),
+    ]);
+    expect(prefetchQuery.mock.calls[1]?.[0].queryKey).toEqual([
+      ...providerDiscoveryQueryKeys.agents("claudeAgent", "/bin/claude-custom", "/tmp/project"),
+      getProviderDiscoveryGeneration(),
+    ]);
   });
 
   it("prefetches models and agents for the resolved provider", async () => {
