@@ -18,8 +18,10 @@ import {
   deriveEffectiveComposerModelState,
   findSupersededComposerImageBlobAttachments,
   isComposerImageBlobReferenced,
+  isComposerAttachmentSyncGenerationCurrent,
   markPromotedDraftThreads,
   partializeComposerDraftStoreState,
+  pendingComposerAttachmentSyncGenerationCount,
   resolvePreferredComposerModelSelection,
   useComposerDraftStore,
 } from "./composerDraftStore";
@@ -1182,12 +1184,16 @@ describe("composerDraftStore syncPersistedAttachments", () => {
     });
     const store = useComposerDraftStore.getState();
     store.addImages(threadId, [firstImage, secondImage]);
+    const generationsBefore = pendingComposerAttachmentSyncGenerationCount();
 
     const firstSync = store.syncPersistedAttachments(threadId, [attachmentFor(firstImage)]);
     const secondSync = store.syncPersistedAttachments(threadId, [
       attachmentFor(firstImage),
       attachmentFor(secondImage),
     ]);
+    expect(pendingComposerAttachmentSyncGenerationCount()).toBe(generationsBefore + 1);
+    expect(isComposerAttachmentSyncGenerationCurrent(2, 1)).toBe(false);
+    expect(isComposerAttachmentSyncGenerationCurrent(2, 2)).toBe(true);
 
     // Staging is synchronous even while an earlier sync is still verifying, so
     // a reload in that window cannot lose the newer attachment metadata.
@@ -1200,11 +1206,104 @@ describe("composerDraftStore syncPersistedAttachments", () => {
       "unverified",
       "unverified",
     ]);
+    expect(pendingComposerAttachmentSyncGenerationCount()).toBe(generationsBefore);
     expect(
       useComposerDraftStore
         .getState()
         .draftsByThreadId[threadId]?.persistedAttachments.map((attachment) => attachment.id),
     ).toEqual([firstImage.id, secondImage.id]);
+  });
+
+  it("retires a settled attachment sync generation", async () => {
+    const image = makeImage({
+      id: "appsnap-sync-generation",
+      previewUrl: "blob:appsnap-sync-generation",
+    });
+    const attachment = {
+      id: image.id,
+      name: image.name,
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+      dataUrl: "data:image/png;base64,aGk=",
+    };
+    const store = useComposerDraftStore.getState();
+    store.addImage(threadId, image);
+    const before = pendingComposerAttachmentSyncGenerationCount();
+
+    const sync = store.syncPersistedAttachments(threadId, [attachment]);
+    expect(pendingComposerAttachmentSyncGenerationCount()).toBe(before + 1);
+
+    await expect(sync).resolves.toBe("unverified");
+    expect(pendingComposerAttachmentSyncGenerationCount()).toBe(before);
+  });
+
+  it("retires an attachment sync generation when verification rejects", async () => {
+    const image = makeImage({
+      id: "appsnap-sync-generation-error",
+      previewUrl: "blob:appsnap-sync-generation-error",
+    });
+    let verificationStarted = false;
+    const attachment = {
+      get id() {
+        if (verificationStarted) {
+          throw new Error("attachment verification failed");
+        }
+        return image.id;
+      },
+      name: image.name,
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+      dataUrl: "data:image/png;base64,aGk=",
+    };
+    const store = useComposerDraftStore.getState();
+    store.addImage(threadId, image);
+    const before = pendingComposerAttachmentSyncGenerationCount();
+
+    const precedingSync = store.syncPersistedAttachments(threadId, []);
+    const sync = store.syncPersistedAttachments(threadId, [attachment]);
+    const rejectedSync = expect(sync).rejects.toThrow("attachment verification failed");
+    expect(pendingComposerAttachmentSyncGenerationCount()).toBe(before + 1);
+    verificationStarted = true;
+
+    await expect(precedingSync).resolves.toBe("unverified");
+    await rejectedSync;
+    expect(pendingComposerAttachmentSyncGenerationCount()).toBe(before);
+  });
+
+  it("retires an attachment sync generation when synchronous staging rejects", async () => {
+    const image = makeImage({
+      id: "appsnap-sync-generation-staging-error",
+      previewUrl: "blob:appsnap-sync-generation-staging-error",
+    });
+    const attachment = {
+      get id(): string {
+        throw new Error("attachment staging failed");
+      },
+      name: image.name,
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+      dataUrl: "data:image/png;base64,aGk=",
+    };
+    const store = useComposerDraftStore.getState();
+    store.addImage(threadId, image);
+    const before = pendingComposerAttachmentSyncGenerationCount();
+    const precedingAttachment = {
+      id: image.id,
+      name: image.name,
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+      dataUrl: "data:image/png;base64,aGk=",
+    };
+    const precedingSync = store.syncPersistedAttachments(threadId, [precedingAttachment]);
+    const failedSync = store.syncPersistedAttachments(threadId, [attachment]);
+    const rejectedSync = expect(failedSync).rejects.toThrow("attachment staging failed");
+
+    // The failed newer stage restores the still-pending prior generation rather
+    // than leaking its own marker or incorrectly making the prior sync stale.
+    expect(pendingComposerAttachmentSyncGenerationCount()).toBe(before + 1);
+    await rejectedSync;
+    await expect(precedingSync).resolves.toBe("unverified");
+    expect(pendingComposerAttachmentSyncGenerationCount()).toBe(before);
   });
 
   it("treats malformed persisted draft storage as empty", async () => {
