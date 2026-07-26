@@ -9,6 +9,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SERVER_SETTINGS,
   type ModelSelection,
+  ProviderKind,
   type ProviderWithDefaultModel,
   ServerSettings,
   ServerSettingsError,
@@ -39,13 +40,59 @@ export interface ServerSettingsShape {
   readonly ready: Effect.Effect<void, ServerSettingsError>;
   readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
   readonly getSnapshot: Effect.Effect<
-    { readonly settings: ServerSettings; readonly revision: number },
+    {
+      readonly settings: ServerSettings;
+      readonly revision: number;
+      readonly providerRevisions: ReadonlyMap<ProviderKind, number>;
+    },
     ServerSettingsError
   >;
   readonly updateSettings: (
     patch: ServerSettingsPatch,
   ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+  /**
+   * Runs `effect` while holding the settings write lock, mutually excluding it
+   * with `updateSettings`. Callers that must observe a settings value and act on
+   * it without a concurrent write landing in between (e.g. the confirmed
+   * provider-update flow validating a target and then spawning its updater) wrap
+   * that critical section here. Keep the section short — it blocks all settings
+   * writes for its duration.
+   */
+  readonly withSettingsWriteLock: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
   readonly streamChanges: Stream.Stream<ServerSettings>;
+}
+
+// Derived from the canonical schema so a newly-added provider automatically
+// gets its own settings revision counter (no hand-maintained list to drift).
+const PROVIDER_KINDS: ReadonlyArray<ProviderKind> = ProviderKind.literals;
+
+const initialProviderRevisions = (): ReadonlyMap<ProviderKind, number> =>
+  new Map(PROVIDER_KINDS.map((provider) => [provider, 0] as const));
+
+function providerSettingsFingerprint(settings: ServerSettings, provider: ProviderKind): string {
+  return JSON.stringify({
+    updateChecks: settings.enableProviderUpdateChecks,
+    provider: settings.providers[provider],
+  });
+}
+
+function advanceProviderRevisions(
+  previous: ServerSettings,
+  next: ServerSettings,
+  revisions: ReadonlyMap<ProviderKind, number>,
+): ReadonlyMap<ProviderKind, number> {
+  const updated = new Map(revisions);
+  for (const provider of PROVIDER_KINDS) {
+    if (
+      providerSettingsFingerprint(previous, provider) !==
+      providerSettingsFingerprint(next, provider)
+    ) {
+      updated.set(provider, (revisions.get(provider) ?? 0) + 1);
+    }
+  }
+  return updated;
 }
 
 export class ServerSettingsService extends ServiceMap.Service<
@@ -59,10 +106,12 @@ export class ServerSettingsService extends ServiceMap.Service<
         const currentSettingsRef = yield* Ref.make({
           settings: deepMerge(DEFAULT_SERVER_SETTINGS, overrides),
           revision: 0,
+          providerRevisions: initialProviderRevisions(),
         });
         const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
         const emitChange = (settings: ServerSettings) =>
           PubSub.publish(changesPubSub, settings).pipe(Effect.asVoid);
+        const writeSemaphore = yield* Semaphore.make(1);
 
         return {
           start: Effect.void,
@@ -71,27 +120,41 @@ export class ServerSettingsService extends ServiceMap.Service<
             Effect.map(({ settings }) => resolveTextGenerationProvider(settings)),
           ),
           getSnapshot: Ref.get(currentSettingsRef).pipe(
-            Effect.map(({ settings, revision }) => ({
+            Effect.map(({ settings, revision, providerRevisions }) => ({
               settings: resolveTextGenerationProvider(settings),
               revision,
+              providerRevisions,
             })),
           ),
           updateSettings: (patch) =>
-            Ref.get(currentSettingsRef).pipe(
-              Effect.flatMap(({ settings, revision }) =>
-                normalizeSettings("<memory>", settings, patch).pipe(
-                  Effect.map((nextSettings) => ({ nextSettings, revision })),
+            writeSemaphore.withPermits(1)(
+              Ref.get(currentSettingsRef).pipe(
+                Effect.flatMap(({ settings, revision, providerRevisions }) =>
+                  normalizeSettings("<memory>", settings, patch).pipe(
+                    Effect.map((nextSettings) => ({
+                      nextSettings,
+                      previousSettings: settings,
+                      revision,
+                      providerRevisions,
+                    })),
+                  ),
                 ),
+                Effect.tap(({ nextSettings, previousSettings, revision, providerRevisions }) =>
+                  Ref.set(currentSettingsRef, {
+                    settings: nextSettings,
+                    revision: revision + 1,
+                    providerRevisions: advanceProviderRevisions(
+                      previousSettings,
+                      nextSettings,
+                      providerRevisions,
+                    ),
+                  }),
+                ),
+                Effect.tap(({ nextSettings }) => emitChange(nextSettings)),
+                Effect.map(({ nextSettings }) => resolveTextGenerationProvider(nextSettings)),
               ),
-              Effect.tap(({ nextSettings, revision }) =>
-                Ref.set(currentSettingsRef, {
-                  settings: nextSettings,
-                  revision: revision + 1,
-                }),
-              ),
-              Effect.tap(({ nextSettings }) => emitChange(nextSettings)),
-              Effect.map(({ nextSettings }) => resolveTextGenerationProvider(nextSettings)),
             ),
+          withSettingsWriteLock: writeSemaphore.withPermits(1),
           get streamChanges() {
             return Stream.fromPubSub(changesPubSub).pipe(Stream.map(resolveTextGenerationProvider));
           },
@@ -201,7 +264,11 @@ const makeServerSettings = Effect.gen(function* () {
   const path = yield* Path.Path;
   const writeSemaphore = yield* Semaphore.make(1);
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
-  const settingsRef = yield* Ref.make({ settings: DEFAULT_SERVER_SETTINGS, revision: 0 });
+  const settingsRef = yield* Ref.make({
+    settings: DEFAULT_SERVER_SETTINGS,
+    revision: 0,
+    providerRevisions: initialProviderRevisions(),
+  });
   const startedRef = yield* Ref.make(false);
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
 
@@ -280,7 +347,11 @@ const makeServerSettings = Effect.gen(function* () {
         ),
       );
       const settings = yield* loadSettingsFromDisk;
-      yield* Ref.update(settingsRef, ({ revision }) => ({ settings, revision: revision + 1 }));
+      yield* Ref.update(settingsRef, ({ settings: previous, revision, providerRevisions }) => ({
+        settings,
+        revision: revision + 1,
+        providerRevisions: advanceProviderRevisions(previous, settings, providerRevisions),
+      }));
     });
 
     const startupExit = yield* Effect.exit(startup);
@@ -299,9 +370,10 @@ const makeServerSettings = Effect.gen(function* () {
       Effect.map(({ settings }) => resolveTextGenerationProvider(settings)),
     ),
     getSnapshot: Ref.get(settingsRef).pipe(
-      Effect.map(({ settings, revision }) => ({
+      Effect.map(({ settings, revision, providerRevisions }) => ({
         settings: resolveTextGenerationProvider(settings),
         revision,
+        providerRevisions,
       })),
     ),
     updateSettings: (patch) =>
@@ -313,11 +385,17 @@ const makeServerSettings = Effect.gen(function* () {
           yield* Ref.set(settingsRef, {
             settings: next,
             revision: current.revision + 1,
+            providerRevisions: advanceProviderRevisions(
+              current.settings,
+              next,
+              current.providerRevisions,
+            ),
           });
           yield* emitChange(next);
           return resolveTextGenerationProvider(next);
         }),
       ),
+    withSettingsWriteLock: writeSemaphore.withPermits(1),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub).pipe(Stream.map(resolveTextGenerationProvider));
     },

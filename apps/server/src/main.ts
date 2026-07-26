@@ -249,6 +249,7 @@ const LayerLive = (input: CliInput) => {
       providerRuntime: {
         resolve: providerRuntimeManager.resolve,
         getSnapshot: providerRuntimeManager.getSnapshot,
+        getRevision: providerRuntimeManager.getRevision,
         streamChanges: providerRuntimeManager.streamChanges,
       },
     }).pipe(

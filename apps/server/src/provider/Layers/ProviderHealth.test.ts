@@ -418,8 +418,13 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
           start: Effect.void,
           ready: Effect.never,
           getSettings: Effect.succeed(settings),
-          getSnapshot: Effect.succeed({ settings, revision: 0 }),
+          getSnapshot: Effect.succeed({
+            settings,
+            revision: 0,
+            providerRevisions: new Map<ProviderKind, number>(),
+          }),
           updateSettings: () => Effect.succeed(settings),
+          withSettingsWriteLock: (effect) => effect,
           streamChanges: Stream.never,
         });
         const layer = makeProviderHealthLive().pipe(
@@ -579,6 +584,11 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
                 message: null,
               }),
             getSnapshot: () => Effect.succeed(kiloRuntimeSnapshot(runtimeExecutable)),
+            // Model the real ProviderRuntimeManager: the revision advances when
+            // the resolved runtime target (here, the managed executable path)
+            // changes. binaryA is revision 0; switching to binaryB is a real
+            // target mutation, so the revision advances to 1.
+            getRevision: () => Effect.succeed(runtimeExecutable === binaryA ? 0 : 1),
             streamChanges: runtimeChanges as ProviderRuntimeManagerShape["streamChanges"],
           },
         }).pipe(
@@ -899,6 +909,491 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
           "Update timed out after 20 milliseconds. The provider process was stopped.",
         );
       }),
+    );
+
+    it.effect("releases the settings write lock before spawning the updater (finding #2)", () =>
+      Effect.gen(function* () {
+        yield* stubLatestProviderVersion("2.0.0");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "provider-update-settings-lock-",
+        });
+        const binaryA = path.join(baseDir, "a", ".local", "bin", "kilo");
+        const binaryB = path.join(baseDir, "b", ".local", "bin", "kilo");
+        let upgradeSpawnCount = 0;
+        let spawnedCommand: string | null = null;
+        // Signalled from inside the gated spawn; released by the test so the
+        // update stays parked in spawn (which now runs OUTSIDE the settings
+        // write lock — the lock only covers validate+capture) for a
+        // controlled window.
+        const spawnEntered = yield* Deferred.make<void>();
+        const releaseSpawn = yield* Deferred.make<void>();
+        const settings = {
+          ...allProvidersDisabledServerSettings,
+          providers: {
+            ...allProvidersDisabledServerSettings.providers,
+            kilo: {
+              ...DEFAULT_SERVER_SETTINGS.providers.kilo,
+              enabled: true,
+              binaryPath: binaryA,
+            },
+          },
+        } satisfies typeof DEFAULT_SERVER_SETTINGS;
+        const gatedSpawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const cmd = command as unknown as {
+              command: string;
+              args: ReadonlyArray<string>;
+            };
+            if (cmd.args.join(" ") === "upgrade") {
+              upgradeSpawnCount += 1;
+              // Record which install tree the child was actually spawned
+              // against: kilo's native updater runs `<resolved-binary> upgrade`,
+              // so the command is binaryA or binaryB verbatim.
+              spawnedCommand = cmd.command;
+              return Deferred.succeed(spawnEntered, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseSpawn)),
+                Effect.as(mockHandle({ stdout: "", stderr: "", code: 0 })),
+              );
+            }
+            return Effect.succeed(mockHandle({ stdout: "1.0.0\n", stderr: "", code: 0 }));
+          }),
+        );
+        const layer = makeProviderHealthLive({ providerUpdateTimeoutMs: 60_000 }).pipe(
+          Layer.provideMerge(ServerSettingsService.layerTest(settings)),
+          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+          Layer.provideMerge(gatedSpawnerLayer),
+        );
+
+        yield* Effect.gen(function* () {
+          const providerHealth = yield* ProviderHealth;
+          const serverSettings = yield* ServerSettingsService;
+          const refreshed = yield* providerHealth.refresh;
+          assert.strictEqual(
+            refreshed.find((provider) => provider.provider === "kilo")?.versionAdvisory?.status,
+            "behind_latest",
+          );
+
+          // The update fiber re-validates and captures the target under the
+          // settings write lock, records "running", releases the lock, then
+          // parks inside the (now unlocked) spawn.
+          const updateFiber = yield* TestClock.withLive(
+            providerHealth.updateProvider({ provider: "kilo" }),
+          ).pipe(Effect.forkChild);
+          yield* Deferred.await(spawnEntered);
+
+          // A concurrent settings write that repoints the provider's binary
+          // must NOT block behind the parked spawn — the write lock was already
+          // released before spawn. It completes on its own within a few turns.
+          // (Under the previous validate→spawn-under-lock design this writer
+          // would stay parked on the semaphore until spawn released the lock;
+          // a hung/uninterruptible spawn could then pin it indefinitely.)
+          const writerFiber = yield* serverSettings
+            .updateSettings({ providers: { kilo: { binaryPath: binaryB } } })
+            .pipe(Effect.forkChild);
+          for (let i = 0; i < 50; i += 1) {
+            yield* Effect.yieldNow;
+          }
+          assert.notStrictEqual(
+            writerFiber.pollUnsafe(),
+            undefined,
+            "settings write must not block behind the unlocked spawn",
+          );
+
+          // Consistency check: the child that is now parked was spawned
+          // against the target captured under the lock (binaryA). The capture
+          // happened before this concurrent write ran, so binaryA is expected
+          // here by construction — this documents that the unlocked spawn still
+          // runs the re-validated install rather than re-reading live settings
+          // (which have since moved to binaryB). The mutation-sensitive
+          // guarantee is the lock-release assertion above.
+          assert.strictEqual(spawnedCommand, binaryA);
+          assert.notStrictEqual(spawnedCommand, binaryB);
+
+          yield* Deferred.succeed(releaseSpawn, undefined);
+          yield* Fiber.join(updateFiber);
+          yield* Fiber.join(writerFiber);
+
+          assert.strictEqual(upgradeSpawnCount, 1);
+          const snapshot = yield* serverSettings.getSnapshot;
+          assert.strictEqual(snapshot.settings.providers.kilo.binaryPath, binaryB);
+        }).pipe(Effect.provide(layer));
+      }),
+    );
+
+    it.effect("reports a succeeded update after the post-update re-probe clears the advisory", () =>
+      Effect.gen(function* () {
+        yield* stubLatestProviderVersion("2.0.0");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "provider-update-succeeded-",
+        });
+        const binaryPath = path.join(baseDir, ".local", "bin", "kilo");
+        let upgraded = false;
+        let upgradeSpawnCount = 0;
+        const settings = {
+          ...allProvidersDisabledServerSettings,
+          providers: {
+            ...allProvidersDisabledServerSettings.providers,
+            kilo: {
+              ...DEFAULT_SERVER_SETTINGS.providers.kilo,
+              enabled: true,
+              binaryPath,
+            },
+          },
+        } satisfies typeof DEFAULT_SERVER_SETTINGS;
+        const spawnerLayer = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            const cmd = command as unknown as {
+              command: string;
+              args: ReadonlyArray<string>;
+            };
+            if (cmd.args.join(" ") === "upgrade") {
+              upgradeSpawnCount += 1;
+              upgraded = true;
+              return Effect.succeed(mockHandle({ stdout: "", stderr: "", code: 0 }));
+            }
+            // Version probe: the installed version advances to latest only
+            // after the upgrade command ran. The post-update `refreshNow` must
+            // re-probe (not reuse the pre-update version) for the advisory to
+            // clear and the terminal state to be "succeeded".
+            return Effect.succeed(
+              mockHandle({ stdout: upgraded ? "2.0.0\n" : "1.0.0\n", stderr: "", code: 0 }),
+            );
+          }),
+        );
+        const layer = makeProviderHealthLive({ providerUpdateTimeoutMs: 60_000 }).pipe(
+          Layer.provideMerge(ServerSettingsService.layerTest(settings)),
+          Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+          Layer.provideMerge(spawnerLayer),
+        );
+
+        const result = yield* Effect.gen(function* () {
+          const providerHealth = yield* ProviderHealth;
+          const refreshed = yield* providerHealth.refresh;
+          assert.strictEqual(
+            refreshed.find((provider) => provider.provider === "kilo")?.versionAdvisory?.status,
+            "behind_latest",
+          );
+          return yield* TestClock.withLive(providerHealth.updateProvider({ provider: "kilo" }));
+        }).pipe(Effect.provide(layer));
+
+        const kilo = result.providers.find((provider) => provider.provider === "kilo");
+        assert.strictEqual(upgradeSpawnCount, 1);
+        assert.strictEqual(kilo?.updateState?.status, "succeeded");
+        assert.strictEqual(kilo?.updateState?.message, "Provider updated.");
+      }),
+    );
+
+    it.effect(
+      "reports an unchanged update when the post-update re-probe still detects an outdated version",
+      () =>
+        Effect.gen(function* () {
+          yield* stubLatestProviderVersion("2.0.0");
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "provider-update-unchanged-",
+          });
+          const binaryPath = path.join(baseDir, ".local", "bin", "kilo");
+          let upgradeSpawnCount = 0;
+          const settings = {
+            ...allProvidersDisabledServerSettings,
+            providers: {
+              ...allProvidersDisabledServerSettings.providers,
+              kilo: {
+                ...DEFAULT_SERVER_SETTINGS.providers.kilo,
+                enabled: true,
+                binaryPath,
+              },
+            },
+          } satisfies typeof DEFAULT_SERVER_SETTINGS;
+          const spawnerLayer = Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make((command) => {
+              const cmd = command as unknown as {
+                command: string;
+                args: ReadonlyArray<string>;
+              };
+              if (cmd.args.join(" ") === "upgrade") {
+                // The upgrade command exits 0 but never changes the installed
+                // version (e.g. the CLI is already at the newest it can reach).
+                upgradeSpawnCount += 1;
+                return Effect.succeed(mockHandle({ stdout: "", stderr: "", code: 0 }));
+              }
+              return Effect.succeed(mockHandle({ stdout: "1.0.0\n", stderr: "", code: 0 }));
+            }),
+          );
+          const layer = makeProviderHealthLive({ providerUpdateTimeoutMs: 60_000 }).pipe(
+            Layer.provideMerge(ServerSettingsService.layerTest(settings)),
+            Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+            Layer.provideMerge(spawnerLayer),
+          );
+
+          const result = yield* Effect.gen(function* () {
+            const providerHealth = yield* ProviderHealth;
+            const refreshed = yield* providerHealth.refresh;
+            assert.strictEqual(
+              refreshed.find((provider) => provider.provider === "kilo")?.versionAdvisory?.status,
+              "behind_latest",
+            );
+            return yield* TestClock.withLive(providerHealth.updateProvider({ provider: "kilo" }));
+          }).pipe(Effect.provide(layer));
+
+          const kilo = result.providers.find((provider) => provider.provider === "kilo");
+          assert.strictEqual(upgradeSpawnCount, 1);
+          assert.strictEqual(kilo?.updateState?.status, "unchanged");
+          assert.strictEqual(
+            kilo?.updateState?.message,
+            "Update command completed, but Scient still detects an outdated provider version (installed 1.0.0, latest 2.0.0).",
+          );
+        }),
+    );
+
+    it.effect(
+      "rejects a duplicate update for the same provider without clobbering running state (finding #3)",
+      () =>
+        Effect.gen(function* () {
+          yield* stubLatestProviderVersion("2.0.0");
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "provider-update-duplicate-",
+          });
+          const binaryPath = path.join(baseDir, ".local", "bin", "kilo");
+          let upgradeSpawnCount = 0;
+          let resolveSpawned!: () => void;
+          const spawned = new Promise<void>((resolve) => {
+            resolveSpawned = resolve;
+          });
+          const settings = {
+            ...allProvidersDisabledServerSettings,
+            providers: {
+              ...allProvidersDisabledServerSettings.providers,
+              kilo: {
+                ...DEFAULT_SERVER_SETTINGS.providers.kilo,
+                enabled: true,
+                binaryPath,
+              },
+            },
+          } satisfies typeof DEFAULT_SERVER_SETTINGS;
+          const layer = makeProviderHealthLive({ providerUpdateTimeoutMs: 60_000 }).pipe(
+            Layer.provideMerge(ServerSettingsService.layerTest(settings)),
+            Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+            Layer.provideMerge(
+              hangingSpawnerLayer({
+                onKill: () => undefined,
+                onSpawn: () => {
+                  upgradeSpawnCount += 1;
+                  resolveSpawned();
+                },
+                shouldHang: (args) => args.join(" ") === "upgrade",
+                fallback: () => ({ stdout: "1.0.0\n", stderr: "", code: 0 }),
+              }),
+            ),
+          );
+
+          yield* Effect.gen(function* () {
+            const providerHealth = yield* ProviderHealth;
+            const refreshed = yield* providerHealth.refresh;
+            assert.strictEqual(
+              refreshed.find((provider) => provider.provider === "kilo")?.versionAdvisory?.status,
+              "behind_latest",
+            );
+
+            const firstFiber = yield* TestClock.withLive(
+              providerHealth.updateProvider({ provider: "kilo" }),
+            ).pipe(Effect.forkChild);
+            // First update has spawned and its child hangs: it is now "running".
+            yield* Effect.promise(() => spawned);
+            assert.strictEqual(
+              (yield* providerHealth.getStatuses).find((provider) => provider.provider === "kilo")
+                ?.updateState?.status,
+              "running",
+            );
+
+            const duplicateError = yield* Effect.flip(
+              providerHealth.updateProvider({ provider: "kilo" }),
+            );
+            assert.match(duplicateError.reason, /already running for this provider/i);
+
+            // The rejection above is enforced by the command coordinator's
+            // dedup; the finding-#3-specific guard is that the losing duplicate
+            // does not clobber the in-flight update's state back to a non-running
+            // value (owner-scoped writes) nor spawn a second update command.
+            assert.strictEqual(
+              (yield* providerHealth.getStatuses).find((provider) => provider.provider === "kilo")
+                ?.updateState?.status,
+              "running",
+            );
+            assert.strictEqual(upgradeSpawnCount, 1);
+
+            yield* Fiber.interrupt(firstFiber);
+          }).pipe(Effect.provide(layer));
+        }),
+    );
+
+    it.effect(
+      "lands a terminal failed state when an in-flight update is interrupted (finding #4)",
+      () =>
+        Effect.gen(function* () {
+          yield* stubLatestProviderVersion("2.0.0");
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "provider-update-interrupt-",
+          });
+          const binaryPath = path.join(baseDir, ".local", "bin", "kilo");
+          let killed = false;
+          let resolveSpawned!: () => void;
+          const spawned = new Promise<void>((resolve) => {
+            resolveSpawned = resolve;
+          });
+          const settings = {
+            ...allProvidersDisabledServerSettings,
+            providers: {
+              ...allProvidersDisabledServerSettings.providers,
+              kilo: {
+                ...DEFAULT_SERVER_SETTINGS.providers.kilo,
+                enabled: true,
+                binaryPath,
+              },
+            },
+          } satisfies typeof DEFAULT_SERVER_SETTINGS;
+          const layer = makeProviderHealthLive({ providerUpdateTimeoutMs: 60_000 }).pipe(
+            Layer.provideMerge(ServerSettingsService.layerTest(settings)),
+            Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+            Layer.provideMerge(
+              hangingSpawnerLayer({
+                onKill: () => {
+                  killed = true;
+                },
+                onSpawn: () => resolveSpawned(),
+                shouldHang: (args) => args.join(" ") === "upgrade",
+                fallback: () => ({ stdout: "1.0.0\n", stderr: "", code: 0 }),
+              }),
+            ),
+          );
+
+          yield* Effect.gen(function* () {
+            const providerHealth = yield* ProviderHealth;
+            const refreshed = yield* providerHealth.refresh;
+            assert.strictEqual(
+              refreshed.find((provider) => provider.provider === "kilo")?.versionAdvisory?.status,
+              "behind_latest",
+            );
+
+            const updateFiber = yield* TestClock.withLive(
+              providerHealth.updateProvider({ provider: "kilo" }),
+            ).pipe(Effect.forkChild);
+            yield* Effect.promise(() => spawned);
+
+            yield* Fiber.interrupt(updateFiber);
+
+            const kilo = (yield* providerHealth.getStatuses).find(
+              (provider) => provider.provider === "kilo",
+            );
+            assert.strictEqual(kilo?.updateState?.status, "failed");
+            assert.match(kilo?.updateState?.message ?? "", /interrupted/i);
+            // The scoped finalizer stopped the hung child during teardown.
+            assert.strictEqual(killed, true);
+          }).pipe(Effect.provide(layer));
+        }),
+    );
+
+    it.effect(
+      "serves hot getStatuses reads without re-resolving provider targets (finding #5)",
+      () =>
+        Effect.gen(function* () {
+          yield* stubLatestProviderVersion("2.0.0");
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "provider-update-hot-read-",
+          });
+          const runtimeExecutable = path.join(baseDir, ".local", "bin", "kilo");
+          let spawnCount = 0;
+          // Count the expensive maintenance-context steps that the hot read path
+          // must NOT perform. `getProviderAuthorityKey` (the fix) reads only cheap
+          // revision counters; `getProviderMaintenanceContext` (the pre-fix path)
+          // resolves the runtime and its snapshot. Counting resolve/getSnapshot is
+          // what makes this a real guard for finding #5: reverting the hot path to
+          // getProviderMaintenanceContext would bump both counters below.
+          let resolveCount = 0;
+          let snapshotCount = 0;
+          const settings = {
+            ...allProvidersDisabledServerSettings,
+            providers: {
+              ...allProvidersDisabledServerSettings.providers,
+              kilo: {
+                ...DEFAULT_SERVER_SETTINGS.providers.kilo,
+                enabled: true,
+                binaryPath: "kilo",
+              },
+            },
+          } satisfies typeof DEFAULT_SERVER_SETTINGS;
+          const layer = makeProviderHealthLive({
+            providerRuntime: {
+              resolve: () => {
+                resolveCount += 1;
+                return Effect.succeed({
+                  source: "system" as const,
+                  executable: runtimeExecutable,
+                  managedVersion: null,
+                  canInstall: false,
+                  canRepair: false,
+                  canRollback: false,
+                  canRemove: false,
+                  message: null,
+                });
+              },
+              getSnapshot: () => {
+                snapshotCount += 1;
+                return Effect.succeed(kiloRuntimeSnapshot(runtimeExecutable));
+              },
+              getRevision: () => Effect.succeed(0),
+              streamChanges:
+                Stream.never as unknown as ProviderRuntimeManagerShape["streamChanges"],
+            },
+          }).pipe(
+            Layer.provideMerge(ServerSettingsService.layerTest(settings)),
+            Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
+            Layer.provideMerge(
+              mockSpawnerLayer(() => {
+                spawnCount += 1;
+                return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              }),
+            ),
+          );
+
+          yield* Effect.gen(function* () {
+            const providerHealth = yield* ProviderHealth;
+            const refreshed = yield* providerHealth.refresh;
+            assert.strictEqual(
+              refreshed.find((provider) => provider.provider === "kilo")?.versionAdvisory?.status,
+              "behind_latest",
+            );
+            const spawnAfterRefresh = spawnCount;
+            const resolveAfterRefresh = resolveCount;
+            const snapshotAfterRefresh = snapshotCount;
+            assert.ok(spawnAfterRefresh > 0);
+            assert.ok(resolveAfterRefresh > 0);
+            assert.ok(snapshotAfterRefresh > 0);
+            for (let index = 0; index < 5; index += 1) {
+              yield* providerHealth.getStatuses;
+            }
+            // Hot reads project cached advisory + volatile state in-memory; they
+            // must never re-probe provider CLIs, re-resolve the runtime, or re-read
+            // its snapshot (finding #5).
+            assert.strictEqual(spawnCount, spawnAfterRefresh);
+            assert.strictEqual(resolveCount, resolveAfterRefresh);
+            assert.strictEqual(snapshotCount, snapshotAfterRefresh);
+          }).pipe(Effect.provide(layer));
+        }),
     );
   });
 

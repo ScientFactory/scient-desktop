@@ -167,4 +167,70 @@ describe("ServerSettingsService", () => {
     expect(settings.textGenerationModelSelection.provider).toBe("codex");
     expect(settings.textGenerationModelSelection.model).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
   });
+
+  it("advances only the changed provider's revision counter", async () => {
+    const result = await runWithSettings(
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsService;
+        yield* service.start;
+
+        const initial = yield* service.getSnapshot;
+
+        yield* service.updateSettings({ providers: { kilo: { binaryPath: "/custom/kilo" } } });
+        const afterKilo = yield* service.getSnapshot;
+
+        yield* service.updateSettings({ providers: { codex: { binaryPath: "/custom/codex" } } });
+        const afterCodex = yield* service.getSnapshot;
+
+        // Rewriting kilo with its current value is a no-op for its fingerprint.
+        yield* service.updateSettings({ providers: { kilo: { binaryPath: "/custom/kilo" } } });
+        const afterNoop = yield* service.getSnapshot;
+
+        return { initial, afterKilo, afterCodex, afterNoop };
+      }),
+    );
+
+    // Every provider starts at revision 0.
+    expect(result.initial.providerRevisions.get("kilo")).toBe(0);
+    expect(result.initial.providerRevisions.get("codex")).toBe(0);
+    expect(result.initial.providerRevisions.get("grok")).toBe(0);
+
+    // Changing kilo advances only kilo.
+    expect(result.afterKilo.providerRevisions.get("kilo")).toBe(1);
+    expect(result.afterKilo.providerRevisions.get("codex")).toBe(0);
+    expect(result.afterKilo.providerRevisions.get("grok")).toBe(0);
+
+    // Changing codex advances only codex; kilo stays put (per-provider isolation).
+    expect(result.afterCodex.providerRevisions.get("kilo")).toBe(1);
+    expect(result.afterCodex.providerRevisions.get("codex")).toBe(1);
+    expect(result.afterCodex.providerRevisions.get("grok")).toBe(0);
+
+    // A no-op write advances nothing.
+    expect(result.afterNoop.providerRevisions.get("kilo")).toBe(1);
+    expect(result.afterNoop.providerRevisions.get("codex")).toBe(1);
+  });
+
+  it("advances every provider's revision when the global update-check flag changes", async () => {
+    const result = await runWithSettings(
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsService;
+        yield* service.start;
+
+        const initial = yield* service.getSnapshot;
+        // enableProviderUpdateChecks is folded into every provider's fingerprint,
+        // so toggling it invalidates every provider's confirmed-update authority.
+        yield* service.updateSettings({ enableProviderUpdateChecks: false });
+        const afterToggle = yield* service.getSnapshot;
+
+        return { initial, afterToggle };
+      }),
+    );
+
+    // Guard against a vacuously-passing loop over an empty map.
+    expect(result.initial.providerRevisions.size).toBeGreaterThan(0);
+    for (const provider of result.initial.providerRevisions.keys()) {
+      expect(result.initial.providerRevisions.get(provider)).toBe(0);
+      expect(result.afterToggle.providerRevisions.get(provider)).toBe(1);
+    }
+  });
 });
