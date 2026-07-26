@@ -269,7 +269,9 @@ Authenticode certificate subject (for example, the complete `CN=..., O=..., C=..
 value reported by `Get-AuthenticodeSignature`). Before upload, native Windows
 startup proof requires both the collected NSIS installer and its extracted
 `Scient.exe` to have valid timestamped signatures from that exact subject. The
-check is skipped only by the explicit unsigned early-access publication mode.
+check is skipped only when the produced Windows artifact is actually unsigned,
+which is permitted for build-only validation or an explicitly authorized
+unsigned early-access publication. Signed artifacts are always inspected.
 
 ### Option A: standard Authenticode certificate
 

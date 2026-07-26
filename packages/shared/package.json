@@ -96,6 +96,10 @@
       "types": "./src/backendControl.ts",
       "import": "./src/backendControl.ts"
     },
+    "./packagedStartupProcessOwnership": {
+      "types": "./src/packagedStartupProcessOwnership.ts",
+      "import": "./src/packagedStartupProcessOwnership.ts"
+    },
     "./conversationEdit": {
       "types": "./src/conversationEdit.ts",
       "import": "./src/conversationEdit.ts"

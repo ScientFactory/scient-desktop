@@ -4,6 +4,7 @@
 // Layer: Release verification script
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import {
   chmodSync,
   mkdirSync,
@@ -17,6 +18,14 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import {
+  assertValidTimestampedWindowsAuthenticodeSignature,
+  isWindowsAuthenticodeSignatureDetails,
+  WINDOWS_AUTHENTICODE_READER_FUNCTION_LINES,
+  type WindowsAuthenticodeSignatureDetails,
+} from "./lib/windows-authenticode";
+import { readPackagedStartupOwnedProcesses } from "@synara/shared/packagedStartupProcessOwnership";
 
 export type PackagedDesktopPlatform = "mac" | "win";
 
@@ -32,7 +41,7 @@ export interface PackagedDesktopStartupOptions {
 }
 
 interface TerminationSignalSource {
-  once(signal: NodeJS.Signals, listener: () => void): unknown;
+  on(signal: NodeJS.Signals, listener: () => void): unknown;
   removeListener(signal: NodeJS.Signals, listener: () => void): unknown;
 }
 
@@ -58,7 +67,7 @@ export function monitorPackagedStartupTermination(source: TerminationSignalSourc
       resolveSignal(name);
     };
     listeners.set(name, listener);
-    source.once(name, listener);
+    source.on(name, listener);
   }
 
   return {
@@ -341,9 +350,22 @@ export async function attachMacDiskImageForInspection(
     throw attachError;
   }
   return async () => {
-    await runCommand("hdiutil", ["detach", mountPoint], {
-      signal: AbortSignal.timeout(30_000),
-    });
+    try {
+      await runCommand("hdiutil", ["detach", mountPoint], {
+        signal: AbortSignal.timeout(30_000),
+      });
+    } catch (detachError) {
+      try {
+        await runCommand("hdiutil", ["detach", "-force", mountPoint], {
+          signal: AbortSignal.timeout(30_000),
+        });
+      } catch (forcedDetachError) {
+        throw new AggregateError(
+          [detachError, forcedDetachError],
+          `Failed to detach ${mountPoint} normally or forcibly.`,
+        );
+      }
+    }
   };
 }
 
@@ -471,13 +493,7 @@ export function readWindowsExecutableArchitecture(executable: Uint8Array): strin
   return null;
 }
 
-export interface WindowsReleaseSignatureDetails {
-  readonly status: string;
-  readonly statusMessage: string;
-  readonly signerSubject: string | null;
-  readonly signerThumbprint: string | null;
-  readonly timestampSubject: string | null;
-}
+export type WindowsReleaseSignatureDetails = WindowsAuthenticodeSignatureDetails;
 
 export function assertWindowsReleaseSignatureDetails(
   signatures: ReadonlyArray<WindowsReleaseSignatureDetails>,
@@ -485,21 +501,11 @@ export function assertWindowsReleaseSignatureDetails(
 ): void {
   for (const [index, signature] of signatures.entries()) {
     const label = index === 0 ? "Windows installer" : "Extracted Scient executable";
-    if (signature.status !== "Valid") {
-      throw new Error(
-        `${label} Authenticode signature is not valid (${signature.status}: ${signature.statusMessage}).`,
-      );
-    }
-    if (signature.signerSubject?.trim() !== expectedPublisherSubject) {
+    const { signerSubject } = assertValidTimestampedWindowsAuthenticodeSignature(signature, label);
+    if (signerSubject !== expectedPublisherSubject) {
       throw new Error(
         `${label} publisher ${signature.signerSubject ?? "missing"} does not match ${expectedPublisherSubject}.`,
       );
-    }
-    if (!signature.signerThumbprint?.trim()) {
-      throw new Error(`${label} signer thumbprint is missing.`);
-    }
-    if (!signature.timestampSubject?.trim()) {
-      throw new Error(`${label} timestamp signer is missing.`);
     }
   }
 }
@@ -507,17 +513,8 @@ export function assertWindowsReleaseSignatureDetails(
 const WINDOWS_RELEASE_SIGNATURE_SCRIPT = [
   "param([string]$InstallerPath, [string]$ExecutablePath)",
   "$ErrorActionPreference = 'Stop'",
-  "function Read-Signature([string]$Path) {",
-  "  $Signature = Get-AuthenticodeSignature -LiteralPath $Path",
-  "  [pscustomobject]@{",
-  "    status = [string]$Signature.Status",
-  "    statusMessage = [string]$Signature.StatusMessage",
-  "    signerSubject = if ($null -eq $Signature.SignerCertificate) { $null } else { [string]$Signature.SignerCertificate.Subject }",
-  "    signerThumbprint = if ($null -eq $Signature.SignerCertificate) { $null } else { [string]$Signature.SignerCertificate.Thumbprint }",
-  "    timestampSubject = if ($null -eq $Signature.TimeStamperCertificate) { $null } else { [string]$Signature.TimeStamperCertificate.Subject }",
-  "  }",
-  "}",
-  "@((Read-Signature $InstallerPath), (Read-Signature $ExecutablePath)) | ConvertTo-Json -Compress -Depth 4",
+  ...WINDOWS_AUTHENTICODE_READER_FUNCTION_LINES,
+  "@((Read-AuthenticodeSignature $InstallerPath), (Read-AuthenticodeSignature $ExecutablePath)) | ConvertTo-Json -Compress -Depth 4",
 ].join("\r\n");
 
 async function verifyWindowsReleaseSignatures(
@@ -557,6 +554,9 @@ async function verifyWindowsReleaseSignatures(
   const parsed = JSON.parse(output) as ReadonlyArray<WindowsReleaseSignatureDetails>;
   if (!Array.isArray(parsed) || parsed.length !== 2) {
     throw new Error("Windows Authenticode verifier returned invalid release signature details.");
+  }
+  if (!parsed.every(isWindowsAuthenticodeSignatureDetails)) {
+    throw new Error("Windows Authenticode verifier returned malformed release signature details.");
   }
   assertWindowsReleaseSignatureDetails(parsed, expectedPublisherSubject);
 }
@@ -667,6 +667,7 @@ export function createPackagedDesktopSmokeEnvironment(
     SCIENT_HOME: scientHome,
     SCIENT_DISABLE_SHELL_ENV_SYNC: "1",
     SCIENT_PACKAGED_STARTUP_SMOKE: "1",
+    SCIENT_PACKAGED_STARTUP_CLEANUP_TOKEN: randomBytes(32).toString("hex"),
     SYNARA_DISABLE_AUTO_UPDATE: "1",
     SYNARA_TELEMETRY_ENABLED: "false",
     ELECTRON_ENABLE_LOGGING: "1",
@@ -820,6 +821,7 @@ export async function terminateProcessTree(
   child: ChildProcess,
   dependencies: ProcessTerminationDependencies = {},
   additionalProcessIds: ReadonlyArray<number> = [],
+  recordedOwnedTargets: ReadonlyArray<ProcessTerminationTarget> = [],
 ): Promise<void> {
   const platform = dependencies.platform ?? process.platform;
   const childCanStillOwnProcesses =
@@ -837,11 +839,19 @@ export async function terminateProcessTree(
     platform !== "win32" && child.pid && !rootTarget
       ? { pid: child.pid, processGroup: true }
       : null;
-  // Backend PIDs recovered from logs/runtime state are observation-only. They
-  // prove cleanup completion, but a bare PID is not durable signal authority:
-  // the OS may reuse it after an unlogged exit.
+  const ownedTargets = recordedOwnedTargets.filter(
+    (target, index, allTargets) =>
+      target.pid > 0 &&
+      allTargets.findIndex(
+        (candidate) =>
+          candidate.pid === target.pid && candidate.processGroup === target.processGroup,
+      ) === index,
+  );
+  // Backend PIDs recovered from logs/runtime state are observation-only. A
+  // matching tokened ownership record written synchronously at spawn is the
+  // separate authority that permits signaling a backend after Electron exits.
   const observedTargets = additionalProcessIds
-    .map((pid) => ({ pid, processGroup: platform !== "win32" }))
+    .map((pid) => ({ pid, processGroup: false }))
     .filter(
       (target, index, allTargets) =>
         target.pid > 0 &&
@@ -850,8 +860,13 @@ export async function terminateProcessTree(
   const targets = [
     ...(rootTarget ? [rootTarget] : []),
     ...(exitedRootGroupTarget ? [exitedRootGroupTarget] : []),
-    ...observedTargets.filter(
+    ...ownedTargets.filter(
       (target) => target.pid !== (rootTarget?.pid ?? exitedRootGroupTarget?.pid),
+    ),
+    ...observedTargets.filter(
+      (target) =>
+        target.pid !== (rootTarget?.pid ?? exitedRootGroupTarget?.pid) &&
+        !ownedTargets.some((owned) => owned.pid === target.pid),
     ),
   ];
   if (targets.length === 0) {
@@ -865,54 +880,67 @@ export async function terminateProcessTree(
   const awaitTargetsExit = dependencies.waitForTargetsExit ?? waitForProcessTerminationTargets;
   if (!rootTarget) {
     if (await awaitTargetsExit(targets, 5_000)) return;
-    throw new Error(
-      `Recorded process candidates ${targets.map(({ pid }) => pid).join(", ")} remained after their parent exited; refusing to signal unverified PIDs or process groups.`,
-    );
+    if (ownedTargets.length === 0) {
+      throw new Error(
+        `Recorded process candidates ${targets.map(({ pid }) => pid).join(", ")} remained after their parent exited; refusing to signal unverified PIDs or process groups.`,
+      );
+    }
   }
   if (platform === "win32") {
-    // The live ChildProcess handle establishes root ownership; taskkill /T
-    // derives descendants from that root. Never signal observation-only PIDs.
-    const taskkillResult =
-      dependencies.runTaskkill?.(rootTarget.pid, WINDOWS_TASKKILL_TIMEOUT_MS) ??
-      spawnSync("taskkill", ["/pid", String(rootTarget.pid), "/t", "/f"], {
-        stdio: "ignore",
-        timeout: WINDOWS_TASKKILL_TIMEOUT_MS,
-        windowsHide: true,
-      });
-    const taskkillDetail = taskkillResult.error
-      ? `could not start (${taskkillResult.error.message})`
-      : `status ${taskkillResult.status ?? "unknown"}`;
-    if (taskkillResult.error || taskkillResult.status !== 0) {
-      throw new Error(
-        `Packaged Windows cleanup lost authoritative tree termination; root ${rootTarget.pid} taskkill ${taskkillDetail}.`,
-      );
+    // A live ChildProcess handle owns the root. Tokened records written by that
+    // root at backend spawn retain equivalent authority if Electron exits first.
+    const authoritativeWindowsRoots = [
+      ...(rootTarget ? [rootTarget] : []),
+      ...ownedTargets.filter((target) => target.pid !== rootTarget?.pid),
+    ];
+    const targetIsAlive = dependencies.targetIsAlive ?? processTerminationTargetIsAlive;
+    for (const target of authoritativeWindowsRoots) {
+      if (target !== rootTarget && !targetIsAlive({ ...target, processGroup: false })) continue;
+      const taskkillResult =
+        dependencies.runTaskkill?.(target.pid, WINDOWS_TASKKILL_TIMEOUT_MS) ??
+        spawnSync("taskkill", ["/pid", String(target.pid), "/t", "/f"], {
+          stdio: "ignore",
+          timeout: WINDOWS_TASKKILL_TIMEOUT_MS,
+          windowsHide: true,
+        });
+      const taskkillDetail = taskkillResult.error
+        ? `could not start (${taskkillResult.error.message})`
+        : `status ${taskkillResult.status ?? "unknown"}`;
+      if (taskkillResult.error || taskkillResult.status !== 0) {
+        throw new Error(
+          `Packaged Windows cleanup lost authoritative tree termination; root ${target.pid} taskkill ${taskkillDetail}.`,
+        );
+      }
     }
     if (await awaitTargetsExit(targets, 5_000)) return;
     throw new Error(
-      `Packaged process trees survived Windows cleanup; root ${rootTarget.pid} taskkill ${taskkillDetail}.`,
+      `Packaged process trees survived Windows cleanup; authoritative roots ${authoritativeWindowsRoots.map(({ pid }) => pid).join(", ")}.`,
     );
   }
   const sendSignal = dependencies.sendSignal ?? sendProcessTreeSignal;
-  sendSignal(rootTarget, "SIGTERM");
-  // The desktop owns a bounded backend shutdown that can legitimately take up
-  // to ten seconds. Preserve its supervisor until that bound has elapsed so it
-  // can terminate the backend's separate process group itself.
-  if (await awaitTargetsExit(targets, POSIX_DESKTOP_GRACEFUL_SHUTDOWN_TIMEOUT_MS)) return;
-  const childStillOwnsRoot =
+  if (rootTarget) {
+    sendSignal(rootTarget, "SIGTERM");
+    // The desktop owns a bounded backend shutdown that can legitimately take
+    // up to ten seconds. Preserve its supervisor for that complete deadline.
+    if (await awaitTargetsExit(targets, POSIX_DESKTOP_GRACEFUL_SHUTDOWN_TIMEOUT_MS)) return;
+  }
+  const targetIsAlive = dependencies.targetIsAlive ?? processTerminationTargetIsAlive;
+  const rootStillOwned =
+    rootTarget !== null &&
     child.pid === rootTarget.pid &&
     child.exitCode === null &&
     child.signalCode === null &&
     (dependencies.childIsAlive ?? childProcessHandleIsAlive)(child);
-  if (!childStillOwnsRoot) {
-    throw new Error(
-      `Packaged root ${rootTarget.pid} exited before POSIX escalation; refusing to signal a potentially reused process group.`,
-    );
+  const authoritativePosixTargets = [
+    ...(rootStillOwned && rootTarget ? [rootTarget] : []),
+    ...ownedTargets.filter((target) => target.pid !== rootTarget?.pid),
+  ];
+  for (const target of authoritativePosixTargets) {
+    if (targetIsAlive(target)) sendSignal(target, "SIGKILL");
   }
-  const targetIsAlive = dependencies.targetIsAlive ?? processTerminationTargetIsAlive;
-  if (targetIsAlive(rootTarget)) sendSignal(rootTarget, "SIGKILL");
   if (await awaitTargetsExit(targets, 2_000)) return;
   throw new Error(
-    `Packaged process trees ${targets.map(({ pid }) => pid).join(", ")} survived root-only SIGTERM and SIGKILL; refusing to signal unverified backend PIDs.`,
+    `Packaged process trees ${targets.map(({ pid }) => pid).join(", ")} survived authoritative SIGTERM and SIGKILL cleanup.`,
   );
 }
 
@@ -1192,7 +1220,18 @@ async function verifyPackagedDesktopPayload(
   let processCleanupFailed = false;
   try {
     if (child) {
-      await terminateProcessTree(child, {}, readPackagedBackendProcessIds(environment));
+      const ownedTargets = environment
+        ? readPackagedStartupOwnedProcesses(environment).map(({ pid, processGroup }) => ({
+            pid,
+            processGroup,
+          }))
+        : [];
+      await terminateProcessTree(
+        child,
+        {},
+        readPackagedBackendProcessIds(environment),
+        ownedTargets,
+      );
     }
   } catch (error) {
     processCleanupFailed = true;

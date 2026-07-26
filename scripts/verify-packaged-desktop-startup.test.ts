@@ -363,7 +363,10 @@ describe("packaged desktop startup verification", () => {
     await expect(termination.signal).resolves.toBe("SIGTERM");
     expect(termination.readSignal()).toBe("SIGTERM");
     expect(source.listenerCount("SIGINT")).toBe(1);
-    expect(source.listenerCount("SIGTERM")).toBe(0);
+    expect(source.listenerCount("SIGTERM")).toBe(1);
+
+    source.emit("SIGTERM");
+    expect(termination.readSignal()).toBe("SIGTERM");
 
     termination.dispose();
     expect(source.listenerCount("SIGINT")).toBe(0);
@@ -434,6 +437,45 @@ describe("packaged desktop startup verification", () => {
       },
       { command: "hdiutil", args: ["detach", "-force", "/tmp/scient-mount"] },
     ]);
+  });
+
+  it("force-detaches a mounted DMG when ordinary cleanup reports it busy", async () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    const runCommand = vi.fn(async (_command: string, args: ReadonlyArray<string>) => {
+      calls.push(args);
+      if (args[0] === "detach" && args[1] !== "-force") throw new Error("resource busy");
+      return "";
+    }) as unknown as typeof runPackagedPreparationCommand;
+
+    const cleanup = await attachMacDiskImageForInspection(
+      "/tmp/Scient.dmg",
+      "/tmp/scient-mount",
+      new AbortController().signal,
+      runCommand,
+    );
+    await cleanup();
+
+    expect(calls).toEqual([
+      ["attach", "-readonly", "-nobrowse", "-mountpoint", "/tmp/scient-mount", "/tmp/Scient.dmg"],
+      ["detach", "/tmp/scient-mount"],
+      ["detach", "-force", "/tmp/scient-mount"],
+    ]);
+  });
+
+  it("reports both ordinary and forced DMG cleanup failures", async () => {
+    const runCommand = vi.fn(async (_command: string, args: ReadonlyArray<string>) => {
+      if (args[0] === "detach") throw new Error(args[1] === "-force" ? "force failed" : "busy");
+      return "";
+    }) as unknown as typeof runPackagedPreparationCommand;
+    const cleanup = await attachMacDiskImageForInspection(
+      "/tmp/Scient.dmg",
+      "/tmp/scient-mount",
+      new AbortController().signal,
+      runCommand,
+    );
+
+    await expect(cleanup()).rejects.toThrow("normally or forcibly");
+    expect(runCommand).toHaveBeenCalledTimes(3);
   });
 
   it("rejects startup proof when the process handle closes before the exit event arrives", async () => {
@@ -673,7 +715,7 @@ describe("packaged desktop startup verification", () => {
         },
         [84],
       ),
-    ).rejects.toThrow("refusing to signal unverified backend PIDs");
+    ).rejects.toThrow("survived authoritative");
     expect(signals).toEqual([
       { pid: 42, signal: "SIGTERM" },
       { pid: 42, signal: "SIGKILL" },
@@ -708,7 +750,7 @@ describe("packaged desktop startup verification", () => {
     expect(exitWaits).toEqual([12_000]);
   });
 
-  it("fails closed when the POSIX root exits before escalation", async () => {
+  it("uses spawn-recorded POSIX ownership when the desktop exits before escalation", async () => {
     const childState: {
       exitCode: number | null;
       pid: number;
@@ -735,9 +777,33 @@ describe("packaged desktop startup verification", () => {
           waitForTargetsExit: async () => false,
         },
         [84],
+        [{ pid: 84, processGroup: true }],
       ),
-    ).rejects.toThrow("refusing to signal a potentially reused process group");
-    expect(signals).toEqual([{ pid: 42, signal: "SIGTERM" }]);
+    ).rejects.toThrow("survived authoritative");
+    expect(signals).toEqual([
+      { pid: 42, signal: "SIGTERM" },
+      { pid: 84, signal: "SIGKILL" },
+    ]);
+  });
+
+  it("terminates a token-recorded Windows backend after the desktop root exits", async () => {
+    const child = { exitCode: 0, pid: 42, signalCode: null } as unknown as ChildProcess;
+    const runTaskkill = vi.fn(() => ({ status: 0 }));
+
+    await terminateProcessTree(
+      child,
+      {
+        platform: "win32",
+        runTaskkill,
+        targetIsAlive: () => true,
+        waitForTargetsExit: async (_targets, timeoutMs) =>
+          timeoutMs === 5_000 && runTaskkill.mock.calls.length > 0,
+      },
+      [84],
+      [{ pid: 84, processGroup: false }],
+    );
+
+    expect(runTaskkill).toHaveBeenCalledWith(84, 5_000);
   });
 
   it("observes an orphaned POSIX process group without signaling it", async () => {

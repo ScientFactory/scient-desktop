@@ -46,6 +46,7 @@ import { autoUpdater, BaseUpdater, CancellationToken } from "electron-updater";
 
 import type { ContextMenuItem } from "@synara/contracts";
 import { makeScientBackendShutdownMessage } from "@synara/shared/backendControl";
+import { recordPackagedStartupOwnedProcess } from "@synara/shared/packagedStartupProcessOwnership";
 import { getMacTrafficLightPosition } from "@synara/shared/desktopChrome";
 import {
   SCIENT_APP_NAME,
@@ -2858,18 +2859,34 @@ function spawnBackendGeneration(generation: number): ChildProcess.ChildProcess {
   }
 
   const captureBackendLogs = app.isPackaged && backendLogSink !== null;
+  const environment: NodeJS.ProcessEnv = {
+    ...backendEnv(),
+    ELECTRON_RUN_AS_NODE: "1",
+  };
+  // The verifier-only capability authorizes cleanup of this backend after an
+  // Electron crash. The desktop writes the ownership record itself; neither
+  // the backend nor provider subprocesses need to inherit that capability.
+  delete environment.SCIENT_PACKAGED_STARTUP_CLEANUP_TOKEN;
   const child = ChildProcess.spawn(process.execPath, [...backendNodeArgs(), backendEntry], {
     cwd: resolveBackendCwd(),
     // In Electron main, process.execPath points to the Electron binary.
     // Run the child in Node mode so this backend process does not become a GUI app instance.
-    env: {
-      ...backendEnv(),
-      ELECTRON_RUN_AS_NODE: "1",
-    },
+    env: environment,
     // POSIX force termination targets this dedicated process group. Windows
     // uses taskkill /T after the same graceful IPC deadline.
     ...backendProcessContainmentOptions(captureBackendLogs),
   });
+  try {
+    if (child.pid) {
+      recordPackagedStartupOwnedProcess(process.env, {
+        pid: child.pid,
+        processGroup: process.platform !== "win32",
+      });
+    }
+  } catch (error) {
+    void forceTerminateBackendProcessTree(child).catch(() => undefined);
+    throw error;
+  }
   writeDesktopLogHeader(
     `backend process spawned generation=${generation} pid=${child.pid ?? "unknown"}`,
   );
