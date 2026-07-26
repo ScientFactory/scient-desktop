@@ -4149,6 +4149,35 @@ export default function Sidebar() {
       setSelectionAnchor,
     ],
   );
+  const forgetWorktreeRecoveryDraft = useCallback(
+    async (input: { threadId: ThreadId; branch: string; worktreePath: string }) => {
+      const api = readNativeApi();
+      const confirmationMessage = [
+        `Forget recovered worktree "${input.branch}"?`,
+        "This removes only Scient's recovery entry and saved retry content.",
+        `It does not delete the worktree or any files at ${input.worktreePath}.`,
+      ].join("\n");
+      const confirmed = api
+        ? await api.dialogs.confirm(confirmationMessage)
+        : await showConfirmDialogFallback(confirmationMessage);
+      if (!confirmed) return;
+      const current = useComposerDraftStore.getState().getDraftThread(input.threadId);
+      if (
+        current?.recoveryReason !== "worktree-cleanup-refused" ||
+        current.promotedTo !== undefined ||
+        current.branch !== input.branch ||
+        current.worktreePath !== input.worktreePath
+      ) {
+        showSidebarTransientError({
+          title: "Recovery changed",
+          description: "The recovered worktree changed before it could be forgotten.",
+        });
+        return;
+      }
+      clearComposerDraftForThread(input.threadId);
+    },
+    [clearComposerDraftForThread],
+  );
 
   const handleStartProjectRun = useCallback(
     async (projectId: ProjectId, commandOverride?: string) => {
@@ -4360,6 +4389,24 @@ export default function Sidebar() {
       }
       if (clicked !== "delete") return;
 
+      const blockRemovalForRecoveries = (): boolean => {
+        const unresolvedRecoveryCount = Object.values(
+          useComposerDraftStore.getState().draftThreadsByThreadId,
+        ).filter(
+          (draft) =>
+            draft.projectId === projectId &&
+            draft.recoveryReason === "worktree-cleanup-refused" &&
+            draft.promotedTo === undefined,
+        ).length;
+        if (unresolvedRecoveryCount === 0) return false;
+        showSidebarTransientError({
+          title: "Resolve recovered worktrees first",
+          description: `Retry or forget ${unresolvedRecoveryCount} recovered ${pluralize(unresolvedRecoveryCount, "worktree")} before removing "${project.name}". Scient will not delete those worktree files.`,
+        });
+        return true;
+      };
+      if (blockRemovalForRecoveries()) return;
+
       const projectThreads = sidebarThreads.filter((thread) => thread.projectId === projectId);
       const confirmed = await api.dialogs.confirm(
         projectThreads.length > 0
@@ -4370,6 +4417,7 @@ export default function Sidebar() {
           : `Remove project "${project.name}"?`,
       );
       if (!confirmed) return;
+      if (blockRemovalForRecoveries()) return;
 
       try {
         // `project.delete` refuses non-empty folders, so `Remove` clears threads first.
@@ -4392,6 +4440,7 @@ export default function Sidebar() {
           });
           return;
         }
+        if (blockRemovalForRecoveries()) return;
 
         await deleteProjectFromClient({
           api: api.orchestration,
@@ -6222,19 +6271,29 @@ export default function Sidebar() {
                   </SidebarMenuSubItem>
                   {worktreeRecoveryDrafts.map((recovery) => (
                     <SidebarMenuSubItem key={recovery.threadId} className="w-full">
-                      <SidebarMenuSubButton
-                        render={<button type="button" />}
-                        data-thread-selection-safe
-                        data-testid="recovered-worktree-row"
-                        aria-label={`Open recovered worktree ${recovery.branch} at ${recovery.worktreePath}`}
-                        title={recovery.worktreePath}
-                        size="sm"
-                        className="h-8 translate-x-0 justify-start rounded-lg pr-2 pl-8 text-left text-[length:var(--app-font-size-ui,12px)] hover:bg-[var(--sidebar-accent)]"
-                        onClick={() => void activateWorktreeRecoveryDraft(recovery.threadId)}
-                      >
-                        <WorktreeIcon aria-hidden="true" className="size-3.5 shrink-0" />
-                        <span className="min-w-0 flex-1 truncate">{recovery.branch}</span>
-                      </SidebarMenuSubButton>
+                      <div className="group/recovery-row flex w-full min-w-0 items-center gap-1">
+                        <SidebarMenuSubButton
+                          render={<button type="button" />}
+                          data-thread-selection-safe
+                          data-testid="recovered-worktree-row"
+                          aria-label={`Open recovered worktree ${recovery.branch} at ${recovery.worktreePath}`}
+                          title={recovery.worktreePath}
+                          size="sm"
+                          className="h-8 min-w-0 flex-1 translate-x-0 justify-start rounded-lg pr-2 pl-8 text-left text-[length:var(--app-font-size-ui,12px)] hover:bg-[var(--sidebar-accent)]"
+                          onClick={() => void activateWorktreeRecoveryDraft(recovery.threadId)}
+                        >
+                          <WorktreeIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                          <span className="min-w-0 flex-1 truncate">{recovery.branch}</span>
+                        </SidebarMenuSubButton>
+                        <SidebarIconButton
+                          icon={XIcon}
+                          size="sm"
+                          label={`Forget recovered worktree ${recovery.branch}`}
+                          title="Forget recovery metadata (does not delete files)"
+                          className="mr-1 text-muted-foreground hover:text-foreground"
+                          onClick={() => void forgetWorktreeRecoveryDraft(recovery)}
+                        />
+                      </div>
                     </SidebarMenuSubItem>
                   ))}
                 </>

@@ -1805,6 +1805,7 @@ export default function ChatView({
     composerDraft.interactionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
+  const isWorktreeRecoveryDraft = draftThread?.recoveryReason === "worktree-cleanup-refused";
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.panel === "diff";
   const browserOpen = rawSearch.panel === "browser";
@@ -9624,6 +9625,11 @@ export default function ChatView({
   );
 
   const assertEmptyDraftProjectChangeAvailable = useCallback(() => {
+    if (isWorktreeRecoveryDraft) {
+      throw new Error(
+        "This recovered worktree stays with its original project until you retry or forget the recovery.",
+      );
+    }
     if (
       sendOperationInFlightThreadIds.has(threadId) ||
       sendPreflightInFlightThreadIds.has(threadId) ||
@@ -9631,7 +9637,7 @@ export default function ChatView({
     ) {
       throw new Error("Wait for the current message to finish preparing before changing projects.");
     }
-  }, [threadId]);
+  }, [isWorktreeRecoveryDraft, threadId]);
 
   useLayoutEffect(() => {
     // ChatView is keyed by pane scope and remains mounted when that pane changes
@@ -9653,6 +9659,7 @@ export default function ChatView({
       const liveDraft = useComposerDraftStore.getState().getDraftThread(threadId);
       return (
         liveDraft !== null &&
+        liveDraft.recoveryReason !== "worktree-cleanup-refused" &&
         liveDraft.promotedTo === undefined &&
         getThreadFromState(useStore.getState(), threadId) === undefined
       );
@@ -10921,10 +10928,26 @@ export default function ChatView({
     }
   };
   const showEmptyLandingProjectPicker =
-    isCenteredEmptyLanding && isLocalDraftThread && activeProject?.kind === "project";
+    isCenteredEmptyLanding &&
+    isLocalDraftThread &&
+    !isWorktreeRecoveryDraft &&
+    activeProject?.kind === "project";
   const emptyLandingProjectChip =
     !isEmptyChatLanding && !showEmptyLandingProjectPicker && activeProjectDisplayName ? (
-      <span className="inline-flex min-w-0 max-w-56 shrink items-center gap-2 overflow-hidden rounded-md px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] font-normal text-[var(--color-text-foreground-secondary)] sm:max-w-64">
+      <span
+        data-testid={isWorktreeRecoveryDraft ? "recovery-fixed-project-label" : undefined}
+        aria-label={
+          isWorktreeRecoveryDraft
+            ? `Recovered worktree project is fixed to ${activeProjectDisplayName} until retry or forget`
+            : undefined
+        }
+        title={
+          isWorktreeRecoveryDraft
+            ? "Recovered worktrees cannot be moved to another project. Retry the send or forget the recovery first."
+            : undefined
+        }
+        className="inline-flex min-w-0 max-w-56 shrink items-center gap-2 overflow-hidden rounded-md px-2 py-1 text-[length:var(--app-font-size-ui-sm,11px)] font-normal text-[var(--color-text-foreground-secondary)] sm:max-w-64"
+      >
         <FolderClosed className="size-3.5 shrink-0" />
         <span className="min-w-0 truncate">{activeProjectDisplayName}</span>
       </span>

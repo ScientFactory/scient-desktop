@@ -2004,6 +2004,9 @@ describe("composerDraftStore project draft thread mapping", () => {
     const recoveryThreadId = ThreadId.makeUnsafe("thread-recovery");
     const duplicateCandidateId = ThreadId.makeUnsafe("thread-recovery-duplicate");
     store.setProjectDraftThreadId(projectId, threadId, { branch: "primary-draft" });
+    store.setPrompt(threadId, "source primary prompt");
+    store.setProjectDraftThreadId(otherProjectId, otherThreadId, { branch: "target-primary" });
+    store.setPrompt(otherThreadId, "target primary prompt");
 
     expect(
       store.upsertWorktreeRecoveryDraft(recoveryThreadId, {
@@ -2030,6 +2033,30 @@ describe("composerDraftStore project draft thread mapping", () => {
       worktreePath: "/tmp/recovered-worktree",
       recoveryReason: "worktree-cleanup-refused",
     });
+    useComposerDraftStore.getState().moveDraftThreadToProject(recoveryThreadId, otherProjectId, {
+      branch: "should-not-move",
+      worktreePath: null,
+      envMode: "local",
+    });
+    expect(useComposerDraftStore.getState().getDraftThread(recoveryThreadId)).toMatchObject({
+      projectId,
+      branch: "scient/recovered-worktree",
+      worktreePath: "/tmp/recovered-worktree",
+      envMode: "worktree",
+      recoveryReason: "worktree-cleanup-refused",
+    });
+    expect(useComposerDraftStore.getState().getDraftThreadByProjectId(projectId)?.threadId).toBe(
+      threadId,
+    );
+    expect(
+      useComposerDraftStore.getState().getDraftThreadByProjectId(otherProjectId)?.threadId,
+    ).toBe(otherThreadId);
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.prompt).toBe(
+      "source primary prompt",
+    );
+    expect(useComposerDraftStore.getState().draftsByThreadId[otherThreadId]?.prompt).toBe(
+      "target primary prompt",
+    );
     expect(useComposerDraftStore.getState().getDraftThread(duplicateCandidateId)).toBeNull();
     useComposerDraftStore.getState().setDraftThreadContext(recoveryThreadId, {
       interactionMode: "plan",

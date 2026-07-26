@@ -3847,6 +3847,9 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           if (!existing) {
             return state;
           }
+          if (existing.recoveryReason === "worktree-cleanup-refused") {
+            return state;
+          }
           const nextDraftThread = buildDraftThreadState({
             projectId,
             existingThread: existing,

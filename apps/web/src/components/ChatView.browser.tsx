@@ -6916,6 +6916,29 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await vi.waitFor(() => {
         expect(recoveryEditor.textContent ?? "").toContain("do not keep this worktree");
       });
+      await expect
+        .element(page.getByTestId("empty-landing-heading-project-trigger"))
+        .not.toBeInTheDocument();
+      const fixedProjectLabel = page.getByTestId("recovery-fixed-project-label");
+      await expect.element(fixedProjectLabel).toBeInTheDocument();
+      await expect
+        .element(fixedProjectLabel)
+        .toHaveAttribute(
+          "aria-label",
+          "Recovered worktree project is fixed to Project until retry or forget",
+        );
+      expect(useComposerDraftStore.getState().getDraftThread(recoveryThreadId)).toMatchObject({
+        projectId: PROJECT_ID,
+        branch: "scient/deleted-send",
+        worktreePath: "/repo/.codex/worktrees/project/deleted-send",
+        recoveryReason: "worktree-cleanup-refused",
+      });
+      expect(useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID)?.threadId).toBe(
+        existingPrimaryDraftId,
+      );
+      expect(
+        useComposerDraftStore.getState().draftsByThreadId[existingPrimaryDraftId]?.prompt,
+      ).toBe("existing primary prompt");
       (await waitForSendButton()).click();
       await vi.waitFor(() => {
         expect(
@@ -6949,6 +6972,126 @@ describe("ChatView timeline estimator parity (full app)", () => {
       });
       resolveMetadata();
       useStore.setState({ deletedThreadIdsById: deletedThreadIdsBeforeTest });
+      await mounted.cleanup();
+    }
+  });
+
+  it("blocks project removal until a recovery is explicitly forgotten without deleting files", async () => {
+    const primaryDraftId = ThreadId.makeUnsafe("thread-recovery-delete-primary");
+    const recoveryThreadId = ThreadId.makeUnsafe("b6505d06-c23b-4d42-8b6c-561402266a0f");
+    const dispatchedCommands: Array<Parameters<NativeApi["orchestration"]["dispatchCommand"]>[0]> =
+      [];
+    const confirm = vi.fn<NativeApi["dialogs"]["confirm"]>(async () => true);
+    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => undefined);
+    const deletedProjectIdsBeforeTest = useStore.getState().deletedProjectIdsById ?? {};
+    const deletedThreadIdsBeforeTest = useStore.getState().deletedThreadIdsById ?? {};
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-recovery-project-delete" as MessageId,
+        targetText: "recovery project delete",
+      }),
+      configureNativeApi: (api) => ({
+        ...api,
+        dialogs: { ...api.dialogs, confirm },
+        git: { ...api.git, removeWorktree },
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            dispatchedCommands.push(command);
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+
+    const openProjectRemoveAction = async () => {
+      const projectButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+            (button) => button.textContent?.trim() === "Project",
+          ) ?? null,
+        "Unable to find the Project sidebar row.",
+      );
+      projectButton.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 24,
+          clientY: 24,
+        }),
+      );
+      const removeItem = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+            (item) => item.textContent?.trim() === "Remove",
+          ) ?? null,
+        "Unable to find the Remove project action.",
+      );
+      removeItem.click();
+    };
+
+    try {
+      useComposerDraftStore.getState().setProjectDraftThreadId(PROJECT_ID, primaryDraftId);
+      useComposerDraftStore.getState().setPrompt(primaryDraftId, "primary survives forget");
+      useComposerDraftStore.getState().upsertWorktreeRecoveryDraft(recoveryThreadId, {
+        projectId: PROJECT_ID,
+        branch: "scient/recovery-delete-block",
+        worktreePath: "/repo/worktrees/recovery-delete-block",
+      });
+      useComposerDraftStore.getState().setPrompt(recoveryThreadId, "recovery retry content");
+
+      const recoveryRow = page.getByRole("button", {
+        name: "Open recovered worktree scient/recovery-delete-block at /repo/worktrees/recovery-delete-block",
+      });
+      await expect.element(recoveryRow).toBeInTheDocument();
+      await openProjectRemoveAction();
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="toast-title"]')).find(
+            (element) => element.textContent === "Resolve recovered worktrees first",
+          ) ?? null,
+        "Project removal should show a recovery-specific error.",
+      );
+      expect(confirm).not.toHaveBeenCalled();
+      expect(dispatchedCommands.some((command) => command.type === "project.delete")).toBe(false);
+      expect(useStore.getState().projects.some((project) => project.id === PROJECT_ID)).toBe(true);
+      await expect.element(recoveryRow).toBeInTheDocument();
+      expect(removeWorktree).not.toHaveBeenCalled();
+
+      await page
+        .getByRole("button", { name: "Forget recovered worktree scient/recovery-delete-block" })
+        .click();
+      await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+      expect(confirm.mock.calls[0]?.[0]).toContain(
+        "It does not delete the worktree or any files at /repo/worktrees/recovery-delete-block.",
+      );
+      await expect.element(recoveryRow).not.toBeInTheDocument();
+      expect(useComposerDraftStore.getState().getDraftThread(recoveryThreadId)).toBeNull();
+      expect(useComposerDraftStore.getState().getDraftThreadByProjectId(PROJECT_ID)?.threadId).toBe(
+        primaryDraftId,
+      );
+      expect(useComposerDraftStore.getState().draftsByThreadId[primaryDraftId]?.prompt).toBe(
+        "primary survives forget",
+      );
+      expect(removeWorktree).not.toHaveBeenCalled();
+
+      await openProjectRemoveAction();
+      await vi.waitFor(
+        () => {
+          expect(confirm).toHaveBeenCalledTimes(2);
+          expect(dispatchedCommands.some((command) => command.type === "project.delete")).toBe(
+            true,
+          );
+        },
+        { timeout: 20_000, interval: 16 },
+      );
+      expect(removeWorktree).not.toHaveBeenCalled();
+    } finally {
+      useStore.setState({
+        deletedProjectIdsById: deletedProjectIdsBeforeTest,
+        deletedThreadIdsById: deletedThreadIdsBeforeTest,
+      });
       await mounted.cleanup();
     }
   });
