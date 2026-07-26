@@ -142,6 +142,35 @@ async function waitForAccessibleDialog(inspect, timeoutMs = 15_000) {
   );
 }
 
+async function stopFixture(child, nativeProcessId) {
+  const processIds = new Set(
+    [child.pid, nativeProcessId].filter(
+      (processId) => Number.isInteger(processId) && processId > 0,
+    ),
+  );
+  const signal = (signalName) => {
+    for (const processId of processIds) {
+      try {
+        process.kill(processId, signalName);
+      } catch {
+        // The fixture process already exited.
+      }
+    }
+  };
+
+  signal("SIGTERM");
+  if (child.exitCode === null && child.signalCode === null) {
+    await Promise.race([
+      new Promise((resolveExit) => child.once("exit", resolveExit)),
+      new Promise((resolveDelay) => setTimeout(resolveDelay, 2_000)),
+    ]);
+  }
+  if (child.exitCode === null && child.signalCode === null) {
+    signal("SIGKILL");
+    await new Promise((resolveExit) => child.once("exit", resolveExit));
+  }
+}
+
 function assertDialogAccessibility(snapshot, state) {
   const options = state.dialogOptions.at(-1);
   assert.equal(snapshot.processFrontmost, true);
@@ -238,15 +267,8 @@ async function runScenario(scenario, drive) {
     });
     return finalState;
   } catch (error) {
-    child.kill("SIGTERM");
     const nativeProcessId = readState(root)?.processId;
-    if (Number.isInteger(nativeProcessId) && nativeProcessId > 0) {
-      try {
-        process.kill(nativeProcessId, "SIGTERM");
-      } catch {
-        // The native Electron process already exited.
-      }
-    }
+    await stopFixture(child, nativeProcessId);
     throw new Error(`${error.message}\nElectron stderr:\n${stderr.join("")}`, { cause: error });
   } finally {
     rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
@@ -281,7 +303,7 @@ for (const scenario of ["open-logs-success", "open-logs-failure"]) {
       assertDialogAccessibility(inspect(), dialogState);
       act("Open logs");
       const reopened = await waitForDialogCount(2);
-      const reopenedSnapshot = inspect();
+      const reopenedSnapshot = await waitForAccessibleDialog(inspect);
       assertDialogAccessibility(reopenedSnapshot, reopened);
       if (scenario === "open-logs-failure") {
         assert.equal(reopened.openLogsErrors.length, 1);

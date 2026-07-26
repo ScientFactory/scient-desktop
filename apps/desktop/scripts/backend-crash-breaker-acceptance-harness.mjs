@@ -5,7 +5,7 @@ import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { app, BrowserWindow, dialog, shell } from "electron";
+import { app, BrowserWindow, dialog } from "electron";
 
 import {
   buildBackendRestartRecoveryDialog,
@@ -162,7 +162,9 @@ async function showRecovery(input) {
     openLogs: async () => {
       result.openLogsCalls += 1;
       const target = scenario === "open-logs-failure" ? missingLogsDirectory : logsDirectory;
-      await openDesktopLogsDirectory(target, (path) => shell.openPath(path));
+      await openDesktopLogsDirectory(target, async (path) =>
+        existsSync(path) ? "" : "isolated fixture path is unavailable",
+      );
     },
     onOpenLogsError: (error) => {
       openLogsErrorMessage = error instanceof Error ? error.message : String(error);
