@@ -148,6 +148,7 @@ function createFallbackTab(
   previewCwd?: string,
   sourceIdentity?: string,
   sourceRoot?: string,
+  watchDiscoveryLimited?: boolean,
 ): BrowserTabState {
   return {
     id: crypto.randomUUID(),
@@ -159,6 +160,7 @@ function createFallbackTab(
           previewCwd: previewCwd.trim(),
           ...(sourceIdentity ? { sourceIdentity } : {}),
           ...(sourceRoot ? { sourceRoot } : {}),
+          ...(watchDiscoveryLimited ? { sourceWatchLimited: true } : {}),
         }
       : {}),
     title: defaultBrowserTitle(url),
@@ -819,6 +821,7 @@ export function createWsNativeApi(): LiveHtmlNativeApi {
               input.previewCwd,
               input.sourceIdentity,
               input.sourceRoot,
+              input.watchDiscoveryLimited,
             );
             state.tabs = [...state.tabs, tab];
             state.activeTabId = tab.id;
@@ -830,6 +833,8 @@ export function createWsNativeApi(): LiveHtmlNativeApi {
               activeTab.previewCwd = previewCwd;
               if (input.sourceIdentity) activeTab.sourceIdentity = input.sourceIdentity;
               if (input.sourceRoot) activeTab.sourceRoot = input.sourceRoot;
+              if (input.watchDiscoveryLimited) activeTab.sourceWatchLimited = true;
+              else delete activeTab.sourceWatchLimited;
             } else {
               delete activeTab.previewCwd;
             }
@@ -940,6 +945,8 @@ export function createWsNativeApi(): LiveHtmlNativeApi {
         tab.previewCwd = input.previewCwd;
         if (input.sourceIdentity) tab.sourceIdentity = input.sourceIdentity;
         if (input.sourceRoot) tab.sourceRoot = input.sourceRoot;
+        if (input.watchDiscoveryLimited) tab.sourceWatchLimited = true;
+        else delete tab.sourceWatchLimited;
         if (input.allowedExternalUrls) {
           tab.allowedExternalUrls = input.allowedExternalUrls;
         } else {
@@ -978,6 +985,7 @@ export function createWsNativeApi(): LiveHtmlNativeApi {
           input.previewCwd,
           input.sourceIdentity,
           input.sourceRoot,
+          input.watchDiscoveryLimited,
         );
         state.tabs = [...state.tabs, tab];
         if (input.activate !== false || !state.activeTabId) {

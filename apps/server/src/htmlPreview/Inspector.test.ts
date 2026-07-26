@@ -41,6 +41,20 @@ describe("inspectHtmlArtifact", () => {
     expect(inspected.watchedPaths).toContain(path.join(await fs.realpath(workspace), "future.css"));
   });
 
+  it("watches the first missing directory component for a nested dependency", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "lesson.html");
+    await fs.writeFile(
+      sourcePath,
+      '<!doctype html><link rel="stylesheet" href="assets/theme/future.css"><h1>Study</h1>',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: sourcePath });
+
+    expect(inspected.allowedResourcePaths).toEqual([]);
+    expect(inspected.watchedPaths).toContain(path.join(await fs.realpath(workspace), "assets"));
+  });
+
   it("classifies a standalone document with local presentation assets", async () => {
     const workspace = await makeWorkspace();
     await fs.writeFile(path.join(workspace, "lesson.css"), "body { color: green; }");

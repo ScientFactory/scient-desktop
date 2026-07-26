@@ -70,6 +70,21 @@ export interface HtmlPreviewGrantReconciliation {
   revoked: string[];
 }
 
+type LocalHtmlGenerationTab = Pick<BrowserTabState, "id" | "kind">;
+
+export function pruneConsumedLocalHtmlSourceGenerations(
+  consumed: Map<string, number>,
+  threadId: string,
+  tabs: readonly LocalHtmlGenerationTab[],
+): void {
+  const openKeys = new Set(
+    tabs.filter((tab) => tab.kind === "local-html").map((tab) => `${threadId}\0${tab.id}`),
+  );
+  for (const key of consumed.keys()) {
+    if (!openKeys.has(key)) consumed.delete(key);
+  }
+}
+
 // A local preview grant belongs to the tab that opened it, not to the tab's current URL.
 // Keep the original grant while that tab navigates within the site, onto the web, or back
 // through history, and revoke it only after the owning preview tab disappears.

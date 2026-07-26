@@ -43,6 +43,7 @@ declare module "@synara/contracts" {
     watchedPaths?: readonly string[];
     sourceIdentity?: string;
     sourceRoot?: string;
+    watchDiscoveryLimited?: boolean;
   }
 
   interface BrowserNewTabInput {
@@ -50,6 +51,7 @@ declare module "@synara/contracts" {
     watchedPaths?: readonly string[];
     sourceIdentity?: string;
     sourceRoot?: string;
+    watchDiscoveryLimited?: boolean;
   }
 }
 
@@ -61,6 +63,7 @@ export interface BrowserReplaceLocalHtmlPreviewInput {
   previewCwd: string;
   sourceIdentity?: string;
   sourceRoot?: string;
+  watchDiscoveryLimited?: boolean;
   watchedPaths: readonly string[];
   allowedExternalUrls?: readonly string[];
   activate?: boolean;
@@ -75,6 +78,7 @@ export const LiveHtmlPreviewPrepareResult = Schema.Struct({
   watchedPaths: Schema.optional(
     Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
   ),
+  watchDiscoveryLimited: Schema.optional(Schema.Boolean),
 });
 export type LiveHtmlPreviewPrepareResult = typeof LiveHtmlPreviewPrepareResult.Type;
 

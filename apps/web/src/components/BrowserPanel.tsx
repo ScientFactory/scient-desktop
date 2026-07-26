@@ -66,6 +66,7 @@ import {
   buildBrowserAddressSuggestions,
   normalizeBrowserAddressInput,
   reconcileHtmlPreviewGrants,
+  pruneConsumedLocalHtmlSourceGenerations,
   resolveBrowserChromeStatus,
   resolveBrowserAddressSync,
   shouldCloseBrowserPanelAfterTabClose,
@@ -501,6 +502,14 @@ export function BrowserPanel({
     hasActiveTab: activeTab !== null,
     workspaceReady: runtimeReady,
   });
+
+  useEffect(() => {
+    pruneConsumedLocalHtmlSourceGenerations(
+      consumedLocalHtmlSourceGenerationRef.current,
+      threadId,
+      threadBrowserState?.tabs ?? [],
+    );
+  }, [threadBrowserState?.tabs, threadId]);
   const browserAddressSuggestions = buildBrowserAddressSuggestions({
     query: addressValue,
     activeTabId: activeTab?.id ?? null,
@@ -626,6 +635,7 @@ export function BrowserPanel({
                   ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
                   ...(prepared.sourceRoot ? { sourceRoot: prepared.sourceRoot } : {}),
                   watchedPaths: prepared.watchedPaths ?? [displayUrl],
+                  watchDiscoveryLimited: prepared.watchDiscoveryLimited,
                   ...(prepared.mode === "static-document" && prepared.allowedExternalUrls
                     ? { allowedExternalUrls: prepared.allowedExternalUrls }
                     : {}),

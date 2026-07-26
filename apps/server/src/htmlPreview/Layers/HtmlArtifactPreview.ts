@@ -451,6 +451,7 @@ export function makeHtmlArtifactPreviewLayer(
                 sourceIdentity: inspected.absolutePath,
                 sourceRoot: canonicalSiteRoot,
                 watchedPaths: [...new Set(inspected.watchedPaths)],
+                watchDiscoveryLimited: inspected.watchDiscoveryLimited,
                 previewUrl: dedicatedServer
                   ? `http://127.0.0.1:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`
                   : `http://g-${id}${PREVIEW_HOST_SUFFIX}:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`,

@@ -5,11 +5,32 @@ import {
   browserCopyFeedbackMatches,
   buildBrowserAddressSuggestions,
   normalizeBrowserAddressInput,
+  pruneConsumedLocalHtmlSourceGenerations,
   reconcileHtmlPreviewGrants,
   resolveBrowserChromeStatus,
   resolveBrowserAddressSync,
   shouldCloseBrowserPanelAfterTabClose,
 } from "./BrowserPanel.logic";
+
+describe("pruneConsumedLocalHtmlSourceGenerations", () => {
+  it("bounds bookkeeping across replacement tab ids and clears it after close", () => {
+    const consumed = new Map<string, number>(
+      Array.from({ length: 100 }, (_, index) => [`thread-a\0retired-${index}`, index] as const),
+    );
+    consumed.set("thread-a\0current", 100);
+    consumed.set("thread-b\0old-owner", 5);
+
+    pruneConsumedLocalHtmlSourceGenerations(consumed, "thread-a", [
+      { id: "current", kind: "local-html" },
+      { id: "web", kind: "web" },
+    ]);
+
+    expect([...consumed]).toEqual([["thread-a\0current", 100]]);
+
+    pruneConsumedLocalHtmlSourceGenerations(consumed, "thread-a", []);
+    expect(consumed.size).toBe(0);
+  });
+});
 
 describe("reconcileHtmlPreviewGrants", () => {
   it("keeps the original grant while its local HTML tab navigates", () => {

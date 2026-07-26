@@ -65,6 +65,7 @@ export interface InspectedHtmlArtifact {
   readonly siteRoot: string | null;
   readonly allowedResourcePaths: readonly string[];
   readonly watchedPaths: readonly string[];
+  readonly watchDiscoveryLimited: boolean;
   readonly allowedExternalUrls: readonly string[];
 }
 
@@ -179,6 +180,7 @@ function unsupported(reason: string): InspectedHtmlArtifact {
     siteRoot: null,
     allowedResourcePaths: [],
     watchedPaths: [],
+    watchDiscoveryLimited: false,
     allowedExternalUrls: [],
   };
 }
@@ -388,6 +390,7 @@ async function collectAllowedResourcePaths(
 ): Promise<{
   readonly paths: readonly string[];
   readonly watchedPaths: readonly string[];
+  readonly watchDiscoveryLimited: boolean;
   readonly externalUrls: readonly string[];
   readonly hasExecutableDocument: boolean;
   readonly hasTruncatedActiveDocument: boolean;
@@ -410,8 +413,24 @@ async function collectAllowedResourcePaths(
   let hasExecutableDocument = false;
   let hasTruncatedActiveDocument = false;
   let hasTruncatedDependency = false;
+  let watchDiscoveryLimited = false;
   const addExternalUrl = (url: string) => {
     if (externalUrls.size < RESOURCE_GRAPH_MAX_FILES) externalUrls.add(url);
+  };
+  const missingPathWatchCandidate = async (candidate: string): Promise<string | null> => {
+    if (!canonicalResourceBoundary) return null;
+    let firstMissingPath = candidate;
+    while (true) {
+      const parent = path.dirname(firstMissingPath);
+      if (parent === firstMissingPath) return null;
+      const canonicalParent = await fs.realpath(parent).catch(() => null);
+      if (canonicalParent) {
+        return isPathInside(canonicalParent, canonicalResourceBoundary)
+          ? path.join(canonicalParent, path.basename(firstMissingPath))
+          : null;
+      }
+      firstMissingPath = parent;
+    }
   };
 
   while (pending.length > 0 && allowed.size < RESOURCE_GRAPH_MAX_FILES) {
@@ -419,17 +438,14 @@ async function collectAllowedResourcePaths(
     if (!candidate) continue;
     const canonical = await fs.realpath(candidate).catch(() => null);
     if (!canonical) {
-      // Missing direct dependencies still need a safe directory watch so their
-      // later creation can trigger a fresh inspection. Canonicalize the parent
-      // first so a symlinked directory cannot move the watch outside authority.
-      const canonicalParent = await fs.realpath(path.dirname(candidate)).catch(() => null);
-      if (
-        canonicalParent &&
-        canonicalResourceBoundary &&
-        isPathInside(canonicalParent, canonicalResourceBoundary) &&
-        watchedPaths.size < RESOURCE_GRAPH_MAX_FILES
-      ) {
-        watchedPaths.add(path.join(canonicalParent, path.basename(candidate)));
+      // Watch the first missing component below the nearest canonical existing
+      // ancestor. This sees both a missing file in an existing directory and a
+      // later-created directory tree without trusting a lexical path through a
+      // symlink. The next inspection replaces this trigger with a more precise one.
+      const watchCandidate = await missingPathWatchCandidate(candidate);
+      if (watchCandidate) {
+        if (watchedPaths.size < RESOURCE_GRAPH_MAX_FILES) watchedPaths.add(watchCandidate);
+        else watchDiscoveryLimited = true;
       }
       continue;
     }
@@ -438,6 +454,7 @@ async function collectAllowedResourcePaths(
     if (!stat?.isFile()) continue;
     allowed.add(canonical);
     if (watchedPaths.size < RESOURCE_GRAPH_MAX_FILES) watchedPaths.add(canonical);
+    else watchDiscoveryLimited = true;
 
     const extension = path.extname(canonical).toLowerCase();
     const isActiveDocument = ACTIVE_DOCUMENT_EXTENSIONS.has(extension);
@@ -537,6 +554,7 @@ async function collectAllowedResourcePaths(
   return {
     paths: [...allowed],
     watchedPaths: [...watchedPaths],
+    watchDiscoveryLimited: watchDiscoveryLimited || pending.length > 0,
     externalUrls: [...externalUrls],
     hasExecutableDocument,
     hasTruncatedActiveDocument,
@@ -816,6 +834,7 @@ export async function inspectHtmlArtifact(
     siteRoot: commonSiteRoot(absolutePath, allowedResourcePaths, resourceBoundary),
     allowedResourcePaths,
     watchedPaths: [absolutePath, ...collectedResources.watchedPaths],
+    watchDiscoveryLimited: collectedResources.watchDiscoveryLimited,
     allowedExternalUrls: [...externalResources],
   };
 }

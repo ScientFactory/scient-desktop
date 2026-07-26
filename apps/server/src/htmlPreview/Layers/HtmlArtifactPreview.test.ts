@@ -136,6 +136,54 @@ describe("HtmlArtifactPreviewLive", () => {
     });
   });
 
+  it("re-prepares and serves an asset created under a previously absent directory", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "report.html");
+    const assetsDirectory = path.join(workspace, "assets");
+    const assetPath = path.join(assetsDirectory, "theme.css");
+    await fs.writeFile(
+      sourcePath,
+      '<link rel="stylesheet" href="assets/theme.css"><h1>Report</h1>',
+    );
+
+    await withPreviewService(async (service) => {
+      const before = await Effect.runPromise(service.prepare({ cwd: workspace, path: sourcePath }));
+      expect(before.watchedPaths).toContain(path.join(await fs.realpath(workspace), "assets"));
+      await expect(requestPreview(before.previewUrl!, "/assets/theme.css")).resolves.toMatchObject({
+        status: 404,
+      });
+
+      await fs.mkdir(assetsDirectory);
+      await fs.writeFile(assetPath, "body { color: navy; }");
+      const after = await Effect.runPromise(service.prepare({ cwd: workspace, path: sourcePath }));
+      expect(after.watchedPaths).toContain(await fs.realpath(assetPath));
+      await expect(requestPreview(after.previewUrl!, "/assets/theme.css")).resolves.toMatchObject({
+        status: 200,
+        body: expect.stringContaining("color: navy"),
+      });
+    });
+  });
+
+  it("reports when dependency discovery exceeds its bounded graph", async () => {
+    const workspace = await makeWorkspace();
+    const references: string[] = [];
+    for (let index = 0; index < 251; index += 1) {
+      const name = `asset-${index}.png`;
+      references.push(`<img src="${name}">`);
+      await fs.writeFile(path.join(workspace, name), `asset-${index}`);
+    }
+    const sourcePath = path.join(workspace, "report.html");
+    await fs.writeFile(sourcePath, references.join(""));
+
+    await withPreviewService(async (service) => {
+      const prepared = await Effect.runPromise(
+        service.prepare({ cwd: workspace, path: sourcePath }),
+      );
+      expect(prepared.watchDiscoveryLimited).toBe(true);
+      expect(prepared.watchedPaths).toHaveLength(251);
+    });
+  });
+
   it("gives inert thumbnails a no-network, no-script content policy", async () => {
     const workspace = await makeWorkspace();
     await fs.writeFile(path.join(workspace, "index.html"), "<h1>Thumbnail</h1>");
