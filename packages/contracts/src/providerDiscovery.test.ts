@@ -1,7 +1,11 @@
 import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
-import { ProviderListModelsResult } from "./providerDiscovery";
+import {
+  ProviderListAgentsInput,
+  ProviderListModelsInput,
+  ProviderListModelsResult,
+} from "./providerDiscovery";
 
 const decodeProviderListModelsResult = Schema.decodeUnknownSync(ProviderListModelsResult);
 
@@ -26,5 +30,23 @@ describe("ProviderListModelsResult", () => {
     expect(result.models[0]?.description).toBe("0.4x Factory token rate");
     expect(result.models[1]?.description).toBeUndefined();
     expect(result.runtimeVersion).toBe("2.1.219");
+  });
+});
+
+describe("Claude provider discovery generation", () => {
+  it("preserves the auth/runtime generation on model and agent inputs", () => {
+    const modelInput = Schema.decodeUnknownSync(ProviderListModelsInput)({
+      provider: "claudeAgent",
+      cwd: "/repo",
+      discoveryGeneration: "authenticated-user-a",
+    });
+    const agentInput = Schema.decodeUnknownSync(ProviderListAgentsInput)({
+      provider: "claudeAgent",
+      cwd: "/repo",
+      discoveryGeneration: "authenticated-user-a",
+    });
+
+    expect(modelInput.discoveryGeneration).toBe("authenticated-user-a");
+    expect(agentInput.discoveryGeneration).toBe("authenticated-user-a");
   });
 });

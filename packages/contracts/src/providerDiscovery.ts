@@ -274,6 +274,8 @@ export const ProviderListModelsInput = Schema.Struct({
   apiEndpoint: Schema.optional(TrimmedNonEmptyString),
   agentDir: Schema.optional(TrimmedNonEmptyString),
   cwd: Schema.optional(TrimmedNonEmptyString),
+  /** Renderer-owned generation used to separate discovery across auth/runtime changes. */
+  discoveryGeneration: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderListModelsInput = typeof ProviderListModelsInput.Type;
 
@@ -324,6 +326,8 @@ export const ProviderListAgentsInput = Schema.Struct({
   provider: ProviderDiscoveryKind,
   binaryPath: Schema.optional(TrimmedNonEmptyString),
   cwd: Schema.optional(TrimmedNonEmptyString),
+  /** Renderer-owned generation used to separate discovery across auth/runtime changes. */
+  discoveryGeneration: Schema.optional(TrimmedNonEmptyString),
 });
 export type ProviderListAgentsInput = typeof ProviderListAgentsInput.Type;
 

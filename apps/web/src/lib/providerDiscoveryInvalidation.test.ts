@@ -5,7 +5,12 @@
 import type { ServerProviderStatus } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
-import { providerModelDiscoveryInvalidationFingerprint } from "./providerDiscoveryInvalidation";
+import {
+  AUTH_SENSITIVE_AGENT_DISCOVERY_PROVIDERS,
+  getProviderDiscoveryGeneration,
+  providerModelDiscoveryInvalidationFingerprint,
+  setProviderDiscoveryGeneration,
+} from "./providerDiscoveryInvalidation";
 
 const BASE_PROVIDER_STATUS = {
   provider: "cursor",
@@ -28,6 +33,16 @@ const BASE_PROVIDER_STATUS = {
 } satisfies ServerProviderStatus;
 
 describe("providerModelDiscoveryInvalidationFingerprint", () => {
+  it("refreshes Claude agent discovery with other auth-sensitive agent catalogs", () => {
+    expect(AUTH_SENSITIVE_AGENT_DISCOVERY_PROVIDERS).toContain("claudeAgent");
+  });
+
+  it("publishes the exact provider fingerprint as the discovery generation", () => {
+    const fingerprint = providerModelDiscoveryInvalidationFingerprint([BASE_PROVIDER_STATUS]);
+    setProviderDiscoveryGeneration(fingerprint);
+    expect(getProviderDiscoveryGeneration()).toBe(fingerprint);
+  });
+
   it("ignores provider checkedAt, message, and advisory metadata churn", () => {
     expect(
       providerModelDiscoveryInvalidationFingerprint([

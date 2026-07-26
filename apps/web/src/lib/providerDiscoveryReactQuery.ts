@@ -12,6 +12,8 @@ import type {
 import { queryOptions } from "@tanstack/react-query";
 import { ensureNativeApi } from "~/nativeApi";
 
+import { getProviderDiscoveryGeneration } from "./providerDiscoveryInvalidation";
+
 const EMPTY_SKILLS_RESULT: ProviderListSkillsResult = {
   skills: [],
   source: "empty",
@@ -228,13 +230,23 @@ export function providerModelsQueryOptions(input: {
     ),
     queryFn: async (): Promise<ProviderListModelsResult> => {
       const api = ensureNativeApi();
-      return api.provider.listModels({
+      const discoveryGeneration =
+        input.provider === "claudeAgent" ? getProviderDiscoveryGeneration() : null;
+      const result = await api.provider.listModels({
         provider: input.provider,
         ...(input.binaryPath ? { binaryPath: input.binaryPath } : {}),
         ...(input.apiEndpoint ? { apiEndpoint: input.apiEndpoint } : {}),
         ...(input.agentDir ? { agentDir: input.agentDir } : {}),
         ...(input.cwd ? { cwd: input.cwd } : {}),
+        ...(discoveryGeneration ? { discoveryGeneration } : {}),
       });
+      if (
+        discoveryGeneration !== null &&
+        discoveryGeneration !== getProviderDiscoveryGeneration()
+      ) {
+        throw new Error("Discarded a stale Claude model catalog from an earlier provider state.");
+      }
+      return result;
     },
     enabled: input.enabled ?? true,
     // Cursor/droid failures are permanent for a session (missing CLI/auth): fail
@@ -269,11 +281,21 @@ export function providerAgentsQueryOptions(input: {
     ),
     queryFn: async () => {
       const api = ensureNativeApi();
-      return api.provider.listAgents({
+      const discoveryGeneration =
+        input.provider === "claudeAgent" ? getProviderDiscoveryGeneration() : null;
+      const result = await api.provider.listAgents({
         provider: input.provider,
         ...(input.binaryPath ? { binaryPath: input.binaryPath } : {}),
         ...(input.cwd ? { cwd: input.cwd } : {}),
+        ...(discoveryGeneration ? { discoveryGeneration } : {}),
       });
+      if (
+        discoveryGeneration !== null &&
+        discoveryGeneration !== getProviderDiscoveryGeneration()
+      ) {
+        throw new Error("Discarded a stale Claude agent catalog from an earlier provider state.");
+      }
+      return result;
     },
     enabled: input.enabled ?? true,
     staleTime: 60_000,

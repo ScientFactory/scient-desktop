@@ -5,6 +5,26 @@
 
 import type { ServerProviderStatus } from "@synara/contracts";
 
+let providerDiscoveryGeneration = "initial";
+
+export const AUTH_SENSITIVE_AGENT_DISCOVERY_PROVIDERS = [
+  "claudeAgent",
+  "kilo",
+  "opencode",
+] as const;
+
+/**
+ * Bind server-side in-flight discovery ownership to the provider status generation
+ * that initiated it. A later auth/runtime generation must never join an older CLI.
+ */
+export function setProviderDiscoveryGeneration(fingerprint: string): void {
+  providerDiscoveryGeneration = fingerprint;
+}
+
+export function getProviderDiscoveryGeneration(): string {
+  return providerDiscoveryGeneration;
+}
+
 type ProviderModelDiscoveryFingerprintEntry = readonly [
   provider: ServerProviderStatus["provider"],
   status: ServerProviderStatus["status"],

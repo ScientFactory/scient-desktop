@@ -334,15 +334,21 @@ async function runBoundedClaudeDiscovery<A>(
 }
 
 async function runTemporaryClaudeDiscovery<A>(
-  query: ClaudeQueryRuntime,
+  control: {
+    readonly query: ClaudeQueryRuntime;
+    readonly cancelled: Promise<never>;
+    readonly close: () => void;
+  },
   kind: "command" | "model" | "agent",
   timeoutMs: number,
   discover: () => Promise<A>,
 ): Promise<A> {
   try {
-    return await runBoundedClaudeDiscovery(kind, timeoutMs, discover);
+    return await runBoundedClaudeDiscovery(kind, timeoutMs, () =>
+      Promise.race([discover(), control.cancelled]),
+    );
   } finally {
-    query.close();
+    control.close();
   }
 }
 
@@ -1546,11 +1552,64 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
     const pendingCommandDiscoveries = new Map<string, Promise<ProviderListCommandsResult>>();
     const pendingModelDiscoveries = new Map<string, Promise<ProviderListModelsResult>>();
     const pendingAgentDiscoveries = new Map<string, Promise<ProviderListAgentsResult>>();
+    type TemporaryDiscoveryControl = {
+      readonly query: ClaudeQueryRuntime;
+      readonly cancelled: Promise<never>;
+      readonly close: () => void;
+      readonly cancel: (cause: Error) => void;
+    };
+    const activeTemporaryDiscoveries = new Set<TemporaryDiscoveryControl>();
+    let temporaryDiscoveriesStopped = false;
+    const registerTemporaryDiscovery = (
+      queryRuntime: ClaudeQueryRuntime,
+    ): TemporaryDiscoveryControl => {
+      let closed = false;
+      let rejectCancelled!: (cause: Error) => void;
+      const cancelled = new Promise<never>((_resolve, reject) => {
+        rejectCancelled = reject;
+      });
+      const control: TemporaryDiscoveryControl = {
+        query: queryRuntime,
+        cancelled,
+        close: () => {
+          if (closed) return;
+          closed = true;
+          activeTemporaryDiscoveries.delete(control);
+          queryRuntime.close();
+        },
+        cancel: (cause) => {
+          if (closed) return;
+          rejectCancelled(cause);
+          control.close();
+        },
+      };
+      if (temporaryDiscoveriesStopped) {
+        queryRuntime.close();
+        throw new Error("Claude discovery is unavailable while the adapter is stopping.");
+      }
+      activeTemporaryDiscoveries.add(control);
+      return control;
+    };
+    const stopTemporaryDiscoveries = (): void => {
+      temporaryDiscoveriesStopped = true;
+      const cause = new Error("Claude discovery stopped because the adapter is shutting down.");
+      for (const control of activeTemporaryDiscoveries) {
+        control.cancel(cause);
+      }
+      pendingCommandDiscoveries.clear();
+      pendingModelDiscoveries.clear();
+      pendingAgentDiscoveries.clear();
+    };
     const getOrCreatePendingDiscovery = <A>(
       pending: Map<string, Promise<A>>,
       key: string,
       create: () => Promise<A>,
     ): Promise<A> => {
+      if (temporaryDiscoveriesStopped) {
+        return Promise.reject(
+          new Error("Claude discovery is unavailable while the adapter is stopping."),
+        );
+      }
       const existing = pending.get(key);
       if (existing) return existing;
       const tracked = create().finally(() => {
@@ -4466,15 +4525,18 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       // The SDK's supportedCommands() awaits an internal initialization promise
       // that only resolves when the async generator is iterated (driving the
       // subprocess handshake). We iterate in the background to unblock it.
-      const tempQuery = createQuery({
-        prompt: neverResolvingUserMessageStream(),
-        options: buildIsolatedClaudeDiscoveryOptions({
-          cwd,
-          pathToClaudeCodeExecutable: binaryPath,
-          permissionMode: "plan" as PermissionMode,
-          env: claudeSdkEnvForExecutable(env, binaryPath),
+      const temporaryDiscovery = registerTemporaryDiscovery(
+        createQuery({
+          prompt: neverResolvingUserMessageStream(),
+          options: buildIsolatedClaudeDiscoveryOptions({
+            cwd,
+            pathToClaudeCodeExecutable: binaryPath,
+            permissionMode: "plan" as PermissionMode,
+            env: claudeSdkEnvForExecutable(env, binaryPath),
+          }),
         }),
-      });
+      );
+      const tempQuery = temporaryDiscovery.query;
 
       // Drive the iterator so the subprocess completes its init handshake.
       // This runs in the background; bounded discovery closes it on every exit.
@@ -4486,7 +4548,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       })().catch(() => undefined);
 
       const commands = await runTemporaryClaudeDiscovery(
-        tempQuery,
+        temporaryDiscovery,
         "command",
         discoveryTimeoutMs,
         () => tempQuery.supportedCommands(),
@@ -4499,15 +4561,18 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       env: NodeJS.ProcessEnv,
       binaryPath: string,
     ): Promise<ProviderListModelsResult> {
-      const tempQuery = createQuery({
-        prompt: neverResolvingUserMessageStream(),
-        options: buildIsolatedClaudeDiscoveryOptions({
-          cwd,
-          pathToClaudeCodeExecutable: binaryPath,
-          permissionMode: "plan" as PermissionMode,
-          env: claudeSdkEnvForExecutable(env, binaryPath),
+      const temporaryDiscovery = registerTemporaryDiscovery(
+        createQuery({
+          prompt: neverResolvingUserMessageStream(),
+          options: buildIsolatedClaudeDiscoveryOptions({
+            cwd,
+            pathToClaudeCodeExecutable: binaryPath,
+            permissionMode: "plan" as PermissionMode,
+            env: claudeSdkEnvForExecutable(env, binaryPath),
+          }),
         }),
-      });
+      );
+      const tempQuery = temporaryDiscovery.query;
 
       let resolveRuntimeVersion!: (version: string | null) => void;
       const runtimeVersionPromise = new Promise<string | null>((resolve) => {
@@ -4520,7 +4585,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         }
       })().catch(() => undefined);
       const [models, runtimeVersion] = await runTemporaryClaudeDiscovery(
-        tempQuery,
+        temporaryDiscovery,
         "model",
         discoveryTimeoutMs,
         () => Promise.all([tempQuery.supportedModels(), runtimeVersionPromise]),
@@ -4538,23 +4603,29 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       env: NodeJS.ProcessEnv,
       binaryPath: string,
     ): Promise<ProviderListAgentsResult> {
-      const tempQuery = createQuery({
-        prompt: neverResolvingUserMessageStream(),
-        options: buildIsolatedClaudeDiscoveryOptions({
-          cwd,
-          pathToClaudeCodeExecutable: binaryPath,
-          permissionMode: "plan" as PermissionMode,
-          env: claudeSdkEnvForExecutable(env, binaryPath),
+      const temporaryDiscovery = registerTemporaryDiscovery(
+        createQuery({
+          prompt: neverResolvingUserMessageStream(),
+          options: buildIsolatedClaudeDiscoveryOptions({
+            cwd,
+            pathToClaudeCodeExecutable: binaryPath,
+            permissionMode: "plan" as PermissionMode,
+            env: claudeSdkEnvForExecutable(env, binaryPath),
+          }),
         }),
-      });
+      );
+      const tempQuery = temporaryDiscovery.query;
 
       void (async () => {
         for await (const message of tempQuery) {
           void message;
         }
       })().catch(() => undefined);
-      const agents = await runTemporaryClaudeDiscovery(tempQuery, "agent", discoveryTimeoutMs, () =>
-        tempQuery.supportedAgents(),
+      const agents = await runTemporaryClaudeDiscovery(
+        temporaryDiscovery,
+        "agent",
+        discoveryTimeoutMs,
+        () => tempQuery.supportedAgents(),
       );
       return {
         agents: agents.map((agent) => ({
@@ -4630,24 +4701,33 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       } satisfies ProviderListSkillsResult);
 
     const stopAll: ClaudeAdapterShape["stopAll"] = () =>
-      Effect.forEach(
-        sessions,
-        ([, context]) =>
-          stopSessionInternal(context, {
-            emitExitEvent: true,
-          }),
-        { discard: true },
+      Effect.sync(stopTemporaryDiscoveries).pipe(
+        Effect.andThen(
+          Effect.forEach(
+            sessions,
+            ([, context]) =>
+              stopSessionInternal(context, {
+                emitExitEvent: true,
+              }),
+            { discard: true },
+          ),
+        ),
       );
 
     yield* Effect.addFinalizer(() =>
-      Effect.forEach(
-        sessions,
-        ([, context]) =>
-          stopSessionInternal(context, {
-            emitExitEvent: false,
-          }),
-        { discard: true },
-      ).pipe(Effect.tap(() => Queue.shutdown(runtimeEventQueue))),
+      Effect.sync(stopTemporaryDiscoveries).pipe(
+        Effect.andThen(
+          Effect.forEach(
+            sessions,
+            ([, context]) =>
+              stopSessionInternal(context, {
+                emitExitEvent: false,
+              }),
+            { discard: true },
+          ),
+        ),
+        Effect.tap(() => Queue.shutdown(runtimeEventQueue)),
+      ),
     );
 
     const composerCapabilities: ProviderComposerCapabilities = {
@@ -4670,7 +4750,11 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       Effect.gen(function* () {
         const cwd = input.cwd ?? serverConfig.cwd;
         const binaryPath = input.binaryPath ?? "claude";
-        const cacheKey = JSON.stringify({ cwd, binaryPath });
+        const cacheKey = JSON.stringify({
+          cwd,
+          binaryPath,
+          discoveryGeneration: input.discoveryGeneration ?? "initial",
+        });
         const claudeSdkEnv = yield* resolveClaudeSdkEnv;
         const discovery = getOrCreatePendingDiscovery(pendingModelDiscoveries, cacheKey, () =>
           discoverModelsViaTemporaryProcess(cwd, claudeSdkEnv, binaryPath),
@@ -4692,7 +4776,11 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       Effect.gen(function* () {
         const cwd = input.cwd ?? serverConfig.cwd;
         const binaryPath = input.binaryPath ?? "claude";
-        const cacheKey = JSON.stringify({ cwd, binaryPath });
+        const cacheKey = JSON.stringify({
+          cwd,
+          binaryPath,
+          discoveryGeneration: input.discoveryGeneration ?? "initial",
+        });
         const claudeSdkEnv = yield* resolveClaudeSdkEnv;
         const discovery = getOrCreatePendingDiscovery(pendingAgentDiscoveries, cacheKey, () =>
           discoverAgentsViaTemporaryProcess(cwd, claudeSdkEnv, binaryPath),

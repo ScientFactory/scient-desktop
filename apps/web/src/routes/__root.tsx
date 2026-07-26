@@ -82,7 +82,11 @@ import { hasLiveThreadsWithMissingProjects } from "../lib/desktopProjectRecovery
 import { useDiffRouteSearch } from "../hooks/useDiffRouteSearch";
 import { useProviderStatusRefresh } from "../hooks/useProviderStatusRefresh";
 import { resolveSplitViewThreadIds, selectSplitView, useSplitViewStore } from "../splitViewStore";
-import { providerModelDiscoveryInvalidationFingerprint } from "../lib/providerDiscoveryInvalidation";
+import {
+  AUTH_SENSITIVE_AGENT_DISCOVERY_PROVIDERS,
+  providerModelDiscoveryInvalidationFingerprint,
+  setProviderDiscoveryGeneration,
+} from "../lib/providerDiscoveryInvalidation";
 import { providerDiscoveryQueryKeys } from "../lib/providerDiscoveryReactQuery";
 import { useAppSettings } from "../appSettings";
 import {
@@ -1229,6 +1233,7 @@ function EventRouter() {
         previousProviderDiscoveryFingerprint !== null &&
         previousProviderDiscoveryFingerprint !== nextProviderDiscoveryFingerprint;
       providerDiscoveryInvalidationFingerprint = nextProviderDiscoveryFingerprint;
+      setProviderDiscoveryGeneration(nextProviderDiscoveryFingerprint);
 
       if (!currentConfig) {
         void queryClient.fetchQuery(serverConfigQueryOptions()).catch(() => undefined);
@@ -1250,12 +1255,11 @@ function EventRouter() {
         void queryClient.invalidateQueries({
           queryKey: ["provider-discovery", "models", "cursor"],
         });
-        void queryClient.invalidateQueries({
-          queryKey: providerDiscoveryQueryKeys.agentsForProvider("kilo"),
-        });
-        void queryClient.invalidateQueries({
-          queryKey: providerDiscoveryQueryKeys.agentsForProvider("opencode"),
-        });
+        for (const provider of AUTH_SENSITIVE_AGENT_DISCOVERY_PROVIDERS) {
+          void queryClient.invalidateQueries({
+            queryKey: providerDiscoveryQueryKeys.agentsForProvider(provider),
+          });
+        }
       }
     });
     const unsubServerSettingsUpdated = onServerSettingsUpdated((payload) => {
