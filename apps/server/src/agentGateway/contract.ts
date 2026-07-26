@@ -64,7 +64,7 @@ export const SynaraContextResult = Schema.Struct({
   }),
   capabilities: Schema.Struct({
     threadRead: Schema.Boolean,
-    threadCreate: Schema.Boolean,
+    threadDrive: Schema.Boolean,
     threadWait: Schema.Boolean,
     automations: Schema.Boolean,
   }),

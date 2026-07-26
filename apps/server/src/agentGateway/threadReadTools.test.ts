@@ -177,9 +177,40 @@ describe("synara_context", () => {
     expect(body.caller.provider).toBe("claudeAgent");
     expect(body.capabilities.threadRead).toBe(true);
     expect(body.capabilities.threadWait).toBe(true);
-    // Read-only session: no write/automation capability even with a live turn.
-    expect(body.capabilities.threadCreate).toBe(false);
+    // Read-only session: no drive/automation capability even with a live turn.
+    expect(body.capabilities.threadDrive).toBe(false);
     expect(body.capabilities.automations).toBe(false);
+  });
+
+  it("reports threadDrive true only with the write capability and a live turn", async () => {
+    const fakes: Fakes = {
+      threadShells: {
+        [CALLER_THREAD]: shell(CALLER_THREAD, {
+          latestTurn: { turnId: "turn-1", state: "running" },
+        }),
+      },
+    };
+    const context = makeContext({
+      callerCapabilities: new Set<Capability>(["thread:read", "thread:write"]),
+    });
+    const body = jsonBody(await callTool(fakes, "synara_context", {}, context)) as {
+      capabilities: Record<string, boolean>;
+    };
+    expect(body.capabilities.threadDrive).toBe(true);
+    expect(body.capabilities.automations).toBe(false);
+  });
+
+  it("reports threadDrive false with the write capability but no live turn", async () => {
+    const fakes: Fakes = {
+      threadShells: { [CALLER_THREAD]: shell(CALLER_THREAD, { latestTurn: null }) },
+    };
+    const context = makeContext({
+      callerCapabilities: new Set<Capability>(["thread:read", "thread:write"]),
+    });
+    const body = jsonBody(await callTool(fakes, "synara_context", {}, context)) as {
+      capabilities: Record<string, boolean>;
+    };
+    expect(body.capabilities.threadDrive).toBe(false);
   });
 });
 

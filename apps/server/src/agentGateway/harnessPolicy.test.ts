@@ -22,12 +22,23 @@ describe("renderSynaraHarnessPolicy", () => {
     expect(policy).toContain("untrusted data");
   });
 
+  it("describes the drive tools and their guardrails when control is available", () => {
+    const policy = renderSynaraHarnessPolicy({ gatewayControlAvailable: true });
+    expect(policy).toContain("synara_send_message");
+    expect(policy).toContain("synara_interrupt_thread");
+    // The active-turn and privilege guardrails must be stated to the model.
+    expect(policy).toContain("while your own turn is active");
+    expect(policy).toContain("higher-privilege");
+  });
+
   it("states control is unavailable and does not claim tool access when unavailable", () => {
     const policy = renderSynaraHarnessPolicy({ gatewayControlAvailable: false });
     expect(policy).toContain(SYNARA_HARNESS_POLICY_MARKER);
     expect(policy).toContain("Synara MCP control is unavailable in this provider session.");
     expect(policy).not.toContain("synara_context");
     expect(policy).not.toContain("synara_read_thread");
+    expect(policy).not.toContain("synara_send_message");
+    expect(policy).not.toContain("synara_interrupt_thread");
   });
 });
 
