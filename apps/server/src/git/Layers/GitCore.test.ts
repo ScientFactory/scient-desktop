@@ -231,9 +231,7 @@ it.layer(TestLayer)("git integration", (it) => {
         yield* Fiber.join(linkedWorktreeFiber);
         const finalEvents = yield* Ref.get(events);
         expect(finalEvents.slice(0, 2)).toEqual(["first:start", "first:end"]);
-        expect(new Set(finalEvents.slice(2))).toEqual(
-          new Set(["nested:start", "linked:start"]),
-        );
+        expect(new Set(finalEvents.slice(2))).toEqual(new Set(["nested:start", "linked:start"]));
         yield* core.removeWorktree({ cwd: tmp, path: linkedWorktreePath, force: true });
       }),
     );

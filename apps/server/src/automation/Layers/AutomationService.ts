@@ -797,11 +797,11 @@ export const AutomationServiceLive = Layer.effect(
           ),
         )
         .pipe(
-        Effect.catch((error) =>
-          definition.worktreeMode === "auto"
-            ? requireLocalCheckoutAcknowledgement().pipe(Effect.as(localThreadEnvironment))
-            : Effect.fail(error),
-        ),
+          Effect.catch((error) =>
+            definition.worktreeMode === "auto"
+              ? requireLocalCheckoutAcknowledgement().pipe(Effect.as(localThreadEnvironment))
+              : Effect.fail(error),
+          ),
         );
     };
 

@@ -214,9 +214,7 @@ describe("CheckpointStoreLive", () => {
   });
 
   it("holds a destructive restore behind the shared repository action lock", async () => {
-    const checkpointRef = CheckpointRef.makeUnsafe(
-      "refs/synara-checkpoints/thread/restore/target",
-    );
+    const checkpointRef = CheckpointRef.makeUnsafe("refs/synara-checkpoints/thread/restore/target");
     const commands: string[] = [];
     let lockEntered = false;
     let releaseLock: (() => void) | undefined;
@@ -244,10 +242,7 @@ describe("CheckpointStoreLive", () => {
       Effect.sync(() => {
         expect(cwd).toBe("/repo");
         lockEntered = true;
-      }).pipe(
-        Effect.andThen(Effect.promise(() => lockGate)),
-        Effect.andThen(effect),
-      );
+      }).pipe(Effect.andThen(Effect.promise(() => lockGate)), Effect.andThen(effect));
     const layer = CheckpointStoreLive.pipe(
       Layer.provide(gitCoreLayer(execute, withActionLock)),
       Layer.provide(NodeServices.layer),

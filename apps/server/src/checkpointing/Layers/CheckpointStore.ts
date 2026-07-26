@@ -380,76 +380,76 @@ const makeCheckpointStore = Effect.gen(function* () {
       Effect.gen(function* () {
         const operation = "CheckpointStore.reverseCheckpointDiff";
         const [fromCommitOid, toCommitOid] = yield* Effect.all(
-        [
-          resolveCheckpointCommit(input.cwd, input.fromCheckpointRef),
-          resolveCheckpointCommit(input.cwd, input.toCheckpointRef),
-        ],
-        { concurrency: "unbounded" },
-      );
+          [
+            resolveCheckpointCommit(input.cwd, input.fromCheckpointRef),
+            resolveCheckpointCommit(input.cwd, input.toCheckpointRef),
+          ],
+          { concurrency: "unbounded" },
+        );
 
         if (!fromCommitOid || !toCommitOid) {
           return false;
         }
 
         const diff = yield* git.execute({
-        operation,
-        cwd: input.cwd,
-        args: [
-          "diff",
-          "--patch",
-          "--binary",
-          "--full-index",
-          "--no-color",
-          "--no-ext-diff",
-          "--no-textconv",
-          fromCommitOid,
-          toCommitOid,
-        ],
-        maxOutputBytes: input.maxOutputBytes ?? CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
-      });
+          operation,
+          cwd: input.cwd,
+          args: [
+            "diff",
+            "--patch",
+            "--binary",
+            "--full-index",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            fromCommitOid,
+            toCommitOid,
+          ],
+          maxOutputBytes: input.maxOutputBytes ?? CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+        });
         if (diff.stdout.length === 0) {
           return true;
         }
 
         const changedPaths = yield* git.execute({
-        operation,
-        cwd: input.cwd,
-        args: ["diff", "--name-only", "--no-renames", "-z", fromCommitOid, toCommitOid],
-        maxOutputBytes: input.maxOutputBytes ?? CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
-      });
+          operation,
+          cwd: input.cwd,
+          args: ["diff", "--name-only", "--no-renames", "-z", fromCommitOid, toCommitOid],
+          maxOutputBytes: input.maxOutputBytes ?? CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+        });
         const affectedPaths = changedPaths.stdout.split("\0").filter((entry) => entry.length > 0);
 
         return yield* Effect.acquireUseRelease(
-        fs.makeTempDirectory({ prefix: "scient-checkpoint-undo-" }),
-        (tempDir) =>
-          Effect.gen(function* () {
-            const patchPath = path.join(tempDir, "turn.patch");
-            yield* fs.writeFileString(patchPath, diff.stdout);
-            yield* git.execute({
-              operation,
-              cwd: input.cwd,
-              args: ["apply", "--reverse", "--whitespace=nowarn", "--", patchPath],
-            });
-            if (affectedPaths.length > 0) {
-              const resetExit = yield* Effect.exit(
-                git.execute({
-                  operation,
-                  cwd: input.cwd,
-                  args: ["reset", "--quiet", fromCommitOid, "--", ...affectedPaths],
-                }),
-              );
-              if (Exit.isFailure(resetExit)) {
-                yield* git.execute({
-                  operation,
-                  cwd: input.cwd,
-                  args: ["apply", "--whitespace=nowarn", "--", patchPath],
-                });
-                return yield* Effect.failCause(resetExit.cause);
+          fs.makeTempDirectory({ prefix: "scient-checkpoint-undo-" }),
+          (tempDir) =>
+            Effect.gen(function* () {
+              const patchPath = path.join(tempDir, "turn.patch");
+              yield* fs.writeFileString(patchPath, diff.stdout);
+              yield* git.execute({
+                operation,
+                cwd: input.cwd,
+                args: ["apply", "--reverse", "--whitespace=nowarn", "--", patchPath],
+              });
+              if (affectedPaths.length > 0) {
+                const resetExit = yield* Effect.exit(
+                  git.execute({
+                    operation,
+                    cwd: input.cwd,
+                    args: ["reset", "--quiet", fromCommitOid, "--", ...affectedPaths],
+                  }),
+                );
+                if (Exit.isFailure(resetExit)) {
+                  yield* git.execute({
+                    operation,
+                    cwd: input.cwd,
+                    args: ["apply", "--whitespace=nowarn", "--", patchPath],
+                  });
+                  return yield* Effect.failCause(resetExit.cause);
+                }
               }
-            }
-            return true;
-          }),
-        (tempDir) => fs.remove(tempDir, { recursive: true }),
+              return true;
+            }),
+          (tempDir) => fs.remove(tempDir, { recursive: true }),
         ).pipe(
           Effect.catchTag("PlatformError", (error) =>
             Effect.fail(
