@@ -171,7 +171,7 @@ it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
       }),
     );
 
-    it.effect("does not resolve an ambiguous basename to a single file", () =>
+    it.effect("reports an honest ambiguity error for a basename matching multiple files", () =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem;
         const cwd = yield* makeTempDir;
@@ -182,7 +182,36 @@ it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
           .readFile({ cwd, relativePath: "index.ts" })
           .pipe(Effect.flip);
 
-        expect(error.message).toContain("ENOENT");
+        expect(error.message).toContain('"index.ts" matches 2 files');
+        expect(error.message).toContain("a/index.ts");
+        expect(error.message).toContain("b/index.ts");
+        // The old behavior surfaced a misleading "no such file" for a file that
+        // plainly exists; the honest message must not claim ENOENT.
+        expect(error.message).not.toContain("ENOENT");
+      }),
+    );
+
+    it.effect("resolves a bare filename past a duplicate inside a linked worktree", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "apps/web/src/lib/kanbanDispatch.ts", "export const real = 1;\n");
+        // A linked git worktree records its `.git` as a regular file pointer.
+        // Its copy of the file must not turn a unique reference into an error.
+        yield* writeTextFile(cwd, ".codex-worktrees/pr1/.git", "gitdir: /elsewhere\n");
+        yield* writeTextFile(
+          cwd,
+          ".codex-worktrees/pr1/apps/web/src/lib/kanbanDispatch.ts",
+          "export const copy = 1;\n",
+        );
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "kanbanDispatch.ts",
+        });
+
+        expect(result.relativePath).toBe("apps/web/src/lib/kanbanDispatch.ts");
+        expect(result.contents).toBe("export const real = 1;\n");
       }),
     );
 
