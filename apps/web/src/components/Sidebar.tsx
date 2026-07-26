@@ -109,6 +109,11 @@ import {
   removeDeletedThreadsFromClientState,
 } from "../lib/deletedThreadClientReconciliation";
 import { deleteProjectFromClient } from "../lib/projectDelete";
+import {
+  releaseProjectRemoval,
+  reserveProjectRemoval,
+  waitForProjectSendsToDrain,
+} from "../lib/projectRemovalCoordination";
 import { persistAppStateNow, useStore } from "../store";
 import { getThreadFromState, getThreadsFromState } from "../threadDerivation";
 import {
@@ -4389,37 +4394,47 @@ export default function Sidebar() {
       }
       if (clicked !== "delete") return;
 
-      const blockRemovalForRecoveries = (): boolean => {
-        const unresolvedRecoveryCount = Object.values(
-          useComposerDraftStore.getState().draftThreadsByThreadId,
-        ).filter(
-          (draft) =>
-            draft.projectId === projectId &&
-            draft.recoveryReason === "worktree-cleanup-refused" &&
-            draft.promotedTo === undefined,
-        ).length;
-        if (unresolvedRecoveryCount === 0) return false;
+      const removalReservation = reserveProjectRemoval(projectId);
+      if (!removalReservation) {
         showSidebarTransientError({
-          title: "Resolve recovered worktrees first",
-          description: `Retry or forget ${unresolvedRecoveryCount} recovered ${pluralize(unresolvedRecoveryCount, "worktree")} before removing "${project.name}". Scient will not delete those worktree files.`,
+          title: `Already removing "${project.name}"`,
+          description: "Wait for the current removal request to finish.",
         });
-        return true;
-      };
-      if (blockRemovalForRecoveries()) return;
-
-      const projectThreads = sidebarThreads.filter((thread) => thread.projectId === projectId);
-      const confirmed = await api.dialogs.confirm(
-        projectThreads.length > 0
-          ? [
-              `Remove project "${project.name}"?`,
-              `This will delete ${projectThreads.length} ${pluralize(projectThreads.length, "thread")} in this folder and remove the project.`,
-            ].join("\n")
-          : `Remove project "${project.name}"?`,
-      );
-      if (!confirmed) return;
-      if (blockRemovalForRecoveries()) return;
+        return;
+      }
 
       try {
+        const blockRemovalForRecoveries = (): boolean => {
+          const unresolvedRecoveryCount = Object.values(
+            useComposerDraftStore.getState().draftThreadsByThreadId,
+          ).filter(
+            (draft) =>
+              draft.projectId === projectId &&
+              draft.recoveryReason === "worktree-cleanup-refused" &&
+              draft.promotedTo === undefined,
+          ).length;
+          if (unresolvedRecoveryCount === 0) return false;
+          showSidebarTransientError({
+            title: "Resolve recovered worktrees first",
+            description: `Retry or forget ${unresolvedRecoveryCount} recovered ${pluralize(unresolvedRecoveryCount, "worktree")} before removing "${project.name}". Scient will not delete those worktree files.`,
+          });
+          return true;
+        };
+        if (blockRemovalForRecoveries()) return;
+
+        const projectThreads = sidebarThreads.filter((thread) => thread.projectId === projectId);
+        const confirmed = await api.dialogs.confirm(
+          projectThreads.length > 0
+            ? [
+                `Remove project "${project.name}"?`,
+                `This will delete ${projectThreads.length} ${pluralize(projectThreads.length, "thread")} in this folder and remove the project.`,
+              ].join("\n")
+            : `Remove project "${project.name}"?`,
+        );
+        if (!confirmed) return;
+        if (!(await waitForProjectSendsToDrain(removalReservation))) return;
+        if (blockRemovalForRecoveries()) return;
+
         // `project.delete` refuses non-empty folders, so `Remove` clears threads first.
         const deletionResult = await deleteProjectThreads(projectId, {
           confirmMessage: null,
@@ -4460,6 +4475,8 @@ export default function Sidebar() {
           title: `Failed to remove "${project.name}"`,
           description: message,
         });
+      } finally {
+        releaseProjectRemoval(removalReservation);
       }
     },
     [

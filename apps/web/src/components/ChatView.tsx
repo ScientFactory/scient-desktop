@@ -360,6 +360,11 @@ import {
 import { useComposerFocusRequestStore } from "../composerFocusRequestStore";
 import { appendComposerPromptText } from "../lib/chatReferences";
 import {
+  finishProjectSend,
+  tryBeginProjectSend,
+  type ProjectSendLease,
+} from "../lib/projectRemovalCoordination";
+import {
   appendOriginalComposerPromptBlocks,
   appendTerminalContextsToPrompt,
   IMAGE_ONLY_BOOTSTRAP_PROMPT,
@@ -612,6 +617,7 @@ const SETUP_SCRIPT_TERMINAL_MAX_RUNTIME_MS = 10 * 60 * 1000;
 const sendInFlightThreadIds = new Set<ThreadId>();
 const sendPreflightInFlightThreadIds = new Set<ThreadId>();
 const sendOperationInFlightThreadIds = new Set<ThreadId>();
+const projectSendLeaseByThreadId = new Map<ThreadId, ProjectSendLease>();
 
 function terminalHasRunningSubprocess(threadId: ThreadId, terminalId: string): boolean {
   const terminalState = selectThreadTerminalState(
@@ -7325,20 +7331,36 @@ export default function ChatView({
     [removeQueuedComposerTurnFromDraft, threadId],
   );
 
-  const beginExclusiveSendOperation = useCallback((ownerThreadId: ThreadId): boolean => {
-    if (
-      sendOperationInFlightThreadIds.has(ownerThreadId) ||
-      sendPreflightInFlightThreadIds.has(ownerThreadId) ||
-      sendInFlightThreadIds.has(ownerThreadId)
-    ) {
-      return false;
-    }
-    sendOperationInFlightThreadIds.add(ownerThreadId);
-    return true;
-  }, []);
+  const beginExclusiveSendOperation = useCallback(
+    (ownerThreadId: ThreadId, projectId: ProjectId): boolean => {
+      if (
+        sendOperationInFlightThreadIds.has(ownerThreadId) ||
+        sendPreflightInFlightThreadIds.has(ownerThreadId) ||
+        sendInFlightThreadIds.has(ownerThreadId)
+      ) {
+        return false;
+      }
+      const projectLease = tryBeginProjectSend(projectId);
+      if (!projectLease) {
+        setThreadError(
+          ownerThreadId,
+          "This project is being removed. Wait for removal to finish or cancel it before sending.",
+        );
+        return false;
+      }
+      projectSendLeaseByThreadId.set(ownerThreadId, projectLease);
+      sendOperationInFlightThreadIds.add(ownerThreadId);
+      return true;
+    },
+    [setThreadError],
+  );
 
   const finishExclusiveSendOperation = useCallback((ownerThreadId: ThreadId): void => {
     sendOperationInFlightThreadIds.delete(ownerThreadId);
+    const projectLease = projectSendLeaseByThreadId.get(ownerThreadId);
+    if (!projectLease) return;
+    projectSendLeaseByThreadId.delete(ownerThreadId);
+    finishProjectSend(projectLease);
   }, []);
 
   const runSend = async (
@@ -8569,7 +8591,7 @@ export default function ChatView({
     queuedTurn?: QueuedComposerChatTurn,
     voicePromptOverride?: string,
   ): Promise<boolean> => {
-    if (!beginExclusiveSendOperation(threadId)) {
+    if (!activeThread || !beginExclusiveSendOperation(threadId, activeThread.projectId)) {
       e?.preventDefault();
       return false;
     }
@@ -8871,7 +8893,10 @@ export default function ChatView({
 
     const threadIdForSend = activeThread.id;
     const operationAcquiredHere = !operationAlreadyHeld;
-    if (operationAcquiredHere && !beginExclusiveSendOperation(threadIdForSend)) {
+    if (
+      operationAcquiredHere &&
+      !beginExclusiveSendOperation(threadIdForSend, activeThread.projectId)
+    ) {
       return false;
     }
     const messageIdForSend = newMessageId();
@@ -9016,7 +9041,7 @@ export default function ChatView({
         return false;
       }
       const threadIdForEdit = activeThread.id;
-      if (!beginExclusiveSendOperation(threadIdForEdit)) {
+      if (!beginExclusiveSendOperation(threadIdForEdit, activeThread.projectId)) {
         setThreadError(threadIdForEdit, "Wait for the current send to start before editing.");
         return false;
       }
@@ -9260,7 +9285,7 @@ export default function ChatView({
       proposedPlan: activeProposedPlan,
     });
 
-    if (!beginExclusiveSendOperation(activeThread.id)) {
+    if (!beginExclusiveSendOperation(activeThread.id, activeProject.id)) {
       return;
     }
     sendInFlightThreadIds.add(activeThread.id);

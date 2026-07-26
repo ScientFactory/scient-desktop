@@ -50,6 +50,11 @@ import {
   waitForDraftNavigationIdle,
 } from "../lib/stagedDraftNavigation";
 import { resetStudioProjectPrewarmStateForTests } from "../lib/studioProjects";
+import {
+  hasActiveProjectSends,
+  isProjectRemovalReserved,
+  resetProjectRemovalCoordinationForTests,
+} from "../lib/projectRemovalCoordination";
 import { newThreadNavigationRequestKey } from "../lib/threadBootstrap";
 import { promoteThreadCreate } from "../lib/threadCreatePromotion";
 import { splitViewPaneScopeId } from "../lib/chatPaneScope";
@@ -1683,6 +1688,32 @@ async function waitForEnvironmentModeButton(label: string): Promise<HTMLButtonEl
   );
 }
 
+async function clickProjectRemoveAction(projectName = "Project"): Promise<void> {
+  const projectButton = await waitForElement(
+    () =>
+      Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+        (button) => button.textContent?.trim() === projectName,
+      ) ?? null,
+    `Unable to find the ${projectName} sidebar row.`,
+  );
+  projectButton.dispatchEvent(
+    new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 24,
+      clientY: 24,
+    }),
+  );
+  const removeItem = await waitForElement(
+    () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+        (item) => item.textContent?.trim() === "Remove",
+      ) ?? null,
+    "Unable to find the Remove project action.",
+  );
+  removeItem.click();
+}
+
 async function waitForServerConfigToApply(): Promise<void> {
   await vi.waitFor(
     () => {
@@ -2037,6 +2068,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     resetRetainedThreadDetailSubscriptionsForTests();
     await resetHomeChatProjectPrewarmStateForTests();
     await resetStudioProjectPrewarmStateForTests();
+    resetProjectRemovalCoordinationForTests();
     await setViewport(DEFAULT_VIEWPORT);
     attachmentResponseDelayMs = 0;
     localStorage.clear();
@@ -2073,6 +2105,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     await resetHomeChatProjectPrewarmStateForTests();
     await resetStudioProjectPrewarmStateForTests();
     resetRetainedThreadDetailSubscriptionsForTests();
+    resetProjectRemovalCoordinationForTests();
     resetWsNativeApiForTest();
     document.body.innerHTML = "";
   });
@@ -7005,32 +7038,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
       }),
     });
 
-    const openProjectRemoveAction = async () => {
-      const projectButton = await waitForElement(
-        () =>
-          Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
-            (button) => button.textContent?.trim() === "Project",
-          ) ?? null,
-        "Unable to find the Project sidebar row.",
-      );
-      projectButton.dispatchEvent(
-        new MouseEvent("contextmenu", {
-          bubbles: true,
-          cancelable: true,
-          clientX: 24,
-          clientY: 24,
-        }),
-      );
-      const removeItem = await waitForElement(
-        () =>
-          Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
-            (item) => item.textContent?.trim() === "Remove",
-          ) ?? null,
-        "Unable to find the Remove project action.",
-      );
-      removeItem.click();
-    };
-
     try {
       useComposerDraftStore.getState().setProjectDraftThreadId(PROJECT_ID, primaryDraftId);
       useComposerDraftStore.getState().setPrompt(primaryDraftId, "primary survives forget");
@@ -7045,7 +7052,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         name: "Open recovered worktree scient/recovery-delete-block at /repo/worktrees/recovery-delete-block",
       });
       await expect.element(recoveryRow).toBeInTheDocument();
-      await openProjectRemoveAction();
+      await clickProjectRemoveAction();
       await waitForElement(
         () =>
           Array.from(document.querySelectorAll<HTMLElement>('[data-slot="toast-title"]')).find(
@@ -7076,7 +7083,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       expect(removeWorktree).not.toHaveBeenCalled();
 
-      await openProjectRemoveAction();
+      await clickProjectRemoveAction();
       await vi.waitFor(
         () => {
           expect(confirm).toHaveBeenCalledTimes(2);
@@ -7088,6 +7095,271 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       expect(removeWorktree).not.toHaveBeenCalled();
     } finally {
+      useStore.setState({
+        deletedProjectIdsById: deletedProjectIdsBeforeTest,
+        deletedThreadIdsById: deletedThreadIdsBeforeTest,
+      });
+      await mounted.cleanup();
+    }
+  });
+
+  it("drains an admitted send before removal and reveals a late cleanup recovery", async () => {
+    const sourceDraftId = ThreadId.makeUnsafe("234dc723-a85e-4019-927c-d95d62962588");
+    const createdPath = "/repo/worktrees/removal-late-recovery";
+    const createdBranch = "scient/removal-late-recovery";
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [sourceDraftId]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+          workspaceOrigin: "intentional",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [PROJECT_ID]: sourceDraftId },
+    });
+    let releaseSourceTurn!: () => void;
+    const sourceTurnGate = new Promise<void>((resolve) => {
+      releaseSourceTurn = resolve;
+    });
+    let sourceTurnHeld = false;
+    let resolveRemovalConfirmation!: (confirmed: boolean) => void;
+    const removalConfirmation = new Promise<boolean>((resolve) => {
+      resolveRemovalConfirmation = resolve;
+    });
+    const confirm = vi.fn<NativeApi["dialogs"]["confirm"]>(() => removalConfirmation);
+    const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(async () => ({
+      worktree: { path: createdPath, branch: createdBranch },
+    }));
+    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => {
+      throw new Error("worktree contains external changes");
+    });
+    const dispatchedCommands: Array<Parameters<NativeApi["orchestration"]["dispatchCommand"]>[0]> =
+      [];
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: addThreadToSnapshot(createDraftOnlySnapshot(), OTHER_THREAD_ID),
+      initialEntry: `/${sourceDraftId}`,
+      configureNativeApi: (api) => ({
+        ...api,
+        dialogs: { ...api.dialogs, confirm },
+        git: { ...api.git, createWorktree, removeWorktree },
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            dispatchedCommands.push(command);
+            if (command.type === "thread.turn.start" && command.threadId === sourceDraftId) {
+              sourceTurnHeld = true;
+              await sourceTurnGate;
+              throw new Error("deterministic pre-turn failure during project removal");
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(sourceDraftId, "create a recoverable worktree");
+      (
+        await waitForElement(
+          () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+          "Unable to find the source composer before project removal.",
+        )
+      ).requestSubmit();
+      await vi.waitFor(
+        () => {
+          expect(sourceTurnHeld).toBe(true);
+          expect(createWorktree).toHaveBeenCalledOnce();
+        },
+        { timeout: 20_000, interval: 16 },
+      );
+
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: OTHER_THREAD_ID },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${OTHER_THREAD_ID}`,
+        "The second project thread should open while the source send remains admitted.",
+      );
+      useComposerDraftStore.getState().setPrompt(OTHER_THREAD_ID, "blocked during removal");
+      await clickProjectRemoveAction();
+      await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+
+      (
+        await waitForElement(
+          () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+          "Unable to find the second composer while removal is reserved.",
+        )
+      ).requestSubmit();
+      await vi.waitFor(() => {
+        expect(
+          useStore.getState().threads.find((thread) => thread.id === OTHER_THREAD_ID)?.error,
+        ).toBe(
+          "This project is being removed. Wait for removal to finish or cancel it before sending.",
+        );
+      });
+      expect(
+        dispatchedCommands.some(
+          (command) => command.type === "thread.turn.start" && command.threadId === OTHER_THREAD_ID,
+        ),
+      ).toBe(false);
+      expect(createWorktree).toHaveBeenCalledOnce();
+
+      resolveRemovalConfirmation(true);
+      await Promise.resolve();
+      expect(dispatchedCommands.some((command) => command.type === "project.delete")).toBe(false);
+      releaseSourceTurn();
+
+      const recoveryRow = page.getByRole("button", {
+        name: `Open recovered worktree ${createdBranch} at ${createdPath}`,
+      });
+      await expect.element(recoveryRow).toBeInTheDocument();
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="toast-title"]')).find(
+            (element) => element.textContent === "Resolve recovered worktrees first",
+          ) ?? null,
+        "Late cleanup recovery should stop project deletion visibly.",
+        20_000,
+      );
+      expect(removeWorktree).toHaveBeenCalledWith({
+        cwd: "/repo/project",
+        path: createdPath,
+        force: false,
+      });
+      expect(dispatchedCommands.some((command) => command.type === "project.delete")).toBe(false);
+      expect(useStore.getState().projects.some((project) => project.id === PROJECT_ID)).toBe(true);
+
+      (
+        await waitForElement(
+          () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+          "Unable to find the second composer after removal released its reservation.",
+        )
+      ).requestSubmit();
+      await vi.waitFor(() => {
+        expect(
+          dispatchedCommands.some(
+            (command) =>
+              command.type === "thread.turn.start" && command.threadId === OTHER_THREAD_ID,
+          ),
+        ).toBe(true);
+      });
+      await vi.waitFor(() => expect(hasActiveProjectSends(PROJECT_ID)).toBe(false));
+    } finally {
+      resolveRemovalConfirmation(false);
+      releaseSourceTurn();
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps sends blocked while project deletion is pending and releases them after failure", async () => {
+    const localDraftId = ThreadId.makeUnsafe("48ba1679-20d2-40aa-aa1d-f92605fed30a");
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [localDraftId]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+          workspaceOrigin: "intentional",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [PROJECT_ID]: localDraftId },
+    });
+    let releaseProjectDelete!: () => void;
+    const projectDeleteGate = new Promise<void>((resolve) => {
+      releaseProjectDelete = resolve;
+    });
+    let projectDeleteStarted = false;
+    const confirm = vi.fn<NativeApi["dialogs"]["confirm"]>(async () => true);
+    const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(async () => ({
+      worktree: {
+        path: "/repo/worktrees/removal-delete-failure",
+        branch: "scient/removal-delete-failure",
+      },
+    }));
+    const dispatchedCommands: Array<Parameters<NativeApi["orchestration"]["dispatchCommand"]>[0]> =
+      [];
+    const deletedProjectIdsBeforeTest = useStore.getState().deletedProjectIdsById ?? {};
+    const deletedThreadIdsBeforeTest = useStore.getState().deletedThreadIdsById ?? {};
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-deferred-project-delete" as MessageId,
+        targetText: "deferred project delete",
+      }),
+      configureNativeApi: (api) => ({
+        ...api,
+        dialogs: { ...api.dialogs, confirm },
+        git: { ...api.git, createWorktree },
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            dispatchedCommands.push(command);
+            if (command.type === "project.delete") {
+              projectDeleteStarted = true;
+              await projectDeleteGate;
+              throw new Error("deterministic project deletion failure");
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+
+    try {
+      await clickProjectRemoveAction();
+      await vi.waitFor(() => expect(projectDeleteStarted).toBe(true), {
+        timeout: 20_000,
+        interval: 16,
+      });
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: localDraftId },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${localDraftId}`,
+        "The local draft should remain reachable while native project deletion is pending.",
+      );
+      useComposerDraftStore.getState().setPrompt(localDraftId, "blocked by project delete");
+      (
+        await waitForElement(
+          () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+          "Unable to find the local composer while project deletion is pending.",
+        )
+      ).requestSubmit();
+      await expect
+        .element(
+          page.getByText(
+            "This project is being removed. Wait for removal to finish or cancel it before sending.",
+          ),
+        )
+        .toBeInTheDocument();
+      expect(createWorktree).not.toHaveBeenCalled();
+      expect(
+        dispatchedCommands.some(
+          (command) => command.type === "thread.turn.start" && command.threadId === localDraftId,
+        ),
+      ).toBe(false);
+
+      releaseProjectDelete();
+      await vi.waitFor(() => expect(isProjectRemovalReserved(PROJECT_ID)).toBe(false));
+      expect(hasActiveProjectSends(PROJECT_ID)).toBe(false);
+    } finally {
+      releaseProjectDelete();
       useStore.setState({
         deletedProjectIdsById: deletedProjectIdsBeforeTest,
         deletedThreadIdsById: deletedThreadIdsBeforeTest,
