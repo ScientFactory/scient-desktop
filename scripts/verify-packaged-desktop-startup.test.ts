@@ -834,7 +834,7 @@ describe("packaged desktop startup verification", () => {
     expect(events).toEqual(["SIGTERM", "wait:12000", "SIGKILL", "reap:2000"]);
   });
 
-  it("does not signal an already-gone POSIX sentinel", async () => {
+  it("accepts an already-gone POSIX sentinel only with proven native completion", async () => {
     const child = {
       exitCode: 0,
       pid: 42,
@@ -844,12 +844,28 @@ describe("packaged desktop startup verification", () => {
 
     await terminateProcessTree(child, {
       platform: "darwin",
+      posixPayloadCompletionProven: () => true,
       sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
       targetIsAlive: () => false,
       waitForTargetsExit: async () => true,
     });
 
     expect(signals).toEqual([]);
+  });
+
+  it("fails closed when the POSIX sentinel vanished without any native outcome", async () => {
+    const child = {
+      exitCode: 1,
+      pid: 42,
+      signalCode: null,
+    } as unknown as ChildProcess;
+
+    await expect(
+      terminateProcessTree(child, {
+        platform: "darwin",
+        posixPayloadCompletionProven: () => false,
+      }),
+    ).rejects.toThrow("sentinel vanished without a native-child outcome");
   });
 
   it("refuses numeric POSIX signaling after the retained sentinel exits early", async () => {

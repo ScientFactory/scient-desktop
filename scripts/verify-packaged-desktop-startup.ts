@@ -830,6 +830,7 @@ export interface ProcessTerminationDependencies {
   readonly terminateRoot?: (child: ChildProcess) => boolean;
   readonly sendSignal?: (target: ProcessTerminationTarget, signal: NodeJS.Signals) => void;
   readonly targetIsAlive?: (target: ProcessTerminationTarget) => boolean;
+  readonly posixPayloadCompletionProven?: () => boolean;
   readonly waitForPosixPayloadExit?: (timeoutMs: number) => Promise<boolean>;
   readonly waitForTargetsExit?: (
     targets: ReadonlyArray<ProcessTerminationTarget>,
@@ -917,7 +918,18 @@ export async function terminateProcessTree(
     ...(rootTarget ? [rootTarget] : []),
     ...observedTargets.filter((target) => target.pid !== rootTarget?.pid),
   ];
-  if (targets.length === 0) return;
+  if (targets.length === 0) {
+    if (
+      platform !== "win32" &&
+      child.pid &&
+      dependencies.posixPayloadCompletionProven?.() !== true
+    ) {
+      throw new Error(
+        "Packaged POSIX sentinel vanished without a native-child outcome; preserving evidence because unobserved descendants may remain.",
+      );
+    }
+    return;
+  }
   const awaitTargetsExit = dependencies.waitForTargetsExit ?? waitForProcessTerminationTargets;
   if (platform === "win32") {
     // The ChildProcess handle belongs to the verifier-only PowerShell job
@@ -1302,6 +1314,10 @@ async function verifyPackagedDesktopPayload(
         {
           ...(process.platform !== "win32" && environment
             ? {
+                posixPayloadCompletionProven: () => {
+                  const outcome = readPackagedNativeChildOutcome(environment!);
+                  return Boolean(outcome.exited || outcome.launchError);
+                },
                 waitForPosixPayloadExit: (timeoutMs: number) =>
                   waitForPackagedNativeChildOutcome(environment!, timeoutMs),
               }
