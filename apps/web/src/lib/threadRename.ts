@@ -14,10 +14,11 @@ import {
 } from "@synara/contracts";
 import { type DraftThreadEnvMode } from "../composerDraftStore";
 import { readNativeApi } from "../nativeApi";
+import { finishProjectOperation, tryBeginProjectOperation } from "./projectRemovalCoordination";
 import { promoteThreadCreate } from "./threadCreatePromotion";
 import { newCommandId } from "./utils";
 
-type ThreadRenameOutcome = "empty" | "unchanged" | "unavailable" | "renamed";
+type ThreadRenameOutcome = "empty" | "unchanged" | "unavailable" | "project-removing" | "renamed";
 
 export async function dispatchThreadRename(input: {
   threadId: ThreadId;
@@ -51,33 +52,44 @@ export async function dispatchThreadRename(input: {
   }
 
   if (input.createIfMissing) {
-    const promotionResult = await promoteThreadCreate(
-      {
-        type: "thread.create",
-        commandId: newCommandId(),
-        threadId: input.threadId,
-        projectId: input.createIfMissing.projectId,
-        title: trimmed,
-        modelSelection: input.createIfMissing.modelSelection,
-        runtimeMode: input.createIfMissing.runtimeMode,
-        interactionMode: input.createIfMissing.interactionMode,
-        envMode: input.createIfMissing.envMode,
-        branch: input.createIfMissing.branch,
-        worktreePath: input.createIfMissing.worktreePath,
-        ...(input.createIfMissing.lastKnownPr !== undefined
-          ? { lastKnownPr: input.createIfMissing.lastKnownPr }
-          : {}),
-        createdAt: input.createIfMissing.createdAt,
-      },
-      api,
-    );
-    if (promotionResult === "exists") {
-      await api.orchestration.dispatchCommand({
-        type: "thread.meta.update",
-        commandId: newCommandId(),
-        threadId: input.threadId,
-        title: trimmed,
-      });
+    // Renaming a draft promotes it into a real thread, so hold the project turnstile
+    // for the promotion + title update: a concurrent project removal must not orphan
+    // the freshly created thread. Released on every path once the lease is taken.
+    const projectOperation = tryBeginProjectOperation(input.createIfMissing.projectId);
+    if (!projectOperation) {
+      return "project-removing";
+    }
+    try {
+      const promotionResult = await promoteThreadCreate(
+        {
+          type: "thread.create",
+          commandId: newCommandId(),
+          threadId: input.threadId,
+          projectId: input.createIfMissing.projectId,
+          title: trimmed,
+          modelSelection: input.createIfMissing.modelSelection,
+          runtimeMode: input.createIfMissing.runtimeMode,
+          interactionMode: input.createIfMissing.interactionMode,
+          envMode: input.createIfMissing.envMode,
+          branch: input.createIfMissing.branch,
+          worktreePath: input.createIfMissing.worktreePath,
+          ...(input.createIfMissing.lastKnownPr !== undefined
+            ? { lastKnownPr: input.createIfMissing.lastKnownPr }
+            : {}),
+          createdAt: input.createIfMissing.createdAt,
+        },
+        api,
+      );
+      if (promotionResult === "exists") {
+        await api.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId: input.threadId,
+          title: trimmed,
+        });
+      }
+    } finally {
+      finishProjectOperation(projectOperation);
     }
   } else {
     await api.orchestration.dispatchCommand({

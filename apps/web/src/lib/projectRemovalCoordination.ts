@@ -5,13 +5,13 @@ export interface ProjectRemovalReservation {
   readonly token: symbol;
 }
 
-export interface ProjectSendLease {
+export interface ProjectOperationLease {
   readonly projectId: ProjectId;
   readonly token: symbol;
 }
 
 const removalTokenByProjectId = new Map<ProjectId, symbol>();
-const activeSendTokensByProjectId = new Map<ProjectId, Set<symbol>>();
+const activeOperationTokensByProjectId = new Map<ProjectId, Set<symbol>>();
 const drainWaitersByProjectId = new Map<ProjectId, Set<() => void>>();
 
 function resolveProjectDrainWaiters(projectId: ProjectId): void {
@@ -32,8 +32,8 @@ export function isProjectRemovalReserved(projectId: ProjectId): boolean {
   return removalTokenByProjectId.has(projectId);
 }
 
-export function hasActiveProjectSends(projectId: ProjectId): boolean {
-  return (activeSendTokensByProjectId.get(projectId)?.size ?? 0) > 0;
+export function hasActiveProjectOperations(projectId: ProjectId): boolean {
+  return (activeOperationTokensByProjectId.get(projectId)?.size ?? 0) > 0;
 }
 
 export function releaseProjectRemoval(reservation: ProjectRemovalReservation): void {
@@ -42,28 +42,28 @@ export function releaseProjectRemoval(reservation: ProjectRemovalReservation): v
   resolveProjectDrainWaiters(reservation.projectId);
 }
 
-export function tryBeginProjectSend(projectId: ProjectId): ProjectSendLease | null {
+export function tryBeginProjectOperation(projectId: ProjectId): ProjectOperationLease | null {
   if (removalTokenByProjectId.has(projectId)) return null;
-  const token = Symbol(`project-send:${projectId}`);
-  const activeTokens = activeSendTokensByProjectId.get(projectId) ?? new Set<symbol>();
+  const token = Symbol(`project-operation:${projectId}`);
+  const activeTokens = activeOperationTokensByProjectId.get(projectId) ?? new Set<symbol>();
   activeTokens.add(token);
-  activeSendTokensByProjectId.set(projectId, activeTokens);
+  activeOperationTokensByProjectId.set(projectId, activeTokens);
   return { projectId, token };
 }
 
-export function finishProjectSend(lease: ProjectSendLease): void {
-  const activeTokens = activeSendTokensByProjectId.get(lease.projectId);
+export function finishProjectOperation(lease: ProjectOperationLease): void {
+  const activeTokens = activeOperationTokensByProjectId.get(lease.projectId);
   if (!activeTokens?.delete(lease.token)) return;
   if (activeTokens.size > 0) return;
-  activeSendTokensByProjectId.delete(lease.projectId);
+  activeOperationTokensByProjectId.delete(lease.projectId);
   resolveProjectDrainWaiters(lease.projectId);
 }
 
-export async function waitForProjectSendsToDrain(
+export async function waitForProjectOperationsToDrain(
   reservation: ProjectRemovalReservation,
 ): Promise<boolean> {
   if (removalTokenByProjectId.get(reservation.projectId) !== reservation.token) return false;
-  if ((activeSendTokensByProjectId.get(reservation.projectId)?.size ?? 0) === 0) return true;
+  if ((activeOperationTokensByProjectId.get(reservation.projectId)?.size ?? 0) === 0) return true;
   await new Promise<void>((resolve) => {
     const waiters = drainWaitersByProjectId.get(reservation.projectId) ?? new Set<() => void>();
     waiters.add(resolve);
@@ -74,7 +74,7 @@ export async function waitForProjectSendsToDrain(
 
 export function resetProjectRemovalCoordinationForTests(): void {
   removalTokenByProjectId.clear();
-  activeSendTokensByProjectId.clear();
+  activeOperationTokensByProjectId.clear();
   for (const projectId of drainWaitersByProjectId.keys()) {
     resolveProjectDrainWaiters(projectId);
   }

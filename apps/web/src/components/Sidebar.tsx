@@ -110,9 +110,11 @@ import {
 } from "../lib/deletedThreadClientReconciliation";
 import { deleteProjectFromClient } from "../lib/projectDelete";
 import {
+  finishProjectOperation,
   releaseProjectRemoval,
   reserveProjectRemoval,
-  waitForProjectSendsToDrain,
+  tryBeginProjectOperation,
+  waitForProjectOperationsToDrain,
 } from "../lib/projectRemovalCoordination";
 import { persistAppStateNow, useStore } from "../store";
 import { getThreadFromState, getThreadsFromState } from "../threadDerivation";
@@ -2947,6 +2949,17 @@ export default function Sidebar() {
       if (!modelSelection) {
         throw new Error("Select a Pi model before importing a Pi thread.");
       }
+
+      // Importing creates a thread, so hold the project turnstile across the
+      // create + import: a concurrent project removal must not orphan it.
+      // Released in the finally below once the lease is taken.
+      const projectOperation = tryBeginProjectOperation(activeProject.id);
+      if (!projectOperation) {
+        throw new Error(
+          "This project is being removed. Wait for removal to finish or cancel it before importing a thread.",
+        );
+      }
+
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
       const trimmedExternalId = externalId.trim();
@@ -3002,6 +3015,8 @@ export default function Sidebar() {
             .catch(() => undefined);
         }
         throw error;
+      } finally {
+        finishProjectOperation(projectOperation);
       }
     },
     [appSettings.defaultThreadEnvMode, currentProjectShortcutTargetId, navigate, projects],
@@ -3633,7 +3648,11 @@ export default function Sidebar() {
       const project = projectById.get(projectId);
       if (!project) return null;
 
-      const projectThreads = sidebarThreads.filter((thread) => thread.projectId === projectId);
+      // Re-derive at execution time. Project removal may have waited for an admitted
+      // project operation to finish, and its thread must join this deletion set.
+      const projectThreads = getThreadsFromState(useStore.getState()).filter(
+        (thread) => thread.projectId === projectId,
+      );
       if (projectThreads.length === 0) {
         return {
           deletedCount: 0,
@@ -3705,7 +3724,7 @@ export default function Sidebar() {
         projectName: project.name,
       };
     },
-    [deleteThread, projectById, removeFromSelection, sidebarThreads],
+    [deleteThread, projectById, removeFromSelection],
   );
 
   const deleteAllThreadsInProject = useCallback(
@@ -4432,7 +4451,7 @@ export default function Sidebar() {
             : `Remove project "${project.name}"?`,
         );
         if (!confirmed) return;
-        if (!(await waitForProjectSendsToDrain(removalReservation))) return;
+        if (!(await waitForProjectOperationsToDrain(removalReservation))) return;
         if (blockRemovalForRecoveries()) return;
 
         // `project.delete` refuses non-empty folders, so `Remove` clears threads first.

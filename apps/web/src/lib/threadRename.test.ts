@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const dispatchCommand = vi.fn<(command: unknown) => Promise<void>>();
 
@@ -10,9 +10,15 @@ vi.mock("../nativeApi", () => ({
   }),
 }));
 
+import {
+  reserveProjectRemoval,
+  resetProjectRemovalCoordinationForTests,
+} from "./projectRemovalCoordination";
 import { dispatchThreadRename } from "./threadRename";
 
 describe("dispatchThreadRename", () => {
+  afterEach(() => resetProjectRemovalCoordinationForTests());
+
   it("updates existing server threads", async () => {
     dispatchCommand.mockReset().mockResolvedValue(undefined);
 
@@ -62,5 +68,32 @@ describe("dispatchThreadRename", () => {
       title: "Inbox cleanup",
       createdAt: "2026-04-18T00:00:00.000Z",
     });
+  });
+
+  it("refuses to promote a draft while its project is being removed", async () => {
+    dispatchCommand.mockReset().mockResolvedValue(undefined);
+    reserveProjectRemoval("project-chat" as never);
+
+    const outcome = await dispatchThreadRename({
+      threadId: "thread-draft" as never,
+      newTitle: "Inbox cleanup",
+      unchangedTitles: ["New thread"],
+      createIfMissing: {
+        projectId: "project-chat" as never,
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-04-18T00:00:00.000Z",
+      },
+    });
+
+    expect(outcome).toBe("project-removing");
+    expect(dispatchCommand).not.toHaveBeenCalled();
   });
 });

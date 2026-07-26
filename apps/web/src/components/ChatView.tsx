@@ -360,9 +360,9 @@ import {
 import { useComposerFocusRequestStore } from "../composerFocusRequestStore";
 import { appendComposerPromptText } from "../lib/chatReferences";
 import {
-  finishProjectSend,
-  tryBeginProjectSend,
-  type ProjectSendLease,
+  finishProjectOperation,
+  tryBeginProjectOperation,
+  type ProjectOperationLease,
 } from "../lib/projectRemovalCoordination";
 import {
   appendOriginalComposerPromptBlocks,
@@ -617,7 +617,7 @@ const SETUP_SCRIPT_TERMINAL_MAX_RUNTIME_MS = 10 * 60 * 1000;
 const sendInFlightThreadIds = new Set<ThreadId>();
 const sendPreflightInFlightThreadIds = new Set<ThreadId>();
 const sendOperationInFlightThreadIds = new Set<ThreadId>();
-const projectSendLeaseByThreadId = new Map<ThreadId, ProjectSendLease>();
+const projectOperationLeasesByThreadId = new Map<ThreadId, Map<ProjectId, ProjectOperationLease>>();
 
 function terminalHasRunningSubprocess(threadId: ThreadId, terminalId: string): boolean {
   const terminalState = selectThreadTerminalState(
@@ -7016,6 +7016,20 @@ export default function ChatView({
         return activeThread.id;
       }
 
+      // Promoting the draft creates a real thread, so hold the project turnstile
+      // across promotion: a concurrent project removal must not orphan the new
+      // thread. Released on every path once the lease is taken.
+      const projectOperation = tryBeginProjectOperation(activeProject.id);
+      if (!projectOperation) {
+        reportComposerFeedback({
+          type: "warning",
+          title: "Project removal in progress",
+          description:
+            "This project is being removed. Wait for removal to finish before creating an automation.",
+        });
+        return null;
+      }
+
       const title = buildPromptThreadTitleFallback(input.titleSeed || GENERIC_CHAT_THREAD_TITLE);
       try {
         const result = await promoteThreadCreate(
@@ -7070,6 +7084,8 @@ export default function ChatView({
               : "Scient could not promote this draft before saving the automation.",
         });
         return null;
+      } finally {
+        finishProjectOperation(projectOperation);
       }
     },
     [
@@ -7340,7 +7356,7 @@ export default function ChatView({
       ) {
         return false;
       }
-      const projectLease = tryBeginProjectSend(projectId);
+      const projectLease = tryBeginProjectOperation(projectId);
       if (!projectLease) {
         setThreadError(
           ownerThreadId,
@@ -7348,8 +7364,27 @@ export default function ChatView({
         );
         return false;
       }
-      projectSendLeaseByThreadId.set(ownerThreadId, projectLease);
+      projectOperationLeasesByThreadId.set(ownerThreadId, new Map([[projectId, projectLease]]));
       sendOperationInFlightThreadIds.add(ownerThreadId);
+      return true;
+    },
+    [setThreadError],
+  );
+
+  const ensureExclusiveSendProjectOperation = useCallback(
+    (ownerThreadId: ThreadId, projectId: ProjectId): boolean => {
+      const projectLeases = projectOperationLeasesByThreadId.get(ownerThreadId);
+      if (!projectLeases) return false;
+      if (projectLeases.has(projectId)) return true;
+      const projectLease = tryBeginProjectOperation(projectId);
+      if (!projectLease) {
+        setThreadError(
+          ownerThreadId,
+          "The destination project is being removed. Your message and attachments were kept.",
+        );
+        return false;
+      }
+      projectLeases.set(projectId, projectLease);
       return true;
     },
     [setThreadError],
@@ -7357,10 +7392,12 @@ export default function ChatView({
 
   const finishExclusiveSendOperation = useCallback((ownerThreadId: ThreadId): void => {
     sendOperationInFlightThreadIds.delete(ownerThreadId);
-    const projectLease = projectSendLeaseByThreadId.get(ownerThreadId);
-    if (!projectLease) return;
-    projectSendLeaseByThreadId.delete(ownerThreadId);
-    finishProjectSend(projectLease);
+    const projectLeases = projectOperationLeasesByThreadId.get(ownerThreadId);
+    if (!projectLeases) return;
+    projectOperationLeasesByThreadId.delete(ownerThreadId);
+    for (const projectLease of projectLeases.values()) {
+      finishProjectOperation(projectLease);
+    }
   }, []);
 
   const runSend = async (
@@ -7978,6 +8015,11 @@ export default function ChatView({
       }
 
       if (!sendSourceStillExists()) {
+        return false;
+      }
+
+      if (!ensureExclusiveSendProjectOperation(threadIdForSend, targetProjectIdForSend)) {
+        revokeBlobPreviewUrl(browserPromptAttachment.image?.previewUrl);
         return false;
       }
 
@@ -9907,10 +9949,15 @@ export default function ChatView({
   const handleSelectProjectForEmptyDraft = useCallback(
     (projectId: ProjectId) => {
       assertEmptyDraftProjectChangeAvailable();
+      const projectOperation = tryBeginProjectOperation(projectId);
+      if (!projectOperation) {
+        throw new Error("That project is being removed. Your draft stayed in its current project.");
+      }
       const requestId = emptyDraftProjectRequestRef.current + 1;
       emptyDraftProjectRequestRef.current = requestId;
       emptyDraftProjectRequestInFlightRef.current = requestId;
       return selectProjectForEmptyDraftRequest(projectId, requestId).finally(() => {
+        finishProjectOperation(projectOperation);
         if (emptyDraftProjectRequestInFlightRef.current === requestId) {
           emptyDraftProjectRequestInFlightRef.current = null;
         }
@@ -10886,6 +10933,14 @@ export default function ChatView({
       transientAlertManager.add({
         type: "warning",
         title: "Thread title cannot be empty",
+      });
+      return;
+    }
+    if (outcome === "project-removing") {
+      transientAlertManager.add({
+        type: "warning",
+        title: "Project removal in progress",
+        description: "This project is being removed. Your draft was kept.",
       });
       return;
     }

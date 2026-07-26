@@ -51,10 +51,15 @@ import {
 } from "../lib/stagedDraftNavigation";
 import { resetStudioProjectPrewarmStateForTests } from "../lib/studioProjects";
 import {
-  hasActiveProjectSends,
+  finishProjectOperation,
+  hasActiveProjectOperations,
   isProjectRemovalReserved,
+  releaseProjectRemoval,
+  reserveProjectRemoval,
   resetProjectRemovalCoordinationForTests,
+  tryBeginProjectOperation,
 } from "../lib/projectRemovalCoordination";
+import { getSidechatCreator } from "../lib/sidechatCreatorRegistry";
 import { newThreadNavigationRequestKey } from "../lib/threadBootstrap";
 import { promoteThreadCreate } from "../lib/threadCreatePromotion";
 import { splitViewPaneScopeId } from "../lib/chatPaneScope";
@@ -2294,6 +2299,120 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("blocks direct fork, review, and registered Side creators during project removal", async () => {
+    const sourceMessageId = MessageId.makeUnsafe("msg-user-project-removal-direct-creators");
+    const sourceSnapshot = createSnapshotForTargetUser({
+      targetMessageId: sourceMessageId,
+      targetText: "Keep project mutation entry points closed",
+    });
+    const sourceThread = sourceSnapshot.threads[0]!;
+    const sourceMessageIndex = sourceThread.messages.findIndex(
+      (message) => message.id === sourceMessageId,
+    );
+    const snapshot: OrchestrationReadModel = {
+      ...sourceSnapshot,
+      threads: [
+        {
+          ...sourceThread,
+          messages: sourceThread.messages.slice(sourceMessageIndex, sourceMessageIndex + 2),
+        },
+      ],
+    };
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/review");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+    let reservation: ReturnType<typeof reserveProjectRemoval> = null;
+
+    try {
+      await userEvent.click(await waitForSendButton());
+      await expect
+        .element(page.getByText("Review Uncommitted Changes", { exact: true }))
+        .toBeVisible();
+      await vi.waitFor(() => expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false));
+      const requestStart = wsRequests.length;
+      reservation = reserveProjectRemoval(PROJECT_ID);
+      expect(reservation).not.toBeNull();
+
+      await page.getByText("Review Uncommitted Changes", { exact: true }).click();
+      await expect.element(page.getByText("Project removal in progress")).toBeInTheDocument();
+
+      const sourceRow = await waitForElement(
+        () =>
+          document.querySelector<HTMLElement>(
+            `[data-message-id="${sourceMessageId}"][data-message-role="user"]`,
+          ),
+        "Unable to find the source message for the removal-time fork action.",
+      );
+      await userEvent.hover(sourceRow);
+      sourceRow
+        .querySelector<HTMLButtonElement>(
+          'button[aria-label="Fork conversation from this message"]',
+        )
+        ?.click();
+
+      const createSidechat = getSidechatCreator(THREAD_ID);
+      expect(createSidechat).toBeDefined();
+      await expect(createSidechat?.()).resolves.toBe(false);
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+
+      expect(
+        wsRequests
+          .slice(requestStart)
+          .map(readDispatchedCommand)
+          .some(
+            (command) =>
+              command?.type === "thread.fork.create" || command?.type === "thread.create",
+          ),
+      ).toBe(false);
+      expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false);
+    } finally {
+      if (reservation) releaseProjectRemoval(reservation);
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the Side command when admitted Side creation fails", async () => {
+    const sidePrompt = "/side";
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, sidePrompt);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-side-admission-failure" as MessageId,
+        targetText: "Side failure source",
+      }),
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            if (command.type === "thread.fork.create") {
+              throw new Error("deterministic Side creation failure");
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+
+    try {
+      await userEvent.click(await waitForSendButton());
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="toast-title"]')).find(
+            (element) => element.textContent === "Could not start Side",
+          ) ?? null,
+        "Side creation failure should be reported without consuming its prompt.",
+      );
+      expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt).toBe(sidePrompt);
+      await vi.waitFor(() => expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false));
+      expect(hasDispatchedCommandType("thread.turn.start")).toBe(false);
     } finally {
       await mounted.cleanup();
     }
@@ -5080,6 +5199,134 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps an unsent draft in its source project when the picker target is being removed", async () => {
+    const prompt = "keep this draft outside the project being removed";
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: HOME_PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+          workspaceOrigin: "intentional",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [HOME_PROJECT_ID]: THREAD_ID },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, prompt);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withStudioProject(withHomeChatProject(createDraftOnlySnapshot())),
+      configureFixture: (nextFixture) => {
+        nextFixture.welcome = {
+          ...nextFixture.welcome,
+          homeDir: "/Users/tester",
+          chatWorkspaceRoot: "/Users/tester/Documents/Synara",
+        };
+      },
+    });
+    const reservation = reserveProjectRemoval(PROJECT_ID);
+    expect(reservation).not.toBeNull();
+
+    try {
+      await page.getByTestId("workspace-picker-trigger").click();
+      const projectSearch = page.getByPlaceholder("Search projects");
+      await projectSearch.fill("project");
+      await userEvent.keyboard("{ArrowDown}{Enter}");
+
+      await expect
+        .element(
+          page.getByText(
+            "That project is being removed. Your draft stayed in its current project.",
+          ),
+        )
+        .toBeInTheDocument();
+      expect(useComposerDraftStore.getState().getDraftThread(THREAD_ID)).toMatchObject({
+        projectId: HOME_PROJECT_ID,
+      });
+      expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt).toBe(prompt);
+      expect(useComposerDraftStore.getState().projectDraftThreadIdByProjectId[PROJECT_ID]).toBe(
+        undefined,
+      );
+      expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false);
+    } finally {
+      if (reservation) releaseProjectRemoval(reservation);
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps a container draft intact when its resolved target project is being removed", async () => {
+    const prompt = "preserve this cross-project first send";
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: HOME_PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: "main",
+          worktreePath: "/repo/project",
+          envMode: "worktree",
+          workspaceOrigin: "intentional",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [HOME_PROJECT_ID]: THREAD_ID },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, prompt);
+    const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>();
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withHomeChatProject(createDraftOnlySnapshot()),
+      configureFixture: (nextFixture) => {
+        nextFixture.welcome = {
+          ...nextFixture.welcome,
+          homeDir: "/Users/tester",
+          chatWorkspaceRoot: "/Users/tester/Documents/Synara",
+        };
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        git: { ...api.git, createWorktree },
+      }),
+    });
+    const reservation = reserveProjectRemoval(PROJECT_ID);
+    expect(reservation).not.toBeNull();
+    const requestStart = wsRequests.length;
+
+    try {
+      await userEvent.click(await waitForSendButton());
+      await expect
+        .element(
+          page.getByText(
+            "The destination project is being removed. Your message and attachments were kept.",
+          ),
+        )
+        .toBeInTheDocument();
+      expect(useComposerDraftStore.getState().getDraftThread(THREAD_ID)).toMatchObject({
+        projectId: HOME_PROJECT_ID,
+        worktreePath: "/repo/project",
+      });
+      expect(useComposerDraftStore.getState().draftsByThreadId[THREAD_ID]?.prompt).toBe(prompt);
+      expect(createWorktree).not.toHaveBeenCalled();
+      expect(
+        wsRequests
+          .slice(requestStart)
+          .map(readDispatchedCommand)
+          .some((command) => command?.type === "thread.create"),
+      ).toBe(false);
+      await vi.waitFor(() => expect(hasActiveProjectOperations(HOME_PROJECT_ID)).toBe(false));
+      expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false);
+    } finally {
+      if (reservation) releaseProjectRemoval(reservation);
+      await mounted.cleanup();
+    }
+  });
+
   it("creates and selects a new project from an empty project draft without navigating away", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -7103,6 +7350,102 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("blocks chat and terminal New Thread entry points while project removal is reserved", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-removal-new-thread-gate" as MessageId,
+        targetText: "new thread admission source",
+      }),
+    });
+    const reservation = reserveProjectRemoval(PROJECT_ID);
+    expect(reservation).not.toBeNull();
+    const originalPath = mounted.router.state.location.pathname;
+    const originalDraftThreadIds = Object.keys(
+      useComposerDraftStore.getState().draftThreadsByThreadId,
+    ).toSorted();
+    const requestStart = wsRequests.length;
+
+    try {
+      await page.getByLabelText("Create new thread in Project").click();
+      await page.getByLabelText("Create new terminal thread in Project").click();
+      await expect.element(page.getByText("Project removal in progress")).toBeInTheDocument();
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+
+      expect(mounted.router.state.location.pathname).toBe(originalPath);
+      expect(
+        Object.keys(useComposerDraftStore.getState().draftThreadsByThreadId).toSorted(),
+      ).toEqual(originalDraftThreadIds);
+      expect(
+        wsRequests
+          .slice(requestStart)
+          .map(readDispatchedCommand)
+          .some((command) => command?.type === "thread.create"),
+      ).toBe(false);
+      expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false);
+    } finally {
+      if (reservation) releaseProjectRemoval(reservation);
+      await mounted.cleanup();
+    }
+  });
+
+  it("deletes a thread admitted before removal from the live post-drain project snapshot", async () => {
+    const admittedOperation = tryBeginProjectOperation(PROJECT_ID);
+    expect(admittedOperation).not.toBeNull();
+    const lateThreadId = ThreadId.makeUnsafe("dfdbccf0-75b0-4a5b-8485-3cb124b05543");
+    const confirm = vi.fn<NativeApi["dialogs"]["confirm"]>(async () => true);
+    const dispatchedCommands: Array<Parameters<NativeApi["orchestration"]["dispatchCommand"]>[0]> =
+      [];
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-removal-live-thread-set" as MessageId,
+        targetText: "live project thread set source",
+      }),
+      configureNativeApi: (api) => ({
+        ...api,
+        dialogs: { ...api.dialogs, confirm },
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            dispatchedCommands.push(command);
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+
+    try {
+      await clickProjectRemoveAction();
+      await vi.waitFor(() => expect(isProjectRemovalReserved(PROJECT_ID)).toBe(true));
+      expect(dispatchedCommands.some((command) => command.type === "thread.delete")).toBe(false);
+
+      const sourceThread = useStore.getState().threads.find((thread) => thread.id === THREAD_ID);
+      expect(sourceThread).toBeDefined();
+      useStore.setState((state) => ({
+        threads: [...state.threads, { ...sourceThread!, id: lateThreadId, title: "Late thread" }],
+      }));
+      finishProjectOperation(admittedOperation!);
+
+      await vi.waitFor(
+        () => {
+          expect(
+            dispatchedCommands.some(
+              (command) => command.type === "thread.delete" && command.threadId === lateThreadId,
+            ),
+          ).toBe(true);
+          expect(dispatchedCommands.some((command) => command.type === "project.delete")).toBe(
+            true,
+          );
+        },
+        { timeout: 20_000, interval: 16 },
+      );
+    } finally {
+      finishProjectOperation(admittedOperation!);
+      await mounted.cleanup();
+    }
+  });
+
   it("drains an admitted send before removal and reveals a late cleanup recovery", async () => {
     const sourceDraftId = ThreadId.makeUnsafe("234dc723-a85e-4019-927c-d95d62962588");
     const createdPath = "/repo/worktrees/removal-late-recovery";
@@ -7252,7 +7595,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           ),
         ).toBe(true);
       });
-      await vi.waitFor(() => expect(hasActiveProjectSends(PROJECT_ID)).toBe(false));
+      await vi.waitFor(() => expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false));
     } finally {
       resolveRemovalConfirmation(false);
       releaseSourceTurn();
@@ -7357,7 +7700,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       releaseProjectDelete();
       await vi.waitFor(() => expect(isProjectRemovalReserved(PROJECT_ID)).toBe(false));
-      expect(hasActiveProjectSends(PROJECT_ID)).toBe(false);
+      expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false);
     } finally {
       releaseProjectDelete();
       useStore.setState({
