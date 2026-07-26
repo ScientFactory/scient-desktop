@@ -5,8 +5,8 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
-import { realpathSync } from "node:fs";
-import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { realpathSync, renameSync } from "node:fs";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -1883,11 +1883,12 @@ describe("DesktopBrowserManager reliability", () => {
     }
   });
 
-  it("detects an atomic replacement of a watched HTML source path", async () => {
+  it("detects an atomic replacement during the watch startup window", async () => {
     const directory = await mkdtemp(join(tmpdir(), "scient-html-watch-"));
     const sourcePath = join(directory, "report.html");
     const replacementPath = join(directory, "report.next.html");
     await writeFile(sourcePath, "<p>before</p>", "utf8");
+    await writeFile(replacementPath, "<p>after</p>", "utf8");
     const manager = new DesktopBrowserManager();
     try {
       const opened = manager.open({
@@ -1898,8 +1899,15 @@ describe("DesktopBrowserManager reliability", () => {
         previewCwd: directory,
         watchedPaths: [sourcePath],
       });
-      await writeFile(replacementPath, "<p>after</p>", "utf8");
-      await rename(replacementPath, sourcePath);
+      const internals = manager as unknown as {
+        localHtmlSourceWatches: Map<string, { watchers: Array<{ close: () => void }> }>;
+      };
+      for (const sourceWatch of internals.localHtmlSourceWatches.values()) {
+        for (const watcher of sourceWatch.watchers) watcher.close();
+      }
+      // Deliberately suppress the OS event to model a replacement between
+      // snapshotting the source and fs.watch becoming ready.
+      renameSync(replacementPath, sourcePath);
 
       await vi.waitFor(
         () => {

@@ -4,7 +4,7 @@
 // Depends on: Electron BrowserWindow/WebContentsView, shared browser IPC contracts
 
 import * as Crypto from "node:crypto";
-import { realpathSync, watch, type FSWatcher } from "node:fs";
+import { realpathSync, statSync, watch, type FSWatcher } from "node:fs";
 import * as Path from "node:path";
 
 import {
@@ -91,6 +91,7 @@ interface LocalHtmlSourceWatch {
   readonly watchers: FSWatcher[];
   ownerTabId: string;
   debounceTimer: ReturnType<typeof setTimeout> | null;
+  startupVerificationTimer: ReturnType<typeof setTimeout> | null;
 }
 
 interface PendingLocalHtmlReplacement {
@@ -947,6 +948,9 @@ export class DesktopBrowserManager {
     if (sourceWatch.debounceTimer) {
       clearTimeout(sourceWatch.debounceTimer);
     }
+    if (sourceWatch.startupVerificationTimer) {
+      clearTimeout(sourceWatch.startupVerificationTimer);
+    }
     for (const watcher of sourceWatch.watchers) {
       watcher.close();
     }
@@ -990,6 +994,7 @@ export class DesktopBrowserManager {
       watchers: [],
       ownerTabId: tab.id,
       debounceTimer: null,
+      startupVerificationTimer: null,
     };
     const notifyChanged = () => {
       if (sourceWatch.debounceTimer) {
@@ -1009,6 +1014,22 @@ export class DesktopBrowserManager {
       }, 300);
       sourceWatch.debounceTimer.unref();
     };
+
+    // fs.watch does not expose a portable "ready" event. Snapshot the watched
+    // paths before registration, then verify them once the current turn has
+    // completed so an atomic rename in that narrow startup window cannot be
+    // missed. Subsequent changes are handled by the directory watchers below.
+    const sourceFingerprint = (sourcePath: string): string | null => {
+      try {
+        const stats = statSync(sourcePath, { bigint: true });
+        return [stats.dev, stats.ino, stats.size, stats.mtimeNs, stats.ctimeNs].join(":");
+      } catch {
+        return null;
+      }
+    };
+    const startupFingerprints = new Map(
+      [...normalizedPaths].map((sourcePath) => [sourcePath, sourceFingerprint(sourcePath)]),
+    );
 
     const existingWatchDirectoryCount = [...this.localHtmlSourceWatches.values()].reduce(
       (total, existingWatch) => total + existingWatch.watchers.length,
@@ -1049,6 +1070,17 @@ export class DesktopBrowserManager {
 
     if (sourceWatch.watchers.length > 0) {
       this.localHtmlSourceWatches.set(buildRuntimeKey(threadId, tab.id), sourceWatch);
+      sourceWatch.startupVerificationTimer = setTimeout(() => {
+        sourceWatch.startupVerificationTimer = null;
+        if (
+          [...startupFingerprints].some(
+            ([sourcePath, fingerprint]) => sourceFingerprint(sourcePath) !== fingerprint,
+          )
+        ) {
+          notifyChanged();
+        }
+      }, 0);
+      sourceWatch.startupVerificationTimer.unref();
     }
     const wasLimited = tab.sourceWatchLimited === true;
     if (watchLimited) {
@@ -1263,6 +1295,9 @@ export class DesktopBrowserManager {
     for (const sourceWatch of this.localHtmlSourceWatches.values()) {
       if (sourceWatch.debounceTimer) {
         clearTimeout(sourceWatch.debounceTimer);
+      }
+      if (sourceWatch.startupVerificationTimer) {
+        clearTimeout(sourceWatch.startupVerificationTimer);
       }
       for (const watcher of sourceWatch.watchers) {
         watcher.close();
