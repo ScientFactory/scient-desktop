@@ -351,15 +351,20 @@ export class DesktopBackendSupervisor {
       1,
       Math.floor(this.#options.restartMaxFailures ?? DEFAULT_RESTART_MAX_FAILURES),
     );
-    const windowMs = Math.max(
+    const configuredWindowMs = Math.max(
       1,
       this.#options.restartFailureWindowMs ?? DEFAULT_RESTART_FAILURE_WINDOW_MS,
     );
     const now = this.#now();
-    this.#restartFailures = this.#restartFailures.filter((failureAt) => failureAt > now - windowMs);
+    // A generation is forgiven only after it remains ready for the stability
+    // threshold (or after an explicit user retry resets supervision). Expiring
+    // failures by wall time lets a deterministic but slower crash loop run
+    // forever without ever demonstrating a healthy generation.
     this.#restartFailures.push(now);
     const failures = this.#restartFailures.length;
     if (failures >= maxFailures) {
+      const firstFailureAt = this.#restartFailures[0] ?? now;
+      const windowMs = Math.max(configuredWindowMs, Math.ceil(now - firstFailureAt));
       const error = new DesktopBackendRestartLimitError({
         failures,
         maxFailures,

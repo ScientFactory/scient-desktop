@@ -217,7 +217,7 @@ describe("DesktopBackendSupervisor", () => {
     expect(harness.restarts.map(({ attempt }) => attempt)).toEqual([0, 0]);
   });
 
-  it("fails closed after rapid crashes reach the rolling-window limit", async () => {
+  it("fails closed after rapid crashes reach the consecutive-failure limit", async () => {
     const onError = vi.fn();
     const harness = makeHarness({ onError });
     await harness.supervisor.start();
@@ -252,7 +252,7 @@ describe("DesktopBackendSupervisor", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("expires old failures outside the rolling restart window", async () => {
+  it("retains spaced failures until a generation demonstrates stability", async () => {
     const harness = makeHarness({
       restartBaseDelayMs: 1,
       restartFailureWindowMs: 1_000,
@@ -269,9 +269,15 @@ describe("DesktopBackendSupervisor", () => {
     harness.children[2]!.exit(1);
     await settleLifecycle();
 
-    expect(harness.restartLimits).toHaveLength(0);
-    expect(harness.restarts.map(({ attempt }) => attempt)).toEqual([0, 0, 0]);
-    expect(harness.supervisor.desiredRunning).toBe(true);
+    expect(harness.restartLimits).toEqual([
+      expect.objectContaining({
+        failures: 3,
+        maxFailures: 3,
+        windowMs: 2_002,
+      }),
+    ]);
+    expect(harness.restarts.map(({ attempt }) => attempt)).toEqual([0, 1]);
+    expect(harness.supervisor.desiredRunning).toBe(false);
   });
 
   it("ignores stale readiness from an earlier generation", async () => {

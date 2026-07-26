@@ -3,6 +3,31 @@
 // Layer: Desktop main-process support
 
 export type BackendRestartRecoveryAction = "retry" | "open-logs" | "dismiss";
+export type BackendRecoveryAfterUpdaterFailureAction = "none" | "restart" | "show-recovery";
+
+export function ensureBackendRestartRecoveryOwner<Owner>(input: {
+  readonly currentOwner: Owner | null;
+  readonly existingOwners: readonly Owner[];
+  readonly isDestroyed: (owner: Owner) => boolean;
+  readonly createOwner: () => Owner;
+}): Owner {
+  if (input.currentOwner && !input.isDestroyed(input.currentOwner)) {
+    return input.currentOwner;
+  }
+  const existingOwner = input.existingOwners.find((owner) => !input.isDestroyed(owner));
+  return existingOwner ?? input.createOwner();
+}
+
+export function resolveBackendRecoveryAfterUpdaterFailure(input: {
+  readonly restartWasRequired: boolean;
+  readonly recoveryPending: boolean;
+  readonly recoveryDialogOpen: boolean;
+}): BackendRecoveryAfterUpdaterFailureAction {
+  if (input.recoveryPending) {
+    return input.recoveryDialogOpen ? "none" : "show-recovery";
+  }
+  return input.restartWasRequired ? "restart" : "none";
+}
 
 export function shouldShowBackendRestartRecovery(isQuitting: boolean): boolean {
   return !isQuitting;

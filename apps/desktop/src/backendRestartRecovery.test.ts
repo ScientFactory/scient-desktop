@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildBackendRestartRecoveryDialog,
+  ensureBackendRestartRecoveryOwner,
   handleBackendRestartRecoveryAction,
+  resolveBackendRecoveryAfterUpdaterFailure,
   resolveBackendRestartRecoveryAction,
   showBackendRestartRecoveryDialog,
   shouldShowBackendRestartRecovery,
@@ -12,6 +14,56 @@ describe("backend restart recovery", () => {
   it("suppresses the initial recovery dialog once shutdown begins", () => {
     expect(shouldShowBackendRestartRecovery(false)).toBe(true);
     expect(shouldShowBackendRestartRecovery(true)).toBe(false);
+  });
+
+  it("reuses or creates a live main-window owner for recovery", () => {
+    const current = { id: 1, destroyed: true };
+    const existing = { id: 2, destroyed: false };
+    const createOwner = vi.fn(() => ({ id: 3, destroyed: false }));
+
+    expect(
+      ensureBackendRestartRecoveryOwner({
+        currentOwner: current,
+        existingOwners: [existing],
+        isDestroyed: (owner) => owner.destroyed,
+        createOwner,
+      }),
+    ).toBe(existing);
+    expect(createOwner).not.toHaveBeenCalled();
+
+    expect(
+      ensureBackendRestartRecoveryOwner({
+        currentOwner: null,
+        existingOwners: [],
+        isDestroyed: (owner) => owner.destroyed,
+        createOwner,
+      }),
+    ).toEqual({ id: 3, destroyed: false });
+    expect(createOwner).toHaveBeenCalledOnce();
+  });
+
+  it("restores a paused recovery prompt instead of reviving the backend after updater failure", () => {
+    expect(
+      resolveBackendRecoveryAfterUpdaterFailure({
+        restartWasRequired: false,
+        recoveryPending: true,
+        recoveryDialogOpen: false,
+      }),
+    ).toBe("show-recovery");
+    expect(
+      resolveBackendRecoveryAfterUpdaterFailure({
+        restartWasRequired: false,
+        recoveryPending: true,
+        recoveryDialogOpen: true,
+      }),
+    ).toBe("none");
+    expect(
+      resolveBackendRecoveryAfterUpdaterFailure({
+        restartWasRequired: true,
+        recoveryPending: false,
+        recoveryDialogOpen: false,
+      }),
+    ).toBe("restart");
   });
 
   it("offers retry and logs while keeping cancellation non-destructive", () => {

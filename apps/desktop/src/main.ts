@@ -61,7 +61,9 @@ import { ensureStaticSnapshot, findAsarArchivePath } from "@synara/shared/static
 import { isBackendReadinessAborted, waitForHttpReady } from "./backendReadiness";
 import {
   buildBackendRestartRecoveryDialog,
+  ensureBackendRestartRecoveryOwner,
   handleBackendRestartRecoveryAction,
+  resolveBackendRecoveryAfterUpdaterFailure,
   showBackendRestartRecoveryDialog,
   shouldShowBackendRestartRecovery,
 } from "./backendRestartRecovery";
@@ -318,6 +320,12 @@ let isQuitting = false;
 let isUpdaterInstallPreparing = false;
 let isUpdaterQuitAndInstallInFlight = false;
 const updateBackendRecovery = new UpdateBackendRecoveryLatch();
+let pendingBackendRestartRecovery: {
+  failures: number;
+  windowMs: number;
+  openLogsErrorMessage?: string | null;
+} | null = null;
+let backendRestartRecoveryDialogOpen = false;
 let desktopShutdownPromise: Promise<void> | null = null;
 let desktopShutdownComplete = false;
 let desktopProtocolRegistered = false;
@@ -781,7 +789,16 @@ function clearUpdaterInstallInFlightAfterError(): void {
 }
 
 function restoreBackendAfterUpdaterFailure(): void {
-  if (updateBackendRecovery.consume()) startBackend();
+  const action = resolveBackendRecoveryAfterUpdaterFailure({
+    restartWasRequired: updateBackendRecovery.consume(),
+    recoveryPending: pendingBackendRestartRecovery !== null,
+    recoveryDialogOpen: backendRestartRecoveryDialogOpen,
+  });
+  if (action === "restart") {
+    startBackend();
+  } else if (action === "show-recovery") {
+    void showBackendRestartRecovery();
+  }
 }
 
 function clearUpdateInstallWatchdogTimer(): void {
@@ -2910,23 +2927,39 @@ function handleBackendGenerationExited(exit: DesktopBackendExit): void {
   }
 }
 
-async function showBackendRestartRecovery(input: {
+async function showBackendRestartRecovery(input?: {
   failures: number;
   windowMs: number;
   openLogsErrorMessage?: string | null;
 }): Promise<void> {
-  if (!shouldShowBackendRestartRecovery(isQuitting)) return;
+  if (input) pendingBackendRestartRecovery = input;
+  if (
+    !pendingBackendRestartRecovery ||
+    backendRestartRecoveryDialogOpen ||
+    !shouldShowBackendRestartRecovery(isQuitting)
+  ) {
+    return;
+  }
+  const recovery = pendingBackendRestartRecovery;
+  backendRestartRecoveryDialogOpen = true;
+  let reopenAfterClose = false;
   try {
     const options = buildBackendRestartRecoveryDialog({
       appName: SCIENT_APP_NAME,
-      failures: input.failures,
-      windowMs: input.windowMs,
+      failures: recovery.failures,
+      windowMs: recovery.windowMs,
       logFilePath: Path.join(LOG_DIR, "server-child.log"),
-      ...(input.openLogsErrorMessage !== undefined
-        ? { openLogsErrorMessage: input.openLogsErrorMessage }
+      ...(recovery.openLogsErrorMessage !== undefined
+        ? { openLogsErrorMessage: recovery.openLogsErrorMessage }
         : {}),
     });
-    const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const owner = ensureBackendRestartRecoveryOwner({
+      currentOwner: mainWindow,
+      existingOwners: BrowserWindow.getAllWindows(),
+      isDestroyed: (window) => window.isDestroyed(),
+      createOwner: () => createWindow(),
+    });
+    mainWindow = owner;
     const action = await showBackendRestartRecoveryDialog({
       owner,
       options,
@@ -2934,6 +2967,10 @@ async function showBackendRestartRecovery(input: {
       showOwned: (window, dialogOptions) => dialog.showMessageBox(window, dialogOptions),
       showUnowned: (dialogOptions) => dialog.showMessageBox(dialogOptions),
     });
+    const actionSuppressedByShutdown = isQuitting;
+    if (!actionSuppressedByShutdown && action !== "open-logs") {
+      pendingBackendRestartRecovery = null;
+    }
     let openLogsErrorMessage: string | null = null;
     await handleBackendRestartRecoveryAction({
       action,
@@ -2941,13 +2978,23 @@ async function showBackendRestartRecovery(input: {
       openLogs: () => openDesktopLogsDirectory(LOG_DIR, (path) => shell.openPath(path)),
       onOpenLogsError: (error) => {
         openLogsErrorMessage = formatErrorMessage(error);
+        pendingBackendRestartRecovery = { ...recovery, openLogsErrorMessage };
         safeConsoleError(`[desktop] unable to open backend logs: ${openLogsErrorMessage}`);
       },
       isQuitting: () => isQuitting,
-      reopen: () => void showBackendRestartRecovery({ ...input, openLogsErrorMessage }),
+      reopen: () => {
+        pendingBackendRestartRecovery = { ...recovery, openLogsErrorMessage };
+        reopenAfterClose = true;
+      },
     });
+    if (actionSuppressedByShutdown) reopenAfterClose = true;
   } catch (error: unknown) {
     safeConsoleError(`[desktop] backend recovery dialog failed: ${formatErrorMessage(error)}`);
+  } finally {
+    backendRestartRecoveryDialogOpen = false;
+    if (reopenAfterClose && pendingBackendRestartRecovery && !isQuitting) {
+      void showBackendRestartRecovery();
+    }
   }
 }
 
