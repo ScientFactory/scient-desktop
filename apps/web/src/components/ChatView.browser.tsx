@@ -5322,9 +5322,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await page.getByTestId("empty-landing-heading-project-trigger").click();
       const otherProjectOption = await waitForElement(
         () =>
-          Array.from(
-            document.querySelectorAll<HTMLElement>('[data-slot="combobox-item"]'),
-          ).find((item) => item.textContent?.trim() === "other") ?? null,
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="combobox-item"]')).find(
+            (item) => item.textContent?.trim() === "other",
+          ) ?? null,
         "Unable to find the Other Project picker option.",
       );
       const composerForm = await waitForElement(
