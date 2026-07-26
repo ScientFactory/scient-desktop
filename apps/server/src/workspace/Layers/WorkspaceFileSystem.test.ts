@@ -196,9 +196,14 @@ it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
         const workspaceFileSystem = yield* WorkspaceFileSystem;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "apps/web/src/lib/kanbanDispatch.ts", "export const real = 1;\n");
-        // A linked git worktree records its `.git` as a regular file pointer.
-        // Its copy of the file must not turn a unique reference into an error.
-        yield* writeTextFile(cwd, ".codex-worktrees/pr1/.git", "gitdir: /elsewhere\n");
+        // A linked git worktree records its `.git` as a regular file whose
+        // `gitdir:` points into the parent repo's `.git/worktrees/<name>`. Its
+        // copy of the file must not turn a unique reference into an error.
+        yield* writeTextFile(
+          cwd,
+          ".codex-worktrees/pr1/.git",
+          "gitdir: /elsewhere/.git/worktrees/pr1\n",
+        );
         yield* writeTextFile(
           cwd,
           ".codex-worktrees/pr1/apps/web/src/lib/kanbanDispatch.ts",
@@ -212,6 +217,26 @@ it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
 
         expect(result.relativePath).toBe("apps/web/src/lib/kanbanDispatch.ts");
         expect(result.contents).toBe("export const real = 1;\n");
+      }),
+    );
+
+    it.effect("opens a file inside a git submodule (not pruned as a worktree)", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        // A submodule ALSO stores `.git` as a regular file, but its pointer
+        // targets `.git/modules/<name>`. Its files are a distinct repository
+        // that legitimately belongs to the workspace and must stay resolvable.
+        yield* writeTextFile(cwd, "vendor/lib/.git", "gitdir: /super/.git/modules/lib\n");
+        yield* writeTextFile(cwd, "vendor/lib/submoduleOnly.ts", "export const sub = 1;\n");
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "submoduleOnly.ts",
+        });
+
+        expect(result.relativePath).toBe("vendor/lib/submoduleOnly.ts");
+        expect(result.contents).toBe("export const sub = 1;\n");
       }),
     );
 

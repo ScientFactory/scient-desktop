@@ -232,13 +232,43 @@ function isPathInIgnoredDirectory(relativePath: string): boolean {
   return IGNORED_DIRECTORY_NAMES.has(firstSegment);
 }
 
-// A linked git worktree records its `.git` as a regular file (a `gitdir:`
-// pointer) rather than a directory. Such a directory is a second checkout of a
-// repo that is already indexed elsewhere, so walking into it produces duplicate
-// paths that make a bare/partial reference look ambiguous even though it points
-// at a single logical file. Detect the marker so the walk can prune the subtree.
-function direntsMarkLinkedWorktree(dirents: readonly Dirent[]): boolean {
-  return dirents.some((dirent) => dirent.name === ".git" && dirent.isFile());
+// A linked git worktree records its `.git` as a regular file holding a
+// `gitdir:` pointer into the parent repo's `.git/worktrees/<name>`. Such a
+// directory is a second checkout of a repo that is already indexed elsewhere,
+// so walking into it produces duplicate paths that make a bare/partial
+// reference look ambiguous even though it points at a single logical file.
+//
+// A git *submodule* also records `.git` as a regular file, but its pointer
+// targets `.git/modules/<name>` and its working tree is a *distinct* repository
+// whose files legitimately belong to the workspace. We must never prune those,
+// so we discriminate by the pointer target rather than treating every `.git`
+// file as a worktree marker (which would silently hide submodule files).
+function isLinkedWorktreeGitdir(gitdirTarget: string): boolean {
+  const segments = toPosixPath(gitdirTarget.trim()).split("/");
+  const worktreesIndex = segments.indexOf("worktrees");
+  return worktreesIndex > 0 && segments[worktreesIndex - 1] === ".git";
+}
+
+// Resolve whether a walked directory is a linked worktree that should be pruned.
+// Reads the `.git` pointer file only when one is present (rare), so the common
+// directory stays a single cheap `some(...)` scan. On any read/parse failure we
+// fail open (do not prune) so an unreadable pointer can never hide real files.
+async function isLinkedWorktreeDirectory(
+  absoluteDir: string,
+  dirents: readonly Dirent[],
+): Promise<boolean> {
+  const hasGitFile = dirents.some((dirent) => dirent.name === ".git" && dirent.isFile());
+  if (!hasGitFile) {
+    return false;
+  }
+  try {
+    const contents = await fs.readFile(path.join(absoluteDir, ".git"), "utf8");
+    const match = /^gitdir:\s*(.+?)\s*$/m.exec(contents);
+    const target = match?.[1];
+    return target !== undefined && isLinkedWorktreeGitdir(target);
+  } catch {
+    return false;
+  }
 }
 
 // Shared per-entry skip rule for the workspace walk and the direct suffix scan:
@@ -669,13 +699,26 @@ async function buildWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
       },
     );
 
-    const candidateEntriesByDirectory = directoryEntries.map((directoryEntry) => {
+    // Reading the `.git` pointer to classify worktrees is async, so resolve it
+    // once per directory up front and consult the result in the sync map below.
+    const linkedWorktreeFlags = await Promise.all(
+      directoryEntries.map((directoryEntry) =>
+        directoryEntry.dirents
+          ? isLinkedWorktreeDirectory(
+              directoryEntry.relativeDir ? path.join(cwd, directoryEntry.relativeDir) : cwd,
+              directoryEntry.dirents,
+            )
+          : Promise.resolve(false),
+      ),
+    );
+
+    const candidateEntriesByDirectory = directoryEntries.map((directoryEntry, directoryIndex) => {
       const { relativeDir, dirents } = directoryEntry;
       if (!dirents) return [] as Array<{ dirent: Dirent; relativePath: string }>;
       // Prune linked git worktrees: their contents duplicate another checkout
       // that is indexed under its own root, so indexing them here makes bare
       // references resolve ambiguously and inflates the index toward its cap.
-      if (direntsMarkLinkedWorktree(dirents)) {
+      if (linkedWorktreeFlags[directoryIndex]) {
         return [] as Array<{ dirent: Dirent; relativePath: string }>;
       }
 
@@ -860,11 +903,14 @@ export async function searchWorkspaceEntries(
 
 // Outcome of resolving a bare/partial workspace-relative reference:
 // "resolved" carries the single matching tracked path, "ambiguous" carries the
-// competing matches so the caller can surface an honest, actionable error, and
-// "unresolved" means no tracked file matched.
+// competing matches so the caller can surface an honest, actionable error,
+// "indeterminate" means the workspace was too large to scan conclusively (so we
+// refuse to guess a unique match), and "unresolved" means no tracked file
+// matched.
 export type WorkspaceFileSuffixResolution =
   | { readonly status: "resolved"; readonly relativePath: string }
   | { readonly status: "ambiguous"; readonly matches: readonly string[] }
+  | { readonly status: "indeterminate" }
   | { readonly status: "unresolved" };
 
 function matchesSuffixReference(
@@ -877,29 +923,46 @@ function matchesSuffixReference(
 
 // Turn a set of candidate paths into a resolution. Resolve only when a single
 // distinct file matches; two genuinely different files sharing a basename stay
-// ambiguous rather than being silently disambiguated to the wrong one.
-function classifySuffixMatches(matches: readonly string[]): WorkspaceFileSuffixResolution {
+// ambiguous rather than being silently disambiguated to the wrong one. When the
+// candidates come from an incomplete scan (`complete === false`) that saw fewer
+// than two matches, we can prove neither uniqueness nor absence, so we fail
+// closed to "indeterminate" rather than claim a possibly-wrong unique match.
+export function classifySuffixMatches(
+  matches: readonly string[],
+  complete = true,
+): WorkspaceFileSuffixResolution {
   const unique = [...new Set(matches)];
-  if (unique.length === 0) {
-    return { status: "unresolved" };
+  if (unique.length >= 2) {
+    return {
+      status: "ambiguous",
+      matches: unique.toSorted((left, right) => left.localeCompare(right)),
+    };
+  }
+  if (!complete) {
+    return { status: "indeterminate" };
   }
   if (unique.length === 1) {
     return { status: "resolved", relativePath: unique[0] as string };
   }
-  return {
-    status: "ambiguous",
-    matches: unique.toSorted((left, right) => left.localeCompare(right)),
-  };
+  return { status: "unresolved" };
 }
 
 // Directly walk the workspace for files matching a suffix reference, applying the
 // same ignore/worktree pruning as the index build. Used only when the cached
-// index is truncated (and therefore an unreliable source of truth); bounded by a
-// match count and a scanned-directory cap so a pathological tree cannot stall.
-async function findWorkspaceFilesBySuffixOnDisk(
+// index is truncated (and therefore an unreliable source of truth). Bounded by a
+// match count and a scanned-directory cap so a pathological tree cannot stall;
+// `complete` reports whether the walk finished before hitting a cap, so callers
+// can refuse to claim a unique match from a scan that stopped early (a second
+// match may sit in the unscanned remainder). The limits are injectable so tests
+// can exercise the truncation path without materializing a pathological tree.
+export async function findWorkspaceFilesBySuffixOnDisk(
   cwd: string,
   normalized: string,
-): Promise<string[]> {
+  limits: { readonly maxMatches: number; readonly maxDirectories: number } = {
+    maxMatches: WORKSPACE_SUFFIX_SCAN_MAX_MATCHES,
+    maxDirectories: WORKSPACE_SUFFIX_SCAN_MAX_DIRECTORIES,
+  },
+): Promise<{ readonly matches: string[]; readonly complete: boolean }> {
   const suffix = `/${normalized}`;
   const matches: string[] = [];
   let scannedDirectories = 0;
@@ -927,10 +990,11 @@ async function findWorkspaceFilesBySuffixOnDisk(
         continue;
       }
       scannedDirectories += 1;
-      if (scannedDirectories > WORKSPACE_SUFFIX_SCAN_MAX_DIRECTORIES) {
-        return matches;
+      if (scannedDirectories > limits.maxDirectories) {
+        return { matches, complete: false };
       }
-      if (direntsMarkLinkedWorktree(dirents)) {
+      const absoluteDir = relativeDir ? path.join(cwd, relativeDir) : cwd;
+      if (await isLinkedWorktreeDirectory(absoluteDir, dirents)) {
         continue;
       }
 
@@ -948,15 +1012,15 @@ async function findWorkspaceFilesBySuffixOnDisk(
           pendingDirectories.push(relativePath);
         } else if (matchesSuffixReference(relativePath, normalized, suffix)) {
           matches.push(relativePath);
-          if (matches.length >= WORKSPACE_SUFFIX_SCAN_MAX_MATCHES) {
-            return matches;
+          if (matches.length >= limits.maxMatches) {
+            return { matches, complete: false };
           }
         }
       }
     }
   }
 
-  return matches;
+  return { matches, complete: true };
 }
 
 // Resolve a workspace-relative reference that omits its leading directories.
@@ -978,9 +1042,12 @@ export async function resolveWorkspaceFileBySuffix(input: {
   const index = await getWorkspaceIndex(input.cwd);
   // A truncated index may have dropped the real file or some of its duplicates,
   // so a lookup against it could both miss and falsely look unique. Re-scan the
-  // tree directly for a trustworthy candidate set in that case.
+  // tree directly for a trustworthy candidate set in that case, and carry the
+  // scan's completeness through so an early-stopped scan cannot claim a unique
+  // match it never proved.
   if (index.truncated) {
-    return classifySuffixMatches(await findWorkspaceFilesBySuffixOnDisk(input.cwd, normalized));
+    const scan = await findWorkspaceFilesBySuffixOnDisk(input.cwd, normalized);
+    return classifySuffixMatches(scan.matches, scan.complete);
   }
 
   const suffix = `/${normalized}`;

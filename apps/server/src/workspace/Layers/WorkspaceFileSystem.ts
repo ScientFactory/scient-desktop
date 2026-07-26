@@ -37,6 +37,18 @@ function formatAmbiguousReferenceDetail(reference: string, matches: readonly str
   );
 }
 
+// Honest detail for a reference we could not resolve conclusively because the
+// workspace was too large to scan fully. We refuse to guess a unique match (it
+// might be the wrong file) and refuse to claim the file is missing (it might
+// exist beyond the scan bound), so we ask for a fuller path instead.
+function formatIndeterminateReferenceDetail(reference: string): string {
+  return (
+    `Couldn't conclusively resolve "${reference}": this workspace is too large ` +
+    "to scan fully for a unique match. Reference it by a fuller path (including " +
+    "its directory) so it resolves directly."
+  );
+}
+
 function isFileNotFoundError(cause: unknown): boolean {
   return (cause as NodeJS.ErrnoException | null)?.code === "ENOENT";
 }
@@ -166,6 +178,17 @@ export const makeWorkspaceFileSystem = Effect.gen(function* () {
               relativePath: input.relativePath,
               operation: "workspaceFileSystem.resolve",
               detail: formatAmbiguousReferenceDetail(input.relativePath, suffixResolution.matches),
+            });
+          }
+          // The workspace was too large to scan conclusively: fail closed with
+          // an honest message rather than open a possibly-wrong file or falsely
+          // report the file as missing.
+          if (suffixResolution.status === "indeterminate") {
+            return yield* new WorkspaceFileSystemError({
+              cwd: input.cwd,
+              relativePath: input.relativePath,
+              operation: "workspaceFileSystem.resolve",
+              detail: formatIndeterminateReferenceDetail(input.relativePath),
             });
           }
           if (suffixResolution.status === "resolved") {
