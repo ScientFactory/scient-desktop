@@ -1,13 +1,28 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { dirname, join } from "node:path";
 
 export const PACKAGED_STARTUP_PROCESS_OWNERSHIP_FILE = "packaged-startup-processes.ndjson";
 
 export interface PackagedStartupOwnedProcess {
-  readonly schemaVersion: 1;
-  readonly token: string;
+  readonly schemaVersion: 2;
   readonly pid: number;
   readonly processGroup: boolean;
+  readonly authenticator: string;
+}
+
+function processOwnershipAuthenticator(
+  token: string,
+  processDetails: Pick<PackagedStartupOwnedProcess, "pid" | "processGroup">,
+): string {
+  return createHmac("sha256", token)
+    .update(`2\n${processDetails.pid}\n${processDetails.processGroup ? "1" : "0"}`)
+    .digest("hex");
+}
+
+function authenticatorMatches(expected: string, actual: unknown): boolean {
+  if (typeof actual !== "string" || !/^[0-9a-f]{64}$/i.test(actual)) return false;
+  return timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(actual, "hex"));
 }
 
 export function resolvePackagedStartupProcessOwnershipPath(scientHome: string): string {
@@ -30,11 +45,14 @@ export function recordPackagedStartupOwnedProcess(
   const path = resolvePackagedStartupProcessOwnershipPath(scientHome);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const record: PackagedStartupOwnedProcess = {
-    schemaVersion: 1,
-    token,
+    schemaVersion: 2,
     ...processDetails,
+    authenticator: processOwnershipAuthenticator(token, processDetails),
   };
-  appendFileSync(path, `${JSON.stringify(record)}\n`, { encoding: "utf8", mode: 0o600 });
+  appendFileSync(path, `${JSON.stringify(record)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
 }
 
 export function readPackagedStartupOwnedProcesses(
@@ -55,11 +73,17 @@ export function readPackagedStartupOwnedProcesses(
     try {
       const value = JSON.parse(line) as Partial<PackagedStartupOwnedProcess>;
       if (
-        value.schemaVersion === 1 &&
-        value.token === expectedToken &&
+        value.schemaVersion === 2 &&
         Number.isSafeInteger(value.pid) &&
         (value.pid ?? 0) > 0 &&
-        typeof value.processGroup === "boolean"
+        typeof value.processGroup === "boolean" &&
+        authenticatorMatches(
+          processOwnershipAuthenticator(expectedToken, {
+            pid: value.pid!,
+            processGroup: value.processGroup,
+          }),
+          value.authenticator,
+        )
       ) {
         records.push(value as PackagedStartupOwnedProcess);
       }

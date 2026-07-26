@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 describe("packaged startup process ownership", () => {
-  it("round-trips only process authority bearing the verifier token", () => {
+  it("round-trips authenticated process authority without persisting the verifier token", () => {
     const root = mkdtempSync(join(tmpdir(), "scient-packaged-ownership-test-"));
     roots.push(root);
     const environment = {
@@ -26,11 +26,22 @@ describe("packaged startup process ownership", () => {
       SCIENT_PACKAGED_STARTUP_CLEANUP_TOKEN: "a".repeat(64),
     };
 
-    recordPackagedStartupOwnedProcess(environment, { pid: 42, processGroup: true });
+    recordPackagedStartupOwnedProcess(environment, {
+      pid: 42,
+      processGroup: true,
+    });
 
     expect(readPackagedStartupOwnedProcesses(environment)).toEqual([
-      { schemaVersion: 1, token: "a".repeat(64), pid: 42, processGroup: true },
+      {
+        schemaVersion: 2,
+        pid: 42,
+        processGroup: true,
+        authenticator: expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
     ]);
+    expect(readFileSync(resolvePackagedStartupProcessOwnershipPath(root), "utf8")).not.toContain(
+      "a".repeat(64),
+    );
     expect(
       readPackagedStartupOwnedProcesses({
         ...environment,
@@ -42,25 +53,38 @@ describe("packaged startup process ownership", () => {
   it("ignores malformed, truncated, and duplicated authority records", () => {
     const root = mkdtempSync(join(tmpdir(), "scient-packaged-ownership-test-"));
     roots.push(root);
-    const token = "c".repeat(64);
     const environment = {
       SCIENT_HOME: root,
-      SCIENT_PACKAGED_STARTUP_CLEANUP_TOKEN: token,
+      SCIENT_PACKAGED_STARTUP_SMOKE: "1",
+      SCIENT_PACKAGED_STARTUP_CLEANUP_TOKEN: "c".repeat(64),
     };
+    recordPackagedStartupOwnedProcess(environment, {
+      pid: 84,
+      processGroup: false,
+    });
     const path = resolvePackagedStartupProcessOwnershipPath(root);
-    mkdirSync(join(root, "userdata"), { recursive: true });
-    writeFileSync(
+    const validRecord = readFileSync(path, "utf8").trim();
+    appendFileSync(
       path,
       [
-        JSON.stringify({ schemaVersion: 1, token, pid: 84, processGroup: false }),
-        JSON.stringify({ schemaVersion: 1, token, pid: 84, processGroup: false }),
-        JSON.stringify({ schemaVersion: 1, token: "wrong", pid: 126, processGroup: false }),
+        validRecord,
+        JSON.stringify({
+          schemaVersion: 2,
+          pid: 126,
+          processGroup: false,
+          authenticator: "0".repeat(64),
+        }),
         "{truncated",
       ].join("\n"),
     );
 
     expect(readPackagedStartupOwnedProcesses(environment)).toEqual([
-      { schemaVersion: 1, token, pid: 84, processGroup: false },
+      {
+        schemaVersion: 2,
+        pid: 84,
+        processGroup: false,
+        authenticator: expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
     ]);
   });
 
@@ -83,11 +107,17 @@ describe("packaged startup process ownership", () => {
     };
 
     expect(() =>
-      recordPackagedStartupOwnedProcess(environment, { pid: 42, processGroup: true }),
+      recordPackagedStartupOwnedProcess(environment, {
+        pid: 42,
+        processGroup: true,
+      }),
     ).toThrow("cleanup token");
     expect(() =>
       recordPackagedStartupOwnedProcess(
-        { ...environment, SCIENT_PACKAGED_STARTUP_CLEANUP_TOKEN: "d".repeat(64) },
+        {
+          ...environment,
+          SCIENT_PACKAGED_STARTUP_CLEANUP_TOKEN: "d".repeat(64),
+        },
         { pid: 0, processGroup: true },
       ),
     ).toThrow("positive PID");
