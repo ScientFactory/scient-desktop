@@ -73,6 +73,7 @@ import { useTerminalStateStore } from "../terminalStateStore";
 import { resetRetainedThreadDetailSubscriptionsForTests } from "../threadDetailSubscriptionRetention";
 import { resetWsNativeApiForTest } from "../wsNativeApi";
 import { estimateTimelineMessageHeight } from "./timelineHeight";
+import type { ChatMessage } from "../types";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
 const OTHER_THREAD_ID = "thread-browser-test-other" as ThreadId;
@@ -5801,6 +5802,201 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps optimistic prompts and previews owned by their source across same-pane navigation", async () => {
+    const sourcePrompt = "source optimistic prompt must stay private";
+    const destinationPrompt = "destination sends independently";
+    const sourcePreviewUrl = "blob:source-owned-optimistic-image";
+    let releaseSourceTurn!: () => void;
+    const sourceTurnGate = new Promise<void>((resolve) => {
+      releaseSourceTurn = resolve;
+    });
+    let sourceAcknowledgedMessage: ChatMessage | null = null;
+    const getSourceAcknowledgedMessage = () => sourceAcknowledgedMessage;
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: addThreadToSnapshot(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-optimistic-owner-source" as MessageId,
+          targetText: "existing source message",
+        }),
+        OTHER_THREAD_ID,
+      ),
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            if (command.type === "thread.turn.start" && command.threadId === THREAD_ID) {
+              sourceAcknowledgedMessage = {
+                id: command.message.messageId,
+                role: "user",
+                text: command.message.text,
+                attachments: command.message.attachments,
+                dispatchMode: command.dispatchMode,
+                createdAt: command.createdAt,
+                streaming: false,
+                source: "native",
+              };
+              await sourceTurnGate;
+            }
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_ID, sourcePrompt);
+      useComposerDraftStore.getState().addImages(THREAD_ID, [
+        createComposerImage({
+          id: "source-owned-optimistic-image",
+          previewUrl: sourcePreviewUrl,
+          name: "source-owned.png",
+        }),
+      ]);
+      (
+        await waitForElement(
+          () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+          "Unable to find the source composer for optimistic ownership.",
+        )
+      ).requestSubmit();
+
+      await vi.waitFor(() => {
+        expect(getSourceAcknowledgedMessage()).not.toBeNull();
+        expect(document.body.textContent ?? "").toContain(sourcePrompt);
+        expect(document.querySelector(`img[src="${sourcePreviewUrl}"]`)).not.toBeNull();
+      });
+
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: OTHER_THREAD_ID },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${OTHER_THREAD_ID}`,
+        "Destination thread should own the pane.",
+      );
+      await vi.waitFor(() => {
+        expect(document.body.textContent ?? "").not.toContain(sourcePrompt);
+        expect(document.querySelector(`img[src="${sourcePreviewUrl}"]`)).toBeNull();
+      });
+      const destinationEditor = await waitForComposerEditor();
+      destinationEditor.focus();
+      await userEvent.keyboard("{ArrowUp}");
+      expect(destinationEditor.textContent ?? "").not.toContain(sourcePrompt);
+
+      useComposerDraftStore.getState().setPrompt(OTHER_THREAD_ID, destinationPrompt);
+      await vi.waitFor(() => {
+        expect(destinationEditor.textContent ?? "").toContain(destinationPrompt);
+      });
+      (
+        await waitForElement(
+          () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+          "Unable to find the destination composer.",
+        )
+      ).requestSubmit();
+      await vi.waitFor(() => {
+        expect(
+          wsRequests
+            .map(readDispatchedCommand)
+            .some(
+              (command) =>
+                command?.type === "thread.turn.start" && command.threadId === OTHER_THREAD_ID,
+            ),
+        ).toBe(true);
+      });
+
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: THREAD_ID },
+      });
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${THREAD_ID}`,
+        "Source thread should regain the pane.",
+      );
+      await vi.waitFor(() => {
+        expect(document.body.textContent ?? "").toContain(sourcePrompt);
+        expect(document.body.textContent ?? "").not.toContain(destinationPrompt);
+        expect(document.querySelector(`img[src="${sourcePreviewUrl}"]`)).not.toBeNull();
+      });
+
+      releaseSourceTurn();
+      await vi.waitFor(() => {
+        expect(
+          wsRequests
+            .map(readDispatchedCommand)
+            .some(
+              (command) => command?.type === "thread.turn.start" && command.threadId === THREAD_ID,
+            ),
+        ).toBe(true);
+      });
+      const acknowledgedMessage = getSourceAcknowledgedMessage();
+      if (!acknowledgedMessage) {
+        throw new Error("Source turn acknowledgement was not captured.");
+      }
+      useStore.setState((state) => {
+        const existingMessageIds = state.messageIdsByThreadId?.[THREAD_ID] ?? [];
+        const existingMessagesById = state.messageByThreadId?.[THREAD_ID] ?? {};
+        return {
+          messageIdsByThreadId: {
+            ...state.messageIdsByThreadId,
+            [THREAD_ID]: [...existingMessageIds, acknowledgedMessage.id],
+          },
+          messageByThreadId: {
+            ...state.messageByThreadId,
+            [THREAD_ID]: {
+              ...existingMessagesById,
+              [acknowledgedMessage.id]: acknowledgedMessage,
+            },
+          },
+        };
+      });
+      await vi.waitFor(
+        () => {
+          expect(
+            document.querySelectorAll(`[data-message-id="${acknowledgedMessage.id}"]`),
+          ).toHaveLength(1);
+          expect(revokeObjectUrl).toHaveBeenCalledWith(sourcePreviewUrl);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const splitViewId = useSplitViewStore.getState().createFromDrop({
+        sourceThreadId: THREAD_ID,
+        ownerProjectId: PROJECT_ID,
+        droppedThreadId: OTHER_THREAD_ID,
+        direction: "horizontal",
+        side: "second",
+      });
+      await mounted.router.navigate({
+        to: "/$threadId",
+        params: { threadId: THREAD_ID },
+        search: () => ({ splitViewId }),
+      });
+      await vi.waitFor(() => {
+        expect(document.querySelectorAll("[data-split-chat-pane]")).toHaveLength(2);
+      });
+      await vi.waitFor(() => {
+        const sourcePane = document
+          .querySelector(`[data-message-id="${acknowledgedMessage.id}"]`)
+          ?.closest<HTMLElement>("[data-split-chat-pane]");
+        expect(sourcePane).not.toBeNull();
+        expect(sourcePane?.textContent ?? "").toContain(sourcePrompt);
+        const destinationPane = Array.from(
+          document.querySelectorAll<HTMLElement>("[data-split-chat-pane]"),
+        ).find((pane) => pane !== sourcePane);
+        expect(destinationPane).toBeDefined();
+        expect(destinationPane?.textContent ?? "").not.toContain(sourcePrompt);
+      });
+    } finally {
+      releaseSourceTurn();
+      revokeObjectUrl.mockRestore();
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps the same-thread send gate when provider preflight crosses a split remount", async () => {
     const unavailableProvider = {
       provider: "codex" as const,
@@ -6571,7 +6767,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(removeWorktree).toHaveBeenCalledWith({
             cwd: "/repo/project",
             path: "/repo/.codex/worktrees/project/deleted-send",
-            force: true,
+            force: false,
           });
         },
         { timeout: 8_000, interval: 16 },
@@ -6682,7 +6878,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(removeWorktree).toHaveBeenCalledWith({
             cwd: "/repo/project",
             path: "/repo/.codex/worktrees/project/deleted-draft",
-            force: true,
+            force: false,
           });
         },
         { timeout: 8_000, interval: 16 },
@@ -6944,8 +7140,113 @@ describe("ChatView timeline estimator parity (full app)", () => {
       expect(removeWorktree).toHaveBeenCalledWith({
         cwd: "/repo/project",
         path: firstPath,
-        force: true,
+        force: false,
       });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("adopts a generated worktree when non-forced rollback cleanup refuses removal", async () => {
+    const newThreadId = ThreadId.makeUnsafe("thread-dirty-worktree-promotion-failure");
+    const createdPath = "/repo/.codex/worktrees/project/dirty-before-turn";
+    const createdBranch = "scient/dirty-before-turn";
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [newThreadId]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          entryPoint: "chat",
+          branch: "main",
+          worktreePath: null,
+          envMode: "worktree",
+          workspaceOrigin: "intentional",
+        },
+      },
+      projectDraftThreadIdByProjectId: { [PROJECT_ID]: newThreadId },
+    });
+    const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(async () => ({
+      worktree: { path: createdPath, branch: createdBranch },
+    }));
+    const removeWorktree = vi.fn<NativeApi["git"]["removeWorktree"]>(async () => {
+      throw new Error("worktree contains external changes");
+    });
+    let failNextTurn = true;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      initialEntry: `/${newThreadId}`,
+      configureNativeApi: (api) => ({
+        ...api,
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            const result = await api.orchestration.dispatchCommand(command);
+            if (command.type === "thread.turn.start" && failNextTurn) {
+              failNextTurn = false;
+              throw new Error("deterministic pre-turn failure");
+            }
+            return result;
+          }),
+        },
+        git: { ...api.git, createWorktree, removeWorktree },
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(newThreadId, "preserve external worktree data");
+      const composerEditor = await waitForComposerEditor();
+      await vi.waitFor(() => {
+        expect(composerEditor.textContent ?? "").toContain("preserve external worktree data");
+      });
+
+      (
+        await waitForElement(
+          () => document.querySelector<HTMLFormElement>('form[data-chat-composer-form="true"]'),
+          "Unable to find the composer before dirty-worktree rollback.",
+        )
+      ).requestSubmit();
+
+      await vi.waitFor(
+        () => {
+          expect(removeWorktree).toHaveBeenCalledWith({
+            cwd: "/repo/project",
+            path: createdPath,
+            force: false,
+          });
+          expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+            envMode: "worktree",
+            branch: createdBranch,
+            worktreePath: createdPath,
+          });
+          expect(
+            useComposerDraftStore.getState().getDraftThread(newThreadId)?.promotedTo,
+          ).toBeUndefined();
+        },
+        { timeout: 20_000, interval: 16 },
+      );
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt).toBe(
+        "preserve external worktree data",
+      );
+
+      await (await waitForSendButton()).click();
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests
+              .map(readDispatchedCommand)
+              .filter(
+                (command) =>
+                  command?.type === "thread.turn.start" && command.threadId === newThreadId,
+              ),
+          ).toHaveLength(2);
+        },
+        { timeout: 20_000, interval: 16 },
+      );
+      expect(createWorktree).toHaveBeenCalledOnce();
+      expect(removeWorktree).toHaveBeenCalledOnce();
     } finally {
       await mounted.cleanup();
     }

@@ -608,6 +608,10 @@ const sendInFlightThreadIds = new Set<ThreadId>();
 const sendPreflightInFlightThreadIds = new Set<ThreadId>();
 const sendOperationInFlightThreadIds = new Set<ThreadId>();
 
+type OwnedOptimisticUserMessage = ChatMessage & {
+  ownerThreadId: ThreadId;
+};
+
 function terminalHasRunningSubprocess(threadId: ThreadId, terminalId: string): boolean {
   const terminalState = selectThreadTerminalState(
     useTerminalStateStore.getState().terminalStateByThreadId,
@@ -1346,7 +1350,9 @@ export default function ChatView({
   const emptyDraftProjectRequestInFlightRef = useRef<number | null>(null);
   const [isDragOverComposer, setIsDragOverComposer] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
-  const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
+  const [optimisticUserMessages, setOptimisticUserMessages] = useState<
+    OwnedOptimisticUserMessage[]
+  >([]);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const composerAssistantSelectionsRef = useRef<ComposerAssistantSelectionAttachment[]>(
@@ -3171,10 +3177,12 @@ export default function ChatView({
         : [];
     // Optimistic messages exist only briefly after a send; skip the full-transcript
     // id Set on the common (streaming-flush) path where there is nothing to reconcile.
-    let pendingMessages = optimisticUserMessages;
-    if (optimisticUserMessages.length > 0) {
+    let pendingMessages = optimisticUserMessages.filter(
+      (message) => message.ownerThreadId === threadId,
+    );
+    if (pendingMessages.length > 0) {
       const serverIds = new Set(serverMessagesWithPreviewHandoff.map((message) => message.id));
-      pendingMessages = optimisticUserMessages.filter((message) => !serverIds.has(message.id));
+      pendingMessages = pendingMessages.filter((message) => !serverIds.has(message.id));
     }
     const withPending =
       pendingMessages.length === 0
@@ -3193,15 +3201,18 @@ export default function ChatView({
     const activeMessages = activeThread?.messages ?? EMPTY_MESSAGES;
     // Optimistic messages exist only briefly after a send; skip the full-transcript
     // id Set on the common (streaming-flush) path where there is nothing to reconcile.
-    if (optimisticUserMessages.length === 0) {
+    const ownedOptimisticMessages = optimisticUserMessages.filter(
+      (message) => message.ownerThreadId === threadId,
+    );
+    if (ownedOptimisticMessages.length === 0) {
       return derivePromptHistoryFromMessages(activeMessages);
     }
     const activeMessageIds = new Set(activeMessages.map((message) => message.id));
-    const pendingOptimisticMessages = optimisticUserMessages.filter(
+    const pendingOptimisticMessages = ownedOptimisticMessages.filter(
       (message) => !activeMessageIds.has(message.id),
     );
     return derivePromptHistoryFromMessages([...activeMessages, ...pendingOptimisticMessages]);
-  }, [activeThread?.messages, optimisticUserMessages]);
+  }, [activeThread?.messages, optimisticUserMessages, threadId]);
   const timelineEntries = useMemo(
     () =>
       deriveTimelineEntries(
@@ -3212,8 +3223,13 @@ export default function ChatView({
     [activeThread?.proposedPlans, agentActivityTimelineState.timelineWorkEntries, timelineMessages],
   );
   const enteringUserMessageIds = useMemo<ReadonlySet<MessageId>>(
-    () => new Set(optimisticUserMessages.map((message) => message.id)),
-    [optimisticUserMessages],
+    () =>
+      new Set(
+        optimisticUserMessages
+          .filter((message) => message.ownerThreadId === threadId)
+          .map((message) => message.id),
+      ),
+    [optimisticUserMessages, threadId],
   );
   const forkableMessageIds = useMemo(
     () => (activeThread ? resolveThreadForkableMessageIds(activeThread) : new Set<MessageId>()),
@@ -5556,13 +5572,17 @@ export default function ChatView({
       return;
     }
     const serverIds = new Set(activeThread.messages.map((message) => message.id));
-    const removedMessages = optimisticUserMessages.filter((message) => serverIds.has(message.id));
+    const removedMessages = optimisticUserMessages.filter(
+      (message) => message.ownerThreadId === activeThread.id && serverIds.has(message.id),
+    );
     if (removedMessages.length === 0) {
       return;
     }
     const timer = window.setTimeout(() => {
       setOptimisticUserMessages((existing) =>
-        existing.filter((message) => !serverIds.has(message.id)),
+        existing.filter(
+          (message) => message.ownerThreadId !== activeThread.id || !serverIds.has(message.id),
+        ),
       );
     }, 0);
     for (const removedMessage of removedMessages) {
@@ -5635,14 +5655,6 @@ export default function ChatView({
   }, [selectedProvider, threadId, updateSelectedComposerMentions, updateSelectedComposerSkills]);
 
   useLayoutEffect(() => {
-    // ChatView stays mounted across thread switches, so clear thread-local overlays before paint.
-    setOptimisticUserMessages((existing) => {
-      if (existing.length === 0) return existing;
-      for (const message of existing) {
-        revokeUserMessagePreviewUrls(message);
-      }
-      return [];
-    });
     setExpandedImage(null);
   }, [threadId]);
 
@@ -5655,13 +5667,6 @@ export default function ChatView({
     void readNativeApi()?.server.cancelVoiceTranscription?.();
     void cancelVoiceRecording();
     setVoiceCompletionIntent(null);
-    setOptimisticUserMessages((existing) => {
-      if (existing.length === 0) return existing;
-      for (const message of existing) {
-        revokeUserMessagePreviewUrls(message);
-      }
-      return [];
-    });
     localDispatchOwnerThreadIdRef.current = null;
     setLocalDispatch(null);
     setComposerHighlightedItemId(null);
@@ -8094,6 +8099,7 @@ export default function ChatView({
       setOptimisticUserMessages((existing) => [
         ...existing,
         {
+          ownerThreadId: threadIdForSend,
           id: messageIdForSend,
           role: "user",
           text: outgoingMessageText,
@@ -8161,7 +8167,7 @@ export default function ChatView({
         await api.git.removeWorktree({
           cwd: worktree.cwd,
           path: worktree.path,
-          force: true,
+          force: false,
         });
         createdWorktreeForSend = null;
         return true;
@@ -8194,8 +8200,8 @@ export default function ChatView({
         };
         if (!sendSourceStillExists()) {
           // No setup action or user turn has run in this freshly-created
-          // worktree, so forced removal is safe and prevents an ownerless
-          // worktree from surviving deletion of the source thread.
+          // worktree, but another process may already have written to it. Let
+          // Git refuse a dirty removal so unique data is never discarded.
           await removeUntouchedCreatedWorktree();
           throw new Error("Thread was deleted before the message could be sent.");
         }
@@ -8465,11 +8471,17 @@ export default function ChatView({
         failedSendDraftStillEmpty
       ) {
         setOptimisticUserMessages((existing) => {
-          const removed = existing.filter((message) => message.id === messageIdForSend);
+          const removed = existing.filter(
+            (message) =>
+              message.ownerThreadId === threadIdForSend && message.id === messageIdForSend,
+          );
           for (const message of removed) {
             revokeUserMessagePreviewUrls(message);
           }
-          const next = existing.filter((message) => message.id !== messageIdForSend);
+          const next = existing.filter(
+            (message) =>
+              message.ownerThreadId !== threadIdForSend || message.id !== messageIdForSend,
+          );
           return next.length === existing.length ? existing : next;
         });
         setComposerDraftPrompt(threadIdForSend, promptForSend);
@@ -8844,6 +8856,7 @@ export default function ChatView({
     setOptimisticUserMessages((existing) => [
       ...existing,
       {
+        ownerThreadId: threadIdForSend,
         id: messageIdForSend,
         role: "user",
         text: outgoingMessageText,
@@ -8929,7 +8942,9 @@ export default function ChatView({
       return true;
     } catch (err) {
       setOptimisticUserMessages((existing) =>
-        existing.filter((message) => message.id !== messageIdForSend),
+        existing.filter(
+          (message) => message.ownerThreadId !== threadIdForSend || message.id !== messageIdForSend,
+        ),
       );
       if (threadSourceStillExists(threadIdForSend, true)) {
         setThreadError(
