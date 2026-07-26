@@ -12,6 +12,7 @@ describe("live HTML preview RPC transport", () => {
       sourceIdentity: "/workspace/report.html",
       sourceRoot: "/workspace",
       watchedPaths: ["/workspace/report.html", "/workspace/theme.css"],
+      watchDiscoveryLimited: true,
     });
     const encoded = Schema.encodeSync(LiveHtmlPreviewPrepareResult)(decoded);
     const roundTripped = Schema.decodeUnknownSync(LiveHtmlPreviewPrepareResult)(encoded);
@@ -19,7 +20,9 @@ describe("live HTML preview RPC transport", () => {
     expect(decoded.watchedPaths).toEqual(["/workspace/report.html", "/workspace/theme.css"]);
     expect(decoded.sourceIdentity).toBe("/workspace/report.html");
     expect(decoded.sourceRoot).toBe("/workspace");
+    expect(decoded.watchDiscoveryLimited).toBe(true);
     expect(encoded.watchedPaths).toEqual(["/workspace/report.html", "/workspace/theme.css"]);
     expect(roundTripped.watchedPaths).toEqual(["/workspace/report.html", "/workspace/theme.css"]);
+    expect(roundTripped.watchDiscoveryLimited).toBe(true);
   });
 });
