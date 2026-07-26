@@ -50,6 +50,7 @@ import { isBrowserCopyLinkChord } from "@synara/shared/browserShortcuts";
 import {
   serializeLocalHtmlCapabilityAuthority,
   type BrowserReplaceLocalHtmlPreviewInput,
+  type LocalHtmlNetworkPolicy,
 } from "@synara/shared/liveHtmlPreviewTransport";
 import {
   BROWSER_BLANK_URL as ABOUT_BLANK_URL,
@@ -132,6 +133,7 @@ interface PendingRuntimeSync {
 interface ProvisionalLocalHtmlRuntime {
   threadId: ThreadId;
   sourceTabId: string;
+  runtimeTabId: string;
   replacementTaskKey: string;
   tab: BrowserTabState;
 }
@@ -220,10 +222,14 @@ function isSameLocalHtmlSource(left: BrowserTabState, right: BrowserTabState): b
   if (left.kind !== "local-html" || right.kind !== "local-html") {
     return false;
   }
-  const leftSourceIdentity = canonicalLocalHtmlSourcePath(left.sourceIdentity);
-  const rightSourceIdentity = canonicalLocalHtmlSourcePath(right.sourceIdentity);
-  if (leftSourceIdentity && rightSourceIdentity) {
-    return leftSourceIdentity === rightSourceIdentity;
+  const leftSourceIdentity = normalizedLocalHtmlSourcePath(left.sourceIdentity);
+  const rightSourceIdentity = normalizedLocalHtmlSourcePath(right.sourceIdentity);
+  const leftSourceRoot = normalizedLocalHtmlSourcePath(left.sourceRoot);
+  const rightSourceRoot = normalizedLocalHtmlSourcePath(right.sourceRoot);
+  const leftHasCanonicalAuthority = Boolean(leftSourceIdentity && leftSourceRoot);
+  const rightHasCanonicalAuthority = Boolean(rightSourceIdentity && rightSourceRoot);
+  if (leftHasCanonicalAuthority || rightHasCanonicalAuthority) {
+    return leftSourceIdentity === rightSourceIdentity && leftSourceRoot === rightSourceRoot;
   }
   const leftDisplayUrl = normalizedLocalHtmlSourcePath(left.sourceIdentity ?? left.displayUrl);
   const rightDisplayUrl = normalizedLocalHtmlSourcePath(right.sourceIdentity ?? right.displayUrl);
@@ -278,6 +284,8 @@ function sameLocalHtmlReplacementInput(
     left.sourceIdentity === right.sourceIdentity &&
     left.sourceRoot === right.sourceRoot &&
     left.watchDiscoveryLimited === right.watchDiscoveryLimited &&
+    left.localHtmlNetworkPolicy === right.localHtmlNetworkPolicy &&
+    left.localHtmlCapabilityProof === right.localHtmlCapabilityProof &&
     left.activate === right.activate &&
     sameStringList(left.watchedPaths, right.watchedPaths) &&
     sameStringList(left.allowedExternalUrls, right.allowedExternalUrls)
@@ -321,6 +329,7 @@ function createBrowserTab(
   previewSessionSlot: 0 | 1 = 0,
   sourceIdentity?: string,
   sourceRoot?: string,
+  localHtmlNetworkPolicy?: LocalHtmlNetworkPolicy,
 ): BrowserTabState {
   const sourceAuthority =
     kind === "local-html"
@@ -337,6 +346,7 @@ function createBrowserTab(
           previewSessionSlot,
           sourceChangeGeneration: 0,
           ...(sourceAuthority ?? {}),
+          ...(localHtmlNetworkPolicy ? { localHtmlNetworkPolicy } : {}),
         }
       : {}),
     title: defaultTitleForUrl(url),
@@ -362,7 +372,7 @@ function previewSessionPartitionForTab(threadId: ThreadId, tab: BrowserTabState)
     tab.displayUrl &&
     tab.previewCwd
   ) {
-    const sourceIdentity = `${threadId}\0${normalizedLocalHtmlSourcePath(tab.previewCwd)}\0${normalizedLocalHtmlSourcePath(tab.sourceIdentity ?? tab.displayUrl)}`;
+    const sourceIdentity = `${threadId}\0${normalizedLocalHtmlSourcePath(tab.previewCwd)}\0${normalizedLocalHtmlSourcePath(tab.sourceRoot)}\0${normalizedLocalHtmlSourcePath(tab.sourceIdentity ?? tab.displayUrl)}`;
     const sourceHash = Crypto.createHash("sha256")
       .update(sourceIdentity)
       .digest("hex")
@@ -463,6 +473,11 @@ function buildRuntimeKey(threadId: ThreadId, tabId: string): string {
 }
 
 function buildLocalHtmlReplacementKey(input: BrowserReplaceLocalHtmlPreviewInput): string {
+  const normalizedSourceIdentity = normalizedLocalHtmlSourcePath(input.sourceIdentity);
+  const normalizedSourceRoot = normalizedLocalHtmlSourcePath(input.sourceRoot);
+  if (normalizedSourceIdentity && normalizedSourceRoot) {
+    return `${input.threadId}\0canonical\0${normalizedSourceRoot}\0${normalizedSourceIdentity}`;
+  }
   const normalizedPreviewCwd = normalizedLocalHtmlSourcePath(input.previewCwd);
   const normalizedDisplayUrl = normalizedLocalHtmlSourcePath(
     input.sourceIdentity ?? input.displayUrl,
@@ -470,7 +485,7 @@ function buildLocalHtmlReplacementKey(input: BrowserReplaceLocalHtmlPreviewInput
   if (!normalizedPreviewCwd || !normalizedDisplayUrl) {
     return buildRuntimeKey(input.threadId, input.tabId);
   }
-  return `${input.threadId}\0${normalizedPreviewCwd}\0${normalizedDisplayUrl}`;
+  return `${input.threadId}\0legacy\0${normalizedPreviewCwd}\0${normalizedDisplayUrl}`;
 }
 
 function createPendingLocalHtmlReplacement(
@@ -568,11 +583,12 @@ export class DesktopBrowserManager {
     readonly sourceRoot: string | null | undefined;
     readonly watchedPaths: readonly string[] | undefined;
     readonly allowedExternalUrls: readonly string[] | undefined;
+    readonly localHtmlNetworkPolicy: LocalHtmlNetworkPolicy | null | undefined;
     readonly localHtmlCapabilityProof: string | null | undefined;
   }): void {
     const sourceAuthority = validatePreparedLocalHtmlSourceAuthority(input);
     const suppliedProof = input.localHtmlCapabilityProof?.trim();
-    if (!this.localHtmlCapabilityKey || !suppliedProof) {
+    if (!this.localHtmlCapabilityKey || !suppliedProof || !input.localHtmlNetworkPolicy) {
       throw new Error("The local HTML preview is missing its server-issued capability proof.");
     }
     if (suppliedProof.length > 256) {
@@ -586,6 +602,7 @@ export class DesktopBrowserManager {
           sourceRoot: sourceAuthority.sourceRoot,
           watchedPaths: input.watchedPaths ?? [],
           allowedExternalUrls: input.allowedExternalUrls ?? [],
+          networkPolicy: input.localHtmlNetworkPolicy,
         }),
       )
       .digest();
@@ -684,6 +701,7 @@ export class DesktopBrowserManager {
       kind: "artifact" | "local-html";
       origin: string;
       allowedExternalUrls?: readonly string[];
+      networkPolicy?: LocalHtmlNetworkPolicy;
     },
   ): void {
     if (this.previewSessionsConfigured.has(partition)) {
@@ -756,7 +774,7 @@ export class DesktopBrowserManager {
         event.preventDefault();
       });
     }
-    if (preview?.kind === "local-html" && preview.allowedExternalUrls === undefined) {
+    if (preview?.kind === "local-html" && preview.networkPolicy === "sealed-interactive") {
       this.configureInteractiveLocalHtmlProxy(partition, preview.origin);
     } else {
       this.previewSessionReady.set(partition, Promise.resolve(null));
@@ -801,6 +819,9 @@ export class DesktopBrowserManager {
             origin: previewOrigin,
             ...(tab.kind === "local-html" && tab.allowedExternalUrls
               ? { allowedExternalUrls: tab.allowedExternalUrls }
+              : {}),
+            ...(tab.kind === "local-html" && tab.localHtmlNetworkPolicy
+              ? { networkPolicy: tab.localHtmlNetworkPolicy }
               : {}),
           }
         : undefined,
@@ -1320,6 +1341,7 @@ export class DesktopBrowserManager {
         sourceRoot: input.sourceRoot,
         watchedPaths: input.watchedPaths,
         allowedExternalUrls: input.allowedExternalUrls,
+        localHtmlNetworkPolicy: input.localHtmlNetworkPolicy,
         localHtmlCapabilityProof: input.localHtmlCapabilityProof,
       });
     }
@@ -1334,6 +1356,7 @@ export class DesktopBrowserManager {
       input.sourceIdentity,
       input.sourceRoot,
       input.watchDiscoveryLimited,
+      input.localHtmlNetworkPolicy,
     );
     const didChange = !state.open;
     state.open = true;
@@ -1361,6 +1384,9 @@ export class DesktopBrowserManager {
         ...(input.localHtmlCapabilityProof
           ? { localHtmlCapabilityProof: input.localHtmlCapabilityProof }
           : {}),
+        ...(input.localHtmlNetworkPolicy
+          ? { localHtmlNetworkPolicy: input.localHtmlNetworkPolicy }
+          : {}),
         ...(input.allowedExternalUrls ? { allowedExternalUrls: input.allowedExternalUrls } : {}),
         activate: true,
       });
@@ -1375,6 +1401,11 @@ export class DesktopBrowserManager {
           delete activeTab.previewCwd;
         }
         activeTab.allowedExternalUrls = normalizedLocalHtmlExternalUrls(input.allowedExternalUrls);
+        if (input.localHtmlNetworkPolicy) {
+          activeTab.localHtmlNetworkPolicy = input.localHtmlNetworkPolicy;
+        } else {
+          delete activeTab.localHtmlNetworkPolicy;
+        }
         this.configureLocalHtmlSourceWatch(
           input.threadId,
           activeTab,
@@ -1676,7 +1707,7 @@ export class DesktopBrowserManager {
     const runtime = this.runtimes.get(buildRuntimeKey(input.threadId, tab.id));
     if (runtime && tab.kind === "local-html") {
       let retryPartition: string | null = null;
-      if (tab.allowedExternalUrls === undefined) {
+      if (tab.localHtmlNetworkPolicy === "sealed-interactive") {
         const previewOrigin = safeUrlOrigin(tab.url);
         if (previewOrigin) {
           retryPartition = previewSessionPartitionForTab(input.threadId, tab);
@@ -1713,9 +1744,8 @@ export class DesktopBrowserManager {
     } catch (error) {
       return Promise.reject(error);
     }
-    // A successful replacement gives this source a new random tab id. Use the
-    // logical source identity so later saves cannot start a competing task via
-    // that new id while this queue is still draining.
+    // Serialize every revision by canonical source authority, independently of
+    // renderer snapshots or the provisional runtime used for atomic replacement.
     const key = buildLocalHtmlReplacementKey(validatedInput);
     const pending = createPendingLocalHtmlReplacement(validatedInput);
     const existing = this.localHtmlReplacementTasks.get(key);
@@ -1736,13 +1766,19 @@ export class DesktopBrowserManager {
       return pending.promise;
     }
     this.localHtmlReplacementCurrentInputs.set(key, pending);
-    const task = this.performQueuedLocalHtmlPreviewReplacements(key, pending).finally(() => {
-      if (this.localHtmlReplacementTasks.get(key) === task) {
-        this.localHtmlReplacementTasks.delete(key);
-        this.localHtmlReplacementCurrentInputs.delete(key);
-        this.localHtmlReplacementQueuedInputs.delete(key);
-      }
-    });
+    // Publish single-flight ownership before starting any source install. The
+    // deferred callback makes two same-turn no-tab callers observe the same
+    // queue even though the first install has not created browser state yet.
+    let task: Promise<void>;
+    task = Promise.resolve()
+      .then(() => this.performQueuedLocalHtmlPreviewReplacements(key, pending))
+      .finally(() => {
+        if (this.localHtmlReplacementTasks.get(key) === task) {
+          this.localHtmlReplacementTasks.delete(key);
+          this.localHtmlReplacementCurrentInputs.delete(key);
+          this.localHtmlReplacementQueuedInputs.delete(key);
+        }
+      });
     this.localHtmlReplacementTasks.set(key, task);
     return pending.promise;
   }
@@ -1750,11 +1786,6 @@ export class DesktopBrowserManager {
   private validateLocalHtmlReplacementInput(
     input: BrowserReplaceLocalHtmlPreviewInput,
   ): BrowserReplaceLocalHtmlPreviewInput {
-    const state = this.states.get(input.threadId);
-    const currentTab = state?.tabs.find((tab) => tab.id === input.tabId);
-    if (!currentTab || currentTab.kind !== "local-html") {
-      throw new Error("The local HTML preview is no longer available.");
-    }
     if (!isLocalHtmlPreviewUrl(input.url)) {
       throw new Error("The replacement URL is not a local HTML preview capability.");
     }
@@ -1766,18 +1797,59 @@ export class DesktopBrowserManager {
       sourceRoot: input.sourceRoot,
       watchedPaths: input.watchedPaths,
       allowedExternalUrls: input.allowedExternalUrls,
+      localHtmlNetworkPolicy: input.localHtmlNetworkPolicy,
       localHtmlCapabilityProof: input.localHtmlCapabilityProof,
     });
 
-    const currentDisplayUrl = normalizedLocalHtmlSourcePath(currentTab.displayUrl);
-    const currentPreviewCwd = canonicalLocalHtmlSourcePath(currentTab.previewCwd);
-    const currentSourceIdentity = normalizedLocalHtmlSourcePath(currentTab.sourceIdentity);
-    const currentSourceRoot = normalizedLocalHtmlSourcePath(currentTab.sourceRoot);
     const preparedAuthority = validatePreparedLocalHtmlSourceAuthority({
       displayUrl: input.displayUrl,
       sourceIdentity: input.sourceIdentity,
       sourceRoot: input.sourceRoot,
     });
+    const state = this.states.get(input.threadId);
+    const exactTab = state?.tabs.find((tab) => tab.id === input.tabId);
+    if (
+      exactTab?.kind === "local-html" &&
+      (normalizedLocalHtmlSourcePath(exactTab.sourceIdentity) !==
+        preparedAuthority.sourceIdentity ||
+        normalizedLocalHtmlSourcePath(exactTab.sourceRoot) !== preparedAuthority.sourceRoot)
+    ) {
+      throw new Error("The replacement does not match the owned local HTML source.");
+    }
+    const currentTab = state?.tabs.find(
+      (tab) =>
+        tab.kind === "local-html" &&
+        ((tab.id === input.tabId &&
+          normalizedLocalHtmlSourcePath(tab.sourceIdentity) === preparedAuthority.sourceIdentity) ||
+          (normalizedLocalHtmlSourcePath(tab.sourceIdentity) === preparedAuthority.sourceIdentity &&
+            normalizedLocalHtmlSourcePath(tab.sourceRoot) === preparedAuthority.sourceRoot)),
+    );
+    if (!currentTab) {
+      if (input.tabId) {
+        throw new Error("The local HTML preview is no longer available.");
+      }
+      const watchedPaths = [preparedAuthority.sourceIdentity, ...input.watchedPaths]
+        .map((sourcePath) => canonicalLocalHtmlSourcePath(sourcePath))
+        .filter(
+          (sourcePath): sourcePath is string =>
+            sourcePath !== null && isPathInside(sourcePath, preparedAuthority.sourceRoot),
+        );
+      if (watchedPaths.length !== input.watchedPaths.length + 1) {
+        throw new Error("A replacement dependency is outside the local HTML source authority.");
+      }
+      return {
+        ...input,
+        tabId: "",
+        sourceIdentity: preparedAuthority.sourceIdentity,
+        sourceRoot: preparedAuthority.sourceRoot,
+        watchedPaths: [...new Set(watchedPaths)],
+      };
+    }
+
+    const currentDisplayUrl = normalizedLocalHtmlSourcePath(currentTab.displayUrl);
+    const currentPreviewCwd = canonicalLocalHtmlSourcePath(currentTab.previewCwd);
+    const currentSourceIdentity = normalizedLocalHtmlSourcePath(currentTab.sourceIdentity);
+    const currentSourceRoot = normalizedLocalHtmlSourcePath(currentTab.sourceRoot);
     if (
       !currentDisplayUrl ||
       !currentPreviewCwd ||
@@ -1805,6 +1877,7 @@ export class DesktopBrowserManager {
 
     return {
       ...input,
+      tabId: currentTab.id,
       displayUrl: currentTab.displayUrl ?? currentDisplayUrl,
       previewCwd: currentTab.previewCwd ?? currentPreviewCwd,
       sourceIdentity: currentSourceIdentity,
@@ -1877,6 +1950,28 @@ export class DesktopBrowserManager {
     input: BrowserReplaceLocalHtmlPreviewInput,
     replacementTaskKey: string,
   ): Promise<ThreadBrowserState> {
+    if (!input.tabId) {
+      return this.open({
+        threadId: input.threadId,
+        initialUrl: input.url,
+        kind: "local-html",
+        displayUrl: input.displayUrl,
+        previewCwd: input.previewCwd,
+        watchedPaths: input.watchedPaths,
+        ...(input.sourceIdentity ? { sourceIdentity: input.sourceIdentity } : {}),
+        ...(input.sourceRoot ? { sourceRoot: input.sourceRoot } : {}),
+        ...(input.watchDiscoveryLimited !== undefined
+          ? { watchDiscoveryLimited: input.watchDiscoveryLimited }
+          : {}),
+        ...(input.localHtmlCapabilityProof
+          ? { localHtmlCapabilityProof: input.localHtmlCapabilityProof }
+          : {}),
+        ...(input.localHtmlNetworkPolicy
+          ? { localHtmlNetworkPolicy: input.localHtmlNetworkPolicy }
+          : {}),
+        ...(input.allowedExternalUrls ? { allowedExternalUrls: input.allowedExternalUrls } : {}),
+      });
+    }
     const state = this.ensureWorkspace(input.threadId);
     const activeTabIdAtStart = state.activeTabId;
     const previousTabIndex = state.tabs.findIndex((candidate) => candidate.id === input.tabId);
@@ -1896,7 +1991,10 @@ export class DesktopBrowserManager {
       nextSessionSlot,
       input.sourceIdentity,
       input.sourceRoot,
+      input.localHtmlNetworkPolicy,
     );
+    candidateTab.id = previousTab.id;
+    const provisionalRuntimeTabId = Crypto.randomUUID();
     candidateTab.sourceChangeGeneration = previousTab.sourceChangeGeneration ?? 0;
     const partition = previewSessionPartitionForTab(input.threadId, candidateTab);
     const abortController = new AbortController();
@@ -1923,12 +2021,17 @@ export class DesktopBrowserManager {
         throw new Error("The local HTML preview changed while it was waiting to refresh.");
       }
       this.configureTabSession(input.threadId, candidateTab);
-      candidateRuntime = this.createLiveRuntime(input.threadId, candidateTab.id, candidateTab);
+      candidateRuntime = this.createLiveRuntime(
+        input.threadId,
+        provisionalRuntimeTabId,
+        candidateTab,
+      );
       const liveCandidateRuntime = candidateRuntime;
       this.runtimes.set(liveCandidateRuntime.key, liveCandidateRuntime);
       this.provisionalLocalHtmlRuntimes.set(liveCandidateRuntime.key, {
         threadId: input.threadId,
         sourceTabId: input.tabId,
+        runtimeTabId: provisionalRuntimeTabId,
         replacementTaskKey,
         tab: candidateTab,
       });
@@ -2009,6 +2112,14 @@ export class DesktopBrowserManager {
         this.destroyRuntime(input.threadId, duplicateTab.id, duplicateTab, true);
         this.clearLocalHtmlSourceWatch(input.threadId, duplicateTab.id);
       }
+      const provisionalRuntimeKey = candidateRuntime.key;
+      const committedRuntimeKey = buildRuntimeKey(input.threadId, candidateTab.id);
+      this.pendingRuntimeSyncs.delete(provisionalRuntimeKey);
+      this.runtimes.delete(provisionalRuntimeKey);
+      this.provisionalLocalHtmlRuntimes.delete(provisionalRuntimeKey);
+      candidateRuntime.key = committedRuntimeKey;
+      candidateRuntime.tabId = candidateTab.id;
+      this.runtimes.set(committedRuntimeKey, candidateRuntime);
       this.configureLocalHtmlSourceWatch(
         input.threadId,
         candidateTab,
@@ -2029,13 +2140,14 @@ export class DesktopBrowserManager {
       ) {
         this.attachRuntime(candidateRuntime, bounds);
       }
-      this.provisionalLocalHtmlRuntimes.delete(candidateRuntime.key);
       return this.snapshotThreadState(input.threadId, state);
     } catch (error) {
       if (candidateRuntime) {
         this.pendingLocalHtmlHttpErrors.delete(candidateRuntime.webContents.id);
-        this.destroyRuntime(input.threadId, candidateTab.id, candidateTab, true);
-        this.provisionalLocalHtmlRuntimes.delete(candidateRuntime.key);
+        this.destroyRuntime(input.threadId, provisionalRuntimeTabId, candidateTab, true);
+        this.provisionalLocalHtmlRuntimes.delete(
+          buildRuntimeKey(input.threadId, provisionalRuntimeTabId),
+        );
       }
       throw error;
     } finally {
@@ -2072,6 +2184,7 @@ export class DesktopBrowserManager {
         sourceRoot: input.sourceRoot,
         watchedPaths: input.watchedPaths,
         allowedExternalUrls: input.allowedExternalUrls,
+        localHtmlNetworkPolicy: input.localHtmlNetworkPolicy,
         localHtmlCapabilityProof: input.localHtmlCapabilityProof,
       });
     }
@@ -2085,6 +2198,7 @@ export class DesktopBrowserManager {
       0,
       input.sourceIdentity,
       input.sourceRoot,
+      input.localHtmlNetworkPolicy,
     );
     const existingSourceTab =
       tab.kind === "local-html"
@@ -2790,9 +2904,9 @@ export class DesktopBrowserManager {
     runtime: LiveTabRuntime,
     sourceTabOverride?: BrowserTabState,
   ): void {
-    const { threadId, tabId, webContents } = runtime;
+    const { threadId, webContents } = runtime;
     const state = this.ensureWorkspace(threadId);
-    const sourceTab = sourceTabOverride ?? this.getTab(state, tabId);
+    const sourceTab = sourceTabOverride ?? this.getTab(state, runtime.tabId);
     const tabKind = sourceTab?.kind ?? "web";
     const artifactOrigin = tabKind === "artifact" ? safeUrlOrigin(sourceTab?.url) : null;
     const localHtmlOrigin = tabKind === "local-html" ? safeUrlOrigin(sourceTab?.url) : null;
@@ -2892,7 +3006,7 @@ export class DesktopBrowserManager {
     }
 
     const didCreateWindow = (childWindow: BrowserWindow) => {
-      this.registerOAuthPopupWindow(childWindow, { threadId, tabId });
+      this.registerOAuthPopupWindow(childWindow, { threadId, tabId: runtime.tabId });
     };
     webContents.on("did-create-window", didCreateWindow);
     runtime.listenerDisposers.push(() => {
@@ -2919,7 +3033,7 @@ export class DesktopBrowserManager {
         return;
       }
       event.preventDefault();
-      this.copyTabLink(threadId, tabId);
+      this.copyTabLink(threadId, runtime.tabId);
     };
     webContents.on("before-input-event", beforeInputEvent);
     runtime.listenerDisposers.push(() => {
@@ -2928,7 +3042,7 @@ export class DesktopBrowserManager {
 
     const pageTitleUpdated = (event: Electron.Event) => {
       event.preventDefault();
-      this.queueRuntimeStateSync(threadId, tabId);
+      this.queueRuntimeStateSync(threadId, runtime.tabId);
     };
     webContents.on("page-title-updated", pageTitleUpdated);
     runtime.listenerDisposers.push(() => {
@@ -2936,7 +3050,7 @@ export class DesktopBrowserManager {
     });
 
     const pageFaviconUpdated = (_event: Electron.Event, faviconUrls: string[]) => {
-      this.queueRuntimeStateSync(threadId, tabId, faviconUrls);
+      this.queueRuntimeStateSync(threadId, runtime.tabId, faviconUrls);
     };
     webContents.on("page-favicon-updated", pageFaviconUpdated);
     runtime.listenerDisposers.push(() => {
@@ -2945,7 +3059,7 @@ export class DesktopBrowserManager {
 
     const didStartLoading = () => {
       const state = this.states.get(threadId);
-      const tab = state ? this.getTab(state, tabId) : null;
+      const tab = state ? this.getTab(state, runtime.tabId) : null;
       if (state && tab) {
         const didChange = !tab.isLoading || tab.lastError !== null;
         tab.isLoading = true;
@@ -2956,7 +3070,7 @@ export class DesktopBrowserManager {
           this.emitState(threadId);
         }
       }
-      this.queueRuntimeStateSync(threadId, tabId);
+      this.queueRuntimeStateSync(threadId, runtime.tabId);
     };
     webContents.on("did-start-loading", didStartLoading);
     runtime.listenerDisposers.push(() => {
@@ -2964,7 +3078,7 @@ export class DesktopBrowserManager {
     });
 
     const didStopLoading = () => {
-      this.queueRuntimeStateSync(threadId, tabId);
+      this.queueRuntimeStateSync(threadId, runtime.tabId);
     };
     webContents.on("did-stop-loading", didStopLoading);
     runtime.listenerDisposers.push(() => {
@@ -2977,7 +3091,7 @@ export class DesktopBrowserManager {
           .executeJavaScript(LOCAL_HTML_DEFAULT_CANVAS_SCRIPT, true)
           .catch(() => undefined);
       }
-      this.queueRuntimeStateSync(threadId, tabId);
+      this.queueRuntimeStateSync(threadId, runtime.tabId);
     };
     webContents.on("did-finish-load", didFinishLoad);
     runtime.listenerDisposers.push(() => {
@@ -2985,7 +3099,7 @@ export class DesktopBrowserManager {
     });
 
     const didNavigate = () => {
-      this.queueRuntimeStateSync(threadId, tabId);
+      this.queueRuntimeStateSync(threadId, runtime.tabId);
     };
     webContents.on("did-navigate", didNavigate);
     runtime.listenerDisposers.push(() => {
@@ -2993,7 +3107,7 @@ export class DesktopBrowserManager {
     });
 
     const didNavigateInPage = () => {
-      this.queueRuntimeStateSync(threadId, tabId);
+      this.queueRuntimeStateSync(threadId, runtime.tabId);
     };
     webContents.on("did-navigate-in-page", didNavigateInPage);
     runtime.listenerDisposers.push(() => {
@@ -3012,7 +3126,7 @@ export class DesktopBrowserManager {
       }
 
       const state = this.states.get(threadId);
-      const tab = state ? this.getTab(state, tabId) : null;
+      const tab = state ? this.getTab(state, runtime.tabId) : null;
       if (!state || !tab) {
         return;
       }
@@ -3032,8 +3146,8 @@ export class DesktopBrowserManager {
 
     const renderProcessGone = () => {
       const state = this.states.get(threadId);
-      const tab = state ? this.getTab(state, tabId) : null;
-      this.destroyRuntime(threadId, tabId);
+      const tab = state ? this.getTab(state, runtime.tabId) : null;
+      this.destroyRuntime(threadId, runtime.tabId);
       if (state && tab) {
         tab.status = "suspended";
         tab.isLoading = false;
@@ -3220,7 +3334,7 @@ export class DesktopBrowserManager {
       if (provisional.threadId !== threadId || provisional.sourceTabId !== sourceTabId) {
         continue;
       }
-      this.destroyRuntime(threadId, provisional.tab.id, provisional.tab, true);
+      this.destroyRuntime(threadId, provisional.runtimeTabId, provisional.tab, true);
       this.provisionalLocalHtmlRuntimes.delete(key);
       this.localHtmlReplacementQueuedInputs
         .get(provisional.replacementTaskKey)
@@ -3234,7 +3348,7 @@ export class DesktopBrowserManager {
       this.destroyRuntime(runtime.threadId, runtime.tabId, undefined, true);
     }
     for (const [key, provisional] of [...this.provisionalLocalHtmlRuntimes]) {
-      this.destroyRuntime(provisional.threadId, provisional.tab.id, provisional.tab, true);
+      this.destroyRuntime(provisional.threadId, provisional.runtimeTabId, provisional.tab, true);
       this.provisionalLocalHtmlRuntimes.delete(key);
     }
     for (const [threadId, state] of this.states) {
@@ -3432,6 +3546,7 @@ export class DesktopBrowserManager {
     sourceIdentity?: string,
     sourceRoot?: string,
     watchDiscoveryLimited?: boolean,
+    localHtmlNetworkPolicy?: LocalHtmlNetworkPolicy,
   ): ThreadBrowserState {
     this.ensureSessionConfigured();
     const state = this.getOrCreateState(threadId);
@@ -3445,6 +3560,7 @@ export class DesktopBrowserManager {
         0,
         sourceIdentity,
         sourceRoot,
+        localHtmlNetworkPolicy,
       );
       this.configureTabSession(threadId, initialTab);
       state.tabs = [initialTab];

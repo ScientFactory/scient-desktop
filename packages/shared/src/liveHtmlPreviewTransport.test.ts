@@ -14,6 +14,7 @@ describe("live HTML preview RPC transport", () => {
       watchedPaths: ["/workspace/report.html", "/workspace/theme.css"],
       watchDiscoveryLimited: true,
       localHtmlCapabilityProof: "server-issued-proof",
+      localHtmlNetworkPolicy: "reviewed-static",
     });
     const encoded = Schema.encodeSync(LiveHtmlPreviewPrepareResult)(decoded);
     const roundTripped = Schema.decodeUnknownSync(LiveHtmlPreviewPrepareResult)(encoded);
@@ -23,9 +24,11 @@ describe("live HTML preview RPC transport", () => {
     expect(decoded.sourceRoot).toBe("/workspace");
     expect(decoded.watchDiscoveryLimited).toBe(true);
     expect(decoded.localHtmlCapabilityProof).toBe("server-issued-proof");
+    expect(decoded.localHtmlNetworkPolicy).toBe("reviewed-static");
     expect(encoded.watchedPaths).toEqual(["/workspace/report.html", "/workspace/theme.css"]);
     expect(roundTripped.watchedPaths).toEqual(["/workspace/report.html", "/workspace/theme.css"]);
     expect(roundTripped.watchDiscoveryLimited).toBe(true);
     expect(roundTripped.localHtmlCapabilityProof).toBe("server-issued-proof");
+    expect(roundTripped.localHtmlNetworkPolicy).toBe("reviewed-static");
   });
 });

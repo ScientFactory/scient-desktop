@@ -831,11 +831,11 @@ describe("BrowserPanel interactions", () => {
     const replacementState: ThreadBrowserState = {
       ...openState,
       version: openState.version + 1,
-      activeTabId: "tab-revision",
+      activeTabId: "tab-source",
       tabs: [
         {
           ...openState.tabs[0]!,
-          id: "tab-revision",
+          id: "tab-source",
           url: replacementUrl,
           lastCommittedUrl: replacementUrl,
         },
@@ -846,6 +846,7 @@ describe("BrowserPanel interactions", () => {
       warnings: [],
       previewUrl: replacementUrl,
       localHtmlCapabilityProof: "server-issued-proof",
+      localHtmlNetworkPolicy: "reviewed-static",
       watchedPaths: ["/workspace/report.html", "/workspace/theme.css"],
     }));
     const replaceLocalHtmlPreview = vi.fn(async () => replacementState);
@@ -879,6 +880,7 @@ describe("BrowserPanel interactions", () => {
         previewCwd: "/workspace",
         watchedPaths: ["/workspace/report.html", "/workspace/theme.css"],
         localHtmlCapabilityProof: "server-issued-proof",
+        localHtmlNetworkPolicy: "reviewed-static",
         activate: true,
       });
       expect(revokeHtmlArtifactPreview).toHaveBeenCalledWith({ previewUrl: previousUrl });
@@ -904,11 +906,11 @@ describe("BrowserPanel interactions", () => {
     const replacementState: ThreadBrowserState = {
       ...openState,
       version: openState.version + 1,
-      activeTabId: "tab-revision",
+      activeTabId: "tab-source",
       tabs: [
         {
           ...openState.tabs[0]!,
-          id: "tab-revision",
+          id: "tab-source",
           url: replacementUrl,
           lastCommittedUrl: replacementUrl,
         },
@@ -930,6 +932,7 @@ describe("BrowserPanel interactions", () => {
           warnings: [],
           previewUrl: replacementUrl,
           localHtmlCapabilityProof: "server-issued-proof",
+          localHtmlNetworkPolicy: "reviewed-static",
           watchedPaths: ["/workspace/report.html"],
           allowedExternalUrls: ["https://cdn.example/script.js"],
         })),
@@ -950,6 +953,7 @@ describe("BrowserPanel interactions", () => {
         previewCwd: "/workspace",
         watchedPaths: ["/workspace/report.html"],
         localHtmlCapabilityProof: "server-issued-proof",
+        localHtmlNetworkPolicy: "reviewed-static",
         activate: true,
       });
     });
@@ -989,6 +993,7 @@ describe("BrowserPanel interactions", () => {
           warnings: [],
           previewUrl: "http://g-a2345678-1234-4123-8123-123456789abc.preview.localhost:5000/",
           localHtmlCapabilityProof: "server-issued-proof",
+          localHtmlNetworkPolicy: "reviewed-static",
           watchedPaths: ["/workspace/report.html"],
         })),
         revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
@@ -1081,6 +1086,7 @@ describe("BrowserPanel interactions", () => {
         warnings: [],
         previewUrl: firstReplacementUrl,
         localHtmlCapabilityProof: "server-issued-proof",
+        localHtmlNetworkPolicy: "reviewed-static",
         watchedPaths: ["/workspace/report.html"],
       })
       .mockResolvedValueOnce({
@@ -1088,6 +1094,7 @@ describe("BrowserPanel interactions", () => {
         warnings: [],
         previewUrl: secondReplacementUrl,
         localHtmlCapabilityProof: "server-issued-proof",
+        localHtmlNetworkPolicy: "reviewed-static",
         watchedPaths: ["/workspace/report.html"],
       })
       .mockResolvedValueOnce({
@@ -1095,6 +1102,7 @@ describe("BrowserPanel interactions", () => {
         warnings: [],
         previewUrl: recoveredReplacementUrl,
         localHtmlCapabilityProof: "server-issued-proof",
+        localHtmlNetworkPolicy: "reviewed-static",
         watchedPaths: ["/workspace/report.html"],
       });
     const replaceLocalHtmlPreview = vi
@@ -1187,6 +1195,7 @@ describe("BrowserPanel interactions", () => {
         warnings: [],
         previewUrl: failedUrl,
         localHtmlCapabilityProof: "server-issued-proof",
+        localHtmlNetworkPolicy: "reviewed-static",
         watchedPaths: ["/workspace/report.html", "/workspace/theme.css"],
       })
       .mockResolvedValueOnce({
@@ -1194,6 +1203,7 @@ describe("BrowserPanel interactions", () => {
         warnings: [],
         previewUrl: recoveredUrl,
         localHtmlCapabilityProof: "server-issued-proof",
+        localHtmlNetworkPolicy: "reviewed-static",
         watchedPaths: ["/workspace/report.html", "/workspace/theme.css"],
       });
     const replaceLocalHtmlPreview = vi
@@ -1273,6 +1283,7 @@ describe("BrowserPanel interactions", () => {
           warnings: [],
           previewUrl: "http://g-d2345678-1234-4123-8123-123456789abc.preview.localhost:5000/",
           localHtmlCapabilityProof: "server-issued-proof",
+          localHtmlNetworkPolicy: "reviewed-static",
           watchedPaths: ["/workspace/report.html"],
         })),
         revokeHtmlArtifactPreview,
@@ -1354,6 +1365,7 @@ describe("BrowserPanel interactions", () => {
           warnings: [],
           previewUrl: replacementUrl,
           localHtmlCapabilityProof: "server-issued-proof",
+          localHtmlNetworkPolicy: "reviewed-static",
           watchedPaths: ["/workspace/report.html"],
         })),
         revokeHtmlArtifactPreview,
@@ -1394,24 +1406,37 @@ describe("BrowserPanel interactions", () => {
     const replacementState: ThreadBrowserState = {
       ...openState,
       version: openState.version + 1,
-      activeTabId: "tab-revision",
+      activeTabId: "tab-source",
       tabs: [
         {
           ...openState.tabs[0]!,
-          id: "tab-revision",
+          id: "tab-source",
           url: replacementUrl,
           lastCommittedUrl: replacementUrl,
           sourceChanged: false,
         },
       ],
     };
-    const prepareLiveHtmlPreview = vi.fn(async () => ({
+    let resolvePrepared!: (value: {
+      mode: "static-document";
+      warnings: never[];
+      previewUrl: string;
+      localHtmlCapabilityProof: string;
+      localHtmlNetworkPolicy: "reviewed-static";
+      watchedPaths: string[];
+    }) => void;
+    const preparedPromise = new Promise<Parameters<typeof resolvePrepared>[0]>((resolve) => {
+      resolvePrepared = resolve;
+    });
+    const prepareLiveHtmlPreview = vi.fn(() => preparedPromise);
+    const prepared = {
       mode: "static-document" as const,
       warnings: [],
       previewUrl: replacementUrl,
       localHtmlCapabilityProof: "server-issued-proof",
+      localHtmlNetworkPolicy: "reviewed-static" as const,
       watchedPaths: ["/workspace/report.html"],
-    }));
+    };
     nativeApiTestState.api = {
       browser: {
         // Native open returns the manager's latest snapshot and therefore must not
@@ -1431,7 +1456,12 @@ describe("BrowserPanel interactions", () => {
     useBrowserStateStore.getState().upsertThreadState(openState);
 
     await renderLivePanel(() => undefined);
+    const sourceTab = (await page.getByRole("tab").element()) as HTMLButtonElement;
+    sourceTab.focus();
+    resolvePrepared(prepared);
     await vi.waitFor(() => expect(prepareLiveHtmlPreview).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(sourceTab).toHaveFocus());
+    await expect.element(page.getByRole("tab")).toHaveAttribute("aria-selected", "true");
   });
 
   it("consumes a failed automatic refresh once until a new filesystem generation arrives", async () => {
@@ -1547,6 +1577,7 @@ describe("BrowserPanel interactions", () => {
         warnings: [],
         previewUrl: replacementUrlB,
         localHtmlCapabilityProof: "server-issued-proof",
+        localHtmlNetworkPolicy: "reviewed-static",
         watchedPaths: [sourcePath],
       });
     const replaceLocalHtmlPreview = vi.fn(async () => replacementStateB);
@@ -1681,6 +1712,7 @@ describe("BrowserPanel interactions", () => {
         warnings: [],
         previewUrl: replacementUrlA,
         localHtmlCapabilityProof: "server-issued-proof",
+        localHtmlNetworkPolicy: "reviewed-static",
         watchedPaths: [sourcePath],
       })
       .mockResolvedValueOnce({
@@ -1688,6 +1720,7 @@ describe("BrowserPanel interactions", () => {
         warnings: [],
         previewUrl: replacementUrlB,
         localHtmlCapabilityProof: "server-issued-proof",
+        localHtmlNetworkPolicy: "reviewed-static",
         watchedPaths: [sourcePath],
       });
     const replaceLocalHtmlPreview = vi

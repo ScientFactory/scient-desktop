@@ -72,6 +72,34 @@ export interface HtmlPreviewGrantReconciliation {
 
 type LocalHtmlGenerationTab = Pick<BrowserTabState, "id" | "kind">;
 
+type LocalHtmlSourceTab = Pick<
+  BrowserTabState,
+  "kind" | "sourceIdentity" | "sourceRoot" | "previewCwd" | "displayUrl"
+>;
+
+export function localHtmlSourceKey(threadId: string, tab: LocalHtmlSourceTab): string | null {
+  if (tab.kind !== "local-html") return null;
+  if (tab.sourceIdentity && tab.sourceRoot) {
+    return `${threadId}\0canonical\0${tab.sourceRoot}\0${tab.sourceIdentity}`;
+  }
+  return tab.previewCwd && tab.displayUrl
+    ? `${threadId}\0legacy\0${tab.previewCwd}\0${tab.displayUrl}`
+    : null;
+}
+
+export function localHtmlTabsShareSource(
+  left: LocalHtmlSourceTab,
+  right: LocalHtmlSourceTab,
+): boolean {
+  if (left.kind !== "local-html" || right.kind !== "local-html") return false;
+  const leftHasCanonicalAuthority = Boolean(left.sourceIdentity && left.sourceRoot);
+  const rightHasCanonicalAuthority = Boolean(right.sourceIdentity && right.sourceRoot);
+  if (leftHasCanonicalAuthority || rightHasCanonicalAuthority) {
+    return left.sourceIdentity === right.sourceIdentity && left.sourceRoot === right.sourceRoot;
+  }
+  return left.previewCwd === right.previewCwd && left.displayUrl === right.displayUrl;
+}
+
 export function pruneConsumedLocalHtmlSourceGenerations(
   consumed: Map<string, number>,
   threadId: string,

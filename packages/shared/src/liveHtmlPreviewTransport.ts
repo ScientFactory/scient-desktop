@@ -36,6 +36,8 @@ declare module "@synara/contracts" {
     sourceWatchLimited?: boolean;
     /** One of the bounded session slots used for atomic local-HTML replacement. */
     previewSessionSlot?: 0 | 1;
+    /** Signed desktop network policy for this prepared local HTML capability. */
+    localHtmlNetworkPolicy?: LocalHtmlNetworkPolicy;
   }
 
   interface BrowserOpenInput {
@@ -45,6 +47,7 @@ declare module "@synara/contracts" {
     sourceRoot?: string;
     watchDiscoveryLimited?: boolean;
     localHtmlCapabilityProof?: string;
+    localHtmlNetworkPolicy?: LocalHtmlNetworkPolicy;
   }
 
   interface BrowserNewTabInput {
@@ -54,6 +57,7 @@ declare module "@synara/contracts" {
     sourceRoot?: string;
     watchDiscoveryLimited?: boolean;
     localHtmlCapabilityProof?: string;
+    localHtmlNetworkPolicy?: LocalHtmlNetworkPolicy;
   }
 }
 
@@ -67,12 +71,19 @@ export interface BrowserReplaceLocalHtmlPreviewInput {
   sourceRoot?: string;
   watchDiscoveryLimited?: boolean;
   localHtmlCapabilityProof?: string;
+  localHtmlNetworkPolicy?: LocalHtmlNetworkPolicy;
   watchedPaths: readonly string[];
   allowedExternalUrls?: readonly string[];
   activate?: boolean;
 }
 
 export const LIVE_HTML_PREVIEW_PREPARE_V1_METHOD = "scient.liveHtmlPreview.prepare.v1";
+
+export const LocalHtmlNetworkPolicy = Schema.Union([
+  Schema.Literal("sealed-interactive"),
+  Schema.Literal("reviewed-static"),
+]);
+export type LocalHtmlNetworkPolicy = typeof LocalHtmlNetworkPolicy.Type;
 
 export const LiveHtmlPreviewPrepareResult = Schema.Struct({
   ...ProjectPrepareHtmlArtifactPreviewResult.fields,
@@ -83,6 +94,7 @@ export const LiveHtmlPreviewPrepareResult = Schema.Struct({
   ),
   watchDiscoveryLimited: Schema.optional(Schema.Boolean),
   localHtmlCapabilityProof: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
+  localHtmlNetworkPolicy: Schema.optional(LocalHtmlNetworkPolicy),
 });
 export type LiveHtmlPreviewPrepareResult = typeof LiveHtmlPreviewPrepareResult.Type;
 
@@ -92,18 +104,20 @@ export interface LocalHtmlCapabilityAuthority {
   readonly sourceRoot: string;
   readonly watchedPaths: readonly string[];
   readonly allowedExternalUrls: readonly string[];
+  readonly networkPolicy: LocalHtmlNetworkPolicy;
 }
 
 export function serializeLocalHtmlCapabilityAuthority(
   authority: LocalHtmlCapabilityAuthority,
 ): string {
   return JSON.stringify({
-    version: 1,
+    version: 2,
     previewUrl: authority.previewUrl,
     sourceIdentity: authority.sourceIdentity,
     sourceRoot: authority.sourceRoot,
     watchedPaths: [...authority.watchedPaths],
     allowedExternalUrls: [...authority.allowedExternalUrls],
+    networkPolicy: authority.networkPolicy,
   });
 }
 

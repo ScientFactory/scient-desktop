@@ -55,6 +55,24 @@ describe("inspectHtmlArtifact", () => {
     expect(inspected.watchedPaths).toContain(path.join(await fs.realpath(workspace), "assets"));
   });
 
+  it("bounds discovery work across many deeply nested missing dependencies", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "lesson.html");
+    await fs.writeFile(
+      sourcePath,
+      Array.from(
+        { length: 400 },
+        (_, index) => `<link rel="stylesheet" href="missing-${index}/deep/theme.css">`,
+      ).join(""),
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: sourcePath });
+
+    expect(inspected.watchDiscoveryLimited).toBe(true);
+    expect(inspected.allowedResourcePaths).toEqual([]);
+    expect(inspected.watchedPaths.length).toBeLessThanOrEqual(250);
+  });
+
   it("classifies a standalone document with local presentation assets", async () => {
     const workspace = await makeWorkspace();
     await fs.writeFile(path.join(workspace, "lesson.css"), "body { color: green; }");

@@ -77,17 +77,41 @@ export function resolveDockDiffAvailable(input: {
 
 export function browserStateOwnsLocalHtmlRevision(
   state: ThreadBrowserState,
-  input: { url: string; displayUrl: string; previewCwd: string; sourceIdentity?: string },
+  input: {
+    url: string;
+    displayUrl: string;
+    previewCwd: string;
+    sourceIdentity?: string;
+    sourceRoot?: string;
+  },
 ): boolean {
   return state.tabs.some(
     (tab) =>
       tab.kind === "local-html" &&
       tab.url === input.url &&
       (input.sourceIdentity
-        ? tab.sourceIdentity === input.sourceIdentity
+        ? tab.sourceIdentity === input.sourceIdentity && tab.sourceRoot === input.sourceRoot
         : tab.displayUrl === input.displayUrl) &&
       tab.previewCwd === input.previewCwd,
   );
+}
+
+export function retiredLocalHtmlPreviewUrl(input: {
+  previousUrl: string | null;
+  nextState: ThreadBrowserState;
+  installed: {
+    url: string;
+    displayUrl: string;
+    previewCwd: string;
+    sourceIdentity?: string;
+    sourceRoot?: string;
+  };
+}): string | null {
+  return input.previousUrl &&
+    input.previousUrl !== input.installed.url &&
+    browserStateOwnsLocalHtmlRevision(input.nextState, input.installed)
+    ? input.previousUrl
+    : null;
 }
 
 function createRoutePanelSearchKey(input: {

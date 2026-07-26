@@ -459,6 +459,10 @@ export function makeHtmlArtifactPreviewLayer(
                 inspected.result.mode === "static-document"
                   ? (inspected.allowedExternalUrls ?? [])
                   : [];
+              const localHtmlNetworkPolicy =
+                inspected.result.mode === "static-document"
+                  ? ("reviewed-static" as const)
+                  : ("sealed-interactive" as const);
               const previewUrl = dedicatedServer
                 ? `http://127.0.0.1:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`
                 : `http://g-${id}${PREVIEW_HOST_SUFFIX}:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`;
@@ -472,6 +476,7 @@ export function makeHtmlArtifactPreviewLayer(
                         sourceRoot: canonicalSiteRoot,
                         watchedPaths,
                         allowedExternalUrls,
+                        networkPolicy: localHtmlNetworkPolicy,
                       }),
                     )
                     .digest("base64url")
@@ -483,6 +488,7 @@ export function makeHtmlArtifactPreviewLayer(
                 sourceRoot: canonicalSiteRoot,
                 watchedPaths,
                 watchDiscoveryLimited: inspected.watchDiscoveryLimited,
+                localHtmlNetworkPolicy,
                 previewUrl,
                 ...(localHtmlCapabilityProof ? { localHtmlCapabilityProof } : {}),
               };

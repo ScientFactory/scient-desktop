@@ -228,6 +228,7 @@ function localHtmlCapabilityProof(input: {
   sourceRoot: string;
   watchedPaths?: readonly string[];
   allowedExternalUrls?: readonly string[];
+  networkPolicy?: "sealed-interactive" | "reviewed-static";
 }): string {
   return createHmac("sha256", TEST_LOCAL_HTML_CAPABILITY_KEY)
     .update(
@@ -237,6 +238,9 @@ function localHtmlCapabilityProof(input: {
         sourceRoot: input.sourceRoot,
         watchedPaths: input.watchedPaths ?? [],
         allowedExternalUrls: input.allowedExternalUrls ?? [],
+        networkPolicy:
+          input.networkPolicy ??
+          (input.allowedExternalUrls === undefined ? "sealed-interactive" : "reviewed-static"),
       }),
     )
     .digest("base64url");
@@ -255,6 +259,9 @@ class DesktopBrowserManager extends NativeDesktopBrowserManager {
     const previewCwd = input.previewCwd ?? "/missing";
     const sourceIdentity = canonicalTestPath(input.sourceIdentity ?? displayUrl);
     const sourceRoot = canonicalTestPath(input.sourceRoot ?? previewCwd);
+    const localHtmlNetworkPolicy =
+      input.localHtmlNetworkPolicy ??
+      (input.allowedExternalUrls === undefined ? "sealed-interactive" : "reviewed-static");
     return super.open({
       ...input,
       initialUrl,
@@ -262,12 +269,14 @@ class DesktopBrowserManager extends NativeDesktopBrowserManager {
       previewCwd,
       sourceIdentity,
       sourceRoot,
+      localHtmlNetworkPolicy,
       localHtmlCapabilityProof: localHtmlCapabilityProof({
         url: initialUrl,
         sourceIdentity,
         sourceRoot,
         ...(input.watchedPaths ? { watchedPaths: input.watchedPaths } : {}),
         ...(input.allowedExternalUrls ? { allowedExternalUrls: input.allowedExternalUrls } : {}),
+        networkPolicy: localHtmlNetworkPolicy,
       }),
     });
   }
@@ -280,6 +289,9 @@ class DesktopBrowserManager extends NativeDesktopBrowserManager {
     const previewCwd = input.previewCwd ?? "/missing";
     const sourceIdentity = canonicalTestPath(input.sourceIdentity ?? displayUrl);
     const sourceRoot = canonicalTestPath(input.sourceRoot ?? previewCwd);
+    const localHtmlNetworkPolicy =
+      input.localHtmlNetworkPolicy ??
+      (input.allowedExternalUrls === undefined ? "sealed-interactive" : "reviewed-static");
     return super.newTab({
       ...input,
       url,
@@ -287,12 +299,14 @@ class DesktopBrowserManager extends NativeDesktopBrowserManager {
       previewCwd,
       sourceIdentity,
       sourceRoot,
+      localHtmlNetworkPolicy,
       localHtmlCapabilityProof: localHtmlCapabilityProof({
         url,
         sourceIdentity,
         sourceRoot,
         ...(input.watchedPaths ? { watchedPaths: input.watchedPaths } : {}),
         ...(input.allowedExternalUrls ? { allowedExternalUrls: input.allowedExternalUrls } : {}),
+        networkPolicy: localHtmlNetworkPolicy,
       }),
     });
   }
@@ -300,16 +314,21 @@ class DesktopBrowserManager extends NativeDesktopBrowserManager {
   override replaceLocalHtmlPreview(input: BrowserReplaceLocalHtmlPreviewInput) {
     const sourceIdentity = canonicalTestPath(input.sourceIdentity ?? input.displayUrl);
     const sourceRoot = canonicalTestPath(input.sourceRoot ?? input.previewCwd);
+    const localHtmlNetworkPolicy =
+      input.localHtmlNetworkPolicy ??
+      (input.allowedExternalUrls === undefined ? "sealed-interactive" : "reviewed-static");
     return super.replaceLocalHtmlPreview({
       ...input,
       sourceIdentity,
       sourceRoot,
+      localHtmlNetworkPolicy,
       localHtmlCapabilityProof: localHtmlCapabilityProof({
         url: input.url,
         sourceIdentity,
         sourceRoot,
         watchedPaths: input.watchedPaths,
         ...(input.allowedExternalUrls ? { allowedExternalUrls: input.allowedExternalUrls } : {}),
+        networkPolicy: localHtmlNetworkPolicy,
       }),
     });
   }
@@ -640,7 +659,7 @@ describe("DesktopBrowserManager reliability", () => {
     });
 
     expect(replaced.tabs).toHaveLength(1);
-    expect(replaced.activeTabId).not.toBe(previousTabId);
+    expect(replaced.activeTabId).toBe(previousTabId);
     expect(replaced.tabs[0]).toMatchObject({
       kind: "local-html",
       url: nextUrl,
@@ -893,7 +912,7 @@ describe("DesktopBrowserManager reliability", () => {
 
     expect(replaced.tabs).toHaveLength(2);
     expect(replaced.activeTabId).toBe(activeWebTabId);
-    expect(replaced.tabs.some((tab) => tab.id === sourceTabId)).toBe(false);
+    expect(replaced.tabs.some((tab) => tab.id === sourceTabId)).toBe(true);
     expect(replaced.tabs.find((tab) => tab.kind === "local-html")?.displayUrl).toBe(
       "/missing/report.html",
     );
@@ -964,6 +983,44 @@ describe("DesktopBrowserManager reliability", () => {
     expect(deduplicated.activeTabId).toBe(opened.activeTabId);
     expect(deduplicated.tabs[0]?.url).toContain("g-e2345678");
     manager.dispose();
+  });
+
+  it("keeps the same canonical file distinct when prepared under different roots", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "scient-browser-roots-"));
+    const nestedDirectory = join(directory, "site");
+    const sourcePath = join(nestedDirectory, "report.html");
+    await mkdir(nestedDirectory);
+    await writeFile(sourcePath, "<!doctype html><title>Report</title>");
+    const manager = new DesktopBrowserManager();
+    try {
+      manager.open({
+        threadId: THREAD_ID,
+        initialUrl: "http://g-e3345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+        kind: "local-html",
+        displayUrl: sourcePath,
+        previewCwd: directory,
+        sourceIdentity: canonicalTestPath(sourcePath),
+        sourceRoot: canonicalTestPath(directory),
+      });
+      const second = manager.newTab({
+        threadId: THREAD_ID,
+        url: "http://g-f3345678-1234-4123-8123-123456789abc.preview.localhost:43123/",
+        kind: "local-html",
+        displayUrl: sourcePath,
+        previewCwd: directory,
+        sourceIdentity: canonicalTestPath(sourcePath),
+        sourceRoot: canonicalTestPath(nestedDirectory),
+        activate: true,
+      });
+
+      expect(second.tabs).toHaveLength(2);
+      expect(new Set(second.tabs.map((tab) => tab.sourceRoot))).toEqual(
+        new Set([canonicalTestPath(directory), canonicalTestPath(nestedDirectory)]),
+      );
+    } finally {
+      manager.dispose();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("coalesces concurrent replacement requests for the same source tab", async () => {
@@ -1153,7 +1210,7 @@ describe("DesktopBrowserManager reliability", () => {
     manager.dispose();
   });
 
-  it("keeps one logical-source queue after a replacement changes the tab id", async () => {
+  it("keeps one logical-source queue while preserving the stable tab id", async () => {
     const directory = await mkdtemp(join(tmpdir(), "scient-html-queued-refresh-"));
     const assetDirectory = join(directory, "assets");
     await mkdir(assetDirectory);
@@ -1230,7 +1287,7 @@ describe("DesktopBrowserManager reliability", () => {
         .getState({ threadId: THREAD_ID })
         .tabs.find((tab) => tab.kind === "local-html");
       expect(installedFirstTab).toMatchObject({ url: firstUrl });
-      expect(installedFirstTab?.id).not.toBe(sourceTabId);
+      expect(installedFirstTab?.id).toBe(sourceTabId);
       const newest = manager.replaceLocalHtmlPreview({
         threadId: THREAD_ID,
         tabId: installedFirstTab?.id ?? "",
@@ -1505,6 +1562,49 @@ describe("DesktopBrowserManager reliability", () => {
     }
   });
 
+  it("atomically installs a missing source and resolves stale caller tab ids by authority", async () => {
+    const manager = new DesktopBrowserManager();
+    const firstUrl = "http://g-30345678-2234-4123-8123-123456789abc.preview.localhost:43123/";
+    const secondUrl = "http://g-31345678-2234-4123-8123-123456789abc.preview.localhost:43123/";
+
+    const firstPromise = manager.replaceLocalHtmlPreview({
+      threadId: THREAD_ID,
+      tabId: "",
+      url: firstUrl,
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+      watchedPaths: ["/missing/report.html"],
+      activate: true,
+    });
+    const concurrentPromise = manager.replaceLocalHtmlPreview({
+      threadId: THREAD_ID,
+      tabId: "",
+      url: secondUrl,
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+      watchedPaths: ["/missing/report.html"],
+      activate: true,
+    });
+    const first = await firstPromise;
+    const concurrent = await concurrentPromise;
+    const stableTabId = first.activeTabId ?? "";
+    expect(concurrent.tabs[0]).toMatchObject({ id: stableTabId, url: secondUrl });
+    const second = await manager.replaceLocalHtmlPreview({
+      threadId: THREAD_ID,
+      tabId: "retired-renderer-snapshot",
+      url: firstUrl,
+      displayUrl: "/missing/report.html",
+      previewCwd: "/missing",
+      watchedPaths: ["/missing/report.html"],
+      activate: true,
+    });
+
+    expect(second.tabs).toHaveLength(1);
+    expect(second.activeTabId).toBe(stableTabId);
+    expect(second.tabs[0]).toMatchObject({ id: stableTabId, url: firstUrl });
+    manager.dispose();
+  });
+
   it("rejects renderer-forged local HTML capabilities on open, new tab, and replacement", async () => {
     const directory = await mkdtemp(join(tmpdir(), "scient-html-capability-proof-"));
     const sourcePath = join(directory, "report.html");
@@ -1534,6 +1634,7 @@ describe("DesktopBrowserManager reliability", () => {
       sourceRoot: canonicalDirectory,
       watchedPaths: [canonicalSourcePath],
       localHtmlCapabilityProof: validProof,
+      localHtmlNetworkPolicy: "sealed-interactive" as const,
     };
     try {
       for (const initialUrl of forgedUrls) {
@@ -1541,6 +1642,24 @@ describe("DesktopBrowserManager reliability", () => {
       }
 
       const opened = manager.open({ ...common, initialUrl: validUrl });
+      const policyTamper = {
+        ...common,
+        localHtmlNetworkPolicy: "reviewed-static" as const,
+        allowedExternalUrls: [] as const,
+      };
+      expect(() => manager.open({ ...policyTamper, initialUrl: validUrl })).toThrow(
+        "capability proof is invalid",
+      );
+      expect(() => manager.newTab({ ...policyTamper, url: validUrl })).toThrow(
+        "capability proof is invalid",
+      );
+      await expect(
+        manager.replaceLocalHtmlPreview({
+          ...policyTamper,
+          tabId: opened.activeTabId ?? "",
+          url: validUrl,
+        }),
+      ).rejects.toThrow("capability proof is invalid");
       for (const url of forgedUrls) {
         expect(() => manager.newTab({ ...common, url })).toThrow();
         await expect(

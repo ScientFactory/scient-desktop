@@ -65,6 +65,8 @@ import {
   browserCopyFeedbackMatches,
   buildBrowserAddressSuggestions,
   normalizeBrowserAddressInput,
+  localHtmlSourceKey,
+  localHtmlTabsShareSource,
   reconcileHtmlPreviewGrants,
   pruneConsumedLocalHtmlSourceGenerations,
   resolveBrowserChromeStatus,
@@ -457,9 +459,7 @@ export function BrowserPanel({
   const copiedBrowserItem =
     visibleCopyFeedback?.tone === "success" ? visibleCopyFeedback.item : null;
   const activeLocalHtmlSourceKey =
-    activeTab?.kind === "local-html" && activeTab.displayUrl && activeTab.previewCwd
-      ? `${threadId}\0${activeTab.previewCwd}\0${activeTab.displayUrl}`
-      : null;
+    activeTab?.kind === "local-html" ? localHtmlSourceKey(threadId, activeTab) : null;
   const loading =
     (activeTab?.isLoading ?? false) ||
     (activeLocalHtmlSourceKey ? refreshingLocalHtmlSources.has(activeLocalHtmlSourceKey) : false);
@@ -481,7 +481,10 @@ export function BrowserPanel({
         .filter(
           (tab) => tab.kind === "local-html" && Boolean(tab.displayUrl) && Boolean(tab.previewCwd),
         )
-        .map((tab) => `${threadId}\0${tab.previewCwd}\0${tab.displayUrl}`),
+        .flatMap((tab) => {
+          const key = localHtmlSourceKey(threadId, tab);
+          return key ? [key] : [];
+        }),
     );
     setLocalHtmlRefreshErrors((current) => {
       const next = new Map(
@@ -577,7 +580,10 @@ export function BrowserPanel({
       // BrowserPanel is reused when a split pane switches threads. Keep async refresh
       // ownership thread-scoped so the next thread cannot join or display the previous
       // thread's in-flight work merely because both tabs reference the same file path.
-      const sourceKey = `${threadId}\0${sourceTab.previewCwd}\0${sourceTab.displayUrl}`;
+      const sourceKey = localHtmlSourceKey(threadId, sourceTab);
+      if (!sourceKey) {
+        return Promise.reject(new Error("This local HTML preview cannot be refreshed."));
+      }
       const existing = localHtmlRefreshTasksRef.current.get(sourceKey);
       if (existing) {
         pendingLocalHtmlRefreshesRef.current.add(sourceKey);
@@ -595,10 +601,7 @@ export function BrowserPanel({
               useBrowserStateStore.getState().threadStatesByThreadId[threadId] ??
               threadBrowserState;
             const latestTab = latestState?.tabs.find(
-              (tab) =>
-                tab.kind === "local-html" &&
-                tab.displayUrl === sourceTab.displayUrl &&
-                tab.previewCwd === sourceTab.previewCwd,
+              (tab) => tab.kind === "local-html" && localHtmlTabsShareSource(tab, sourceTab),
             );
             const displayUrl = latestTab?.displayUrl;
             const previewCwd = latestTab?.previewCwd;
@@ -624,7 +627,7 @@ export function BrowserPanel({
                     : (prepared.reason ?? "This HTML file is no longer available for preview."),
                 );
               }
-              if (!prepared.localHtmlCapabilityProof) {
+              if (!prepared.localHtmlCapabilityProof || !prepared.localHtmlNetworkPolicy) {
                 throw new Error("This HTML preview is missing its server-issued capability proof.");
               }
 
@@ -642,20 +645,22 @@ export function BrowserPanel({
                     ? { watchDiscoveryLimited: prepared.watchDiscoveryLimited }
                     : {}),
                   localHtmlCapabilityProof: prepared.localHtmlCapabilityProof,
+                  localHtmlNetworkPolicy: prepared.localHtmlNetworkPolicy,
                   ...(prepared.mode === "static-document" && prepared.allowedExternalUrls
                     ? { allowedExternalUrls: prepared.allowedExternalUrls }
                     : {}),
                   activate: latestState?.activeTabId === latestTab.id,
                 });
                 const installedRevision = nextState.tabs.find(
-                  (tab) =>
-                    tab.kind === "local-html" &&
-                    tab.displayUrl === displayUrl &&
-                    tab.previewCwd === previewCwd,
+                  (tab) => tab.kind === "local-html" && localHtmlTabsShareSource(tab, latestTab),
                 );
                 if (installedRevision?.url !== replacementUrl) {
                   await api.projects
                     .revokeHtmlArtifactPreview({ previewUrl: replacementUrl })
+                    .catch(() => ({ revoked: false }));
+                } else if (latestTab.url !== replacementUrl) {
+                  await api.projects
+                    .revokeHtmlArtifactPreview({ previewUrl: latestTab.url })
                     .catch(() => ({ revoked: false }));
                 }
                 syncHtmlPreviewGrants(nextState.threadId, nextState.tabs);
@@ -683,12 +688,7 @@ export function BrowserPanel({
                 : "The local HTML preview could not be refreshed.";
             const currentSourceTab = (
               useBrowserStateStore.getState().threadStatesByThreadId[threadId]?.tabs ?? []
-            ).find(
-              (tab) =>
-                tab.kind === "local-html" &&
-                tab.displayUrl === sourceTab.displayUrl &&
-                tab.previewCwd === sourceTab.previewCwd,
-            );
+            ).find((tab) => tab.kind === "local-html" && localHtmlTabsShareSource(tab, sourceTab));
             if (currentSourceTab?.url === failedRevisionUrl) {
               setLocalHtmlRefreshErrors((current) =>
                 new Map(current).set(sourceKey, { message, revisionUrl: failedRevisionUrl }),

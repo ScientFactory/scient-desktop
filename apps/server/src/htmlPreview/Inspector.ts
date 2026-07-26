@@ -397,6 +397,7 @@ async function collectAllowedResourcePaths(
   readonly hasTruncatedDependency: boolean;
 }> {
   const pending = resources
+    .slice(0, RESOURCE_GRAPH_MAX_FILES)
     .map((resource) =>
       resolveHtmlDocumentResourcePath({
         value: resource,
@@ -413,7 +414,19 @@ async function collectAllowedResourcePaths(
   let hasExecutableDocument = false;
   let hasTruncatedActiveDocument = false;
   let hasTruncatedDependency = false;
-  let watchDiscoveryLimited = false;
+  let watchDiscoveryLimited = resources.length > RESOURCE_GRAPH_MAX_FILES;
+  const inspectedCandidates = new Set<string>();
+  const queuedCandidates = new Set(pending);
+  let missingAncestorProbes = 0;
+  const queueCandidate = (candidate: string | null) => {
+    if (!candidate || inspectedCandidates.has(candidate) || queuedCandidates.has(candidate)) return;
+    if (inspectedCandidates.size + queuedCandidates.size >= RESOURCE_GRAPH_MAX_FILES) {
+      watchDiscoveryLimited = true;
+      return;
+    }
+    queuedCandidates.add(candidate);
+    pending.push(candidate);
+  };
   const addExternalUrl = (url: string) => {
     if (externalUrls.size < RESOURCE_GRAPH_MAX_FILES) externalUrls.add(url);
   };
@@ -421,6 +434,11 @@ async function collectAllowedResourcePaths(
     if (!canonicalResourceBoundary) return null;
     let firstMissingPath = candidate;
     while (true) {
+      if (missingAncestorProbes >= RESOURCE_GRAPH_MAX_FILES) {
+        watchDiscoveryLimited = true;
+        return null;
+      }
+      missingAncestorProbes += 1;
       const parent = path.dirname(firstMissingPath);
       if (parent === firstMissingPath) return null;
       const canonicalParent = await fs.realpath(parent).catch(() => null);
@@ -433,9 +451,12 @@ async function collectAllowedResourcePaths(
     }
   };
 
-  while (pending.length > 0 && allowed.size < RESOURCE_GRAPH_MAX_FILES) {
+  while (pending.length > 0 && inspectedCandidates.size < RESOURCE_GRAPH_MAX_FILES) {
     const candidate = pending.shift();
     if (!candidate) continue;
+    queuedCandidates.delete(candidate);
+    if (inspectedCandidates.has(candidate)) continue;
+    inspectedCandidates.add(candidate);
     const canonical = await fs.realpath(candidate).catch(() => null);
     if (!canonical) {
       // Watch the first missing component below the nearest canonical existing
@@ -491,7 +512,7 @@ async function collectAllowedResourcePaths(
           siteRoot: resourceBoundary,
           baseHref: linkedDocument.baseHref,
         });
-        if (resolved) pending.push(resolved);
+        queueCandidate(resolved);
       }
       continue;
     }
@@ -509,7 +530,7 @@ async function collectAllowedResourcePaths(
               dependency.startsWith("/") ? resourceBoundary : dependencyDirectory,
             )
           : null;
-        if (resolved) pending.push(resolved);
+        queueCandidate(resolved);
       }
       continue;
     }
@@ -524,7 +545,7 @@ async function collectAllowedResourcePaths(
         dependency,
         dependency.startsWith("/") ? resourceBoundary : dependencyDirectory,
       );
-      if (resolved) pending.push(resolved);
+      queueCandidate(resolved);
     }
 
     await initializeModuleLexer;
@@ -543,7 +564,7 @@ async function collectAllowedResourcePaths(
               dependency.startsWith("/") ? resourceBoundary : dependencyDirectory,
             )
           : null;
-        if (resolved) pending.push(resolved);
+        queueCandidate(resolved);
       }
     } catch {
       // A bounded prefix can end in the middle of a token. Literal-reference

@@ -9,6 +9,7 @@ import {
   resolveSplitPaneCloseDecision,
   resolveSplitPaneMaximizeDecision,
   resolveThreadPickerTitle,
+  retiredLocalHtmlPreviewUrl,
   resolveToggledChatPanelPatch,
 } from "./-chatThreadRoute.logic";
 
@@ -91,6 +92,8 @@ describe("browserStateOwnsLocalHtmlRevision", () => {
         url: "http://g-a.preview.localhost:5000/",
         displayUrl: "/workspace/report.html",
         previewCwd: "/workspace",
+        sourceIdentity: "/workspace/report.html",
+        sourceRoot: "/workspace",
         title: "report.html",
         status: "live" as const,
         isLoading: false,
@@ -109,6 +112,8 @@ describe("browserStateOwnsLocalHtmlRevision", () => {
         url: "http://g-a.preview.localhost:5000/",
         displayUrl: "/workspace/report.html",
         previewCwd: "/workspace",
+        sourceIdentity: "/workspace/report.html",
+        sourceRoot: "/workspace",
       }),
     ).toBe(true);
     expect(
@@ -116,8 +121,43 @@ describe("browserStateOwnsLocalHtmlRevision", () => {
         url: "http://g-b.preview.localhost:5000/",
         displayUrl: "/workspace/report.html",
         previewCwd: "/workspace",
+        sourceIdentity: "/workspace/report.html",
+        sourceRoot: "/other-root",
       }),
     ).toBe(false);
+    expect(
+      browserStateOwnsLocalHtmlRevision(state, {
+        url: "http://g-a.preview.localhost:5000/",
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        sourceIdentity: "/workspace/report.html",
+        sourceRoot: "/other-root",
+      }),
+    ).toBe(false);
+  });
+
+  it("retires only the prior grant after the new revision is confirmed installed", () => {
+    const installed = {
+      url: "http://g-a.preview.localhost:5000/",
+      displayUrl: "/workspace/report.html",
+      previewCwd: "/workspace",
+      sourceIdentity: "/workspace/report.html",
+      sourceRoot: "/workspace",
+    };
+    expect(
+      retiredLocalHtmlPreviewUrl({
+        previousUrl: "http://g-old.preview.localhost:5000/",
+        nextState: state,
+        installed,
+      }),
+    ).toBe("http://g-old.preview.localhost:5000/");
+    expect(
+      retiredLocalHtmlPreviewUrl({
+        previousUrl: "http://g-old.preview.localhost:5000/",
+        nextState: { ...state, tabs: [] },
+        installed,
+      }),
+    ).toBeNull();
   });
 });
 

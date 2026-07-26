@@ -107,6 +107,7 @@ describe("HtmlArtifactPreviewLive", () => {
               sourceRoot: prepared.sourceRoot!,
               watchedPaths: prepared.watchedPaths ?? [],
               allowedExternalUrls: prepared.allowedExternalUrls ?? [],
+              networkPolicy: prepared.localHtmlNetworkPolicy!,
             }),
           )
           .digest("base64url"),
@@ -133,6 +134,7 @@ describe("HtmlArtifactPreviewLive", () => {
         service.prepare({ cwd: workspace, path: "report.html" }),
       );
       expect(prepared.mode).toBe("static-document");
+      expect(prepared.localHtmlNetworkPolicy).toBe("reviewed-static");
       expect(prepared.previewUrl).toBeDefined();
       const canonicalWorkspace = await fs.realpath(workspace);
       expect(prepared.sourceIdentity).toBe(path.join(canonicalWorkspace, "report.html"));
@@ -285,6 +287,7 @@ describe("HtmlArtifactPreviewLive", () => {
         service.prepare({ cwd: workspace, path: "index.html" }),
       );
       expect(prepared.mode).toBe("interactive-bundle");
+      expect(prepared.localHtmlNetworkPolicy).toBe("sealed-interactive");
       const document = await requestPreview(prepared.previewUrl!);
       expect(document.headers["content-security-policy"]).toBeUndefined();
       expect(document.headers["x-dns-prefetch-control"]).toBe("off");

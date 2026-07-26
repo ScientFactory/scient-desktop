@@ -180,6 +180,7 @@ import {
   resolveSplitPaneCloseDecision,
   resolveSplitPaneMaximizeDecision,
   resolveThreadPickerTitle,
+  retiredLocalHtmlPreviewUrl,
   resolveToggledChatPanelPatch,
 } from "./-chatThreadRoute.logic";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
@@ -1904,7 +1905,10 @@ function SingleChatSurface(props: {
           if (!url) {
             throw new Error("This HTML file is not available for preview.");
           }
-          if (browserKind === "local-html" && !prepared.localHtmlCapabilityProof) {
+          if (
+            browserKind === "local-html" &&
+            (!prepared.localHtmlCapabilityProof || !prepared.localHtmlNetworkPolicy)
+          ) {
             throw new Error("This HTML preview is missing its server-issued capability proof.");
           }
           if (prepared.warnings.length > 0) {
@@ -1932,14 +1936,16 @@ function SingleChatSurface(props: {
                   (tab) =>
                     tab.kind === "local-html" &&
                     (prepared.sourceIdentity
-                      ? tab.sourceIdentity === prepared.sourceIdentity
+                      ? tab.sourceIdentity === prepared.sourceIdentity &&
+                        tab.sourceRoot === prepared.sourceRoot
                       : tab.displayUrl === absolutePath && tab.previewCwd === htmlCwd),
                 )
               : undefined;
-          if (existingSourceTab) {
+          if (browserKind === "local-html") {
+            const retiredPreviewUrl = existingSourceTab?.url ?? null;
             const nextBrowserState = await api.browser.replaceLocalHtmlPreview({
               threadId: props.threadId,
-              tabId: existingSourceTab.id,
+              tabId: existingSourceTab?.id ?? "",
               url,
               displayUrl: absolutePath,
               previewCwd: htmlCwd,
@@ -1952,18 +1958,31 @@ function SingleChatSurface(props: {
               ...(prepared.localHtmlCapabilityProof
                 ? { localHtmlCapabilityProof: prepared.localHtmlCapabilityProof }
                 : {}),
+              ...(prepared.localHtmlNetworkPolicy
+                ? { localHtmlNetworkPolicy: prepared.localHtmlNetworkPolicy }
+                : {}),
               ...(allowedExternalUrls ? { allowedExternalUrls } : {}),
               activate: true,
             });
-            if (
-              browserStateOwnsLocalHtmlRevision(nextBrowserState, {
-                url,
-                displayUrl: absolutePath,
-                previewCwd: htmlCwd,
-                ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
-              })
-            ) {
+            const installedRevision = {
+              url,
+              displayUrl: absolutePath,
+              previewCwd: htmlCwd,
+              ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
+              ...(prepared.sourceRoot ? { sourceRoot: prepared.sourceRoot } : {}),
+            };
+            const retiredUrl = retiredLocalHtmlPreviewUrl({
+              previousUrl: retiredPreviewUrl,
+              nextState: nextBrowserState,
+              installed: installedRevision,
+            });
+            if (browserStateOwnsLocalHtmlRevision(nextBrowserState, installedRevision)) {
               previewUrlToRevoke = null;
+              if (retiredUrl) {
+                await api.projects
+                  .revokeHtmlArtifactPreview({ previewUrl: retiredUrl })
+                  .catch(() => undefined);
+              }
             }
           } else {
             const nextBrowserState = await api.browser.open({
@@ -1971,20 +1990,6 @@ function SingleChatSurface(props: {
               initialUrl: url,
               kind: browserKind,
               displayUrl: absolutePath,
-              ...(browserKind === "local-html"
-                ? {
-                    previewCwd: htmlCwd,
-                    ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
-                    ...(prepared.sourceRoot ? { sourceRoot: prepared.sourceRoot } : {}),
-                    watchedPaths: prepared.watchedPaths ?? [absolutePath],
-                    ...(prepared.watchDiscoveryLimited !== undefined
-                      ? { watchDiscoveryLimited: prepared.watchDiscoveryLimited }
-                      : {}),
-                    ...(prepared.localHtmlCapabilityProof
-                      ? { localHtmlCapabilityProof: prepared.localHtmlCapabilityProof }
-                      : {}),
-                  }
-                : {}),
               ...(allowedExternalUrls ? { allowedExternalUrls } : {}),
             });
             if (

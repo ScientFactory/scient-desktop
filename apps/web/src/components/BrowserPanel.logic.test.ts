@@ -5,12 +5,42 @@ import {
   browserCopyFeedbackMatches,
   buildBrowserAddressSuggestions,
   normalizeBrowserAddressInput,
+  localHtmlSourceKey,
+  localHtmlTabsShareSource,
   pruneConsumedLocalHtmlSourceGenerations,
   reconcileHtmlPreviewGrants,
   resolveBrowserChromeStatus,
   resolveBrowserAddressSync,
   shouldCloseBrowserPanelAfterTabClose,
 } from "./BrowserPanel.logic";
+
+describe("local HTML source authority", () => {
+  it("keeps retargeted canonical sources distinct despite one display path", () => {
+    const first = {
+      kind: "local-html" as const,
+      displayUrl: "/workspace/current/report.html",
+      previewCwd: "/workspace",
+      sourceIdentity: "/workspace/source-a/report.html",
+      sourceRoot: "/workspace/source-a",
+    };
+    const second = {
+      ...first,
+      sourceIdentity: "/workspace/source-b/report.html",
+      sourceRoot: "/workspace/source-b",
+    };
+
+    expect(localHtmlSourceKey("thread-a", first)).not.toBe(localHtmlSourceKey("thread-a", second));
+    expect(localHtmlTabsShareSource(first, second)).toBe(false);
+    expect(localHtmlTabsShareSource(first, { ...first })).toBe(true);
+    expect(
+      localHtmlTabsShareSource(first, {
+        kind: "local-html",
+        displayUrl: first.displayUrl,
+        previewCwd: first.previewCwd,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("pruneConsumedLocalHtmlSourceGenerations", () => {
   it("bounds bookkeeping across replacement tab ids and clears it after close", () => {
