@@ -58,6 +58,9 @@ export interface TerminalAttentionCandidate {
   title: string;
 }
 
+export const ACTIVITY_CENTER_ALERTS_DESCRIPTION =
+  "Keep off-screen chat attention requests and managed terminal completions or attention requests in the in-app Activity Center.";
+
 export function activeThreadAttentionActivityKeys(threads: readonly Thread[]): ReadonlySet<string> {
   const keys = new Set<string>();
   for (const thread of threads) {
@@ -99,6 +102,22 @@ export function staleAttentionActivityKeys(
           (dedupeKey.startsWith("terminal:") && dedupeKey.endsWith(":attention"))) &&
         !activeKeys.has(dedupeKey),
     );
+}
+
+// Thread replies already own their completed/unread state in the conversation and sidebar.
+// Remove completion cards written by older builds without disturbing terminal history or
+// actionable thread attention items.
+export function legacyThreadCompletionActivityKeys(
+  items: readonly Pick<ActivityItem, "dedupeKey" | "source">[],
+): readonly string[] {
+  return items
+    .filter(
+      (item) =>
+        item.source === "thread" &&
+        item.dedupeKey.startsWith("thread:") &&
+        item.dedupeKey.includes(":completed:"),
+    )
+    .map((item) => item.dedupeKey);
 }
 
 type ThreadSessionStatus = ThreadSession["status"];
