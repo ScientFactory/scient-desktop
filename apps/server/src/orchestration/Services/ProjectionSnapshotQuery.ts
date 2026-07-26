@@ -115,6 +115,12 @@ export interface ProjectionSnapshotQueryShape {
     ProjectionRepositoryError
   >;
 
+  /** Read active project shells without consulting thread tables. */
+  readonly listActiveProjectShells: () => Effect.Effect<
+    ReadonlyArray<OrchestrationProjectShell>,
+    ProjectionRepositoryError
+  >;
+
   /**
    * Read the active project for an exact workspace root match.
    */
