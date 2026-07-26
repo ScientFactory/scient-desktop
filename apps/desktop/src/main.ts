@@ -62,7 +62,7 @@ import { isBackendReadinessAborted, waitForHttpReady } from "./backendReadiness"
 import {
   buildBackendRestartRecoveryDialog,
   handleBackendRestartRecoveryAction,
-  resolveBackendRestartRecoveryAction,
+  showBackendRestartRecoveryDialog,
   shouldShowBackendRestartRecovery,
 } from "./backendRestartRecovery";
 import { UpdateBackendRecoveryLatch } from "./updateBackendRecovery";
@@ -2917,18 +2917,23 @@ async function showBackendRestartRecovery(input: {
 }): Promise<void> {
   if (!shouldShowBackendRestartRecovery(isQuitting)) return;
   try {
-    const { response } = await dialog.showMessageBox(
-      buildBackendRestartRecoveryDialog({
-        appName: SCIENT_APP_NAME,
-        failures: input.failures,
-        windowMs: input.windowMs,
-        logFilePath: Path.join(LOG_DIR, "server-child.log"),
-        ...(input.openLogsErrorMessage !== undefined
-          ? { openLogsErrorMessage: input.openLogsErrorMessage }
-          : {}),
-      }),
-    );
-    const action = resolveBackendRestartRecoveryAction(response);
+    const options = buildBackendRestartRecoveryDialog({
+      appName: SCIENT_APP_NAME,
+      failures: input.failures,
+      windowMs: input.windowMs,
+      logFilePath: Path.join(LOG_DIR, "server-child.log"),
+      ...(input.openLogsErrorMessage !== undefined
+        ? { openLogsErrorMessage: input.openLogsErrorMessage }
+        : {}),
+    });
+    const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    const action = await showBackendRestartRecoveryDialog({
+      owner,
+      options,
+      focusOwner: () => focusMainWindow({ stealAppFocus: true }),
+      showOwned: (window, dialogOptions) => dialog.showMessageBox(window, dialogOptions),
+      showUnowned: (dialogOptions) => dialog.showMessageBox(dialogOptions),
+    });
     let openLogsErrorMessage: string | null = null;
     await handleBackendRestartRecoveryAction({
       action,

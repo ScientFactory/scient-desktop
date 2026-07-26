@@ -4,6 +4,7 @@ import {
   buildBackendRestartRecoveryDialog,
   handleBackendRestartRecoveryAction,
   resolveBackendRestartRecoveryAction,
+  showBackendRestartRecoveryDialog,
   shouldShowBackendRestartRecovery,
 } from "./backendRestartRecovery";
 
@@ -103,4 +104,52 @@ describe("backend restart recovery", () => {
     expect(resolveBackendRestartRecoveryAction(2)).toBe("dismiss");
     expect(resolveBackendRestartRecoveryAction(-1)).toBe("dismiss");
   });
+
+  it("owns the native dialog to the main window and preserves its default action", async () => {
+    const owner = { id: 42 };
+    const options = buildBackendRestartRecoveryDialog({
+      appName: "Scient",
+      failures: 5,
+      windowMs: 60_000,
+      logFilePath: "/tmp/scient/server-child.log",
+    });
+    const showOwned = vi.fn(async () => ({ response: 0 }));
+    const showUnowned = vi.fn(async () => ({ response: 2 }));
+    const focusOwner = vi.fn();
+
+    await expect(
+      showBackendRestartRecoveryDialog({
+        owner,
+        options,
+        focusOwner,
+        showOwned,
+        showUnowned,
+      }),
+    ).resolves.toBe("retry");
+    expect(focusOwner).toHaveBeenCalledWith(owner);
+    expect(showOwned).toHaveBeenCalledWith(owner, options);
+    expect(showUnowned).not.toHaveBeenCalled();
+  });
+
+  it.each(["retry", "open-logs"] as const)(
+    "suppresses %s when quit or updater shutdown begins while the dialog is open",
+    async (action) => {
+      const retry = vi.fn();
+      const openLogs = vi.fn(async () => undefined);
+      const reopen = vi.fn();
+
+      await handleBackendRestartRecoveryAction({
+        action,
+        openLogs,
+        retry,
+        reopen,
+        isQuitting: () => true,
+        onOpenLogsError: vi.fn(),
+      });
+
+      expect(retry).not.toHaveBeenCalled();
+      expect(openLogs).not.toHaveBeenCalled();
+      expect(reopen).not.toHaveBeenCalled();
+    },
+  );
 });

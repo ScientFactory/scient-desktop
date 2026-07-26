@@ -54,6 +54,25 @@ export function resolveBackendRestartRecoveryAction(
   return "dismiss";
 }
 
+export async function showBackendRestartRecoveryDialog<Owner>(input: {
+  readonly owner: Owner | null;
+  readonly options: BackendRestartRecoveryDialogOptions;
+  readonly focusOwner?: (owner: Owner) => void;
+  readonly showOwned: (
+    owner: Owner,
+    options: BackendRestartRecoveryDialogOptions,
+  ) => Promise<{ response: number }>;
+  readonly showUnowned: (
+    options: BackendRestartRecoveryDialogOptions,
+  ) => Promise<{ response: number }>;
+}): Promise<BackendRestartRecoveryAction> {
+  if (input.owner) input.focusOwner?.(input.owner);
+  const result = input.owner
+    ? await input.showOwned(input.owner, input.options)
+    : await input.showUnowned(input.options);
+  return resolveBackendRestartRecoveryAction(result.response);
+}
+
 export async function handleBackendRestartRecoveryAction(input: {
   action: BackendRestartRecoveryAction;
   openLogs: () => Promise<void>;
@@ -62,6 +81,10 @@ export async function handleBackendRestartRecoveryAction(input: {
   isQuitting: () => boolean;
   onOpenLogsError: (error: unknown) => void;
 }): Promise<void> {
+  // The native dialog can already be open when app quit or updater handoff
+  // begins. Recheck at action time so its default button cannot revive a
+  // backend that shutdown has intentionally stopped.
+  if (input.isQuitting()) return;
   if (input.action === "retry") {
     input.retry();
     return;
