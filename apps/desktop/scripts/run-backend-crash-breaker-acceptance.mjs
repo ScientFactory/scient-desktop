@@ -116,6 +116,32 @@ async function waitUntil(read, predicate, timeoutMs = 15_000) {
   throw new Error("Timed out waiting for the native crash-breaker acceptance fixture.");
 }
 
+async function waitForAccessibleDialog(inspect, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      const snapshot = inspect();
+      if (
+        snapshot.processFrontmost === true &&
+        snapshot.focusedElement &&
+        snapshot.buttons.length === 3 &&
+        snapshot.defaultButton === "Try again"
+      ) {
+        return snapshot;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+  }
+  throw new Error(
+    `Timed out waiting for the native recovery dialog to become accessibility-ready.${
+      lastError instanceof Error ? ` Last error: ${lastError.message}` : ""
+    }`,
+  );
+}
+
 function assertDialogAccessibility(snapshot, state) {
   const options = state.dialogOptions.at(-1);
   assert.equal(snapshot.processFrontmost, true);
@@ -169,11 +195,22 @@ async function runScenario(scenario, drive) {
     );
     const nativeProcessId = dialogState.processId;
     assert.ok(Number.isInteger(nativeProcessId) && nativeProcessId > 0);
+    const inspectLive = () =>
+      JSON.parse(runAppleScript(AX_INSPECTION_SCRIPT, String(nativeProcessId)));
+    const initialSnapshot =
+      dialogState.phase === "dialog-open" ? await waitForAccessibleDialog(inspectLive) : null;
+    let initialSnapshotAvailable = initialSnapshot !== null;
     await drive({
       root,
       child,
       dialogState,
-      inspect: () => JSON.parse(runAppleScript(AX_INSPECTION_SCRIPT, String(nativeProcessId))),
+      inspect: () => {
+        if (initialSnapshotAvailable) {
+          initialSnapshotAvailable = false;
+          return initialSnapshot;
+        }
+        return inspectLive();
+      },
       act: (action) => runAppleScript(AX_ACTION_SCRIPT, String(nativeProcessId), action),
       signalShutdown: () => writeFileSync(join(root, "shutdown-requested"), "1\n"),
       waitForDialogCount: (dialogs) =>
@@ -212,7 +249,7 @@ async function runScenario(scenario, drive) {
     }
     throw new Error(`${error.message}\nElectron stderr:\n${stderr.join("")}`, { cause: error });
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   }
 }
 
