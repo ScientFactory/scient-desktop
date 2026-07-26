@@ -431,14 +431,15 @@ export function spawnContainedPackagedDesktop(
         launch.command,
         "-WorkingDirectory",
         launch.cwd,
-        "-VerifierProcessId",
-        String(process.pid),
       ],
       {
         cwd: launch.cwd,
         env: environment,
         detached: false,
-        stdio: ["ignore", "pipe", "pipe"],
+        // The verifier exclusively retains the writable end of this private
+        // stdin pipe. The Windows launcher observes the inherited read handle,
+        // avoiding any numeric-PID lookup or reuse window.
+        stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       },
     );

@@ -584,20 +584,30 @@ function verifyReleaseWorkflowSafety(): void {
   );
   assertContains(
     windowsStartupJobLauncher,
-    "OpenProcess(SYNCHRONIZE, false, verifierProcessId)",
-    "Expected Windows startup containment to retain a verifier process handle.",
+    "GetStdHandle(STD_INPUT_HANDLE)",
+    "Expected Windows startup containment to inherit a private verifier control pipe.",
   );
   if (
-    windowsStartupJobLauncher.indexOf("OpenProcess(SYNCHRONIZE, false, verifierProcessId)") < 0 ||
-    windowsStartupJobLauncher.indexOf("OpenProcess(SYNCHRONIZE, false, verifierProcessId)") >
+    windowsStartupJobLauncher.indexOf("EnsureVerifierControlConnected(verifierControl)") < 0 ||
+    windowsStartupJobLauncher.indexOf("EnsureVerifierControlConnected(verifierControl)") >
       windowsStartupJobLauncher.indexOf("if (!CreateProcess(")
   ) {
-    throw new Error("Expected Windows verifier liveness authority before payload creation.");
+    throw new Error("Expected Windows verifier pipe authority before payload creation.");
   }
   assertContains(
     windowsStartupJobLauncher,
-    "WaitForMultipleObjects(2, livenessHandles, false, INFINITE)",
-    "Expected Windows Job cleanup to observe verifier death as well as payload exit.",
+    "PeekNamedPipe(",
+    "Expected Windows Job cleanup to observe verifier pipe closure without PID lookup.",
+  );
+  assertNotContains(
+    windowsStartupJobLauncher,
+    "VerifierProcessId",
+    "Windows verifier authority must not be reconstructed from a reusable numeric PID.",
+  );
+  assertNotContains(
+    windowsStartupJobLauncher,
+    "OpenProcess(",
+    "Windows verifier authority must remain bound to the inherited control pipe.",
   );
   assertContains(
     windowsStartupJobLauncher,

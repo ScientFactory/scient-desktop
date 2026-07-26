@@ -947,8 +947,11 @@ describe("packaged desktop startup verification", () => {
     expect(jobScript).toContain("EXTENDED_STARTUPINFO_PRESENT");
     expect(jobScript).toContain("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE");
     expect(jobScript).toContain("PROC_THREAD_ATTRIBUTE_JOB_LIST");
-    expect(jobScript).toContain("OpenProcess(SYNCHRONIZE");
-    expect(jobScript).toContain("WaitForMultipleObjects");
+    expect(jobScript).toContain("GetStdHandle(STD_INPUT_HANDLE)");
+    expect(jobScript).toContain("PeekNamedPipe(");
+    expect(jobScript).toContain("EnsureVerifierControlConnected(verifierControl)");
+    expect(jobScript).not.toContain("VerifierProcessId");
+    expect(jobScript).not.toContain("OpenProcess(");
     expect(jobScript).toContain("SCIENT_PACKAGED_STARTUP_SENTINEL_PID");
     expect(jobScript).toContain("Add-Type -Path $AssemblyPath");
     expect(jobScript.indexOf("Add-Type -TypeDefinition $source")).toBeLessThan(
@@ -960,12 +963,14 @@ describe("packaged desktop startup verification", () => {
     expect(jobScript.indexOf("if (!UpdateProcThreadAttribute(")).toBeLessThan(
       jobScript.indexOf("if (!CreateProcess("),
     );
-    expect(jobScript.indexOf("OpenProcess(SYNCHRONIZE")).toBeLessThan(
+    expect(jobScript.indexOf("EnsureVerifierControlConnected(verifierControl)")).toBeLessThan(
       jobScript.indexOf("if (!CreateProcess("),
     );
     expect(jobScript.indexOf("if (!CreateProcess(")).toBeLessThan(
       jobScript.indexOf("ResumeThread(child.hThread)"),
     );
+    expect(windowsCall[1]).not.toContain("-VerifierProcessId");
+    expect(windowsCall[2]).toEqual(expect.objectContaining({ stdio: ["pipe", "pipe", "pipe"] }));
 
     spawnProcess.mockClear();
     spawnContainedPackagedDesktop(
@@ -1208,10 +1213,8 @@ describe("packaged desktop startup verification", () => {
           markerPath,
           "-PreResumeGatePath",
           gatePath,
-          "-VerifierProcessId",
-          String(process.pid),
         ],
-        { stdio: "ignore" },
+        { stdio: ["pipe", "ignore", "ignore"] },
       );
 
       const markerAppeared = await waitUntil(() => existsSync(markerPath), 15_000);
@@ -1228,6 +1231,76 @@ describe("packaged desktop startup verification", () => {
       ).toBe(true);
       expect(launcherTerminated).toBe(true);
       expect(launcherExited).toBe(true);
+      expect(
+        await waitUntil(() => {
+          try {
+            process.kill(payloadProcessId!, 0);
+            return false;
+          } catch (error) {
+            return (error as NodeJS.ErrnoException).code === "ESRCH";
+          }
+        }, 5_000),
+      ).toBe(true);
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "closes the Windows Job before resume when the inherited verifier pipe is lost",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "scient-packaged-job-pipe-loss-test-"));
+      temporaryRoots.push(root);
+      const markerPath = join(root, "pre-resume.marker");
+      const gatePath = join(root, "pre-resume.gate");
+      const powershell = join(
+        process.env.SystemRoot ?? "C:\\Windows",
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe",
+      );
+      const windowsJobAssemblyPath = await prepareWindowsJobLauncherAssembly(
+        root,
+        new AbortController().signal,
+      );
+      const launcher = spawn(
+        powershell,
+        [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          fileURLToPath(new URL("./lib/packaged-startup-windows-job.ps1", import.meta.url)),
+          "-AssemblyPath",
+          windowsJobAssemblyPath,
+          "-ExecutablePath",
+          powershell,
+          "-WorkingDirectory",
+          root,
+          "-PreResumeMarkerPath",
+          markerPath,
+          "-PreResumeGatePath",
+          gatePath,
+        ],
+        { stdio: ["pipe", "ignore", "ignore"] },
+      );
+
+      const markerAppeared = await waitUntil(() => existsSync(markerPath), 15_000);
+      const payloadProcessId = markerAppeared ? Number(readFileSync(markerPath, "utf8")) : null;
+      launcher.stdin?.end();
+      const launcherExited = await waitUntil(
+        () => launcher.exitCode !== null || launcher.signalCode !== null,
+        5_000,
+      );
+
+      expect(markerAppeared).toBe(true);
+      expect(
+        payloadProcessId !== null && Number.isInteger(payloadProcessId) && payloadProcessId > 0,
+      ).toBe(true);
+      expect(launcherExited).toBe(true);
+      expect(launcher.exitCode).not.toBe(0);
       expect(
         await waitUntil(() => {
           try {
@@ -1291,8 +1364,8 @@ describe("packaged desktop startup verification", () => {
       const verifierSource = [
         'const { spawn } = require("node:child_process");',
         'const { writeFileSync } = require("node:fs");',
-        `const child = spawn(${JSON.stringify(powershell)}, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ${JSON.stringify(launcherScript)}, "-AssemblyPath", ${JSON.stringify(windowsJobAssemblyPath)}, "-ExecutablePath", ${JSON.stringify(executable)}, "-WorkingDirectory", ${JSON.stringify(root)}, "-VerifierProcessId", String(process.pid)],`,
-        `{ cwd: ${JSON.stringify(root)}, env: { ...process.env, SCIENT_HOME: ${JSON.stringify(join(root, "scient-home"))}, SCIENT_PAYLOAD_MARKER_PATH: ${JSON.stringify(payloadMarkerPath)} }, stdio: "ignore", windowsHide: true });`,
+        `const child = spawn(${JSON.stringify(powershell)}, ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", ${JSON.stringify(launcherScript)}, "-AssemblyPath", ${JSON.stringify(windowsJobAssemblyPath)}, "-ExecutablePath", ${JSON.stringify(executable)}, "-WorkingDirectory", ${JSON.stringify(root)}],`,
+        `{ cwd: ${JSON.stringify(root)}, env: { ...process.env, SCIENT_HOME: ${JSON.stringify(join(root, "scient-home"))}, SCIENT_PAYLOAD_MARKER_PATH: ${JSON.stringify(payloadMarkerPath)} }, stdio: ["pipe", "ignore", "ignore"], windowsHide: true });`,
         `writeFileSync(${JSON.stringify(launcherMarkerPath)}, String(child.pid));`,
         "setInterval(() => undefined, 60000);",
       ].join("");
