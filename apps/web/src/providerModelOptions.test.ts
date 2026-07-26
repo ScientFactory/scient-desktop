@@ -292,6 +292,8 @@ describe("mergeDynamicModelOptions", () => {
 
     expect(filter([])).toEqual([opus48]);
     expect(filter([{ slug: "sonnet", resolvedModel: "claude-sonnet-5" }])).toEqual([opus48]);
+    expect(filter([{ slug: "opus" }])).toEqual([opus48]);
+    expect(filter([{ slug: "opus-5" }])).toEqual([opus48]);
     expect(filter([{ slug: "opus", resolvedModel: "claude-opus-5" }])).toEqual(staticOptions);
   });
 });

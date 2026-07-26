@@ -61,8 +61,14 @@ function runtimeCatalogAdvertisesClaudeOpus5(
 ): boolean {
   return (
     runtimeModels?.some((model) => {
-      const exactIdentity = model.resolvedModel?.trim() || model.slug.trim();
-      return normalizeDynamicModelSlug("claudeAgent", exactIdentity) === "claude-opus-5";
+      const exactIdentity = (model.resolvedModel?.trim() || model.slug.trim()).replace(
+        /\[[^\]]+\]$/u,
+        "",
+      );
+      // Keep this identical to the server's exact-process authorization gate.
+      // Moving aliases such as `opus` and shorthand such as `opus-5` are not
+      // proof that this account/project runtime actually advertises Opus 5.
+      return exactIdentity === "claude-opus-5";
     }) === true
   );
 }

@@ -92,15 +92,12 @@ import {
   Semaphore,
   Stream,
 } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
-
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { buildIsolatedClaudeDiscoveryOptions } from "../claudeDiscoveryIsolation.ts";
 import { buildFileAttachmentsPromptBlock } from "../attachmentProjection.ts";
 import { readProviderPromptImage } from "../promptAttachments.ts";
 import { buildClaudeProcessEnv } from "../claudeProcessEnv.ts";
-import { resolveClaudeCliVersion } from "../claudeCliVersion.ts";
 import {
   applyClaudeTaskToolResult,
   claudeTrackedTasksPayload,
@@ -303,11 +300,6 @@ export interface ClaudeAdapterLiveOptions {
   }) => ClaudeQueryRuntime;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
-  readonly resolveClaudeVersion?: (input: {
-    readonly executable: string;
-    readonly env: NodeJS.ProcessEnv;
-    readonly cwd: string;
-  }) => Effect.Effect<string | null>;
   readonly discoveryTimeoutMs?: number;
 }
 
@@ -1437,7 +1429,7 @@ function toRequestError(threadId: ThreadId, method: string, cause: unknown): Pro
 function unsupportedClaudeModelError(
   modelSelection: Extract<ModelSelection, { provider: "claudeAgent" }>,
   providerVersion: string | null | undefined,
-  method: "startSession" | "sendTurn",
+  method: "sendTurn",
 ): ProviderAdapterRequestError | undefined {
   if (
     normalizeModelSlug(modelSelection.model, "claudeAgent") !== "claude-opus-5" ||
@@ -1523,7 +1515,6 @@ function sdkNativeItemId(message: SDKMessage): string | undefined {
 function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
   return Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
-    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const serverConfig = yield* ServerConfig;
     const nativeEventLogger =
       options?.nativeEventLogger ??
@@ -1641,16 +1632,6 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       isScientManagedProviderExecutable(binaryPath, serverConfig.stateDir)
         ? { ...env, DISABLE_AUTOUPDATER: "1" }
         : env;
-    const resolveClaudeVersion =
-      options?.resolveClaudeVersion ??
-      ((input: {
-        readonly executable: string;
-        readonly env: NodeJS.ProcessEnv;
-        readonly cwd: string;
-      }) =>
-        resolveClaudeCliVersion(input).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-        ));
     const offerRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
       Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid);
 
@@ -3845,25 +3826,9 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           yield* resolveClaudeSdkEnv,
           claudeExecutable,
         );
-        // The external probe is only a conservative early rejection. It cannot
-        // authorize the later lazy SDK process because the executable may be
-        // replaced between these operations; sendTurn confirms that exact
-        // process from its init message before applying the Opus 5 model id.
-        const preflightClaudeVersion = requestedOpus5
-          ? yield* resolveClaudeVersion({
-              executable: claudeExecutable,
-              env: claudeSdkEnv,
-              cwd: claudeCwd,
-            })
-          : null;
-        if (requestedModelSelection) {
-          const unsupportedModel = unsupportedClaudeModelError(
-            requestedModelSelection,
-            preflightClaudeVersion,
-            "startSession",
-          );
-          if (unsupportedModel) return yield* unsupportedModel;
-        }
+        // Authorization is deliberately deferred to sendTurn, where the exact
+        // SDK process reports its version and model catalog. A separate
+        // executable probe can race replacement and reject a valid session.
         const modelSelection = requestedModelSelection
           ? normalizeClaudeModelSelectionForRuntime(requestedModelSelection)
           : undefined;

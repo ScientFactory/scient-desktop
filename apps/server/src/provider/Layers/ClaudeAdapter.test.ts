@@ -199,8 +199,6 @@ function makeHarness(config?: {
   readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
   readonly cwd?: string;
   readonly baseDir?: string;
-  readonly claudeVersion?: string | null;
-  readonly resolveClaudeVersion?: ClaudeAdapterLiveOptions["resolveClaudeVersion"];
   readonly discoveryTimeoutMs?: number;
 }) {
   const query = new FakeClaudeQuery();
@@ -229,13 +227,6 @@ function makeHarness(config?: {
           nativeEventLogPath: config.nativeEventLogPath,
         }
       : {}),
-    ...(config?.resolveClaudeVersion
-      ? { resolveClaudeVersion: config.resolveClaudeVersion }
-      : config && Object.hasOwn(config, "claudeVersion")
-        ? {
-            resolveClaudeVersion: () => Effect.succeed(config.claudeVersion ?? null),
-          }
-        : {}),
   };
 
   return {
@@ -829,13 +820,7 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("uses the configured Claude executable for pre-session model discovery", () => {
-    const versionProbeInputs: Array<{ executable: string; cwd: string }> = [];
-    const harness = makeHarness({
-      resolveClaudeVersion: ({ executable, cwd }) => {
-        versionProbeInputs.push({ executable, cwd });
-        return Effect.succeed("2.1.219");
-      },
-    });
+    const harness = makeHarness();
     (harness.query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels =
       async () => [
         {
@@ -877,7 +862,6 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(harness.getLastCreateQueryInput()?.options.persistSession, false);
       assert.equal(harness.query.closeCalls, 1);
       assert.equal(result.runtimeVersion, "2.1.219");
-      assert.deepEqual(versionProbeInputs, []);
       assert.deepEqual(result.models, [
         {
           slug: "opus[1m]",
@@ -1279,7 +1263,7 @@ describe("ClaudeAdapterLive", () => {
   it.effect(
     "starts the explicit Opus 5 alias with its native context suffix and supported options",
     () => {
-      const harness = makeHarness({ claudeVersion: "2.1.219" });
+      const harness = makeHarness();
       return Effect.gen(function* () {
         const adapter = yield* ClaudeAdapter;
         yield* adapter.startSession({
@@ -1318,14 +1302,8 @@ describe("ClaudeAdapterLive", () => {
     },
   );
 
-  it.effect("probes a relative Claude executable in the exact session cwd", () => {
-    const versionProbeInputs: Array<{ executable: string; cwd: string }> = [];
-    const harness = makeHarness({
-      resolveClaudeVersion: ({ executable, cwd }) => {
-        versionProbeInputs.push({ executable, cwd });
-        return Effect.succeed("2.1.219");
-      },
-    });
+  it.effect("uses a relative Claude executable in the exact session cwd", () => {
+    const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -1337,12 +1315,13 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      assert.deepEqual(versionProbeInputs, [
-        { executable: "./claude", cwd: "/tmp/project-with-relative-claude" },
-      ]);
       assert.equal(
         harness.getLastCreateQueryInput()?.options.cwd,
         "/tmp/project-with-relative-claude",
+      );
+      assert.equal(
+        harness.getLastCreateQueryInput()?.options.pathToClaudeCodeExecutable,
+        "./claude",
       );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -1350,20 +1329,31 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("rejects an Opus 5 alias when the Claude runtime is too old", () => {
-    const harness = makeHarness({ claudeVersion: "2.1.218" });
+  it.effect("rejects an Opus 5 alias when the exact SDK runtime is too old", () => {
+    const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
-      const result = yield* adapter
-        .startSession({
-          threadId: THREAD_ID,
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: {
           provider: "claudeAgent",
+          model: "opus-5[1m]",
+          options: { effort: "ultracode", fastMode: true },
+        },
+        runtimeMode: "full-access",
+      });
+      harness.query.emit(claudeInitMessage("2.1.218"));
+      const result = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
           modelSelection: {
             provider: "claudeAgent",
             model: "opus-5[1m]",
             options: { effort: "ultracode", fastMode: true },
           },
-          runtimeMode: "full-access",
+          input: "hello",
+          attachments: [],
         })
         .pipe(Effect.result);
 
@@ -1373,7 +1363,8 @@ describe("ClaudeAdapterLive", () => {
         assert.match(result.failure.message, /requires Claude Code 2\.1\.219 or newer/u);
         assert.match(result.failure.message, /installed Claude Code version is 2\.1\.218/u);
       }
-      assert.equal(harness.getLastCreateQueryInput(), undefined);
+      assert.notEqual(harness.getLastCreateQueryInput(), undefined);
+      assert.deepEqual(harness.query.setModelCalls, []);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -1381,18 +1372,28 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("rejects Opus 5 when the Claude runtime version is unknown", () => {
-    const harness = makeHarness({ claudeVersion: null });
+    const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
-      const result = yield* adapter
-        .startSession({
-          threadId: THREAD_ID,
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: {
           provider: "claudeAgent",
+          model: "claude-opus-5",
+        },
+        runtimeMode: "full-access",
+      });
+      harness.query.emit(claudeInitMessage(""));
+      const result = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
           modelSelection: {
             provider: "claudeAgent",
             model: "claude-opus-5",
           },
-          runtimeMode: "full-access",
+          input: "hello",
+          attachments: [],
         })
         .pipe(Effect.result);
 
@@ -1401,15 +1402,16 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(result.failure._tag, "ProviderAdapterRequestError");
         assert.match(result.failure.message, /version could not be confirmed/u);
       }
-      assert.equal(harness.getLastCreateQueryInput(), undefined);
+      assert.notEqual(harness.getLastCreateQueryInput(), undefined);
+      assert.deepEqual(harness.query.setModelCalls, []);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
   });
 
-  it.effect("does not authorize Opus 5 when the exact SDK process is older than preflight", () => {
-    const harness = makeHarness({ claudeVersion: "2.1.219" });
+  it.effect("does not authorize Opus 5 when the exact SDK process is too old", () => {
+    const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -1439,7 +1441,7 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("does not authorize Opus 5 when the exact SDK catalog omits it", () => {
-    const harness = makeHarness({ claudeVersion: "2.1.219" });
+    const harness = makeHarness();
     (harness.query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels =
       async () => [
         {
@@ -1485,7 +1487,7 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("fails closed when live Opus 5 catalog discovery does not settle", () => {
-    const harness = makeHarness({ claudeVersion: "2.1.219", discoveryTimeoutMs: 10 });
+    const harness = makeHarness({ discoveryTimeoutMs: 10 });
     (harness.query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels = () =>
       new Promise<ModelInfo[]>(() => {});
     return Effect.gen(function* () {
@@ -5085,7 +5087,7 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("preserves an explicit Opus 5 alias context suffix when changing models live", () => {
-    const harness = makeHarness({ claudeVersion: "2.1.219" });
+    const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -5113,7 +5115,7 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("rejects a live switch to Opus 5 when the Claude runtime is too old", () => {
-    const harness = makeHarness({ claudeVersion: "2.1.218" });
+    const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -5147,11 +5149,8 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("does not authorize a live Opus 5 switch from a replaced on-disk executable", () => {
-    let probes = 0;
-    const harness = makeHarness({
-      resolveClaudeVersion: () => Effect.succeed(++probes === 1 ? "2.1.218" : "2.1.219"),
-    });
+  it.effect("does not authorize a live Opus 5 switch from an older SDK process", () => {
+    const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       const session = yield* adapter.startSession({
@@ -5173,7 +5172,6 @@ describe("ClaudeAdapterLive", () => {
       const result = yield* adapter.sendTurn(input).pipe(Effect.result);
 
       assert.equal(result._tag, "Failure");
-      assert.equal(probes, 0);
       assert.deepEqual(harness.query.setModelCalls, []);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

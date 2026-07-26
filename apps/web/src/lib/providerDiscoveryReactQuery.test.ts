@@ -117,7 +117,7 @@ describe("providerModelsQueryOptions", () => {
     const options = providerModelsQueryOptions({ provider: "claudeAgent" });
     setProviderDiscoveryGeneration("signed-in");
     const queryClient = new QueryClient();
-    const pending = queryClient.fetchQuery({ ...options, retry: false });
+    const pending = queryClient.fetchQuery(options);
 
     await vi.waitFor(() => expect(listModels).toHaveBeenCalledTimes(1));
     expect(listModels).toHaveBeenCalledWith({
@@ -127,6 +127,7 @@ describe("providerModelsQueryOptions", () => {
     resolveModels?.({ models: [] });
 
     await expect(pending).rejects.toThrow(/stale Claude model catalog/u);
+    expect(listModels).toHaveBeenCalledTimes(1);
     expect(queryClient.getQueryData(options.queryKey)).toBeUndefined();
   });
 
@@ -279,7 +280,7 @@ describe("providerAgentsQueryOptions", () => {
     const options = providerAgentsQueryOptions({ provider: "claudeAgent" });
     setProviderDiscoveryGeneration("signed-in");
     const queryClient = new QueryClient();
-    const pending = queryClient.fetchQuery({ ...options, retry: false });
+    const pending = queryClient.fetchQuery(options);
 
     await vi.waitFor(() => expect(listAgents).toHaveBeenCalledTimes(1));
     expect(listAgents).toHaveBeenCalledWith({
@@ -289,6 +290,7 @@ describe("providerAgentsQueryOptions", () => {
     resolveAgents?.({ agents: [] });
 
     await expect(pending).rejects.toThrow(/stale Claude agent catalog/u);
+    expect(listAgents).toHaveBeenCalledTimes(1);
     expect(queryClient.getQueryData(options.queryKey)).toBeUndefined();
   });
 });

@@ -52,6 +52,17 @@ const EMPTY_PLUGINS_RESULT: ProviderListPluginsResult = {
 // side effect of returning to the Scient window.
 const PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS = false;
 
+class StaleProviderDiscoveryGenerationError extends Error {
+  constructor(kind: "model" | "agent") {
+    super(`Discarded a stale Claude ${kind} catalog from an earlier provider state.`);
+    this.name = "StaleProviderDiscoveryGenerationError";
+  }
+}
+
+function shouldRetryProviderDiscovery(failureCount: number, error: unknown): boolean {
+  return !(error instanceof StaleProviderDiscoveryGenerationError) && failureCount < 3;
+}
+
 export const providerDiscoveryQueryKeys = {
   all: ["provider-discovery"] as const,
   composerCapabilities: (provider: ProviderKind) =>
@@ -248,14 +259,19 @@ export function providerModelsQueryOptions(input: {
         discoveryGeneration !== null &&
         discoveryGeneration !== getProviderDiscoveryGeneration()
       ) {
-        throw new Error("Discarded a stale Claude model catalog from an earlier provider state.");
+        throw new StaleProviderDiscoveryGenerationError("model");
       }
       return result;
     },
     enabled: input.enabled ?? true,
     // Cursor/droid failures are permanent for a session (missing CLI/auth): fail
     // fast so the picker settles to static options instead of spinning (#103).
-    retry: input.provider === "droid" || input.provider === "cursor" ? 0 : 3,
+    retry:
+      input.provider === "droid" || input.provider === "cursor"
+        ? 0
+        : input.provider === "claudeAgent"
+          ? shouldRetryProviderDiscovery
+          : 3,
     staleTime: input.provider === "droid" ? 5 * 60_000 : 60_000,
     refetchOnWindowFocus: PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS,
     // Never carry a Claude catalog across an executable/cwd cache-key change.
@@ -301,11 +317,12 @@ export function providerAgentsQueryOptions(input: {
         discoveryGeneration !== null &&
         discoveryGeneration !== getProviderDiscoveryGeneration()
       ) {
-        throw new Error("Discarded a stale Claude agent catalog from an earlier provider state.");
+        throw new StaleProviderDiscoveryGenerationError("agent");
       }
       return result;
     },
     enabled: input.enabled ?? true,
+    ...(input.provider === "claudeAgent" ? { retry: shouldRetryProviderDiscovery } : {}),
     staleTime: 60_000,
     refetchOnWindowFocus: PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS,
     ...(input.provider === "claudeAgent"
