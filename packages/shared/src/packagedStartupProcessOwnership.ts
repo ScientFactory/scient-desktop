@@ -66,6 +66,23 @@ export function readWindowsProcessInstanceId(
   return /^\d{10,32}$/.test(instanceId) ? instanceId : null;
 }
 
+export function recordWindowsPackagedStartupOwnedProcess(
+  environment: NodeJS.ProcessEnv,
+  pid: number,
+  runProcess: typeof spawnSync = spawnSync,
+): void {
+  if (environment.SCIENT_PACKAGED_STARTUP_SMOKE !== "1") return;
+  const instanceId = readWindowsProcessInstanceId(pid, environment, runProcess);
+  if (!instanceId) {
+    throw new Error("Could not establish the packaged backend process instance identity.");
+  }
+  recordPackagedStartupOwnedProcess(environment, {
+    pid,
+    processGroup: false,
+    instanceId,
+  });
+}
+
 export function recordPackagedStartupOwnedProcess(
   environment: NodeJS.ProcessEnv,
   processDetails: Pick<PackagedStartupOwnedProcess, "pid" | "processGroup" | "instanceId">,
@@ -139,7 +156,9 @@ export function readPackagedStartupOwnedProcesses(
     (record, index, all) =>
       all.findIndex(
         (candidate) =>
-          candidate.pid === record.pid && candidate.processGroup === record.processGroup,
+          candidate.pid === record.pid &&
+          candidate.processGroup === record.processGroup &&
+          candidate.instanceId === record.instanceId,
       ) === index,
   );
 }

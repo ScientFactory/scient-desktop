@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   attachMacDiskImageForInspection,
   assertPackagedLaunchCommandSafety,
+  assertUnsignedWindowsReleaseSignatureDetails,
   assertWindowsReleaseSignatureDetails,
   createPackagedDesktopSmokeEnvironment,
   expectedPackagedDesktopStartupAssetName,
@@ -338,6 +339,35 @@ describe("packaged desktop startup verification", () => {
     ).toThrow("timestamp signer is missing");
   });
 
+  it("requires genuinely unsigned Windows payloads in explicit unsigned mode", () => {
+    const unsigned = {
+      status: "NotSigned",
+      statusMessage: "The file is not digitally signed.",
+      signerSubject: null,
+      signerThumbprint: null,
+      timestampSubject: null,
+    };
+    expect(() => assertUnsignedWindowsReleaseSignatureDetails([unsigned, unsigned])).not.toThrow();
+    expect(() =>
+      assertUnsignedWindowsReleaseSignatureDetails([
+        { ...unsigned, status: "HashMismatch" },
+        unsigned,
+      ]),
+    ).toThrow("must be genuinely unsigned");
+    expect(() =>
+      assertUnsignedWindowsReleaseSignatureDetails([
+        {
+          ...unsigned,
+          status: "Valid",
+          signerSubject: "CN=Other Publisher",
+          signerThumbprint: "FOREIGN",
+          timestampSubject: "CN=Timestamp",
+        },
+        unsigned,
+      ]),
+    ).toThrow("must be genuinely unsigned");
+  });
+
   it("accepts startup proof only after the process remains alive for the stability window", async () => {
     let now = 0;
     await expect(
@@ -556,10 +586,13 @@ describe("packaged desktop startup verification", () => {
         {
           platform: "win32",
           childIsAlive: () => true,
+          readWindowsProcessInstanceId: () => "638891234567890123",
           runTaskkill,
           waitForTargetsExit: async () => false,
         },
         [84],
+        [],
+        "638891234567890123",
       ),
     ).rejects.toThrow("survived Windows cleanup");
     expect(runTaskkill.mock.calls.map(([pid]) => pid)).toEqual([42]);
@@ -573,12 +606,19 @@ describe("packaged desktop startup verification", () => {
       signalCode: null,
     } as unknown as ChildProcess;
     await expect(
-      terminateProcessTree(child, {
-        platform: "win32",
-        childIsAlive: () => true,
-        runTaskkill: () => ({ status: 1 }),
-        waitForTargetsExit: async () => true,
-      }),
+      terminateProcessTree(
+        child,
+        {
+          platform: "win32",
+          childIsAlive: () => true,
+          readWindowsProcessInstanceId: () => "638891234567890123",
+          runTaskkill: () => ({ status: 1 }),
+          waitForTargetsExit: async () => true,
+        },
+        [],
+        [],
+        "638891234567890123",
+      ),
     ).rejects.toThrow("lost authoritative tree termination");
   });
 
@@ -737,7 +777,7 @@ describe("packaged desktop startup verification", () => {
         platform: "darwin",
         childIsAlive: () => true,
         sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
-        targetIsAlive: () => false,
+        targetIsAlive: () => true,
         waitForTargetsExit: async (_targets, timeoutMs) => {
           exitWaits.push(timeoutMs);
           return true;
@@ -748,6 +788,24 @@ describe("packaged desktop startup verification", () => {
 
     expect(signals).toEqual([{ pid: 42, signal: "SIGTERM" }]);
     expect(exitWaits).toEqual([12_000]);
+  });
+
+  it("does not signal a verifier-created POSIX group after it is already gone", async () => {
+    const child = {
+      exitCode: 0,
+      pid: 42,
+      signalCode: null,
+    } as unknown as ChildProcess;
+    const signals: Array<{ pid: number; signal: NodeJS.Signals }> = [];
+
+    await terminateProcessTree(child, {
+      platform: "darwin",
+      sendSignal: (target, signal) => signals.push({ pid: target.pid, signal }),
+      targetIsAlive: () => false,
+      waitForTargetsExit: async () => true,
+    });
+
+    expect(signals).toEqual([]);
   });
 
   it("keeps the verifier-created POSIX group authoritative when its leader exits", async () => {
@@ -851,6 +909,52 @@ describe("packaged desktop startup verification", () => {
         },
         [84],
         [{ pid: 84, processGroup: false, instanceId: "638891234567890123" }],
+      ),
+    ).rejects.toThrow("survived Windows cleanup");
+    expect(runTaskkill).not.toHaveBeenCalled();
+  });
+
+  it("retains the newest authenticated backend when Windows reuses a PID", async () => {
+    const child = { exitCode: 0, pid: 42, signalCode: null } as unknown as ChildProcess;
+    const runTaskkill = vi.fn(() => ({ status: 0 }));
+
+    await terminateProcessTree(
+      child,
+      {
+        platform: "win32",
+        readWindowsProcessInstanceId: () => "638891234567890999",
+        runTaskkill,
+        waitForTargetsExit: async (_targets, timeoutMs) =>
+          timeoutMs === 5_000 && runTaskkill.mock.calls.length > 0,
+      },
+      [84],
+      [
+        { pid: 84, processGroup: false, instanceId: "638891234567890123" },
+        { pid: 84, processGroup: false, instanceId: "638891234567890999" },
+      ],
+    );
+
+    expect(runTaskkill).toHaveBeenCalledTimes(1);
+    expect(runTaskkill).toHaveBeenCalledWith(84, 5_000);
+  });
+
+  it("does not taskkill a Windows Electron root after its process instance is reused", async () => {
+    const child = { exitCode: null, pid: 42, signalCode: null } as unknown as ChildProcess;
+    const runTaskkill = vi.fn(() => ({ status: 0 }));
+
+    await expect(
+      terminateProcessTree(
+        child,
+        {
+          platform: "win32",
+          childIsAlive: () => true,
+          readWindowsProcessInstanceId: () => "638891234567890999",
+          runTaskkill,
+          waitForTargetsExit: async () => false,
+        },
+        [],
+        [],
+        "638891234567890123",
       ),
     ).rejects.toThrow("survived Windows cleanup");
     expect(runTaskkill).not.toHaveBeenCalled();

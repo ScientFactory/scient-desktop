@@ -46,10 +46,7 @@ import { autoUpdater, BaseUpdater, CancellationToken } from "electron-updater";
 
 import type { ContextMenuItem } from "@synara/contracts";
 import { makeScientBackendShutdownMessage } from "@synara/shared/backendControl";
-import {
-  readWindowsProcessInstanceId,
-  recordPackagedStartupOwnedProcess,
-} from "@synara/shared/packagedStartupProcessOwnership";
+import { recordWindowsPackagedStartupOwnedProcess } from "@synara/shared/packagedStartupProcessOwnership";
 import { getMacTrafficLightPosition } from "@synara/shared/desktopChrome";
 import {
   SCIENT_APP_NAME,
@@ -2887,15 +2884,7 @@ function spawnBackendGeneration(generation: number): ChildProcess.ChildProcess {
   });
   try {
     if (child.pid && process.platform === "win32") {
-      const instanceId = readWindowsProcessInstanceId(child.pid, process.env);
-      if (!instanceId) {
-        throw new Error("Could not establish the packaged backend process instance identity.");
-      }
-      recordPackagedStartupOwnedProcess(process.env, {
-        pid: child.pid,
-        processGroup: false,
-        instanceId,
-      });
+      recordWindowsPackagedStartupOwnedProcess(process.env, child.pid);
     }
   } catch (error) {
     void forceTerminateBackendProcessTree(child).catch(() => undefined);

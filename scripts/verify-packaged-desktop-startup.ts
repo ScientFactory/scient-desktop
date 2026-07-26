@@ -513,6 +513,19 @@ export function assertWindowsReleaseSignatureDetails(
   }
 }
 
+export function assertUnsignedWindowsReleaseSignatureDetails(
+  signatures: ReadonlyArray<WindowsReleaseSignatureDetails>,
+): void {
+  for (const [index, signature] of signatures.entries()) {
+    const label = index === 0 ? "Windows installer" : "Extracted Scient executable";
+    if (signature.status !== "NotSigned") {
+      throw new Error(
+        `${label} must be genuinely unsigned, not ${signature.status}: ${signature.statusMessage}.`,
+      );
+    }
+  }
+}
+
 const WINDOWS_RELEASE_SIGNATURE_SCRIPT = [
   "param([string]$InstallerPath, [string]$ExecutablePath)",
   "$ErrorActionPreference = 'Stop'",
@@ -523,7 +536,7 @@ const WINDOWS_RELEASE_SIGNATURE_SCRIPT = [
 async function verifyWindowsReleaseSignatures(
   installer: string,
   executable: string,
-  expectedPublisherSubject: string,
+  expectedPublisherSubject: string | null,
   extractionRoot: string,
   signal: AbortSignal,
 ): Promise<void> {
@@ -561,7 +574,11 @@ async function verifyWindowsReleaseSignatures(
   if (!parsed.every(isWindowsAuthenticodeSignatureDetails)) {
     throw new Error("Windows Authenticode verifier returned malformed release signature details.");
   }
-  assertWindowsReleaseSignatureDetails(parsed, expectedPublisherSubject);
+  if (expectedPublisherSubject === null) {
+    assertUnsignedWindowsReleaseSignatureDetails(parsed);
+  } else {
+    assertWindowsReleaseSignatureDetails(parsed, expectedPublisherSubject);
+  }
 }
 
 async function prepareWindowsLaunch(
@@ -605,19 +622,17 @@ async function prepareWindowsLaunch(
       `Expected exact Windows ${options.arch} executable, found ${executableArchitecture ?? "unknown"}.`,
     );
   }
-  if (!options.allowUnsignedWindows) {
-    const expectedPublisherSubject = options.windowsPublisherSubject?.trim();
-    if (!expectedPublisherSubject) {
-      throw new Error("Signed Windows startup proof requires an expected publisher subject.");
-    }
-    await verifyWindowsReleaseSignatures(
-      installer,
-      executables[0]!,
-      expectedPublisherSubject,
-      extractionRoot,
-      signal,
-    );
+  const expectedPublisherSubject = options.windowsPublisherSubject?.trim() || null;
+  if (!options.allowUnsignedWindows && !expectedPublisherSubject) {
+    throw new Error("Signed Windows startup proof requires an expected publisher subject.");
   }
+  await verifyWindowsReleaseSignatures(
+    installer,
+    executables[0]!,
+    options.allowUnsignedWindows ? null : expectedPublisherSubject,
+    extractionRoot,
+    signal,
+  );
   return { command: executables[0]!, args: [], cwd: dirname(executables[0]!) };
 }
 
@@ -827,6 +842,7 @@ export async function terminateProcessTree(
   dependencies: ProcessTerminationDependencies = {},
   additionalProcessIds: ReadonlyArray<number> = [],
   recordedOwnedTargets: ReadonlyArray<ProcessTerminationTarget> = [],
+  rootProcessInstanceId?: string,
 ): Promise<void> {
   const platform = dependencies.platform ?? process.platform;
   const childCanStillOwnProcesses =
@@ -835,7 +851,13 @@ export async function terminateProcessTree(
     child.signalCode === null;
   const rootTarget: ProcessTerminationTarget | null =
     child.pid && childCanStillOwnProcesses
-      ? { pid: child.pid, processGroup: platform !== "win32" }
+      ? {
+          pid: child.pid,
+          processGroup: platform !== "win32",
+          ...(platform === "win32" && rootProcessInstanceId
+            ? { instanceId: rootProcessInstanceId }
+            : {}),
+        }
       : null;
   // The verifier creates this POSIX process group and keeps authority over it
   // while any descendant remains, even after its original leader exits.
@@ -848,7 +870,9 @@ export async function terminateProcessTree(
       target.pid > 0 &&
       allTargets.findIndex(
         (candidate) =>
-          candidate.pid === target.pid && candidate.processGroup === target.processGroup,
+          candidate.pid === target.pid &&
+          candidate.processGroup === target.processGroup &&
+          candidate.instanceId === target.instanceId,
       ) === index,
   );
   // Backend PIDs recovered from logs/runtime state are observation-only. A
@@ -891,8 +915,9 @@ export async function terminateProcessTree(
     }
   }
   if (platform === "win32") {
-    // A live ChildProcess handle owns the root. Authenticated backend records
-    // retain authority only while their Windows process creation identity matches.
+    // A live ChildProcess handle establishes liveness, while the captured
+    // process-creation identity prevents numeric-PID reuse before taskkill.
+    // Authenticated backend records use the same identity boundary.
     const candidateWindowsRoots = [
       ...(rootTarget ? [rootTarget] : []),
       ...ownedTargets.filter((target) => target.pid !== rootTarget?.pid),
@@ -902,10 +927,7 @@ export async function terminateProcessTree(
       dependencies.readWindowsProcessInstanceId ??
       ((pid: number) => readWindowsProcessInstanceId(pid));
     for (const target of candidateWindowsRoots) {
-      if (
-        target !== rootTarget &&
-        (!target.instanceId || readInstanceId(target.pid) !== target.instanceId)
-      ) {
+      if (!target.instanceId || readInstanceId(target.pid) !== target.instanceId) {
         continue;
       }
       authoritativeWindowsRoots.push(target);
@@ -931,14 +953,16 @@ export async function terminateProcessTree(
     );
   }
   const sendSignal = dependencies.sendSignal ?? sendProcessTreeSignal;
+  const targetIsAlive = dependencies.targetIsAlive ?? processTerminationTargetIsAlive;
   const authoritativeRootGroup = rootTarget ?? exitedRootGroupTarget;
   if (authoritativeRootGroup) {
-    sendSignal(authoritativeRootGroup, "SIGTERM");
+    if (targetIsAlive(authoritativeRootGroup)) {
+      sendSignal(authoritativeRootGroup, "SIGTERM");
+    }
     // The desktop owns a bounded backend shutdown that can legitimately take
     // up to ten seconds. Preserve its supervisor for that complete deadline.
     if (await awaitTargetsExit(targets, POSIX_DESKTOP_GRACEFUL_SHUTDOWN_TIMEOUT_MS)) return;
   }
-  const targetIsAlive = dependencies.targetIsAlive ?? processTerminationTargetIsAlive;
   const authoritativePosixTargets = [
     ...(authoritativeRootGroup ? [authoritativeRootGroup] : []),
     ...ownedTargets.filter((target) => target.pid !== authoritativeRootGroup?.pid),
@@ -1172,6 +1196,7 @@ async function verifyPackagedDesktopPayload(
   let child: ChildProcess | null = null;
   let launch: PackagedDesktopLaunchCommand | null = null;
   let environment: NodeJS.ProcessEnv | null = null;
+  let rootProcessInstanceId: string | null = null;
   let logPath: string | null = null;
   let output = "";
   const failures: Array<{ phase: string; error: unknown }> = [];
@@ -1210,6 +1235,15 @@ async function verifyPackagedDesktopPayload(
     child.stdout?.on("data", recordOutput);
     child.stderr?.on("data", recordOutput);
 
+    if (process.platform === "win32") {
+      rootProcessInstanceId = child.pid
+        ? readWindowsProcessInstanceId(child.pid, environment)
+        : null;
+      if (!rootProcessInstanceId) {
+        throw new Error("Could not establish the packaged Electron process instance identity.");
+      }
+    }
+
     await Promise.race([
       waitForPackagedStartupProof({
         timeoutMs: options.timeoutMs,
@@ -1242,6 +1276,7 @@ async function verifyPackagedDesktopPayload(
         {},
         readPackagedBackendProcessIds(environment),
         ownedTargets,
+        rootProcessInstanceId ?? undefined,
       );
     }
   } catch (error) {

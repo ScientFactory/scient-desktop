@@ -8,6 +8,7 @@ import {
   readPackagedStartupOwnedProcesses,
   readWindowsProcessInstanceId,
   recordPackagedStartupOwnedProcess,
+  recordWindowsPackagedStartupOwnedProcess,
   resolvePackagedStartupProcessOwnershipPath,
 } from "./packagedStartupProcessOwnership";
 
@@ -94,6 +95,36 @@ describe("packaged startup process ownership", () => {
     ]);
   });
 
+  it("preserves distinct authenticated process instances when Windows reuses a PID", () => {
+    const root = mkdtempSync(join(tmpdir(), "scient-packaged-ownership-test-"));
+    roots.push(root);
+    const environment = {
+      SCIENT_HOME: root,
+      SCIENT_PACKAGED_STARTUP_SMOKE: "1",
+      SCIENT_PACKAGED_STARTUP_CLEANUP_TOKEN: "e".repeat(64),
+    };
+    recordPackagedStartupOwnedProcess(environment, {
+      pid: 84,
+      processGroup: false,
+      instanceId: "638891234567890456",
+    });
+    recordPackagedStartupOwnedProcess(environment, {
+      pid: 84,
+      processGroup: false,
+      instanceId: "638891234567890789",
+    });
+
+    expect(
+      readPackagedStartupOwnedProcesses(environment).map(({ pid, instanceId }) => ({
+        pid,
+        instanceId,
+      })),
+    ).toEqual([
+      { pid: 84, instanceId: "638891234567890456" },
+      { pid: 84, instanceId: "638891234567890789" },
+    ]);
+  });
+
   it("does not write authority outside packaged startup verification", () => {
     const root = mkdtempSync(join(tmpdir(), "scient-packaged-ownership-test-"));
     roots.push(root);
@@ -104,6 +135,42 @@ describe("packaged startup process ownership", () => {
     );
 
     expect(readPackagedStartupOwnedProcesses({ SCIENT_HOME: root })).toEqual([]);
+  });
+
+  it("does not probe Windows process identity outside packaged startup verification", () => {
+    const runProcess = vi.fn();
+
+    expect(() =>
+      recordWindowsPackagedStartupOwnedProcess({ SCIENT_HOME: "/unused" }, 42, runProcess),
+    ).not.toThrow();
+
+    expect(runProcess).not.toHaveBeenCalled();
+  });
+
+  it("records the probed Windows process instance during packaged startup verification", () => {
+    const root = mkdtempSync(join(tmpdir(), "scient-packaged-ownership-test-"));
+    roots.push(root);
+    const environment = {
+      SCIENT_HOME: root,
+      SCIENT_PACKAGED_STARTUP_SMOKE: "1",
+      SCIENT_PACKAGED_STARTUP_CLEANUP_TOKEN: "f".repeat(64),
+      SystemRoot: "D:\\Windows",
+    };
+    const runProcess = vi.fn(() => ({
+      error: undefined,
+      status: 0,
+      stdout: "638891234567890999\r\n",
+    }));
+
+    recordWindowsPackagedStartupOwnedProcess(
+      environment,
+      42,
+      runProcess as unknown as typeof import("node:child_process").spawnSync,
+    );
+
+    expect(readPackagedStartupOwnedProcesses(environment)).toEqual([
+      expect.objectContaining({ pid: 42, instanceId: "638891234567890999" }),
+    ]);
   });
 
   it("refuses weak cleanup capabilities and invalid process ids", () => {
