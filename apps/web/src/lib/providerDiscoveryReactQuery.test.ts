@@ -19,7 +19,10 @@ import {
   skillsCatalogQueryOptions,
 } from "./providerDiscoveryReactQuery";
 import * as nativeApi from "../nativeApi";
-import { setProviderDiscoveryGeneration } from "./providerDiscoveryInvalidation";
+import {
+  getProviderDiscoveryGeneration,
+  setProviderDiscoveryGeneration,
+} from "./providerDiscoveryInvalidation";
 
 function mockListModels(listModels: ReturnType<typeof vi.fn>) {
   vi.spyOn(nativeApi, "ensureNativeApi").mockReturnValue({
@@ -76,7 +79,7 @@ describe("isInitialModelDiscoveryPending", () => {
 
 describe("providerModelsQueryOptions", () => {
   it("scopes Claude discovery and its cache identity to the configured executable", async () => {
-    setProviderDiscoveryGeneration("auth-generation-a");
+    const discoveryGeneration = setProviderDiscoveryGeneration("auth-generation-a");
     const listModels = mockListModels(vi.fn().mockResolvedValue({ models: [] }));
     const configuredOptions = providerModelsQueryOptions({
       provider: "claudeAgent",
@@ -92,7 +95,7 @@ describe("providerModelsQueryOptions", () => {
     expect(listModels).toHaveBeenCalledWith({
       provider: "claudeAgent",
       binaryPath: "/opt/claude-custom",
-      discoveryGeneration: "auth-generation-a",
+      discoveryGeneration,
     });
 
     setProviderDiscoveryGeneration("auth-generation-b");
@@ -113,7 +116,7 @@ describe("providerModelsQueryOptions", () => {
           }),
       ),
     );
-    setProviderDiscoveryGeneration("signed-out");
+    const staleGeneration = setProviderDiscoveryGeneration("signed-out");
     const options = providerModelsQueryOptions({ provider: "claudeAgent" });
     setProviderDiscoveryGeneration("signed-in");
     const queryClient = new QueryClient();
@@ -122,13 +125,46 @@ describe("providerModelsQueryOptions", () => {
     await vi.waitFor(() => expect(listModels).toHaveBeenCalledTimes(1));
     expect(listModels).toHaveBeenCalledWith({
       provider: "claudeAgent",
-      discoveryGeneration: "signed-out",
+      discoveryGeneration: staleGeneration,
     });
     resolveModels?.({ models: [] });
 
     await expect(pending).rejects.toThrow(/stale Claude model catalog/u);
     expect(listModels).toHaveBeenCalledTimes(1);
     expect(queryClient.getQueryData(options.queryKey)).toBeUndefined();
+  });
+
+  it("rejects an old Claude model catalog after an A-B-A provider transition", async () => {
+    let resolveModels: ((result: { models: [] }) => void) | undefined;
+    const listModels = mockListModels(
+      vi.fn(
+        () =>
+          new Promise<{ models: [] }>((resolve) => {
+            resolveModels = resolve;
+          }),
+      ),
+    );
+    const firstGeneration = setProviderDiscoveryGeneration("same-provider-state");
+    const staleOptions = providerModelsQueryOptions({ provider: "claudeAgent" });
+    setProviderDiscoveryGeneration("intermediate-provider-state");
+    const currentGeneration = setProviderDiscoveryGeneration("same-provider-state");
+    const currentOptions = providerModelsQueryOptions({ provider: "claudeAgent" });
+
+    expect(currentGeneration).not.toBe(firstGeneration);
+    expect(currentOptions.queryKey).not.toEqual(staleOptions.queryKey);
+    expect(getProviderDiscoveryGeneration()).toBe(currentGeneration);
+
+    const queryClient = new QueryClient();
+    const pending = queryClient.fetchQuery(staleOptions);
+    await vi.waitFor(() => expect(listModels).toHaveBeenCalledTimes(1));
+    expect(listModels).toHaveBeenCalledWith({
+      provider: "claudeAgent",
+      discoveryGeneration: firstGeneration,
+    });
+    resolveModels?.({ models: [] });
+
+    await expect(pending).rejects.toThrow(/stale Claude model catalog/u);
+    expect(queryClient.getQueryData(staleOptions.queryKey)).toBeUndefined();
   });
 
   it("fails fast for Cursor so a missing CLI settles instead of spinning (#103)", async () => {
@@ -239,7 +275,7 @@ describe("providerAgentsQueryOptions", () => {
   });
 
   it("scopes Claude subagents and their cache identity to the configured executable", async () => {
-    setProviderDiscoveryGeneration("auth-generation-b");
+    const discoveryGeneration = setProviderDiscoveryGeneration("auth-generation-b");
     const listAgents = mockListAgents(vi.fn().mockResolvedValue({ agents: [] }));
     const configuredOptions = providerAgentsQueryOptions({
       provider: "claudeAgent",
@@ -255,7 +291,7 @@ describe("providerAgentsQueryOptions", () => {
     expect(listAgents).toHaveBeenCalledWith({
       provider: "claudeAgent",
       binaryPath: "/opt/claude-custom",
-      discoveryGeneration: "auth-generation-b",
+      discoveryGeneration,
     });
 
     setProviderDiscoveryGeneration("auth-generation-c");
@@ -276,7 +312,7 @@ describe("providerAgentsQueryOptions", () => {
           }),
       ),
     );
-    setProviderDiscoveryGeneration("signed-out");
+    const staleGeneration = setProviderDiscoveryGeneration("signed-out");
     const options = providerAgentsQueryOptions({ provider: "claudeAgent" });
     setProviderDiscoveryGeneration("signed-in");
     const queryClient = new QueryClient();
@@ -285,7 +321,7 @@ describe("providerAgentsQueryOptions", () => {
     await vi.waitFor(() => expect(listAgents).toHaveBeenCalledTimes(1));
     expect(listAgents).toHaveBeenCalledWith({
       provider: "claudeAgent",
-      discoveryGeneration: "signed-out",
+      discoveryGeneration: staleGeneration,
     });
     resolveAgents?.({ agents: [] });
 

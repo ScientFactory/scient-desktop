@@ -37,10 +37,23 @@ describe("providerModelDiscoveryInvalidationFingerprint", () => {
     expect(AUTH_SENSITIVE_AGENT_DISCOVERY_PROVIDERS).toContain("claudeAgent");
   });
 
-  it("publishes the exact provider fingerprint as the discovery generation", () => {
-    const fingerprint = providerModelDiscoveryInvalidationFingerprint([BASE_PROVIDER_STATUS]);
-    setProviderDiscoveryGeneration(fingerprint);
-    expect(getProviderDiscoveryGeneration()).toBe(fingerprint);
+  it("keeps repeated fingerprints stable while issuing opaque generations for A-B-A", () => {
+    const firstFingerprint = `${providerModelDiscoveryInvalidationFingerprint([
+      BASE_PROVIDER_STATUS,
+    ])}:first`;
+    const secondFingerprint = `${firstFingerprint}:second`;
+
+    const firstGeneration = setProviderDiscoveryGeneration(firstFingerprint);
+    expect(setProviderDiscoveryGeneration(firstFingerprint)).toBe(firstGeneration);
+
+    const secondGeneration = setProviderDiscoveryGeneration(secondFingerprint);
+    expect(secondGeneration).not.toBe(firstGeneration);
+
+    const returnedGeneration = setProviderDiscoveryGeneration(firstFingerprint);
+    expect(returnedGeneration).not.toBe(firstGeneration);
+    expect(returnedGeneration).not.toBe(secondGeneration);
+    expect(getProviderDiscoveryGeneration()).toBe(returnedGeneration);
+    expect(returnedGeneration).not.toContain(firstFingerprint);
   });
 
   it("ignores provider checkedAt, message, and advisory metadata churn", () => {

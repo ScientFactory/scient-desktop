@@ -620,32 +620,40 @@ describe("ClaudeAdapterLive", () => {
         binaryPath: "/managed/claude",
       };
       const oldFirst = yield* adapter
-        .listModels({ ...input, discoveryGeneration: "signed-out" })
+        .listModels({ ...input, discoveryGeneration: "signed-out:1" })
         .pipe(Effect.forkChild);
       const oldSecond = yield* adapter
-        .listModels({ ...input, discoveryGeneration: "signed-out" })
+        .listModels({ ...input, discoveryGeneration: "signed-out:1" })
+        .pipe(Effect.forkChild);
+      const intermediate = yield* adapter
+        .listModels({ ...input, discoveryGeneration: "signed-in" })
         .pipe(Effect.forkChild);
       const current = yield* adapter
-        .listModels({ ...input, discoveryGeneration: "signed-in" })
+        .listModels({ ...input, discoveryGeneration: "signed-out:2" })
         .pipe(Effect.forkChild);
       yield* Effect.yieldNow;
 
-      assert.equal(queries.length, 2);
+      assert.equal(queries.length, 3);
       queries[0]?.emit(claudeInitMessage("2.1.219"));
       queries[1]?.emit(claudeInitMessage("2.1.220"));
+      queries[2]?.emit(claudeInitMessage("2.1.221"));
       modelResolvers[0]?.([]);
       modelResolvers[1]?.([]);
-      const [oldFirstResult, oldSecondResult, currentResult] = yield* Effect.all([
-        Fiber.join(oldFirst),
-        Fiber.join(oldSecond),
-        Fiber.join(current),
-      ]);
+      modelResolvers[2]?.([]);
+      const [oldFirstResult, oldSecondResult, intermediateResult, currentResult] =
+        yield* Effect.all([
+          Fiber.join(oldFirst),
+          Fiber.join(oldSecond),
+          Fiber.join(intermediate),
+          Fiber.join(current),
+        ]);
       assert.equal(oldFirstResult.runtimeVersion, "2.1.219");
       assert.equal(oldSecondResult.runtimeVersion, "2.1.219");
-      assert.equal(currentResult.runtimeVersion, "2.1.220");
+      assert.equal(intermediateResult.runtimeVersion, "2.1.220");
+      assert.equal(currentResult.runtimeVersion, "2.1.221");
       assert.deepEqual(
         queries.map((query) => query.closeCalls),
-        [1, 1],
+        [1, 1, 1],
       );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -678,24 +686,32 @@ describe("ClaudeAdapterLive", () => {
         binaryPath: "/managed/claude",
       };
       const oldFirst = yield* adapter
-        .listAgents({ ...input, discoveryGeneration: "signed-out" })
+        .listAgents({ ...input, discoveryGeneration: "signed-out:1" })
         .pipe(Effect.forkChild);
       const oldSecond = yield* adapter
-        .listAgents({ ...input, discoveryGeneration: "signed-out" })
+        .listAgents({ ...input, discoveryGeneration: "signed-out:1" })
+        .pipe(Effect.forkChild);
+      const intermediate = yield* adapter
+        .listAgents({ ...input, discoveryGeneration: "signed-in" })
         .pipe(Effect.forkChild);
       const current = yield* adapter
-        .listAgents({ ...input, discoveryGeneration: "signed-in" })
+        .listAgents({ ...input, discoveryGeneration: "signed-out:2" })
         .pipe(Effect.forkChild);
       yield* Effect.yieldNow;
 
-      assert.equal(queries.length, 2);
+      assert.equal(queries.length, 3);
       agentResolvers[0]?.([{ name: "old-agent", description: "old", model: "inherit" }]);
-      agentResolvers[1]?.([{ name: "current-agent", description: "new", model: "inherit" }]);
-      const [oldFirstResult, oldSecondResult, currentResult] = yield* Effect.all([
-        Fiber.join(oldFirst),
-        Fiber.join(oldSecond),
-        Fiber.join(current),
+      agentResolvers[1]?.([
+        { name: "intermediate-agent", description: "middle", model: "inherit" },
       ]);
+      agentResolvers[2]?.([{ name: "current-agent", description: "new", model: "inherit" }]);
+      const [oldFirstResult, oldSecondResult, intermediateResult, currentResult] =
+        yield* Effect.all([
+          Fiber.join(oldFirst),
+          Fiber.join(oldSecond),
+          Fiber.join(intermediate),
+          Fiber.join(current),
+        ]);
       assert.deepEqual(
         oldFirstResult.agents.map((agent) => agent.name),
         ["old-agent"],
@@ -705,12 +721,16 @@ describe("ClaudeAdapterLive", () => {
         ["old-agent"],
       );
       assert.deepEqual(
+        intermediateResult.agents.map((agent) => agent.name),
+        ["intermediate-agent"],
+      );
+      assert.deepEqual(
         currentResult.agents.map((agent) => agent.name),
         ["current-agent"],
       );
       assert.deepEqual(
         queries.map((query) => query.closeCalls),
-        [1, 1],
+        [1, 1, 1],
       );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
