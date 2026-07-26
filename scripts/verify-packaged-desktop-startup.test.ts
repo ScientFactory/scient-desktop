@@ -284,6 +284,8 @@ describe("packaged desktop startup verification", () => {
       "renderer main frame load failed code=-2 message=failed",
       "renderer main process gone reason=crashed exitCode=1",
       "renderer main window unresponsive",
+      "packaged main window hidden",
+      "packaged main window closed",
       "packaged responsiveness failed message=frozen",
       "backend process exited generation=1 pid=42 reason=unexpected exit",
     ]) {
@@ -390,6 +392,24 @@ describe("packaged desktop startup verification", () => {
     expect(now).toBeGreaterThanOrEqual(1_000);
   });
 
+  it("rejects proof invalidated by a window close during the stability window", async () => {
+    let now = 0;
+    let windowClosed = false;
+    await expect(
+      waitForPackagedStartupProof({
+        timeoutMs: 1_000,
+        stableForMs: 500,
+        hasProof: () => !windowClosed,
+        readOutcome: () => ({ exited: null, launchError: null }),
+        now: () => now,
+        delay: async (milliseconds) => {
+          now += milliseconds;
+          windowClosed = true;
+        },
+      }),
+    ).rejects.toThrow("timed out");
+  });
+
   it("turns interrupt signals into an observable cleanup request and removes its listeners", async () => {
     const source = new EventEmitter();
     const termination = monitorPackagedStartupTermination(source);
@@ -466,6 +486,33 @@ describe("packaged desktop startup verification", () => {
     abortController.abort(new Error("interrupted"));
 
     await expect(command).rejects.toBeInstanceOf(PackagedPreparationCleanupError);
+  });
+
+  it("fails closed when Windows preparation descendants are not Job-contained", async () => {
+    const abortController = new AbortController();
+    const kill = vi.fn(() => true);
+    const spawnProcess = vi.fn(() => {
+      const child = new EventEmitter() as ChildProcess;
+      Object.assign(child, {
+        exitCode: null,
+        kill,
+        pid: 42,
+        signalCode: null,
+        stdout: new EventEmitter(),
+        stderr: new EventEmitter(),
+      });
+      return child;
+    }) as unknown as typeof import("node:child_process").spawn;
+    const command = runPackagedPreparationCommand("7z", ["hung.exe"], {
+      platform: "win32",
+      signal: abortController.signal,
+      spawnProcess,
+    });
+
+    abortController.abort(new Error("interrupted"));
+
+    await expect(command).rejects.toBeInstanceOf(PackagedPreparationCleanupError);
+    expect(kill).toHaveBeenCalledOnce();
   });
 
   it("attempts to detach a partially mounted DMG after attach fails", async () => {

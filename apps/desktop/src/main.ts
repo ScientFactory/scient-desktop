@@ -3544,6 +3544,11 @@ function createWindow(): BrowserWindow {
   const packagedWindowVisibility = new Promise<boolean>((resolveVisibility) => {
     resolvePackagedWindowVisibility = resolveVisibility;
   });
+  const verifierOwnedPackagedStartupSmoke = isVerifierOwnedPackagedStartupSmoke(
+    process.env,
+    process.ppid,
+    app.isPackaged,
+  );
   browserManager.setWindow(window);
   attachDesktopZoomFactorSync(window);
 
@@ -3599,7 +3604,7 @@ function createWindow(): BrowserWindow {
     writeDesktopLogHeader("renderer main frame loaded");
     window.setTitle(APP_DISPLAY_NAME);
     emitUpdateState();
-    if (isVerifierOwnedPackagedStartupSmoke(process.env, process.ppid, app.isPackaged)) {
+    if (verifierOwnedPackagedStartupSmoke) {
       setTimeout(() => {
         const generation = getBackendSupervisor().currentGeneration;
         void Promise.all([
@@ -3655,6 +3660,11 @@ function createWindow(): BrowserWindow {
   window.on("unresponsive", () => {
     writeDesktopLogHeader("renderer main window unresponsive");
   });
+  window.on("hide", () => {
+    if (verifierOwnedPackagedStartupSmoke) {
+      writeDesktopLogHeader("packaged main window hidden");
+    }
+  });
   window.once("ready-to-show", () => {
     // Preserve the original first-launch behavior, then respect the state saved
     // by subsequent closes. Normal bounds are restored before maximizing so the
@@ -3707,6 +3717,9 @@ function createWindow(): BrowserWindow {
   }
 
   window.on("closed", () => {
+    if (verifierOwnedPackagedStartupSmoke) {
+      writeDesktopLogHeader("packaged main window closed");
+    }
     if (mainWindow === window) {
       mainWindow = null;
     }

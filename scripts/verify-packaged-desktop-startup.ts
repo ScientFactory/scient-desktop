@@ -183,15 +183,17 @@ export async function runPackagedPreparationCommand(
   args: ReadonlyArray<string>,
   options: {
     readonly cwd?: string;
+    readonly platform?: NodeJS.Platform;
     readonly signal: AbortSignal;
     readonly spawnProcess?: typeof spawn;
     readonly terminateProcess?: (child: ChildProcess) => Promise<void>;
   },
 ): Promise<string> {
   if (options.signal.aborted) throw options.signal.reason;
+  const platform = options.platform ?? process.platform;
   const child = (options.spawnProcess ?? spawn)(command, [...args], {
     cwd: options.cwd,
-    detached: process.platform !== "win32",
+    detached: platform !== "win32",
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
@@ -226,9 +228,23 @@ export async function runPackagedPreparationCommand(
   });
   const handleAbort = () => {
     abortReason = options.signal.reason ?? new Error(`${command} preparation was aborted.`);
-    abortCleanup ??= Promise.resolve().then(() =>
-      (options.terminateProcess ?? terminateProcessTree)(child),
-    );
+    abortCleanup ??= Promise.resolve().then(async () => {
+      if (options.terminateProcess) {
+        await options.terminateProcess(child);
+        return;
+      }
+      if (platform === "win32") {
+        // Preparation helpers do not run beneath the packaged desktop's Job
+        // launcher. Closing only the direct ChildProcess handle cannot prove
+        // that a helper's descendants were terminated, so preserve the
+        // evidence instead of claiming cleanup succeeded.
+        child.kill();
+        throw new Error(
+          "Windows preparation cleanup cannot prove descendant termination without Job Object containment.",
+        );
+      }
+      await terminateProcessTree(child, { platform });
+    });
     resolveAbortStarted();
   };
   options.signal.addEventListener("abort", handleAbort, { once: true });
@@ -1010,6 +1026,8 @@ export function hasPackagedStartupProof(
       !log.includes("renderer main frame load failed") &&
       !log.includes("renderer main process gone") &&
       !log.includes("renderer main window unresponsive") &&
+      !log.includes("packaged main window hidden") &&
+      !log.includes("packaged main window closed") &&
       !log.includes("packaged responsiveness failed") &&
       !log.includes("backend process exited generation=")
     );
