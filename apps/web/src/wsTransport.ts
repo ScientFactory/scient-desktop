@@ -24,6 +24,7 @@ import {
   type WsPushChannel,
   type WsPushMessage,
 } from "@synara/contracts";
+import { GitMutationRpcGroup } from "@synara/shared/gitMutationRpc";
 import { LiveHtmlPreviewRpcGroup } from "@synara/shared/liveHtmlPreviewTransport";
 import {
   Cause,
@@ -85,7 +86,8 @@ class WsTransportRpcError extends Data.TaggedError("WsTransportRpcError")<{
   readonly cause?: unknown;
 }> {}
 
-const makeRpcClient = RpcClient.make(LiveHtmlPreviewRpcGroup);
+const ScientWsRpcGroup = LiveHtmlPreviewRpcGroup.merge(GitMutationRpcGroup);
+const makeRpcClient = RpcClient.make(ScientWsRpcGroup);
 
 // Every RPC promise must settle: React Query (and any other awaiting caller)
 // can only retry or surface an error once the request rejects. The socket

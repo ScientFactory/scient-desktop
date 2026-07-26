@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  buildFileDiffRenderInstanceKey,
   buildFileDiffRenderKey,
   buildPatchCacheKey,
   fileDiffStatsByPath,
@@ -99,6 +100,18 @@ describe("file diff identity helpers", () => {
     const reparsed = getRenderablePatch(twoFilePatch, "git-pane:test");
     if (reparsed?.kind !== "files") return;
     expect(reparsed.files.map((file) => buildFileDiffRenderKey(file))).toEqual(keys);
+  });
+
+  it("remounts the renderer when its mount-time theme or layout changes", () => {
+    const renderable = getRenderablePatch(twoFilePatch, "git-pane:test");
+    if (renderable?.kind !== "files") return;
+    const [file] = renderable.files;
+    if (!file) return;
+
+    const split = buildFileDiffRenderInstanceKey(file, "light", "split");
+    expect(buildFileDiffRenderInstanceKey(file, "light", "split")).toBe(split);
+    expect(buildFileDiffRenderInstanceKey(file, "light", "stacked")).not.toBe(split);
+    expect(buildFileDiffRenderInstanceKey(file, "dark", "split")).not.toBe(split);
   });
 
   it("keeps binary image diffs as renderable file rows", () => {

@@ -18,13 +18,13 @@ import {
   GitReadWorkingTreeDiffInput,
   GitReadWorkingTreeDiffResult,
   GitResolvePullRequestResult,
-  GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStatusInput,
   GitStatusResult,
   GitSummarizeDiffInput,
   GitSummarizeDiffResult,
 } from "@synara/contracts";
+import type { AuthorizedGitRunStackedActionInput } from "@synara/shared/gitMutationRpc";
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 import type { GitManagerServiceError } from "../Errors.ts";
@@ -96,7 +96,7 @@ export interface GitManagerShape {
    * When `featureBranch` is set, creates and checks out a feature branch first.
    */
   readonly runStackedAction: (
-    input: GitRunStackedActionInput,
+    input: AuthorizedGitRunStackedActionInput,
     options?: GitRunStackedActionOptions,
   ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
 }

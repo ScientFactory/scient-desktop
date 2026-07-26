@@ -1,0 +1,282 @@
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  buildBackendRestartRecoveryDialog,
+  ensureBackendRestartRecoveryOwner,
+  handleBackendRecoveryAfterUpdaterFailure,
+  handleBackendRestartRecoveryAction,
+  resolveBackendRecoveryAfterUpdaterFailure,
+  resolveBackendRestartRecoveryAction,
+  showBackendRestartRecoveryDialog,
+  shouldAttemptBackendRestartRecovery,
+} from "./backendRestartRecovery";
+
+describe("backend restart recovery", () => {
+  it("suppresses the initial recovery dialog once shutdown begins", () => {
+    expect(
+      shouldAttemptBackendRestartRecovery({
+        recoveryPending: true,
+        recoveryDialogOpen: false,
+        isQuitting: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldAttemptBackendRestartRecovery({
+        recoveryPending: true,
+        recoveryDialogOpen: false,
+        isQuitting: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("reuses or creates a live main-window owner for recovery", () => {
+    const current = { id: 1, destroyed: true };
+    const existing = { id: 2, destroyed: false };
+    const createOwner = vi.fn(() => ({ id: 3, destroyed: false }));
+
+    expect(
+      ensureBackendRestartRecoveryOwner({
+        currentOwner: current,
+        existingOwners: [existing],
+        isDestroyed: (owner) => owner.destroyed,
+        createOwner,
+      }),
+    ).toBe(existing);
+    expect(createOwner).not.toHaveBeenCalled();
+
+    expect(
+      ensureBackendRestartRecoveryOwner({
+        currentOwner: null,
+        existingOwners: [],
+        isDestroyed: (owner) => owner.destroyed,
+        createOwner,
+      }),
+    ).toEqual({ id: 3, destroyed: false });
+    expect(createOwner).toHaveBeenCalledOnce();
+  });
+
+  it("restores a paused recovery prompt instead of reviving the backend after updater failure", () => {
+    expect(
+      resolveBackendRecoveryAfterUpdaterFailure({
+        restartWasRequired: false,
+        recoveryPending: true,
+        recoveryDialogOpen: false,
+      }),
+    ).toBe("show-recovery");
+    expect(
+      resolveBackendRecoveryAfterUpdaterFailure({
+        restartWasRequired: false,
+        recoveryPending: true,
+        recoveryDialogOpen: true,
+      }),
+    ).toBe("none");
+    expect(
+      resolveBackendRecoveryAfterUpdaterFailure({
+        restartWasRequired: true,
+        recoveryPending: false,
+        recoveryDialogOpen: false,
+      }),
+    ).toBe("restart");
+  });
+
+  it("dispatches updater recovery through exactly one production action", () => {
+    const resume = vi.fn();
+    const showRecovery = vi.fn();
+
+    expect(
+      handleBackendRecoveryAfterUpdaterFailure({
+        restartWasRequired: true,
+        recoveryPending: false,
+        recoveryDialogOpen: false,
+        resume,
+        showRecovery,
+      }),
+    ).toBe("restart");
+    expect(resume).toHaveBeenCalledOnce();
+    expect(showRecovery).not.toHaveBeenCalled();
+
+    expect(
+      handleBackendRecoveryAfterUpdaterFailure({
+        restartWasRequired: false,
+        recoveryPending: true,
+        recoveryDialogOpen: false,
+        resume,
+        showRecovery,
+      }),
+    ).toBe("show-recovery");
+    expect(resume).toHaveBeenCalledOnce();
+    expect(showRecovery).toHaveBeenCalledOnce();
+  });
+
+  it("offers retry and logs while keeping cancellation non-destructive", () => {
+    const options = buildBackendRestartRecoveryDialog({
+      appName: "Scient",
+      failures: 5,
+      windowMs: 60_000,
+      logFilePath: "/tmp/scient/server-child.log",
+    });
+
+    expect(options.buttons).toEqual(["Try again", "Open logs", "Keep Scient open"]);
+    expect(options.defaultId).toBe(0);
+    expect(options.cancelId).toBe(2);
+    expect(options.detail).toContain("5 failures in 60 seconds");
+    expect(options.detail).toContain("/tmp/scient/server-child.log");
+  });
+
+  it("explains a log-opening failure when recovery choices reopen", () => {
+    const options = buildBackendRestartRecoveryDialog({
+      appName: "Scient",
+      failures: 5,
+      windowMs: 60_000,
+      logFilePath: "/tmp/scient/server-child.log",
+      openLogsErrorMessage: "permission denied",
+    });
+
+    expect(options.detail).toContain("Scient could not open the logs folder: permission denied");
+    expect(options.detail).toContain("/tmp/scient/server-child.log");
+  });
+
+  it("reopens recovery choices after logs open successfully", async () => {
+    const retry = vi.fn();
+    const reopen = vi.fn();
+    const onOpenLogsError = vi.fn();
+
+    await handleBackendRestartRecoveryAction({
+      action: "open-logs",
+      openLogs: vi.fn(async () => undefined),
+      retry,
+      reopen,
+      isQuitting: () => false,
+      onOpenLogsError,
+    });
+
+    expect(reopen).toHaveBeenCalledOnce();
+    expect(onOpenLogsError).not.toHaveBeenCalled();
+    expect(retry).not.toHaveBeenCalled();
+  });
+
+  it("reports log-open failure and still reopens recovery choices", async () => {
+    const failure = new Error("logs unavailable");
+    const reopen = vi.fn();
+    const onOpenLogsError = vi.fn();
+
+    await handleBackendRestartRecoveryAction({
+      action: "open-logs",
+      openLogs: vi.fn(async () => {
+        throw failure;
+      }),
+      retry: vi.fn(),
+      reopen,
+      isQuitting: () => false,
+      onOpenLogsError,
+    });
+
+    expect(onOpenLogsError).toHaveBeenCalledWith(failure);
+    expect(reopen).toHaveBeenCalledOnce();
+  });
+
+  it("does not reopen recovery choices once quitting begins", async () => {
+    const reopen = vi.fn();
+
+    await handleBackendRestartRecoveryAction({
+      action: "open-logs",
+      openLogs: vi.fn(async () => {
+        throw new Error("logs unavailable");
+      }),
+      retry: vi.fn(),
+      reopen,
+      isQuitting: () => true,
+      onOpenLogsError: vi.fn(),
+    });
+
+    expect(reopen).not.toHaveBeenCalled();
+  });
+
+  it("maps only explicit actionable buttons to native effects", () => {
+    expect(resolveBackendRestartRecoveryAction(0)).toBe("retry");
+    expect(resolveBackendRestartRecoveryAction(1)).toBe("open-logs");
+    expect(resolveBackendRestartRecoveryAction(2)).toBe("dismiss");
+    expect(resolveBackendRestartRecoveryAction(-1)).toBe("dismiss");
+  });
+
+  it("owns the native dialog to the main window and preserves its default action", async () => {
+    const owner = { id: 42 };
+    const options = buildBackendRestartRecoveryDialog({
+      appName: "Scient",
+      failures: 5,
+      windowMs: 60_000,
+      logFilePath: "/tmp/scient/server-child.log",
+    });
+    const showOwned = vi.fn(async () => ({ response: 0 }));
+    const showUnowned = vi.fn(async () => ({ response: 2 }));
+    const focusOwner = vi.fn();
+
+    await expect(
+      showBackendRestartRecoveryDialog({
+        owner,
+        options,
+        focusOwner,
+        showOwned,
+        showUnowned,
+      }),
+    ).resolves.toBe("retry");
+    expect(focusOwner).toHaveBeenCalledWith(owner);
+    expect(showOwned).toHaveBeenCalledWith(owner, options);
+    expect(showUnowned).not.toHaveBeenCalled();
+  });
+
+  it("recreates a destroyed owner and retains retry eligibility after dialog failure", async () => {
+    const failure = new Error("native dialog unavailable");
+    const owner = ensureBackendRestartRecoveryOwner({
+      currentOwner: { id: 1, destroyed: true },
+      existingOwners: [],
+      isDestroyed: (candidate) => candidate.destroyed,
+      createOwner: () => ({ id: 2, destroyed: false }),
+    });
+    await expect(
+      showBackendRestartRecoveryDialog({
+        owner,
+        options: buildBackendRestartRecoveryDialog({
+          appName: "Scient",
+          failures: 5,
+          windowMs: 60_000,
+          logFilePath: "/tmp/scient/server-child.log",
+        }),
+        showOwned: vi.fn(async () => {
+          throw failure;
+        }),
+        showUnowned: vi.fn(async () => ({ response: 2 })),
+      }),
+    ).rejects.toBe(failure);
+    expect(owner).toEqual({ id: 2, destroyed: false });
+    expect(
+      shouldAttemptBackendRestartRecovery({
+        recoveryPending: true,
+        recoveryDialogOpen: false,
+        isQuitting: false,
+      }),
+    ).toBe(true);
+  });
+
+  it.each(["retry", "open-logs"] as const)(
+    "suppresses %s when quit or updater shutdown begins while the dialog is open",
+    async (action) => {
+      const retry = vi.fn();
+      const openLogs = vi.fn(async () => undefined);
+      const reopen = vi.fn();
+
+      await handleBackendRestartRecoveryAction({
+        action,
+        openLogs,
+        retry,
+        reopen,
+        isQuitting: () => true,
+        onOpenLogsError: vi.fn(),
+      });
+
+      expect(retry).not.toHaveBeenCalled();
+      expect(openLogs).not.toHaveBeenCalled();
+      expect(reopen).not.toHaveBeenCalled();
+    },
+  );
+});
