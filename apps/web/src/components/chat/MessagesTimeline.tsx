@@ -182,9 +182,11 @@ const MAX_VISIBLE_INLINE_TOOL_ENTRIES = 4;
 // Changed-files list in the per-turn card is capped so large turns stay compact;
 // the rest are revealed via an inline "Show more" row.
 const MAX_VISIBLE_CHANGED_FILES = 5;
-// The composer overlaps the transcript by design, so the list needs extra tail
-// space beyond the overlap to keep final cards from sitting flush against it.
-const MIN_BOTTOM_CONTENT_INSET_PX = 64;
+// The composer overlaps the transcript by design (its -mt-5 pulls it up over the list's
+// tail), so the list appends a fixed tail spacer beyond that overlap to keep final cards
+// from sitting flush against the composer.
+const BOTTOM_CONTENT_INSET_PX = 64;
+const TIMELINE_LIST_FOOTER = <div aria-hidden="true" style={{ height: BOTTOM_CONTENT_INSET_PX }} />;
 const MESSAGE_HOVER_REVEAL_CLASS_NAME =
   "opacity-0 transition-opacity pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto group-focus-within:opacity-100 group-focus-within:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto";
 // Shared interaction tone for a work row's leading glyph and labels: muted by
@@ -449,7 +451,6 @@ interface MessagesTimelineProps {
   chatFontSizePx?: number;
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
-  bottomContentInsetPx?: number | undefined;
   /**
    * Right padding (px) applied to the scroll viewport so transcript rows clear a right-edge
    * overlay (e.g. the docked Environment card). The scrollbar stays pinned to the viewport's
@@ -510,7 +511,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   timestampFormat,
   workspaceRoot,
   emptyStateContent,
-  bottomContentInsetPx,
   contentInsetRightPx,
 }: MessagesTimelineProps) {
   const normalizedChatFontSizePx = normalizeChatFontSizePx(chatFontSizePx);
@@ -605,11 +605,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const fallbackListRef = useRef<LegendListRef | null>(null);
   const resolvedListRef = listRef ?? fallbackListRef;
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
-  const bottomSpacerHeightPx = Math.max(bottomContentInsetPx ?? 0, MIN_BOTTOM_CONTENT_INSET_PX);
-  const listFooter = useMemo(
-    () => <div aria-hidden="true" style={{ height: bottomSpacerHeightPx }} />,
-    [bottomSpacerHeightPx],
-  );
 
   const presentedWorktreeSetup = useWorktreeSetupPresentation(worktreeSetup);
   const rawRows = useMemo(
@@ -1984,7 +1979,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         onTouchStart={onMessagesTouchStart}
         onWheel={onMessagesWheel}
         data-chat-scroll-container="true"
-        ListFooterComponent={listFooter}
+        ListFooterComponent={TIMELINE_LIST_FOOTER}
         // `scroll-fade-b` (vendored shadcn 4.12.0 util in index.css) masks the bottom
         // edge so streamed content dissolves toward the composer. It is scroll-aware
         // via `animation-timeline: scroll()`, so the fade clears at the live edge and a
