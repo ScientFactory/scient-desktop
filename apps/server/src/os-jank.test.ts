@@ -56,6 +56,27 @@ describe("fixPath", () => {
     expect(env.PATH).toBe("/opt/homebrew/bin:/usr/bin");
   });
 
+  it("does not inspect host shell state when environment sync is disabled", () => {
+    const env: NodeJS.ProcessEnv = {
+      SCIENT_DISABLE_SHELL_ENV_SYNC: "1",
+      SHELL: "/bin/zsh",
+      PATH: "/isolated/bin",
+    };
+    const readPath = vi.fn(() => "/host/bin");
+    const readLaunchctlPath = vi.fn(() => "/host/launchctl/bin");
+
+    fixPath({
+      env,
+      platform: "darwin",
+      readPath,
+      readLaunchctlPath,
+    });
+
+    expect(readPath).not.toHaveBeenCalled();
+    expect(readLaunchctlPath).not.toHaveBeenCalled();
+    expect(env.PATH).toBe("/isolated/bin");
+  });
+
   it("does nothing on unsupported platforms", () => {
     const env: NodeJS.ProcessEnv = {
       SHELL: "C:/Program Files/Git/bin/bash.exe",

@@ -8,7 +8,11 @@ import { isSupportedLocalImagePath } from "@synara/shared/localPreviewFiles";
 import { memo, useCallback, type MouseEvent as ReactMouseEvent } from "react";
 import { ChevronDownIcon, CopyIcon, EllipsisIcon, MessageCircleIcon } from "~/lib/icons";
 
-import { buildFileDiffRenderKey, resolveFileDiffPath } from "~/lib/diffRendering";
+import {
+  buildFileDiffRenderInstanceKey,
+  buildFileDiffRenderKey,
+  resolveFileDiffPath,
+} from "~/lib/diffRendering";
 import { FileDiffCard, FileDiffSurface } from "./chat/FileDiffView";
 import { LocalImagePreview } from "./LocalImagePreview";
 import { PanelStateMessage } from "./chat/PanelStateMessage";
@@ -217,10 +221,14 @@ export const DiffPanelFileList = memo(
       <FileDiffSurface className="h-full min-h-0 overflow-auto px-2 pb-2">
         {props.renderableFiles.map((fileDiff) => {
           const fileKey = buildFileDiffRenderKey(fileDiff);
-          const themedFileKey = `${fileKey}:${props.resolvedTheme}`;
+          const renderInstanceKey = buildFileDiffRenderInstanceKey(
+            fileDiff,
+            props.resolvedTheme,
+            props.diffRenderMode,
+          );
           return (
             <DiffPanelFileRow
-              key={themedFileKey}
+              key={renderInstanceKey}
               fileDiff={fileDiff}
               resolvedTheme={props.resolvedTheme}
               diffRenderMode={props.diffRenderMode}

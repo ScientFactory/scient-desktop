@@ -15,6 +15,7 @@ import {
   collectCompletedThreadCandidates,
   collectInputNeededThreadCandidates,
   isNotificationRuntimeFreshTimestamp,
+  legacyThreadCompletionActivityKeys,
   shouldShowThreadNotificationToast,
   staleAttentionActivityKeys,
 } from "./taskCompletion.logic";
@@ -616,6 +617,19 @@ describe("active attention activity keys", () => {
         new Set(["terminal:thread-1:terminal-1:attention"]),
       ),
     ).toEqual(["thread:deleted:attention:request-1"]);
+  });
+});
+
+describe("legacyThreadCompletionActivityKeys", () => {
+  it("removes only persisted thread-completion cards", () => {
+    expect(
+      legacyThreadCompletionActivityKeys([
+        { dedupeKey: "thread:thread-1:completed:today", source: "thread" },
+        { dedupeKey: "thread:thread-1:attention:request-1", source: "thread" },
+        { dedupeKey: "terminal:thread-1:terminal-1:completed", source: "terminal" },
+        { dedupeKey: "thread:thread-2:completed:today", source: "system" },
+      ]),
+    ).toEqual(["thread:thread-1:completed:today"]);
   });
 });
 

@@ -22,6 +22,7 @@ import {
 } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import * as nodeFs from "node:fs/promises";
 import * as nodePath from "node:path";
 
@@ -669,6 +670,56 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const { worktreesDir } = yield* ServerConfig;
+    const actionLocks = new Map<string, Semaphore.Semaphore>();
+    const canonicalPath = (candidate: string) => {
+      try {
+        return realpathSync.native(candidate);
+      } catch {
+        return nodePath.resolve(candidate);
+      }
+    };
+
+    const fallbackActionLockKey = (cwd: string) => canonicalPath(cwd);
+
+    let execute: GitCoreShape["execute"];
+
+    const resolveActionLockKey = (cwd: string) =>
+      Effect.suspend(() =>
+        execute({
+          operation: "GitCore.resolveActionLockKey",
+          cwd,
+          args: ["rev-parse", "--git-common-dir"],
+          allowNonZeroExit: true,
+        }),
+      ).pipe(
+        Effect.map((result) => {
+          if (result.code !== 0) {
+            return fallbackActionLockKey(cwd);
+          }
+          const commonDirectory = result.stdout.trim();
+          if (commonDirectory.length === 0) {
+            return fallbackActionLockKey(cwd);
+          }
+          return canonicalPath(
+            nodePath.isAbsolute(commonDirectory)
+              ? commonDirectory
+              : nodePath.resolve(cwd, commonDirectory),
+          );
+        }),
+        Effect.catch(() => Effect.succeed(fallbackActionLockKey(cwd))),
+      );
+
+    const withActionLock: GitCoreShape["withActionLock"] = (cwd, effect) =>
+      resolveActionLockKey(cwd).pipe(
+        Effect.flatMap((key) => {
+          let lock = actionLocks.get(key);
+          if (!lock) {
+            lock = Semaphore.makeUnsafe(1);
+            actionLocks.set(key, lock);
+          }
+          return lock.withPermits(1)(effect);
+        }),
+      );
 
     const buildGeneratedDetachedWorktreePath = (cwd: string) =>
       Effect.gen(function* () {
@@ -690,8 +741,6 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
         yield* fileSystem.makeDirectory(fallbackParent, { recursive: true });
         return path.join(fallbackParent, AUTO_DETACHED_WORKTREE_DIRNAME);
       });
-
-    let execute: GitCoreShape["execute"];
 
     if (options?.executeOverride) {
       execute = options.executeOverride;
@@ -1838,7 +1887,7 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
         };
       });
 
-    const pullCurrentBranch: GitCoreShape["pullCurrentBranch"] = (cwd) =>
+    const pullCurrentBranch: GitCoreShape["pullCurrentBranch"] = (cwd, expectedBranch) =>
       Effect.gen(function* () {
         const details = yield* statusDetails(cwd);
         const branch = details.branch;
@@ -1848,6 +1897,14 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
             cwd,
             ["pull", "--ff-only"],
             "Cannot pull from detached HEAD.",
+          );
+        }
+        if (branch !== expectedBranch) {
+          return yield* createGitCommandError(
+            "GitCore.pullCurrentBranch",
+            cwd,
+            ["pull", "--ff-only"],
+            `The current branch changed from '${expectedBranch}' to '${branch}'. Review the current branch and try again.`,
           );
         }
         if (!details.hasUpstream) {
@@ -1864,6 +1921,19 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
           ["rev-parse", "HEAD"],
           true,
         ).pipe(Effect.map((stdout) => stdout.trim()));
+        const branchBeforePull = yield* runGitStdout(
+          "GitCore.pullCurrentBranch.revalidateBranch",
+          cwd,
+          ["branch", "--show-current"],
+        ).pipe(Effect.map((stdout) => stdout.trim()));
+        if (branchBeforePull !== expectedBranch) {
+          return yield* createGitCommandError(
+            "GitCore.pullCurrentBranch",
+            cwd,
+            ["pull", "--ff-only"],
+            `The current branch changed from '${expectedBranch}' to '${branchBeforePull || "detached HEAD"}'. Review the current branch and try again.`,
+          );
+        }
         yield* executeGit("GitCore.pullCurrentBranch.pull", cwd, ["pull", "--ff-only"], {
           timeoutMs: 30_000,
           fallbackErrorMessage: "git pull failed",
@@ -2064,7 +2134,7 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
           }
         }
 
-        const localBranches = localBranchResult.stdout
+        let localBranches = localBranchResult.stdout
           .split("\n")
           .map(parseBranchLine)
           .filter((branch): branch is { name: string; current: boolean } => branch !== null)
@@ -2085,6 +2155,43 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
             if (aLastCommit !== bLastCommit) return bLastCommit - aLastCommit;
             return a.name.localeCompare(b.name);
           });
+
+        // `git branch` prints no rows before the first commit, even though HEAD already names the
+        // unborn branch. Resolve that uncommon state separately so clients can safely distinguish
+        // it from detached HEAD without adding another Git process to the normal branch-list path.
+        if (!localBranches.some((branch) => branch.current)) {
+          const currentBranchResult = yield* executeGit(
+            "GitCore.listBranches.currentBranch",
+            input.cwd,
+            ["branch", "--show-current"],
+            {
+              timeoutMs: 5_000,
+              allowNonZeroExit: true,
+            },
+          ).pipe(Effect.catch(() => Effect.succeed({ code: 1, stdout: "", stderr: "" })));
+          const currentBranch =
+            currentBranchResult.code === 0 ? currentBranchResult.stdout.trim() : "";
+          if (currentBranch.length > 0) {
+            const existingCurrentBranch = localBranches.find(
+              (branch) => branch.name === currentBranch,
+            );
+            localBranches = existingCurrentBranch
+              ? localBranches.map((branch) => ({
+                  ...branch,
+                  current: branch.name === currentBranch,
+                }))
+              : [
+                  {
+                    name: currentBranch,
+                    current: true,
+                    isRemote: false,
+                    isDefault: currentBranch === defaultBranch,
+                    worktreePath: worktreeMap.get(currentBranch) ?? null,
+                  },
+                  ...localBranches,
+                ];
+          }
+        }
 
         const remoteBranches =
           remoteBranchResult.code === 0
@@ -2655,6 +2762,7 @@ export const makeGitCore = (options?: { executeOverride?: GitCoreShape["execute"
       });
 
     return {
+      withActionLock,
       execute,
       status,
       statusDetails,

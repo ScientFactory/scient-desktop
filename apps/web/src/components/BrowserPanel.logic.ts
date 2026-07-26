@@ -70,6 +70,49 @@ export interface HtmlPreviewGrantReconciliation {
   revoked: string[];
 }
 
+type LocalHtmlGenerationTab = Pick<BrowserTabState, "id" | "kind">;
+
+type LocalHtmlSourceTab = Pick<
+  BrowserTabState,
+  "kind" | "sourceIdentity" | "sourceRoot" | "previewCwd" | "displayUrl"
+>;
+
+export function localHtmlSourceKey(threadId: string, tab: LocalHtmlSourceTab): string | null {
+  if (tab.kind !== "local-html") return null;
+  if (tab.sourceIdentity && tab.sourceRoot) {
+    return `${threadId}\0canonical\0${tab.sourceRoot}\0${tab.sourceIdentity}`;
+  }
+  return tab.previewCwd && tab.displayUrl
+    ? `${threadId}\0legacy\0${tab.previewCwd}\0${tab.displayUrl}`
+    : null;
+}
+
+export function localHtmlTabsShareSource(
+  left: LocalHtmlSourceTab,
+  right: LocalHtmlSourceTab,
+): boolean {
+  if (left.kind !== "local-html" || right.kind !== "local-html") return false;
+  const leftHasCanonicalAuthority = Boolean(left.sourceIdentity && left.sourceRoot);
+  const rightHasCanonicalAuthority = Boolean(right.sourceIdentity && right.sourceRoot);
+  if (leftHasCanonicalAuthority || rightHasCanonicalAuthority) {
+    return left.sourceIdentity === right.sourceIdentity && left.sourceRoot === right.sourceRoot;
+  }
+  return left.previewCwd === right.previewCwd && left.displayUrl === right.displayUrl;
+}
+
+export function pruneConsumedLocalHtmlSourceGenerations(
+  consumed: Map<string, number>,
+  threadId: string,
+  tabs: readonly LocalHtmlGenerationTab[],
+): void {
+  const openKeys = new Set(
+    tabs.filter((tab) => tab.kind === "local-html").map((tab) => `${threadId}\0${tab.id}`),
+  );
+  for (const key of consumed.keys()) {
+    if (!openKeys.has(key)) consumed.delete(key);
+  }
+}
+
 // A local preview grant belongs to the tab that opened it, not to the tab's current URL.
 // Keep the original grant while that tab navigates within the site, onto the web, or back
 // through history, and revoke it only after the owning preview tab disappears.
@@ -79,11 +122,33 @@ export function reconcileHtmlPreviewGrants(
 ): HtmlPreviewGrantReconciliation {
   const active = new Map<string, string>();
 
+  const previewGrantOrigin = (value: string): string | null => {
+    try {
+      const url = new URL(value);
+      const hostname = url.hostname.toLowerCase();
+      return hostname === "127.0.0.1" ||
+        (hostname.startsWith("g-") && hostname.endsWith(".preview.localhost"))
+        ? url.origin
+        : null;
+    } catch {
+      return null;
+    }
+  };
+
   for (const tab of tabs) {
     if (tab.kind !== "artifact" && tab.kind !== "local-html") {
       continue;
     }
-    active.set(tab.id, previous.get(tab.id) ?? tab.url);
+    const previousUrl = previous.get(tab.id);
+    const previousOrigin = previousUrl ? previewGrantOrigin(previousUrl) : null;
+    const currentOrigin = previewGrantOrigin(tab.url);
+    // Ordinary navigation keeps the original capability grant. A successful
+    // local-preview replacement, however, installs a new capability origin on
+    // the same logical tab id; start tracking that new grant immediately.
+    active.set(
+      tab.id,
+      previousUrl && (!currentOrigin || currentOrigin === previousOrigin) ? previousUrl : tab.url,
+    );
   }
 
   const activeGrantOrigins = new Set(
@@ -96,14 +161,14 @@ export function reconcileHtmlPreviewGrants(
     }),
   );
   const revoked: string[] = [];
-  for (const [tabId, previewUrl] of previous) {
+  for (const previewUrl of previous.values()) {
     let grantOrigin = previewUrl;
     try {
       grantOrigin = new URL(previewUrl).origin;
     } catch {
       // Keep malformed values isolated by their exact string.
     }
-    if (!active.has(tabId) && !activeGrantOrigins.has(grantOrigin)) {
+    if (!activeGrantOrigins.has(grantOrigin)) {
       revoked.push(previewUrl);
     }
   }
@@ -227,6 +292,7 @@ export function buildBrowserAddressSuggestions(
 // Only shows transient browser state; the address field already reflects the active URL.
 export function resolveBrowserChromeStatus(input: {
   localError: string | null;
+  localNotice?: string | null;
   threadLastError: string | null | undefined;
   activeTabStatus: string;
   hasActiveTab: boolean;
@@ -243,6 +309,13 @@ export function resolveBrowserChromeStatus(input: {
     return {
       tone: "error",
       label: input.threadLastError,
+    };
+  }
+
+  if (input.localNotice) {
+    return {
+      tone: "default",
+      label: input.localNotice,
     };
   }
 

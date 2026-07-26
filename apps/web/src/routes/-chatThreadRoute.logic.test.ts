@@ -2,12 +2,15 @@ import { ThreadId, TurnId } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
+  browserStateOwnsLocalHtmlRevision,
+  localHtmlPreviewPathsEqual,
   resolveDockDiffAvailable,
   resolveFilePreviewWorkspaceRoot,
   resolveRoutePanelBootstrap,
   resolveSplitPaneCloseDecision,
   resolveSplitPaneMaximizeDecision,
   resolveThreadPickerTitle,
+  retiredLocalHtmlPreviewUrl,
   resolveToggledChatPanelPatch,
 } from "./-chatThreadRoute.logic";
 
@@ -71,6 +74,135 @@ describe("resolveDockDiffAvailable", () => {
 
   it("reports no diff only when both sources are empty", () => {
     expect(resolveDockDiffAvailable({ turnDiffCount: 0, hasWorkingTreeChanges: false })).toBe(
+      false,
+    );
+  });
+});
+
+describe("browserStateOwnsLocalHtmlRevision", () => {
+  const state = {
+    threadId: THREAD_ID,
+    version: 1,
+    open: true,
+    activeTabId: "preview-a",
+    lastError: null,
+    tabs: [
+      {
+        id: "preview-a",
+        kind: "local-html" as const,
+        url: "http://g-a.preview.localhost:5000/",
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        sourceIdentity: "/workspace/report.html",
+        sourceRoot: "/workspace",
+        title: "report.html",
+        status: "live" as const,
+        isLoading: false,
+        canGoBack: false,
+        canGoForward: false,
+        faviconUrl: null,
+        lastCommittedUrl: "http://g-a.preview.localhost:5000/",
+        lastError: null,
+      },
+    ],
+  };
+
+  it("transfers capability ownership only to the exact installed revision", () => {
+    expect(
+      browserStateOwnsLocalHtmlRevision(state, {
+        url: "http://g-a.preview.localhost:5000/",
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        sourceIdentity: "/workspace/report.html",
+        sourceRoot: "/workspace",
+      }),
+    ).toBe(true);
+    expect(
+      browserStateOwnsLocalHtmlRevision(state, {
+        url: "http://g-b.preview.localhost:5000/",
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        sourceIdentity: "/workspace/report.html",
+        sourceRoot: "/other-root",
+      }),
+    ).toBe(false);
+    expect(
+      browserStateOwnsLocalHtmlRevision(state, {
+        url: "http://g-a.preview.localhost:5000/",
+        displayUrl: "/workspace/report.html",
+        previewCwd: "/workspace",
+        sourceIdentity: "/workspace/report.html",
+        sourceRoot: "/other-root",
+      }),
+    ).toBe(false);
+  });
+
+  it("retires only the prior grant after the new revision is confirmed installed", () => {
+    const installed = {
+      url: "http://g-a.preview.localhost:5000/",
+      displayUrl: "/workspace/report.html",
+      previewCwd: "/workspace",
+      sourceIdentity: "/workspace/report.html",
+      sourceRoot: "/workspace",
+    };
+    expect(
+      retiredLocalHtmlPreviewUrl({
+        previousUrl: "http://g-old.preview.localhost:5000/",
+        nextState: state,
+        installed,
+      }),
+    ).toBe("http://g-old.preview.localhost:5000/");
+    expect(
+      retiredLocalHtmlPreviewUrl({
+        previousUrl: "http://g-old.preview.localhost:5000/",
+        nextState: { ...state, tabs: [] },
+        installed,
+      }),
+    ).toBeNull();
+  });
+
+  it("keeps Windows source authority owned across separator normalization", () => {
+    const windowsState = {
+      ...state,
+      tabs: [
+        {
+          ...state.tabs[0]!,
+          displayUrl: "C:\\Users\\Yaacov\\Scient\\Report-MixedCase.HTML",
+          previewCwd: "C:\\Users\\Yaacov\\Scient",
+          sourceIdentity: "C:\\Users\\Yaacov\\Scient\\Report-MixedCase.HTML",
+          sourceRoot: "C:\\Users\\Yaacov\\Scient",
+        },
+      ],
+    };
+    const installed = {
+      url: "http://g-a.preview.localhost:5000/",
+      displayUrl: "C:/Users/Yaacov/Scient/Report-MixedCase.HTML",
+      previewCwd: "C:/Users/Yaacov/Scient/",
+      sourceIdentity: "C:/Users/Yaacov/Scient/Report-MixedCase.HTML",
+      sourceRoot: "C:/Users/Yaacov/Scient/",
+    };
+
+    expect(
+      localHtmlPreviewPathsEqual(windowsState.tabs[0]?.sourceIdentity, installed.sourceIdentity),
+    ).toBe(true);
+    expect(browserStateOwnsLocalHtmlRevision(windowsState, installed)).toBe(true);
+    expect(
+      retiredLocalHtmlPreviewUrl({
+        previousUrl: "http://g-old.preview.localhost:5000/",
+        nextState: windowsState,
+        installed,
+      }),
+    ).toBe("http://g-old.preview.localhost:5000/");
+  });
+
+  it("preserves distinct source authority for case-sensitive Windows directories", () => {
+    expect(
+      localHtmlPreviewPathsEqual("C:/CaseSensitive/Report.html", "C:/CaseSensitive/report.html"),
+    ).toBe(false);
+  });
+
+  it("preserves case-sensitive ownership for POSIX paths", () => {
+    expect(localHtmlPreviewPathsEqual("/Workspace/report.html", "/workspace/report.html")).toBe(
       false,
     );
   });

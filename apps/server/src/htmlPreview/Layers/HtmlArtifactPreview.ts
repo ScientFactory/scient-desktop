@@ -3,7 +3,7 @@
 // Layer: Server HTML-preview live implementation
 
 import crypto from "node:crypto";
-import { constants as fsConstants, type Stats } from "node:fs";
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import http from "node:http";
@@ -15,9 +15,18 @@ import type {
   ProjectPrepareHtmlArtifactPreviewInput,
   ProjectRevokeHtmlArtifactPreviewInput,
 } from "@synara/contracts";
+import { serializeLocalHtmlCapabilityAuthority } from "@synara/shared/liveHtmlPreviewTransport";
 import { Effect, Layer } from "effect";
 
-import { inspectHtmlArtifact } from "../Inspector";
+import {
+  HtmlArtifactChangedDuringPreparationError,
+  htmlArtifactContentDigest,
+  htmlArtifactFileFingerprint,
+  htmlArtifactFileFingerprintsEqual,
+  inspectHtmlArtifact,
+  readExactPositionedBytes,
+  type HtmlArtifactFileFingerprint,
+} from "../Inspector";
 import {
   HtmlArtifactPreview,
   HtmlArtifactPreviewError,
@@ -39,13 +48,18 @@ interface PreviewGrant {
 
 interface GrantedFile {
   readonly path: string;
-  readonly device: number;
-  readonly inode: number;
+  readonly fingerprint: HtmlArtifactFileFingerprint;
+  readonly classifiedDocumentDigest?: string;
 }
 
 function isPathInside(candidate: string, root: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  const normalizedCandidate = path.normalize(candidate);
+  const normalizedRoot = path.normalize(root);
+  if (normalizedCandidate === normalizedRoot) return true;
+  const rootPrefix = normalizedRoot.endsWith(path.sep)
+    ? normalizedRoot
+    : `${normalizedRoot}${path.sep}`;
+  return normalizedCandidate.startsWith(rootPrefix);
 }
 
 function contentTypeFor(filePath: string): string {
@@ -131,10 +145,12 @@ function decodeRequestedAssetPath(rawUrl: string | undefined): string | null {
 async function resolveGrantedFile(
   grant: PreviewGrant,
   rawUrl: string | undefined,
+  afterFingerprint?: (filePath: string) => Promise<void>,
 ): Promise<{
-  readonly file: FileHandle;
+  readonly file: FileHandle | null;
   readonly path: string;
-  readonly stat: Stats;
+  readonly size: number;
+  readonly immutableContents?: Buffer;
 } | null> {
   const relativePath = decodeRequestedAssetPath(rawUrl);
   if (relativePath === null) return null;
@@ -149,12 +165,44 @@ async function resolveGrantedFile(
   const noFollow = process.platform === "win32" ? 0 : fsConstants.O_NOFOLLOW;
   const file = await fs.open(granted.path, fsConstants.O_RDONLY | noFollow).catch(() => null);
   if (!file) return null;
-  const stat = await file.stat().catch(() => null);
-  if (!stat?.isFile() || stat.dev !== granted.device || stat.ino !== granted.inode) {
+  const stat = await file.stat({ bigint: true }).catch(() => null);
+  if (
+    !stat?.isFile() ||
+    !htmlArtifactFileFingerprintsEqual(htmlArtifactFileFingerprint(stat), granted.fingerprint) ||
+    stat.size > BigInt(Number.MAX_SAFE_INTEGER)
+  ) {
     await file.close().catch(() => undefined);
     return null;
   }
-  return { file, path: granted.path, stat: stat as Stats };
+  try {
+    await afterFingerprint?.(granted.path);
+    if (granted.classifiedDocumentDigest) {
+      const immutableContents = await readExactPositionedBytes(file, Number(stat.size));
+      const afterRead = await file.stat({ bigint: true });
+      if (
+        !afterRead.isFile() ||
+        !htmlArtifactFileFingerprintsEqual(
+          htmlArtifactFileFingerprint(afterRead),
+          granted.fingerprint,
+        ) ||
+        htmlArtifactContentDigest(immutableContents) !== granted.classifiedDocumentDigest
+      ) {
+        await file.close().catch(() => undefined);
+        return null;
+      }
+      await file.close().catch(() => undefined);
+      return {
+        file: null,
+        path: granted.path,
+        size: immutableContents.length,
+        immutableContents,
+      };
+    }
+    return { file, path: granted.path, size: Number(stat.size) };
+  } catch {
+    await file.close().catch(() => undefined);
+    return null;
+  }
 }
 
 function browserHeaders(grant: PreviewGrant): Record<string, string> {
@@ -218,13 +266,29 @@ async function buildGrantedFileRoutes(input: {
   entryPath: string;
   siteRoot: string;
   resourcePaths: readonly string[];
+  fileFingerprints: ReadonlyMap<string, HtmlArtifactFileFingerprint>;
+  classifiedDocumentDigests: ReadonlyMap<string, string>;
 }): Promise<ReadonlyMap<string, GrantedFile>> {
   const routes = new Map<string, GrantedFile>();
   const addRoute = async (route: string, filePath: string) => {
     if (route.split("/").some((segment) => segment.startsWith("."))) return;
-    const stat = await fs.stat(filePath).catch(() => null);
-    if (!stat?.isFile()) return;
-    routes.set(route, { path: filePath, device: stat.dev, inode: stat.ino });
+    const expectedFingerprint = input.fileFingerprints.get(filePath);
+    const canonicalFile = await fs.realpath(filePath).catch(() => null);
+    const stat = await fs.stat(filePath, { bigint: true }).catch(() => null);
+    if (
+      !expectedFingerprint ||
+      canonicalFile !== filePath ||
+      !stat?.isFile() ||
+      !htmlArtifactFileFingerprintsEqual(htmlArtifactFileFingerprint(stat), expectedFingerprint)
+    ) {
+      throw new HtmlArtifactChangedDuringPreparationError();
+    }
+    const classifiedDocumentDigest = input.classifiedDocumentDigests.get(filePath);
+    routes.set(route, {
+      path: filePath,
+      fingerprint: expectedFingerprint,
+      ...(classifiedDocumentDigest ? { classifiedDocumentDigest } : {}),
+    });
   };
 
   for (const filePath of [input.entryPath, ...input.resourcePaths]) {
@@ -275,10 +339,21 @@ export function makeHtmlArtifactPreviewLayer(
   options: {
     readonly maxActiveGrants?: number;
     readonly useDedicatedServers?: boolean;
+    readonly capabilitySigningKey?: string;
+    readonly inspectArtifact?: typeof inspectHtmlArtifact;
+    readonly afterGrantedFileFingerprint?: (filePath: string) => Promise<void>;
   } = {},
 ) {
   const maxActiveGrants = options.maxActiveGrants ?? PREVIEW_MAX_ACTIVE_GRANTS;
   const useDedicatedServers = options.useDedicatedServers ?? process.platform === "win32";
+  const inheritedCapabilitySigningKey = process.env.SCIENT_LOCAL_HTML_CAPABILITY_KEY?.trim();
+  const capabilitySigningKey = options.capabilitySigningKey ?? inheritedCapabilitySigningKey;
+  const inspectArtifact = options.inspectArtifact ?? inspectHtmlArtifact;
+  // Capture the one-run attestation key in this service closure, then remove it
+  // before the backend can propagate its environment to provider subprocesses.
+  if (!options.capabilitySigningKey && inheritedCapabilitySigningKey) {
+    delete process.env.SCIENT_LOCAL_HTML_CAPABILITY_KEY;
+  }
   return Layer.effect(
     HtmlArtifactPreview,
     Effect.gen(function* () {
@@ -316,35 +391,47 @@ export function makeHtmlArtifactPreviewLayer(
               writeNotFound(response);
               return;
             }
-            const resolvedFile = await resolveGrantedFile(grant, request.url);
+            const resolvedFile = await resolveGrantedFile(
+              grant,
+              request.url,
+              options.afterGrantedFileFingerprint,
+            );
             if (!resolvedFile) {
               writeNotFound(response);
               return;
             }
-            const { file, path: filePath, stat } = resolvedFile;
+            const { file, path: filePath, size, immutableContents } = resolvedFile;
             const contentType = contentTypeFor(filePath);
-            const range = parseSingleByteRange(request.headers.range, stat.size);
+            const range = parseSingleByteRange(request.headers.range, size);
             if (range === "invalid") {
               response.writeHead(416, {
                 ...browserHeaders(grant),
-                "Content-Range": `bytes */${stat.size}`,
+                "Content-Range": `bytes */${size}`,
               });
               response.end();
-              await file.close().catch(() => undefined);
+              await file?.close().catch(() => undefined);
               return;
             }
-            const responseSize = range ? range.end - range.start + 1 : stat.size;
+            const responseSize = range ? range.end - range.start + 1 : size;
             response.writeHead(range ? 206 : 200, {
               ...browserHeaders(grant),
               "Content-Length": String(responseSize),
               "Content-Type": contentType,
-              ...(range
-                ? { "Content-Range": `bytes ${range.start}-${range.end}/${stat.size}` }
-                : {}),
+              ...(range ? { "Content-Range": `bytes ${range.start}-${range.end}/${size}` } : {}),
             });
             if (request.method === "HEAD") {
               response.end();
-              await file.close().catch(() => undefined);
+              await file?.close().catch(() => undefined);
+              return;
+            }
+            if (immutableContents) {
+              response.end(
+                range ? immutableContents.subarray(range.start, range.end + 1) : immutableContents,
+              );
+              return;
+            }
+            if (!file) {
+              response.destroy();
               return;
             }
             const stream = file.createReadStream(
@@ -398,7 +485,7 @@ export function makeHtmlArtifactPreviewLayer(
         input: ProjectInspectHtmlArtifactInput,
       ) =>
         Effect.tryPromise({
-          try: async () => (await inspectHtmlArtifact(input)).result,
+          try: async () => (await inspectArtifact(input)).result,
           catch: (cause) =>
             new HtmlArtifactPreviewError({
               message: "Failed to inspect the HTML artifact.",
@@ -411,22 +498,40 @@ export function makeHtmlArtifactPreviewLayer(
       ) =>
         Effect.tryPromise({
           try: async () => {
-            const inspected = await inspectHtmlArtifact(input);
-            if (
-              !inspected.absolutePath ||
-              !inspected.baseDirectory ||
-              !inspected.siteRoot ||
-              (inspected.result.mode !== "static-document" &&
-                inspected.result.mode !== "interactive-bundle")
-            ) {
-              return inspected.result;
+            let inspected: Awaited<ReturnType<typeof inspectArtifact>>;
+            let canonicalSiteRoot: string;
+            let filesByRoute: ReadonlyMap<string, GrantedFile>;
+            for (let attempt = 0; ; attempt += 1) {
+              try {
+                inspected = await inspectArtifact(input);
+                if (
+                  !inspected.absolutePath ||
+                  !inspected.baseDirectory ||
+                  !inspected.siteRoot ||
+                  (inspected.result.mode !== "static-document" &&
+                    inspected.result.mode !== "interactive-bundle")
+                ) {
+                  return inspected.result;
+                }
+                canonicalSiteRoot = await fs.realpath(inspected.siteRoot);
+                filesByRoute = await buildGrantedFileRoutes({
+                  entryPath: inspected.absolutePath,
+                  siteRoot: canonicalSiteRoot,
+                  resourcePaths: inspected.allowedResourcePaths,
+                  fileFingerprints: inspected.fileFingerprints,
+                  classifiedDocumentDigests:
+                    inspected.result.mode === "static-document"
+                      ? inspected.classifiedDocumentDigests
+                      : new Map(),
+                });
+                break;
+              } catch (cause) {
+                if (cause instanceof HtmlArtifactChangedDuringPreparationError && attempt === 0) {
+                  continue;
+                }
+                throw cause;
+              }
             }
-            const canonicalSiteRoot = await fs.realpath(inspected.siteRoot);
-            const filesByRoute = await buildGrantedFileRoutes({
-              entryPath: inspected.absolutePath,
-              siteRoot: canonicalSiteRoot,
-              resourcePaths: inspected.allowedResourcePaths,
-            });
             const releaseGrantReservation = reserveGrantCapacity();
             let dedicatedServer: http.Server | undefined;
             try {
@@ -445,12 +550,43 @@ export function makeHtmlArtifactPreviewLayer(
                 ...(dedicatedServer ? { dedicatedServer } : {}),
               });
               releaseGrantReservation();
+              const watchedPaths = [...new Set(inspected.watchedPaths)];
+              const allowedExternalUrls =
+                inspected.result.mode === "static-document"
+                  ? (inspected.allowedExternalUrls ?? [])
+                  : [];
+              const localHtmlNetworkPolicy =
+                inspected.result.mode === "static-document"
+                  ? ("reviewed-static" as const)
+                  : ("sealed-interactive" as const);
+              const previewUrl = dedicatedServer
+                ? `http://127.0.0.1:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`
+                : `http://g-${id}${PREVIEW_HOST_SUFFIX}:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`;
+              const localHtmlCapabilityProof = capabilitySigningKey
+                ? crypto
+                    .createHmac("sha256", capabilitySigningKey)
+                    .update(
+                      serializeLocalHtmlCapabilityAuthority({
+                        previewUrl,
+                        sourceIdentity: inspected.absolutePath,
+                        sourceRoot: canonicalSiteRoot,
+                        watchedPaths,
+                        allowedExternalUrls,
+                        networkPolicy: localHtmlNetworkPolicy,
+                      }),
+                    )
+                    .digest("base64url")
+                : undefined;
               return {
                 ...inspected.result,
-                allowedExternalUrls: inspected.allowedExternalUrls,
-                previewUrl: dedicatedServer
-                  ? `http://127.0.0.1:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`
-                  : `http://g-${id}${PREVIEW_HOST_SUFFIX}:${grantListenerPort}${previewPathFor(inspected.absolutePath, canonicalSiteRoot)}`,
+                allowedExternalUrls,
+                sourceIdentity: inspected.absolutePath,
+                sourceRoot: canonicalSiteRoot,
+                watchedPaths,
+                watchDiscoveryLimited: inspected.watchDiscoveryLimited,
+                localHtmlNetworkPolicy,
+                previewUrl,
+                ...(localHtmlCapabilityProof ? { localHtmlCapabilityProof } : {}),
               };
             } catch (cause) {
               releaseGrantReservation();
@@ -460,7 +596,10 @@ export function makeHtmlArtifactPreviewLayer(
           },
           catch: (cause) =>
             new HtmlArtifactPreviewError({
-              message: "Failed to prepare the HTML artifact preview.",
+              message:
+                cause instanceof HtmlArtifactChangedDuringPreparationError
+                  ? "The HTML artifact kept changing while its preview was being prepared. Try again after the file is stable."
+                  : "Failed to prepare the HTML artifact preview.",
               cause,
             }),
         });

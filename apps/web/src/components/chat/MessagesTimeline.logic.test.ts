@@ -1,4 +1,10 @@
-import { CheckpointRef, MessageId, OrchestrationProposedPlanId, TurnId } from "@synara/contracts";
+import {
+  CheckpointRef,
+  MessageId,
+  OrchestrationProposedPlanId,
+  ThreadId,
+  TurnId,
+} from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 import {
   buildTurnDiffSummaryByAssistantMessageId,
@@ -783,6 +789,42 @@ describe("resolveAssistantMessageDisplayText", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("keeps fork provenance first without changing transcript message identity", () => {
+    const messageId = MessageId.makeUnsafe("restored-message");
+    const timelineEntries: TimelineEntry[] = [
+      {
+        id: messageId,
+        kind: "message",
+        createdAt: "2026-07-26T12:00:00.000Z",
+        message: {
+          id: messageId,
+          role: "user",
+          text: "Restored transcript",
+          createdAt: "2026-07-26T12:00:00.000Z",
+          streaming: false,
+        },
+      },
+    ];
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries,
+      forkProvenance: {
+        sourceThreadId: ThreadId.makeUnsafe("source-thread"),
+        sourceMessageId: null,
+        sourceTitle: "Source",
+        sourceAvailable: true,
+      },
+      isWorking: false,
+      worktreeSetup: null,
+      worktreeSetupOpen: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual(["fork-provenance", "message"]);
+    expect(rows[1]).toMatchObject({ id: messageId, message: { id: messageId } });
+  });
+
   type MessageTimelineRow = Extract<MessagesTimelineRow, { kind: "message" }>;
 
   const baseInput = {

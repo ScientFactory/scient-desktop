@@ -40,6 +40,11 @@ import { useFeedbackDialogStore } from "../feedbackDialogStore";
 import type { FeedbackThreadContext } from "../feedback";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
+  createPackagedStartupRendererReadinessState,
+  disposePackagedStartupRendererReadiness,
+  hydrateShellForPackagedStartupRenderer,
+} from "../lib/packagedStartupRendererReadiness";
+import {
   serverConfigQueryOptions,
   serverQueryKeys,
   serverSettingsQueryOptions,
@@ -691,6 +696,7 @@ function EventRouter() {
     let reconcileThreadSubscriptionsChain = Promise.resolve();
     let scopedSubscriptionsStarted = false;
     let scopedSubscriptionsStartInFlight: Promise<void> | null = null;
+    const packagedStartupRendererReadiness = createPackagedStartupRendererReadinessState();
 
     const beginThreadSubscription = (threadId: ThreadId) => {
       threadSnapshotSequenceById.delete(threadId);
@@ -1165,11 +1171,18 @@ function EventRouter() {
           chatWorkspaceRoot: payload.chatWorkspaceRoot,
           studioWorkspaceRoot: payload.studioWorkspaceRoot,
         });
-        await ensureScopedSubscriptions();
+        await hydrateShellForPackagedStartupRenderer({
+          hydrateShell: async () => {
+            await ensureScopedSubscriptions();
+            if (disposed) return;
+            await loadShellSnapshotOnce();
+          },
+          state: packagedStartupRendererReadiness,
+          shouldMark: () => !disposed,
+        });
         if (disposed) {
           return;
         }
-        await loadShellSnapshotOnce();
 
         if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
           return;
@@ -1305,6 +1318,7 @@ function EventRouter() {
     return () => {
       flushPendingDomainEvents();
       disposed = true;
+      disposePackagedStartupRendererReadiness(packagedStartupRendererReadiness);
       window.clearTimeout(shellBootstrapFallbackTimer);
       window.clearInterval(threadDetailCatchupInterval);
       needsProviderInvalidation = false;

@@ -7,6 +7,7 @@ import { resolveWindowsSystemRoot } from "@synara/shared/windowsProcess";
 export interface ForceTerminateBackendProcessTreeOptions {
   readonly platform?: NodeJS.Platform;
   readonly env?: NodeJS.ProcessEnv;
+  readonly retainedByExternalContainment?: boolean;
   readonly killProcessGroup?: (pid: number, signal: NodeJS.Signals) => void;
   readonly spawnProcess?: typeof spawn;
 }
@@ -14,9 +15,10 @@ export interface ForceTerminateBackendProcessTreeOptions {
 export function backendProcessContainmentOptions(
   captureLogs: boolean,
   platform: NodeJS.Platform = process.platform,
+  isolatePosixProcessGroup = true,
 ): Pick<SpawnOptions, "detached" | "stdio"> {
   return {
-    detached: platform !== "win32",
+    detached: platform !== "win32" && isolatePosixProcessGroup,
     stdio: captureLogs
       ? ["ignore", "pipe", "pipe", "ipc"]
       : ["ignore", "inherit", "inherit", "ipc"],
@@ -57,6 +59,11 @@ export async function forceTerminateBackendProcessTree(
   child: Pick<ChildProcess, "pid">,
   options: ForceTerminateBackendProcessTreeOptions = {},
 ): Promise<void> {
+  if (options.retainedByExternalContainment) {
+    throw new Error(
+      "External packaged-startup containment retains cleanup authority; refusing backend PID-tree signaling.",
+    );
+  }
   const pid = child.pid;
   if (!pid || pid <= 0) return;
 

@@ -32,6 +32,7 @@ import { MessageTrail } from "./MessageTrail";
 import { createActiveTrailStore, deriveMessageTrailItems } from "./messageTrail.logic";
 import { AgentActivityDetailView } from "./AgentActivityDetailView";
 import type { AgentActivityDetail } from "./agentActivity.logic";
+import type { ForkProvenance } from "./forkProvenance";
 
 interface ChatTranscriptPaneProps {
   activeThreadId: string;
@@ -49,6 +50,7 @@ interface ChatTranscriptPaneProps {
   isRevertingCheckpoint: boolean;
   isWorking: boolean;
   followLiveOutput: boolean;
+  forkProvenance?: ForkProvenance | null;
   listRef: RefObject<LegendListRef | null>;
   timelineControllerRef?: RefObject<MessagesTimelineController | null>;
   pinnedMessageIds?: ReadonlySet<MessageId>;
@@ -109,6 +111,7 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
   isRevertingCheckpoint,
   isWorking,
   followLiveOutput,
+  forkProvenance,
   listRef,
   timelineControllerRef,
   pinnedMessageIds,
@@ -217,6 +220,7 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
             {...(threadMarkers ? { threadMarkers } : {})}
             {...(enteringUserMessageIds ? { enteringUserMessageIds } : {})}
             timelineEntries={timelineEntries}
+            {...(forkProvenance ? { forkProvenance } : {})}
             turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
             onOpenTurnDiff={onOpenTurnDiff}
             onOpenThread={onOpenThread}

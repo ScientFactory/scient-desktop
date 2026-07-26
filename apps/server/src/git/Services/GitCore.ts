@@ -158,6 +158,16 @@ export interface GitPublishBranchInput {
  */
 export interface GitCoreShape {
   /**
+   * Serialize a repository-wide mutating workflow with other Git entrypoints.
+   * The permit intentionally spans multi-command workflows so direct RPC mutations cannot
+   * interleave with a stacked action between its branch, commit, push, and PR phases.
+   */
+  readonly withActionLock: <A, E, R>(
+    cwd: string,
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
+
+  /**
    * Execute a raw Git command.
    */
   readonly execute: (input: ExecuteGitInput) => Effect.Effect<ExecuteGitResult, GitCommandError>;
@@ -246,7 +256,10 @@ export interface GitCoreShape {
   /**
    * Pull current branch from upstream using fast-forward only.
    */
-  readonly pullCurrentBranch: (cwd: string) => Effect.Effect<GitPullResult, GitCommandError>;
+  readonly pullCurrentBranch: (
+    cwd: string,
+    expectedBranch: string,
+  ) => Effect.Effect<GitPullResult, GitCommandError>;
 
   /**
    * Create a worktree and branch from a base branch.

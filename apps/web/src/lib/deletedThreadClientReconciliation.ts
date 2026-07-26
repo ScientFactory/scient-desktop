@@ -1,11 +1,16 @@
 // FILE: deletedThreadClientReconciliation.ts
 // Purpose: Keeps thread-delete UI state responsive after the server accepts deletion.
 // Layer: Web orchestration helper
-// Exports: reconcileDeletedThreadFromClient, reconcileDeletedThreadsFromClient
+// Exports: browser cleanup and local-state reconciliation for deleted threads
 
-import type { ThreadId } from "@synara/contracts";
+import type { NativeApi, ThreadBrowserState, ThreadId } from "@synara/contracts";
+
+import { useBrowserStateStore } from "../browserStateStore";
+
+type DeletedThreadBrowserCleanupApi = Pick<NativeApi, "browser" | "projects">;
 
 interface DeletedThreadClientReconciliationInput {
+  api: DeletedThreadBrowserCleanupApi;
   threadIds: ReadonlyArray<ThreadId>;
   removeDeletedThreadFromClientState: (threadId: ThreadId) => void;
 }
@@ -21,9 +26,50 @@ export function reconcileDeletedThreadFromClient(
   input: DeletedThreadClientReconciliationSingleInput,
 ): Promise<void> {
   return reconcileDeletedThreadsFromClient({
+    api: input.api,
     threadIds: [input.threadId],
     removeDeletedThreadFromClientState: input.removeDeletedThreadFromClientState,
   });
+}
+
+function previewUrlsFromState(state: ThreadBrowserState | null | undefined): readonly string[] {
+  return (
+    state?.tabs.flatMap((tab) =>
+      tab.kind === "artifact" || tab.kind === "local-html" ? [tab.url] : [],
+    ) ?? []
+  );
+}
+
+export async function cleanupDeletedThreadBrowserState(
+  api: DeletedThreadBrowserCleanupApi,
+  threadId: ThreadId,
+): Promise<void> {
+  const browserStore = useBrowserStateStore.getState();
+  const cachedState = browserStore.threadStatesByThreadId[threadId];
+  const liveState = await api.browser.getState({ threadId }).catch(() => null);
+  const previewUrls = new Set([
+    ...previewUrlsFromState(cachedState),
+    ...previewUrlsFromState(liveState),
+  ]);
+
+  // Close main-process ownership before worktree cleanup can remove watched
+  // paths. This also covers offscreen threads with no mounted BrowserPanel.
+  await api.browser.close({ threadId }).catch(() => undefined);
+  await Promise.all(
+    [...previewUrls].map((previewUrl) =>
+      api.projects.revokeHtmlArtifactPreview({ previewUrl }).catch(() => ({ revoked: false })),
+    ),
+  );
+  useBrowserStateStore.getState().removeThreadState(threadId);
+}
+
+export function removeDeletedThreadsFromClientState(
+  threadIds: ReadonlyArray<ThreadId>,
+  removeDeletedThreadFromClientState: (threadId: ThreadId) => void,
+): void {
+  for (const threadId of new Set(threadIds)) {
+    removeDeletedThreadFromClientState(threadId);
+  }
 }
 
 // Delete reconciliation is intentionally local-only; shell snapshots/events still own
@@ -37,6 +83,7 @@ export async function reconcileDeletedThreadsFromClient(
   }
 
   for (const threadId of threadIds) {
-    input.removeDeletedThreadFromClientState(threadId);
+    await cleanupDeletedThreadBrowserState(input.api, threadId);
   }
+  removeDeletedThreadsFromClientState(threadIds, input.removeDeletedThreadFromClientState);
 }
