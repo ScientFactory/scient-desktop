@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import {
   existsSync,
@@ -30,6 +30,7 @@ import {
   monitorPackagedStartupTermination,
   PackagedPreparationCleanupError,
   parsePackagedDesktopStartupArgs,
+  prepareMacLaunch,
   readWindowsExecutableArchitecture,
   readPackagedDesktopLogTail,
   readPackagedBackendProcessIds,
@@ -572,6 +573,38 @@ describe("packaged desktop startup verification", () => {
     expect(runCommand).toHaveBeenCalledTimes(3);
   });
 
+  it("preserves a mounted DMG when inspection and both detach attempts fail", async () => {
+    const root = mkdtempSync(join(tmpdir(), "scient-packaged-dmg-inspection-test-"));
+    temporaryRoots.push(root);
+    writeFileSync(join(root, "Scient-1.2.3-arm64.dmg"), "fixture");
+    const extractionRoot = join(root, "mount");
+    const executableDirectory = join(extractionRoot, "Scient.app", "Contents", "MacOS");
+    mkdirSync(executableDirectory, { recursive: true });
+    writeFileSync(join(executableDirectory, "Scient"), "fixture");
+    const runCommand = vi.fn(async (_command: string, args: ReadonlyArray<string>) => {
+      if (args[0] === "attach") return "";
+      if (args[0] === "detach") throw new Error(args[1] === "-force" ? "force failed" : "busy");
+      if (args[0] === "-extract") throw new Error("plist inspection failed");
+      return "";
+    }) as unknown as typeof runPackagedPreparationCommand;
+
+    await expect(
+      prepareMacLaunch(
+        root,
+        extractionRoot,
+        "Scient-1.2.3-arm64.dmg",
+        { arch: "arm64", version: "1.2.3" },
+        new AbortController().signal,
+        runCommand,
+      ),
+    ).rejects.toBeInstanceOf(PackagedPreparationCleanupError);
+    expect(runCommand).toHaveBeenCalledWith(
+      "hdiutil",
+      ["detach", "-force", extractionRoot],
+      expect.any(Object),
+    );
+  });
+
   it("rejects startup proof when the process handle closes before the exit event arrives", async () => {
     let now = 0;
     await expect(
@@ -724,6 +757,8 @@ describe("packaged desktop startup verification", () => {
     expect(jobScript).toContain("EXTENDED_STARTUPINFO_PRESENT");
     expect(jobScript).toContain("JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE");
     expect(jobScript).toContain("PROC_THREAD_ATTRIBUTE_JOB_LIST");
+    expect(jobScript).toContain("SCIENT_PACKAGED_STARTUP_SENTINEL_PID");
+    expect(jobScript).toContain("[string]$PID");
     expect(jobScript).not.toContain("AssignProcessToJobObject");
     expect(jobScript.indexOf("if (!UpdateProcThreadAttribute(")).toBeLessThan(
       jobScript.indexOf("if (!CreateProcess("),
@@ -748,6 +783,64 @@ describe("packaged desktop startup verification", () => {
     );
     expect(posixCall[2]).toEqual(expect.objectContaining({ detached: true }));
   });
+
+  it.skipIf(process.platform !== "win32")(
+    "passes authenticated direct-parent authority through the actual Windows Job launcher",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "scient-packaged-job-authority-test-"));
+      temporaryRoots.push(root);
+      const executable = join(root, "AuthorityProbe.exe");
+      const markerPath = join(root, "authority.marker");
+      const powershell = join(
+        process.env.SystemRoot ?? "C:\\Windows",
+        "System32",
+        "WindowsPowerShell",
+        "v1.0",
+        "powershell.exe",
+      );
+      const source = [
+        "using System;",
+        "using System.IO;",
+        "public static class AuthorityProbe {",
+        "  public static void Main() {",
+        '    File.WriteAllText(Environment.GetEnvironmentVariable("SCIENT_AUTHORITY_MARKER_PATH"),',
+        '      Environment.GetEnvironmentVariable("SCIENT_PACKAGED_STARTUP_SENTINEL_PID") ?? "missing");',
+        "  }",
+        "}",
+      ].join(" ");
+      execFileSync(
+        powershell,
+        [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `Add-Type -TypeDefinition $env:SCIENT_AUTHORITY_PROBE_SOURCE -Language CSharp -OutputAssembly '${executable.replaceAll("'", "''")}' -OutputType ConsoleApplication`,
+        ],
+        { env: { ...process.env, SCIENT_AUTHORITY_PROBE_SOURCE: source }, stdio: "pipe" },
+      );
+
+      const launcher = spawnContainedPackagedDesktop(
+        { command: executable, args: [], cwd: root },
+        {
+          ...process.env,
+          SCIENT_HOME: join(root, "scient-home"),
+          SCIENT_PACKAGED_STARTUP_SMOKE: "1",
+          SCIENT_AUTHORITY_MARKER_PATH: markerPath,
+        },
+        "win32",
+      );
+      await new Promise<void>((resolve, reject) => {
+        launcher.once("error", reject);
+        launcher.once("exit", (code) =>
+          code === 0 ? resolve() : reject(new Error(`Windows Job launcher exited ${code}.`)),
+        );
+      });
+
+      expect(readFileSync(markerPath, "utf8")).toBe(String(launcher.pid));
+    },
+    30_000,
+  );
 
   it.skipIf(process.platform !== "win32")(
     "atomically kills the suspended Windows payload when its launcher is interrupted pre-resume",

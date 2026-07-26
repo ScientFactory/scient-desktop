@@ -7,6 +7,15 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# CreateProcess inherits this launcher's process environment. Binding the
+# verifier authority to this retained direct parent gives Windows the same
+# non-inheritable-by-accident contract as the POSIX sentinel.
+[Environment]::SetEnvironmentVariable(
+  'SCIENT_PACKAGED_STARTUP_SENTINEL_PID',
+  [string]$PID,
+  'Process'
+)
+
 $source = @'
 using System;
 using System.ComponentModel;

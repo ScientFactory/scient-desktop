@@ -462,20 +462,21 @@ export function assertPackagedLaunchCommandSafety(launch: PackagedDesktopLaunchC
   }
 }
 
-async function prepareMacLaunch(
+export async function prepareMacLaunch(
   assetsDirectory: string,
   extractionRoot: string,
   expectedAssetName: string,
   options: Pick<PackagedDesktopStartupOptions, "arch" | "version">,
   signal: AbortSignal,
+  runCommand: PackagedPreparationCommandRunner = runPackagedPreparationCommand,
 ): Promise<PackagedDesktopLaunchCommand> {
   const archive = resolveExactPackagedDesktopStartupAsset(assetsDirectory, expectedAssetName);
   const isDiskImage = expectedAssetName.endsWith(".dmg");
   const cleanup = isDiskImage
-    ? await attachMacDiskImageForInspection(archive, extractionRoot, signal)
+    ? await attachMacDiskImageForInspection(archive, extractionRoot, signal, runCommand)
     : undefined;
   if (!isDiskImage) {
-    await runPackagedPreparationCommand("ditto", ["-x", "-k", archive, extractionRoot], { signal });
+    await runCommand("ditto", ["-x", "-k", archive, extractionRoot], { signal });
   }
   try {
     const appBundles = readdirSync(extractionRoot).filter((entry) => entry.endsWith(".app"));
@@ -490,17 +491,17 @@ async function prepareMacLaunch(
       throw new Error(`Expected one macOS main executable, found ${executables.length}.`);
     }
     const infoPlist = join(appBundle, "Contents", "Info.plist");
-    const bundleIdentifier = await runPackagedPreparationCommand(
+    const bundleIdentifier = await runCommand(
       "plutil",
       ["-extract", "CFBundleIdentifier", "raw", "-o", "-", infoPlist],
       { signal },
     );
-    const bundleVersion = await runPackagedPreparationCommand(
+    const bundleVersion = await runCommand(
       "plutil",
       ["-extract", "CFBundleShortVersionString", "raw", "-o", "-", infoPlist],
       { signal },
     );
-    const bundleExecutable = await runPackagedPreparationCommand(
+    const bundleExecutable = await runCommand(
       "plutil",
       ["-extract", "CFBundleExecutable", "raw", "-o", "-", infoPlist],
       { signal },
@@ -516,7 +517,7 @@ async function prepareMacLaunch(
     }
     const expectedArchitecture = options.arch === "x64" ? "x86_64" : options.arch;
     const executableArchitectures = (
-      await runPackagedPreparationCommand("lipo", ["-archs", executables[0]!], {
+      await runCommand("lipo", ["-archs", executables[0]!], {
         signal,
       })
     )
@@ -541,9 +542,9 @@ async function prepareMacLaunch(
       try {
         await cleanup();
       } catch (cleanupError) {
-        throw new AggregateError(
-          [error, cleanupError],
+        throw new PackagedPreparationCleanupError(
           `Failed to inspect and detach ${basename(archive)}.`,
+          new AggregateError([error, cleanupError]),
         );
       }
     }
