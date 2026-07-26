@@ -21,6 +21,7 @@ import {
   isSupportedLocalHtmlPath,
   localFileViewerKindForPath,
 } from "@synara/shared/localPreviewFiles";
+import { asLiveHtmlNativeApi } from "@synara/shared/liveHtmlPreviewTransport";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
@@ -1815,7 +1816,8 @@ function SingleChatSurface(props: {
       if (inspection.mode !== "static-document") {
         return null;
       }
-      const api = readNativeApi();
+      const nativeApi = readNativeApi();
+      const api = nativeApi ? asLiveHtmlNativeApi(nativeApi) : undefined;
       if (!api) {
         return null;
       }
@@ -1841,7 +1843,8 @@ function SingleChatSurface(props: {
         return false;
       }
       void (async () => {
-        const api = readNativeApi();
+        const nativeApi = readNativeApi();
+        const api = nativeApi ? asLiveHtmlNativeApi(nativeApi) : undefined;
         if (!api) {
           throw new Error("The file opener is not available.");
         }

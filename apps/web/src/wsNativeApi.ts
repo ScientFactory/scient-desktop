@@ -38,6 +38,10 @@ import {
   type WsWelcomePayload,
   type AutomationStreamEvent,
 } from "@synara/contracts";
+import {
+  asLiveHtmlDesktopBridge,
+  type LiveHtmlNativeApi,
+} from "@synara/shared/liveHtmlPreviewTransport";
 
 import { showConfirmDialogFallback } from "./confirmDialogFallback";
 import { showContextMenuFallback } from "./contextMenuFallback";
@@ -45,7 +49,7 @@ import { requireHttpExternalUrl } from "./lib/externalUrl";
 import { WsTransport } from "./wsTransport";
 import { emitWsTransportState } from "./wsTransportEvents";
 
-let instance: { api: NativeApi; transport: WsTransport } | null = null;
+let instance: { api: LiveHtmlNativeApi; transport: WsTransport } | null = null;
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
 const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
 const serverProviderStatusesUpdatedListeners = new Set<
@@ -323,7 +327,7 @@ export function onServerSettingsUpdated(
   };
 }
 
-export function createWsNativeApi(): NativeApi {
+export function createWsNativeApi(): LiveHtmlNativeApi {
   if (instance) {
     if (instance.transport.getState() !== "disposed") {
       return instance.api;
@@ -454,7 +458,7 @@ export function createWsNativeApi(): NativeApi {
       }
     }
   });
-  const api: NativeApi = {
+  const api: LiveHtmlNativeApi = {
     dialogs: {
       pickFolder: async () => {
         if (!window.desktopBridge) return null;
@@ -910,7 +914,9 @@ export function createWsNativeApi(): NativeApi {
       },
       replaceLocalHtmlPreview: async (input) => {
         if (window.desktopBridge) {
-          return window.desktopBridge.browser.replaceLocalHtmlPreview(input);
+          return asLiveHtmlDesktopBridge(window.desktopBridge).browser.replaceLocalHtmlPreview(
+            input,
+          );
         }
         const state = ensureFallbackBrowserWorkspace(input.threadId);
         const tab = resolveFallbackBrowserTab(state, input.tabId);

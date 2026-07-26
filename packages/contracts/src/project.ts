@@ -228,9 +228,6 @@ export type ProjectPrepareHtmlArtifactPreviewInput =
 export const ProjectPrepareHtmlArtifactPreviewResult = Schema.Struct({
   ...ProjectInspectHtmlArtifactResult.fields,
   previewUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
-  watchedPaths: Schema.optional(
-    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
-  ),
   allowedExternalUrls: Schema.optional(
     Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(8_192))),
   ),

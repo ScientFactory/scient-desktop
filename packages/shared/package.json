@@ -92,6 +92,10 @@
       "types": "./src/browserSession.ts",
       "import": "./src/browserSession.ts"
     },
+    "./liveHtmlPreviewTransport": {
+      "types": "./src/liveHtmlPreviewTransport.ts",
+      "import": "./src/liveHtmlPreviewTransport.ts"
+    },
     "./backendControl": {
       "types": "./src/backendControl.ts",
       "import": "./src/backendControl.ts"

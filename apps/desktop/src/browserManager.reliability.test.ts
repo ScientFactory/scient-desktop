@@ -14,6 +14,7 @@ const electron = vi.hoisted(() => {
     loadURL: ReturnType<typeof vi.fn>;
     reload: ReturnType<typeof vi.fn>;
     close: ReturnType<typeof vi.fn>;
+    destroy: () => void;
     setWebRTCIPHandlingPolicy: ReturnType<typeof vi.fn>;
     handlers: Map<string, Array<(...args: any[]) => void>>;
     windowOpenHandler: ((details: any) => { action: string }) | null;
@@ -49,9 +50,11 @@ const electron = vi.hoisted(() => {
   let loadURLImplementation = async (_url: string, _webContentsId: number): Promise<void> => {
     void nextWebContentsId;
   };
+  let holdWebContentsDestruction = false;
 
   function createWebContents() {
     let currentUrl = "about:blank";
+    let destroyed = false;
     const handlers = new Map<string, Array<(...args: any[]) => void>>();
     const webContents = {
       id: nextWebContentsId++,
@@ -63,7 +66,7 @@ const electron = vi.hoisted(() => {
         canGoBack: () => false,
         canGoForward: () => false,
       },
-      isDestroyed: () => false,
+      isDestroyed: () => destroyed,
       getURL: () => currentUrl,
       getTitle: () => currentUrl,
       isLoading: () => false,
@@ -88,7 +91,18 @@ const electron = vi.hoisted(() => {
           (handlers.get(name) ?? []).filter((candidate) => candidate !== handler),
         );
       }),
-      close: vi.fn(),
+      destroy: () => {
+        if (destroyed) return;
+        destroyed = true;
+        for (const handler of handlers.get("destroyed") ?? []) {
+          handler();
+        }
+      },
+      close: vi.fn(() => {
+        if (!holdWebContentsDestruction) {
+          webContents.destroy();
+        }
+      }),
       reload: vi.fn(),
       goBack: vi.fn(),
       goForward: vi.fn(),
@@ -144,6 +158,9 @@ const electron = vi.hoisted(() => {
       implementation: (url: string, webContentsId: number) => Promise<void>,
     ) => {
       loadURLImplementation = implementation;
+    },
+    setHoldWebContentsDestruction: (hold: boolean) => {
+      holdWebContentsDestruction = hold;
     },
     sessionFor,
   };
@@ -202,6 +219,7 @@ describe("DesktopBrowserManager reliability", () => {
     electron.sessions.clear();
     electron.setProxyImplementation(async () => undefined);
     electron.setLoadURLImplementation(async () => undefined);
+    electron.setHoldWebContentsDestruction(false);
   });
 
   it("closes the browser session when its final tab closes", () => {
@@ -491,6 +509,7 @@ describe("DesktopBrowserManager reliability", () => {
     };
     internals.ensureLiveRuntime(THREAD_ID, previousTabId);
     const previousContents = electron.createdWebContents.at(-1);
+    electron.setHoldWebContentsDestruction(true);
 
     const replaced = await manager.replaceLocalHtmlPreview({
       threadId: THREAD_ID,
@@ -516,6 +535,40 @@ describe("DesktopBrowserManager reliability", () => {
     expect(previousContents?.close).toHaveBeenCalledOnce();
     const previousPartition = `scient-local-html-preview-${THREAD_ID}-${previousTabId}`;
     const previousSession = electron.sessions.get(previousPartition);
+    expect(previousSession?.clearStorageData).not.toHaveBeenCalled();
+    expect(previousSession?.webRequest.onBeforeRequest).toHaveBeenLastCalledWith(
+      expect.any(Function),
+    );
+    expect(previousSession?.setPermissionCheckHandler).toHaveBeenLastCalledWith(
+      expect.any(Function),
+    );
+    expect(previousSession?.setPermissionRequestHandler).toHaveBeenLastCalledWith(
+      expect.any(Function),
+    );
+    expect(previousSession?.removeAllListeners).not.toHaveBeenCalled();
+    expect(previousSession?.setProxy).not.toHaveBeenCalledWith({ mode: "direct" });
+    const closingRequestGuard = previousSession?.webRequest.onBeforeRequest.mock.calls.at(-1)?.[0];
+    const closingRequestResult = vi.fn();
+    closingRequestGuard(
+      { url: "https://attacker.example/x.js", method: "GET", resourceType: "script" },
+      closingRequestResult,
+    );
+    expect(closingRequestResult).toHaveBeenCalledWith({ cancel: true });
+    const closingPermissionCheck =
+      previousSession?.setPermissionCheckHandler.mock.calls.at(-1)?.[0];
+    expect(closingPermissionCheck()).toBe(false);
+    const closingPermissionRequest =
+      previousSession?.setPermissionRequestHandler.mock.calls.at(-1)?.[0];
+    const permissionResult = vi.fn();
+    closingPermissionRequest(undefined, "media", permissionResult);
+    expect(permissionResult).toHaveBeenCalledWith(false);
+    const closingDownloadGuard = previousSession?.on.mock.calls.find(
+      ([eventName]) => eventName === "will-download",
+    )?.[1];
+    const downloadEvent = { preventDefault: vi.fn() };
+    closingDownloadGuard(downloadEvent);
+    expect(downloadEvent.preventDefault).toHaveBeenCalledOnce();
+    previousContents?.destroy();
     await vi.waitFor(() => {
       expect(previousSession?.clearStorageData).toHaveBeenCalledOnce();
       expect(previousSession?.setProxy).toHaveBeenCalledWith({ mode: "direct" });
@@ -779,10 +832,16 @@ describe("DesktopBrowserManager reliability", () => {
     await vi.waitFor(() => expect(releaseLoad).toBeTypeOf("function"));
     const provisionalContents = electron.createdWebContents.at(-1);
     const provisionalSession = [...electron.sessions.values()].at(-1);
+    electron.setHoldWebContentsDestruction(true);
 
     manager.close({ threadId: THREAD_ID });
 
     expect(provisionalContents?.close).toHaveBeenCalledOnce();
+    expect(provisionalSession?.clearStorageData).not.toHaveBeenCalled();
+    expect(provisionalSession?.webRequest.onBeforeRequest).toHaveBeenLastCalledWith(
+      expect.any(Function),
+    );
+    provisionalContents?.destroy();
     await vi.waitFor(() => {
       expect(provisionalSession?.clearStorageData).toHaveBeenCalledOnce();
       expect(provisionalSession?.clearCache).toHaveBeenCalledOnce();
@@ -802,6 +861,15 @@ describe("DesktopBrowserManager reliability", () => {
       displayUrl: "/missing/report.html",
       previewCwd: "/missing",
     });
+    const sourceTabId = opened.activeTabId ?? "";
+    const internals = manager as unknown as {
+      ensureLiveRuntime: (threadId: ThreadId, tabId: string) => unknown;
+    };
+    internals.ensureLiveRuntime(THREAD_ID, sourceTabId);
+    const sourceContents = electron.createdWebContents.at(-1);
+    const sourceSession = electron.sessions.get(
+      `scient-local-html-preview-${THREAD_ID}-${sourceTabId}`,
+    );
     let releaseLoad: (() => void) | undefined;
     electron.setLoadURLImplementation(
       () =>
@@ -812,7 +880,7 @@ describe("DesktopBrowserManager reliability", () => {
 
     const replacement = manager.replaceLocalHtmlPreview({
       threadId: THREAD_ID,
-      tabId: opened.activeTabId ?? "",
+      tabId: sourceTabId,
       url: "http://g-13345678-2234-4123-8123-123456789abc.preview.localhost:43123/",
       displayUrl: "/missing/report.html",
       previewCwd: "/missing",
@@ -820,14 +888,25 @@ describe("DesktopBrowserManager reliability", () => {
     });
     await vi.waitFor(() => expect(releaseLoad).toBeTypeOf("function"));
     const provisionalContents = electron.createdWebContents.at(-1);
+    const provisionalSession = [...electron.sessions.values()].at(-1);
+    electron.setHoldWebContentsDestruction(true);
 
     const closed = manager.closeTab({
       threadId: THREAD_ID,
-      tabId: opened.activeTabId ?? "",
+      tabId: sourceTabId,
     });
 
     expect(closed).toMatchObject({ open: false, activeTabId: null, tabs: [] });
+    expect(sourceContents?.close).toHaveBeenCalledOnce();
     expect(provisionalContents?.close).toHaveBeenCalledOnce();
+    expect(sourceSession?.clearStorageData).not.toHaveBeenCalled();
+    expect(provisionalSession?.clearStorageData).not.toHaveBeenCalled();
+    sourceContents?.destroy();
+    provisionalContents?.destroy();
+    await vi.waitFor(() => {
+      expect(sourceSession?.clearStorageData).toHaveBeenCalledOnce();
+      expect(provisionalSession?.clearStorageData).toHaveBeenCalledOnce();
+    });
     releaseLoad?.();
     await expect(replacement).rejects.toThrow("could not be loaded");
     manager.dispose();
@@ -879,7 +958,7 @@ describe("DesktopBrowserManager reliability", () => {
     manager.dispose();
   });
 
-  it("installs the newest distinct queued revision with its watch, network, and activation input", async () => {
+  it("keeps one logical-source queue after a replacement changes the tab id", async () => {
     const directory = await mkdtemp(join(tmpdir(), "scient-html-queued-refresh-"));
     const assetDirectory = join(directory, "assets");
     await mkdir(assetDirectory);
@@ -905,6 +984,7 @@ describe("DesktopBrowserManager reliability", () => {
       });
       const webTabId = withWebTab.activeTabId;
       let releaseFirstLoad: (() => void) | undefined;
+      let releaseSecondLoad: (() => void) | undefined;
       let loadCount = 0;
       electron.setLoadURLImplementation(async () => {
         loadCount += 1;
@@ -912,10 +992,15 @@ describe("DesktopBrowserManager reliability", () => {
           await new Promise<void>((resolve) => {
             releaseFirstLoad = resolve;
           });
+        } else if (loadCount === 2) {
+          await new Promise<void>((resolve) => {
+            releaseSecondLoad = resolve;
+          });
         }
       });
       const firstUrl = "http://g-15345678-2234-4123-8123-123456789abc.preview.localhost:43123/";
-      const newestUrl = "http://g-16345678-2234-4123-8123-123456789abc.preview.localhost:43123/";
+      const secondUrl = "http://g-16345678-2234-4123-8123-123456789abc.preview.localhost:43123/";
+      const newestUrl = "http://g-17345678-2234-4123-8123-123456789abc.preview.localhost:43123/";
 
       const first = manager.replaceLocalHtmlPreview({
         threadId: THREAD_ID,
@@ -928,9 +1013,29 @@ describe("DesktopBrowserManager reliability", () => {
         activate: false,
       });
       await vi.waitFor(() => expect(releaseFirstLoad).toBeTypeOf("function"));
-      const newest = manager.replaceLocalHtmlPreview({
+      const second = manager.replaceLocalHtmlPreview({
         threadId: THREAD_ID,
         tabId: sourceTabId,
+        url: secondUrl,
+        displayUrl: sourcePath,
+        previewCwd: directory,
+        watchedPaths: [sourcePath],
+        allowedExternalUrls: ["https://cdn.example/second.js"],
+        activate: false,
+      });
+      expect(second).toBe(first);
+      expect(manager.getState({ threadId: THREAD_ID }).activeTabId).toBe(webTabId);
+      releaseFirstLoad?.();
+      await vi.waitFor(() => expect(releaseSecondLoad).toBeTypeOf("function"));
+
+      const installedFirstTab = manager
+        .getState({ threadId: THREAD_ID })
+        .tabs.find((tab) => tab.kind === "local-html");
+      expect(installedFirstTab).toMatchObject({ url: firstUrl });
+      expect(installedFirstTab?.id).not.toBe(sourceTabId);
+      const newest = manager.replaceLocalHtmlPreview({
+        threadId: THREAD_ID,
+        tabId: installedFirstTab?.id ?? "",
         url: newestUrl,
         displayUrl: sourcePath,
         previewCwd: directory,
@@ -939,14 +1044,13 @@ describe("DesktopBrowserManager reliability", () => {
         activate: true,
       });
       expect(newest).toBe(first);
-      expect(manager.getState({ threadId: THREAD_ID }).activeTabId).toBe(webTabId);
-      releaseFirstLoad?.();
+      releaseSecondLoad?.();
 
       const finalState = await newest;
       const finalTab = finalState.tabs.find((tab) => tab.kind === "local-html");
       expect(
         electron.createdWebContents.map((contents) => contents.loadURL.mock.calls[0]?.[0]),
-      ).toEqual([firstUrl, newestUrl]);
+      ).toEqual([firstUrl, secondUrl, newestUrl]);
       expect(finalTab).toMatchObject({
         url: newestUrl,
         allowedExternalUrls: ["https://cdn.example/newest.js"],

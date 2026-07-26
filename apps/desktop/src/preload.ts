@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
-import type { DesktopBridge } from "@synara/contracts";
+import type { LiveHtmlDesktopBridge } from "@synara/shared/liveHtmlPreviewTransport";
 import { BROWSER_IPC_CHANNELS } from "./browserIpc";
 import {
   DESKTOP_WS_URL_CHANNEL,
@@ -248,4 +248,4 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       };
     },
   },
-} satisfies DesktopBridge);
+} satisfies LiveHtmlDesktopBridge);

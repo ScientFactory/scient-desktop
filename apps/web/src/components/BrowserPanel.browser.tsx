@@ -3,7 +3,8 @@
 
 import "../index.css";
 
-import type { NativeApi, ThreadBrowserState, ThreadId } from "@synara/contracts";
+import type { ThreadBrowserState, ThreadId } from "@synara/contracts";
+import type { LiveHtmlNativeApi } from "@synara/shared/liveHtmlPreviewTransport";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { page, userEvent } from "vitest/browser";
@@ -20,7 +21,7 @@ vi.mock("~/lib/serverReactQuery", async (importOriginal) => ({
 }));
 
 const nativeApiTestState = vi.hoisted(() => ({
-  api: undefined as NativeApi | undefined,
+  api: undefined as LiveHtmlNativeApi | undefined,
 }));
 
 vi.mock("~/nativeApi", async (importOriginal) => ({
@@ -177,7 +178,7 @@ function liveBrowserApi(options?: {
     projects: {
       revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: false })),
     },
-  } as unknown as NativeApi;
+  } as unknown as LiveHtmlNativeApi;
 }
 
 describe("BrowserPanel interactions", () => {
@@ -274,7 +275,7 @@ describe("BrowserPanel interactions", () => {
       projects: {
         revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: false })),
       },
-    } as unknown as NativeApi;
+    } as unknown as LiveHtmlNativeApi;
     useBrowserStateStore.getState().upsertThreadState(openState);
     const fallback = document.createElement("button");
     fallback.textContent = "Open Browser";
@@ -794,7 +795,7 @@ describe("BrowserPanel interactions", () => {
         onCopyLink: vi.fn(() => () => undefined),
       },
       projects: { revokeHtmlArtifactPreview },
-    } as unknown as NativeApi;
+    } as unknown as LiveHtmlNativeApi;
     useBrowserStateStore.getState().removeThreadState(THREAD_ID);
 
     await renderLivePanel(() => undefined);
@@ -858,7 +859,7 @@ describe("BrowserPanel interactions", () => {
         onCopyLink: vi.fn(() => () => undefined),
       },
       projects: { prepareHtmlArtifactPreview, revokeHtmlArtifactPreview },
-    } as unknown as NativeApi;
+    } as unknown as LiveHtmlNativeApi;
     useBrowserStateStore.getState().upsertThreadState(openState);
 
     await renderLivePanel(() => undefined);
@@ -931,7 +932,7 @@ describe("BrowserPanel interactions", () => {
         })),
         revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
       },
-    } as unknown as NativeApi;
+    } as unknown as LiveHtmlNativeApi;
     useBrowserStateStore.getState().upsertThreadState(openState);
 
     await renderLivePanel(() => undefined);
@@ -987,7 +988,7 @@ describe("BrowserPanel interactions", () => {
         })),
         revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
       },
-    } as unknown as NativeApi;
+    } as unknown as LiveHtmlNativeApi;
     useBrowserStateStore.getState().upsertThreadState(openState);
 
     await renderLivePanel(() => undefined);
@@ -1021,6 +1022,8 @@ describe("BrowserPanel interactions", () => {
       "http://g-f2345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
     const secondReplacementUrl =
       "http://g-02345678-1234-4123-8123-123456789abc.preview.localhost:5000/";
+    const recoveredReplacementUrl =
+      "http://g-12345678-3234-4123-8123-123456789abc.preview.localhost:5000/";
     const openState = browserState("tab-source");
     openState.version = 30;
     openState.tabs = [
@@ -1049,6 +1052,19 @@ describe("BrowserPanel interactions", () => {
         },
       ],
     };
+    const recoveredReplacementState: ThreadBrowserState = {
+      ...firstReplacementState,
+      version: firstReplacementState.version + 1,
+      activeTabId: "tab-recovered",
+      tabs: [
+        {
+          ...firstReplacementState.tabs[0]!,
+          id: "tab-recovered",
+          url: recoveredReplacementUrl,
+          lastCommittedUrl: recoveredReplacementUrl,
+        },
+      ],
+    };
     let resolveFirstReplacement: (state: ThreadBrowserState) => void = () => undefined;
     const firstReplacement = new Promise<ThreadBrowserState>((resolve) => {
       resolveFirstReplacement = resolve;
@@ -1066,11 +1082,18 @@ describe("BrowserPanel interactions", () => {
         warnings: [],
         previewUrl: secondReplacementUrl,
         watchedPaths: ["/workspace/report.html"],
+      })
+      .mockResolvedValueOnce({
+        mode: "static-document" as const,
+        warnings: [],
+        previewUrl: recoveredReplacementUrl,
+        watchedPaths: ["/workspace/report.html"],
       });
     const replaceLocalHtmlPreview = vi
       .fn()
       .mockImplementationOnce(() => firstReplacement)
-      .mockRejectedValueOnce(new Error("The newest local HTML revision could not be loaded."));
+      .mockRejectedValueOnce(new Error("The newest local HTML revision could not be loaded."))
+      .mockResolvedValueOnce(recoveredReplacementState);
     nativeApiTestState.api = {
       browser: {
         open: vi.fn(async () => openState),
@@ -1084,7 +1107,7 @@ describe("BrowserPanel interactions", () => {
         prepareHtmlArtifactPreview,
         revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
       },
-    } as unknown as NativeApi;
+    } as unknown as LiveHtmlNativeApi;
     useBrowserStateStore.getState().upsertThreadState(openState);
 
     await renderLivePanel(() => undefined);
@@ -1100,6 +1123,18 @@ describe("BrowserPanel interactions", () => {
         .find((element) => element.textContent?.includes("newest local HTML"));
       expect(status?.textContent).toContain("could not be loaded");
     });
+
+    ((await page.getByRole("button", { name: "Reload" }).element()) as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(replaceLocalHtmlPreview).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => {
+      expect(
+        page
+          .getByRole("status")
+          .elements()
+          .some((element) => element.textContent?.includes("newest local HTML")),
+      ).toBe(false);
+    });
+    expect(prepareHtmlArtifactPreview).toHaveBeenCalledTimes(3);
   });
 
   it("does not retain a refresh failure that finishes after its source is closed", async () => {
@@ -1142,7 +1177,7 @@ describe("BrowserPanel interactions", () => {
         })),
         revokeHtmlArtifactPreview,
       },
-    } as unknown as NativeApi;
+    } as unknown as LiveHtmlNativeApi;
     useBrowserStateStore.getState().upsertThreadState(openState);
 
     await renderLivePanel(() => undefined);
@@ -1222,7 +1257,7 @@ describe("BrowserPanel interactions", () => {
         })),
         revokeHtmlArtifactPreview,
       },
-    } as unknown as NativeApi;
+    } as unknown as LiveHtmlNativeApi;
     useBrowserStateStore.getState().upsertThreadState(openState);
 
     await renderLivePanel(() => undefined);
@@ -1288,7 +1323,7 @@ describe("BrowserPanel interactions", () => {
         prepareHtmlArtifactPreview,
         revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
       },
-    } as unknown as NativeApi;
+    } as unknown as LiveHtmlNativeApi;
     useBrowserStateStore.getState().upsertThreadState(openState);
 
     await renderLivePanel(() => undefined);
@@ -1372,7 +1407,7 @@ describe("BrowserPanel interactions", () => {
         prepareHtmlArtifactPreview,
         revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
       },
-    } as unknown as NativeApi;
+    } as unknown as LiveHtmlNativeApi;
     useBrowserStateStore.getState().upsertThreadState(stateA);
     useBrowserStateStore.getState().upsertThreadState(stateB);
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });

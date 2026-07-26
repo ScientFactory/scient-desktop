@@ -14,12 +14,12 @@ import type {
   BrowserNavigateInput,
   BrowserNewTabInput,
   BrowserOpenInput,
-  BrowserReplaceLocalHtmlPreviewInput,
   BrowserSetPanelBoundsInput,
   BrowserTabInput,
   BrowserThreadInput,
   ThreadBrowserState,
 } from "@synara/contracts";
+import type { BrowserReplaceLocalHtmlPreviewInput } from "@synara/shared/liveHtmlPreviewTransport";
 
 import type { DesktopBrowserManager } from "./browserManager";
 

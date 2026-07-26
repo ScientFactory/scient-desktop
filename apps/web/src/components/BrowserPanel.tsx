@@ -40,6 +40,7 @@ import {
   resolveCopyableBrowserTabUrl,
 } from "@synara/shared/browserSession";
 import { isBrowserCopyLinkChord } from "@synara/shared/browserShortcuts";
+import { asLiveHtmlNativeApi } from "@synara/shared/liveHtmlPreviewTransport";
 
 import { isElectron } from "~/env";
 import { readNativeApi } from "~/nativeApi";
@@ -360,7 +361,8 @@ export function BrowserPanel({
   runtimeMode = "live",
   onRequestLive,
 }: BrowserPanelProps) {
-  const api = readNativeApi();
+  const nativeApi = readNativeApi();
+  const api = nativeApi ? asLiveHtmlNativeApi(nativeApi) : undefined;
   const isLiveRuntime = runtimeMode === "live";
   const threadBrowserState = useBrowserStateStore(selectThreadBrowserState(threadId));
   const recentHistory = useBrowserStateStore(selectThreadBrowserHistory(threadId));
@@ -664,6 +666,7 @@ export function BrowserPanel({
         })
         .finally(() => {
           localHtmlRefreshTasksRef.current.delete(sourceKey);
+          pendingLocalHtmlRefreshesRef.current.delete(sourceKey);
           setRefreshingLocalHtmlSources((current) => {
             const next = new Set(current);
             next.delete(sourceKey);
