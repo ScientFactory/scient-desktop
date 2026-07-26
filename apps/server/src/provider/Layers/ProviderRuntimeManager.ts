@@ -83,6 +83,7 @@ const PROVIDERS: ReadonlyArray<ProviderKind> = [
 ];
 const PLAN_TTL_MS = 10 * 60 * 1000;
 const SMOKE_TIMEOUT_MS = 15_000;
+const EXTRACT_TIMEOUT_MS = 3 * 60 * 1000;
 const SMOKE_OUTPUT_LIMIT = 64 * 1024;
 const MINIMUM_INSTALL_FREE_BYTES = 256 * 1024 * 1024;
 const WINDOWS_ENVIRONMENT_CACHE_MS = 5_000;
@@ -804,13 +805,25 @@ export const ProviderRuntimeManagerLive = Layer.effect(
           message: "Installing the verified provider runtime.",
           version: artifact.version,
         });
-        const extractedExecutable = await extractProviderRuntime({
-          archivePath,
-          destination: stagedRelease,
-          format: artifact.archiveFormat,
-          executablePath: artifact.executablePath,
-          signal: gate.signal,
-        });
+        const extractionTimeout = AbortSignal.timeout(EXTRACT_TIMEOUT_MS);
+        let extractedExecutable: string;
+        try {
+          extractedExecutable = await extractProviderRuntime({
+            archivePath,
+            destination: stagedRelease,
+            format: artifact.archiveFormat,
+            executablePath: artifact.executablePath,
+            signal: AbortSignal.any([gate.signal, extractionTimeout]),
+          });
+        } catch (cause) {
+          if (extractionTimeout.aborted && !gate.signal.aborted) {
+            throw new Error(
+              "Extracting the provider runtime timed out. Antivirus or disk activity may be blocking it; try again.",
+              { cause },
+            );
+          }
+          throw cause;
+        }
         const recipe = getProviderRuntimeRecipe(provider);
         const managedExecutableRelativePath = Path.join(
           "bin",

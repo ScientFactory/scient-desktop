@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { constants as FS_CONSTANTS, createWriteStream } from "node:fs";
+import { constants as FS_CONSTANTS, createReadStream, createWriteStream } from "node:fs";
 import FS from "node:fs/promises";
 import Path from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -280,36 +280,60 @@ async function extractZip(input: {
     throw new ProviderRuntimeFileError("Provider runtime archive exceeds extraction limits.");
   }
 
-  let actualExpandedBytes = 0;
-  const seen = new Set<string>();
+  const entries = new Map<string, (typeof archive.files)[number]>();
   for (const entry of archive.files) {
     if (input.signal.aborted) throw new DOMException("Extraction cancelled.", "AbortError");
-    const destination = safeArchivePath(input.destination, entry.path);
     const normalized = entry.path.replaceAll("\\", "/");
-    if (seen.has(normalized)) {
+    if (entries.has(normalized)) {
       throw new ProviderRuntimeFileError(
         `Provider runtime archive contains a duplicate path: ${entry.path}`,
       );
     }
-    seen.add(normalized);
+    safeArchivePath(input.destination, entry.path);
     const unixMode = (entry.externalFileAttributes >>> 16) & 0o170000;
     if (unixMode === 0o120000) {
       throw new ProviderRuntimeFileError(
         "Provider runtime archives cannot contain symbolic links.",
       );
     }
-    if (entry.type === "Directory") {
-      await FS.mkdir(destination, { recursive: true });
-      continue;
-    }
-    if (entry.type !== "File") {
+    if (entry.type !== "Directory" && entry.type !== "File") {
       throw new ProviderRuntimeFileError(
         `Unsupported provider runtime archive entry: ${entry.path}`,
       );
     }
-    await FS.mkdir(Path.dirname(destination), { recursive: true });
-    const output = await FS.open(destination, "wx", 0o600);
-    try {
+    entries.set(normalized, entry);
+  }
+
+  // Reading every central-directory entry with `entry.stream()` can stall on
+  // multi-entry archives. Parse the archive once, sequentially, instead. This
+  // keeps extraction streaming and makes cancellation real: aborting destroys
+  // the source, parser, current entry, limiter, and destination stream.
+  const source = createReadStream(input.archivePath);
+  const parser = Unzipper.Parse({ forceStream: true });
+  const parseArchive = pipeline(source, parser, { signal: input.signal });
+  let actualExpandedBytes = 0;
+  const extracted = new Set<string>();
+  try {
+    for await (const value of parser) {
+      const entry = value as Unzipper.Entry;
+      if (input.signal.aborted) throw new DOMException("Extraction cancelled.", "AbortError");
+      const normalized = entry.path.replaceAll("\\", "/");
+      const expected = entries.get(normalized);
+      if (!expected || extracted.has(normalized)) {
+        entry.autodrain();
+        throw new ProviderRuntimeFileError(
+          `Provider runtime archive contains an unexpected path: ${entry.path}`,
+        );
+      }
+      extracted.add(normalized);
+      const destination = safeArchivePath(input.destination, entry.path);
+      if (expected.type === "Directory") {
+        await entry.autodrain().promise();
+        await FS.mkdir(destination, { recursive: true });
+        continue;
+      }
+
+      await FS.mkdir(Path.dirname(destination), { recursive: true });
       const limiter = new Transform({
         transform(chunk: Buffer, _encoding, callback) {
           actualExpandedBytes += chunk.byteLength;
@@ -322,12 +346,19 @@ async function extractZip(input: {
           callback(null, chunk);
         },
       });
-      await pipeline(entry.stream(), limiter, output.createWriteStream({ autoClose: false }), {
+      await pipeline(entry, limiter, createWriteStream(destination, { flags: "wx", mode: 0o600 }), {
         signal: input.signal,
       });
-    } finally {
-      await output.close().catch(() => undefined);
     }
+    await parseArchive;
+    if (extracted.size !== entries.size) {
+      throw new ProviderRuntimeFileError("Provider runtime archive is incomplete.");
+    }
+  } catch (cause) {
+    source.destroy();
+    parser.destroy();
+    await parseArchive.catch(() => undefined);
+    throw cause;
   }
 }
 
