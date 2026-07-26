@@ -29,8 +29,25 @@ export function resolveBackendRecoveryAfterUpdaterFailure(input: {
   return input.restartWasRequired ? "restart" : "none";
 }
 
-export function shouldShowBackendRestartRecovery(isQuitting: boolean): boolean {
-  return !isQuitting;
+export function handleBackendRecoveryAfterUpdaterFailure(input: {
+  readonly restartWasRequired: boolean;
+  readonly recoveryPending: boolean;
+  readonly recoveryDialogOpen: boolean;
+  readonly resume: () => void;
+  readonly showRecovery: () => void;
+}): BackendRecoveryAfterUpdaterFailureAction {
+  const action = resolveBackendRecoveryAfterUpdaterFailure(input);
+  if (action === "restart") input.resume();
+  if (action === "show-recovery") input.showRecovery();
+  return action;
+}
+
+export function shouldAttemptBackendRestartRecovery(input: {
+  readonly recoveryPending: boolean;
+  readonly recoveryDialogOpen: boolean;
+  readonly isQuitting: boolean;
+}): boolean {
+  return input.recoveryPending && !input.recoveryDialogOpen && !input.isQuitting;
 }
 
 export interface BackendRestartRecoveryDialogOptions {

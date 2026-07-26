@@ -3,17 +3,30 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildBackendRestartRecoveryDialog,
   ensureBackendRestartRecoveryOwner,
+  handleBackendRecoveryAfterUpdaterFailure,
   handleBackendRestartRecoveryAction,
   resolveBackendRecoveryAfterUpdaterFailure,
   resolveBackendRestartRecoveryAction,
   showBackendRestartRecoveryDialog,
-  shouldShowBackendRestartRecovery,
+  shouldAttemptBackendRestartRecovery,
 } from "./backendRestartRecovery";
 
 describe("backend restart recovery", () => {
   it("suppresses the initial recovery dialog once shutdown begins", () => {
-    expect(shouldShowBackendRestartRecovery(false)).toBe(true);
-    expect(shouldShowBackendRestartRecovery(true)).toBe(false);
+    expect(
+      shouldAttemptBackendRestartRecovery({
+        recoveryPending: true,
+        recoveryDialogOpen: false,
+        isQuitting: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldAttemptBackendRestartRecovery({
+        recoveryPending: true,
+        recoveryDialogOpen: false,
+        isQuitting: true,
+      }),
+    ).toBe(false);
   });
 
   it("reuses or creates a live main-window owner for recovery", () => {
@@ -64,6 +77,35 @@ describe("backend restart recovery", () => {
         recoveryDialogOpen: false,
       }),
     ).toBe("restart");
+  });
+
+  it("dispatches updater recovery through exactly one production action", () => {
+    const resume = vi.fn();
+    const showRecovery = vi.fn();
+
+    expect(
+      handleBackendRecoveryAfterUpdaterFailure({
+        restartWasRequired: true,
+        recoveryPending: false,
+        recoveryDialogOpen: false,
+        resume,
+        showRecovery,
+      }),
+    ).toBe("restart");
+    expect(resume).toHaveBeenCalledOnce();
+    expect(showRecovery).not.toHaveBeenCalled();
+
+    expect(
+      handleBackendRecoveryAfterUpdaterFailure({
+        restartWasRequired: false,
+        recoveryPending: true,
+        recoveryDialogOpen: false,
+        resume,
+        showRecovery,
+      }),
+    ).toBe("show-recovery");
+    expect(resume).toHaveBeenCalledOnce();
+    expect(showRecovery).toHaveBeenCalledOnce();
   });
 
   it("offers retry and logs while keeping cancellation non-destructive", () => {
@@ -183,11 +225,17 @@ describe("backend restart recovery", () => {
     expect(showUnowned).not.toHaveBeenCalled();
   });
 
-  it("surfaces a native dialog failure so the retained recovery can retry on focus", async () => {
+  it("recreates a destroyed owner and retains retry eligibility after dialog failure", async () => {
     const failure = new Error("native dialog unavailable");
+    const owner = ensureBackendRestartRecoveryOwner({
+      currentOwner: { id: 1, destroyed: true },
+      existingOwners: [],
+      isDestroyed: (candidate) => candidate.destroyed,
+      createOwner: () => ({ id: 2, destroyed: false }),
+    });
     await expect(
       showBackendRestartRecoveryDialog({
-        owner: { id: 42 },
+        owner,
         options: buildBackendRestartRecoveryDialog({
           appName: "Scient",
           failures: 5,
@@ -200,6 +248,14 @@ describe("backend restart recovery", () => {
         showUnowned: vi.fn(async () => ({ response: 2 })),
       }),
     ).rejects.toBe(failure);
+    expect(owner).toEqual({ id: 2, destroyed: false });
+    expect(
+      shouldAttemptBackendRestartRecovery({
+        recoveryPending: true,
+        recoveryDialogOpen: false,
+        isQuitting: false,
+      }),
+    ).toBe(true);
   });
 
   it.each(["retry", "open-logs"] as const)(

@@ -62,10 +62,10 @@ import { isBackendReadinessAborted, waitForHttpReady } from "./backendReadiness"
 import {
   buildBackendRestartRecoveryDialog,
   ensureBackendRestartRecoveryOwner,
+  handleBackendRecoveryAfterUpdaterFailure,
   handleBackendRestartRecoveryAction,
-  resolveBackendRecoveryAfterUpdaterFailure,
   showBackendRestartRecoveryDialog,
-  shouldShowBackendRestartRecovery,
+  shouldAttemptBackendRestartRecovery,
 } from "./backendRestartRecovery";
 import { UpdateBackendRecoveryLatch } from "./updateBackendRecovery";
 import { resolveBackendNodeArgs } from "./backendNodeOptions";
@@ -789,16 +789,15 @@ function clearUpdaterInstallInFlightAfterError(): void {
 }
 
 function restoreBackendAfterUpdaterFailure(): void {
-  const action = resolveBackendRecoveryAfterUpdaterFailure({
+  handleBackendRecoveryAfterUpdaterFailure({
     restartWasRequired: updateBackendRecovery.consume(),
     recoveryPending: pendingBackendRestartRecovery !== null,
     recoveryDialogOpen: backendRestartRecoveryDialogOpen,
+    resume: resumeBackend,
+    showRecovery: () => {
+      void showBackendRestartRecovery();
+    },
   });
-  if (action === "restart") {
-    resumeBackend();
-  } else if (action === "show-recovery") {
-    void showBackendRestartRecovery();
-  }
 }
 
 function clearUpdateInstallWatchdogTimer(): void {
@@ -2934,13 +2933,15 @@ async function showBackendRestartRecovery(input?: {
 }): Promise<void> {
   if (input) pendingBackendRestartRecovery = input;
   if (
-    !pendingBackendRestartRecovery ||
-    backendRestartRecoveryDialogOpen ||
-    !shouldShowBackendRestartRecovery(isQuitting)
+    !shouldAttemptBackendRestartRecovery({
+      recoveryPending: pendingBackendRestartRecovery !== null,
+      recoveryDialogOpen: backendRestartRecoveryDialogOpen,
+      isQuitting,
+    })
   ) {
     return;
   }
-  const recovery = pendingBackendRestartRecovery;
+  const recovery = pendingBackendRestartRecovery!;
   backendRestartRecoveryDialogOpen = true;
   let reopenAfterClose = false;
   try {

@@ -9,6 +9,8 @@ import {
   type DesktopBackendChild,
   type DesktopBackendSupervisorOptions,
 } from "./desktopBackendSupervisor";
+import { handleBackendRecoveryAfterUpdaterFailure } from "./backendRestartRecovery";
+import { UpdateBackendRecoveryLatch } from "./updateBackendRecovery";
 
 class FakeBackendChild extends EventEmitter implements DesktopBackendChild {
   pid: number | undefined;
@@ -532,11 +534,26 @@ describe("DesktopBackendSupervisor", () => {
     harness.children[1]!.exit(1);
     await vi.advanceTimersByTimeAsync(2);
 
+    const recoveryLatch = new UpdateBackendRecoveryLatch();
+    recoveryLatch.capture(harness.supervisor.desiredRunning);
     const stopping = harness.supervisor.stop("updater handoff");
     await settleLifecycle();
     harness.children[2]!.exit(0);
     await stopping;
-    await harness.supervisor.resume();
+    let resumed: Promise<void> | null = null;
+    const action = handleBackendRecoveryAfterUpdaterFailure({
+      restartWasRequired: recoveryLatch.consume(),
+      recoveryPending: false,
+      recoveryDialogOpen: false,
+      resume: () => {
+        resumed = harness.supervisor.resume();
+      },
+      showRecovery: () => {
+        throw new Error("unexpected recovery dialog");
+      },
+    });
+    expect(action).toBe("restart");
+    await resumed;
     harness.children[3]!.exit(1);
     await settleLifecycle();
 
