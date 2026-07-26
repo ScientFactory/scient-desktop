@@ -161,16 +161,16 @@ describe("browserStateOwnsLocalHtmlRevision", () => {
     ).toBeNull();
   });
 
-  it("keeps Windows source authority owned across separator and casing normalization", () => {
+  it("keeps Windows source authority owned across separator normalization", () => {
     const windowsState = {
       ...state,
       tabs: [
         {
           ...state.tabs[0]!,
-          displayUrl: "c:\\users\\yaacov\\scient\\report-mixedcase.html",
-          previewCwd: "c:\\users\\yaacov\\scient",
-          sourceIdentity: "c:\\users\\yaacov\\scient\\report-mixedcase.html",
-          sourceRoot: "c:\\users\\yaacov\\scient",
+          displayUrl: "C:\\Users\\Yaacov\\Scient\\Report-MixedCase.HTML",
+          previewCwd: "C:\\Users\\Yaacov\\Scient",
+          sourceIdentity: "C:\\Users\\Yaacov\\Scient\\Report-MixedCase.HTML",
+          sourceRoot: "C:\\Users\\Yaacov\\Scient",
         },
       ],
     };
@@ -193,6 +193,12 @@ describe("browserStateOwnsLocalHtmlRevision", () => {
         installed,
       }),
     ).toBe("http://g-old.preview.localhost:5000/");
+  });
+
+  it("preserves distinct source authority for case-sensitive Windows directories", () => {
+    expect(
+      localHtmlPreviewPathsEqual("C:/CaseSensitive/Report.html", "C:/CaseSensitive/report.html"),
+    ).toBe(false);
   });
 
   it("preserves case-sensitive ownership for POSIX paths", () => {

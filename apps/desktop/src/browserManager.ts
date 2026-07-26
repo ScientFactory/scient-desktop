@@ -4,7 +4,7 @@
 // Depends on: Electron BrowserWindow/WebContentsView, shared browser IPC contracts
 
 import * as Crypto from "node:crypto";
-import { realpathSync, statSync, watch, type FSWatcher } from "node:fs";
+import { statSync, watch, type FSWatcher } from "node:fs";
 import * as Path from "node:path";
 
 import {
@@ -28,6 +28,11 @@ import {
   localHtmlPreviewRequestAllowed,
   localHtmlPreviewResolvedAddressesAllowed,
 } from "./localHtmlPreviewPolicy";
+import {
+  canonicalLocalHtmlSourcePath,
+  isCanonicalLocalHtmlPathInside,
+  normalizeLocalHtmlSourcePath,
+} from "./localHtmlSourcePath";
 import type {
   BrowserAttachWebviewInput,
   BrowserCaptureScreenshotResult,
@@ -172,29 +177,6 @@ function normalizedLocalHtmlExternalUrls(values: readonly string[] | undefined):
   return [...normalized];
 }
 
-function normalizedLocalHtmlSourcePath(value: string | null | undefined): string | null {
-  if (!value?.trim() || !Path.isAbsolute(value)) {
-    return null;
-  }
-  const normalized = Path.normalize(value.trim());
-  return process.platform === "win32" ? normalized.toLocaleLowerCase("en-US") : normalized;
-}
-
-function canonicalLocalHtmlSourcePath(value: string | null | undefined): string | null {
-  const normalized = normalizedLocalHtmlSourcePath(value);
-  if (!normalized) return null;
-  try {
-    return normalizedLocalHtmlSourcePath(realpathSync.native(normalized));
-  } catch {
-    try {
-      const canonicalParent = realpathSync.native(Path.dirname(normalized));
-      return normalizedLocalHtmlSourcePath(Path.join(canonicalParent, Path.basename(normalized)));
-    } catch {
-      return normalized;
-    }
-  }
-}
-
 function localHtmlSourceFingerprint(sourcePath: string): string | null {
   try {
     const stats = statSync(sourcePath, { bigint: true });
@@ -233,8 +215,8 @@ function validatePreparedLocalHtmlSourceAuthority(input: {
   signedSourceIdentity: string;
   signedSourceRoot: string;
 } {
-  const preparedSourceIdentity = normalizedLocalHtmlSourcePath(input.sourceIdentity);
-  const preparedSourceRoot = normalizedLocalHtmlSourcePath(input.sourceRoot);
+  const preparedSourceIdentity = normalizeLocalHtmlSourcePath(input.sourceIdentity);
+  const preparedSourceRoot = normalizeLocalHtmlSourcePath(input.sourceRoot);
   const currentDisplayIdentity = canonicalLocalHtmlSourcePath(input.displayUrl);
   const currentPreparedIdentity = canonicalLocalHtmlSourcePath(input.sourceIdentity);
   const currentPreparedRoot = canonicalLocalHtmlSourcePath(input.sourceRoot);
@@ -245,7 +227,7 @@ function validatePreparedLocalHtmlSourceAuthority(input: {
     currentDisplayIdentity !== preparedSourceIdentity ||
     currentPreparedIdentity !== preparedSourceIdentity ||
     currentPreparedRoot !== preparedSourceRoot ||
-    !isPathInside(preparedSourceIdentity, preparedSourceRoot)
+    !isCanonicalLocalHtmlPathInside(preparedSourceIdentity, preparedSourceRoot)
   ) {
     throw new Error("The local HTML preview source identity changed after preparation.");
   }
@@ -263,30 +245,25 @@ function isSameLocalHtmlSource(left: BrowserTabState, right: BrowserTabState): b
   if (left.kind !== "local-html" || right.kind !== "local-html") {
     return false;
   }
-  const leftSourceIdentity = normalizedLocalHtmlSourcePath(left.sourceIdentity);
-  const rightSourceIdentity = normalizedLocalHtmlSourcePath(right.sourceIdentity);
-  const leftSourceRoot = normalizedLocalHtmlSourcePath(left.sourceRoot);
-  const rightSourceRoot = normalizedLocalHtmlSourcePath(right.sourceRoot);
+  const leftSourceIdentity = normalizeLocalHtmlSourcePath(left.sourceIdentity);
+  const rightSourceIdentity = normalizeLocalHtmlSourcePath(right.sourceIdentity);
+  const leftSourceRoot = normalizeLocalHtmlSourcePath(left.sourceRoot);
+  const rightSourceRoot = normalizeLocalHtmlSourcePath(right.sourceRoot);
   const leftHasCanonicalAuthority = Boolean(leftSourceIdentity && leftSourceRoot);
   const rightHasCanonicalAuthority = Boolean(rightSourceIdentity && rightSourceRoot);
   if (leftHasCanonicalAuthority || rightHasCanonicalAuthority) {
     return leftSourceIdentity === rightSourceIdentity && leftSourceRoot === rightSourceRoot;
   }
-  const leftDisplayUrl = normalizedLocalHtmlSourcePath(left.sourceIdentity ?? left.displayUrl);
-  const rightDisplayUrl = normalizedLocalHtmlSourcePath(right.sourceIdentity ?? right.displayUrl);
-  const leftPreviewCwd = normalizedLocalHtmlSourcePath(left.previewCwd);
-  const rightPreviewCwd = normalizedLocalHtmlSourcePath(right.previewCwd);
+  const leftDisplayUrl = normalizeLocalHtmlSourcePath(left.sourceIdentity ?? left.displayUrl);
+  const rightDisplayUrl = normalizeLocalHtmlSourcePath(right.sourceIdentity ?? right.displayUrl);
+  const leftPreviewCwd = normalizeLocalHtmlSourcePath(left.previewCwd);
+  const rightPreviewCwd = normalizeLocalHtmlSourcePath(right.previewCwd);
   return (
     leftDisplayUrl !== null &&
     leftDisplayUrl === rightDisplayUrl &&
     leftPreviewCwd !== null &&
     leftPreviewCwd === rightPreviewCwd
   );
-}
-
-function isPathInside(candidate: string, root: string): boolean {
-  const relative = Path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !Path.isAbsolute(relative));
 }
 
 function isLocalHtmlPreviewUrl(value: string): boolean {
@@ -422,7 +399,7 @@ function previewSessionPartitionForTab(threadId: ThreadId, tab: BrowserTabState)
     tab.displayUrl &&
     tab.previewCwd
   ) {
-    const sourceIdentity = `${threadId}\0${normalizedLocalHtmlSourcePath(tab.previewCwd)}\0${normalizedLocalHtmlSourcePath(tab.sourceRoot)}\0${normalizedLocalHtmlSourcePath(tab.sourceIdentity ?? tab.displayUrl)}`;
+    const sourceIdentity = `${threadId}\0${normalizeLocalHtmlSourcePath(tab.previewCwd)}\0${normalizeLocalHtmlSourcePath(tab.sourceRoot)}\0${normalizeLocalHtmlSourcePath(tab.sourceIdentity ?? tab.displayUrl)}`;
     const sourceHash = Crypto.createHash("sha256")
       .update(sourceIdentity)
       .digest("hex")
@@ -523,13 +500,13 @@ function buildRuntimeKey(threadId: ThreadId, tabId: string): string {
 }
 
 function buildLocalHtmlReplacementKey(input: BrowserReplaceLocalHtmlPreviewInput): string {
-  const normalizedSourceIdentity = normalizedLocalHtmlSourcePath(input.sourceIdentity);
-  const normalizedSourceRoot = normalizedLocalHtmlSourcePath(input.sourceRoot);
+  const normalizedSourceIdentity = normalizeLocalHtmlSourcePath(input.sourceIdentity);
+  const normalizedSourceRoot = normalizeLocalHtmlSourcePath(input.sourceRoot);
   if (normalizedSourceIdentity && normalizedSourceRoot) {
     return `${input.threadId}\0canonical\0${normalizedSourceRoot}\0${normalizedSourceIdentity}`;
   }
-  const normalizedPreviewCwd = normalizedLocalHtmlSourcePath(input.previewCwd);
-  const normalizedDisplayUrl = normalizedLocalHtmlSourcePath(
+  const normalizedPreviewCwd = normalizeLocalHtmlSourcePath(input.previewCwd);
+  const normalizedDisplayUrl = normalizeLocalHtmlSourcePath(
     input.sourceIdentity ?? input.displayUrl,
   );
   if (!normalizedPreviewCwd || !normalizedDisplayUrl) {
@@ -1024,18 +1001,17 @@ export class DesktopBrowserManager {
         .map((sourcePath) => canonicalLocalHtmlSourcePath(sourcePath))
         .filter((sourcePath): sourcePath is string => sourcePath !== null)
         .filter((sourcePath) => {
-          const allowed = sourceRoot !== null && isPathInside(sourcePath, sourceRoot);
+          const allowed =
+            sourceRoot !== null && isCanonicalLocalHtmlPathInside(sourcePath, sourceRoot);
           watchLimited ||= !allowed;
           return allowed;
         }),
     );
     const namesByDirectory = new Map<string, Set<string>>();
-    const normalizeWatchName = (name: string) =>
-      process.platform === "win32" ? name.toLocaleLowerCase("en-US") : name;
     for (const sourcePath of normalizedPaths) {
       const directory = Path.dirname(sourcePath);
       const names = namesByDirectory.get(directory) ?? new Set<string>();
-      names.add(normalizeWatchName(Path.basename(sourcePath)));
+      names.add(Path.basename(sourcePath));
       namesByDirectory.set(directory, names);
     }
 
@@ -1082,7 +1058,7 @@ export class DesktopBrowserManager {
     for (const [directory, names] of [...namesByDirectory].slice(0, watchDirectoryBudget)) {
       try {
         const watcher = watch(directory, { persistent: false }, (_eventType, filename) => {
-          if (filename === null || names.has(normalizeWatchName(filename.toString()))) {
+          if (filename === null || names.has(filename.toString())) {
             notifyChanged();
           }
         });
@@ -1883,9 +1859,8 @@ export class DesktopBrowserManager {
     const exactTab = state?.tabs.find((tab) => tab.id === input.tabId);
     if (
       exactTab?.kind === "local-html" &&
-      (normalizedLocalHtmlSourcePath(exactTab.sourceIdentity) !==
-        preparedAuthority.sourceIdentity ||
-        normalizedLocalHtmlSourcePath(exactTab.sourceRoot) !== preparedAuthority.sourceRoot)
+      (normalizeLocalHtmlSourcePath(exactTab.sourceIdentity) !== preparedAuthority.sourceIdentity ||
+        normalizeLocalHtmlSourcePath(exactTab.sourceRoot) !== preparedAuthority.sourceRoot)
     ) {
       throw new Error("The replacement does not match the owned local HTML source.");
     }
@@ -1893,9 +1868,9 @@ export class DesktopBrowserManager {
       (tab) =>
         tab.kind === "local-html" &&
         ((tab.id === input.tabId &&
-          normalizedLocalHtmlSourcePath(tab.sourceIdentity) === preparedAuthority.sourceIdentity) ||
-          (normalizedLocalHtmlSourcePath(tab.sourceIdentity) === preparedAuthority.sourceIdentity &&
-            normalizedLocalHtmlSourcePath(tab.sourceRoot) === preparedAuthority.sourceRoot)),
+          normalizeLocalHtmlSourcePath(tab.sourceIdentity) === preparedAuthority.sourceIdentity) ||
+          (normalizeLocalHtmlSourcePath(tab.sourceIdentity) === preparedAuthority.sourceIdentity &&
+            normalizeLocalHtmlSourcePath(tab.sourceRoot) === preparedAuthority.sourceRoot)),
     );
     if (!currentTab) {
       if (input.tabId) {
@@ -1905,7 +1880,8 @@ export class DesktopBrowserManager {
         .map((sourcePath) => canonicalLocalHtmlSourcePath(sourcePath))
         .filter(
           (sourcePath): sourcePath is string =>
-            sourcePath !== null && isPathInside(sourcePath, preparedAuthority.sourceRoot),
+            sourcePath !== null &&
+            isCanonicalLocalHtmlPathInside(sourcePath, preparedAuthority.sourceRoot),
         );
       if (watchedPaths.length !== input.watchedPaths.length + 1) {
         throw new Error("A replacement dependency is outside the local HTML source authority.");
@@ -1919,21 +1895,21 @@ export class DesktopBrowserManager {
       };
     }
 
-    const currentDisplayUrl = normalizedLocalHtmlSourcePath(currentTab.displayUrl);
+    const currentDisplayUrl = normalizeLocalHtmlSourcePath(currentTab.displayUrl);
     const currentPreviewCwd = canonicalLocalHtmlSourcePath(currentTab.previewCwd);
-    const currentSourceIdentity = normalizedLocalHtmlSourcePath(currentTab.sourceIdentity);
-    const currentSourceRoot = normalizedLocalHtmlSourcePath(currentTab.sourceRoot);
+    const currentSourceIdentity = normalizeLocalHtmlSourcePath(currentTab.sourceIdentity);
+    const currentSourceRoot = normalizeLocalHtmlSourcePath(currentTab.sourceRoot);
     if (
       !currentDisplayUrl ||
       !currentPreviewCwd ||
       !currentSourceIdentity ||
       !currentSourceRoot ||
-      normalizedLocalHtmlSourcePath(input.displayUrl) !== currentDisplayUrl ||
+      normalizeLocalHtmlSourcePath(input.displayUrl) !== currentDisplayUrl ||
       canonicalLocalHtmlSourcePath(input.previewCwd) !== currentPreviewCwd ||
       preparedAuthority.sourceIdentity !== currentSourceIdentity ||
       preparedAuthority.sourceRoot !== currentSourceRoot ||
       canonicalLocalHtmlSourcePath(currentTab.displayUrl) !== currentSourceIdentity ||
-      !isPathInside(currentSourceIdentity, currentSourceRoot)
+      !isCanonicalLocalHtmlPathInside(currentSourceIdentity, currentSourceRoot)
     ) {
       throw new Error("The replacement does not match the owned local HTML source.");
     }
@@ -1942,7 +1918,7 @@ export class DesktopBrowserManager {
       .map((sourcePath) => canonicalLocalHtmlSourcePath(sourcePath))
       .filter(
         (sourcePath): sourcePath is string =>
-          sourcePath !== null && isPathInside(sourcePath, currentSourceRoot),
+          sourcePath !== null && isCanonicalLocalHtmlPathInside(sourcePath, currentSourceRoot),
       );
     if (watchedPaths.length !== input.watchedPaths.length + 1) {
       throw new Error("A replacement dependency is outside the local HTML source authority.");
@@ -2004,12 +1980,12 @@ export class DesktopBrowserManager {
       const currentSourceTab = state?.tabs.find(
         (tab) =>
           tab.kind === "local-html" &&
-          normalizedLocalHtmlSourcePath(tab.sourceIdentity ?? tab.displayUrl) ===
-            normalizedLocalHtmlSourcePath(
+          normalizeLocalHtmlSourcePath(tab.sourceIdentity ?? tab.displayUrl) ===
+            normalizeLocalHtmlSourcePath(
               queuedPending.input.sourceIdentity ?? queuedPending.input.displayUrl,
             ) &&
-          normalizedLocalHtmlSourcePath(tab.previewCwd) ===
-            normalizedLocalHtmlSourcePath(queuedPending.input.previewCwd),
+          normalizeLocalHtmlSourcePath(tab.previewCwd) ===
+            normalizeLocalHtmlSourcePath(queuedPending.input.previewCwd),
       );
       nextPending = {
         ...queuedPending,

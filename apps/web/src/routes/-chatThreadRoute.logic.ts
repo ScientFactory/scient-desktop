@@ -82,7 +82,7 @@ function localHtmlPathForComparison(value: string | null | undefined): string | 
   if (!isWindowsAbsolutePath(trimmed)) return trimmed;
   const withForwardSlashes = trimmed.replace(/\\/g, "/");
   const withoutTrailingSeparators = withForwardSlashes.replace(/\/+$/, "");
-  return (withoutTrailingSeparators || withForwardSlashes).toLocaleLowerCase("en-US");
+  return withoutTrailingSeparators || withForwardSlashes;
 }
 
 export function localHtmlPreviewPathsEqual(

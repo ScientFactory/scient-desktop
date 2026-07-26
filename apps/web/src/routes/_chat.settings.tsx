@@ -1845,7 +1845,7 @@ function SettingsRouteView() {
       setWorktreeFeedback({ tone: "info", message: `Deleting ${displayName}...` });
       try {
         await deleteArchivedThreadsFromClient({
-          api: api.orchestration,
+          api,
           threadIds: linkedArchivedThreadIds,
           removeDeletedThreadFromClientState,
         });
@@ -1906,7 +1906,7 @@ function SettingsRouteView() {
       setArchivedThreadFeedback({ tone: "info", message: `Deleting ${threadTitle}...` });
       try {
         await deleteArchivedThreadFromClient({
-          api: api.orchestration,
+          api,
           threadId,
           removeDeletedThreadFromClientState,
         });

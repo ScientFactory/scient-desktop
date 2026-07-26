@@ -198,6 +198,68 @@ describe("inspectHtmlArtifact", () => {
     });
   });
 
+  it("fails closed for external active framed documents while preserving inert local children", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(path.join(workspace, "local-child.html"), "<p>Local static child</p>");
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      [
+        '<iframe src="local-child.html"></iframe>',
+        '<iframe src="https://frames.example/iframe"></iframe>',
+        '<object data="https://frames.example/object"></object>',
+        '<embed src="https://frames.example/embed">',
+      ].join(""),
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+    expect(inspected.allowedResourcePaths).toContain(
+      await fs.realpath(path.join(workspace, "local-child.html")),
+    );
+    expect(new Set(inspected.allowedExternalUrls)).toEqual(
+      new Set([
+        "https://frames.example/iframe",
+        "https://frames.example/object",
+        "https://frames.example/embed",
+      ]),
+    );
+    expect(inspected.result.warnings).toContainEqual({
+      code: "external-resource-blocked",
+      message:
+        "External network resources are blocked for interactive local HTML; bundle them into the same site directory instead.",
+    });
+  });
+
+  it("fails closed for an external legacy frameset document", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(
+      path.join(workspace, "frames.html"),
+      '<frameset><frame src="https://frames.example/frame"></frameset>',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "frames.html" });
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+    expect(inspected.allowedExternalUrls).toContain("https://frames.example/frame");
+  });
+
+  it("keeps an inert local framed document static", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(path.join(workspace, "local-child.html"), "<p>Local static child</p>");
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      '<iframe src="local-child.html"></iframe>',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(inspected.result.mode).toBe("static-document");
+    expect(inspected.allowedResourcePaths).toContain(
+      await fs.realpath(path.join(workspace, "local-child.html")),
+    );
+  });
+
   it("treats an active SVG subdocument as executable content", async () => {
     const workspace = await makeWorkspace();
     await fs.writeFile(

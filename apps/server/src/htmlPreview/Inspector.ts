@@ -25,6 +25,7 @@ const RESOURCE_GRAPH_PARSE_MAX_BYTES = 1_000_000;
 const DEV_SOURCE_EXTENSIONS = new Set([".ts", ".tsx", ".jsx"]);
 const BROWSER_SCRIPT_EXTENSIONS = new Set([".js", ".mjs"]);
 const ACTIVE_DOCUMENT_EXTENSIONS = new Set([".html", ".htm", ".xhtml", ".svg"]);
+const ACTIVE_EMBEDDED_DOCUMENT_ELEMENTS = new Set(["embed", "frame", "iframe", "object"]);
 const SVG_HREF_RESOURCE_ELEMENTS = new Set(["feimage", "image", "mpath", "use"]);
 const SVG_ARBITRARY_ATTRIBUTE_MUTATION_ELEMENTS = new Set(["animate", "set"]);
 const SVG_NAMESPACE = "http://www.w3.org/2000/svg";
@@ -70,8 +71,13 @@ export interface InspectedHtmlArtifact {
 }
 
 function isPathInside(candidate: string, root: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  const normalizedCandidate = path.normalize(candidate);
+  const normalizedRoot = path.normalize(root);
+  if (normalizedCandidate === normalizedRoot) return true;
+  const rootPrefix = normalizedRoot.endsWith(path.sep)
+    ? normalizedRoot
+    : `${normalizedRoot}${path.sep}`;
+  return normalizedCandidate.startsWith(rootPrefix);
 }
 
 function isElement(node: Node): node is Element {
@@ -326,6 +332,12 @@ function isExecutableUrlAttribute(name: string, value: string): boolean {
 function markupHasExecutableContent(source: string, srcdocDepth = 0): boolean {
   const document = parse(source) as DocumentNode;
   let executable = false;
+  let baseHref: string | null = null;
+  visit(document, (element) => {
+    if (baseHref === null && element.tagName.toLowerCase() === "base") {
+      baseHref = attributeOf(element, "href");
+    }
+  });
   visit(document, (element) => {
     if (executable) return;
     const tagName = element.tagName.toLowerCase();
@@ -340,6 +352,16 @@ function markupHasExecutableContent(source: string, srcdocDepth = 0): boolean {
     if (elementCanMutateSvgAtRuntime(element)) {
       executable = true;
       return;
+    }
+    if (ACTIVE_EMBEDDED_DOCUMENT_ELEMENTS.has(tagName)) {
+      const documentUrl = attributeOf(element, tagName === "object" ? "data" : "src");
+      if (documentUrl && normalizedExternalResourceUrl(documentUrl, baseHref)) {
+        // Remote framed documents are active content even when the local entry
+        // contains no script of its own. Their response can execute arbitrary
+        // JavaScript and must inherit the sealed interactive policy.
+        executable = true;
+        return;
+      }
     }
     if (
       element.attrs.some(
@@ -693,6 +715,12 @@ export async function inspectHtmlArtifact(
     const srcdoc = attributeOf(element, "srcdoc");
     if (srcdoc && markupHasExecutableContent(srcdoc)) {
       hasInlineScript = true;
+    }
+    if (ACTIVE_EMBEDDED_DOCUMENT_ELEMENTS.has(tagName)) {
+      const documentUrl = attributeOf(element, tagName === "object" ? "data" : "src");
+      if (documentUrl && normalizedExternalResourceUrl(documentUrl, documentBaseHref)) {
+        hasInlineScript = true;
+      }
     }
     if (tagName === "base") {
       return;

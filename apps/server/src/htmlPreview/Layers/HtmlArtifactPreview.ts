@@ -45,8 +45,13 @@ interface GrantedFile {
 }
 
 function isPathInside(candidate: string, root: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  const normalizedCandidate = path.normalize(candidate);
+  const normalizedRoot = path.normalize(root);
+  if (normalizedCandidate === normalizedRoot) return true;
+  const rootPrefix = normalizedRoot.endsWith(path.sep)
+    ? normalizedRoot
+    : `${normalizedRoot}${path.sep}`;
+  return normalizedCandidate.startsWith(rootPrefix);
 }
 
 function contentTypeFor(filePath: string): string {
