@@ -1999,6 +1999,46 @@ describe("composerDraftStore project draft thread mapping", () => {
     );
   });
 
+  it("clears mapped and mapping-less drafts owned by a deleted project", () => {
+    const store = useComposerDraftStore.getState();
+    const standaloneThreadId = ThreadId.makeUnsafe("thread-standalone-kanban");
+
+    store.setProjectDraftThreadId(projectId, threadId);
+    store.setPrompt(threadId, "mapped project draft");
+    store.registerDraftThread(standaloneThreadId, {
+      projectId,
+      entryPoint: "chat",
+      envMode: "local",
+    });
+    store.setPrompt(standaloneThreadId, "standalone kanban draft");
+    store.enqueueQueuedTurn(
+      standaloneThreadId,
+      makeQueuedChatTurn(
+        "queued-standalone-project-delete",
+        makeImage({
+          id: "queued-standalone-image",
+          previewUrl: "blob:queued-standalone-project-delete",
+        }),
+      ),
+    );
+    store.setProjectDraftThreadId(otherProjectId, otherThreadId);
+    store.setPrompt(otherThreadId, "unrelated draft");
+
+    store.clearProjectDraftThreads(projectId);
+
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toBeNull();
+    expect(useComposerDraftStore.getState().getDraftThread(standaloneThreadId)).toBeNull();
+    expect(useComposerDraftStore.getState().draftsByThreadId[threadId]).toBeUndefined();
+    expect(useComposerDraftStore.getState().draftsByThreadId[standaloneThreadId]).toBeUndefined();
+    expect(useComposerDraftStore.getState().getDraftThread(otherThreadId)).toMatchObject({
+      projectId: otherProjectId,
+    });
+    expect(useComposerDraftStore.getState().draftsByThreadId[otherThreadId]?.prompt).toBe(
+      "unrelated draft",
+    );
+    expect(revokeSpy).toHaveBeenCalledWith("blob:queued-standalone-project-delete");
+  });
+
   it("persists and deduplicates surfaced worktree recoveries without replacing the primary draft", () => {
     const store = useComposerDraftStore.getState();
     const recoveryThreadId = ThreadId.makeUnsafe("thread-recovery");

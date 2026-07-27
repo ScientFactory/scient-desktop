@@ -3935,12 +3935,22 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         }
         set((state) => {
           const nextProjectDraftThreadIdByProjectId: Record<string, ThreadId> = {};
-          const removedThreadIds = new Set<ThreadId>();
+          // Not every project-owned draft occupies the canonical project slot. Kanban and staged
+          // navigation drafts are deliberately mapping-less, so derive the destructive set from
+          // both metadata and mappings before removing any slot.
+          const removedThreadIds = new Set<ThreadId>(
+            Object.entries(state.draftThreadsByThreadId)
+              .filter(([, draftThread]) => draftThread.projectId === projectId)
+              .map(([threadId]) => threadId as ThreadId),
+          );
           for (const [mappingKey, threadId] of Object.entries(
             state.projectDraftThreadIdByProjectId,
           )) {
             if (projectIdFromDraftThreadMappingKey(mappingKey) === projectId) {
               removedThreadIds.add(threadId);
+              continue;
+            }
+            if (removedThreadIds.has(threadId)) {
               continue;
             }
             nextProjectDraftThreadIdByProjectId[mappingKey] = threadId;

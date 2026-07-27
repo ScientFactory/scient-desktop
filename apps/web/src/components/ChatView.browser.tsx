@@ -5207,6 +5207,59 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps an unsent project draft when Home is being removed", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withHomeChatProject(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-project-picker-home-removal" as MessageId,
+          targetText: "project picker Home removal",
+        }),
+      ),
+      configureFixture: (nextFixture) => {
+        nextFixture.welcome = {
+          ...nextFixture.welcome,
+          homeDir: "/Users/tester",
+          chatWorkspaceRoot: "/Users/tester/Documents/Synara",
+        };
+      },
+    });
+    const reservation = reserveProjectRemoval(HOME_PROJECT_ID);
+    expect(reservation).not.toBeNull();
+
+    try {
+      await page.getByLabelText("Create new thread in Project").click();
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+      useComposerDraftStore.getState().setPrompt(newThreadId, "keep my unsent Home switch");
+
+      await page.getByTestId("empty-landing-heading-project-trigger").click();
+      await page.getByText("Don't work in a project").click();
+
+      await expect
+        .element(
+          page.getByText(
+            "That project is being removed. Your draft stayed in its current project.",
+          ),
+        )
+        .toBeInTheDocument();
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        projectId: PROJECT_ID,
+      });
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt).toBe(
+        "keep my unsent Home switch",
+      );
+      expect(hasActiveProjectOperations(HOME_PROJECT_ID)).toBe(false);
+    } finally {
+      if (reservation) releaseProjectRemoval(reservation);
+      await mounted.cleanup();
+    }
+  });
+
   it("navigates to a promoting Home draft instead of replacing its recovery state", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -5469,6 +5522,61 @@ describe("ChatView timeline estimator parity (full app)", () => {
         undefined,
       );
       expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false);
+    } finally {
+      if (reservation) releaseProjectRemoval(reservation);
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps an unsent draft when the folder picker resolves to a project being removed", async () => {
+    const pickFolder = vi.fn(async () => "/repo/other");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: withOpenProjectPickerFixtures(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-project-picker-folder-removal" as MessageId,
+          targetText: "folder picker removal source",
+        }),
+      ),
+      configureNativeApi: (api) => ({
+        ...api,
+        dialogs: { ...api.dialogs, pickFolder },
+      }),
+    });
+    const reservation = reserveProjectRemoval(OTHER_PROJECT_ID);
+    expect(reservation).not.toBeNull();
+
+    try {
+      await page.getByLabelText("Create new thread in Project").click();
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+      useComposerDraftStore.getState().setPrompt(newThreadId, "keep folder-picker draft");
+
+      await page.getByTestId("empty-landing-heading-project-trigger").click();
+      await page.getByText("New project").click();
+      await vi.waitFor(() => expect(pickFolder).toHaveBeenCalledTimes(1));
+
+      await expect
+        .element(
+          page.getByText(
+            "That project is being removed. Your draft stayed in its current project.",
+          ),
+        )
+        .toBeInTheDocument();
+      expect(useComposerDraftStore.getState().getDraftThread(newThreadId)).toMatchObject({
+        projectId: PROJECT_ID,
+      });
+      expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.prompt).toBe(
+        "keep folder-picker draft",
+      );
+      expect(
+        useComposerDraftStore.getState().projectDraftThreadIdByProjectId[OTHER_PROJECT_ID],
+      ).toBe(undefined);
+      expect(hasActiveProjectOperations(OTHER_PROJECT_ID)).toBe(false);
     } finally {
       if (reservation) releaseProjectRemoval(reservation);
       await mounted.cleanup();
@@ -7618,6 +7726,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
     const admittedOperation = tryBeginProjectOperation(PROJECT_ID);
     expect(admittedOperation).not.toBeNull();
     const lateThreadId = ThreadId.makeUnsafe("dfdbccf0-75b0-4a5b-8485-3cb124b05543");
+    const standaloneDraftId = ThreadId.makeUnsafe("478cb186-48c7-4c52-b7ef-79df1234f31a");
+    useComposerDraftStore.getState().registerDraftThread(standaloneDraftId, {
+      projectId: PROJECT_ID,
+      entryPoint: "chat",
+      envMode: "local",
+    });
+    useComposerDraftStore.getState().setPrompt(standaloneDraftId, "standalone kanban draft");
     const confirm = vi.fn<NativeApi["dialogs"]["confirm"]>(async () => true);
     const dispatchedCommands: Array<Parameters<NativeApi["orchestration"]["dispatchCommand"]>[0]> =
       [];
@@ -7643,6 +7758,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       await clickProjectRemoveAction();
       await vi.waitFor(() => expect(isProjectRemovalReserved(PROJECT_ID)).toBe(true));
+      expect(confirm).not.toHaveBeenCalled();
       expect(dispatchedCommands.some((command) => command.type === "thread.delete")).toBe(false);
 
       const sourceShell = useStore.getState().threadShellById?.[THREAD_ID];
@@ -7660,6 +7776,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       }));
       finishProjectOperation(admittedOperation!);
 
+      await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+      expect(String(confirm.mock.calls[0]?.[0])).toContain("delete 2 threads");
+
       await vi.waitFor(
         () => {
           expect(
@@ -7670,20 +7789,64 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(dispatchedCommands.some((command) => command.type === "project.delete")).toBe(
             true,
           );
+          expect(useComposerDraftStore.getState().getDraftThread(standaloneDraftId)).toBeNull();
         },
         { timeout: 20_000, interval: 16 },
       );
 
-      // The confirmation count is read from the live normalized store at consent time (one
-      // thread) rather than a stale render snapshot — the regression guard for Codex's P1 #2.
-      // Confirmation runs before the drain so the dialog never hangs behind an in-flight send;
-      // the thread admitted before reservation finalizes during the drain, so it is outside the
-      // count the user saw, yet deletion re-derives the authoritative post-drain set (asserted
-      // above), so it is still cleared rather than orphaned.
-      const confirmMessages = confirm.mock.calls.map((call) => String(call[0]));
-      expect(confirmMessages.some((message) => message.includes("delete 1 thread"))).toBe(true);
+      // Consent is requested only after admitted work drains, so its count describes the same
+      // stable thread set that deletion will consume. A late admitted thread must never be deleted
+      // under an earlier, smaller confirmation.
     } finally {
       finishProjectOperation(admittedOperation!);
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps the stable post-drain project state when removal confirmation is cancelled", async () => {
+    const confirm = vi.fn<NativeApi["dialogs"]["confirm"]>(async () => false);
+    const dispatchedCommands: Array<Parameters<NativeApi["orchestration"]["dispatchCommand"]>[0]> =
+      [];
+    const standaloneDraftId = ThreadId.makeUnsafe("5ab531de-d244-452f-bdae-1fc307ea97bb");
+    useComposerDraftStore.getState().registerDraftThread(standaloneDraftId, {
+      projectId: PROJECT_ID,
+      entryPoint: "chat",
+      envMode: "local",
+    });
+    useComposerDraftStore.getState().setPrompt(standaloneDraftId, "do not discard me");
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-removal-cancel-stable-set" as MessageId,
+        targetText: "removal cancellation source",
+      }),
+      configureNativeApi: (api) => ({
+        ...api,
+        dialogs: { ...api.dialogs, confirm },
+        orchestration: {
+          ...api.orchestration,
+          dispatchCommand: vi.fn(async (command) => {
+            dispatchedCommands.push(command);
+            return api.orchestration.dispatchCommand(command);
+          }),
+        },
+      }),
+    });
+
+    try {
+      await clickProjectRemoveAction();
+      await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(isProjectRemovalReserved(PROJECT_ID)).toBe(false));
+
+      expect(dispatchedCommands.some((command) => command.type === "thread.delete")).toBe(false);
+      expect(dispatchedCommands.some((command) => command.type === "project.delete")).toBe(false);
+      expect(useComposerDraftStore.getState().getDraftThread(standaloneDraftId)).toMatchObject({
+        projectId: PROJECT_ID,
+      });
+      expect(useComposerDraftStore.getState().draftsByThreadId[standaloneDraftId]?.prompt).toBe(
+        "do not discard me",
+      );
+    } finally {
       await mounted.cleanup();
     }
   });
@@ -7713,11 +7876,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       releaseSourceTurn = resolve;
     });
     let sourceTurnHeld = false;
-    let resolveRemovalConfirmation!: (confirmed: boolean) => void;
-    const removalConfirmation = new Promise<boolean>((resolve) => {
-      resolveRemovalConfirmation = resolve;
-    });
-    const confirm = vi.fn<NativeApi["dialogs"]["confirm"]>(() => removalConfirmation);
+    const confirm = vi.fn<NativeApi["dialogs"]["confirm"]>(async () => true);
     const createWorktree = vi.fn<NativeApi["git"]["createWorktree"]>(async () => ({
       worktree: { path: createdPath, branch: createdBranch },
     }));
@@ -7776,7 +7935,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       useComposerDraftStore.getState().setPrompt(OTHER_THREAD_ID, "blocked during removal");
       await clickProjectRemoveAction();
-      await vi.waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+      await vi.waitFor(() => expect(isProjectRemovalReserved(PROJECT_ID)).toBe(true));
+      expect(confirm).not.toHaveBeenCalled();
 
       (
         await waitForElement(
@@ -7798,8 +7958,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
       ).toBe(false);
       expect(createWorktree).toHaveBeenCalledOnce();
 
-      resolveRemovalConfirmation(true);
-      await Promise.resolve();
       expect(dispatchedCommands.some((command) => command.type === "project.delete")).toBe(false);
       releaseSourceTurn();
 
@@ -7820,6 +7978,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         path: createdPath,
         force: false,
       });
+      // The admitted send surfaced a recovery while the removal was draining. Re-checking that
+      // blocker before consent means the user never sees a misleading deletion confirmation.
+      expect(confirm).not.toHaveBeenCalled();
       expect(dispatchedCommands.some((command) => command.type === "project.delete")).toBe(false);
       expect(useStore.getState().projects.some((project) => project.id === PROJECT_ID)).toBe(true);
 
@@ -7839,7 +8000,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
       });
       await vi.waitFor(() => expect(hasActiveProjectOperations(PROJECT_ID)).toBe(false));
     } finally {
-      resolveRemovalConfirmation(false);
       releaseSourceTurn();
       await mounted.cleanup();
     }

@@ -17,6 +17,7 @@ import type {
 
 import { useComposerDraftStore, type DraftThreadEnvMode } from "../composerDraftStore";
 import { dispatchKanbanDraftThread, type KanbanDraftDispatchResult } from "./kanbanDispatch";
+import { finishProjectOperation, tryBeginProjectOperation } from "./projectRemovalCoordination";
 import { newThreadId } from "./utils";
 
 export interface KanbanDraftTaskInput {
@@ -36,23 +37,31 @@ export interface KanbanDraftTaskInput {
  * created back to back.
  */
 export function createKanbanDraftTask(input: KanbanDraftTaskInput): ThreadId {
-  const store = useComposerDraftStore.getState();
-  const threadId = newThreadId();
-  store.registerDraftThread(threadId, {
-    projectId: input.projectId,
-    envMode: input.envMode,
-    runtimeMode: input.runtimeMode,
-    interactionMode: input.interactionMode,
-  });
-  if (input.sourceComposerThreadId) {
-    store.copyTransferableComposerState(input.sourceComposerThreadId, threadId);
-  } else {
-    store.setPrompt(threadId, input.prompt);
+  const projectOperation = tryBeginProjectOperation(input.projectId);
+  if (!projectOperation) {
+    throw new Error("This project is being removed. Your draft was kept in the task composer.");
   }
-  store.setModelSelection(threadId, input.modelSelection);
-  store.setRuntimeMode(threadId, input.runtimeMode);
-  store.setInteractionMode(threadId, input.interactionMode);
-  return threadId;
+  try {
+    const store = useComposerDraftStore.getState();
+    const threadId = newThreadId();
+    store.registerDraftThread(threadId, {
+      projectId: input.projectId,
+      envMode: input.envMode,
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
+    });
+    if (input.sourceComposerThreadId) {
+      store.copyTransferableComposerState(input.sourceComposerThreadId, threadId);
+    } else {
+      store.setPrompt(threadId, input.prompt);
+    }
+    store.setModelSelection(threadId, input.modelSelection);
+    store.setRuntimeMode(threadId, input.runtimeMode);
+    store.setInteractionMode(threadId, input.interactionMode);
+    return threadId;
+  } finally {
+    finishProjectOperation(projectOperation);
+  }
 }
 
 /**

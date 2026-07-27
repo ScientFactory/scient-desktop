@@ -4441,9 +4441,16 @@ export default function Sidebar() {
         };
         if (blockRemovalForRecoveries()) return;
 
-        // Build the confirmation from the live thread set (`getThreadsFromState`) rather than the
-        // captured `sidebarThreads` render snapshot, so the count the user consents to reflects the
-        // store at click time and never lags a stale render.
+        // Reserve first, then drain every operation admitted before the reservation. The definitive
+        // confirmation must describe the stable post-drain deletion set: confirming before the
+        // drain could let a late-finishing creator add a thread that the user never consented to
+        // delete.
+        if (!(await waitForProjectOperationsToDrain(removalReservation))) return;
+        if (blockRemovalForRecoveries()) return;
+
+        // Build the confirmation from the live post-drain thread set (`getThreadsFromState`) rather
+        // than the captured `sidebarThreads` render snapshot. No new coordinated creator can enter
+        // while the removal reservation is held, so this is the exact destructive scope.
         const projectThreads = getThreadsFromState(useStore.getState()).filter(
           (thread) => thread.projectId === projectId,
         );
@@ -4456,12 +4463,6 @@ export default function Sidebar() {
             : `Remove project "${project.name}"?`,
         );
         if (!confirmed) return;
-
-        // Drain already-admitted project operations only after consent so in-flight creators flush
-        // before deletion. `deleteProjectThreads` re-derives the live post-drain set, so a thread
-        // admitted before removal that finalizes during the drain is still cleared.
-        if (!(await waitForProjectOperationsToDrain(removalReservation))) return;
-        if (blockRemovalForRecoveries()) return;
 
         // `project.delete` refuses non-empty folders, so `Remove` clears threads first.
         const deletionResult = await deleteProjectThreads(projectId, {

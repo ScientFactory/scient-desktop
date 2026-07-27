@@ -9771,27 +9771,38 @@ export default function ChatView({
       if (!isEmptyDraftProjectRequestCurrent(requestId)) {
         return;
       }
-      const draftStore = useComposerDraftStore.getState();
-      const destinationThreadId = draftStore.projectDraftThreadIdByProjectId[projectId];
-      const destinationDraft = destinationThreadId
-        ? draftStore.getDraftThread(destinationThreadId)
-        : null;
-      if (destinationThreadId && destinationDraft && destinationThreadId !== threadId) {
-        const destinationRouteThreadId = destinationDraft.promotedTo ?? destinationThreadId;
-        if (surfaceMode === "split" && onActivateThreadInSplitPane) {
-          onActivateThreadInSplitPane(destinationRouteThreadId);
+      // Every route into a destination project (direct selection, folder picker, Home, or Studio)
+      // must enter through the same removal turnstile. Keeping the lease at this deepest shared
+      // seam prevents a draft from moving into a project after its removal has already drained.
+      const projectOperation = tryBeginProjectOperation(projectId);
+      if (!projectOperation) {
+        throw new Error("That project is being removed. Your draft stayed in its current project.");
+      }
+      try {
+        const draftStore = useComposerDraftStore.getState();
+        const destinationThreadId = draftStore.projectDraftThreadIdByProjectId[projectId];
+        const destinationDraft = destinationThreadId
+          ? draftStore.getDraftThread(destinationThreadId)
+          : null;
+        if (destinationThreadId && destinationDraft && destinationThreadId !== threadId) {
+          const destinationRouteThreadId = destinationDraft.promotedTo ?? destinationThreadId;
+          if (surfaceMode === "split" && onActivateThreadInSplitPane) {
+            onActivateThreadInSplitPane(destinationRouteThreadId);
+            return;
+          }
+          await navigate({
+            to: "/$threadId",
+            params: { threadId: destinationRouteThreadId },
+          });
           return;
         }
-        await navigate({
-          to: "/$threadId",
-          params: { threadId: destinationRouteThreadId },
-        });
-        return;
+        if (!isEmptyDraftProjectRequestCurrent(requestId)) {
+          return;
+        }
+        moveEmptyDraftToLocalProject(projectId);
+      } finally {
+        finishProjectOperation(projectOperation);
       }
-      if (!isEmptyDraftProjectRequestCurrent(requestId)) {
-        return;
-      }
-      moveEmptyDraftToLocalProject(projectId);
     },
     [
       isEmptyDraftProjectRequestCurrent,
@@ -9981,15 +9992,10 @@ export default function ChatView({
   const handleSelectProjectForEmptyDraft = useCallback(
     (projectId: ProjectId) => {
       assertEmptyDraftProjectChangeAvailable();
-      const projectOperation = tryBeginProjectOperation(projectId);
-      if (!projectOperation) {
-        throw new Error("That project is being removed. Your draft stayed in its current project.");
-      }
       const requestId = emptyDraftProjectRequestRef.current + 1;
       emptyDraftProjectRequestRef.current = requestId;
       emptyDraftProjectRequestInFlightRef.current = requestId;
       return selectProjectForEmptyDraftRequest(projectId, requestId).finally(() => {
-        finishProjectOperation(projectOperation);
         if (emptyDraftProjectRequestInFlightRef.current === requestId) {
           emptyDraftProjectRequestInFlightRef.current = null;
         }
