@@ -102,6 +102,40 @@ describe("provider runtime files", () => {
     }
   });
 
+  it("coalesces bursty download progress and preserves the catalog total", async () => {
+    const root = await temporaryRoot();
+    const chunk = new Uint8Array(8 * 1024).fill(7);
+    const chunkCount = 320;
+    const expectedSize = chunk.byteLength * chunkCount;
+    const onProgress = vi.fn();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (let index = 0; index < chunkCount; index += 1) controller.enqueue(chunk);
+            controller.close();
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(
+      downloadProviderRuntime({
+        url: "https://releases.example.test/provider",
+        destination: Path.join(root, "download"),
+        allowedHosts: ["releases.example.test"],
+        signal: new AbortController().signal,
+        expectedSize,
+        onProgress,
+      }),
+    ).resolves.toEqual({ bytes: expectedSize });
+
+    expect(onProgress.mock.calls.length).toBeGreaterThan(0);
+    expect(onProgress.mock.calls.length).toBeLessThanOrEqual(4);
+    expect(onProgress).toHaveBeenLastCalledWith(expectedSize, expectedSize);
+  });
+
   it("verifies a reviewed digest and rejects a mismatch", async () => {
     const root = await temporaryRoot();
     const filePath = Path.join(root, "runtime");

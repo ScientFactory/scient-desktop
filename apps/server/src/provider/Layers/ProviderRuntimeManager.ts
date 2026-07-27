@@ -817,7 +817,7 @@ export const ProviderRuntimeManagerLive = Layer.effect(
               message: `Downloading ${provider} ${artifact.version}.`,
               version: artifact.version,
               bytesDownloaded,
-              totalBytes,
+              totalBytes: totalBytes ?? artifact.size ?? null,
             }),
         });
         setInstallationState(provider, {

@@ -1314,8 +1314,16 @@ export function makeProviderConnectionLive(options?: {
           return yield* Effect.gen(function* () {
             const before = yield* providerHealth.refresh;
             const current = before.find((status) => status.provider === provider);
-            if (!current?.available || current.authStatus !== "authenticated") {
+            if (current?.available && current.authStatus === "unauthenticated") {
               return { providers: before };
+            }
+            if (!current?.available || current.authStatus === "unknown") {
+              return yield* makeConnectionError({
+                provider,
+                reason: "invalid_method",
+                message:
+                  "Scient could not verify the current account state, so it did not run the provider's global sign-out command. Refresh the provider status and try again.",
+              });
             }
 
             const command = yield* resolveCommand(provider, method, signOutArgs);
@@ -1324,6 +1332,19 @@ export function makeProviderConnectionLive(options?: {
               Effect.timeoutOption(signOutTimeout),
               Effect.result,
             );
+            const refreshed = yield* providerHealth.refresh;
+            const after = refreshed.find((status) => status.provider === provider);
+            if (after?.available && after.authStatus === "unauthenticated") {
+              return { providers: refreshed };
+            }
+            if (!after?.available || after.authStatus === "unknown") {
+              return yield* makeConnectionError({
+                provider,
+                reason: "invalid_method",
+                message:
+                  "The sign-out command finished, but Scient could not verify the account state. Check the provider CLI before continuing.",
+              });
+            }
             if (Result.isFailure(result)) {
               return yield* makeConnectionError({
                 provider,
@@ -1335,7 +1356,7 @@ export function makeProviderConnectionLive(options?: {
               return yield* makeConnectionError({
                 provider,
                 reason: "invalid_method",
-                message: "Provider sign-out timed out. Your account may still be connected.",
+                message: "Provider sign-out timed out. Your account is still connected.",
               });
             }
             if (result.success.value.code !== 0) {
@@ -1343,18 +1364,7 @@ export function makeProviderConnectionLive(options?: {
                 provider,
                 reason: "invalid_method",
                 message:
-                  "The provider CLI could not complete sign-out. Your account may still be connected.",
-              });
-            }
-
-            const refreshed = yield* providerHealth.refresh;
-            const after = refreshed.find((status) => status.provider === provider);
-            if (!after?.available || after.authStatus === "unknown") {
-              return yield* makeConnectionError({
-                provider,
-                reason: "invalid_method",
-                message:
-                  "The sign-out command finished, but Scient could not verify the account state. Check the provider CLI before continuing.",
+                  "The provider CLI could not complete sign-out. Your account is still connected.",
               });
             }
             if (after.authStatus === "authenticated") {
@@ -1365,7 +1375,11 @@ export function makeProviderConnectionLive(options?: {
                   "The provider CLI still reports an authenticated account. Try signing out from the provider CLI directly.",
               });
             }
-            return { providers: refreshed };
+            return yield* makeConnectionError({
+              provider,
+              reason: "invalid_method",
+              message: "Scient could not verify that the provider account was signed out.",
+            });
           }).pipe(Effect.ensuring(releaseProvider(provider, "")));
         },
       );

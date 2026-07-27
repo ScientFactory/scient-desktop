@@ -440,7 +440,7 @@ export function ProviderConnectionDialog() {
                 </span>
               </div>
               {installProgress ? (
-                <div className="space-y-1 pt-1 pl-6" aria-live="polite">
+                <div className="space-y-1 pt-1 pl-6">
                   <div
                     className="h-1.5 w-full overflow-hidden rounded-full bg-[color:var(--color-border)]"
                     role="progressbar"
