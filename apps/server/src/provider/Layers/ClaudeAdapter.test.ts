@@ -386,6 +386,58 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("does not reuse an active session across command discovery generations", () => {
+    const queries: FakeClaudeQuery[] = [];
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => {
+        const query = new FakeClaudeQuery();
+        const source = queries.length === 0 ? "active-session" : "isolated-discovery";
+        Object.assign(query, {
+          supportedCommands: async () => [{ name: source, description: source, argumentHint: "" }],
+        });
+        queries.push(query);
+        return query;
+      },
+    }).pipe(
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-command-generation", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listCommands) {
+        return assert.fail("Claude adapter should support command discovery.");
+      }
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+        cwd: "/tmp/claude-command-generation",
+        providerOptions: { claudeAgent: { binaryPath: "/managed/claude" } },
+      });
+
+      const result = yield* adapter.listCommands({
+        provider: "claudeAgent",
+        cwd: "/tmp/claude-command-generation",
+        binaryPath: "/managed/claude",
+        threadId: THREAD_ID,
+        discoveryGeneration: "new-account-generation",
+      });
+
+      assert.equal(queries.length, 2);
+      assert.deepEqual(
+        result.commands.map((command) => command.name),
+        ["isolated-discovery"],
+      );
+      assert.equal(queries[0]?.closeCalls, 0);
+      assert.equal(queries[1]?.closeCalls, 1);
+      yield* adapter.stopSession(THREAD_ID);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
   it.effect(
     "does not retain completed command discovery across exact cwd and binary queries",
     () => {
@@ -1042,10 +1094,64 @@ describe("ClaudeAdapterLive", () => {
             { value: "max", label: "Max" },
           ],
           supportsReasoningEffort: true,
-          supportsThinkingToggle: true,
           supportsFastMode: true,
         },
       ]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps a usable model catalog when the runtime omits its init version", () => {
+    const harness = makeHarness({ discoveryTimeoutMs: 100 });
+    Object.assign(harness.query, {
+      supportedModels: async () => {
+        harness.query.finish();
+        return [
+          {
+            value: "sonnet",
+            resolvedModel: "claude-sonnet-4-6",
+            displayName: "Claude Sonnet 4.6",
+            description: "General coding",
+            supportsEffort: true,
+            supportedEffortLevels: ["low", "high"],
+            supportsAdaptiveThinking: true,
+            supportsFastMode: false,
+            supportsAutoMode: false,
+          },
+        ] satisfies ModelInfo[];
+      },
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listModels) {
+        return assert.fail("Claude adapter should support model discovery.");
+      }
+      const result = yield* adapter.listModels({
+        provider: "claudeAgent",
+        cwd: "/tmp/claude-adapter-test",
+        binaryPath: "/managed/claude",
+        discoveryGeneration: "runtime-without-init",
+      });
+
+      assert.equal(result.runtimeVersion, null);
+      assert.deepEqual(result.models, [
+        {
+          slug: "sonnet",
+          name: "Claude Sonnet 4.6",
+          resolvedModel: "claude-sonnet-4-6",
+          description: "General coding",
+          supportedReasoningEfforts: [
+            { value: "low", label: "Low" },
+            { value: "high", label: "High" },
+          ],
+          supportsReasoningEffort: true,
+          supportsFastMode: false,
+        },
+      ]);
+      assert.equal(harness.query.closeCalls, 1);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

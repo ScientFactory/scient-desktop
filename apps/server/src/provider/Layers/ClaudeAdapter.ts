@@ -377,9 +377,10 @@ function mapClaudeModelInfo(model: ModelInfo): ProviderModelDescriptor {
       : supportedReasoningEfforts
         ? { supportedReasoningEfforts }
         : {}),
-    ...(model.supportsAdaptiveThinking !== undefined
-      ? { supportsThinkingToggle: model.supportsAdaptiveThinking }
-      : {}),
+    // Claude's `supportsAdaptiveThinking` describes the model's internal
+    // reasoning mode. It does not mean that the CLI accepts Scient's separate
+    // `alwaysThinkingEnabled` user setting, so do not advertise a control that
+    // the session dispatcher cannot faithfully apply.
     ...(model.supportsFastMode !== undefined ? { supportsFastMode: model.supportsFastMode } : {}),
   };
 }
@@ -4561,14 +4562,26 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
       );
       const tempQuery = temporaryDiscovery.query;
 
+      let runtimeVersionSettled = false;
       let resolveRuntimeVersion!: (version: string | null) => void;
       const runtimeVersionPromise = new Promise<string | null>((resolve) => {
-        resolveRuntimeVersion = resolve;
+        resolveRuntimeVersion = (version) => {
+          if (runtimeVersionSettled) return;
+          runtimeVersionSettled = true;
+          resolve(version);
+        };
       });
       void (async () => {
-        for await (const message of tempQuery) {
-          const version = claudeRuntimeVersionFromMessage(message);
-          if (version !== undefined) resolveRuntimeVersion(version);
+        try {
+          for await (const message of tempQuery) {
+            const version = claudeRuntimeVersionFromMessage(message);
+            if (version !== undefined) resolveRuntimeVersion(version);
+          }
+        } finally {
+          // A usable catalog can arrive even when an older or unusual Claude
+          // runtime omits the init-version message. Preserve that catalog while
+          // failing Opus 5 closed through a null runtime version.
+          resolveRuntimeVersion(null);
         }
       })().catch(() => undefined);
       const [models, runtimeVersion] = await runTemporaryClaudeDiscovery(
@@ -4633,33 +4646,11 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         const binaryPath = input.binaryPath ?? "claude";
         const discoveryGeneration = input.discoveryGeneration ?? "initial";
         const cacheKey = JSON.stringify({ cwd: input.cwd, binaryPath, discoveryGeneration });
-        // Reuse only a session with the exact discovery ownership. An arbitrary
-        // active Claude session may use different project resources or binary.
-        const context = input.threadId
-          ? sessions.get(ThreadId.makeUnsafe(input.threadId))
-          : [...sessions.values()].find(
-              (session) =>
-                !session.stopped &&
-                session.claudeCwd === input.cwd &&
-                session.claudeExecutable === binaryPath,
-            );
-
-        if (
-          context &&
-          !context.stopped &&
-          context.claudeCwd === input.cwd &&
-          context.claudeExecutable === binaryPath
-        ) {
-          const commands = yield* Effect.tryPromise({
-            try: () => context.query.supportedCommands(),
-            catch: (cause) => toRequestError(context.session.threadId, "listCommands", cause),
-          });
-          return mapSupportedCommands(commands);
-        }
-
         // React Query owns the bounded completed-result cache. The server only
         // deduplicates discovery already in flight for this exact cwd/binary/
-        // generation, so a later auth generation never joins an older CLI.
+        // generation. Always use the isolated process: an active conversation
+        // session is not bound to the renderer's auth generation and may belong
+        // to the account that was signed out immediately before this request.
         const claudeSdkEnv = yield* resolveClaudeSdkEnv;
         const discoveryPromise = getOrCreatePendingDiscovery(
           pendingCommandDiscoveries,

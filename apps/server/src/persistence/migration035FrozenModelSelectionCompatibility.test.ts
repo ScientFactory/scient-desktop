@@ -1,33 +1,14 @@
 // FILE: migration035FrozenModelSelectionCompatibility.test.ts
-// Purpose: Proves the frozen migration-035 snapshot is behaviorally identical to
-//   the live modelSelectionCompatibility for old persisted data, and that its
-//   hardcoded DROID_ONLY set still matches the live catalog derivation.
+// Purpose: Proves the frozen migration-035 snapshot preserves its v0.5.13 golden
+//   behavior without coupling the historical migration back to the live catalog.
 // Layer: Persistence migration test
 
-import { MODEL_OPTIONS_BY_PROVIDER } from "@synara/contracts";
 import { assert, it } from "@effect/vitest";
 
 import {
   normalizeLegacyModelSelection as frozenNormalizeLegacy,
   normalizePersistedModelSelection as frozenNormalizePersisted,
 } from "./migration035FrozenModelSelectionCompatibility.ts";
-import {
-  normalizeLegacyModelSelection as liveNormalizeLegacy,
-  normalizePersistedModelSelection as liveNormalizePersisted,
-} from "./modelSelectionCompatibility.ts";
-
-// The one and only catalog-coupled behavior in the live helper: provider-less
-// slugs that belong exclusively to the Droid provider are attributed to "droid".
-// Reproduce the live derivation here from the current catalog so the assertion
-// tracks the catalog rather than a stale literal.
-const liveNonDroidSlugs = new Set(
-  Object.entries(MODEL_OPTIONS_BY_PROVIDER).flatMap(([provider, models]) =>
-    provider === "droid" ? [] : models.map((model) => model.slug.toLowerCase()),
-  ),
-);
-const liveDroidOnlySlugs = MODEL_OPTIONS_BY_PROVIDER.droid
-  .map((model) => model.slug.toLowerCase())
-  .filter((slug) => !liveNonDroidSlugs.has(slug));
 
 // Persisted-shape corpus spanning every branch of normalizePersistedModelSelection,
 // with emphasis on the ambiguous-provider and Droid-model cases.
@@ -78,38 +59,106 @@ const persistedCorpus: readonly unknown[] = [
   { provider: "antigravity", model: "Gemini 3.5 Flash (High)", options: [{ id: "x", value: 1 }] },
 ];
 
-it("frozen normalizePersistedModelSelection matches the live helper across the corpus", () => {
-  for (const input of persistedCorpus) {
+const persistedGoldenOutputs: readonly unknown[] = [
+  null,
+  undefined,
+  "not-a-record",
+  42,
+  [],
+  [{ id: "effort", value: "high" }],
+  {},
+  { provider: "codex" },
+  { model: "   " },
+  { provider: "pi", model: "openai/gpt-5.5" },
+  { provider: "claudeAgent", model: "claude-opus-4-8" },
+  { provider: "droid", model: "minimax-m3" },
+  { provider: "claudeAgent", model: "claude-opus-4-8" },
+  { provider: "claudeAgent", model: "claude-opus-5" },
+  { provider: "claudeAgent", model: "claude-sonnet-4-6" },
+  { provider: "antigravity", model: "gemini-3.5-pro" },
+  { provider: "grok", model: "grok-4" },
+  { provider: "codex", model: "gpt-5.5" },
+  { provider: "codex", model: "some-unknown-model" },
+  {
+    provider: "antigravity",
+    model: "Claude Sonnet 4.6",
+    options: { reasoningEffort: "thinking" },
+  },
+  {
+    provider: "antigravity",
+    model: "Claude Sonnet 4.6",
+    options: { reasoningEffort: "thinking" },
+  },
+  { provider: "pi", model: "openai/gpt-5.5" },
+  { provider: "droid", model: "gpt-5.5" },
+  { provider: "cursor", model: "claude-opus-4-8" },
+  { provider: "opencode", model: "claude-opus-4-8" },
+  { provider: "kilo", model: "claude-opus-4-8" },
+  { provider: "antigravity", model: "Gemini 3.1 Pro" },
+  { provider: "antigravity", model: "Gemini 3.5 Flash" },
+  { provider: "antigravity", model: "gemini-custom-preview" },
+  {
+    provider: "antigravity",
+    model: "Gemini 3.5 Flash",
+    options: { reasoningEffort: "high" },
+  },
+  { provider: "antigravity", model: "Gemini 3.5 Flash (bogus)" },
+  { provider: "codex", model: "gpt-5.5", options: { effort: "high" } },
+  {
+    provider: "claudeAgent",
+    model: "claude-opus-4-8",
+    options: { fastMode: true },
+  },
+  {
+    provider: "antigravity",
+    model: "Gemini 3.5 Flash",
+    options: { x: 1, reasoningEffort: "high" },
+  },
+];
+
+const frozenDroidOnlySlugs = [
+  "claude-opus-4-8-fast",
+  "claude-opus-4-7-fast",
+  "claude-opus-4-5-20251101",
+  "claude-sonnet-4-5-20250929",
+  "claude-haiku-4-5-20251001",
+  "gpt-5.5-fast",
+  "gpt-5.5-pro",
+  "gpt-5.4-fast",
+  "gpt-5.3-codex-fast",
+  "gemini-3.1-pro-preview",
+  "gemini-3.5-flash",
+  "gemini-3-flash-preview",
+  "glm-5.2",
+  "glm-5.2-fast",
+  "glm-5.1",
+  "nemotron-3-ultra",
+  "kimi-k2.7-code",
+  "kimi-k2.6",
+  "deepseek-v4-pro",
+  "minimax-m3",
+  "minimax-m2.7",
+] as const;
+
+it("preserves the frozen v0.5.13 persisted-selection golden corpus", () => {
+  assert.strictEqual(persistedCorpus.length, persistedGoldenOutputs.length);
+  for (const [index, input] of persistedCorpus.entries()) {
     assert.deepEqual(
       frozenNormalizePersisted(input),
-      liveNormalizePersisted(input),
-      `mismatch for input ${JSON.stringify(input)}`,
+      persistedGoldenOutputs[index],
+      `v0.5.13 mismatch for input ${JSON.stringify(input)}`,
     );
   }
 });
 
-it("frozen normalizeLegacyModelSelection matches the live helper for every Droid-only slug", () => {
-  for (const slug of liveDroidOnlySlugs) {
+it("preserves the frozen v0.5.13 Droid-only slug set", () => {
+  for (const slug of frozenDroidOnlySlugs) {
     const input = { provider: undefined, model: slug, options: undefined };
-    assert.deepEqual(
-      frozenNormalizeLegacy(input),
-      liveNormalizeLegacy(input),
-      `mismatch for ${slug}`,
-    );
+    assert.deepEqual(frozenNormalizeLegacy(input), { provider: "droid", model: slug });
   }
-});
-
-it("frozen DROID_ONLY set still equals the live catalog-derived Droid-only set", () => {
-  // A provider-less slug is attributed to "droid" iff it is Droid-only. Assert the
-  // frozen snapshot attributes exactly the live catalog's Droid-only slugs to droid.
-  for (const slug of liveDroidOnlySlugs) {
+  for (const slug of ["claude-opus-4-8", "gpt-5.5", "gemini-3.5-pro", "grok-4"]) {
     const result = frozenNormalizePersisted({ model: slug }) as { provider: string };
-    assert.strictEqual(result.provider, "droid", `expected droid for Droid-only slug ${slug}`);
-  }
-  // And no non-droid catalog slug is mis-attributed to droid by the frozen snapshot.
-  for (const slug of liveNonDroidSlugs) {
-    const result = frozenNormalizePersisted({ model: slug }) as { provider: string };
-    assert.notStrictEqual(result.provider, "droid", `Droid inference stole non-droid slug ${slug}`);
+    assert.notStrictEqual(result.provider, "droid", `frozen Droid inference stole ${slug}`);
   }
 });
 
