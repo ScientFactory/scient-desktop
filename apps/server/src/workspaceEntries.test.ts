@@ -8,8 +8,11 @@ import { afterEach, assert, describe, expect, it, vi } from "vitest";
 
 import * as ProcessRunner from "./processRunner";
 import {
+  classifySuffixMatches,
   discoverProjectScripts,
+  findWorkspaceFilesBySuffixOnDisk,
   listWorkspaceDirectories,
+  resolveWorkspaceFileBySuffix,
   searchWorkspaceEntries,
 } from "./workspaceEntries";
 
@@ -242,6 +245,23 @@ describe("searchWorkspaceEntries", () => {
     assert.isFalse(paths.some((entryPath) => entryPath.startsWith(".convex/")));
   });
 
+  it("prunes linked git worktree subtrees from the index", async () => {
+    const cwd = makeTempDir("synara-workspace-worktree-");
+    writeFile(cwd, "src/app.ts", "export {};");
+    // A linked worktree stores its `.git` as a regular file pointer; its files
+    // duplicate another checkout and must not appear in the index.
+    writeFile(cwd, ".worktrees/pr1/.git", "gitdir: /elsewhere/.git/worktrees/pr1\n");
+    writeFile(cwd, ".worktrees/pr1/src/app.ts", "export {};");
+    writeFile(cwd, ".worktrees/pr1/src/copy-only.ts", "export {};");
+
+    const result = await searchWorkspaceEntries({ cwd, query: "", limit: 500 });
+    const paths = result.entries.map((entry) => entry.path);
+
+    assert.include(paths, "src/app.ts");
+    assert.isFalse(paths.some((entryPath) => entryPath.startsWith(".worktrees/pr1/src")));
+    assert.notInclude(paths, ".worktrees/pr1/src/copy-only.ts");
+  });
+
   it("deduplicates concurrent index builds for the same cwd", async () => {
     const cwd = makeTempDir("synara-workspace-concurrent-build-");
     writeFile(cwd, "src/components/Composer.tsx");
@@ -296,6 +316,243 @@ describe("searchWorkspaceEntries", () => {
     await searchWorkspaceEntries({ cwd, query: "", limit: 200 });
 
     assert.isAtMost(peakReads, 32);
+  });
+});
+
+describe("resolveWorkspaceFileBySuffix", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const dir of tempDirs.splice(0, tempDirs.length)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves a unique bare basename to its tracked path", async () => {
+    const cwd = makeTempDir("synara-suffix-unique-");
+    writeFile(cwd, "apps/web/src/lib/kanbanDispatch.ts", "export {};");
+
+    const resolution = await resolveWorkspaceFileBySuffix({
+      cwd,
+      relativePath: "kanbanDispatch.ts",
+    });
+
+    expect(resolution).toEqual({
+      status: "resolved",
+      relativePath: "apps/web/src/lib/kanbanDispatch.ts",
+    });
+  });
+
+  it("resolves a unique partial path tail", async () => {
+    const cwd = makeTempDir("synara-suffix-tail-");
+    writeFile(cwd, "apps/web/src/lib/chatReferences.ts", "export {};");
+
+    const resolution = await resolveWorkspaceFileBySuffix({
+      cwd,
+      relativePath: "lib/chatReferences.ts",
+    });
+
+    expect(resolution).toEqual({
+      status: "resolved",
+      relativePath: "apps/web/src/lib/chatReferences.ts",
+    });
+  });
+
+  it("reports the competing matches for an ambiguous basename", async () => {
+    const cwd = makeTempDir("synara-suffix-ambiguous-");
+    writeFile(cwd, "apps/web/src/kanbanDispatch.ts", "export {};");
+    writeFile(cwd, "apps/server/src/kanbanDispatch.ts", "export {};");
+
+    const resolution = await resolveWorkspaceFileBySuffix({
+      cwd,
+      relativePath: "kanbanDispatch.ts",
+    });
+
+    expect(resolution).toEqual({
+      status: "ambiguous",
+      matches: ["apps/server/src/kanbanDispatch.ts", "apps/web/src/kanbanDispatch.ts"],
+    });
+  });
+
+  it("returns unresolved when nothing matches", async () => {
+    const cwd = makeTempDir("synara-suffix-missing-");
+    writeFile(cwd, "apps/web/src/lib/kanbanDispatch.ts", "export {};");
+
+    const resolution = await resolveWorkspaceFileBySuffix({
+      cwd,
+      relativePath: "does-not-exist.ts",
+    });
+
+    expect(resolution).toEqual({ status: "unresolved" });
+  });
+
+  it("ignores duplicate copies inside linked git worktrees", async () => {
+    const cwd = makeTempDir("synara-suffix-worktree-");
+    writeFile(cwd, "apps/web/src/lib/kanbanDispatch.ts", "export const real = 1;");
+    writeFile(cwd, ".codex-worktrees/pr1/.git", "gitdir: /elsewhere/.git/worktrees/pr1\n");
+    writeFile(
+      cwd,
+      ".codex-worktrees/pr1/apps/web/src/lib/kanbanDispatch.ts",
+      "export const copy = 1;",
+    );
+
+    const resolution = await resolveWorkspaceFileBySuffix({
+      cwd,
+      relativePath: "kanbanDispatch.ts",
+    });
+
+    expect(resolution).toEqual({
+      status: "resolved",
+      relativePath: "apps/web/src/lib/kanbanDispatch.ts",
+    });
+  });
+
+  it("does not prune git submodules (only linked worktrees)", async () => {
+    const cwd = makeTempDir("synara-suffix-submodule-");
+    // A submodule stores `.git` as a regular file too, but its pointer targets
+    // `.git/modules/<name>`, not `.git/worktrees/<name>`. Its files are a
+    // distinct repository that must remain discoverable — never pruned.
+    writeFile(cwd, "vendor/lib/.git", "gitdir: /super/.git/modules/lib\n");
+    writeFile(cwd, "vendor/lib/submoduleOnly.ts", "export const sub = 1;");
+
+    const resolution = await resolveWorkspaceFileBySuffix({
+      cwd,
+      relativePath: "submoduleOnly.ts",
+    });
+
+    expect(resolution).toEqual({
+      status: "resolved",
+      relativePath: "vendor/lib/submoduleOnly.ts",
+    });
+
+    // The submodule's files must also appear in the index used for search.
+    const search = await searchWorkspaceEntries({ cwd, query: "submoduleOnly", limit: 100 });
+    assert.include(
+      search.entries.map((entry) => entry.path),
+      "vendor/lib/submoduleOnly.ts",
+    );
+  });
+
+  it("re-scans disk for matches when the index is truncated", async () => {
+    const cwd = makeTempDir("synara-suffix-truncated-");
+    // Two real, distinct files share a basename on disk.
+    writeFile(cwd, "apps/web/src/kanbanDispatch.ts", "export {};");
+    writeFile(cwd, "apps/server/src/kanbanDispatch.ts", "export {};");
+
+    // Force a truncated git index that lists only one of the two copies, so a
+    // lookup against the index alone would wrongly look unique.
+    const runProcessSpy = vi.spyOn(ProcessRunner, "runProcess");
+    runProcessSpy.mockImplementation(async (command, args) => {
+      if (command !== "git") {
+        throw new Error(`Unexpected command: ${command}`);
+      }
+      if (args.includes("rev-parse")) {
+        return {
+          stdout: "true\n",
+          stderr: "",
+          code: 0,
+          signal: null,
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
+      }
+      if (args.includes("ls-files")) {
+        return {
+          stdout: "apps/web/src/kanbanDispatch.ts\0",
+          stderr: "",
+          code: 0,
+          signal: null,
+          timedOut: false,
+          stdoutTruncated: true,
+          stderrTruncated: false,
+        };
+      }
+      if (args.includes("check-ignore")) {
+        return {
+          stdout: "",
+          stderr: "",
+          code: 1,
+          signal: null,
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+        };
+      }
+      throw new Error(`Unexpected git command: ${args.join(" ")}`);
+    });
+
+    const resolution = await resolveWorkspaceFileBySuffix({
+      cwd,
+      relativePath: "kanbanDispatch.ts",
+    });
+
+    // The disk re-scan finds both real files, so the honest answer is ambiguous
+    // rather than the false "unique" the truncated index would suggest.
+    expect(resolution).toEqual({
+      status: "ambiguous",
+      matches: ["apps/server/src/kanbanDispatch.ts", "apps/web/src/kanbanDispatch.ts"],
+    });
+  });
+});
+
+describe("findWorkspaceFilesBySuffixOnDisk", () => {
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0, tempDirs.length)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports complete when the whole tree is scanned", async () => {
+    const cwd = makeTempDir("synara-scan-complete-");
+    writeFile(cwd, "dup.ts", "export {};");
+    writeFile(cwd, "nested/dup.ts", "export {};");
+
+    const scan = await findWorkspaceFilesBySuffixOnDisk(cwd, "dup.ts");
+
+    expect(scan.complete).toBe(true);
+    expect(scan.matches.toSorted()).toEqual(["dup.ts", "nested/dup.ts"]);
+  });
+
+  it("reports incomplete when it stops at the scanned-directory cap", async () => {
+    const cwd = makeTempDir("synara-scan-incomplete-");
+    // A match sits at the root and a second, distinct match is one directory
+    // deeper. Capping the scan at a single directory forces it to stop after
+    // seeing only the first match — the exact false-unique hazard.
+    writeFile(cwd, "dup.ts", "export {};");
+    writeFile(cwd, "nested/dup.ts", "export {};");
+
+    const scan = await findWorkspaceFilesBySuffixOnDisk(cwd, "dup.ts", {
+      maxMatches: 64,
+      maxDirectories: 1,
+    });
+
+    expect(scan.complete).toBe(false);
+    expect(scan.matches).toEqual(["dup.ts"]);
+    // A single match from an incomplete scan must NOT be reported as resolved.
+    expect(classifySuffixMatches(scan.matches, scan.complete)).toEqual({ status: "indeterminate" });
+  });
+});
+
+describe("classifySuffixMatches", () => {
+  it("resolves a single match only when the scan was complete", () => {
+    expect(classifySuffixMatches(["a/x.ts"], true)).toEqual({
+      status: "resolved",
+      relativePath: "a/x.ts",
+    });
+    // Fail closed: an incomplete scan cannot prove the single match is unique.
+    expect(classifySuffixMatches(["a/x.ts"], false)).toEqual({ status: "indeterminate" });
+  });
+
+  it("treats two or more distinct matches as ambiguous even when incomplete", () => {
+    expect(classifySuffixMatches(["b/x.ts", "a/x.ts"], false)).toEqual({
+      status: "ambiguous",
+      matches: ["a/x.ts", "b/x.ts"],
+    });
+  });
+
+  it("distinguishes a complete empty scan from an incomplete one", () => {
+    expect(classifySuffixMatches([], true)).toEqual({ status: "unresolved" });
+    expect(classifySuffixMatches([], false)).toEqual({ status: "indeterminate" });
   });
 });
 

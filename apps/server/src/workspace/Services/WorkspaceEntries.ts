@@ -13,6 +13,8 @@ import type {
   ProjectSearchLocalEntriesResult,
 } from "@synara/contracts";
 
+import type { WorkspaceFileSuffixResolution } from "../../workspaceEntries";
+
 export interface WorkspaceEntriesShape {
   readonly browse: (
     input: FilesystemBrowseInput,
@@ -30,11 +32,12 @@ export interface WorkspaceEntriesShape {
     input: ProjectSearchLocalEntriesInput,
   ) => Effect.Effect<ProjectSearchLocalEntriesResult, WorkspaceEntriesError>;
   // Resolve a bare/partial workspace-relative reference (basename or tail path)
-  // to a unique tracked file's path, or null when zero/multiple files match.
+  // against the tracked workspace, reporting whether it resolved to a unique
+  // file, is ambiguous (with the competing matches), or matched nothing.
   readonly resolveFileBySuffix: (input: {
     readonly cwd: string;
     readonly relativePath: string;
-  }) => Effect.Effect<string | null, WorkspaceEntriesError>;
+  }) => Effect.Effect<WorkspaceFileSuffixResolution, WorkspaceEntriesError>;
   readonly invalidate: (cwd: string) => Effect.Effect<void, never>;
 }
 
