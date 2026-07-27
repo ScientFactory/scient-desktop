@@ -1008,6 +1008,9 @@ describe("ClaudeAdapterLive", () => {
 
   it.effect("bounds exact-process model catalog and version discovery together", () => {
     const harness = makeHarness();
+    Object.assign(harness.query, {
+      supportedModels: () => new Promise<ModelInfo[]>(() => undefined),
+    });
     const layer = makeClaudeAdapterLive({
       createQuery: () => harness.query,
       discoveryTimeoutMs: 10,
@@ -1040,26 +1043,28 @@ describe("ClaudeAdapterLive", () => {
   it.effect("uses the configured Claude executable for pre-session model discovery", () => {
     const harness = makeHarness();
     (harness.query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels =
-      async () => [
-        {
-          value: "opus[1m]",
-          resolvedModel: "claude-opus-4-8[1m]",
-          displayName: "Claude Opus 4.8 (1M context)",
-          description: "Complex agentic coding",
-          supportsEffort: true,
-          supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
-          supportsAdaptiveThinking: true,
-          supportsFastMode: true,
-          supportsAutoMode: false,
-        },
-      ];
+      async () => {
+        setTimeout(() => harness.query.emit(claudeInitMessage("2.1.219")), 0);
+        return [
+          {
+            value: "opus[1m]",
+            resolvedModel: "claude-opus-4-8[1m]",
+            displayName: "Claude Opus 4.8 (1M context)",
+            description: "Complex agentic coding",
+            supportsEffort: true,
+            supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+            supportsAdaptiveThinking: true,
+            supportsFastMode: true,
+            supportsAutoMode: false,
+          },
+        ];
+      };
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       if (!adapter.listModels) {
         return assert.fail("Claude adapter should support model discovery.");
       }
 
-      harness.query.emit(claudeInitMessage("2.1.219"));
       const result = yield* adapter.listModels({
         provider: "claudeAgent",
         cwd: "/tmp/claude-model-discovery",
@@ -1107,7 +1112,6 @@ describe("ClaudeAdapterLive", () => {
     const harness = makeHarness({ discoveryTimeoutMs: 100 });
     Object.assign(harness.query, {
       supportedModels: async () => {
-        harness.query.finish();
         return [
           {
             value: "sonnet",
@@ -1151,6 +1155,8 @@ describe("ClaudeAdapterLive", () => {
           supportsFastMode: false,
         },
       ]);
+      // The temporary query deliberately remains open until discovery closes
+      // it. Returning this catalog must not depend on iterator completion.
       assert.equal(harness.query.closeCalls, 1);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

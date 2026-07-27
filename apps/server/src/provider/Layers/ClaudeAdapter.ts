@@ -4588,7 +4588,16 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
         temporaryDiscovery,
         "model",
         discoveryTimeoutMs,
-        () => Promise.all([tempQuery.supportedModels(), runtimeVersionPromise]),
+        async () => {
+          const models = await tempQuery.supportedModels();
+          // The SDK can return a usable catalog while leaving the discovery
+          // iterator open without an init-version event. Give an already
+          // queued init message one event-loop turn to reach the consumer,
+          // then preserve the catalog and fail version-gated models closed.
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          resolveRuntimeVersion(null);
+          return [models, await runtimeVersionPromise] as const;
+        },
       );
       return {
         models: models.map(mapClaudeModelInfo),
