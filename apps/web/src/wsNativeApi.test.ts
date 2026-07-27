@@ -36,6 +36,7 @@ const showContextMenuFallbackMock =
       position?: { x: number; y: number },
     ) => Promise<T | null>
   >();
+const showConfirmDialogFallbackMock = vi.fn<(message: string) => Promise<boolean>>();
 const channelListeners = new Map<string, Set<(message: WsPush) => void>>();
 const latestPushByChannel = new Map<string, WsPush>();
 const subscribeMock = vi.fn<
@@ -75,6 +76,10 @@ vi.mock("./wsTransport", () => {
 
 vi.mock("./contextMenuFallback", () => ({
   showContextMenuFallback: showContextMenuFallbackMock,
+}));
+
+vi.mock("./confirmDialogFallback", () => ({
+  showConfirmDialogFallback: showConfirmDialogFallbackMock,
 }));
 
 let nextPushSequence = 1;
@@ -119,6 +124,7 @@ beforeEach(() => {
   requestMock.mockReset();
   onStateChangeMock.mockClear();
   showContextMenuFallbackMock.mockReset();
+  showConfirmDialogFallbackMock.mockReset();
   subscribeMock.mockClear();
   channelListeners.clear();
   latestPushByChannel.clear();
@@ -132,6 +138,32 @@ afterEach(() => {
 });
 
 describe("wsNativeApi", () => {
+  it("uses the native desktop confirmation bridge when available", async () => {
+    const nativeConfirm = vi.fn().mockResolvedValue(false);
+    getWindowForTest().desktopBridge = { confirm: nativeConfirm } as unknown as NonNullable<
+      Window["desktopBridge"]
+    >;
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const confirmed = await createWsNativeApi().dialogs.confirm("Sign out globally?");
+
+    expect(confirmed).toBe(false);
+    expect(nativeConfirm).toHaveBeenCalledOnce();
+    expect(nativeConfirm).toHaveBeenCalledWith("Sign out globally?");
+    expect(showConfirmDialogFallbackMock).not.toHaveBeenCalled();
+  });
+
+  it("uses the browser confirmation fallback when no desktop bridge exists", async () => {
+    showConfirmDialogFallbackMock.mockResolvedValue(true);
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const confirmed = await createWsNativeApi().dialogs.confirm("Continue in browser?");
+
+    expect(confirmed).toBe(true);
+    expect(showConfirmDialogFallbackMock).toHaveBeenCalledOnce();
+    expect(showConfirmDialogFallbackMock).toHaveBeenCalledWith("Continue in browser?");
+  });
+
   it("seeds renderer transport state from the new transport immediately", async () => {
     const { createWsNativeApi } = await import("./wsNativeApi");
 

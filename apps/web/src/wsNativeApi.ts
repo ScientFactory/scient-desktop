@@ -495,6 +495,7 @@ export function createWsNativeApi(): ProviderSignOutNativeApi {
         return null;
       },
       confirm: async (message) => {
+        if (window.desktopBridge?.confirm) return window.desktopBridge.confirm(message);
         return showConfirmDialogFallback(message);
       },
     },
