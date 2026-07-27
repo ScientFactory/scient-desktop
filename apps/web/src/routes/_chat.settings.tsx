@@ -16,6 +16,7 @@ import {
 import { createFileRoute, useSearch } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getModelOptions, normalizeModelSlug } from "@synara/shared/model";
+import { providerSupportsSignOut } from "@synara/shared/providerSignOut";
 import { pluralize } from "@synara/shared/text";
 import {
   type ReactNode,
@@ -99,6 +100,7 @@ import {
 } from "../components/settings/SettingsPanelPrimitives";
 import { ProviderUsageSettingsPanel } from "../components/settings/ProviderUsageSettingsPanel";
 import { ProviderUpdateActionButton } from "../components/settings/ProviderUpdateActionButton";
+import { ProviderSignOutActionButton } from "../components/settings/ProviderSignOutActionButton";
 import { ProviderUpdatesSettingsRow } from "../components/settings/ProviderUpdatesSettingsRow";
 import { ProfileSettingsPanel } from "../components/settings/ProfileSettingsPanel";
 import { KeyboardShortcutsSettingsPanel } from "../components/settings/KeyboardShortcutsSettingsPanel";
@@ -145,6 +147,8 @@ import {
 import { cn, isMacPlatform } from "../lib/utils";
 import { unarchiveThreadFromClient } from "../lib/threadArchive";
 import { resolveProviderDiscoveryCwd } from "../lib/providerDiscovery";
+import { applyProviderStatusesToCache } from "../lib/providerStatusCache";
+import { requestProviderSignOut } from "../lib/providerSignOutRequest";
 import { ensureNativeApi, readNativeApi } from "../nativeApi";
 import {
   buildNotificationSettingsSupportText,
@@ -178,6 +182,7 @@ import { formatRelativeTime } from "../lib/relativeTime";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { sameProviderOrder } from "../providerOrdering";
 import {
+  isProviderUpdateActive,
   providerUpdateSummaryStatus,
   shouldShowProviderUpdateStatus,
   withProviderUpdateTimeout,
@@ -1449,6 +1454,35 @@ function SettingsRouteView() {
       }
     },
     [queryClient, updatingProviders],
+  );
+
+  const runProviderSignOut = useCallback(
+    async (provider: ProviderKind) => {
+      const label = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+      const api = readNativeApi() ?? ensureNativeApi();
+      const activityKey = `provider:sign-out:${provider}`;
+      try {
+        const result = await requestProviderSignOut(api, provider);
+        if (!result) return;
+        applyProviderStatusesToCache(queryClient, result.providers);
+        activityManager.remove(activityKey);
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : `Scient could not sign out of ${label}. Your account may still be connected.`;
+        activityManager.publish({
+          dedupeKey: activityKey,
+          source: "provider",
+          status: "needs_attention",
+          tone: "error",
+          title: `Could not sign out of ${label}`,
+          description: message,
+          destination: { type: "settings", section: "providers" },
+        });
+      }
+    },
+    [queryClient],
   );
 
   const copyProviderUpdateCommand = useCallback(async (provider: ProviderKind, command: string) => {
@@ -3711,6 +3745,17 @@ function SettingsRouteView() {
                                 ? "Connect"
                                 : "Set up"}
                           </Button>
+                        ) : null}
+                        {providerConnected && providerSupportsSignOut(providerSettings.provider) ? (
+                          <ProviderSignOutActionButton
+                            provider={providerSettings.provider}
+                            disabled={
+                              providerConnectionActive ||
+                              isProviderUpdateActive(providerStatus) ||
+                              updatingProviders.has(providerSettings.provider)
+                            }
+                            onRequestSignOut={() => runProviderSignOut(providerSettings.provider)}
+                          />
                         ) : null}
                       </div>
 

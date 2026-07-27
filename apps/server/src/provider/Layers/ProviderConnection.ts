@@ -15,6 +15,10 @@ import type {
   ServerProviderStatus,
 } from "@synara/contracts";
 import { ServerProviderConnectionError } from "@synara/contracts";
+import {
+  providerSignOutCommandArgs,
+  providerSupportsSignOut,
+} from "@synara/shared/providerSignOut";
 import { prepareWindowsSafeProcess } from "@synara/shared/windowsProcess";
 import {
   Duration,
@@ -46,9 +50,11 @@ import { ProviderConnection, type ProviderConnectionShape } from "../Services/Pr
 import { ProviderDiscoveryService } from "../Services/ProviderDiscoveryService";
 import { ProviderHealth } from "../Services/ProviderHealth";
 import { ProviderRuntimeManager } from "../Services/ProviderRuntimeManager";
+import { safeProviderConnectionFailureDetail } from "../providerConnectionFailureDetail";
 import { parseAntigravityModelsAuthStatus, resolveProviderProbeCwd } from "./ProviderHealth";
 
 const CONNECTION_TIMEOUT = Duration.minutes(10);
+const SIGN_OUT_TIMEOUT = Duration.seconds(30);
 export const CODEX_DEVICE_CODE_CONNECTION_TIMEOUT = Duration.minutes(16);
 const INSTALLATION_HANDOFF_TIMEOUT = Duration.minutes(30);
 const INSTALLATION_HANDOFF_POLL_INTERVAL = Duration.millis(250);
@@ -342,6 +348,8 @@ export function providerConnectionCommandArgs(
   return null;
 }
 
+export { providerSignOutCommandArgs, providerSupportsSignOut };
+
 function makeConnectionError(input: {
   readonly provider: ProviderKind;
   readonly reason: ConstructorParameters<typeof ServerProviderConnectionError>[0]["reason"];
@@ -368,6 +376,7 @@ export function resolveProviderConnectionTimeout(input: {
 
 export function makeProviderConnectionLive(options?: {
   readonly timeout?: Duration.Duration;
+  readonly signOutTimeout?: Duration.Duration;
   readonly codexDeviceCodeTimeout?: Duration.Duration;
   readonly antigravityCodeWindowTimeout?: Duration.Duration;
   readonly antigravityCodeWindowCloseSignal?: Effect.Effect<void>;
@@ -379,6 +388,7 @@ export function makeProviderConnectionLive(options?: {
   readonly droidAuthenticationProbe?: typeof probeDroidAcpAuthentication;
 }) {
   const timeout = options?.timeout ?? CONNECTION_TIMEOUT;
+  const signOutTimeout = options?.signOutTimeout ?? SIGN_OUT_TIMEOUT;
   const codexDeviceCodeTimeout =
     options?.codexDeviceCodeTimeout ?? CODEX_DEVICE_CODE_CONNECTION_TIMEOUT;
   const antigravityCodeWindowTimeout =
@@ -440,6 +450,7 @@ export function makeProviderConnectionLive(options?: {
       const resolveCommand = Effect.fn("ProviderConnection.resolveCommand")(function* (
         provider: ProviderKind,
         method: ServerProviderConnectionMethod,
+        argsOverride?: ReadonlyArray<string>,
       ) {
         const settings = yield* serverSettings.getSettings.pipe(
           Effect.mapError(() =>
@@ -458,7 +469,7 @@ export function makeProviderConnectionLive(options?: {
             message: "This provider does not yet support in-app sign in.",
           });
         }
-        const args = providerConnectionCommandArgs(provider, method);
+        const args = argsOverride ?? providerConnectionCommandArgs(provider, method);
         if (!args) {
           return yield* makeConnectionError({
             provider,
@@ -904,53 +915,50 @@ export function makeProviderConnectionLive(options?: {
               provider,
               state({ status: "waiting_for_browser", message: command.waitingMessage }),
             );
-            let oauthOutputBuffer = "";
+            let providerOutputBuffer = "";
             let publishedAuthorizationUrl: string | null = null;
             let publishedUserCode: string | null = null;
-            const oauthOutputObserver: ConnectionOutputObserver | undefined =
-              provider === "grok" || provider === "antigravity" || provider === "codex"
-                ? {
-                    onOutputChunk: (chunk) => {
-                      oauthOutputBuffer =
-                        `${oauthOutputBuffer}${Buffer.from(chunk).toString("utf8")}`.slice(
-                          -OAUTH_OUTPUT_BUFFER_MAX_CHARS,
-                        );
-                      const codexDevice =
-                        provider === "codex" && method === "codex_device_code"
-                          ? parseCodexDeviceAuthorization(oauthOutputBuffer)
-                          : null;
-                      const authorizationUrl = codexDevice
-                        ? (codexDevice.authorizationUrl ?? null)
-                        : provider === "codex"
-                          ? parseCodexOAuthAuthorizationUrl(oauthOutputBuffer)
-                          : provider === "grok"
-                            ? parseGrokOAuthAuthorizationUrl(oauthOutputBuffer)
-                            : parseAntigravityOAuthAuthorizationUrl(oauthOutputBuffer);
-                      const userCode = codexDevice?.userCode ?? null;
-                      const nextAuthorizationUrl = authorizationUrl ?? publishedAuthorizationUrl;
-                      const nextUserCode = userCode ?? publishedUserCode;
-                      if (
-                        nextAuthorizationUrl === publishedAuthorizationUrl &&
-                        nextUserCode === publishedUserCode
-                      ) {
-                        return undefined;
-                      }
-                      publishedAuthorizationUrl = nextAuthorizationUrl;
-                      publishedUserCode = nextUserCode;
-                      return publishState(
-                        provider,
-                        state({
-                          status: "waiting_for_browser",
-                          message: command.waitingMessage,
-                          ...(nextAuthorizationUrl
-                            ? { authorizationUrl: nextAuthorizationUrl }
-                            : {}),
-                          ...(nextUserCode ? { userCode: nextUserCode } : {}),
-                        }),
-                      ).pipe(Effect.asVoid);
-                    },
-                  }
-                : undefined;
+            const providerOutputObserver: ConnectionOutputObserver = {
+              onOutputChunk: (chunk) => {
+                providerOutputBuffer =
+                  `${providerOutputBuffer}${Buffer.from(chunk).toString("utf8")}`.slice(
+                    -OAUTH_OUTPUT_BUFFER_MAX_CHARS,
+                  );
+                const codexDevice =
+                  provider === "codex" && method === "codex_device_code"
+                    ? parseCodexDeviceAuthorization(providerOutputBuffer)
+                    : null;
+                const authorizationUrl = codexDevice
+                  ? (codexDevice.authorizationUrl ?? null)
+                  : provider === "codex"
+                    ? parseCodexOAuthAuthorizationUrl(providerOutputBuffer)
+                    : provider === "grok"
+                      ? parseGrokOAuthAuthorizationUrl(providerOutputBuffer)
+                      : provider === "antigravity"
+                        ? parseAntigravityOAuthAuthorizationUrl(providerOutputBuffer)
+                        : null;
+                const userCode = codexDevice?.userCode ?? null;
+                const nextAuthorizationUrl = authorizationUrl ?? publishedAuthorizationUrl;
+                const nextUserCode = userCode ?? publishedUserCode;
+                if (
+                  nextAuthorizationUrl === publishedAuthorizationUrl &&
+                  nextUserCode === publishedUserCode
+                ) {
+                  return undefined;
+                }
+                publishedAuthorizationUrl = nextAuthorizationUrl;
+                publishedUserCode = nextUserCode;
+                return publishState(
+                  provider,
+                  state({
+                    status: "waiting_for_browser",
+                    message: command.waitingMessage,
+                    ...(nextAuthorizationUrl ? { authorizationUrl: nextAuthorizationUrl } : {}),
+                    ...(nextUserCode ? { userCode: nextUserCode } : {}),
+                  }),
+                ).pipe(Effect.asVoid);
+              },
+            };
             const connectionProcess: Effect.Effect<number, unknown> =
               provider === "droid"
                 ? (options?.droidAuthenticationProbe ?? probeDroidAcpAuthentication)({
@@ -973,9 +981,9 @@ export function makeProviderConnectionLive(options?: {
                           message: "Verifying the connection.",
                         }),
                       ).pipe(Effect.asVoid),
-                      oauthOutputObserver,
+                      providerOutputObserver,
                     )
-                  : runCommand(command, oauthOutputObserver).pipe(Effect.scoped);
+                  : runCommand(command, providerOutputObserver).pipe(Effect.scoped);
             const operationTimeout = resolveProviderConnectionTimeout({
               provider,
               method,
@@ -1012,14 +1020,16 @@ export function makeProviderConnectionLive(options?: {
               return;
             }
             if (exitCodeResult.success.value !== 0) {
+              const detail = safeProviderConnectionFailureDetail(providerOutputBuffer);
+              const baseMessage =
+                provider === "grok"
+                  ? "Grok authorization was not completed. Close any old xAI page, update Grok if an update is available, then try again to start a fresh secure browser sign-in."
+                  : "Sign in was not completed. No credentials were saved by Scient.";
               yield* publishState(
                 provider,
                 state({
                   status: "failed",
-                  message:
-                    provider === "grok"
-                      ? "Grok authorization was not completed. Close any old xAI page, update Grok if an update is available, then try again to start a fresh secure browser sign-in."
-                      : "Sign in was not completed. No credentials were saved by Scient.",
+                  message: detail ? `${baseMessage} ${detail}` : baseMessage,
                   finished: true,
                 }),
               );
@@ -1038,11 +1048,14 @@ export function makeProviderConnectionLive(options?: {
               if (attempt < 9) yield* Effect.sleep(Duration.millis(500));
             }
             if (!verified?.available || verified.authStatus !== "authenticated") {
+              const detail = safeProviderConnectionFailureDetail(providerOutputBuffer);
               yield* publishState(
                 provider,
                 state({
                   status: "failed",
-                  message: "Sign in finished, but Scient could not verify the account.",
+                  message: detail
+                    ? `Sign in finished, but Scient could not verify the account. ${detail}`
+                    : "Sign in finished, but Scient could not verify the account.",
                   finished: true,
                 }),
               );
@@ -1270,11 +1283,99 @@ export function makeProviderConnectionLive(options?: {
         return { providers: yield* providerHealth.getStatuses };
       });
 
+      const signOut: ProviderConnectionShape["signOut"] = Effect.fn("ProviderConnection.signOut")(
+        function* (input) {
+          const { provider } = input;
+          const signOutArgs = providerSignOutCommandArgs(provider);
+          if (!signOutArgs) {
+            return yield* makeConnectionError({
+              provider,
+              reason: "unsupported_provider",
+              message: "Scient cannot safely sign out of this provider through its CLI.",
+            });
+          }
+          const method = expectedMethodForProvider(provider);
+          if (!method) {
+            return yield* makeConnectionError({
+              provider,
+              reason: "unsupported_provider",
+              message: "This provider does not support an in-app account connection.",
+            });
+          }
+          const reserved = yield* reserveProvider(provider);
+          if (!reserved) {
+            return yield* makeConnectionError({
+              provider,
+              reason: "already_running",
+              message: "Finish the current provider account operation before signing out.",
+            });
+          }
+
+          return yield* Effect.gen(function* () {
+            const before = yield* providerHealth.refresh;
+            const current = before.find((status) => status.provider === provider);
+            if (!current?.available || current.authStatus !== "authenticated") {
+              return { providers: before };
+            }
+
+            const command = yield* resolveCommand(provider, method, signOutArgs);
+            const result = yield* runCommandResult({ ...command, cwd: providerConnectionCwd }).pipe(
+              Effect.scoped,
+              Effect.timeoutOption(signOutTimeout),
+              Effect.result,
+            );
+            if (Result.isFailure(result)) {
+              return yield* makeConnectionError({
+                provider,
+                reason: "invalid_method",
+                message: "Scient could not start the provider's sign-out command.",
+              });
+            }
+            if (Option.isNone(result.success)) {
+              return yield* makeConnectionError({
+                provider,
+                reason: "invalid_method",
+                message: "Provider sign-out timed out. Your account may still be connected.",
+              });
+            }
+            if (result.success.value.code !== 0) {
+              return yield* makeConnectionError({
+                provider,
+                reason: "invalid_method",
+                message:
+                  "The provider CLI could not complete sign-out. Your account may still be connected.",
+              });
+            }
+
+            const refreshed = yield* providerHealth.refresh;
+            const after = refreshed.find((status) => status.provider === provider);
+            if (!after?.available || after.authStatus === "unknown") {
+              return yield* makeConnectionError({
+                provider,
+                reason: "invalid_method",
+                message:
+                  "The sign-out command finished, but Scient could not verify the account state. Check the provider CLI before continuing.",
+              });
+            }
+            if (after.authStatus === "authenticated") {
+              return yield* makeConnectionError({
+                provider,
+                reason: "invalid_method",
+                message:
+                  "The provider CLI still reports an authenticated account. Try signing out from the provider CLI directly.",
+              });
+            }
+            return { providers: refreshed };
+          }).pipe(Effect.ensuring(releaseProvider(provider, "")));
+        },
+      );
+
       return {
         start,
         cancel,
         submitAuthorizationCode,
         startAfterInstallation,
+        signOut,
       } satisfies ProviderConnectionShape;
     }),
   );

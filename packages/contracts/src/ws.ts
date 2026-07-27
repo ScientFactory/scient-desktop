@@ -99,6 +99,7 @@ import {
   ServerProviderConnectionCancelInput,
   ServerProviderConnectionStartInput,
   ServerProviderConnectionSubmitAuthorizationCodeInput,
+  ServerProviderSignOutInput,
   ServerProviderInstallCancelInput,
   ServerProviderInstallInput,
   ServerProviderInstallPlanInput,
@@ -224,6 +225,7 @@ export const WS_METHODS = {
   serverRefreshProviders: "server.refreshProviders",
   serverStartProviderConnection: "server.startProviderConnection",
   serverCancelProviderConnection: "server.cancelProviderConnection",
+  serverSignOutProvider: "server.signOutProvider",
   serverSubmitProviderConnectionAuthorizationCode:
     "server.submitProviderConnectionAuthorizationCode",
   serverPrepareProviderInstall: "server.prepareProviderInstall",
@@ -426,6 +428,7 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.serverRefreshProviders, Schema.Struct({})),
   tagRequestBody(WS_METHODS.serverStartProviderConnection, ServerProviderConnectionStartInput),
   tagRequestBody(WS_METHODS.serverCancelProviderConnection, ServerProviderConnectionCancelInput),
+  tagRequestBody(WS_METHODS.serverSignOutProvider, ServerProviderSignOutInput),
   tagRequestBody(
     WS_METHODS.serverSubmitProviderConnectionAuthorizationCode,
     ServerProviderConnectionSubmitAuthorizationCodeInput,

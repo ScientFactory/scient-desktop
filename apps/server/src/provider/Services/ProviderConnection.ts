@@ -13,6 +13,7 @@ import type {
   ServerProviderConnectionCancelInput,
   ServerProviderConnectionError,
   ServerProviderConnectionResult,
+  ServerProviderSignOutInput,
   ServerProviderConnectionStartInput,
   ServerProviderConnectionSubmitAuthorizationCodeInput,
 } from "@synara/contracts";
@@ -34,6 +35,9 @@ export interface ProviderConnectionShape {
     readonly method: ServerProviderConnectionMethod;
     readonly installationOperationId: string;
   }) => Effect.Effect<void>;
+  readonly signOut: (
+    input: ServerProviderSignOutInput,
+  ) => Effect.Effect<ServerProviderConnectionResult, ServerProviderConnectionError>;
 }
 
 export class ProviderConnection extends ServiceMap.Service<

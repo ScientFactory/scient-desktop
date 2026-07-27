@@ -192,6 +192,10 @@
       "types": "./src/providerVersions.ts",
       "import": "./src/providerVersions.ts"
     },
+    "./providerSignOut": {
+      "types": "./src/providerSignOut.ts",
+      "import": "./src/providerSignOut.ts"
+    },
     "./formatBytes": {
       "types": "./src/formatBytes.ts",
       "import": "./src/formatBytes.ts"

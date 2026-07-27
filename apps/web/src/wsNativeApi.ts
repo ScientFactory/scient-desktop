@@ -685,6 +685,7 @@ export function createWsNativeApi(): LiveHtmlNativeApi {
         transport.request(WS_METHODS.serverStartProviderConnection, input),
       cancelProviderConnection: (input) =>
         transport.request(WS_METHODS.serverCancelProviderConnection, input),
+      signOutProvider: (input) => transport.request(WS_METHODS.serverSignOutProvider, input),
       submitProviderConnectionAuthorizationCode: (input) =>
         transport.request(WS_METHODS.serverSubmitProviderConnectionAuthorizationCode, input),
       prepareProviderInstall: (input) =>
