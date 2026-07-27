@@ -13,6 +13,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 
 import { ArrowUpIcon, GitHubIcon } from "~/lib/icons";
+import { isImeCompositionKeyEvent } from "~/lib/imeComposition";
 import { pullRequestCommentMutationOptions } from "~/lib/pullRequestReactQuery";
 import { PR_BODY_TEXT_CLASS_NAME } from "./pullRequestText";
 import { cn } from "~/lib/utils";
@@ -78,7 +79,11 @@ export function PullRequestCommentComposer({ detail }: { detail: PullRequestDeta
           }}
           onKeyDown={(event) => {
             // Enter during IME composition confirms the composition, not the comment.
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !isImeCompositionKeyEvent(event.nativeEvent)
+            ) {
               event.preventDefault();
               void submit();
             }

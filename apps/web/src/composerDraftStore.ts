@@ -473,6 +473,7 @@ const PersistedDraftThreadState = Schema.Struct({
     Schema.withDecodingDefault(() => "default"),
   ),
   isTemporary: Schema.optionalKey(Schema.Boolean),
+  recoveryReason: Schema.optionalKey(Schema.Literal("worktree-cleanup-refused")),
   promotedTo: Schema.optionalKey(ThreadId),
 });
 type PersistedDraftThreadState = typeof PersistedDraftThreadState.Type;
@@ -525,6 +526,7 @@ export interface DraftThreadState {
   envMode: DraftThreadEnvMode;
   workspaceOrigin: DraftThreadWorkspaceOrigin;
   isTemporary?: boolean;
+  recoveryReason?: "worktree-cleanup-refused";
   promotedTo?: ThreadId;
 }
 
@@ -539,6 +541,7 @@ interface DraftThreadMutationOptions {
   interactionMode?: ProviderInteractionMode;
   entryPoint?: ThreadPrimarySurface;
   isTemporary?: boolean;
+  recoveryReason?: "worktree-cleanup-refused";
 }
 
 type DraftThreadCreatedAtMode = "accept-empty" | "preserve-existing-on-empty";
@@ -583,8 +586,21 @@ export interface ComposerDraftStoreState {
       interactionMode?: ProviderInteractionMode;
       entryPoint?: ThreadPrimarySurface;
       isTemporary?: boolean;
+      recoveryReason?: "worktree-cleanup-refused";
     },
   ) => void;
+  upsertWorktreeRecoveryDraft: (
+    preferredThreadId: ThreadId,
+    options: {
+      projectId: ProjectId;
+      createdAt?: string;
+      branch: string;
+      worktreePath: string;
+      runtimeMode?: RuntimeMode;
+      interactionMode?: ProviderInteractionMode;
+      entryPoint?: ThreadPrimarySurface;
+    },
+  ) => ThreadId;
   setDraftThreadContext: (
     threadId: ThreadId,
     options: DraftThreadMutationOptions & { projectId?: ProjectId },
@@ -602,6 +618,14 @@ export interface ComposerDraftStoreState {
   clearProjectDraftThreads: (projectId: ProjectId) => void;
   clearProjectDraftThreadById: (projectId: ProjectId, threadId: ThreadId) => void;
   markDraftThreadPromoting: (threadId: ThreadId, promotedTo?: ThreadId) => void;
+  rollbackDraftThreadPromotion: (
+    threadId: ThreadId,
+    expectedPromotedTo: ThreadId,
+    workspace?: {
+      branch: string;
+      worktreePath: string;
+    },
+  ) => boolean;
   finalizePromotedDraftThread: (threadId: ThreadId) => void;
   clearDraftThread: (threadId: ThreadId) => void;
   setStickyModelSelection: (modelSelection: ModelSelection | null | undefined) => void;
@@ -810,6 +834,7 @@ function buildDraftThreadState(input: {
         ? false
         : existingThread?.isTemporary === true;
   const nextPromotedTo = existingThread?.promotedTo;
+  const nextRecoveryReason = options?.recoveryReason ?? existingThread?.recoveryReason;
   const hasWorkspaceMutation =
     options?.branch !== undefined ||
     options?.worktreePath !== undefined ||
@@ -839,6 +864,7 @@ function buildDraftThreadState(input: {
       options?.workspaceOrigin ??
       (hasWorkspaceMutation ? "intentional" : (existingThread?.workspaceOrigin ?? "default")),
     ...(nextIsTemporary ? { isTemporary: true } : {}),
+    ...(nextRecoveryReason ? { recoveryReason: nextRecoveryReason } : {}),
     ...(nextPromotedTo ? { promotedTo: nextPromotedTo } : {}),
   };
 }
@@ -863,6 +889,7 @@ function draftThreadStatesEqual(
     left.envMode === right.envMode &&
     left.workspaceOrigin === right.workspaceOrigin &&
     (left.isTemporary === true) === (right.isTemporary === true) &&
+    left.recoveryReason === right.recoveryReason &&
     left.promotedTo === right.promotedTo
   );
 }
@@ -2560,6 +2587,10 @@ function normalizePersistedDraftThreads(
       }
       const normalizedWorktreePath = typeof worktreePath === "string" ? worktreePath : null;
       const isTemporary = candidateDraftThread.isTemporary === true ? true : undefined;
+      const recoveryReason =
+        candidateDraftThread.recoveryReason === "worktree-cleanup-refused"
+          ? "worktree-cleanup-refused"
+          : undefined;
       const promotedTo =
         typeof candidateDraftThread.promotedTo === "string" &&
         candidateDraftThread.promotedTo.length > 0
@@ -2592,6 +2623,7 @@ function normalizePersistedDraftThreads(
         workspaceOrigin:
           candidateDraftThread.workspaceOrigin === "intentional" ? "intentional" : "default",
         ...(isTemporary ? { isTemporary: true } : {}),
+        ...(recoveryReason ? { recoveryReason } : {}),
         ...(promotedTo ? { promotedTo } : {}),
       };
     }
@@ -3701,6 +3733,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             envMode: options.envMode ?? (worktreePath ? "worktree" : "local"),
             workspaceOrigin: options.workspaceOrigin ?? "default",
             ...(options.isTemporary ? { isTemporary: true } : {}),
+            ...(options.recoveryReason ? { recoveryReason: options.recoveryReason } : {}),
           };
           return {
             draftThreadsByThreadId: {
@@ -3709,6 +3742,49 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             },
           };
         });
+      },
+      upsertWorktreeRecoveryDraft: (preferredThreadId, options) => {
+        let ownerThreadId = preferredThreadId;
+        set((state) => {
+          const matchingRecovery = Object.entries(state.draftThreadsByThreadId).find(
+            ([, draft]) =>
+              draft.recoveryReason === "worktree-cleanup-refused" &&
+              draft.promotedTo === undefined &&
+              draft.projectId === options.projectId &&
+              draft.branch === options.branch &&
+              draft.worktreePath === options.worktreePath,
+          );
+          ownerThreadId = (matchingRecovery?.[0] as ThreadId | undefined) ?? preferredThreadId;
+          const existingThread = state.draftThreadsByThreadId[ownerThreadId];
+          const nextDraftThread = buildDraftThreadState({
+            projectId: options.projectId,
+            existingThread,
+            options: {
+              branch: options.branch,
+              worktreePath: options.worktreePath,
+              envMode: "worktree",
+              workspaceOrigin: "intentional",
+              recoveryReason: "worktree-cleanup-refused",
+              ...(options.createdAt !== undefined ? { createdAt: options.createdAt } : {}),
+              ...(options.runtimeMode !== undefined ? { runtimeMode: options.runtimeMode } : {}),
+              ...(options.interactionMode !== undefined
+                ? { interactionMode: options.interactionMode }
+                : {}),
+              ...(options.entryPoint !== undefined ? { entryPoint: options.entryPoint } : {}),
+            },
+            createdAtMode: "preserve-existing-on-empty",
+          });
+          if (draftThreadStatesEqual(existingThread, nextDraftThread)) {
+            return state;
+          }
+          return {
+            draftThreadsByThreadId: {
+              ...state.draftThreadsByThreadId,
+              [ownerThreadId]: nextDraftThread,
+            },
+          };
+        });
+        return ownerThreadId;
       },
       setDraftThreadContext: (threadId, options) => {
         if (threadId.length === 0) {
@@ -3732,6 +3808,23 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           if (draftThreadStatesEqual(existing, nextDraftThread)) {
             return state;
           }
+          if (existing.recoveryReason === "worktree-cleanup-refused") {
+            return {
+              draftThreadsByThreadId: {
+                ...state.draftThreadsByThreadId,
+                [threadId]: {
+                  ...nextDraftThread,
+                  projectId: existing.projectId,
+                  entryPoint: existing.entryPoint,
+                  branch: existing.branch,
+                  worktreePath: existing.worktreePath,
+                  envMode: existing.envMode,
+                  workspaceOrigin: existing.workspaceOrigin,
+                  recoveryReason: existing.recoveryReason,
+                },
+              },
+            };
+          }
           const nextProjectDraftThreadIdByProjectId: Record<string, ThreadId> = {
             ...removeProjectDraftMappingsForThread(state.projectDraftThreadIdByProjectId, threadId),
             [projectDraftThreadMappingKey(nextProjectId, nextDraftThread.entryPoint)]: threadId,
@@ -3752,6 +3845,9 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         set((state) => {
           const existing = state.draftThreadsByThreadId[threadId];
           if (!existing) {
+            return state;
+          }
+          if (existing.recoveryReason === "worktree-cleanup-refused") {
             return state;
           }
           const nextDraftThread = buildDraftThreadState({
@@ -3839,12 +3935,22 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         }
         set((state) => {
           const nextProjectDraftThreadIdByProjectId: Record<string, ThreadId> = {};
-          const removedThreadIds = new Set<ThreadId>();
+          // Not every project-owned draft occupies the canonical project slot. Kanban and staged
+          // navigation drafts are deliberately mapping-less, so derive the destructive set from
+          // both metadata and mappings before removing any slot.
+          const removedThreadIds = new Set<ThreadId>(
+            Object.entries(state.draftThreadsByThreadId)
+              .filter(([, draftThread]) => draftThread.projectId === projectId)
+              .map(([threadId]) => threadId as ThreadId),
+          );
           for (const [mappingKey, threadId] of Object.entries(
             state.projectDraftThreadIdByProjectId,
           )) {
             if (projectIdFromDraftThreadMappingKey(mappingKey) === projectId) {
               removedThreadIds.add(threadId);
+              continue;
+            }
+            if (removedThreadIds.has(threadId)) {
               continue;
             }
             nextProjectDraftThreadIdByProjectId[mappingKey] = threadId;
@@ -3923,6 +4029,35 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             },
           };
         });
+      },
+      rollbackDraftThreadPromotion: (threadId, expectedPromotedTo, workspace) => {
+        if (threadId.length === 0 || expectedPromotedTo.length === 0) {
+          return false;
+        }
+        let rolledBack = false;
+        set((state) => {
+          const existing = state.draftThreadsByThreadId[threadId];
+          if (!existing || existing.promotedTo !== expectedPromotedTo) {
+            return state;
+          }
+          const { promotedTo: _promotedTo, ...unpromoted } = existing;
+          rolledBack = true;
+          return {
+            draftThreadsByThreadId: {
+              ...state.draftThreadsByThreadId,
+              [threadId]: workspace
+                ? {
+                    ...unpromoted,
+                    envMode: "worktree",
+                    workspaceOrigin: "intentional",
+                    branch: workspace.branch,
+                    worktreePath: workspace.worktreePath,
+                  }
+                : unpromoted,
+            },
+          };
+        });
+        return rolledBack;
       },
       finalizePromotedDraftThread: (threadId) => {
         const draftThread = get().draftThreadsByThreadId[threadId];
