@@ -15,9 +15,38 @@ import { WorkspacePaths } from "../Services/WorkspacePaths";
 import { resolveRealPathWithinRoot } from "../realPathContainment";
 
 const DEFAULT_READ_FILE_MAX_BYTES = 1_000_000;
+// Cap how many competing paths an ambiguity error spells out so the message
+// stays readable when a common basename matches many files.
+const AMBIGUOUS_REFERENCE_MAX_LISTED = 5;
 
 function isBinaryLike(bytes: Uint8Array): boolean {
   return bytes.includes(0);
+}
+
+// Honest, actionable detail for a bare/partial reference that matches several
+// tracked files. Replaces the misleading "no such file" the read used to throw
+// when the direct path is missing but multiple index entries share the name.
+function formatAmbiguousReferenceDetail(reference: string, matches: readonly string[]): string {
+  const listed = matches.slice(0, AMBIGUOUS_REFERENCE_MAX_LISTED);
+  const remaining = matches.length - listed.length;
+  const tail = remaining > 0 ? `, and ${remaining} more` : "";
+  return (
+    `"${reference}" matches ${matches.length} files in this workspace ` +
+    `(${listed.join(", ")}${tail}). ` +
+    "Reference it by a fuller path so exactly one file matches."
+  );
+}
+
+// Honest detail for a reference we could not resolve conclusively because the
+// workspace was too large to scan fully. We refuse to guess a unique match (it
+// might be the wrong file) and refuse to claim the file is missing (it might
+// exist beyond the scan bound), so we ask for a fuller path instead.
+function formatIndeterminateReferenceDetail(reference: string): string {
+  return (
+    `Couldn't conclusively resolve "${reference}": this workspace is too large ` +
+    "to scan fully for a unique match. Reference it by a fuller path (including " +
+    "its directory) so it resolves directly."
+  );
 }
 
 function isFileNotFoundError(cause: unknown): boolean {
@@ -126,7 +155,7 @@ export const makeWorkspaceFileSystem = Effect.gen(function* () {
         // unique match in the tracked workspace index so the in-app viewer can
         // still open it; ambiguous names stay unresolved and surface the error.
         if (resolution.status === "missing") {
-          const fallbackRelativePath = yield* workspaceEntries
+          const suffixResolution = yield* workspaceEntries
             .resolveFileBySuffix({ cwd: input.cwd, relativePath: input.relativePath })
             .pipe(
               Effect.mapError(
@@ -140,13 +169,35 @@ export const makeWorkspaceFileSystem = Effect.gen(function* () {
                   }),
               ),
             );
-          if (fallbackRelativePath !== null) {
+          // Multiple tracked files share this bare/partial name: report them
+          // honestly instead of letting the read fall through to a misleading
+          // "no such file" error for a file that plainly exists.
+          if (suffixResolution.status === "ambiguous") {
+            return yield* new WorkspaceFileSystemError({
+              cwd: input.cwd,
+              relativePath: input.relativePath,
+              operation: "workspaceFileSystem.resolve",
+              detail: formatAmbiguousReferenceDetail(input.relativePath, suffixResolution.matches),
+            });
+          }
+          // The workspace was too large to scan conclusively: fail closed with
+          // an honest message rather than open a possibly-wrong file or falsely
+          // report the file as missing.
+          if (suffixResolution.status === "indeterminate") {
+            return yield* new WorkspaceFileSystemError({
+              cwd: input.cwd,
+              relativePath: input.relativePath,
+              operation: "workspaceFileSystem.resolve",
+              detail: formatIndeterminateReferenceDetail(input.relativePath),
+            });
+          }
+          if (suffixResolution.status === "resolved") {
             target = yield* workspacePaths.resolveRelativePathWithinRoot({
               workspaceRoot: input.cwd,
-              relativePath: fallbackRelativePath,
+              relativePath: suffixResolution.relativePath,
             });
             resolution = yield* resolveInRootRealPath(
-              fallbackRelativePath,
+              suffixResolution.relativePath,
               target.absolutePath,
               input.cwd,
             );
