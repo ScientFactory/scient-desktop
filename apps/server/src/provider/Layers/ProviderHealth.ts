@@ -44,6 +44,7 @@ import {
   Scope,
   Stream,
 } from "effect";
+import * as Semaphore from "effect/Semaphore";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -103,6 +104,7 @@ import {
   parseGenericCliVersion,
   resolveProviderMaintenanceCapabilitiesEffect,
   type PackageManagedProviderMaintenanceDefinition,
+  type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance";
 import { collectUint8StreamText } from "../../stream/collectUint8StreamText";
 import { ensurePrivateDirectorySync } from "../../privatePathPermissions";
@@ -2105,6 +2107,10 @@ export function projectProviderStatusesForSettings(
 export function makeProviderHealthLive(options?: {
   readonly providerUpdateTimeoutMs?: number;
   readonly resolveProviderRuntime?: ProviderRuntimeManagerShape["resolve"];
+  readonly providerRuntime?: Pick<
+    ProviderRuntimeManagerShape,
+    "resolve" | "getSnapshot" | "getRevision" | "streamChanges"
+  >;
 }) {
   const providerUpdateTimeoutMs = options?.providerUpdateTimeoutMs ?? PROVIDER_UPDATE_TIMEOUT_MS;
   return Layer.effect(
@@ -2118,7 +2124,7 @@ export function makeProviderHealthLive(options?: {
       const providerHealthProbeCwd = resolveProviderProbeCwd(serverConfig.stateDir);
       yield* Effect.sync(() => ensurePrivateDirectorySync(providerHealthProbeCwd));
       const changesPubSub = yield* Effect.acquireRelease(
-        PubSub.unbounded<ReadonlyArray<ServerProviderStatus>>(),
+        PubSub.unbounded<ReadonlyArray<ServerProviderStatus>>({ replay: 1 }),
         PubSub.shutdown,
       );
       const refreshScope = yield* Scope.make("sequential");
@@ -2147,22 +2153,39 @@ export function makeProviderHealthLive(options?: {
       ).pipe(
         Effect.map((statuses) =>
           orderProviderStatuses(
-            statuses.filter(
-              (status): status is ServerProviderStatus =>
-                status !== undefined && !isDisabledProviderStatusOverlay(status),
-            ),
+            statuses
+              .filter(
+                (status): status is ServerProviderStatus =>
+                  status !== undefined && !isDisabledProviderStatusOverlay(status),
+              )
+              .map(suppressProviderVersionAdvisory),
           ),
         ),
       );
 
-      const statusesRef = yield* Ref.make<ProviderStatuses>(cachedStatuses);
+      const advisoryStateRef = yield* Ref.make<{
+        readonly statuses: ProviderStatuses;
+        readonly targetKeys: ReadonlyMap<ProviderKind, string>;
+      }>({ statuses: cachedStatuses, targetKeys: new Map() });
       const updateStatesRef = yield* Ref.make<ReadonlyMap<ProviderKind, ServerProviderUpdateState>>(
         new Map(),
       );
       const connectionStatesRef = yield* Ref.make<
         ReadonlyMap<ProviderKind, ServerProviderConnectionState>
       >(new Map());
+      // Identifies the single `updateProvider` call that currently owns a
+      // provider's update lifecycle. Only the owner may write that provider's
+      // update state, so a duplicate request that loses the acquire race (or any
+      // other non-owner) can never clobber an in-flight update's status, and an
+      // interrupted owner can clean up exactly its own state (findings #3/#4).
+      const updateOwnersRef = yield* Ref.make<ReadonlyMap<ProviderKind, symbol>>(new Map());
       const refreshFiberRef = yield* Ref.make<Fiber.Fiber<ProviderStatuses, never> | null>(null);
+      // Serializes the full refresh pipeline (probe → enrich → commit) so two
+      // refreshes can never interleave their writes to `advisoryStateRef` and
+      // publish a torn advisory snapshot. `updateProvider` refreshes directly
+      // (bypassing `ensureRefreshFiber`), so the mutual exclusion has to live at
+      // the `refreshNow` boundary rather than in the fiber dedupe.
+      const refreshSemaphore = yield* Semaphore.make(1);
       const commandCoordinator = yield* makeProviderMaintenanceCommandCoordinator({
         makeAlreadyRunningError: (provider) =>
           new ServerProviderUpdateError({
@@ -2198,68 +2221,171 @@ export function makeProviderHealthLive(options?: {
         provider: ProviderKind,
         configuredExecutable?: string,
       ): Effect.Effect<string | undefined> => {
-        if (!options?.resolveProviderRuntime) return Effect.succeed(configuredExecutable);
-        return options
-          .resolveProviderRuntime(provider, configuredExecutable)
-          .pipe(Effect.map((runtime) => runtime.executable ?? configuredExecutable));
+        const resolveRuntime = options?.providerRuntime?.resolve ?? options?.resolveProviderRuntime;
+        if (!resolveRuntime) return Effect.succeed(configuredExecutable);
+        return resolveRuntime(provider, configuredExecutable).pipe(
+          Effect.map((runtime) => runtime.executable ?? configuredExecutable),
+        );
       };
 
-      const getProviderMaintenanceCapabilities = Effect.fn("getProviderMaintenanceCapabilities")(
-        function* (provider: ProviderKind) {
-          const settings = yield* serverSettings.getSettings;
-          if (!isProviderEnabledForSettings(provider, settings)) {
-            return makeProviderMaintenanceCapabilities({
+      // An immutable point-in-time view of server settings (with the revision
+      // counters that drive advisory authority). Captured once per refresh and
+      // threaded through probing, enrichment, and target-key derivation so a
+      // concurrent settings write can never tear a single refresh across two
+      // different settings versions.
+      type ProviderSettingsSnapshot = {
+        readonly settings: ServerSettings;
+        readonly revision: number;
+        readonly providerRevisions: ReadonlyMap<ProviderKind, number>;
+      };
+
+      const getProviderMaintenanceContext = Effect.fn("getProviderMaintenanceContext")(function* (
+        provider: ProviderKind,
+        suppliedSettingsSnapshot?: ProviderSettingsSnapshot,
+      ) {
+        const settingsSnapshot = suppliedSettingsSnapshot ?? (yield* serverSettings.getSnapshot);
+        const { settings, providerRevisions } = settingsSnapshot;
+        const providerSettingsRevision = providerRevisions.get(provider) ?? 0;
+        const configuredExecutable = getProviderBinaryPath(provider, settings);
+        const resolveRuntime = options?.providerRuntime?.resolve ?? options?.resolveProviderRuntime;
+        const runtime = resolveRuntime
+          ? yield* resolveRuntime(provider, configuredExecutable)
+          : null;
+        const runtimeSnapshot = options?.providerRuntime
+          ? yield* options.providerRuntime.getSnapshot(provider)
+          : null;
+        // Runtime identity is tracked by a monotonic revision counter, which only
+        // the `providerRuntime` service exposes. The legacy `resolveProviderRuntime`
+        // option (tests only) has no counter and pins this to 0 — acceptable there
+        // because those callers do not mutate the runtime target mid-session.
+        // Production always wires `providerRuntime` (see main.ts), so real runtime
+        // target changes always advance this counter.
+        const runtimeRevision = options?.providerRuntime
+          ? yield* options.providerRuntime.getRevision(provider)
+          : 0;
+        // Stable identity of the update target. Runtime identity is carried by
+        // `runtimeRevision` (a monotonic counter that advances only on real
+        // target mutations), never by the raw snapshot — so transient install
+        // progress cannot churn this key and invalidate a live advisory.
+        const authorityKey = JSON.stringify({
+          provider,
+          providerSettingsRevision,
+          configuredExecutable: nonEmptyTrimmed(configuredExecutable) ?? null,
+          runtimeRevision,
+        });
+        const withTargetKey = (capabilities: ProviderMaintenanceCapabilities) => ({
+          capabilities,
+          authorityKey,
+          runtime,
+          runtimeSnapshot,
+          targetKey: JSON.stringify({
+            authorityKey,
+            runtime: runtime
+              ? {
+                  source: runtime.source,
+                  executable: runtime.executable,
+                  managedVersion: runtime.managedVersion,
+                }
+              : null,
+            runtimeSnapshot: runtimeSnapshot
+              ? {
+                  managedExecutablePath: runtimeSnapshot.managedExecutablePath,
+                  managedVersion: runtimeSnapshot.managedVersion,
+                  bundled: runtimeSnapshot.bundled,
+                  installationState: runtimeSnapshot.installationState,
+                }
+              : null,
+            latestVersionSource: capabilities.latestVersionSource,
+            update: capabilities.update,
+          }),
+        });
+        if (!isProviderEnabledForSettings(provider, settings)) {
+          return withTargetKey(
+            makeProviderMaintenanceCapabilities({
               provider,
               packageName: null,
               latestVersionSource: null,
               updateExecutable: null,
               updateArgs: [],
               updateLockKey: null,
-            });
-          }
-          if (provider === "cursor") {
-            const command = buildCursorAgentCommand(getProviderBinaryPath(provider, settings), [
-              "update",
-            ]);
-            return makeProviderMaintenanceCapabilities({
+            }),
+          );
+        }
+        if (provider === "cursor") {
+          const command = buildCursorAgentCommand(configuredExecutable, ["update"]);
+          return withTargetKey(
+            makeProviderMaintenanceCapabilities({
               provider,
               packageName: null,
               updateExecutable: command.command,
               updateArgs: command.args,
               updateLockKey: "cursor-agent",
-            });
-          }
-          const definition = PACKAGE_MANAGED_PROVIDER_UPDATES[provider];
-          if (!definition) {
-            return makeProviderMaintenanceCapabilities({
+            }),
+          );
+        }
+        const definition = PACKAGE_MANAGED_PROVIDER_UPDATES[provider];
+        if (!definition) {
+          return withTargetKey(
+            makeProviderMaintenanceCapabilities({
               provider,
               packageName: null,
               updateExecutable: null,
               updateArgs: [],
               updateLockKey: null,
-            });
-          }
-          const configuredExecutable = getProviderBinaryPath(provider, settings);
-          const runtime = options?.resolveProviderRuntime
-            ? yield* options.resolveProviderRuntime(provider, configuredExecutable)
-            : null;
-          if (runtime && !runtime.executable) {
-            return makeProviderMaintenanceCapabilities({
+            }),
+          );
+        }
+        if (runtime && !runtime.executable) {
+          return withTargetKey(
+            makeProviderMaintenanceCapabilities({
               provider,
               packageName: definition.npmPackageName,
               latestVersionSource: definition.latestVersionSource ?? null,
               updateExecutable: null,
               updateArgs: [],
               updateLockKey: null,
-            });
-          }
-          return yield* resolveProviderMaintenanceCapabilitiesEffect(definition, {
-            binaryPath: runtime?.executable ?? configuredExecutable,
-            env: process.env,
-            platform: process.platform,
-          }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
-        },
-      );
+            }),
+          );
+        }
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(definition, {
+          binaryPath: runtime?.executable ?? configuredExecutable,
+          env: process.env,
+          platform: process.platform,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
+        return withTargetKey(capabilities);
+      });
+
+      // Cheap re-derivation of the authority key for a provider. Must produce a
+      // byte-identical string to the `authorityKey` built inside
+      // `getProviderMaintenanceContext`, so keep the two object shapes in sync.
+      // Reads only cheap revision counters — no runtime snapshot resolution — so
+      // it is safe on hot/streaming paths.
+      const getProviderAuthorityKey = Effect.fn("getProviderAuthorityKey")(function* (
+        provider: ProviderKind,
+        suppliedSettingsSnapshot?: ProviderSettingsSnapshot,
+      ) {
+        const { settings, providerRevisions } =
+          suppliedSettingsSnapshot ?? (yield* serverSettings.getSnapshot);
+        const configuredExecutable = getProviderBinaryPath(provider, settings);
+        const runtimeRevision = options?.providerRuntime
+          ? yield* options.providerRuntime.getRevision(provider)
+          : 0;
+        return JSON.stringify({
+          provider,
+          providerSettingsRevision: providerRevisions.get(provider) ?? 0,
+          configuredExecutable: nonEmptyTrimmed(configuredExecutable) ?? null,
+          runtimeRevision,
+        });
+      });
+
+      const targetAuthorityKey = (targetKey: string): string | null => {
+        try {
+          const parsed = JSON.parse(targetKey) as { authorityKey?: unknown };
+          return typeof parsed.authorityKey === "string" ? parsed.authorityKey : null;
+        } catch {
+          return null;
+        }
+      };
 
       const applyVolatileProviderState = Effect.fn("applyVolatileProviderState")(function* (
         status: ServerProviderStatus,
@@ -2282,21 +2408,36 @@ export function makeProviderHealthLive(options?: {
 
       const projectStatusesForCurrentSettings = Effect.fn(
         "projectProviderStatusesForCurrentSettings",
-      )(function* (statuses: ReadonlyArray<ServerProviderStatus>) {
-        return yield* serverSettings.getSettings.pipe(
+      )(function* (
+        statuses: ReadonlyArray<ServerProviderStatus>,
+        targetKeys: ReadonlyMap<ProviderKind, string> = new Map(),
+      ) {
+        const projected = yield* serverSettings.getSettings.pipe(
           Effect.map((settings) => projectProviderStatusesForSettings(statuses, settings)),
           Effect.catch(() => Effect.succeed(statuses)),
-          Effect.flatMap((projected) =>
-            Effect.forEach(projected, applyVolatileProviderState, {
-              concurrency: "unbounded",
-            }),
-          ),
+        );
+        return yield* Effect.forEach(
+          projected,
+          (status) => {
+            const confirmedTarget = targetKeys.get(status.provider);
+            if (!confirmedTarget) return applyVolatileProviderState(status);
+            return getProviderAuthorityKey(status.provider).pipe(
+              Effect.map((authorityKey) =>
+                authorityKey === targetAuthorityKey(confirmedTarget)
+                  ? status
+                  : suppressProviderVersionAdvisory(status),
+              ),
+              Effect.catch(() => Effect.succeed(suppressProviderVersionAdvisory(status))),
+              Effect.flatMap(applyVolatileProviderState),
+            );
+          },
+          { concurrency: "unbounded" },
         );
       });
 
       const publishProjectedStatuses = Effect.fn("publishProjectedProviderStatuses")(function* () {
-        const rawStatuses = yield* Ref.get(statusesRef);
-        const projectedStatuses = yield* projectStatusesForCurrentSettings(rawStatuses);
+        const { statuses, targetKeys } = yield* Ref.get(advisoryStateRef);
+        const projectedStatuses = yield* projectStatusesForCurrentSettings(statuses, targetKeys);
         yield* PubSub.publish(changesPubSub, projectedStatuses);
         return projectedStatuses;
       });
@@ -2318,6 +2459,40 @@ export function makeProviderHealthLive(options?: {
         return yield* publishProjectedStatuses();
       });
 
+      // ---- Update ownership (findings #3/#4) --------------------------------
+      // A single `updateProvider` call claims ownership of a provider's update
+      // lifecycle after it wins the command coordinator's target acquisition.
+      // The command coordinator already guarantees at most one live update per
+      // provider, so ownership is uncontended once claimed; these helpers make
+      // every state transition (including failure and interruption cleanup)
+      // conditional on still holding ownership.
+      const claimUpdateOwnership = (provider: ProviderKind, owner: symbol) =>
+        Ref.update(updateOwnersRef, (previous) => new Map(previous).set(provider, owner));
+
+      const releaseUpdateOwnership = (provider: ProviderKind, owner: symbol) =>
+        Ref.update(updateOwnersRef, (previous) => {
+          if (previous.get(provider) !== owner) return previous;
+          const next = new Map(previous);
+          next.delete(provider);
+          return next;
+        });
+
+      // Writes the provider's update state only if `owner` still owns it. A
+      // non-owner call leaves the in-flight state untouched and simply returns
+      // the current projection, so it can never overwrite the active update.
+      const setProviderUpdateStateIfOwner = Effect.fn("setProviderUpdateStateIfOwner")(function* (
+        provider: ProviderKind,
+        owner: symbol,
+        state: ServerProviderUpdateState | null,
+      ) {
+        const owned = (yield* Ref.get(updateOwnersRef)).get(provider) === owner;
+        if (!owned) {
+          const { statuses, targetKeys } = yield* Ref.get(advisoryStateRef);
+          return yield* projectStatusesForCurrentSettings(statuses, targetKeys);
+        }
+        return yield* setProviderUpdateState(provider, state);
+      });
+
       const setConnectionState: ProviderHealthShape["setConnectionState"] = Effect.fn(
         "ProviderHealth.setConnectionState",
       )(function* (provider, state) {
@@ -2335,46 +2510,68 @@ export function makeProviderHealthLive(options?: {
 
       const enrichStatuses = Effect.fn("enrichProviderStatuses")(function* (
         statuses: ReadonlyArray<ServerProviderStatus>,
+        settingsSnapshot: ProviderSettingsSnapshot,
       ) {
-        const settings = yield* serverSettings.ready.pipe(
-          Effect.flatMap(() => serverSettings.getSettings),
-          Effect.catch(() => Effect.succeed(null)),
-        );
-        if (settings?.enableProviderUpdateChecks === false) {
-          return yield* Effect.forEach(
+        // Enrichment (and the confirmed-target key derived from it) must observe
+        // exactly the settings the statuses were probed against, so we read from
+        // the caller-supplied snapshot rather than re-reading live settings.
+        const settings = settingsSnapshot.settings;
+        if (settings.enableProviderUpdateChecks === false) {
+          const suppressed = yield* Effect.forEach(
             statuses.map(suppressProviderVersionAdvisory),
             applyVolatileProviderState,
             { concurrency: "unbounded" },
           );
+          return { statuses: suppressed, targetKeys: new Map<ProviderKind, string>() };
         }
 
-        const enriched = yield* Effect.forEach(
+        const enrichedWithTargets = yield* Effect.forEach(
           statuses,
           (status) =>
-            getProviderMaintenanceCapabilities(status.provider).pipe(
-              Effect.flatMap((capabilities) =>
-                enrichProviderStatusWithVersionAdvisory(status, capabilities),
+            getProviderMaintenanceContext(status.provider, settingsSnapshot).pipe(
+              Effect.flatMap(({ capabilities, targetKey }) =>
+                enrichProviderStatusWithVersionAdvisory(status, capabilities).pipe(
+                  Effect.map((enrichedStatus) => ({ enrichedStatus, targetKey })),
+                ),
               ),
               Effect.catch(() =>
                 Effect.succeed({
-                  ...status,
-                  versionAdvisory: {
-                    status: "unknown" as const,
-                    currentVersion: status.version ?? null,
-                    latestVersion: null,
-                    updateCommand: null,
-                    canUpdate: false,
-                    checkedAt: status.checkedAt,
-                    message: null,
+                  targetKey: null,
+                  enrichedStatus: {
+                    ...status,
+                    versionAdvisory: {
+                      status: "unknown" as const,
+                      currentVersion: status.version ?? null,
+                      latestVersion: null,
+                      updateCommand: null,
+                      canUpdate: false,
+                      checkedAt: status.checkedAt,
+                      message: null,
+                    },
                   },
                 }),
               ),
             ),
           { concurrency: "unbounded" },
         );
-        return yield* Effect.forEach(enriched, applyVolatileProviderState, {
+        const targetKeys = new Map(
+          enrichedWithTargets.flatMap(({ enrichedStatus, targetKey }) => {
+            const advisory = enrichedStatus.versionAdvisory;
+            return targetKey &&
+              advisory &&
+              advisory.status !== "unknown" &&
+              advisory.currentVersion !== null &&
+              advisory.latestVersion !== null &&
+              advisory.checkedAt !== null
+              ? [[enrichedStatus.provider, targetKey] as const]
+              : [];
+          }),
+        );
+        const enriched = enrichedWithTargets.map(({ enrichedStatus }) => enrichedStatus);
+        const enrichedStatuses = yield* Effect.forEach(enriched, applyVolatileProviderState, {
           concurrency: "unbounded",
         });
+        return { statuses: enrichedStatuses, targetKeys };
       });
 
       const checkProviderWhenEnabled = <R>(
@@ -2386,123 +2583,114 @@ export function makeProviderHealthLive(options?: {
           ? check.pipe(Effect.map(Option.some))
           : Effect.succeed(Option.none());
 
-      const loadProviderStatuses = serverSettings.ready
-        .pipe(
-          Effect.flatMap(() => serverSettings.getSettings),
-          Effect.flatMap((settings) =>
-            Effect.all(
-              [
-                checkProviderWhenEnabled(
-                  settings,
-                  CODEX_PROVIDER,
-                  resolveProviderBinaryPath(
-                    CODEX_PROVIDER,
-                    settings.providers.codex.binaryPath,
-                  ).pipe(
-                    Effect.flatMap((binaryPath) =>
-                      makeCheckCodexProviderStatus(binaryPath, settings.providers.codex.homePath),
-                    ),
+      const loadProviderStatuses = (settingsSnapshot: ProviderSettingsSnapshot) =>
+        Effect.suspend(() => {
+          const settings = settingsSnapshot.settings;
+          return Effect.all(
+            [
+              checkProviderWhenEnabled(
+                settings,
+                CODEX_PROVIDER,
+                resolveProviderBinaryPath(CODEX_PROVIDER, settings.providers.codex.binaryPath).pipe(
+                  Effect.flatMap((binaryPath) =>
+                    makeCheckCodexProviderStatus(binaryPath, settings.providers.codex.homePath),
                   ),
                 ),
-                checkProviderWhenEnabled(
-                  settings,
+              ),
+              checkProviderWhenEnabled(
+                settings,
+                CLAUDE_AGENT_PROVIDER,
+                resolveProviderBinaryPath(
                   CLAUDE_AGENT_PROVIDER,
-                  resolveProviderBinaryPath(
-                    CLAUDE_AGENT_PROVIDER,
-                    settings.providers.claudeAgent.binaryPath,
-                  ).pipe(
-                    Effect.flatMap((binaryPath) => {
-                      const executable = nonEmptyTrimmed(binaryPath) ?? "claude";
-                      const env = buildClaudeProcessEnv({
-                        env: process.env,
-                        homeDir: serverConfig.homeDir,
-                      });
-                      return makeCheckClaudeProviderStatus(
-                        Effect.promise(() =>
-                          probeClaudeAccountCapabilities({
-                            executable,
-                            env,
-                            cwd: providerHealthProbeCwd,
-                          }),
-                        ),
-                        executable,
-                        serverConfig.homeDir,
-                      );
-                    }),
-                  ),
+                  settings.providers.claudeAgent.binaryPath,
+                ).pipe(
+                  Effect.flatMap((binaryPath) => {
+                    const executable = nonEmptyTrimmed(binaryPath) ?? "claude";
+                    const env = buildClaudeProcessEnv({
+                      env: process.env,
+                      homeDir: serverConfig.homeDir,
+                    });
+                    return makeCheckClaudeProviderStatus(
+                      Effect.promise(() =>
+                        probeClaudeAccountCapabilities({
+                          executable,
+                          env,
+                          cwd: providerHealthProbeCwd,
+                        }),
+                      ),
+                      executable,
+                      serverConfig.homeDir,
+                    );
+                  }),
                 ),
-                checkProviderWhenEnabled(
-                  settings,
-                  CURSOR_PROVIDER,
-                  makeCheckCursorProviderStatus(settings.providers.cursor.binaryPath),
-                ),
-                checkProviderWhenEnabled(
-                  settings,
+              ),
+              checkProviderWhenEnabled(
+                settings,
+                CURSOR_PROVIDER,
+                makeCheckCursorProviderStatus(settings.providers.cursor.binaryPath),
+              ),
+              checkProviderWhenEnabled(
+                settings,
+                ANTIGRAVITY_PROVIDER,
+                resolveProviderBinaryPath(
                   ANTIGRAVITY_PROVIDER,
-                  resolveProviderBinaryPath(
-                    ANTIGRAVITY_PROVIDER,
-                    settings.providers.antigravity.binaryPath,
-                  ).pipe(
-                    Effect.flatMap((binaryPath) =>
-                      checkAntigravityProviderStatus(binaryPath, serverConfig.stateDir),
-                    ),
+                  settings.providers.antigravity.binaryPath,
+                ).pipe(
+                  Effect.flatMap((binaryPath) =>
+                    checkAntigravityProviderStatus(binaryPath, serverConfig.stateDir),
                   ),
                 ),
-                checkProviderWhenEnabled(
-                  settings,
-                  GROK_PROVIDER,
-                  resolveProviderBinaryPath(GROK_PROVIDER, settings.providers.grok.binaryPath).pipe(
-                    Effect.flatMap(makeCheckGrokProviderStatus),
+              ),
+              checkProviderWhenEnabled(
+                settings,
+                GROK_PROVIDER,
+                resolveProviderBinaryPath(GROK_PROVIDER, settings.providers.grok.binaryPath).pipe(
+                  Effect.flatMap(makeCheckGrokProviderStatus),
+                ),
+              ),
+              checkProviderWhenEnabled(
+                settings,
+                DROID_PROVIDER,
+                resolveProviderBinaryPath(DROID_PROVIDER, settings.providers.droid.binaryPath).pipe(
+                  Effect.flatMap((binaryPath) =>
+                    makeCheckDroidProviderStatus(binaryPath, providerHealthProbeCwd),
                   ),
                 ),
-                checkProviderWhenEnabled(
-                  settings,
-                  DROID_PROVIDER,
-                  resolveProviderBinaryPath(
-                    DROID_PROVIDER,
-                    settings.providers.droid.binaryPath,
-                  ).pipe(
-                    Effect.flatMap((binaryPath) =>
-                      makeCheckDroidProviderStatus(binaryPath, providerHealthProbeCwd),
-                    ),
-                  ),
+              ),
+              checkProviderWhenEnabled(
+                settings,
+                KILO_PROVIDER,
+                makeCheckKiloProviderStatus(settings.providers.kilo.binaryPath),
+              ),
+              checkProviderWhenEnabled(
+                settings,
+                OPENCODE_PROVIDER,
+                makeCheckOpenCodeProviderStatus(settings.providers.opencode.binaryPath),
+              ),
+              checkProviderWhenEnabled(
+                settings,
+                PI_PROVIDER,
+                checkPiProviderStatus(
+                  settings.providers.pi.agentDir,
+                  settings.providers.pi.binaryPath,
                 ),
-                checkProviderWhenEnabled(
-                  settings,
-                  KILO_PROVIDER,
-                  makeCheckKiloProviderStatus(settings.providers.kilo.binaryPath),
-                ),
-                checkProviderWhenEnabled(
-                  settings,
-                  OPENCODE_PROVIDER,
-                  makeCheckOpenCodeProviderStatus(settings.providers.opencode.binaryPath),
-                ),
-                checkProviderWhenEnabled(
-                  settings,
-                  PI_PROVIDER,
-                  checkPiProviderStatus(
-                    settings.providers.pi.agentDir,
-                    settings.providers.pi.binaryPath,
-                  ),
-                ),
-              ],
-              {
-                concurrency: "unbounded",
-              },
+              ),
+            ],
+            {
+              concurrency: "unbounded",
+            },
+          ).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.map((statuses) =>
+              orderProviderStatuses(
+                statuses.flatMap((status) => (Option.isSome(status) ? [status.value] : [])),
+              ),
             ),
-          ),
-        )
-        .pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, path),
-          Effect.map((statuses) =>
-            orderProviderStatuses(
-              statuses.flatMap((status) => (Option.isSome(status) ? [status.value] : [])),
-            ),
-          ),
-          Effect.flatMap(enrichStatuses),
-        );
+            Effect.flatMap((ordered) => enrichStatuses(ordered, settingsSnapshot)),
+          );
+        });
 
       const persistStatuses = (statuses: ProviderStatuses) =>
         Effect.forEach(
@@ -2526,27 +2714,74 @@ export function makeProviderHealthLive(options?: {
           { concurrency: "unbounded", discard: true },
         );
 
-      const refreshNow = Effect.gen(function* () {
-        const loadedStatuses = yield* loadProviderStatuses;
-        const previousRawStatuses = yield* Ref.get(statusesRef);
-        const previousStatuses = yield* projectStatusesForCurrentSettings(previousRawStatuses);
-        const stabilizedLoadedStatuses = stabilizeProviderStatusesAgainstTransientTimeouts(
-          previousRawStatuses,
-          loadedStatuses,
+      // Re-checks each freshly-derived confirmed target against the *current*
+      // provider authority. A target whose embedded authority no longer matches
+      // was certified against settings/runtime that have since changed, so it is
+      // dropped rather than published. Monotonic revisions guarantee a changed
+      // authority never reads back as equal (no ABA), and this runs at the
+      // commit boundary so a write racing the probe can only ever cause a drop —
+      // never certification of a stale target.
+      const revalidateConfirmedTargets = Effect.fn("revalidateConfirmedProviderTargets")(function* (
+        targetKeys: ReadonlyMap<ProviderKind, string>,
+      ) {
+        if (targetKeys.size === 0) return targetKeys;
+        const validated = new Map<ProviderKind, string>();
+        yield* Effect.forEach(
+          [...targetKeys],
+          ([provider, targetKey]) =>
+            getProviderAuthorityKey(provider).pipe(
+              Effect.map((authorityKey) => {
+                if (authorityKey === targetAuthorityKey(targetKey)) {
+                  validated.set(provider, targetKey);
+                }
+              }),
+              Effect.catch(() => Effect.void),
+            ),
+          { concurrency: "unbounded", discard: true },
         );
-        const nextRawStatuses = mergeProviderStatusUpdates(
-          previousRawStatuses,
-          stabilizedLoadedStatuses,
-        );
-        const nextStatuses = yield* projectStatusesForCurrentSettings(nextRawStatuses);
-        yield* Ref.set(statusesRef, nextRawStatuses);
-        if (providerStatusesEqual(previousStatuses, nextStatuses)) {
-          return nextStatuses;
-        }
-        yield* persistStatuses(nextRawStatuses);
-        yield* PubSub.publish(changesPubSub, nextStatuses);
-        return nextStatuses;
+        return validated;
       });
+
+      const refreshNow = refreshSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          // Capture one immutable settings snapshot for the whole refresh so the
+          // probe, enrichment, and confirmed-target key are all derived from the
+          // same settings version — closing the torn-read window where a probe
+          // result could be certified against settings it was never probed with.
+          yield* serverSettings.ready;
+          const settingsSnapshot = yield* serverSettings.getSnapshot;
+          const loaded = yield* loadProviderStatuses(settingsSnapshot);
+          const validatedTargetKeys = yield* revalidateConfirmedTargets(loaded.targetKeys);
+          const previousState = yield* Ref.get(advisoryStateRef);
+          const previousRawStatuses = previousState.statuses;
+          const previousStatuses = yield* projectStatusesForCurrentSettings(
+            previousRawStatuses,
+            previousState.targetKeys,
+          );
+          const stabilizedLoadedStatuses = stabilizeProviderStatusesAgainstTransientTimeouts(
+            previousRawStatuses,
+            loaded.statuses,
+          );
+          const nextRawStatuses = mergeProviderStatusUpdates(
+            previousRawStatuses,
+            stabilizedLoadedStatuses,
+          );
+          const nextStatuses = yield* projectStatusesForCurrentSettings(
+            nextRawStatuses,
+            validatedTargetKeys,
+          );
+          yield* Ref.set(advisoryStateRef, {
+            statuses: nextRawStatuses,
+            targetKeys: validatedTargetKeys,
+          });
+          if (providerStatusesEqual(previousStatuses, nextStatuses)) {
+            return nextStatuses;
+          }
+          yield* persistStatuses(nextRawStatuses);
+          yield* PubSub.publish(changesPubSub, nextStatuses);
+          return nextStatuses;
+        }),
+      );
 
       // Keep a single refresh in flight so repeated config reads do not spawn
       // overlapping CLI probes while the cache already gives us a usable answer.
@@ -2563,18 +2798,84 @@ export function makeProviderHealthLive(options?: {
             }
             // Keep the current in-memory snapshot as the source of truth if a
             // foreground refresh fails after startup.
-            const rawStatuses = yield* Ref.get(statusesRef);
-            return yield* projectStatusesForCurrentSettings(rawStatuses);
+            const { statuses, targetKeys } = yield* Ref.get(advisoryStateRef);
+            return yield* projectStatusesForCurrentSettings(statuses, targetKeys);
           }).pipe(Effect.ensuring(Ref.set(refreshFiberRef, null)), Effect.forkIn(refreshScope));
           yield* Ref.set(refreshFiberRef, refreshFiber);
           return refreshFiber;
         },
       );
 
+      const invalidateProviderAdvisories = Effect.fn("invalidateProviderAdvisories")(function* (
+        providers: ReadonlySet<ProviderKind>,
+      ) {
+        if (providers.size === 0) return;
+        yield* Ref.update(advisoryStateRef, (previous) => {
+          const next = new Map(previous.targetKeys);
+          for (const provider of providers) next.delete(provider);
+          return {
+            statuses: previous.statuses.map((status) =>
+              providers.has(status.provider) ? suppressProviderVersionAdvisory(status) : status,
+            ),
+            targetKeys: next,
+          };
+        });
+        yield* publishProjectedStatuses();
+      });
+
+      const reconcileProviderAdvisoryTargets = Effect.fn("reconcileProviderAdvisoryTargets")(
+        function* (providers: ReadonlySet<ProviderKind>) {
+          const { targetKeys: confirmedTargets } = yield* Ref.get(advisoryStateRef);
+          const invalidated = new Set<ProviderKind>();
+          // Compare against the cheap, stable authority key rather than the full
+          // maintenance target key. The authority key excludes transient install
+          // progress, so runtime progress events (which arrive on this stream)
+          // never spuriously invalidate a live advisory; it also avoids the
+          // filesystem capability scan on every streamed change. A real target
+          // mutation advances the settings/runtime revision folded into the
+          // authority key, which is what we want to detect here.
+          yield* Effect.forEach(
+            providers,
+            (provider) => {
+              const confirmedTarget = confirmedTargets.get(provider);
+              if (!confirmedTarget) return Effect.void;
+              return getProviderAuthorityKey(provider).pipe(
+                Effect.matchEffect({
+                  onFailure: () => Effect.sync(() => invalidated.add(provider)),
+                  onSuccess: (authorityKey) =>
+                    authorityKey === targetAuthorityKey(confirmedTarget)
+                      ? Effect.void
+                      : Effect.sync(() => invalidated.add(provider)),
+                }),
+              );
+            },
+            { concurrency: "unbounded", discard: true },
+          );
+          if (invalidated.size > 0) {
+            yield* invalidateProviderAdvisories(invalidated);
+          } else {
+            yield* publishProjectedStatuses();
+          }
+        },
+      );
+
       yield* serverSettings.streamChanges.pipe(
-        Stream.runForEach(() => publishProjectedStatuses().pipe(Effect.asVoid)),
+        Stream.runForEach((settings) =>
+          settings.enableProviderUpdateChecks === false
+            ? invalidateProviderAdvisories(new Set(PROVIDERS))
+            : reconcileProviderAdvisoryTargets(new Set(PROVIDERS)),
+        ),
         Effect.forkIn(refreshScope),
       );
+
+      if (options?.providerRuntime) {
+        yield* options.providerRuntime.streamChanges.pipe(
+          Stream.runForEach((snapshots) =>
+            reconcileProviderAdvisoryTargets(new Set(snapshots.keys())),
+          ),
+          Effect.forkIn(refreshScope),
+        );
+      }
 
       const refresh: Effect.Effect<ProviderStatuses> = ensureRefreshFiber.pipe(
         Effect.flatMap(Fiber.join),
@@ -2596,6 +2897,72 @@ export function makeProviderHealthLive(options?: {
         output: input.output ?? null,
       });
 
+      const requireConfirmedProviderUpdate = Effect.fn("requireConfirmedProviderUpdate")(function* (
+        provider: ProviderKind,
+      ) {
+        const toUpdateError = (reason: unknown) =>
+          new ServerProviderUpdateError({
+            provider,
+            reason: reason instanceof Error ? reason.message : String(reason),
+          });
+        const { settings } = yield* serverSettings.getSnapshot.pipe(Effect.mapError(toUpdateError));
+        if (!isProviderEnabledForSettings(provider, settings)) {
+          return yield* new ServerProviderUpdateError({
+            provider,
+            reason: "Provider is disabled in Scient settings.",
+          });
+        }
+        if (!settings.enableProviderUpdateChecks) {
+          return yield* new ServerProviderUpdateError({
+            provider,
+            reason:
+              "Provider update availability is not confirmed while automatic update checks are disabled.",
+          });
+        }
+        const resolveRuntime = options?.providerRuntime?.resolve ?? options?.resolveProviderRuntime;
+        if (resolveRuntime) {
+          const runtime = yield* resolveRuntime(
+            provider,
+            getProviderBinaryPath(provider, settings),
+          ).pipe(Effect.mapError(toUpdateError));
+          const blockReason = providerExternalUpdateBlockReason(provider, runtime);
+          if (blockReason) {
+            return yield* new ServerProviderUpdateError({ provider, reason: blockReason });
+          }
+        }
+        const context = yield* getProviderMaintenanceContext(provider).pipe(
+          Effect.mapError(toUpdateError),
+        );
+        const { statuses, targetKeys } = yield* Ref.get(advisoryStateRef);
+        const status = statuses.find((candidate) => candidate.provider === provider);
+        const advisory = status?.versionAdvisory;
+        if (
+          !status?.available ||
+          advisory?.status !== "behind_latest" ||
+          advisory.currentVersion === null ||
+          advisory.latestVersion === null ||
+          advisory.checkedAt === null ||
+          targetKeys.get(provider) !== context.targetKey
+        ) {
+          return yield* new ServerProviderUpdateError({
+            provider,
+            reason:
+              "Provider update availability is not confirmed for the current installation. Refresh provider status and try again.",
+          });
+        }
+        if (!context.capabilities.update) {
+          return yield* new ServerProviderUpdateError({
+            provider,
+            reason: "This provider does not support one-click updates.",
+          });
+        }
+        return context as typeof context & {
+          readonly capabilities: typeof context.capabilities & {
+            readonly update: NonNullable<typeof context.capabilities.update>;
+          };
+        };
+      });
+
       const describeUpdateCommandError = (error: unknown): string => {
         if (error instanceof Error && error.message.trim().length > 0) {
           if (error.message.includes("initial is not a function")) {
@@ -2609,7 +2976,15 @@ export function makeProviderHealthLive(options?: {
         return "Update command could not be started.";
       };
 
-      const runUpdateCommand = Effect.fn("runProviderUpdateCommand")(function* (input: {
+      // Split the update command into a "spawn" step (this function) and an
+      // "await" step (`awaitUpdateResult`) so both run OUTSIDE the settings write
+      // lock, under one scope and one timeout budget. The lock (in
+      // `updateProvider`) covers only re-validating and capturing the target
+      // (finding #2); the child is never spawned while holding it, so a slow or
+      // hung spawn cannot pin the (global) write lock. The child's kill finalizer
+      // is registered against the enclosing scope, so it fires when the update
+      // completes, times out, or is interrupted.
+      const spawnUpdateChild = Effect.fn("spawnProviderUpdateChild")(function* (input: {
         readonly command: string;
         readonly args: ReadonlyArray<string>;
         readonly pathPrepend?: string;
@@ -2631,6 +3006,14 @@ export function makeProviderHealthLive(options?: {
           }),
         );
         yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
+        return child;
+      });
+
+      type UpdateChild = Effect.Success<ReturnType<typeof spawnUpdateChild>>;
+
+      const awaitUpdateResult = Effect.fn("awaitProviderUpdateResult")(function* (
+        child: UpdateChild,
+      ) {
         const [stdout, stderr, exitCode] = yield* Effect.all(
           [
             collectUint8StreamText({
@@ -2658,140 +3041,222 @@ export function makeProviderHealthLive(options?: {
         "ProviderHealth.updateProvider",
       )(function* (input) {
         const provider = input.provider;
+        // Unique token identifying this specific update request. Ownership is
+        // claimed only once this call wins the command coordinator's target
+        // acquisition (inside `onQueued`/`run`), so a duplicate request that
+        // loses the race never claims it and can never mutate this update's
+        // state through the failure/cleanup handlers below.
+        const owner = Symbol("providerUpdate");
         const toUpdateError = (reason: unknown) =>
           new ServerProviderUpdateError({
             provider,
             reason: reason instanceof Error ? reason.message : String(reason),
           });
-        const settings = yield* serverSettings.getSettings.pipe(Effect.mapError(toUpdateError));
-        if (!isProviderEnabledForSettings(provider, settings)) {
-          return yield* new ServerProviderUpdateError({
-            provider,
-            reason: "Provider is disabled in Scient settings.",
-          });
-        }
-        if (options?.resolveProviderRuntime) {
-          const runtime = yield* options
-            .resolveProviderRuntime(provider, getProviderBinaryPath(provider, settings))
-            .pipe(Effect.mapError(toUpdateError));
-          const blockReason = providerExternalUpdateBlockReason(provider, runtime);
-          if (blockReason) {
-            return yield* new ServerProviderUpdateError({
-              provider,
-              reason: blockReason,
-            });
-          }
-        }
-        const capabilities = yield* getProviderMaintenanceCapabilities(provider).pipe(
-          Effect.mapError(toUpdateError),
-        );
-        const update = capabilities.update;
-        if (!update) {
-          return yield* new ServerProviderUpdateError({
-            provider,
-            reason: "This provider does not support one-click updates.",
-          });
-        }
+        const initialContext = yield* requireConfirmedProviderUpdate(provider);
+        const initialUpdate = initialContext.capabilities.update;
 
         const run = Effect.gen(function* () {
-          const startedAt = yield* nowIso;
-          yield* setProviderUpdateState(
-            provider,
-            makeUpdateState({
-              status: "running",
-              startedAt,
-              finishedAt: null,
-              message: "Updating provider.",
-            }),
-          );
+          yield* claimUpdateOwnership(provider, owner);
 
-          const commandResult = yield* runUpdateCommand({
-            command: update.executable,
-            args: update.args,
-            ...(update.pathPrepend ? { pathPrepend: update.pathPrepend } : {}),
-          }).pipe(
-            Effect.scoped,
-            Effect.timeoutOption(Duration.millis(providerUpdateTimeoutMs)),
-            Effect.result,
-          );
-          const finishedAt = yield* nowIso;
-          if (Result.isFailure(commandResult)) {
-            const providers = yield* setProviderUpdateState(
-              provider,
-              makeUpdateState({
-                status: "failed",
-                startedAt,
-                finishedAt,
-                message: describeUpdateCommandError(commandResult.failure),
+          return yield* Effect.gen(function* () {
+            // Critical section (finding #2): re-validate the confirmed target and
+            // capture the updater command into immutable locals while holding the
+            // settings write lock, so a concurrent settings write cannot change
+            // what gets spawned between validation and capture. Only in-memory
+            // work runs under the lock — the child is spawned OUTSIDE it (below).
+            // Holding the (global) settings write lock across the spawn/await
+            // risked pinning it indefinitely on a hung `spawner.spawn` (whose
+            // acquire is uninterruptible, so a timeout could not preempt it),
+            // blocking every settings write with no recovery. Capturing the
+            // command under the lock preserves the security property — the spawn
+            // can only ever target an install that was re-validated under the
+            // lock — without that liveness hazard.
+            const validated = yield* serverSettings.withSettingsWriteLock(
+              Effect.gen(function* () {
+                const currentContext = yield* requireConfirmedProviderUpdate(provider);
+                if (currentContext.targetKey !== initialContext.targetKey) {
+                  return yield* new ServerProviderUpdateError({
+                    provider,
+                    reason:
+                      "Provider installation changed before the update started. Refresh provider status and try again.",
+                  });
+                }
+                const update = currentContext.capabilities.update;
+                const startedAt = yield* nowIso;
+                yield* setProviderUpdateStateIfOwner(
+                  provider,
+                  owner,
+                  makeUpdateState({
+                    status: "running",
+                    startedAt,
+                    finishedAt: null,
+                    message: "Updating provider.",
+                  }),
+                );
+                return { update, startedAt };
               }),
             );
-            return { providers };
-          }
-          const result = commandResult.success;
-          const output = Option.isSome(result)
-            ? [result.value.stderr, result.value.stdout].filter(Boolean).join("\n\n").trim() || null
-            : null;
-          const failed = Option.isNone(result) || result.value.exitCode !== 0;
-          if (failed) {
-            const message = Option.isNone(result)
-              ? `Update timed out after ${formatProviderUpdateTimeout(providerUpdateTimeoutMs)}. The provider process was stopped.`
-              : `Update command exited with code ${result.value.exitCode}.`;
-            const providers = yield* setProviderUpdateState(
+
+            const { update, startedAt } = validated;
+            // Spawn + await run unlocked, under a single timeout budget. A hung
+            // spawn or await can only stall this one update request (the original
+            // pre-hardening behavior) — never the settings write lock, which was
+            // released above. The child's kill finalizer (registered inside
+            // `spawnUpdateChild` against the scope below) fires on completion,
+            // timeout, or interruption. Both a spawn failure and an await failure
+            // are reported through the update state (soft failure) rather than
+            // raising out of updateProvider; a timeout surfaces as `None`.
+            const commandResult = yield* spawnUpdateChild({
+              command: update.executable,
+              args: update.args,
+              ...(update.pathPrepend ? { pathPrepend: update.pathPrepend } : {}),
+            }).pipe(
+              Effect.flatMap(awaitUpdateResult),
+              Effect.scoped,
+              Effect.timeoutOption(Duration.millis(providerUpdateTimeoutMs)),
+              Effect.result,
+            );
+            const finishedAt = yield* nowIso;
+            if (Result.isFailure(commandResult)) {
+              const providers = yield* setProviderUpdateStateIfOwner(
+                provider,
+                owner,
+                makeUpdateState({
+                  status: "failed",
+                  startedAt,
+                  finishedAt,
+                  message: describeUpdateCommandError(commandResult.failure),
+                }),
+              );
+              return { providers };
+            }
+            const result = commandResult.success;
+            const output = Option.isSome(result)
+              ? [result.value.stderr, result.value.stdout].filter(Boolean).join("\n\n").trim() ||
+                null
+              : null;
+            const failed = Option.isNone(result) || result.value.exitCode !== 0;
+            if (failed) {
+              const message = Option.isNone(result)
+                ? `Update timed out after ${formatProviderUpdateTimeout(providerUpdateTimeoutMs)}. The provider process was stopped.`
+                : `Update command exited with code ${result.value.exitCode}.`;
+              const providers = yield* setProviderUpdateStateIfOwner(
+                provider,
+                owner,
+                makeUpdateState({
+                  status: "failed",
+                  startedAt,
+                  finishedAt,
+                  message,
+                  output: output ? output.slice(0, UPDATE_OUTPUT_MAX_BYTES) : null,
+                }),
+              );
+              return { providers };
+            }
+
+            const providers = yield* refreshNow.pipe(Effect.mapError(toUpdateError));
+            const refreshed = providers.find((status) => status.provider === provider);
+            const refreshedAdvisory = refreshed?.versionAdvisory;
+            const stillOutdated = refreshedAdvisory?.status === "behind_latest";
+            const stillOutdatedVersions =
+              refreshedAdvisory?.currentVersion && refreshedAdvisory.latestVersion
+                ? ` (installed ${refreshedAdvisory.currentVersion}, latest ${refreshedAdvisory.latestVersion})`
+                : "";
+            const finalProviders = yield* setProviderUpdateStateIfOwner(
               provider,
+              owner,
               makeUpdateState({
-                status: "failed",
+                status: stillOutdated ? "unchanged" : "succeeded",
                 startedAt,
                 finishedAt,
-                message,
+                message: stillOutdated
+                  ? `Update command completed, but Scient still detects an outdated provider version${stillOutdatedVersions}.`
+                  : "Provider updated.",
                 output: output ? output.slice(0, UPDATE_OUTPUT_MAX_BYTES) : null,
               }),
             );
-            return { providers };
-          }
+            return { providers: finalProviders };
+          });
+        });
 
-          const providers = yield* refreshNow.pipe(Effect.mapError(toUpdateError));
-          const refreshed = providers.find((status) => status.provider === provider);
-          const refreshedAdvisory = refreshed?.versionAdvisory;
-          const stillOutdated = refreshedAdvisory?.status === "behind_latest";
-          const stillOutdatedVersions =
-            refreshedAdvisory?.currentVersion && refreshedAdvisory.latestVersion
-              ? ` (installed ${refreshedAdvisory.currentVersion}, latest ${refreshedAdvisory.latestVersion})`
-              : "";
-          const finalProviders = yield* setProviderUpdateState(
-            provider,
-            makeUpdateState({
-              status: stillOutdated ? "unchanged" : "succeeded",
-              startedAt,
-              finishedAt,
-              message: stillOutdated
-                ? `Update command completed, but Scient still detects an outdated provider version${stillOutdatedVersions}.`
-                : "Provider updated.",
-              output: output ? output.slice(0, UPDATE_OUTPUT_MAX_BYTES) : null,
-            }),
+        return yield* commandCoordinator
+          .withCommandLock({
+            targetKey: provider,
+            lockKey: initialUpdate.lockKey,
+            onQueued: claimUpdateOwnership(provider, owner).pipe(
+              Effect.flatMap(() =>
+                setProviderUpdateStateIfOwner(
+                  provider,
+                  owner,
+                  makeUpdateState({
+                    status: "queued",
+                    startedAt: null,
+                    finishedAt: null,
+                    message: "Waiting for another provider update to finish.",
+                  }),
+                ),
+              ),
+              Effect.asVoid,
+            ),
+            run,
+          })
+          .pipe(
+            // Record a terminal failure only if we still own the update. A
+            // duplicate request that failed the acquire race is not the owner,
+            // so this is a no-op for it and the in-flight update is preserved
+            // (finding #3).
+            Effect.tapError((error) =>
+              nowIso.pipe(
+                Effect.flatMap((finishedAt) =>
+                  setProviderUpdateStateIfOwner(
+                    provider,
+                    owner,
+                    makeUpdateState({
+                      status: "failed",
+                      startedAt: null,
+                      finishedAt,
+                      message: error.reason,
+                    }),
+                  ),
+                ),
+                Effect.asVoid,
+              ),
+            ),
+            // If the owning fiber is interrupted (client disconnect, shutdown)
+            // land a terminal state instead of stranding the update on
+            // "running"/"queued" (finding #4). The spawned child is already
+            // killed by the update command's scoped finalizer.
+            Effect.onInterrupt(() =>
+              nowIso.pipe(
+                Effect.flatMap((finishedAt) =>
+                  setProviderUpdateStateIfOwner(
+                    provider,
+                    owner,
+                    makeUpdateState({
+                      status: "failed",
+                      startedAt: null,
+                      finishedAt,
+                      message: "Provider update was interrupted before it completed.",
+                    }),
+                  ),
+                ),
+                Effect.asVoid,
+              ),
+            ),
+            // Always relinquish ownership last (no-op unless we hold it), so the
+            // next update for this provider can claim it cleanly.
+            Effect.ensuring(releaseUpdateOwnership(provider, owner)),
           );
-          return { providers: finalProviders };
-        });
-
-        return yield* commandCoordinator.withCommandLock({
-          targetKey: provider,
-          lockKey: update.lockKey,
-          onQueued: setProviderUpdateState(
-            provider,
-            makeUpdateState({
-              status: "queued",
-              startedAt: null,
-              finishedAt: null,
-              message: "Waiting for another provider update to finish.",
-            }),
-          ).pipe(Effect.asVoid),
-          run,
-        });
       });
 
       return {
         // Mirror upstream's behavior here: reads consume the latest stable
         // snapshot, while refreshes happen explicitly or from provider streams.
-        getStatuses: Ref.get(statusesRef).pipe(Effect.flatMap(projectStatusesForCurrentSettings)),
+        getStatuses: Ref.get(advisoryStateRef).pipe(
+          Effect.flatMap(({ statuses, targetKeys }) =>
+            projectStatusesForCurrentSettings(statuses, targetKeys),
+          ),
+        ),
         refresh,
         updateProvider,
         setConnectionState,
