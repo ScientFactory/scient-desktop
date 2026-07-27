@@ -80,6 +80,7 @@ import {
 } from "../test/effectRpcWebSocketMock";
 import { useTemporaryThreadStore } from "../temporaryThreadStore";
 import { useOptimisticUserMessageStore } from "../optimisticUserMessageStore";
+import { transientAlertManager } from "../notifications/transientAlert";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { resetRetainedThreadDetailSubscriptionsForTests } from "../threadDetailSubscriptionRetention";
 import { resetWsNativeApiForTest } from "../wsNativeApi";
@@ -7778,6 +7779,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
       expect(String(confirm.mock.calls[0]?.[0])).toContain("delete 2 threads");
+      expect(String(confirm.mock.calls[0]?.[0])).toContain("and 1 unsent draft");
 
       await vi.waitFor(
         () => {
@@ -7836,6 +7838,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       await clickProjectRemoveAction();
       await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+      expect(String(confirm.mock.calls[0]?.[0])).toContain("1 thread and 1 unsent draft");
       await vi.waitFor(() => expect(isProjectRemovalReserved(PROJECT_ID)).toBe(false));
 
       expect(dispatchedCommands.some((command) => command.type === "thread.delete")).toBe(false);
@@ -7847,6 +7850,93 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "do not discard me",
       );
     } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows cancellable progress while project removal waits for admitted work", async () => {
+    const admittedOperation = tryBeginProjectOperation(PROJECT_ID);
+    expect(admittedOperation).not.toBeNull();
+    const confirm = vi.fn<NativeApi["dialogs"]["confirm"]>(async () => true);
+    const addAlert = vi.spyOn(transientAlertManager, "add");
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-removal-wait-cancel" as MessageId,
+      targetText: "removal wait cancellation source",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...snapshot,
+        projects: snapshot.projects.map((project) =>
+          project.id === PROJECT_ID ? { ...project, title: "Removal Wait Project" } : project,
+        ),
+      },
+      configureNativeApi: (api) => ({
+        ...api,
+        dialogs: { ...api.dialogs, confirm },
+      }),
+    });
+
+    try {
+      await clickProjectRemoveAction("Removal Wait Project");
+      await expect
+        .element(page.getByText('Waiting to remove "Removal Wait Project"'))
+        .toBeInTheDocument();
+      expect(isProjectRemovalReserved(PROJECT_ID)).toBe(true);
+      expect(confirm).not.toHaveBeenCalled();
+
+      await expect
+        .element(page.getByRole("button", { name: 'Cancel removal of "Removal Wait Project"' }))
+        .toBeInTheDocument();
+      const waitingAlertCallIndex = addAlert.mock.calls.findIndex(
+        ([input]) => input.title === 'Waiting to remove "Removal Wait Project"',
+      );
+      const waitingAlert = addAlert.mock.calls[waitingAlertCallIndex]?.[0];
+      expect(waitingAlert?.actionProps?.children).toBe("Cancel removal");
+      // Multiple full-app mounts intentionally share the global toast manager in this file, so a
+      // raw DOM click can target a retained provider from an earlier test. Invoke the exact alert
+      // action captured for this removal after proving its uniquely named button is rendered.
+      waitingAlert?.actionProps?.onClick?.(new MouseEvent("click") as never);
+      await vi.waitFor(() => expect(isProjectRemovalReserved(PROJECT_ID)).toBe(false), {
+        timeout: 8_000,
+        interval: 16,
+      });
+      await expect
+        .element(page.getByText('Waiting to remove "Removal Wait Project"'))
+        .not.toBeInTheDocument();
+      expect(confirm).not.toHaveBeenCalled();
+      expect(useStore.getState().projects.some((project) => project.id === PROJECT_ID)).toBe(true);
+
+      const resumedOperation = tryBeginProjectOperation(PROJECT_ID);
+      expect(resumedOperation).not.toBeNull();
+      if (resumedOperation) finishProjectOperation(resumedOperation);
+
+      // Swipe dismissal closes through the toast manager rather than the visible action or X.
+      // Exercise that shared lifecycle directly: hiding the progress surface must also release
+      // the reservation so it cannot leave project sends and creators blocked indefinitely.
+      await clickProjectRemoveAction("Removal Wait Project");
+      await vi.waitFor(() => expect(addAlert).toHaveBeenCalledTimes(2));
+      await expect
+        .element(page.getByText('Waiting to remove "Removal Wait Project"'))
+        .toBeInTheDocument();
+      expect(isProjectRemovalReserved(PROJECT_ID)).toBe(true);
+      const managerDismissedAlertId = addAlert.mock.results[1]?.value;
+      expect(managerDismissedAlertId).toBeTypeOf("string");
+      transientAlertManager.close(managerDismissedAlertId);
+      await vi.waitFor(() => expect(isProjectRemovalReserved(PROJECT_ID)).toBe(false), {
+        timeout: 8_000,
+        interval: 16,
+      });
+      await expect
+        .element(page.getByText('Waiting to remove "Removal Wait Project"'))
+        .not.toBeInTheDocument();
+      expect(confirm).not.toHaveBeenCalled();
+      const operationAfterManagerDismissal = tryBeginProjectOperation(PROJECT_ID);
+      expect(operationAfterManagerDismissal).not.toBeNull();
+      if (operationAfterManagerDismissal) finishProjectOperation(operationAfterManagerDismissal);
+    } finally {
+      addAlert.mockRestore();
+      if (admittedOperation) finishProjectOperation(admittedOperation);
       await mounted.cleanup();
     }
   });

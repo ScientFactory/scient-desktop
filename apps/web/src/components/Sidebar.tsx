@@ -111,6 +111,7 @@ import {
 import { deleteProjectFromClient } from "../lib/projectDelete";
 import {
   finishProjectOperation,
+  hasActiveProjectOperations,
   releaseProjectRemoval,
   reserveProjectRemoval,
   tryBeginProjectOperation,
@@ -439,11 +440,17 @@ export function showSidebarTransientError(input: {
   title: string;
   description?: string | undefined;
 }): void {
-  transientAlertManager.add({
+  showSidebarTransientAlert({
     type: "error",
     title: input.title,
     ...(input.description ? { description: input.description } : {}),
   });
+}
+
+function showSidebarTransientAlert(
+  input: Parameters<typeof transientAlertManager.add>[0],
+): ReturnType<typeof transientAlertManager.add> {
+  return transientAlertManager.add(input);
 }
 
 export function createSidebarBulkThreadActivity(
@@ -4445,7 +4452,43 @@ export default function Sidebar() {
         // confirmation must describe the stable post-drain deletion set: confirming before the
         // drain could let a late-finishing creator add a thread that the user never consented to
         // delete.
-        if (!(await waitForProjectOperationsToDrain(removalReservation))) return;
+        let waitingAlertId: ReturnType<typeof transientAlertManager.add> | null = null;
+        let waitingFinished = false;
+        if (hasActiveProjectOperations(projectId)) {
+          const cancelWaitingRemoval = () => {
+            if (!waitingFinished) releaseProjectRemoval(removalReservation);
+          };
+          waitingAlertId = showSidebarTransientAlert({
+            id: `project-removal-wait:${projectId}`,
+            type: "warning",
+            title: `Waiting to remove "${project.name}"`,
+            description:
+              "Scient is waiting for an active send or project setup to finish. Cancel removal to keep working in this project.",
+            timeout: 0,
+            actionProps: {
+              children: "Cancel removal",
+              "aria-label": `Cancel removal of "${project.name}"`,
+              onClick: () => {
+                releaseProjectRemoval(removalReservation);
+                if (waitingAlertId !== null) transientAlertManager.close(waitingAlertId);
+              },
+            },
+            // Base UI invokes the top-level lifecycle callbacks for every close path, including
+            // the close button, swipe dismissal, manager close, and removal after animation.
+            // Keeping this outside `data` prevents a dismissed progress surface from stranding
+            // the project-removal reservation.
+            onClose: cancelWaitingRemoval,
+            onRemove: cancelWaitingRemoval,
+            data: {
+              allowCrossThreadVisibility: true,
+              showDescription: true,
+            },
+          });
+        }
+        const drained = await waitForProjectOperationsToDrain(removalReservation);
+        waitingFinished = true;
+        if (waitingAlertId !== null) transientAlertManager.close(waitingAlertId);
+        if (!drained) return;
         if (blockRemovalForRecoveries()) return;
 
         // Build the confirmation from the live post-drain thread set (`getThreadsFromState`) rather
@@ -4454,11 +4497,28 @@ export default function Sidebar() {
         const projectThreads = getThreadsFromState(useStore.getState()).filter(
           (thread) => thread.projectId === projectId,
         );
+        const durableThreadIds = new Set(projectThreads.map((thread) => thread.id));
+        const unsentProjectDraftCount = Object.entries(
+          useComposerDraftStore.getState().draftThreadsByThreadId,
+        ).filter(
+          ([threadId, draft]) =>
+            draft.projectId === projectId &&
+            draft.promotedTo === undefined &&
+            !durableThreadIds.has(threadId as ThreadId),
+        ).length;
+        const deletionScope = [
+          ...(projectThreads.length > 0
+            ? [`${projectThreads.length} ${pluralize(projectThreads.length, "thread")}`]
+            : []),
+          ...(unsentProjectDraftCount > 0
+            ? [`${unsentProjectDraftCount} unsent ${pluralize(unsentProjectDraftCount, "draft")}`]
+            : []),
+        ].join(" and ");
         const confirmed = await api.dialogs.confirm(
-          projectThreads.length > 0
+          deletionScope
             ? [
                 `Remove project "${project.name}"?`,
-                `This will delete ${projectThreads.length} ${pluralize(projectThreads.length, "thread")} in this folder and remove the project.`,
+                `This will permanently delete ${deletionScope} in this folder and remove the project.`,
               ].join("\n")
             : `Remove project "${project.name}"?`,
         );
