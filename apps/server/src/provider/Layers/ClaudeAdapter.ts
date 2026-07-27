@@ -3732,12 +3732,25 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           claudeExecutable,
         );
 
-        // Host-served agent gateway MCP injection (cross-thread coordination).
-        // The bearer token rides an HTTP `Authorization` header, never the
-        // process env, so exec subprocesses cannot inherit it. The token is
-        // revoked on session teardown (stopSessionInternal) and on failed
-        // installation (the `Effect.ensuring` cleanup below). Gated by the
-        // feature flag so the injection is absent unless the operator opts in.
+        // Host-served agent gateway MCP injection (cross-thread coordination),
+        // gated by the feature flag so nothing is injected unless the operator
+        // opts in.
+        //
+        // Token exposure (be precise): the token is passed via the SDK's
+        // `mcpServers` option as an HTTP `Authorization` header, so it avoids
+        // process-env inheritance. But the pinned SDK serializes that whole
+        // config — header and token included — into the `--mcp-config <json>`
+        // argv of the spawned `claude` process, so the token is NOT absent from
+        // process metadata (it is readable by same-UID tooling / crash reports
+        // via argv). This is a scoped, documented exposure; a safer off-argv
+        // (temp-file) delivery is tracked separately.
+        //
+        // The token is revoked on session teardown (stopSessionInternal), on a
+        // failed `createQuery` (the `Effect.tapError` below), and on a failed
+        // installation after createQuery (the `Effect.ensuring` cleanup below).
+        //
+        // Note: the Slice 1 read tools are NOT active-turn-gated; only the
+        // Slice 2 drive tools require an active turn.
         if (agentGatewayToken === undefined && serverConfig.agentGatewayEnabled) {
           const connection = agentGatewayCredentials.connectionForThread(threadId, PROVIDER);
           agentGatewayToken = connection.bearerToken;
@@ -3788,7 +3801,21 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
               detail: toMessage(cause, "Failed to start Claude runtime session."),
               cause,
             }),
-        });
+        }).pipe(
+          // If the SDK query fails to build, the installation gen below (and its
+          // `Effect.ensuring` revoke) is never entered, so revoke the token that
+          // was just minted here — otherwise a failed start leaks a live
+          // credential. Revoke is idempotent, so this never double-revokes.
+          Effect.tapError(() =>
+            Effect.suspend(() => {
+              if (agentGatewayToken === undefined) {
+                return Effect.void;
+              }
+              const revokedToken = agentGatewayToken;
+              return Effect.sync(() => agentGatewayCredentials.revokeSessionToken(revokedToken));
+            }),
+          ),
+        );
 
         let installationContext: ClaudeSessionContext | undefined;
         let installationComplete = false;

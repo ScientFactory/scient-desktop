@@ -200,7 +200,15 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
           Effect.mapError((error) => new ToolInputError(errorText(error))),
           Effect.flatMap(
             Option.match({
-              onNone: () => Effect.fail(new ToolInputError(`Thread "${threadId}" was not found.`)),
+              // Not-found must be byte-for-byte indistinguishable from the
+              // cross-project denial below: same code, same message, same JSON
+              // shape (via the GatewayToolError branch of the tail catch). A
+              // plain-text ToolInputError here would leak an existence oracle —
+              // a caller could tell "no such thread" from "exists elsewhere".
+              onNone: () =>
+                Effect.fail(
+                  new GatewayToolError("thread_not_found", `Thread "${threadId}" was not found.`),
+                ),
               onSome: (thread) => Effect.succeed(thread),
             }),
           ),
@@ -222,7 +230,15 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
             maxMessageChars,
           }),
         );
-      }).pipe(Effect.catch((error) => Effect.succeed(mcpToolResultError(errorText(error))))),
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.succeed(
+            error instanceof GatewayToolError
+              ? gatewayToolErrorResult(error)
+              : mcpToolResultError(errorText(error)),
+          ),
+        ),
+      ),
   };
 
   const waitForThreads: ToolEntry = {

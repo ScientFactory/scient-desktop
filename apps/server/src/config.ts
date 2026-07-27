@@ -156,7 +156,11 @@ export const resolveCanonicalWorkspaceRoots = Effect.fn(function* (input: {
 export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigShape>()(
   "synara/config/ServerConfig",
 ) {
-  static readonly layerTest = (cwd: string, baseDirOrPrefix: string | { prefix: string }) =>
+  static readonly layerTest = (
+    cwd: string,
+    baseDirOrPrefix: string | { prefix: string },
+    overrides: Partial<ServerConfigShape> = {},
+  ) =>
     Layer.effect(
       ServerConfig,
       Effect.gen(function* () {
@@ -200,6 +204,7 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
           staticDir: undefined,
           devUrl,
           noBrowser: false,
+          ...overrides,
         } satisfies ServerConfigShape;
       }),
     );

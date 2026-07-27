@@ -257,10 +257,15 @@ describe("synara_read_thread", () => {
     expect(body.totalMessages).toBe(2);
   });
 
-  it("returns a not-found error for an unknown thread", async () => {
+  it("returns a not-found error shaped identically to a cross-project denial", async () => {
+    // Non-disclosure: an unknown thread must be indistinguishable from a thread
+    // that exists in another project — same JSON error shape, same code, same
+    // message — so the caller cannot use the response to probe existence.
     const result = await callTool({}, "synara_read_thread", { threadId: "t-missing" });
     expect(result.isError).toBe(true);
-    expect(rawText(result)).toContain("was not found");
+    const body = jsonBody(result) as { error: { code: string; message: string } };
+    expect(body.error.code).toBe("thread_not_found");
+    expect(body.error.message).toContain("was not found");
   });
 
   it("denies a cross-project read with thread_not_found (no project disclosure)", async () => {
