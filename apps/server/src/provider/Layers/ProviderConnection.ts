@@ -1342,7 +1342,7 @@ export function makeProviderConnectionLive(options?: {
                 provider,
                 reason: "invalid_method",
                 message:
-                  "The sign-out command finished, but Scient could not verify the account state. Check the provider CLI before continuing.",
+                  "After the sign-out attempt, Scient could not verify the account state. Check the provider CLI before continuing.",
               });
             }
             if (Result.isFailure(result)) {

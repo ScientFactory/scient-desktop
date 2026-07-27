@@ -445,6 +445,7 @@ export function ProviderConnectionDialog() {
                     className="h-1.5 w-full overflow-hidden rounded-full bg-[color:var(--color-border)]"
                     role="progressbar"
                     aria-label="Provider download progress"
+                    aria-valuetext={installProgress.label}
                     aria-valuemin={0}
                     aria-valuemax={100}
                     aria-valuenow={
