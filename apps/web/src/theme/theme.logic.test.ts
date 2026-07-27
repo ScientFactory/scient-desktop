@@ -337,7 +337,7 @@ describe("buildThemeCssVariables", () => {
     expect(cssVariables.variables["--composer-surface"]).not.toBe(cssVariables.variables["--card"]);
     expect(cssVariables.variables["--sidebar-accent"]).toBe("rgba(227, 228, 230, 0.058)");
     expect(cssVariables.variables["--sidebar-accent-active"]).toBe("rgba(227, 228, 230, 0.058)");
-    expect(cssVariables.variables["--theme-font-ui-family"]).toBe("Inter");
+    expect(cssVariables.variables["--theme-font-ui-family"]).toBe('"Inter Variable", Inter');
     expect(cssVariables.variables["--theme-font-code-family"]).toBe(
       `"Jetbrains Mono", ${DEFAULT_MONOSPACE_FONT_FAMILY_STACK}`,
     );
@@ -350,6 +350,40 @@ describe("buildThemeCssVariables", () => {
     expect(cssVariables.variables["--color-token-terminal-ansi-green"]).toBe("#56a554");
     expect(cssVariables.variables["--color-token-terminal-ansi-magenta"]).toBe("#c2a1ff");
     expect(cssVariables.variables["--color-token-terminal-ansi-red"]).toBe("#ff7e78");
+  });
+
+  it("prepends the bundled variable families for a theme that ships Geist fonts", () => {
+    // Guards the self-hosted @font-face name contract: the vercel seed stores
+    // the plain family names ("Geist", "Geist Mono", "Inter"), and the emission
+    // boundary must alias them to the "<Family> Variable" faces registered by
+    // the @fontsource-variable packages. If fontsource ever renames a face,
+    // this assertion breaks instead of silently falling back to a system font.
+    const cssVariables = buildThemeCssVariables(
+      { codeThemeId: "vercel", theme: getCodeThemeSeed("vercel", "dark") },
+      "dark",
+      { electron: true },
+    );
+
+    expect(cssVariables.variables["--theme-font-ui-family"]).toBe(
+      '"Geist Variable", Geist, "Inter Variable", Inter',
+    );
+    // A generic (ui-monospace) is already present, so the default mono stack is
+    // not appended; only the bundled "Geist Mono Variable" face is prepended.
+    expect(cssVariables.variables["--theme-font-code-family"]).toBe(
+      '"Geist Mono Variable", "Geist Mono", ui-monospace, "SFMono-Regular"',
+    );
+  });
+
+  it("emits an empty UI font family when the system UI font is preferred", () => {
+    // With systemUiFont the applier removes the property so the native -apple-system
+    // stack takes over; the alias expander must not fabricate a value here.
+    const cssVariables = buildThemeCssVariables(
+      { codeThemeId: "vercel", theme: getCodeThemeSeed("vercel", "dark") },
+      "dark",
+      { electron: true, systemUiFont: true },
+    );
+
+    expect(cssVariables.variables["--theme-font-ui-family"]).toBe("");
   });
 
   it("exposes a structured derived-token surface for retrieving non-stored colors", () => {

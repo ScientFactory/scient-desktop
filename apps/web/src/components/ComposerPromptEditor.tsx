@@ -60,6 +60,7 @@ import {
 import { parseBareComposerLink } from "~/lib/linkChips";
 import { type TerminalContextDraft } from "~/lib/terminalContext";
 import { shouldCollapsePastedText } from "~/lib/composerPastedText";
+import { isImeCompositionKeyEvent } from "~/lib/imeComposition";
 import { resolveRawTextDirectionHint } from "~/lib/textDirection";
 import type { ProviderMentionReference } from "@synara/contracts";
 import { cn } from "~/lib/utils";
@@ -552,6 +553,13 @@ function ComposerCommandKeyPlugin(props: {
       key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab" | "Slash",
       event: KeyboardEvent | null,
     ): boolean => {
+      // Swallow Enter fired mid-IME-composition: it confirms the candidate, so
+      // it must not reach the composer's send/menu logic below. Returning true
+      // suppresses Lexical's default newline without submitting.
+      if (key === "Enter" && event && isImeCompositionKeyEvent(event)) {
+        event.stopPropagation();
+        return true;
+      }
       if (!props.onCommandKeyDown || !event) {
         return false;
       }
