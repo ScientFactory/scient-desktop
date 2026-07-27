@@ -80,6 +80,20 @@ it.effect("accepts git.preparePullRequestThread requests", () =>
   }),
 );
 
+it.effect("accepts compact working-tree diff stats requests", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decode(WebSocketRequest, {
+      id: "req-diff-stats-1",
+      body: {
+        _tag: WS_METHODS.gitWorkingTreeDiffStats,
+        cwd: "/repo",
+        scope: "branch",
+      },
+    });
+    assert.strictEqual(parsed.body._tag, WS_METHODS.gitWorkingTreeDiffStats);
+  }),
+);
+
 it.effect("accepts project script discovery requests", () =>
   Effect.gen(function* () {
     const parsed = yield* decode(WebSocketRequest, {

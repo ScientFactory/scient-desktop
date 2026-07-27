@@ -372,6 +372,14 @@ export const GitReadWorkingTreeDiffResult = Schema.Struct({
 });
 export type GitReadWorkingTreeDiffResult = typeof GitReadWorkingTreeDiffResult.Type;
 
+/** Compact totals for one working-tree diff scope, without the patch text. */
+export const GitWorkingTreeDiffStatsResult = Schema.Struct({
+  additions: NonNegativeInt,
+  deletions: NonNegativeInt,
+  fileCount: NonNegativeInt,
+});
+export type GitWorkingTreeDiffStatsResult = typeof GitWorkingTreeDiffStatsResult.Type;
+
 // Stage/unstage are fire-and-forget index mutations; callers refetch status/diff.
 export const GitStageFilesResult = Schema.Struct({
   ok: Schema.Boolean,

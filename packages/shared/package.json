@@ -207,6 +207,10 @@
     "./chatGptVoiceAuth": {
       "types": "./src/chatGptVoiceAuth.ts",
       "import": "./src/chatGptVoiceAuth.ts"
+    },
+    "./unifiedPatchStats": {
+      "types": "./src/unifiedPatchStats.ts",
+      "import": "./src/unifiedPatchStats.ts"
     }
   },
   "scripts": {

@@ -17,6 +17,7 @@ import {
   GitPullRequestSnapshotResult,
   GitReadWorkingTreeDiffInput,
   GitReadWorkingTreeDiffResult,
+  GitWorkingTreeDiffStatsResult,
   GitResolvePullRequestResult,
   GitRunStackedActionResult,
   GitStatusInput,
@@ -55,6 +56,11 @@ export interface GitManagerShape {
   readonly readWorkingTreeDiff: (
     input: GitReadWorkingTreeDiffInput,
   ) => Effect.Effect<GitReadWorkingTreeDiffResult, GitManagerServiceError>;
+
+  /** Count one working-tree diff scope without returning its patch text. */
+  readonly readWorkingTreeDiffStats: (
+    input: GitReadWorkingTreeDiffInput,
+  ) => Effect.Effect<GitWorkingTreeDiffStatsResult, GitManagerServiceError>;
 
   /**
    * Generate a read-only markdown summary for an existing diff patch.

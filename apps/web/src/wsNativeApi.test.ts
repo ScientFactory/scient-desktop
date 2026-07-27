@@ -131,6 +131,17 @@ afterEach(() => {
 });
 
 describe("wsNativeApi", () => {
+  it("routes working-tree diff stats without requesting patch text", async () => {
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    const input = { cwd: "/repo/a", scope: "staged" as const };
+    const result = { additions: 4, deletions: 2, fileCount: 3 };
+    requestMock.mockResolvedValue(result);
+
+    await expect(api.git.workingTreeDiffStats(input)).resolves.toEqual(result);
+    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.gitWorkingTreeDiffStats, input);
+  });
+
   it("seeds renderer transport state from the new transport immediately", async () => {
     const { createWsNativeApi } = await import("./wsNativeApi");
 
