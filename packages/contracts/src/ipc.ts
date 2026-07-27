@@ -149,7 +149,6 @@ import type {
   ServerProviderConnectionResult,
   ServerProviderConnectionStartInput,
   ServerProviderConnectionSubmitAuthorizationCodeInput,
-  ServerProviderSignOutInput,
   ServerProviderInstallCancelInput,
   ServerProviderInstallInput,
   ServerProviderInstallPlanInput,
@@ -727,7 +726,6 @@ export interface NativeApi {
     cancelProviderConnection: (
       input: ServerProviderConnectionCancelInput,
     ) => Promise<ServerProviderConnectionResult>;
-    signOutProvider: (input: ServerProviderSignOutInput) => Promise<ServerProviderConnectionResult>;
     submitProviderConnectionAuthorizationCode: (
       input: ServerProviderConnectionSubmitAuthorizationCodeInput,
     ) => Promise<ServerProviderConnectionResult>;

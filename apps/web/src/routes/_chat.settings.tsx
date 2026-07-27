@@ -17,6 +17,7 @@ import { createFileRoute, useSearch } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getModelOptions, normalizeModelSlug } from "@synara/shared/model";
 import { providerSupportsSignOut } from "@synara/shared/providerSignOut";
+import { asProviderSignOutNativeApi } from "@synara/shared/providerSignOutTransport";
 import { pluralize } from "@synara/shared/text";
 import {
   type ReactNode,
@@ -1459,7 +1460,7 @@ function SettingsRouteView() {
   const runProviderSignOut = useCallback(
     async (provider: ProviderKind) => {
       const label = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
-      const api = readNativeApi() ?? ensureNativeApi();
+      const api = asProviderSignOutNativeApi(readNativeApi() ?? ensureNativeApi());
       const activityKey = `provider:sign-out:${provider}`;
       try {
         const result = await requestProviderSignOut(api, provider);

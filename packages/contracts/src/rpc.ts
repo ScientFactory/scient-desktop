@@ -174,7 +174,6 @@ import {
   ServerProviderConnectionResult,
   ServerProviderConnectionStartInput,
   ServerProviderConnectionSubmitAuthorizationCodeInput,
-  ServerProviderSignOutInput,
   ServerProviderInstallCancelInput,
   ServerProviderInstallInput,
   ServerProviderInstallPlanInput,
@@ -777,12 +776,6 @@ export const WsServerCancelProviderConnectionRpc = Rpc.make(
   },
 );
 
-export const WsServerSignOutProviderRpc = Rpc.make(WS_METHODS.serverSignOutProvider, {
-  payload: ServerProviderSignOutInput,
-  success: ServerProviderConnectionResult,
-  error: ServerProviderConnectionError,
-});
-
 export const WsServerSubmitProviderConnectionAuthorizationCodeRpc = Rpc.make(
   WS_METHODS.serverSubmitProviderConnectionAuthorizationCode,
   {
@@ -1138,7 +1131,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRefreshProvidersRpc,
   WsServerStartProviderConnectionRpc,
   WsServerCancelProviderConnectionRpc,
-  WsServerSignOutProviderRpc,
   WsServerSubmitProviderConnectionAuthorizationCodeRpc,
   WsServerPrepareProviderInstallRpc,
   WsServerInstallProviderRpc,

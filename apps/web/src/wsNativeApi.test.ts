@@ -24,6 +24,7 @@ import {
   type ServerProviderStatus,
 } from "@synara/contracts";
 import { LIVE_HTML_PREVIEW_PREPARE_V1_METHOD } from "@synara/shared/liveHtmlPreviewTransport";
+import { PROVIDER_SIGN_OUT_METHOD } from "@synara/shared/providerSignOutTransport";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestMock = vi.fn<(...args: Array<unknown>) => Promise<unknown>>();
@@ -683,7 +684,7 @@ describe("wsNativeApi", () => {
     expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverGetEnvironment);
   });
 
-  it("forwards provider connection start, code submission, and cancel requests", async () => {
+  it("forwards provider connection start, code submission, cancel, and sign-out requests", async () => {
     requestMock.mockResolvedValue({ providers: defaultProviders });
     const { createWsNativeApi } = await import("./wsNativeApi");
     const api = createWsNativeApi();
@@ -701,6 +702,7 @@ describe("wsNativeApi", () => {
       operationId: "operation-2",
       authorizationCode: "4/test-code-123",
     });
+    await api.server.signOutProvider({ provider: "claudeAgent" });
 
     expect(requestMock).toHaveBeenCalledWith(WS_METHODS.serverStartProviderConnection, {
       provider: "codex",
@@ -718,6 +720,9 @@ describe("wsNativeApi", () => {
         authorizationCode: "4/test-code-123",
       },
     );
+    expect(requestMock).toHaveBeenCalledWith(PROVIDER_SIGN_OUT_METHOD, {
+      provider: "claudeAgent",
+    });
   });
 
   it("fetches auth session state over HTTP", async () => {

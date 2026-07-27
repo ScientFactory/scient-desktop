@@ -1,4 +1,4 @@
-import type { NativeApi } from "@synara/contracts";
+import type { ProviderSignOutNativeApi } from "@synara/shared/providerSignOutTransport";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -12,7 +12,7 @@ function api(confirm: boolean) {
     signOutProvider: vi.fn().mockResolvedValue({ providers: [] }),
   };
   return {
-    value: { dialogs, server } as unknown as Pick<NativeApi, "dialogs" | "server">,
+    value: { dialogs, server } as unknown as Pick<ProviderSignOutNativeApi, "dialogs" | "server">,
     dialogs,
     server,
   };

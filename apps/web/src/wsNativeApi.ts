@@ -41,8 +41,11 @@ import {
 import {
   asLiveHtmlDesktopBridge,
   LIVE_HTML_PREVIEW_PREPARE_V1_METHOD,
-  type LiveHtmlNativeApi,
 } from "@synara/shared/liveHtmlPreviewTransport";
+import {
+  PROVIDER_SIGN_OUT_METHOD,
+  type ProviderSignOutNativeApi,
+} from "@synara/shared/providerSignOutTransport";
 
 import { showConfirmDialogFallback } from "./confirmDialogFallback";
 import { showContextMenuFallback } from "./contextMenuFallback";
@@ -50,7 +53,7 @@ import { requireHttpExternalUrl } from "./lib/externalUrl";
 import { WsTransport } from "./wsTransport";
 import { emitWsTransportState } from "./wsTransportEvents";
 
-let instance: { api: LiveHtmlNativeApi; transport: WsTransport } | null = null;
+let instance: { api: ProviderSignOutNativeApi; transport: WsTransport } | null = null;
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
 const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
 const serverProviderStatusesUpdatedListeners = new Set<
@@ -338,7 +341,7 @@ export function onServerSettingsUpdated(
   };
 }
 
-export function createWsNativeApi(): LiveHtmlNativeApi {
+export function createWsNativeApi(): ProviderSignOutNativeApi {
   if (instance) {
     if (instance.transport.getState() !== "disposed") {
       return instance.api;
@@ -469,7 +472,7 @@ export function createWsNativeApi(): LiveHtmlNativeApi {
       }
     }
   });
-  const api: LiveHtmlNativeApi = {
+  const api: ProviderSignOutNativeApi = {
     dialogs: {
       pickFolder: async () => {
         if (!window.desktopBridge) return null;
@@ -685,7 +688,7 @@ export function createWsNativeApi(): LiveHtmlNativeApi {
         transport.request(WS_METHODS.serverStartProviderConnection, input),
       cancelProviderConnection: (input) =>
         transport.request(WS_METHODS.serverCancelProviderConnection, input),
-      signOutProvider: (input) => transport.request(WS_METHODS.serverSignOutProvider, input),
+      signOutProvider: (input) => transport.request(PROVIDER_SIGN_OUT_METHOD, input),
       submitProviderConnectionAuthorizationCode: (input) =>
         transport.request(WS_METHODS.serverSubmitProviderConnectionAuthorizationCode, input),
       prepareProviderInstall: (input) =>

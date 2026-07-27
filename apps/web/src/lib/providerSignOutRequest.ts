@@ -4,10 +4,10 @@
 
 import {
   PROVIDER_DISPLAY_NAMES,
-  type NativeApi,
   type ProviderKind,
   type ServerProviderConnectionResult,
 } from "@synara/contracts";
+import type { ProviderSignOutNativeApi } from "@synara/shared/providerSignOutTransport";
 
 export function providerSignOutConfirmationMessage(provider: ProviderKind): string {
   const label = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
@@ -18,7 +18,7 @@ export function providerSignOutConfirmationMessage(provider: ProviderKind): stri
 }
 
 export async function requestProviderSignOut(
-  api: Pick<NativeApi, "dialogs" | "server">,
+  api: Pick<ProviderSignOutNativeApi, "dialogs" | "server">,
   provider: ProviderKind,
 ): Promise<ServerProviderConnectionResult | null> {
   const confirmed = await api.dialogs.confirm(providerSignOutConfirmationMessage(provider));
