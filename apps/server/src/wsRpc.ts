@@ -22,6 +22,10 @@ import {
   LIVE_HTML_PREVIEW_PREPARE_V1_METHOD,
   LiveHtmlPreviewRpcGroup,
 } from "@synara/shared/liveHtmlPreviewTransport";
+import {
+  PROVIDER_SIGN_OUT_METHOD,
+  ProviderSignOutRpcGroup,
+} from "@synara/shared/providerSignOutTransport";
 import { clamp } from "effect/Number";
 import { Effect, FileSystem, Layer, Option, Path, Queue, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -95,7 +99,8 @@ import { cloneProjectSource, getRepositorySourceStatuses } from "./projectSource
 
 const MAX_DIAGNOSTIC_CHILD_PROCESSES = 80;
 const MAX_DIAGNOSTIC_ARGS_CHARS = 500;
-const ScientWsRpcGroup = LiveHtmlPreviewRpcGroup.merge(GitMutationRpcGroup);
+const ScientWsRpcGroup =
+  LiveHtmlPreviewRpcGroup.merge(GitMutationRpcGroup).merge(ProviderSignOutRpcGroup);
 
 // Relative subdirectories scaffolded under a freshly created chat container workspace root.
 // The Studio layout lives in studioWorkspaceScaffold.ts alongside its instruction files.
@@ -1167,6 +1172,11 @@ export const makeWsRpcLayer = () =>
           ),
         [WS_METHODS.serverCancelProviderConnection]: (input) =>
           providerConnection.cancel(input).pipe(
+            Effect.andThen(providerClientStatusProjection.getStatuses),
+            Effect.map((providers) => ({ providers })),
+          ),
+        [PROVIDER_SIGN_OUT_METHOD]: (input) =>
+          providerConnection.signOut(input).pipe(
             Effect.andThen(providerClientStatusProjection.getStatuses),
             Effect.map((providers) => ({ providers })),
           ),

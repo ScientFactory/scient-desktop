@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { constants as FS_CONSTANTS, createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream } from "node:fs";
 import FS from "node:fs/promises";
 import Path from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -16,6 +16,8 @@ const DEFAULT_MAX_EXPANDED_BYTES = 1024 * 1024 * 1024;
 const DEFAULT_MAX_FILES = 20_000;
 const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 const DOWNLOAD_IDLE_TIMEOUT_MS = 30 * 1000;
+const DOWNLOAD_PROGRESS_MIN_INTERVAL_MS = 250;
+const DOWNLOAD_PROGRESS_MIN_BYTES = 1024 * 1024;
 
 export class ProviderRuntimeFileError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -129,6 +131,23 @@ export async function downloadProviderRuntime(input: {
 
   await FS.mkdir(Path.dirname(input.destination), { recursive: true });
   let downloaded = 0;
+  let lastReportedBytes = 0;
+  let lastReportedAt = Date.now();
+  const progressTotal = contentLength ?? input.expectedSize ?? null;
+  const reportProgress = (force: boolean) => {
+    if (!input.onProgress || downloaded === lastReportedBytes) return;
+    const now = Date.now();
+    if (
+      !force &&
+      downloaded - lastReportedBytes < DOWNLOAD_PROGRESS_MIN_BYTES &&
+      now - lastReportedAt < DOWNLOAD_PROGRESS_MIN_INTERVAL_MS
+    ) {
+      return;
+    }
+    lastReportedBytes = downloaded;
+    lastReportedAt = now;
+    input.onProgress(downloaded, progressTotal);
+  };
   try {
     const source = Readable.fromWeb(response.body as never);
     source.on("data", (chunk: Buffer) => {
@@ -138,7 +157,7 @@ export async function downloadProviderRuntime(input: {
         source.destroy(
           new ProviderRuntimeFileError("Provider runtime download exceeded the allowed size."),
         );
-      input.onProgress?.(downloaded, contentLength);
+      reportProgress(progressTotal !== null && downloaded >= progressTotal);
     });
     await pipeline(source, createWriteStream(input.destination, { flags: "wx", mode: 0o600 }), {
       signal,
@@ -149,6 +168,7 @@ export async function downloadProviderRuntime(input: {
   } finally {
     if (idleTimer) clearTimeout(idleTimer);
   }
+  reportProgress(true);
 
   if (input.expectedSize !== undefined && downloaded !== input.expectedSize) {
     await FS.rm(input.destination, { force: true }).catch(() => undefined);
@@ -212,8 +232,7 @@ async function extractTarGzip(input: {
   let expandedBytes = 0;
   const seen = new Set<string>();
   let validationError: ProviderRuntimeFileError | DOMException | null = null;
-  await Tar.x({
-    file: input.archivePath,
+  const extractor = Tar.x({
     cwd: input.destination,
     strict: true,
     preservePaths: false,
@@ -261,6 +280,7 @@ async function extractTarGzip(input: {
       }
     },
   });
+  await pipeline(createReadStream(input.archivePath), extractor, { signal: input.signal });
   if (validationError) throw validationError;
 }
 
@@ -280,36 +300,60 @@ async function extractZip(input: {
     throw new ProviderRuntimeFileError("Provider runtime archive exceeds extraction limits.");
   }
 
-  let actualExpandedBytes = 0;
-  const seen = new Set<string>();
+  const entries = new Map<string, (typeof archive.files)[number]>();
   for (const entry of archive.files) {
     if (input.signal.aborted) throw new DOMException("Extraction cancelled.", "AbortError");
-    const destination = safeArchivePath(input.destination, entry.path);
     const normalized = entry.path.replaceAll("\\", "/");
-    if (seen.has(normalized)) {
+    if (entries.has(normalized)) {
       throw new ProviderRuntimeFileError(
         `Provider runtime archive contains a duplicate path: ${entry.path}`,
       );
     }
-    seen.add(normalized);
+    safeArchivePath(input.destination, entry.path);
     const unixMode = (entry.externalFileAttributes >>> 16) & 0o170000;
     if (unixMode === 0o120000) {
       throw new ProviderRuntimeFileError(
         "Provider runtime archives cannot contain symbolic links.",
       );
     }
-    if (entry.type === "Directory") {
-      await FS.mkdir(destination, { recursive: true });
-      continue;
-    }
-    if (entry.type !== "File") {
+    if (entry.type !== "Directory" && entry.type !== "File") {
       throw new ProviderRuntimeFileError(
         `Unsupported provider runtime archive entry: ${entry.path}`,
       );
     }
-    await FS.mkdir(Path.dirname(destination), { recursive: true });
-    const output = await FS.open(destination, "wx", 0o600);
-    try {
+    entries.set(normalized, entry);
+  }
+
+  // Reading every central-directory entry with `entry.stream()` can stall on
+  // multi-entry archives. Parse the archive once, sequentially, instead. This
+  // keeps extraction streaming and makes cancellation real: aborting destroys
+  // the source, parser, current entry, limiter, and destination stream.
+  const source = createReadStream(input.archivePath);
+  const parser = Unzipper.Parse({ forceStream: true });
+  const parseArchive = pipeline(source, parser, { signal: input.signal });
+  let actualExpandedBytes = 0;
+  const extracted = new Set<string>();
+  try {
+    for await (const value of parser) {
+      const entry = value as Unzipper.Entry;
+      if (input.signal.aborted) throw new DOMException("Extraction cancelled.", "AbortError");
+      const normalized = entry.path.replaceAll("\\", "/");
+      const expected = entries.get(normalized);
+      if (!expected || extracted.has(normalized)) {
+        entry.autodrain();
+        throw new ProviderRuntimeFileError(
+          `Provider runtime archive contains an unexpected path: ${entry.path}`,
+        );
+      }
+      extracted.add(normalized);
+      const destination = safeArchivePath(input.destination, entry.path);
+      if (expected.type === "Directory") {
+        await entry.autodrain().promise();
+        await FS.mkdir(destination, { recursive: true });
+        continue;
+      }
+
+      await FS.mkdir(Path.dirname(destination), { recursive: true });
       const limiter = new Transform({
         transform(chunk: Buffer, _encoding, callback) {
           actualExpandedBytes += chunk.byteLength;
@@ -322,12 +366,19 @@ async function extractZip(input: {
           callback(null, chunk);
         },
       });
-      await pipeline(entry.stream(), limiter, output.createWriteStream({ autoClose: false }), {
+      await pipeline(entry, limiter, createWriteStream(destination, { flags: "wx", mode: 0o600 }), {
         signal: input.signal,
       });
-    } finally {
-      await output.close().catch(() => undefined);
     }
+    await parseArchive;
+    if (extracted.size !== entries.size) {
+      throw new ProviderRuntimeFileError("Provider runtime archive is incomplete.");
+    }
+  } catch (cause) {
+    source.destroy();
+    parser.destroy();
+    await parseArchive.catch(() => undefined);
+    throw cause;
   }
 }
 
@@ -344,8 +395,11 @@ export async function extractProviderRuntime(input: {
   const executable = safeArchivePath(input.destination, input.executablePath);
   if (input.format === "raw") {
     await FS.mkdir(Path.dirname(executable), { recursive: true });
-    if (input.signal.aborted) throw new DOMException("Extraction cancelled.", "AbortError");
-    await FS.copyFile(input.archivePath, executable, FS_CONSTANTS.COPYFILE_EXCL);
+    await pipeline(
+      createReadStream(input.archivePath),
+      createWriteStream(executable, { flags: "wx", mode: 0o600 }),
+      { signal: input.signal },
+    );
   } else if (input.format === "tar.gz") {
     await extractTarGzip({
       archivePath: input.archivePath,

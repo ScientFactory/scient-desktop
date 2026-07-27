@@ -164,7 +164,7 @@ describe("ProviderConnectionDialog", () => {
         .element(page.getByText("Finish signing in in the browser window."))
         .toBeVisible();
       await expect.element(page.getByRole("button", { name: "Cancel sign-in" })).toBeVisible();
-      await expect.element(page.getByText(/sign in continues in the background/u)).toBeVisible();
+      await expect.element(page.getByText(/setup continues in the background/u)).toBeVisible();
     } finally {
       await screen.unmount();
       queryClient.clear();
@@ -1316,8 +1316,8 @@ describe("ProviderConnectionDialog", () => {
         finishedAt: null,
         message: "Downloading Antigravity 1.1.5.",
         version: "1.1.5",
-        bytesDownloaded: 0,
-        totalBytes: 46_664_998,
+        bytesDownloaded: 11 * 1_048_576,
+        totalBytes: 44 * 1_048_576,
       },
     } satisfies ServerProviderStatus;
     const prepareProviderInstall = vi.fn().mockResolvedValue({
@@ -1359,6 +1359,10 @@ describe("ProviderConnectionDialog", () => {
         });
       });
       await expect.element(page.getByText("Downloading Antigravity 1.1.5.")).toBeVisible();
+      await expect.element(page.getByText("11.0 MB of 44.0 MB (25%)")).toBeVisible();
+      await expect
+        .element(page.getByRole("progressbar", { name: "Provider download progress" }))
+        .toHaveAttribute("aria-valuenow", "25");
       await expect.element(page.getByRole("button", { name: "Cancel installation" })).toBeVisible();
     } finally {
       await screen.unmount();

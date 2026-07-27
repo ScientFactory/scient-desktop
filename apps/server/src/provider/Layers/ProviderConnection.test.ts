@@ -1,6 +1,7 @@
 import type {
   ProviderKind,
   ProviderListModelsResult,
+  ServerProviderAuthStatus,
   ServerProviderConnectionState,
   ServerProviderInstallationState,
   ServerProviderRuntimeSource,
@@ -40,6 +41,8 @@ import {
   parseCodexOAuthAuthorizationUrl,
   parseGrokOAuthAuthorizationUrl,
   providerConnectionCommandArgs,
+  providerSignOutCommandArgs,
+  providerSupportsSignOut,
   resolveProviderConnectionTimeout,
 } from "./ProviderConnection";
 import { resolveProviderProbeCwd } from "./ProviderHealth";
@@ -133,6 +136,7 @@ function makeConnectionTestLayer(input?: {
   readonly provider?: ProviderKind;
   readonly runtimeSource?: ServerProviderRuntimeSource;
   readonly timeout?: Duration.Duration;
+  readonly signOutTimeout?: Duration.Duration;
   readonly codexDeviceCodeTimeout?: Duration.Duration;
   readonly antigravityCodeWindowTimeout?: Duration.Duration;
   readonly antigravityCodeWindowCloseSignal?: Effect.Effect<void>;
@@ -160,6 +164,18 @@ function makeConnectionTestLayer(input?: {
   readonly listModelsHanging?: boolean;
   readonly initiallyAuthenticated?: boolean;
   readonly authenticatedAfterRefresh?: (refreshCall: number) => boolean;
+  readonly refreshAuthentication?: (input: {
+    readonly refreshCalls: number;
+    readonly authenticated: boolean;
+  }) => boolean;
+  readonly refreshAvailable?: (input: {
+    readonly refreshCalls: number;
+    readonly available: boolean;
+  }) => boolean;
+  readonly authStatus?: (input: {
+    readonly refreshCalls: number;
+    readonly authenticated: boolean;
+  }) => ServerProviderAuthStatus;
   readonly requiresProviderAccount?: boolean | null;
   readonly installationState?:
     | ServerProviderInstallationState
@@ -182,12 +198,15 @@ function makeConnectionTestLayer(input?: {
     (state: ServerProviderConnectionState | undefined) => void
   >();
   let authenticated = input?.initiallyAuthenticated ?? false;
+  let available = input?.available ?? true;
   let refreshCalls = 0;
   const status = (): ServerProviderStatus => ({
     provider: input?.provider ?? "claudeAgent",
     status: authenticated ? "ready" : "error",
-    available: input?.available ?? true,
-    authStatus: authenticated ? "authenticated" : "unauthenticated",
+    available,
+    authStatus:
+      input?.authStatus?.({ refreshCalls, authenticated }) ??
+      (authenticated ? "authenticated" : "unauthenticated"),
     ...(input?.requiresProviderAccount === null
       ? {}
       : input?.requiresProviderAccount !== undefined
@@ -202,12 +221,17 @@ function makeConnectionTestLayer(input?: {
     getStatuses: Effect.sync(() => [status()]),
     refresh: Effect.sync(() => {
       refreshCalls += 1;
-      // The first refresh is the preflight. A completed sign-in is verified by
-      // the following refresh, unless the fixture began authenticated.
-      if (input?.authenticatedAfterRefresh) {
+      if (input?.refreshAuthentication) {
+        authenticated = input.refreshAuthentication({ refreshCalls, authenticated });
+      } else if (input?.authenticatedAfterRefresh) {
         authenticated = input.authenticatedAfterRefresh(refreshCalls);
       } else if (refreshCalls > 1 && input?.hanging !== true) {
+        // The first refresh is the preflight. A completed sign-in is verified by
+        // the following refresh, unless the fixture began authenticated.
         authenticated = true;
+      }
+      if (input?.refreshAvailable) {
+        available = input.refreshAvailable({ refreshCalls, available });
       }
       return [status()];
     }),
@@ -392,6 +416,7 @@ function makeConnectionTestLayer(input?: {
   } satisfies ProviderRuntimeManagerShape);
   const layer = makeProviderConnectionLive({
     ...(input?.timeout ? { timeout: input.timeout } : {}),
+    ...(input?.signOutTimeout ? { signOutTimeout: input.signOutTimeout } : {}),
     ...(input?.codexDeviceCodeTimeout
       ? { codexDeviceCodeTimeout: input.codexDeviceCodeTimeout }
       : {}),
@@ -487,6 +512,15 @@ describe("provider connection command allowlist", () => {
   it("uses Grok's provider-owned browser login", () => {
     expect(expectedMethodForProvider("grok")).toBe("grok_browser");
     expect(providerConnectionCommandArgs("grok", "grok_browser")).toEqual(["login", "--oauth"]);
+  });
+
+  it("uses only verified provider-owned CLI sign-out commands", () => {
+    expect(providerSignOutCommandArgs("codex")).toEqual(["logout"]);
+    expect(providerSignOutCommandArgs("claudeAgent")).toEqual(["auth", "logout"]);
+    expect(providerSignOutCommandArgs("cursor")).toEqual(["logout"]);
+    expect(providerSignOutCommandArgs("grok")).toEqual(["logout"]);
+    expect(providerSupportsSignOut("antigravity")).toBe(false);
+    expect(providerSupportsSignOut("droid")).toBe(false);
   });
 
   it("uses Droid's ACP device-pairing authentication", () => {
@@ -1297,6 +1331,7 @@ describe("ProviderConnectionLive", () => {
       "https://accounts.google.com/o/oauth2/auth?response_type=code&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&client_id=test-client&state=test-state&code_challenge=test-challenge&code_challenge_method=S256";
     const fixture = makeConnectionTestLayer({
       provider: "antigravity",
+      antigravityAuthenticationSettleTimeout: Duration.millis(20),
       processForCommand: ({ args }) =>
         args.includes("--print")
           ? {
@@ -1904,5 +1939,227 @@ describe("ProviderConnectionLive", () => {
     );
 
     expect(onKill).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces curated CLI failure guidance without reflecting secrets", async () => {
+    const secret = "sk-provider-secret-123456789";
+    const fixture = makeConnectionTestLayer({
+      provider: "claudeAgent",
+      processExitCode: 1,
+      processStdout: `authentication failed token=${secret} for user@example.com`,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        yield* connection.start({ provider: "claudeAgent", method: "claude_account" });
+        yield* Effect.sleep(Duration.millis(20));
+        const message = fixture.getConnectionState()?.message ?? "";
+        expect(message).toContain("provider did not accept the authorization");
+        expect(message).not.toContain(secret);
+        expect(message).not.toContain("user@example.com");
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+  });
+
+  it("signs out through the provider CLI and verifies the refreshed account state", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      initiallyAuthenticated: true,
+      onSpawn,
+      refreshAuthentication: ({ refreshCalls, authenticated }) =>
+        refreshCalls > 1 ? false : authenticated,
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* connection.signOut({ provider: "codex" });
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result.providers[0]?.authStatus).toBe("unauthenticated");
+    expect(onSpawn).toHaveBeenCalledOnce();
+    expect(onSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: "codex",
+        args: ["logout"],
+        options: expect.objectContaining({ cwd: TEST_PROVIDER_PROBE_CWD }),
+      }),
+    );
+  });
+
+  it("treats an explicitly unauthenticated preflight as an idempotent no-op", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({ provider: "codex", onSpawn });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* connection.signOut({ provider: "codex" });
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result.providers[0]?.authStatus).toBe("unauthenticated");
+    expect(onSpawn).not.toHaveBeenCalled();
+  });
+
+  it.each(["unavailable", "unknown"] as const)(
+    "does not claim sign-out or launch a global command when preflight is %s",
+    async (preflightState) => {
+      const onSpawn = vi.fn();
+      const fixture = makeConnectionTestLayer({
+        provider: "codex",
+        initiallyAuthenticated: true,
+        onSpawn,
+        ...(preflightState === "unavailable"
+          ? { refreshAvailable: () => false }
+          : { authStatus: () => "unknown" as const }),
+      });
+
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const connection = yield* ProviderConnection;
+          return yield* Effect.result(connection.signOut({ provider: "codex" }));
+        }).pipe(Effect.provide(fixture.layer)),
+      );
+
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(result.failure.message).toContain("did not run");
+      }
+      expect(onSpawn).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not report success while the provider still reports an authenticated account", async () => {
+    const fixture = makeConnectionTestLayer({
+      provider: "cursor",
+      initiallyAuthenticated: true,
+      refreshAuthentication: ({ authenticated }) => authenticated,
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* Effect.result(connection.signOut({ provider: "cursor" }));
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure.message).toContain("still reports an authenticated account");
+    }
+  });
+
+  it("trusts confirmed post-sign-out state even when the provider CLI exits unsuccessfully", async () => {
+    const fixture = makeConnectionTestLayer({
+      provider: "codex",
+      initiallyAuthenticated: true,
+      processExitCode: 1,
+      refreshAuthentication: ({ refreshCalls, authenticated }) =>
+        refreshCalls > 1 ? false : authenticated,
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* connection.signOut({ provider: "codex" });
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result.providers[0]?.authStatus).toBe("unauthenticated");
+  });
+
+  it("trusts confirmed post-sign-out state when the provider CLI times out", async () => {
+    const fixture = makeConnectionTestLayer({
+      provider: "claudeAgent",
+      initiallyAuthenticated: true,
+      hanging: true,
+      signOutTimeout: Duration.millis(20),
+      refreshAuthentication: ({ refreshCalls, authenticated }) =>
+        refreshCalls > 1 ? false : authenticated,
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* connection.signOut({ provider: "claudeAgent" });
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result.providers[0]?.authStatus).toBe("unauthenticated");
+  });
+
+  it("does not claim sign-out when the refreshed provider state is unavailable", async () => {
+    const fixture = makeConnectionTestLayer({
+      provider: "cursor",
+      initiallyAuthenticated: true,
+      refreshAuthentication: ({ refreshCalls, authenticated }) =>
+        refreshCalls > 1 ? false : authenticated,
+      refreshAvailable: ({ refreshCalls, available }) => (refreshCalls > 1 ? false : available),
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* Effect.result(connection.signOut({ provider: "cursor" }));
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure.message).toContain("could not verify the account state");
+    }
+  });
+
+  it("serializes sign-out against every other account operation for that provider", async () => {
+    const onKill = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "claudeAgent",
+      initiallyAuthenticated: true,
+      hanging: true,
+      signOutTimeout: Duration.millis(20),
+      onKill,
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        const first = yield* connection.signOut({ provider: "claudeAgent" }).pipe(Effect.forkChild);
+        yield* Effect.sleep(Duration.millis(5));
+        const competing = yield* Effect.result(connection.signOut({ provider: "claudeAgent" }));
+        expect(competing._tag).toBe("Failure");
+        if (competing._tag === "Failure") {
+          expect(competing.failure.reason).toBe("already_running");
+        }
+        yield* Fiber.await(first);
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(onKill).toHaveBeenCalledOnce();
+  });
+
+  it("rejects sign-out for providers without a verified provider-owned command", async () => {
+    const onSpawn = vi.fn();
+    const fixture = makeConnectionTestLayer({
+      provider: "antigravity",
+      initiallyAuthenticated: true,
+      onSpawn,
+    });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const connection = yield* ProviderConnection;
+        return yield* Effect.result(connection.signOut({ provider: "antigravity" }));
+      }).pipe(Effect.provide(fixture.layer)),
+    );
+
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure.reason).toBe("unsupported_provider");
+    }
+    expect(onSpawn).not.toHaveBeenCalled();
   });
 });
