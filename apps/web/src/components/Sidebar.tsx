@@ -104,8 +104,9 @@ import { showConfirmDialogFallback } from "../confirmDialogFallback";
 import { formatRelativeTime } from "../lib/relativeTime";
 import { isMacPlatform, newCommandId, newThreadId, randomUUID } from "../lib/utils";
 import {
+  cleanupDeletedThreadBrowserState,
   reconcileDeletedThreadFromClient,
-  reconcileDeletedThreadsFromClient,
+  removeDeletedThreadsFromClientState,
 } from "../lib/deletedThreadClientReconciliation";
 import { deleteProjectFromClient } from "../lib/projectDelete";
 import { persistAppStateNow, useStore } from "../store";
@@ -3162,11 +3163,16 @@ export default function Sidebar() {
         threadId,
       });
       if (opts.reconcileDeletedThread ?? true) {
-        void reconcileDeletedThreadFromClient({
+        await reconcileDeletedThreadFromClient({
+          api,
           threadId,
           removeDeletedThreadFromClientState:
             useStore.getState().removeDeletedThreadFromClientState,
         });
+      } else {
+        // Bulk callers defer row removal, but main-process browser ownership
+        // must be closed before this helper can remove an orphaned worktree.
+        await cleanupDeletedThreadBrowserState(api, threadId);
       }
       unpinThread(threadId);
       clearComposerDraftForThread(threadId);
@@ -3252,7 +3258,6 @@ export default function Sidebar() {
       removeThreadFromSplitViews,
       clearTemporaryThread,
       sidebarThreads,
-      syncServerShellSnapshot,
       unpinThread,
     ],
   );
@@ -3667,10 +3672,10 @@ export default function Sidebar() {
         }
       }
 
-      void reconcileDeletedThreadsFromClient({
-        threadIds: successfullyDeletedIds,
-        removeDeletedThreadFromClientState: useStore.getState().removeDeletedThreadFromClientState,
-      });
+      removeDeletedThreadsFromClientState(
+        successfullyDeletedIds,
+        useStore.getState().removeDeletedThreadFromClientState,
+      );
       removeFromSelection([...deletedIds]);
 
       if (options?.publishResultActivity ?? true) {
@@ -4049,11 +4054,10 @@ export default function Sidebar() {
         }
       } finally {
         if (successfullyDeletedIds.length > 0) {
-          void reconcileDeletedThreadsFromClient({
-            threadIds: successfullyDeletedIds,
-            removeDeletedThreadFromClientState:
-              useStore.getState().removeDeletedThreadFromClientState,
-          });
+          removeDeletedThreadsFromClientState(
+            successfullyDeletedIds,
+            useStore.getState().removeDeletedThreadFromClientState,
+          );
         }
       }
       removeFromSelection(ids);

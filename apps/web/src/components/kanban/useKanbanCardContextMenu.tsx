@@ -185,7 +185,8 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
         commandId: newCommandId(),
         threadId: card.threadId,
       });
-      void reconcileDeletedThreadFromClient({
+      await reconcileDeletedThreadFromClient({
+        api,
         threadId: card.threadId,
         removeDeletedThreadFromClientState: useStore.getState().removeDeletedThreadFromClientState,
       });

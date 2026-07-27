@@ -98,6 +98,8 @@ import {
   SettingsSelectPopup,
 } from "../components/settings/SettingsPanelPrimitives";
 import { ProviderUsageSettingsPanel } from "../components/settings/ProviderUsageSettingsPanel";
+import { ProviderUpdateActionButton } from "../components/settings/ProviderUpdateActionButton";
+import { ProviderUpdatesSettingsRow } from "../components/settings/ProviderUpdatesSettingsRow";
 import { ProfileSettingsPanel } from "../components/settings/ProfileSettingsPanel";
 import { KeyboardShortcutsSettingsPanel } from "../components/settings/KeyboardShortcutsSettingsPanel";
 import { SkillsSettingsPanel } from "../components/settings/SkillsSettingsPanel";
@@ -126,7 +128,6 @@ import {
   ArchiveIcon,
   ChevronDownIcon,
   DeviceLaptopIcon,
-  DownloadIcon,
   ExternalLinkIcon,
   Loader2Icon,
   MoonIcon,
@@ -150,6 +151,7 @@ import {
   readBrowserNotificationPermissionState,
   requestBrowserNotificationPermission,
 } from "../notifications/taskCompletion";
+import { ACTIVITY_CENTER_ALERTS_DESCRIPTION } from "../notifications/taskCompletion.logic";
 import { activityManager } from "../notifications/activityStore";
 import {
   normalizeSettingsSection,
@@ -176,8 +178,7 @@ import { formatRelativeTime } from "../lib/relativeTime";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
 import { sameProviderOrder } from "../providerOrdering";
 import {
-  getVisibleProviderUpdateStatuses,
-  shouldOfferProviderUpdateAction,
+  providerUpdateSummaryStatus,
   shouldShowProviderUpdateStatus,
   withProviderUpdateTimeout,
 } from "../providerUpdates";
@@ -976,16 +977,22 @@ function SettingsRouteView() {
         : null,
     [serverSettingsQuery.data, settings.enableProviderUpdateChecks],
   );
-  const outdatedProviderStatuses = useMemo(
+  const providerUpdateSummary = useMemo(
     () =>
-      getVisibleProviderUpdateStatuses({
+      providerUpdateSummaryStatus({
         providers: serverConfigQuery.data?.providers ?? [],
         hiddenProviders: settings.hiddenProviders,
         serverSettings: providerUpdateServerSettings,
+        loading: serverConfigQuery.data === undefined,
+        locallyUpdatingProviders: updatingProviders,
       }),
-    [providerUpdateServerSettings, serverConfigQuery.data?.providers, settings.hiddenProviders],
+    [
+      providerUpdateServerSettings,
+      serverConfigQuery.data,
+      settings.hiddenProviders,
+      updatingProviders,
+    ],
   );
-  const outdatedProviderCount = outdatedProviderStatuses.length;
   useSettingsTargetScroll(
     activeSection === "providers" && settingsTarget === SETTINGS_TARGETS.providerUpdates,
     providerUpdatesRef,
@@ -1845,7 +1852,7 @@ function SettingsRouteView() {
       setWorktreeFeedback({ tone: "info", message: `Deleting ${displayName}...` });
       try {
         await deleteArchivedThreadsFromClient({
-          api: api.orchestration,
+          api,
           threadIds: linkedArchivedThreadIds,
           removeDeletedThreadFromClientState,
         });
@@ -1906,7 +1913,7 @@ function SettingsRouteView() {
       setArchivedThreadFeedback({ tone: "info", message: `Deleting ${threadTitle}...` });
       try {
         await deleteArchivedThreadFromClient({
-          api: api.orchestration,
+          api,
           threadId,
           removeDeletedThreadFromClientState,
         });
@@ -2563,8 +2570,7 @@ function SettingsRouteView() {
         {renderBooleanSettingRow({
           settingKey: "enableTaskCompletionToasts",
           title: "Activity Center alerts",
-          description:
-            "Keep off-screen chat and managed terminal completions or attention requests in the in-app Activity Center.",
+          description: ACTIVITY_CENTER_ALERTS_DESCRIPTION,
           resetLabel: "Activity Center alerts",
           ariaLabel: "Activity Center alerts",
         })}
@@ -3452,71 +3458,14 @@ function SettingsRouteView() {
           ariaLabel: "Automatic CLI update checks",
         })}
 
-        <SettingsRow
-          title="Provider updates"
-          description="Review installed provider tools that Scient can safely update."
-          status={
-            !settings.enableProviderUpdateChecks
-              ? "Automatic checks off"
-              : outdatedProviderCount > 0
-                ? `${outdatedProviderCount} ${pluralize(outdatedProviderCount, "update")} available`
-                : "No provider updates detected"
-          }
+        <ProviderUpdatesSettingsRow
+          providers={serverConfigQuery.data?.providers ?? []}
+          hiddenProviders={settings.hiddenProviders}
+          serverSettings={providerUpdateServerSettings}
+          loading={serverConfigQuery.data === undefined}
+          locallyUpdatingProviders={updatingProviders}
+          onUpdate={(providerStatus) => void runProviderUpdate(providerStatus)}
         >
-          {settings.enableProviderUpdateChecks && outdatedProviderStatuses.length > 0 ? (
-            <div
-              className={cn(
-                "mt-4",
-                SETTINGS_INSET_LIST_CLASS_NAME,
-                "divide-y divide-[color:var(--color-border)]",
-              )}
-            >
-              {outdatedProviderStatuses.map((providerStatus) => {
-                const updateAdvisory = providerStatus.versionAdvisory;
-                const updateState = providerStatus.updateState?.status;
-                const isProviderUpdateActive =
-                  updateState === "queued" ||
-                  updateState === "running" ||
-                  updatingProviders.has(providerStatus.provider);
-                const canUpdateProvider =
-                  shouldOfferProviderUpdateAction(providerStatus) && !isProviderUpdateActive;
-                const updateLabel = providerUpdateStatusLabel(providerStatus);
-
-                return (
-                  <SettingsListRow
-                    key={providerStatus.provider}
-                    title={PROVIDER_DISPLAY_NAMES[providerStatus.provider]}
-                    description={updateLabel || undefined}
-                    actions={
-                      shouldOfferProviderUpdateAction(providerStatus) ? (
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="outline"
-                          disabled={!canUpdateProvider}
-                          title={
-                            updateAdvisory?.updateCommand
-                              ? `Run ${updateAdvisory.updateCommand}`
-                              : undefined
-                          }
-                          onClick={() => void runProviderUpdate(providerStatus)}
-                        >
-                          {isProviderUpdateActive ? (
-                            <Loader2Icon className="size-3.5 animate-spin" />
-                          ) : (
-                            <DownloadIcon className="size-3.5" />
-                          )}
-                          {isProviderUpdateActive ? "Updating" : "Update"}
-                        </Button>
-                      ) : (
-                        <span className="text-[11px] text-muted-foreground">Manual update</span>
-                      )
-                    }
-                  />
-                );
-              })}
-            </div>
-          ) : null}
           {PROVIDER_SELECT_OPTIONS.map((provider) => {
             const feedback = providerUpdateFeedbackByProvider[provider];
             if (!feedback) return null;
@@ -3550,7 +3499,7 @@ function SettingsRouteView() {
               </SettingsInlineFeedback>
             );
           })}
-        </SettingsRow>
+        </ProviderUpdatesSettingsRow>
       </SettingsSection>
     </div>
   );
@@ -3561,13 +3510,7 @@ function SettingsRouteView() {
         <SettingsRow
           title="Installed CLIs"
           description="Review provider versions and update tools. Open a row only when you need binary overrides."
-          status={
-            !settings.enableProviderUpdateChecks
-              ? "Automatic checks off"
-              : outdatedProviderCount > 0
-                ? `${outdatedProviderCount} ${pluralize(outdatedProviderCount, "update")} available`
-                : "No provider updates detected"
-          }
+          status={providerUpdateSummary}
           resetAction={
             isInstallSettingsDirty ? (
               <SettingResetButton
@@ -3680,16 +3623,6 @@ function SettingsRouteView() {
                       : providerUpdateStatusLabel(providerStatus)
                   : null;
                 const updateAdvisory = providerStatus?.versionAdvisory;
-                const providerUpdateState = providerStatus?.updateState?.status;
-                const isProviderUpdateActive =
-                  providerUpdateState === "queued" ||
-                  providerUpdateState === "running" ||
-                  updatingProviders.has(providerSettings.provider);
-                const shouldShowProviderUpdateButton = providerStatus
-                  ? shouldOfferProviderUpdateAction(providerStatus) &&
-                    (showProviderUpdateStatus || updateAdvisory?.status === "unknown")
-                  : false;
-                const canUpdateProvider = shouldShowProviderUpdateButton && !isProviderUpdateActive;
                 const providerConnectionActive =
                   providerStatus?.connectionState?.status === "starting" ||
                   providerStatus?.connectionState?.status === "waiting_for_browser" ||
@@ -3748,29 +3681,13 @@ function SettingsRouteView() {
                             )}
                           />
                         </button>
-                        {shouldShowProviderUpdateButton ? (
-                          <Button
-                            type="button"
-                            size="xs"
-                            variant="outline"
-                            disabled={!canUpdateProvider}
-                            title={
-                              updateAdvisory?.updateCommand
-                                ? `Run ${updateAdvisory.updateCommand}`
-                                : undefined
-                            }
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              if (providerStatus) void runProviderUpdate(providerStatus);
-                            }}
-                          >
-                            {isProviderUpdateActive ? (
-                              <Loader2Icon className="size-3.5 animate-spin" />
-                            ) : (
-                              <DownloadIcon className="size-3.5" />
-                            )}
-                            {isProviderUpdateActive ? "Updating" : "Update"}
-                          </Button>
+                        {providerStatus ? (
+                          <ProviderUpdateActionButton
+                            providerStatus={providerStatus}
+                            confirmedUpdateVisible={showProviderUpdateStatus}
+                            locallyUpdating={updatingProviders.has(providerSettings.provider)}
+                            onUpdate={() => void runProviderUpdate(providerStatus)}
+                          />
                         ) : null}
                         {!providerConnected ? (
                           <Button

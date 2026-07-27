@@ -26,6 +26,89 @@ afterEach(async () => {
 });
 
 describe("inspectHtmlArtifact", () => {
+  it("continues positioned inspection reads after deterministic short reads", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "lesson.html");
+    const source = "<main>שיעור 🧪</main><script>window.ready = true</script>";
+    await fs.writeFile(sourcePath, source);
+    const positions: number[] = [];
+
+    const inspected = await inspectHtmlArtifact(
+      { cwd: workspace, path: sourcePath },
+      {
+        readChunk: (handle, buffer, offset, length, position) => {
+          positions.push(position);
+          return handle.read(buffer, offset, Math.min(length, 2), position);
+        },
+      },
+    );
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+    expect(positions).toEqual(
+      Array.from({ length: Math.ceil(Buffer.byteLength(source) / 2) }, (_, index) => index * 2),
+    );
+  });
+
+  it("fails closed when a positioned inspection read reports premature EOF", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "lesson.html");
+    await fs.writeFile(sourcePath, "<main>Lesson</main>");
+
+    await expect(
+      inspectHtmlArtifact(
+        { cwd: workspace, path: sourcePath },
+        { readChunk: async () => ({ bytesRead: 0 }) },
+      ),
+    ).rejects.toThrow("changed while its preview was being prepared");
+  });
+
+  it("keeps a safe watch candidate for a referenced dependency created later", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "lesson.html");
+    const futureStylePath = path.join(workspace, "future.css");
+    await fs.writeFile(
+      sourcePath,
+      '<!doctype html><link rel="stylesheet" href="future.css"><h1>Study</h1>',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: sourcePath });
+
+    expect(inspected.allowedResourcePaths).not.toContain(futureStylePath);
+    expect(inspected.watchedPaths).toContain(path.join(await fs.realpath(workspace), "future.css"));
+  });
+
+  it("watches the first missing directory component for a nested dependency", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "lesson.html");
+    await fs.writeFile(
+      sourcePath,
+      '<!doctype html><link rel="stylesheet" href="assets/theme/future.css"><h1>Study</h1>',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: sourcePath });
+
+    expect(inspected.allowedResourcePaths).toEqual([]);
+    expect(inspected.watchedPaths).toContain(path.join(await fs.realpath(workspace), "assets"));
+  });
+
+  it("bounds discovery work across many deeply nested missing dependencies", async () => {
+    const workspace = await makeWorkspace();
+    const sourcePath = path.join(workspace, "lesson.html");
+    await fs.writeFile(
+      sourcePath,
+      Array.from(
+        { length: 400 },
+        (_, index) => `<link rel="stylesheet" href="missing-${index}/deep/theme.css">`,
+      ).join(""),
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: sourcePath });
+
+    expect(inspected.watchDiscoveryLimited).toBe(true);
+    expect(inspected.allowedResourcePaths).toEqual([]);
+    expect(inspected.watchedPaths.length).toBeLessThanOrEqual(250);
+  });
+
   it("classifies a standalone document with local presentation assets", async () => {
     const workspace = await makeWorkspace();
     await fs.writeFile(path.join(workspace, "lesson.css"), "body { color: green; }");
@@ -149,6 +232,68 @@ describe("inspectHtmlArtifact", () => {
       message:
         "External network resources are blocked for interactive local HTML; bundle them into the same site directory instead.",
     });
+  });
+
+  it("fails closed for external active framed documents while preserving inert local children", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(path.join(workspace, "local-child.html"), "<p>Local static child</p>");
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      [
+        '<iframe src="local-child.html"></iframe>',
+        '<iframe src="https://frames.example/iframe"></iframe>',
+        '<object data="https://frames.example/object"></object>',
+        '<embed src="https://frames.example/embed">',
+      ].join(""),
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+    expect(inspected.allowedResourcePaths).toContain(
+      await fs.realpath(path.join(workspace, "local-child.html")),
+    );
+    expect(new Set(inspected.allowedExternalUrls)).toEqual(
+      new Set([
+        "https://frames.example/iframe",
+        "https://frames.example/object",
+        "https://frames.example/embed",
+      ]),
+    );
+    expect(inspected.result.warnings).toContainEqual({
+      code: "external-resource-blocked",
+      message:
+        "External network resources are blocked for interactive local HTML; bundle them into the same site directory instead.",
+    });
+  });
+
+  it("fails closed for an external legacy frameset document", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(
+      path.join(workspace, "frames.html"),
+      '<frameset><frame src="https://frames.example/frame"></frameset>',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "frames.html" });
+
+    expect(inspected.result.mode).toBe("interactive-bundle");
+    expect(inspected.allowedExternalUrls).toContain("https://frames.example/frame");
+  });
+
+  it("keeps an inert local framed document static", async () => {
+    const workspace = await makeWorkspace();
+    await fs.writeFile(path.join(workspace, "local-child.html"), "<p>Local static child</p>");
+    await fs.writeFile(
+      path.join(workspace, "index.html"),
+      '<iframe src="local-child.html"></iframe>',
+    );
+
+    const inspected = await inspectHtmlArtifact({ cwd: workspace, path: "index.html" });
+
+    expect(inspected.result.mode).toBe("static-document");
+    expect(inspected.allowedResourcePaths).toContain(
+      await fs.realpath(path.join(workspace, "local-child.html")),
+    );
   });
 
   it("treats an active SVG subdocument as executable content", async () => {

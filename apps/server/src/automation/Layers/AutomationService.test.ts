@@ -61,6 +61,7 @@ const dispatchedCommands: OrchestrationCommand[] = [];
 const createdWorktrees: GitCreateWorktreeInput[] = [];
 const removedWorktrees: GitRemoveWorktreeInput[] = [];
 const deletedBranches: GitDeleteBranchInput[] = [];
+const actionLockedCwds: string[] = [];
 type CompletionEvaluationInputForTest = Parameters<
   TextGenerationShape["evaluateAutomationCompletion"]
 >[0];
@@ -98,6 +99,7 @@ function resetHarness() {
   createdWorktrees.length = 0;
   removedWorktrees.length = 0;
   deletedBranches.length = 0;
+  actionLockedCwds.length = 0;
   gitMode = "nonRepo";
   gitStatusHook = null;
   createWorktreeHook = null;
@@ -444,6 +446,10 @@ const textGeneration = {
 } as unknown as TextGenerationShape;
 
 const gitCore = {
+  withActionLock: ((cwd, effect) =>
+    Effect.sync(() => actionLockedCwds.push(cwd)).pipe(
+      Effect.andThen(effect),
+    )) satisfies GitCoreShape["withActionLock"],
   statusDetails: (cwd: string) =>
     Effect.gen(function* () {
       if (gitStatusHook) {
@@ -590,6 +596,7 @@ layer("AutomationService", (it) => {
       assert.strictEqual(threadCreate.envMode, "worktree");
       assert.strictEqual(threadCreate.worktreePath, "/tmp/automation-worktree");
       assert.strictEqual(threadCreate.associatedWorktreeBranch, createdWorktreeBranch);
+      assert.deepStrictEqual(actionLockedCwds, [project.workspaceRoot]);
     }),
   );
 
@@ -625,6 +632,7 @@ layer("AutomationService", (it) => {
           force: true,
         },
       ]);
+      assert.deepStrictEqual(actionLockedCwds, [project.workspaceRoot, project.workspaceRoot]);
 
       const reloaded = yield* service.list({ projectId });
       const run = reloaded.runs.find((entry) => entry.automationId === created.id);

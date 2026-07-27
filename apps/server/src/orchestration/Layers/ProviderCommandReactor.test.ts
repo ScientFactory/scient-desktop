@@ -337,6 +337,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
     const publishBranch = vi.fn(() => Effect.void);
+    const withActionLock = vi.fn<GitCoreShape["withActionLock"]>((_cwd, effect) => effect);
     const generateBranchName = vi.fn<TextGenerationShape["generateBranchName"]>(() =>
       Effect.fail(
         new TextGenerationError({
@@ -412,7 +413,11 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(Layer.succeed(StudioOutputReactor, studioOutputReactor)),
       Layer.provideMerge(Layer.succeed(CheckpointStore, checkpointStore)),
       Layer.provideMerge(
-        Layer.succeed(GitCore, { renameBranch, publishBranch } as unknown as GitCoreShape),
+        Layer.succeed(GitCore, {
+          renameBranch,
+          publishBranch,
+          withActionLock,
+        } as unknown as GitCoreShape),
       ),
       Layer.provideMerge(
         Layer.succeed(TextGeneration, {
@@ -511,6 +516,7 @@ describe("ProviderCommandReactor", () => {
       clearSessionResumeCursor,
       renameBranch,
       publishBranch,
+      withActionLock,
       generateBranchName,
       generateThreadTitle,
       captureStudioOutputBaseline,
@@ -3463,6 +3469,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
+    await waitFor(() => harness.withActionLock.mock.calls.length === 1);
     await waitFor(() => harness.renameBranch.mock.calls.length === 1);
     await waitFor(() => harness.publishBranch.mock.calls.length === 1);
 
@@ -3487,6 +3494,12 @@ describe("ProviderCommandReactor", () => {
       associatedWorktreeBranch: `${WORKTREE_BRANCH_PREFIX}/app-startup-crash`,
       associatedWorktreeRef: `${WORKTREE_BRANCH_PREFIX}/app-startup-crash`,
     });
+    expect(harness.withActionLock.mock.calls[0]?.[0]).toBe(
+      "/tmp/provider-project/.worktrees/cb661f0d",
+    );
+    expect(harness.withActionLock.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.renameBranch.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
   });
 
   it("falls back to prompt-based worktree branch names when the provider cannot generate one", async () => {

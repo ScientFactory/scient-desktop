@@ -10,6 +10,7 @@ import {
   gitPreparePullRequestThreadMutationOptions,
   gitPullMutationOptions,
   gitRunStackedActionMutationOptions,
+  gitStatusQueryOptions,
   passiveGitStatusQueryOptions,
 } from "./gitReactQuery";
 
@@ -129,5 +130,16 @@ describe("passive git status query options", () => {
 
     expect(options.refetchOnWindowFocus).toBe(false);
     expect(options.refetchInterval).toBe(false);
+  });
+});
+
+describe("git status query options", () => {
+  it("can defer status polling until repository discovery completes", () => {
+    expect(gitStatusQueryOptions("/repo/a", false).enabled).toBe(false);
+    expect(gitStatusQueryOptions("/repo/a", true).enabled).toBe(true);
+  });
+
+  it("stays disabled without a cwd even when explicitly enabled", () => {
+    expect(gitStatusQueryOptions(null, true).enabled).toBe(false);
   });
 });

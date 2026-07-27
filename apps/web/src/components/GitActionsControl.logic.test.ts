@@ -9,6 +9,7 @@ import {
   resolveCreatePrActionAvailability,
   resolveDefaultCreateBranchName,
   resolveDefaultBranchActionDialogCopy,
+  resolveGitStatusForActions,
   resolveLiveThreadBranchUpdate,
   resolvePullActionAvailability,
   resolveQuickAction,
@@ -1386,6 +1387,75 @@ describe("resolveLiveThreadBranchUpdate", () => {
     });
 
     assert.deepEqual(update, { branch: "feature/new" });
+  });
+
+  it("waits for branch discovery before comparing status", () => {
+    const update = resolveLiveThreadBranchUpdate({
+      threadBranch: null,
+      gitStatus: status({ branch: "main" }),
+    });
+
+    assert.equal(update, null);
+  });
+});
+
+describe("resolveGitStatusForActions", () => {
+  it("ignores cached status until branch discovery confirms a repository", () => {
+    const cachedStatus = status({ branch: "main" });
+
+    assert.isNull(
+      resolveGitStatusForActions({
+        repositoryConfirmed: false,
+        currentBranch: "main",
+        gitStatus: cachedStatus,
+      }),
+    );
+  });
+
+  it("exposes status only after repository confirmation and branch agreement", () => {
+    const currentStatus = status({ branch: "main" });
+
+    assert.strictEqual(
+      resolveGitStatusForActions({
+        repositoryConfirmed: true,
+        currentBranch: "main",
+        gitStatus: currentStatus,
+      }),
+      currentStatus,
+    );
+  });
+
+  it("rejects status cached from a temporary branch after discovery reaches main", () => {
+    assert.isNull(
+      resolveGitStatusForActions({
+        repositoryConfirmed: true,
+        currentBranch: "main",
+        gitStatus: status({ branch: "scient/deadbeef" }),
+      }),
+    );
+  });
+
+  it("rejects cached named-branch status while HEAD is detached", () => {
+    assert.isNull(
+      resolveGitStatusForActions({
+        repositoryConfirmed: true,
+        currentBranch: null,
+        gitStatus: status({ branch: "feature/previous" }),
+      }),
+    );
+  });
+
+  it("preserves confirmed detached status for branch recovery controls", () => {
+    const detachedStatus = status({ branch: null });
+
+    assert.strictEqual(
+      resolveGitStatusForActions({
+        repositoryConfirmed: true,
+        currentBranch: null,
+        gitStatus: detachedStatus,
+      }),
+      detachedStatus,
+    );
   });
 });
 

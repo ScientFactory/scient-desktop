@@ -91,7 +91,8 @@ export function useTemporaryThreadLifecycle(activeThreadId: ThreadId | null): vo
               .then(() => true)
               .catch(() => false);
             if (deletedOnServer) {
-              void reconcileDeletedThreadFromClient({
+              await reconcileDeletedThreadFromClient({
+                api,
                 threadId: temporaryThreadId,
                 removeDeletedThreadFromClientState:
                   useStore.getState().removeDeletedThreadFromClientState,

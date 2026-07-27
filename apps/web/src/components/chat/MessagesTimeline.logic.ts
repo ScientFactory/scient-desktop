@@ -13,6 +13,7 @@ import {
   type WorktreeSetupSnapshot,
   type WorktreeSetupStep,
 } from "../../types";
+import type { ForkProvenance } from "./forkProvenance";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 
@@ -38,6 +39,11 @@ interface TimelineDiffMessage {
 }
 
 export type MessagesTimelineRow =
+  | {
+      kind: "fork-provenance";
+      id: string;
+      provenance: ForkProvenance;
+    }
   | {
       kind: "work";
       id: string;
@@ -304,6 +310,7 @@ export function deriveTerminalAssistantMessageIds(
 // arrives renders above that text; trailing work renders below it.
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
+  forkProvenance?: ForkProvenance | null;
   isWorking: boolean;
   worktreeSetup: WorktreeSetupSnapshot | null;
   worktreeSetupOpen: boolean;
@@ -495,6 +502,17 @@ export function deriveMessagesTimelineRows(input: {
       kind: "working-header",
       id: "working-header-row",
       createdAt: input.activeTurnStartedAt,
+    });
+  }
+
+  // Provenance belongs to the transcript itself, not transient chrome. Insert
+  // it after all turn folding so it is always the first stable list row without
+  // influencing message durations, work grouping, or live-turn collapse.
+  if (input.forkProvenance) {
+    nextRows.unshift({
+      kind: "fork-provenance",
+      id: `fork-provenance:${input.forkProvenance.sourceThreadId}`,
+      provenance: input.forkProvenance,
     });
   }
 
@@ -850,6 +868,16 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   if (a.kind !== b.kind || a.id !== b.id) return false;
 
   switch (a.kind) {
+    case "fork-provenance": {
+      const bp = (b as typeof a).provenance;
+      return (
+        a.provenance.sourceThreadId === bp.sourceThreadId &&
+        a.provenance.sourceMessageId === bp.sourceMessageId &&
+        a.provenance.sourceTitle === bp.sourceTitle &&
+        a.provenance.sourceAvailable === bp.sourceAvailable
+      );
+    }
+
     case "working":
       return a.createdAt === (b as typeof a).createdAt;
 
