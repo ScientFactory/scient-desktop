@@ -387,6 +387,7 @@ function makeConnectionTestLayer(input?: {
         canRemove: false,
         message: null,
       }),
+    getRevision: () => Effect.succeed(0),
     streamChanges: Stream.empty,
   } satisfies ProviderRuntimeManagerShape);
   const layer = makeProviderConnectionLive({
