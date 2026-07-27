@@ -12,6 +12,7 @@ import {
   isChatNewShortcut,
   isChatNewChatShortcut,
   isDiffToggleShortcut,
+  isKeyboardShortcutsHelpShortcut,
   isOpenFavoriteEditorShortcut,
   isSidebarToggleShortcut,
   isTerminalClearShortcut,
@@ -38,6 +39,102 @@ function event(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
     ...overrides,
   };
 }
+
+describe("isKeyboardShortcutsHelpShortcut", () => {
+  it("does not mistake the physical minus keys for shortcuts help on Windows", () => {
+    assert.isFalse(
+      isKeyboardShortcutsHelpShortcut(event({ ctrlKey: true, key: "/", code: "Minus" }), "Win32"),
+    );
+    assert.isFalse(
+      isKeyboardShortcutsHelpShortcut(
+        event({ ctrlKey: true, key: "/", code: "NumpadSubtract" }),
+        "Win32",
+      ),
+    );
+    assert.isFalse(
+      isKeyboardShortcutsHelpShortcut(event({ ctrlKey: true, key: "-", code: "Slash" }), "Win32"),
+    );
+  });
+
+  it("recognizes the physical slash keys on Windows", () => {
+    assert.isTrue(
+      isKeyboardShortcutsHelpShortcut(event({ ctrlKey: true, key: "/", code: "Slash" }), "Win32"),
+    );
+    assert.isTrue(
+      isKeyboardShortcutsHelpShortcut(
+        event({ ctrlKey: true, key: "/", code: "NumpadDivide" }),
+        "Win32",
+      ),
+    );
+  });
+
+  it("uses Cmd+/ on macOS without accepting Ctrl+/", () => {
+    assert.isTrue(
+      isKeyboardShortcutsHelpShortcut(
+        event({ metaKey: true, key: "/", code: "Slash" }),
+        "MacIntel",
+      ),
+    );
+    assert.isTrue(
+      isKeyboardShortcutsHelpShortcut(
+        event({ metaKey: true, key: "/", code: "Minus" }),
+        "MacIntel",
+      ),
+    );
+    assert.isFalse(
+      isKeyboardShortcutsHelpShortcut(
+        event({ ctrlKey: true, key: "/", code: "Slash" }),
+        "MacIntel",
+      ),
+    );
+  });
+
+  it("uses Ctrl+/ on Linux without accepting Meta+/", () => {
+    assert.isTrue(
+      isKeyboardShortcutsHelpShortcut(event({ ctrlKey: true, key: "/", code: "Slash" }), "Linux"),
+    );
+    assert.isTrue(
+      isKeyboardShortcutsHelpShortcut(event({ ctrlKey: true, key: "/", code: "Minus" }), "Linux"),
+    );
+    assert.isTrue(
+      isKeyboardShortcutsHelpShortcut(
+        event({ ctrlKey: true, key: "/", code: "NumpadSubtract" }),
+        "Linux",
+      ),
+    );
+    assert.isFalse(
+      isKeyboardShortcutsHelpShortcut(event({ metaKey: true, key: "/", code: "Slash" }), "Linux"),
+    );
+  });
+
+  it("ignores key-up, auto-repeat, and modified slash events", () => {
+    const platform = "Win32";
+    assert.isFalse(
+      isKeyboardShortcutsHelpShortcut(
+        event({ type: "keyup", ctrlKey: true, key: "/", code: "Slash" }),
+        platform,
+      ),
+    );
+    assert.isFalse(
+      isKeyboardShortcutsHelpShortcut(
+        event({ repeat: true, ctrlKey: true, key: "/", code: "Slash" }),
+        platform,
+      ),
+    );
+    assert.isFalse(
+      isKeyboardShortcutsHelpShortcut(
+        event({ ctrlKey: true, shiftKey: true, key: "/", code: "Slash" }),
+        platform,
+      ),
+    );
+    assert.isFalse(
+      isKeyboardShortcutsHelpShortcut(
+        event({ ctrlKey: true, altKey: true, key: "/", code: "Slash" }),
+        platform,
+      ),
+    );
+  });
+});
 
 function modShortcut(
   key: string,

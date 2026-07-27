@@ -156,6 +156,7 @@ const electron = vi.hoisted(() => {
   }
 
   return {
+    clipboardWriteText: vi.fn(),
     createdWebContents,
     createdWebContentsViewPreferences,
     createdViews,
@@ -198,7 +199,7 @@ vi.mock("electron", () => ({
   },
   clipboard: {
     writeImage: vi.fn(),
-    writeText: vi.fn(),
+    writeText: electron.clipboardWriteText,
   },
   nativeImage: {
     createFromBuffer: vi.fn(),
@@ -417,6 +418,83 @@ describe("DesktopBrowserManager reliability", () => {
     expect(next.open).toBe(true);
     expect(next.tabs).toHaveLength(1);
     expect(next.activeTabId).toBe(withSecondTab.activeTabId);
+    manager.dispose();
+  });
+
+  it("gives the shell first refusal on browser guest keyboard input", () => {
+    const beforeInputEvent = vi.fn((event: { preventDefault(): void }) => {
+      event.preventDefault();
+      return true;
+    });
+    const manager = new NativeDesktopBrowserManager(undefined, { beforeInputEvent });
+    const opened = manager.open({ threadId: THREAD_ID, initialUrl: "https://example.com/" });
+    const tabId = opened.activeTabId ?? "";
+    const internals = manager as unknown as {
+      ensureLiveRuntime: (threadId: ThreadId, tabId: string) => unknown;
+    };
+    internals.ensureLiveRuntime(THREAD_ID, tabId);
+    const contents = electron.createdWebContents.at(-1);
+    const handlers = contents?.handlers.get("before-input-event") ?? [];
+    expect(handlers.length).toBeGreaterThan(0);
+    const event = { preventDefault: vi.fn() };
+    const input = {
+      type: "keyDown",
+      key: "-",
+      code: "Minus",
+      isAutoRepeat: false,
+      isComposing: false,
+      shift: false,
+      control: true,
+      alt: false,
+      meta: false,
+      location: 0,
+      modifiers: ["control"],
+    };
+
+    for (const handler of handlers) {
+      handler(event, input);
+    }
+
+    expect(beforeInputEvent).toHaveBeenCalledWith(event, input);
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(electron.clipboardWriteText).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
+  it("keeps browser copy-link handling when the shell declines the chord", () => {
+    const beforeInputEvent = vi.fn(() => false);
+    const manager = new NativeDesktopBrowserManager(undefined, { beforeInputEvent });
+    const opened = manager.open({ threadId: THREAD_ID, initialUrl: "https://example.com/" });
+    const tabId = opened.activeTabId ?? "";
+    const internals = manager as unknown as {
+      ensureLiveRuntime: (threadId: ThreadId, tabId: string) => unknown;
+    };
+    internals.ensureLiveRuntime(THREAD_ID, tabId);
+    const contents = electron.createdWebContents.at(-1);
+    const handlers = contents?.handlers.get("before-input-event") ?? [];
+    expect(handlers.length).toBeGreaterThan(0);
+    const event = { preventDefault: vi.fn() };
+    const input = {
+      type: "keyDown",
+      key: "c",
+      code: "KeyC",
+      isAutoRepeat: false,
+      isComposing: false,
+      shift: true,
+      control: process.platform !== "darwin",
+      alt: false,
+      meta: process.platform === "darwin",
+      location: 0,
+      modifiers: process.platform === "darwin" ? ["meta", "shift"] : ["control", "shift"],
+    };
+
+    for (const handler of handlers) {
+      handler(event, input);
+    }
+
+    expect(beforeInputEvent).toHaveBeenCalledWith(event, input);
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(electron.clipboardWriteText).toHaveBeenCalledWith("https://example.com/");
     manager.dispose();
   });
 
