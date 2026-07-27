@@ -39,6 +39,11 @@ import { useFocusedChatContext } from "../focusedChatContext";
 import { useStore } from "../store";
 import { useTemporaryThreadStore } from "../temporaryThreadStore";
 import { useTerminalStateStore } from "../terminalStateStore";
+import {
+  finishProjectOperation,
+  tryBeginProjectOperation,
+} from "../lib/projectRemovalCoordination";
+import { transientAlertManager } from "../notifications/transientAlert";
 
 export interface NewThreadNavigationOptions {
   /**
@@ -71,6 +76,15 @@ export function useHandleNewThread() {
     ): Promise<ThreadId | null> => {
       const entryPoint = options?.entryPoint ?? "chat";
       const wantsTemporaryThread = options?.temporary === true;
+      const projectOperation = tryBeginProjectOperation(projectId);
+      if (!projectOperation) {
+        transientAlertManager.add({
+          type: "warning",
+          title: "Project removal in progress",
+          description: "Wait for project removal to finish or cancel it before starting a thread.",
+        });
+        return Promise.resolve(null);
+      }
       const restoreComposerDraft = (
         threadId: ThreadId,
         draftState: ComposerThreadDraftState | null,
@@ -368,22 +382,27 @@ export function useHandleNewThread() {
         }
         return threadId;
       };
-      if (existingOwnership) {
-        return runOwnedNavigation(existingOwnership);
+      try {
+        const operation = existingOwnership
+          ? runOwnedNavigation(existingOwnership)
+          : runDraftNavigationOnce(
+              draftNavigationSlotKey(),
+              newThreadNavigationRequestKey({
+                projectId,
+                entryPoint,
+                customSearch: navigation?.search,
+                options,
+              }),
+              runOwnedNavigation,
+              {
+                blocksFollowingOperations: options?.prepareNavigationBlocksFollowing === true,
+              },
+            );
+        return operation.finally(() => finishProjectOperation(projectOperation));
+      } catch (error) {
+        finishProjectOperation(projectOperation);
+        return Promise.reject(error);
       }
-      return runDraftNavigationOnce(
-        draftNavigationSlotKey(),
-        newThreadNavigationRequestKey({
-          projectId,
-          entryPoint,
-          customSearch: navigation?.search,
-          options,
-        }),
-        runOwnedNavigation,
-        {
-          blocksFollowingOperations: options?.prepareNavigationBlocksFollowing === true,
-        },
-      );
     },
     [
       clearTemporaryThread,
