@@ -109,6 +109,14 @@ import {
   removeDeletedThreadsFromClientState,
 } from "../lib/deletedThreadClientReconciliation";
 import { deleteProjectFromClient } from "../lib/projectDelete";
+import {
+  finishProjectOperation,
+  hasActiveProjectOperations,
+  releaseProjectRemoval,
+  reserveProjectRemoval,
+  tryBeginProjectOperation,
+  waitForProjectOperationsToDrain,
+} from "../lib/projectRemovalCoordination";
 import { persistAppStateNow, useStore } from "../store";
 import { getThreadFromState, getThreadsFromState } from "../threadDerivation";
 import {
@@ -168,6 +176,10 @@ import {
   prewarmStudioProject,
 } from "../lib/studioProjects";
 import { useComposerDraftStore } from "../composerDraftStore";
+import {
+  coordinateExternalRouteNavigation,
+  draftNavigationSlotKey,
+} from "../lib/stagedDraftNavigation";
 import { resolveThreadEnvironmentPresentation } from "../lib/threadEnvironment";
 import { dispatchThreadRename } from "../lib/threadRename";
 import { quotePosixShellArgument } from "../lib/shellQuote";
@@ -428,11 +440,17 @@ export function showSidebarTransientError(input: {
   title: string;
   description?: string | undefined;
 }): void {
-  transientAlertManager.add({
+  showSidebarTransientAlert({
     type: "error",
     title: input.title,
     ...(input.description ? { description: input.description } : {}),
   });
+}
+
+function showSidebarTransientAlert(
+  input: Parameters<typeof transientAlertManager.add>[0],
+): ReturnType<typeof transientAlertManager.add> {
+  return transientAlertManager.add(input);
 }
 
 export function createSidebarBulkThreadActivity(
@@ -2938,6 +2956,17 @@ export default function Sidebar() {
       if (!modelSelection) {
         throw new Error("Select a Pi model before importing a Pi thread.");
       }
+
+      // Importing creates a thread, so hold the project turnstile across the
+      // create + import: a concurrent project removal must not orphan it.
+      // Released in the finally below once the lease is taken.
+      const projectOperation = tryBeginProjectOperation(activeProject.id);
+      if (!projectOperation) {
+        throw new Error(
+          "This project is being removed. Wait for removal to finish or cancel it before importing a thread.",
+        );
+      }
+
       const threadId = newThreadId();
       const createdAt = new Date().toISOString();
       const trimmedExternalId = externalId.trim();
@@ -2993,6 +3022,8 @@ export default function Sidebar() {
             .catch(() => undefined);
         }
         throw error;
+      } finally {
+        finishProjectOperation(projectOperation);
       }
     },
     [appSettings.defaultThreadEnvMode, currentProjectShortcutTargetId, navigate, projects],
@@ -3624,7 +3655,11 @@ export default function Sidebar() {
       const project = projectById.get(projectId);
       if (!project) return null;
 
-      const projectThreads = sidebarThreads.filter((thread) => thread.projectId === projectId);
+      // Re-derive at execution time. Project removal may have waited for an admitted
+      // project operation to finish, and its thread must join this deletion set.
+      const projectThreads = getThreadsFromState(useStore.getState()).filter(
+        (thread) => thread.projectId === projectId,
+      );
       if (projectThreads.length === 0) {
         return {
           deletedCount: 0,
@@ -3696,7 +3731,7 @@ export default function Sidebar() {
         projectName: project.name,
       };
     },
-    [deleteThread, projectById, removeFromSelection, sidebarThreads],
+    [deleteThread, projectById, removeFromSelection],
   );
 
   const deleteAllThreadsInProject = useCallback(
@@ -4119,6 +4154,61 @@ export default function Sidebar() {
     splitViewsById,
     terminalStateByThreadId,
   });
+  const activateWorktreeRecoveryDraft = useCallback(
+    async (threadId: ThreadId) => {
+      const mayActivate = await coordinateExternalRouteNavigation(draftNavigationSlotKey());
+      if (!mayActivate) return;
+      setOptimisticActiveThreadId(threadId);
+      if (selectedThreadIds.size > 0) {
+        clearSelection();
+      }
+      setSelectionAnchor(threadId);
+      openChatThreadPage(threadId);
+      rememberLastThreadRouteNow({ threadId });
+      void navigate({
+        to: "/$threadId",
+        params: { threadId },
+        search: (previous) => ({ ...previous, splitViewId: undefined }),
+      });
+    },
+    [
+      clearSelection,
+      navigate,
+      openChatThreadPage,
+      rememberLastThreadRouteNow,
+      selectedThreadIds.size,
+      setSelectionAnchor,
+    ],
+  );
+  const forgetWorktreeRecoveryDraft = useCallback(
+    async (input: { threadId: ThreadId; branch: string; worktreePath: string }) => {
+      const api = readNativeApi();
+      const confirmationMessage = [
+        `Forget recovered worktree "${input.branch}"?`,
+        "This removes only Scient's recovery entry and saved retry content.",
+        `It does not delete the worktree or any files at ${input.worktreePath}.`,
+      ].join("\n");
+      const confirmed = api
+        ? await api.dialogs.confirm(confirmationMessage)
+        : await showConfirmDialogFallback(confirmationMessage);
+      if (!confirmed) return;
+      const current = useComposerDraftStore.getState().getDraftThread(input.threadId);
+      if (
+        current?.recoveryReason !== "worktree-cleanup-refused" ||
+        current.promotedTo !== undefined ||
+        current.branch !== input.branch ||
+        current.worktreePath !== input.worktreePath
+      ) {
+        showSidebarTransientError({
+          title: "Recovery changed",
+          description: "The recovered worktree changed before it could be forgotten.",
+        });
+        return;
+      }
+      clearComposerDraftForThread(input.threadId);
+    },
+    [clearComposerDraftForThread],
+  );
 
   const handleStartProjectRun = useCallback(
     async (projectId: ProjectId, commandOverride?: string) => {
@@ -4330,18 +4420,110 @@ export default function Sidebar() {
       }
       if (clicked !== "delete") return;
 
-      const projectThreads = sidebarThreads.filter((thread) => thread.projectId === projectId);
-      const confirmed = await api.dialogs.confirm(
-        projectThreads.length > 0
-          ? [
-              `Remove project "${project.name}"?`,
-              `This will delete ${projectThreads.length} ${pluralize(projectThreads.length, "thread")} in this folder and remove the project.`,
-            ].join("\n")
-          : `Remove project "${project.name}"?`,
-      );
-      if (!confirmed) return;
+      const removalReservation = reserveProjectRemoval(projectId);
+      if (!removalReservation) {
+        showSidebarTransientError({
+          title: `Already removing "${project.name}"`,
+          description: "Wait for the current removal request to finish.",
+        });
+        return;
+      }
 
       try {
+        const blockRemovalForRecoveries = (): boolean => {
+          const unresolvedRecoveryCount = Object.values(
+            useComposerDraftStore.getState().draftThreadsByThreadId,
+          ).filter(
+            (draft) =>
+              draft.projectId === projectId &&
+              draft.recoveryReason === "worktree-cleanup-refused" &&
+              draft.promotedTo === undefined,
+          ).length;
+          if (unresolvedRecoveryCount === 0) return false;
+          showSidebarTransientError({
+            title: "Resolve recovered worktrees first",
+            description: `Retry or forget ${unresolvedRecoveryCount} recovered ${pluralize(unresolvedRecoveryCount, "worktree")} before removing "${project.name}". Scient will not delete those worktree files.`,
+          });
+          return true;
+        };
+        if (blockRemovalForRecoveries()) return;
+
+        // Reserve first, then drain every operation admitted before the reservation. The definitive
+        // confirmation must describe the stable post-drain deletion set: confirming before the
+        // drain could let a late-finishing creator add a thread that the user never consented to
+        // delete.
+        let waitingAlertId: ReturnType<typeof transientAlertManager.add> | null = null;
+        let waitingFinished = false;
+        if (hasActiveProjectOperations(projectId)) {
+          const cancelWaitingRemoval = () => {
+            if (!waitingFinished) releaseProjectRemoval(removalReservation);
+          };
+          waitingAlertId = showSidebarTransientAlert({
+            id: `project-removal-wait:${projectId}`,
+            type: "warning",
+            title: `Waiting to remove "${project.name}"`,
+            description:
+              "Scient is waiting for an active send or project setup to finish. Cancel removal to keep working in this project.",
+            timeout: 0,
+            actionProps: {
+              children: "Cancel removal",
+              "aria-label": `Cancel removal of "${project.name}"`,
+              onClick: () => {
+                releaseProjectRemoval(removalReservation);
+                if (waitingAlertId !== null) transientAlertManager.close(waitingAlertId);
+              },
+            },
+            // Base UI invokes the top-level lifecycle callbacks for every close path, including
+            // the close button, swipe dismissal, manager close, and removal after animation.
+            // Keeping this outside `data` prevents a dismissed progress surface from stranding
+            // the project-removal reservation.
+            onClose: cancelWaitingRemoval,
+            onRemove: cancelWaitingRemoval,
+            data: {
+              allowCrossThreadVisibility: true,
+              showDescription: true,
+            },
+          });
+        }
+        const drained = await waitForProjectOperationsToDrain(removalReservation);
+        waitingFinished = true;
+        if (waitingAlertId !== null) transientAlertManager.close(waitingAlertId);
+        if (!drained) return;
+        if (blockRemovalForRecoveries()) return;
+
+        // Build the confirmation from the live post-drain thread set (`getThreadsFromState`) rather
+        // than the captured `sidebarThreads` render snapshot. No new coordinated creator can enter
+        // while the removal reservation is held, so this is the exact destructive scope.
+        const projectThreads = getThreadsFromState(useStore.getState()).filter(
+          (thread) => thread.projectId === projectId,
+        );
+        const durableThreadIds = new Set(projectThreads.map((thread) => thread.id));
+        const unsentProjectDraftCount = Object.entries(
+          useComposerDraftStore.getState().draftThreadsByThreadId,
+        ).filter(
+          ([threadId, draft]) =>
+            draft.projectId === projectId &&
+            draft.promotedTo === undefined &&
+            !durableThreadIds.has(threadId as ThreadId),
+        ).length;
+        const deletionScope = [
+          ...(projectThreads.length > 0
+            ? [`${projectThreads.length} ${pluralize(projectThreads.length, "thread")}`]
+            : []),
+          ...(unsentProjectDraftCount > 0
+            ? [`${unsentProjectDraftCount} unsent ${pluralize(unsentProjectDraftCount, "draft")}`]
+            : []),
+        ].join(" and ");
+        const confirmed = await api.dialogs.confirm(
+          deletionScope
+            ? [
+                `Remove project "${project.name}"?`,
+                `This will permanently delete ${deletionScope} in this folder and remove the project.`,
+              ].join("\n")
+            : `Remove project "${project.name}"?`,
+        );
+        if (!confirmed) return;
+
         // `project.delete` refuses non-empty folders, so `Remove` clears threads first.
         const deletionResult = await deleteProjectThreads(projectId, {
           confirmMessage: null,
@@ -4362,6 +4544,7 @@ export default function Sidebar() {
           });
           return;
         }
+        if (blockRemovalForRecoveries()) return;
 
         await deleteProjectFromClient({
           api: api.orchestration,
@@ -4381,6 +4564,8 @@ export default function Sidebar() {
           title: `Failed to remove "${project.name}"`,
           description: message,
         });
+      } finally {
+        releaseProjectRemoval(removalReservation);
       }
     },
     [
@@ -4396,7 +4581,6 @@ export default function Sidebar() {
       projectById,
       requestProjectInitializationDecision,
       removeDeletedProjectFromClientState,
-      sidebarThreads,
       toggleProjectPinned,
     ],
   );
@@ -4479,6 +4663,34 @@ export default function Sidebar() {
     }
     return byProjectId;
   }, [appSettings.sidebarThreadSortOrder, sidebarThreadsByProjectId]);
+  const worktreeRecoveryDraftsByProjectId = useMemo(() => {
+    const byProjectId = new Map<
+      ProjectId,
+      Array<{ threadId: ThreadId; branch: string; worktreePath: string; createdAt: string }>
+    >();
+    for (const [rawThreadId, draft] of Object.entries(draftThreadsByThreadId)) {
+      if (
+        draft.recoveryReason !== "worktree-cleanup-refused" ||
+        draft.promotedTo !== undefined ||
+        !draft.branch ||
+        !draft.worktreePath
+      ) {
+        continue;
+      }
+      const recoveries = byProjectId.get(draft.projectId) ?? [];
+      recoveries.push({
+        threadId: rawThreadId as ThreadId,
+        branch: draft.branch,
+        worktreePath: draft.worktreePath,
+        createdAt: draft.createdAt,
+      });
+      byProjectId.set(draft.projectId, recoveries);
+    }
+    for (const recoveries of byProjectId.values()) {
+      recoveries.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    }
+    return byProjectId;
+  }, [draftThreadsByThreadId]);
   const handleProjectTitlePointerDownCapture = useCallback(() => {
     suppressProjectClickAfterDragRef.current = false;
   }, []);
@@ -5957,6 +6169,7 @@ export default function Sidebar() {
       canShowMoreThreads,
       canShowLessThreads,
     } = projectSidebarData;
+    const worktreeRecoveryDrafts = worktreeRecoveryDraftsByProjectId.get(project.id) ?? [];
     const projectFolderIconClassName = isProjectPinned
       ? "opacity-0"
       : sidebarHoverRevealHideClassName("project-header");
@@ -6154,6 +6367,42 @@ export default function Sidebar() {
                 disclosureContentClassName(project.expanded),
               )}
             >
+              {worktreeRecoveryDrafts.length > 0 ? (
+                <>
+                  <SidebarMenuSubItem className="w-full" aria-hidden="true">
+                    <div className="px-8 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground/70 uppercase">
+                      Recovered worktrees
+                    </div>
+                  </SidebarMenuSubItem>
+                  {worktreeRecoveryDrafts.map((recovery) => (
+                    <SidebarMenuSubItem key={recovery.threadId} className="w-full">
+                      <div className="group/recovery-row flex w-full min-w-0 items-center gap-1">
+                        <SidebarMenuSubButton
+                          render={<button type="button" />}
+                          data-thread-selection-safe
+                          data-testid="recovered-worktree-row"
+                          aria-label={`Open recovered worktree ${recovery.branch} at ${recovery.worktreePath}`}
+                          title={recovery.worktreePath}
+                          size="sm"
+                          className="h-8 min-w-0 flex-1 translate-x-0 justify-start rounded-lg pr-2 pl-8 text-left text-[length:var(--app-font-size-ui,12px)] hover:bg-[var(--sidebar-accent)]"
+                          onClick={() => void activateWorktreeRecoveryDraft(recovery.threadId)}
+                        >
+                          <WorktreeIcon aria-hidden="true" className="size-3.5 shrink-0" />
+                          <span className="min-w-0 flex-1 truncate">{recovery.branch}</span>
+                        </SidebarMenuSubButton>
+                        <SidebarIconButton
+                          icon={XIcon}
+                          size="sm"
+                          label={`Forget recovered worktree ${recovery.branch}`}
+                          title="Forget recovery metadata (does not delete files)"
+                          className="mr-1 text-muted-foreground hover:text-foreground"
+                          onClick={() => void forgetWorktreeRecoveryDraft(recovery)}
+                        />
+                      </div>
+                    </SidebarMenuSubItem>
+                  ))}
+                </>
+              ) : null}
               {visibleEntries.map((entry) =>
                 renderThreadRow(
                   entry.thread,
