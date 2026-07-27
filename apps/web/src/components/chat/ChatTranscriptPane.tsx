@@ -40,7 +40,6 @@ interface ChatTranscriptPaneProps {
   activeTurnInProgress: boolean;
   activeTurnStartedAt: string | null;
   agentActivityDetail?: AgentActivityDetail | null;
-  bottomContentInsetPx?: ComponentProps<typeof MessagesTimeline>["bottomContentInsetPx"];
   contentInsetRightPx?: ComponentProps<typeof MessagesTimeline>["contentInsetRightPx"];
   chatFontSizePx: number;
   emptyStateContent?: ReactNode;
@@ -101,7 +100,6 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
   activeTurnInProgress,
   activeTurnStartedAt,
   agentActivityDetail,
-  bottomContentInsetPx,
   contentInsetRightPx,
   chatFontSizePx,
   emptyStateContent,
@@ -193,7 +191,6 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
         {agentActivityDetail && onCloseAgentActivityDetail ? (
           <AgentActivityDetailView
             detail={agentActivityDetail}
-            bottomContentInsetPx={bottomContentInsetPx}
             chatFontSizePx={chatFontSizePx}
             contentInsetRightPx={contentInsetRightPx}
             markdownCwd={markdownCwd}
@@ -251,7 +248,6 @@ export const ChatTranscriptPane = memo(function ChatTranscriptPane({
             chatFontSizePx={chatFontSizePx}
             timestampFormat={timestampFormat}
             workspaceRoot={workspaceRoot}
-            bottomContentInsetPx={bottomContentInsetPx}
             contentInsetRightPx={contentInsetRightPx}
             {...(onOpenAgentActivity ? { onOpenAgentActivity } : {})}
             emptyStateContent={

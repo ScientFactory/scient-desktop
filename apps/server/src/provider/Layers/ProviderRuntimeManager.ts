@@ -448,6 +448,14 @@ export const ProviderRuntimeManagerLive = Layer.effect(
     const managedDirectoriesAdded = new Set<string>();
     let lastAssignedPath = basePath;
     let disposed = false;
+    // Monotonic per-provider counter of *resolved runtime target* changes.
+    // Consumers (ProviderHealth) fold this into the authority key that gates a
+    // confirmed provider update, so it must advance only when the actual target
+    // identity changes — never on transient installation/download progress.
+    const runtimeTargetRevisions = new Map<ProviderKind, number>(
+      PROVIDERS.map((provider) => [provider, 0] as const),
+    );
+    const runtimeTargetFingerprints = new Map<ProviderKind, string>();
 
     for (const provider of PROVIDERS) {
       const persistedInstallationState = yield* Effect.promise(() =>
@@ -540,8 +548,38 @@ export const ProviderRuntimeManagerLive = Layer.effect(
     const allSnapshots = () =>
       new Map(PROVIDERS.map((provider) => [provider, snapshotFor(provider)] as const));
 
+    // Identity of the resolved runtime *target* — deliberately excludes
+    // `installationState`, which carries transient download/progress status and
+    // would otherwise churn the revision (and every derived authority key)
+    // during a managed install.
+    const runtimeTargetFingerprint = (snapshot: ProviderRuntimeSnapshot): string =>
+      JSON.stringify({
+        provider: snapshot.provider,
+        managedExecutablePath: snapshot.managedExecutablePath,
+        managedVersion: snapshot.managedVersion,
+        previousReleaseAvailable: snapshot.previousReleaseAvailable,
+        bundled: snapshot.bundled,
+        canInstall: snapshot.canInstall,
+      });
+
+    // Seed fingerprints from the initial resolved targets so the construction
+    // -time publish (and any progress-only publishes) do not spuriously bump a
+    // revision. Revisions then represent real target mutations since startup.
+    for (const [provider, snapshot] of allSnapshots()) {
+      runtimeTargetFingerprints.set(provider, runtimeTargetFingerprint(snapshot));
+    }
+
     const publish = () => {
-      if (!disposed) Effect.runFork(PubSub.publish(changes, allSnapshots()).pipe(Effect.asVoid));
+      if (disposed) return;
+      const snapshots = allSnapshots();
+      for (const [provider, snapshot] of snapshots) {
+        const fingerprint = runtimeTargetFingerprint(snapshot);
+        if (runtimeTargetFingerprints.get(provider) !== fingerprint) {
+          runtimeTargetRevisions.set(provider, (runtimeTargetRevisions.get(provider) ?? 0) + 1);
+          runtimeTargetFingerprints.set(provider, fingerprint);
+        }
+      }
+      Effect.runFork(PubSub.publish(changes, snapshots).pipe(Effect.asVoid));
     };
 
     const setInstallationState = (
@@ -1152,6 +1190,8 @@ export const ProviderRuntimeManagerLive = Layer.effect(
 
     const getSnapshot: ProviderRuntimeManagerShape["getSnapshot"] = (provider) =>
       Effect.sync(() => snapshotFor(provider));
+    const getRevision: ProviderRuntimeManagerShape["getRevision"] = (provider) =>
+      Effect.sync(() => runtimeTargetRevisions.get(provider) ?? 0);
 
     const resolve: ProviderRuntimeManagerShape["resolve"] = (provider, configuredExecutable) =>
       Effect.promise(async (): Promise<ResolvedProviderRuntime> => {
@@ -1268,6 +1308,7 @@ export const ProviderRuntimeManagerLive = Layer.effect(
       rollback,
       remove,
       getSnapshot,
+      getRevision,
       resolve,
       streamChanges: Stream.fromPubSub(changes),
     } satisfies ProviderRuntimeManagerShape;

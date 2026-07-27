@@ -50,6 +50,7 @@ export interface ProviderRuntimeManagerShape {
     input: ServerProviderRuntimeMutationInput,
   ) => Effect.Effect<void, ServerProviderInstallationError>;
   readonly getSnapshot: (provider: ProviderKind) => Effect.Effect<ProviderRuntimeSnapshot>;
+  readonly getRevision: (provider: ProviderKind) => Effect.Effect<number>;
   readonly resolve: (
     provider: ProviderKind,
     configuredExecutable?: string | null,

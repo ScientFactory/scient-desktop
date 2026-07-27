@@ -2897,6 +2897,100 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("[geometry:linux] keeps the transcript-to-composer gap constant when a task card joins the composer stack", async () => {
+    // Regression guard for the oversized gap between the transcript tail and the
+    // composer when a stacked panel (active task list) is showing. The composer
+    // is a flex sibling below the transcript, so the flex layout already reserves
+    // the stack height once; the in-list bottom spacer must stay at its constant
+    // baseline (MessagesTimeline BOTTOM_CONTENT_INSET_PX) instead of also growing
+    // with the chrome. If it double-counts, the gap above the composer stack
+    // grows by ~the chrome height when the task card appears.
+    //
+    // We anchor on the bottom spacer's top (the true end of transcript content,
+    // after any live-turn activity indicator) rather than the last message row,
+    // so a running turn's working indicator does not confound the measurement.
+    // Mirrors MessagesTimeline BOTTOM_CONTENT_INSET_PX (the fixed tail spacer).
+    const TRANSCRIPT_BOTTOM_SPACER_PX = 64;
+    const measureComposerGap = async (
+      mounted: Awaited<ReturnType<typeof mountChatView>>,
+      { expectTaskCard }: { expectTaskCard: boolean },
+    ): Promise<number> => {
+      const scrollContainer = await waitForElement(
+        () => document.querySelector<HTMLElement>("[data-chat-scroll-container='true']"),
+        "Unable to find message scroll container.",
+      );
+      // The fixture overflows the viewport, so scrolling to the end pins the tail
+      // spacer against the viewport bottom where the gap is well defined.
+      const layout = await mounted.measureLayout();
+      expect(layout.scrollHeightPx).toBeGreaterThan(layout.scrollClientHeightPx);
+
+      let gapPx = 0;
+      await vi.waitFor(
+        async () => {
+          scrollContainer.scrollTop = scrollContainer.scrollHeight;
+          scrollContainer.dispatchEvent(new Event("scroll"));
+          await waitForLayout();
+          expect(getScrollContainerDistanceFromBottom(scrollContainer)).toBeLessThanOrEqual(
+            AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
+          );
+
+          const taskCard = document.querySelector<HTMLElement>(
+            '[data-testid="active-task-list-card"]',
+          );
+          if (expectTaskCard) {
+            expect(taskCard, "Expected the active task list card to be present.").not.toBeNull();
+          } else {
+            expect(taskCard, "Expected no active task list card.").toBeNull();
+          }
+
+          const composerStack = document.querySelector<HTMLElement>(
+            '[data-chat-composer-stack="true"]',
+          );
+          expect(composerStack, "Unable to find composer stack wrapper.").not.toBeNull();
+          const bottomSpacer = document.querySelector<HTMLElement>(
+            '[data-testid="transcript-bottom-spacer"]',
+          );
+          expect(bottomSpacer, "Unable to find transcript bottom spacer.").not.toBeNull();
+
+          const transcriptContentBottom = bottomSpacer!.getBoundingClientRect().top;
+          const composerStackTop = composerStack!.getBoundingClientRect().top;
+          gapPx = composerStackTop - transcriptContentBottom;
+          // The composer stack sits just below the transcript tail, never a
+          // screenful away.
+          expect(gapPx).toBeGreaterThan(0);
+          expect(gapPx).toBeLessThan(TRANSCRIPT_BOTTOM_SPACER_PX);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      return gapPx;
+    };
+
+    const active = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithActiveInlinePlan(),
+    });
+    let gapWithTaskCard = 0;
+    try {
+      gapWithTaskCard = await measureComposerGap(active, { expectTaskCard: true });
+    } finally {
+      await active.cleanup();
+    }
+
+    const settled = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSettledInlinePlan(),
+    });
+    let gapWithoutTaskCard = 0;
+    try {
+      gapWithoutTaskCard = await measureComposerGap(settled, { expectTaskCard: false });
+    } finally {
+      await settled.cleanup();
+    }
+
+    // The stacked task card must not widen the transcript-to-composer gap.
+    expect(Math.abs(gapWithTaskCard - gapWithoutTaskCard)).toBeLessThanOrEqual(3);
+  });
+
   it("stays pinned to the bottom after delayed attachment loads expand the timeline", async () => {
     attachmentResponseDelayMs = 160;
     const mounted = await mountChatView({

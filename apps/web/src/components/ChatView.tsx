@@ -2855,9 +2855,10 @@ export default function ChatView({
   const planSidebarToggleLabel = planSidebarOpen ? `Hide ${planSidebarLabel}` : planSidebarLabel;
   const planSidebarToggleTitle = `${planSidebarOpen ? "Hide" : "Show"} ${planSidebarLabel.toLowerCase()} sidebar`;
   // Measured height of the whole stack of panels rendered above the composer input
-  // (live file changes, active task list, queued follow-ups). The composer overlaps the
-  // scrolling transcript, so the transcript reserves matching bottom space to keep its
-  // last rows clear of this chrome instead of letting them slide underneath and clip.
+  // (live file changes, active task list, queued follow-ups). The composer is a flex
+  // sibling below the transcript, so a taller stack shrinks the transcript viewport from
+  // the bottom; this height feeds the scroll compensation below (not any bottom inset)
+  // that keeps the transcript pinned to its end while the chrome grows.
   const [composerStackedChromeHeight, setComposerStackedChromeHeight] = useState(0);
   const composerStackedChromeObserverRef = useRef<ResizeObserver | null>(null);
   const previousComposerStackedChromeHeightRef = useRef(0);
@@ -5172,6 +5173,10 @@ export default function ChatView({
     autoFollowThreadIdRef.current = null;
     animateNextAutoFollowScrollRef.current = false;
   }, []);
+  // Keep the transcript pinned to its end while the stacked composer chrome grows. The
+  // composer is a flex sibling, so a taller chrome shrinks the transcript viewport from
+  // the bottom and would otherwise let the last rows drift up out of view. When already
+  // at the end, nudge scrollTop by the growth so the end stays put.
   useLayoutEffect(() => {
     const previousHeight = previousComposerStackedChromeHeightRef.current;
     previousComposerStackedChromeHeightRef.current = composerStackedChromeHeight;
@@ -11234,9 +11239,9 @@ export default function ChatView({
         >
           <ComposerColumnFrame>
             {/* Single measured wrapper around every panel stacked above the composer input.
-                Its height drives the transcript bottom inset and scroll compensation so the
-                last rows stay clear of this chrome (see measureComposerStackedChrome). A bare
-                div keeps the panels' -mb-px seam onto the input shell via margin collapse. */}
+                Its height drives the transcript scroll compensation so the last rows stay
+                pinned as this chrome grows (see measureComposerStackedChrome). A bare div
+                keeps the panels' -mb-px seam onto the input shell via margin collapse. */}
             <div ref={measureComposerStackedChrome}>
               {showComposerLiveChangesHeader ? (
                 <ComposerLiveChangesHeader
@@ -12092,9 +12097,6 @@ export default function ChatView({
                     onCloseAgentActivityDetail={() => setOpenAgentActivityId(null)}
                     scrollButtonVisible={showScrollToBottom}
                     onScrollToBottom={onScrollToBottom}
-                    bottomContentInsetPx={
-                      composerStackedChromeHeight > 0 ? composerStackedChromeHeight + 8 : undefined
-                    }
                     contentInsetRightPx={
                       environmentAppliesContentInset
                         ? ENVIRONMENT_DOCKED_CONTENT_INSET_PX
@@ -12104,6 +12106,7 @@ export default function ChatView({
                 </div>
 
                 <div
+                  data-chat-composer-stack="true"
                   className={cn(
                     "relative z-10 -mt-5 w-full shrink-0 overflow-visible pt-0 sm:pt-0",
                     ENVIRONMENT_CONTENT_INSET_MOTION_CLASS,
