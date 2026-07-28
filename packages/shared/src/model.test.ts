@@ -27,6 +27,7 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeAntigravityModelOptions,
   normalizeClaudeModelOptions,
+  normalizeClaudeModelSelectionForRuntime,
   normalizeCodexModelOptions,
   normalizeGrokModelOptions,
   normalizeModelSlug,
@@ -68,6 +69,12 @@ describe("normalizeModelSlug", () => {
 
   it("uses provider-specific aliases", () => {
     expect(normalizeModelSlug("sonnet", "claudeAgent")).toBe("claude-sonnet-5");
+    expect(normalizeModelSlug("opus", "claudeAgent")).toBe("claude-opus-4-8");
+    expect(normalizeModelSlug("opus-5", "claudeAgent")).toBe("claude-opus-5");
+    expect(normalizeModelSlug("claude-opus-5", "claudeAgent")).toBe("claude-opus-5");
+    expect(normalizeModelSlug("claude-opus-5.0", "claudeAgent")).toBe("claude-opus-5");
+    expect(normalizeModelSlug("claude-opus-5-0", "claudeAgent")).toBe("claude-opus-5");
+    expect(normalizeModelSlug("opus-4.8", "claudeAgent")).toBe("claude-opus-4-8");
     expect(normalizeModelSlug("sonnet-4.6", "claudeAgent")).toBe("claude-sonnet-4-6");
     expect(normalizeModelSlug("opus-4.6", "claudeAgent")).toBe("claude-opus-4-6");
     expect(normalizeModelSlug("claude-haiku-4-5-20251001", "claudeAgent")).toBe("claude-haiku-4-5");
@@ -251,7 +258,47 @@ describe("recommended provider defaults", () => {
       ]),
     ).toEqual({
       provider: "claudeAgent",
-      model: "opus[1m]",
+      model: "claude-opus-4-8",
+      options: { effort: "high" },
+    });
+  });
+
+  it("keeps Opus 4.8 preferred when the exact Claude catalog still advertises it", () => {
+    expect(
+      resolveRecommendedModelSelection("claudeAgent", [
+        {
+          slug: "opus-4.8",
+          name: "Claude Opus 4.8",
+          resolvedModel: "claude-opus-4-8",
+        },
+        {
+          slug: "opus",
+          name: "Claude Opus 5",
+          resolvedModel: "claude-opus-5",
+          isDefault: true,
+        },
+      ]),
+    ).toEqual({
+      provider: "claudeAgent",
+      model: "claude-opus-4-8",
+      options: { effort: "high" },
+    });
+  });
+
+  it("uses Claude's exact advertised default when Opus 4.8 is unavailable", () => {
+    expect(
+      resolveRecommendedModelSelection("claudeAgent", [
+        {
+          slug: "opus",
+          name: "Claude Opus 5",
+          resolvedModel: "claude-opus-5",
+          isDefault: true,
+          supportedReasoningEfforts: [{ value: "high" }],
+        },
+      ]),
+    ).toEqual({
+      provider: "claudeAgent",
+      model: "claude-opus-5",
       options: { effort: "high" },
     });
   });
@@ -355,6 +402,17 @@ describe("getModelCapabilities reasoningEffortLevels", () => {
 
   it("returns claude effort options for Fable 5", () => {
     expect(values("claudeAgent", "claude-fable-5")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultracode",
+    ]);
+  });
+
+  it("returns claude effort options for Opus 5", () => {
+    expect(values("claudeAgent", "claude-opus-5")).toEqual([
       "low",
       "medium",
       "high",
@@ -593,6 +651,9 @@ describe("context window helpers", () => {
     expect(getModelCapabilities("claudeAgent", "claude-opus-4-5").contextWindowTokens).toBe(
       200_000,
     );
+    const opus5Caps = getModelCapabilities("claudeAgent", "claude-opus-5");
+    expect(opus5Caps.contextWindowTokens).toBe(1_000_000);
+    expect(getDefaultAutoCompactWindow(opus5Caps)).toBe("200k");
     expect(getDefaultContextWindow(getModelCapabilities("codex", "gpt-5.4"))).toBeNull();
   });
 
@@ -624,6 +685,7 @@ describe("formatModelDisplayName", () => {
   it("returns built-in display names for known models", () => {
     expect(formatModelDisplayName("gpt-5.3-codex")).toBe("GPT-5.3 Codex");
     expect(formatModelDisplayName("claude-sonnet-5")).toBe("Claude Sonnet 5");
+    expect(formatModelDisplayName("claude-opus-5")).toBe("Claude Opus 5");
   });
 
   it("humanizes unknown GPT model slugs", () => {
@@ -713,6 +775,30 @@ describe("normalizeClaudeModelOptions", () => {
     });
   });
 
+  it("keeps Opus 5 xhigh, ultracode, and fast mode while dropping ultrathink", () => {
+    expect(
+      normalizeClaudeModelOptions("claude-opus-5", {
+        effort: "xhigh",
+        fastMode: true,
+      }),
+    ).toEqual({
+      effort: "xhigh",
+      fastMode: true,
+    });
+    expect(
+      normalizeClaudeModelOptions("claude-opus-5", {
+        effort: "ultracode",
+      }),
+    ).toEqual({
+      effort: "ultracode",
+    });
+    expect(
+      normalizeClaudeModelOptions("claude-opus-5", {
+        effort: "ultrathink",
+      }),
+    ).toBeUndefined();
+  });
+
   it("drops unsupported fast mode for Sonnet while preserving max effort", () => {
     expect(
       normalizeClaudeModelOptions("claude-sonnet-4-6", {
@@ -734,6 +820,28 @@ describe("normalizeClaudeModelOptions", () => {
       thinking: false,
     });
   });
+});
+
+describe("normalizeClaudeModelSelectionForRuntime", () => {
+  it.each([
+    ["opus[1m]", "claude-opus-4-8[1m]"],
+    ["opus-5[1m]", "claude-opus-5[1m]"],
+  ])(
+    "normalizes the Opus alias %s while preserving its native context suffix",
+    (model, expected) => {
+      expect(
+        normalizeClaudeModelSelectionForRuntime({
+          provider: "claudeAgent",
+          model,
+          options: { fastMode: true },
+        }),
+      ).toEqual({
+        provider: "claudeAgent",
+        model: expected,
+        options: { fastMode: true },
+      });
+    },
+  );
 });
 
 describe("resolveApiModelId", () => {
@@ -1002,6 +1110,7 @@ describe("getModelCapabilities Claude capability flags", () => {
   it("enables adaptive reasoning for supported Claude models", () => {
     const has = (m: string | undefined) =>
       getModelCapabilities("claudeAgent", m).reasoningEffortLevels.length > 0;
+    expect(has("claude-opus-5")).toBe(true);
     expect(has("claude-opus-4-8")).toBe(true);
     expect(has("claude-opus-4-7")).toBe(true);
     expect(has("claude-opus-4-6")).toBe(true);
@@ -1014,6 +1123,7 @@ describe("getModelCapabilities Claude capability flags", () => {
   it("enables max effort for supported Claude models", () => {
     const has = (m: string | undefined) =>
       getModelCapabilities("claudeAgent", m).reasoningEffortLevels.some((l) => l.value === "max");
+    expect(has("claude-opus-5")).toBe(true);
     expect(has("claude-opus-4-8")).toBe(true);
     expect(has("claude-opus-4-7")).toBe(true);
     expect(has("claude-opus-4-6")).toBe(true);
@@ -1023,8 +1133,9 @@ describe("getModelCapabilities Claude capability flags", () => {
     expect(has(undefined)).toBe(false);
   });
 
-  it("only enables Claude fast mode for Opus 4.6", () => {
+  it("enables Claude fast mode only for supported Opus models", () => {
     const has = (m: string | undefined) => getModelCapabilities("claudeAgent", m).supportsFastMode;
+    expect(has("claude-opus-5")).toBe(true);
     expect(has("claude-opus-4-8")).toBe(true);
     expect(has("claude-opus-4-7")).toBe(true);
     expect(has("claude-opus-4-6")).toBe(true);
@@ -1035,10 +1146,11 @@ describe("getModelCapabilities Claude capability flags", () => {
     expect(has(undefined)).toBe(false);
   });
 
-  it("only enables ultrathink keyword handling for Opus 4.6 and Sonnet 4.6", () => {
+  it("enables ultrathink keyword handling only for supported legacy models", () => {
     const has = (m: string | undefined) =>
       getModelCapabilities("claudeAgent", m).promptInjectedEffortLevels.includes("ultrathink");
     expect(has("claude-fable-5")).toBe(false);
+    expect(has("claude-opus-5")).toBe(false);
     expect(has("claude-opus-4-8")).toBe(true);
     expect(has("claude-opus-4-7")).toBe(true);
     expect(has("claude-opus-4-6")).toBe(true);
@@ -1050,6 +1162,7 @@ describe("getModelCapabilities Claude capability flags", () => {
   it("only enables the Claude thinking toggle for Haiku 4.5", () => {
     const has = (m: string | undefined) =>
       getModelCapabilities("claudeAgent", m).supportsThinkingToggle;
+    expect(has("claude-opus-5")).toBe(false);
     expect(has("claude-opus-4-6")).toBe(false);
     expect(has("claude-sonnet-5")).toBe(false);
     expect(has("claude-sonnet-4-6")).toBe(false);

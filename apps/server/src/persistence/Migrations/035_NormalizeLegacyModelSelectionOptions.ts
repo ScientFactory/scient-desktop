@@ -5,7 +5,9 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-import { normalizePersistedModelSelection } from "../modelSelectionCompatibility.ts";
+// Uses a frozen v0.5.13 snapshot (not the live modelSelectionCompatibility) so this
+// released migration stays behaviorally pinned while the model catalog evolves.
+import { normalizePersistedModelSelection } from "../migration035FrozenModelSelectionCompatibility.ts";
 
 type JsonObject = Record<string, unknown>;
 

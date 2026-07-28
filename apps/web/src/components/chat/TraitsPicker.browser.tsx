@@ -32,6 +32,7 @@ const CLAUDE_THREAD_ID = ThreadId.makeUnsafe("thread-claude-traits");
 function ClaudeTraitsPickerHarness(props: {
   model: string;
   fallbackModelSelection: ModelSelection | null;
+  runtimeModel?: ProviderModelDescriptor | undefined;
 }) {
   const prompt = useComposerThreadDraft(CLAUDE_THREAD_ID).prompt;
   const setPrompt = useComposerDraftStore((store) => store.setPrompt);
@@ -64,6 +65,7 @@ function ClaudeTraitsPickerHarness(props: {
       provider="claudeAgent"
       threadId={CLAUDE_THREAD_ID}
       model={selectedModel ?? props.model}
+      runtimeModel={props.runtimeModel}
       prompt={prompt}
       modelOptions={modelOptions?.claudeAgent}
       onPromptChange={handlePromptChange}
@@ -83,6 +85,7 @@ async function mountClaudePicker(props?: {
     contextWindow?: string;
   } | null;
   skipDraftModelOptions?: boolean;
+  runtimeModel?: ProviderModelDescriptor;
 }) {
   const model = props?.model ?? "claude-opus-4-6";
   const claudeOptions = !props?.skipDraftModelOptions ? props?.options : undefined;
@@ -133,7 +136,11 @@ async function mountClaudePicker(props?: {
         } satisfies ModelSelection)
       : null;
   const screen = await render(
-    <ClaudeTraitsPickerHarness model={model} fallbackModelSelection={fallbackModelSelection} />,
+    <ClaudeTraitsPickerHarness
+      model={model}
+      fallbackModelSelection={fallbackModelSelection}
+      runtimeModel={props?.runtimeModel}
+    />,
     { container: host },
   );
 
@@ -212,6 +219,53 @@ describe("TraitsPicker (Claude)", () => {
     });
   });
 
+  it("hides static effort controls when runtime discovery explicitly disables them", async () => {
+    await using _ = await mountClaudePicker({
+      model: "claude-opus-4-8",
+      runtimeModel: {
+        slug: "opus",
+        name: "Opus",
+        resolvedModel: "claude-opus-4-8",
+        supportsReasoningEffort: false,
+        supportedReasoningEfforts: [],
+        supportsThinkingToggle: false,
+      },
+    });
+
+    await page.getByRole("button").click();
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).not.toContain("Effort");
+      expect(text).not.toContain("Thinking");
+    });
+  });
+
+  it("shows exact runtime controls for a model absent from the static catalog", async () => {
+    await using _ = await mountClaudePicker({
+      model: "claude-future-1",
+      runtimeModel: {
+        slug: "future",
+        name: "Claude Future",
+        resolvedModel: "claude-future-1",
+        supportsReasoningEffort: true,
+        supportedReasoningEfforts: [
+          { value: "high", label: "High" },
+          { value: "max", label: "Max" },
+        ],
+        supportsThinkingToggle: true,
+      },
+    });
+
+    await page.getByRole("button").click();
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("High");
+      expect(text).toContain("Thinking");
+    });
+  });
+
   it("shows Extra High for Claude Opus 4.7", async () => {
     await using _ = await mountClaudePicker({
       model: "claude-opus-4-7",
@@ -223,6 +277,26 @@ describe("TraitsPicker (Claude)", () => {
       const text = document.body.textContent ?? "";
       expect(text).toContain("Extra High");
       expect(text).toContain("Max");
+    });
+  });
+
+  it("shows the Opus 5 reasoning, speed, and auto-compact controls", async () => {
+    await using _ = await mountClaudePicker({
+      model: "claude-opus-5",
+    });
+
+    await page.getByRole("button").click();
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("Extra High");
+      expect(text).toContain("Max");
+      expect(text).toContain("Ultracode");
+      expect(text).not.toContain("Ultrathink");
+      expect(text).toContain("Speed");
+      expect(text).toContain("Fast");
+      expect(text).toContain("Auto-compact");
+      expect(text).toContain("1M");
     });
   });
 

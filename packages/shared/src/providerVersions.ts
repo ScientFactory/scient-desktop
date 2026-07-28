@@ -5,6 +5,8 @@
 const SEMVER_NUMBER_SEGMENT = /^\d+$/u;
 const STABLE_SEMVER = /^\d+\.\d+\.\d+$/u;
 
+export const MINIMUM_CLAUDE_OPUS_5_VERSION = "2.1.219";
+
 interface ParsedSemver {
   readonly major: number;
   readonly minor: number;
@@ -89,4 +91,9 @@ export function compareSemverVersions(left: string, right: string): number {
     if (comparison !== 0) return comparison;
   }
   return 0;
+}
+
+export function isClaudeOpus5RuntimeSupported(version: string | null | undefined): boolean {
+  if (typeof version !== "string" || parseSemver(version) === null) return false;
+  return compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_5_VERSION) >= 0;
 }

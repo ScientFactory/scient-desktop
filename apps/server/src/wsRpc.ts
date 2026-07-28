@@ -22,6 +22,10 @@ import {
   LIVE_HTML_PREVIEW_PREPARE_V1_METHOD,
   LiveHtmlPreviewRpcGroup,
 } from "@synara/shared/liveHtmlPreviewTransport";
+import {
+  PROVIDER_SIGN_OUT_METHOD,
+  ProviderSignOutRpcGroup,
+} from "@synara/shared/providerSignOutTransport";
 import { clamp } from "effect/Number";
 import { Effect, FileSystem, Layer, Option, Path, Queue, Schema, Stream } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
@@ -31,6 +35,10 @@ import {
   type AuthorizedGitPullInput,
   type AuthorizedGitRunStackedActionInput,
 } from "@synara/shared/gitMutationRpc";
+import {
+  GIT_WORKING_TREE_DIFF_STATS_METHOD,
+  GitDiffStatsRpcGroup,
+} from "@synara/shared/gitDiffStatsRpc";
 
 import { AutomationService } from "./automation/Services/AutomationService";
 import { authErrorResponse, makeEffectAuthRequest } from "./auth/http";
@@ -95,7 +103,9 @@ import { cloneProjectSource, getRepositorySourceStatuses } from "./projectSource
 
 const MAX_DIAGNOSTIC_CHILD_PROCESSES = 80;
 const MAX_DIAGNOSTIC_ARGS_CHARS = 500;
-const ScientWsRpcGroup = LiveHtmlPreviewRpcGroup.merge(GitMutationRpcGroup);
+const ScientWsRpcGroup = LiveHtmlPreviewRpcGroup.merge(GitMutationRpcGroup)
+  .merge(ProviderSignOutRpcGroup)
+  .merge(GitDiffStatsRpcGroup);
 
 // Relative subdirectories scaffolded under a freshly created chat container workspace root.
 // The Studio layout lives in studioWorkspaceScaffold.ts alongside its instruction files.
@@ -864,6 +874,11 @@ export const makeWsRpcLayer = () =>
           rpcEffect(gitStatusBroadcaster.getStatus(input), "Failed to read git status"),
         [WS_METHODS.gitReadWorkingTreeDiff]: (input) =>
           rpcEffect(gitManager.readWorkingTreeDiff(input), "Failed to read working tree diff"),
+        [GIT_WORKING_TREE_DIFF_STATS_METHOD]: (input) =>
+          rpcEffect(
+            gitManager.readWorkingTreeDiffStats(input),
+            "Failed to read working tree diff stats",
+          ),
         [WS_METHODS.gitSummarizeDiff]: (input) =>
           rpcEffect(gitManager.summarizeDiff(input), "Failed to summarize diff"),
         [WS_METHODS.gitPull]: (input) => {
@@ -1167,6 +1182,11 @@ export const makeWsRpcLayer = () =>
           ),
         [WS_METHODS.serverCancelProviderConnection]: (input) =>
           providerConnection.cancel(input).pipe(
+            Effect.andThen(providerClientStatusProjection.getStatuses),
+            Effect.map((providers) => ({ providers })),
+          ),
+        [PROVIDER_SIGN_OUT_METHOD]: (input) =>
+          providerConnection.signOut(input).pipe(
             Effect.andThen(providerClientStatusProjection.getStatuses),
             Effect.map((providers) => ({ providers })),
           ),

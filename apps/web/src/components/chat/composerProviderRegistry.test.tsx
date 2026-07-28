@@ -341,6 +341,58 @@ describe("getComposerProviderState", () => {
     });
   });
 
+  it("drops stored Claude controls when exact runtime metadata disables them", () => {
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-opus-4-8",
+      runtimeModel: {
+        slug: "opus",
+        name: "Opus",
+        resolvedModel: "claude-opus-4-8",
+        supportsReasoningEffort: false,
+        supportedReasoningEfforts: [],
+        supportsThinkingToggle: false,
+        supportsFastMode: false,
+      },
+      prompt: "",
+      modelOptions: {
+        claudeAgent: { effort: "xhigh", thinking: false, fastMode: true },
+      },
+    });
+
+    expect(state).toEqual({
+      provider: "claudeAgent",
+      promptEffort: null,
+      modelOptionsForDispatch: undefined,
+    });
+  });
+
+  it("dispatches exact runtime controls for a new Claude model", () => {
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-future-1",
+      runtimeModel: {
+        slug: "future",
+        name: "Claude Future",
+        resolvedModel: "claude-future-1",
+        supportsReasoningEffort: true,
+        supportedReasoningEfforts: [{ value: "high" }],
+        supportsThinkingToggle: true,
+        supportsFastMode: false,
+      },
+      prompt: "",
+      modelOptions: {
+        claudeAgent: { effort: "high", thinking: false },
+      },
+    });
+
+    expect(state).toEqual({
+      provider: "claudeAgent",
+      promptEffort: "high",
+      modelOptionsForDispatch: { effort: "high", thinking: false },
+    });
+  });
+
   it("preserves codex fast mode when it is the only active option", () => {
     const state = getComposerProviderState({
       provider: "codex",
@@ -441,6 +493,33 @@ describe("getComposerProviderState", () => {
       model: "claude-sonnet-4-6",
       prompt: "",
       modelOptions: undefined,
+    });
+
+    expect(state).toEqual({
+      provider: "claudeAgent",
+      promptEffort: "high",
+      modelOptionsForDispatch: undefined,
+    });
+  });
+
+  it("drops stored Claude controls that runtime discovery proves unsupported", () => {
+    const state = getComposerProviderState({
+      provider: "claudeAgent",
+      model: "claude-opus-4-8",
+      runtimeModel: {
+        slug: "opus[1m]",
+        name: "Opus",
+        resolvedModel: "claude-opus-4-8[1m]",
+        supportedReasoningEfforts: [{ value: "low" }, { value: "high" }],
+        supportsFastMode: false,
+      },
+      prompt: "",
+      modelOptions: {
+        claudeAgent: {
+          effort: "xhigh",
+          fastMode: true,
+        },
+      },
     });
 
     expect(state).toEqual({

@@ -3,6 +3,7 @@ import {
   humanizeModelSlug,
   normalizeModelSlug,
 } from "@synara/shared/model";
+import { isClaudeOpus5RuntimeSupported } from "@synara/shared/providerVersions";
 import type {
   AntigravityModelOptions,
   AntigravityModelSelection,
@@ -48,6 +49,65 @@ export interface ProviderModelOptionGroup {
   key: string;
   label: string | null;
   options: ProviderModelOption[];
+}
+
+type RuntimeModelIdentity = {
+  readonly slug: string;
+  readonly resolvedModel?: string | null | undefined;
+};
+
+function runtimeCatalogAdvertisesClaudeOpus5(
+  runtimeModels: ReadonlyArray<RuntimeModelIdentity> | null | undefined,
+): boolean {
+  return (
+    runtimeModels?.some((model) => {
+      const exactIdentity = (model.resolvedModel?.trim() || model.slug.trim()).replace(
+        /\[[^\]]+\]$/u,
+        "",
+      );
+      // Keep this identical to the server's exact-process authorization gate.
+      // Moving aliases such as `opus` and shorthand such as `opus-5` are not
+      // proof that this account/project runtime actually advertises Opus 5.
+      return exactIdentity === "claude-opus-5";
+    }) === true
+  );
+}
+
+function providerModelIsSupportedByRuntime(input: {
+  provider: ProviderKind;
+  slug: string;
+  providerVersion?: string | null | undefined;
+  runtimeModels?: ReadonlyArray<RuntimeModelIdentity> | null | undefined;
+}): boolean {
+  if (
+    input.provider !== "claudeAgent" ||
+    normalizeDynamicModelSlug(input.provider, input.slug) !== "claude-opus-5"
+  ) {
+    return true;
+  }
+  // A sufficiently new binary is necessary but not sufficient: availability
+  // is account/project scoped. Never surface the static Opus 5 row until the
+  // exact runtime catalog also advertises that exact resolved model.
+  return (
+    isClaudeOpus5RuntimeSupported(input.providerVersion) &&
+    runtimeCatalogAdvertisesClaudeOpus5(input.runtimeModels)
+  );
+}
+
+export function filterProviderModelOptionsForRuntime(input: {
+  provider: ProviderKind;
+  providerVersion?: string | null | undefined;
+  runtimeModels?: ReadonlyArray<RuntimeModelIdentity> | null | undefined;
+  options: ReadonlyArray<ProviderModelOption & { isCustom?: boolean }>;
+}): ReadonlyArray<ProviderModelOption & { isCustom?: boolean }> {
+  return input.options.filter((option) =>
+    providerModelIsSupportedByRuntime({
+      provider: input.provider,
+      slug: option.slug,
+      providerVersion: input.providerVersion,
+      runtimeModels: input.runtimeModels,
+    }),
+  );
 }
 
 function modelOptionKey(option: Pick<ProviderModelOption, "slug">): string {
@@ -115,6 +175,7 @@ function normalizeDynamicModelSlug(provider: ProviderKind, slug: string): string
  */
 export function mergeDynamicModelOptions(input: {
   provider: ProviderKind;
+  providerVersion?: string | null | undefined;
   staticOptions: ReadonlyArray<ProviderModelOption & { isCustom?: boolean }>;
   dynamicModels: ReadonlyArray<{
     slug: string;
@@ -133,7 +194,13 @@ export function mergeDynamicModelOptions(input: {
       | undefined;
   }>;
 }): ReadonlyArray<ProviderModelOption & { isCustom?: boolean }> {
-  const staticNameBySlug = new Map(input.staticOptions.map((model) => [model.slug, model.name]));
+  const eligibleStaticOptions = filterProviderModelOptionsForRuntime({
+    provider: input.provider,
+    providerVersion: input.providerVersion,
+    runtimeModels: input.dynamicModels,
+    options: input.staticOptions,
+  });
+  const staticNameBySlug = new Map(eligibleStaticOptions.map((model) => [model.slug, model.name]));
   const claudeResolvedDefaultSlug =
     input.provider === "claudeAgent"
       ? input.dynamicModels
@@ -145,6 +212,20 @@ export function mergeDynamicModelOptions(input: {
   const normalizedClaudeResolvedDefaultSlug = claudeResolvedDefaultSlug
     ? normalizeDynamicModelSlug("claudeAgent", claudeResolvedDefaultSlug)
     : undefined;
+  const claudeResolvedModelByAlias = new Map<string, string>();
+  if (input.provider === "claudeAgent") {
+    for (const model of input.dynamicModels) {
+      const resolvedModel = model.resolvedModel?.trim();
+      if (!resolvedModel) continue;
+      claudeResolvedModelByAlias.set(
+        model.slug
+          .trim()
+          .toLowerCase()
+          .replace(/\[[^\]]+\]$/u, ""),
+        resolvedModel,
+      );
+    }
+  }
   const dynamicNormalizedSlugs = new Set<string>();
   const normalizedDynamicOptions: ProviderModelOption[] = [];
 
@@ -159,7 +240,31 @@ export function mergeDynamicModelOptions(input: {
       continue;
     }
 
-    const normalizedSlug = normalizeDynamicModelSlug(input.provider, dynamicModel.slug);
+    // Claude's moving aliases (for example, `opus`) are resolved by the SDK for
+    // the installed CLI. Prefer that exact model identity so an older catalog row
+    // cannot be relabeled when Scient advances the fallback alias.
+    const slugToNormalize =
+      input.provider === "claudeAgent"
+        ? (dynamicModel.resolvedModel?.trim() ??
+          claudeResolvedModelByAlias.get(
+            dynamicModel.slug
+              .trim()
+              .toLowerCase()
+              .replace(/\[[^\]]+\]$/u, ""),
+          ) ??
+          dynamicModel.slug)
+        : dynamicModel.slug;
+    const normalizedSlug = normalizeDynamicModelSlug(input.provider, slugToNormalize);
+    if (
+      !providerModelIsSupportedByRuntime({
+        provider: input.provider,
+        slug: normalizedSlug,
+        providerVersion: input.providerVersion,
+        runtimeModels: input.dynamicModels,
+      })
+    ) {
+      continue;
+    }
     const isDefault =
       dynamicModel.isDefault === true || normalizedSlug === normalizedClaudeResolvedDefaultSlug;
     const rawSlug = dynamicModel.slug.trim().toLowerCase();
@@ -202,24 +307,27 @@ export function mergeDynamicModelOptions(input: {
   const customOnlyModels =
     input.provider === "droid"
       ? []
-      : input.staticOptions.filter(
+      : eligibleStaticOptions.filter(
           (model) =>
             "isCustom" in model &&
             model.isCustom &&
             !dynamicNormalizedSlugs.has(normalizeDynamicModelSlug(input.provider, model.slug)),
         );
-  const staticBuiltInModels = input.staticOptions.filter(
+  const staticBuiltInModels = eligibleStaticOptions.filter(
     (model) => !("isCustom" in model) || model.isCustom !== true,
   );
-  const missingStaticBuiltIns =
-    (input.provider === "antigravity" ||
-      input.provider === "kilo" ||
-      input.provider === "opencode" ||
-      input.provider === "cursor" ||
-      input.provider === "droid") &&
-    normalizedDynamicOptions.length > 0
-      ? []
-      : staticBuiltInModels.filter((model) => !dynamicNormalizedSlugs.has(model.slug));
+  const runtimeCatalogOwnsBuiltIns =
+    input.provider === "claudeAgent"
+      ? input.dynamicModels.length > 0
+      : (input.provider === "antigravity" ||
+          input.provider === "kilo" ||
+          input.provider === "opencode" ||
+          input.provider === "cursor" ||
+          input.provider === "droid") &&
+        normalizedDynamicOptions.length > 0;
+  const missingStaticBuiltIns = runtimeCatalogOwnsBuiltIns
+    ? []
+    : staticBuiltInModels.filter((model) => !dynamicNormalizedSlugs.has(model.slug));
 
   return [...normalizedDynamicOptions, ...missingStaticBuiltIns, ...customOnlyModels];
 }

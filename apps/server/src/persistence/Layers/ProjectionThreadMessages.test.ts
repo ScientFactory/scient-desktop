@@ -244,4 +244,41 @@ layer("ProjectionThreadMessageRepository", (it) => {
       assert.equal(rows[0]?.dispatchOrigin, "automation");
     }),
   );
+
+  it.effect("round-trips and preserves additive agent dispatch provenance", () =>
+    Effect.gen(function* () {
+      const repository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.makeUnsafe("thread-dispatch-source");
+      const messageId = MessageId.makeUnsafe("message-dispatch-source");
+      const createdAt = "2026-07-28T05:00:00.000Z";
+
+      yield* repository.upsert({
+        messageId,
+        threadId,
+        turnId: null,
+        role: "user",
+        text: "continue",
+        dispatchSource: "agent",
+        isStreaming: false,
+        source: "native",
+        createdAt,
+        updatedAt: createdAt,
+      });
+      yield* repository.upsert({
+        messageId,
+        threadId,
+        turnId: null,
+        role: "user",
+        text: "continue now",
+        isStreaming: false,
+        source: "native",
+        createdAt,
+        updatedAt: "2026-07-28T05:00:01.000Z",
+      });
+
+      const rows = yield* repository.listByThreadId({ threadId });
+      assert.equal(rows[0]?.dispatchSource, "agent");
+      assert.equal(rows[0]?.dispatchOrigin, undefined);
+    }),
+  );
 });
