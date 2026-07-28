@@ -133,6 +133,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Fetch official upstream release tags
+        run: |
+          git remote add upstream https://github.com/Emanuele-web04/synara.git
+          git remote set-url --push upstream DISABLED
+          git fetch --prune upstream
+
       - name: Fetch official release lineage
         run: git fetch --no-tags origin +refs/heads/release/stable:refs/remotes/origin/release/stable
 
