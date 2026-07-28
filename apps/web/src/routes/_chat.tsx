@@ -27,7 +27,7 @@ import {
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { startFreshChatForActiveSurface } from "../lib/startContainerChat";
-import { resolveShortcutCommand } from "../keybindings";
+import { isKeyboardShortcutsHelpShortcut, resolveShortcutCommand } from "../keybindings";
 import { useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
@@ -293,13 +293,7 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
-      const isShortcutsHelpShortcut =
-        (event.metaKey || event.ctrlKey) &&
-        !event.shiftKey &&
-        !event.altKey &&
-        !event.repeat &&
-        (event.key === "/" || event.code === "Slash");
-      if (isShortcutsHelpShortcut) {
+      if (isKeyboardShortcutsHelpShortcut(event, platform)) {
         event.preventDefault();
         event.stopPropagation();
         setShortcutsDialogOpen(true);
