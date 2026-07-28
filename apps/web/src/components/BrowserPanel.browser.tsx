@@ -662,7 +662,7 @@ describe("BrowserPanel interactions", () => {
       ]);
     });
 
-    const browserViewport = document.querySelector<HTMLElement>("webview")?.parentElement;
+    const browserViewport = document.querySelector<HTMLElement>('[aria-label="Browser page"]');
     expect(browserViewport).not.toBeNull();
     Object.assign(browserViewport!.style, { width: "500px", right: "auto" });
 

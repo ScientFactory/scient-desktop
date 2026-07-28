@@ -41,6 +41,7 @@ const NATIVE_BROWSER_OBSCURING_OVERLAY_SELECTOR = [
 // blocker, but treating its portal as one would hide the browser across the whole app.
 const NATIVE_BROWSER_NON_OBSCURING_OVERLAY_SELECTOR = [
   "[data-panel-resize-overlay='true']",
+  "[data-browser-webview-runtime-host='true']",
   "[data-slot='toast-portal']",
   "[data-slot='toast-portal-anchored']",
   "[data-slot='toast-viewport']",
@@ -61,6 +62,31 @@ export interface BrowserWebviewElement extends HTMLElement {
 }
 
 export type NativeBrowserBoundsSyncMode = "send" | "hide" | "suppress";
+
+export type NativeBrowserHitStackEntry =
+  | "viewport"
+  | "viewport-descendant"
+  | "viewport-ancestor"
+  | "shared-owner"
+  | "non-obscuring"
+  | "invisible"
+  | "obstruction";
+
+// `elementsFromPoint` is front-to-back. Once the logical browser surface (including its
+// descendants or containing shell) is reached, later entries are behind it and cannot cover it.
+export function nativeBrowserHitStackHasObstruction(
+  entries: readonly NativeBrowserHitStackEntry[],
+): boolean {
+  for (const entry of entries) {
+    if (entry === "viewport" || entry === "viewport-descendant" || entry === "viewport-ancestor") {
+      return false;
+    }
+    if (entry === "obstruction") {
+      return true;
+    }
+  }
+  return false;
+}
 
 export function resolveNativeBrowserBoundsSyncMode(options: {
   obscuredByOverlay: boolean;
@@ -144,24 +170,19 @@ function hasTopLayerDomObstruction(element: HTMLElement): boolean {
       continue;
     }
 
-    for (const hitElement of document.elementsFromPoint(x, y)) {
-      if (!(hitElement instanceof HTMLElement)) {
-        continue;
-      }
-      if (hitElement === element || element.contains(hitElement) || hitElement.contains(element)) {
-        continue;
-      }
-      if (sharesNativeBrowserOverlayOwner(hitElement, element)) {
-        continue;
-      }
-      if (isNativeBrowserNonObscuringOverlayElement(hitElement)) {
-        continue;
-      }
-      if (!isVisibleOverlayElement(hitElement)) {
-        continue;
-      }
-      return true;
-    }
+    const hitStack = document
+      .elementsFromPoint(x, y)
+      .flatMap<NativeBrowserHitStackEntry>((hitElement) => {
+        if (!(hitElement instanceof HTMLElement)) return [];
+        if (hitElement === element) return ["viewport"];
+        if (element.contains(hitElement)) return ["viewport-descendant"];
+        if (hitElement.contains(element)) return ["viewport-ancestor"];
+        if (sharesNativeBrowserOverlayOwner(hitElement, element)) return ["shared-owner"];
+        if (isNativeBrowserNonObscuringOverlayElement(hitElement)) return ["non-obscuring"];
+        if (!isVisibleOverlayElement(hitElement)) return ["invisible"];
+        return ["obstruction"];
+      });
+    if (nativeBrowserHitStackHasObstruction(hitStack)) return true;
   }
 
   return false;
