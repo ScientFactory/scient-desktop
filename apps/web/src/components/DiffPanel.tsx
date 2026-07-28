@@ -49,6 +49,7 @@ import {
   DIFF_PANEL_PICKER_SCOPE_OPTIONS,
   isStaleDiffTurnSelection,
   resolveConversationCacheScope,
+  resolveDiffPanelCompactScopeCountQueryEnabled,
   resolveDiffPanelGitStatusQueriesEnabled,
   resolveDiffPanelQueriesEnabled,
   resolveDiffPanelScopeCountQueriesEnabled,
@@ -622,25 +623,46 @@ export default function DiffPanel({
   const selectedPatch = selectedTurn ? selectedTurnCheckpointDiff : conversationCheckpointDiff;
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
+  const viewSource = useMemo(
+    () =>
+      resolveDiffPanelViewSource({
+        diffViewKind,
+        repoDiffScope,
+        selectedTurnId,
+      }),
+    [diffViewKind, repoDiffScope, selectedTurnId],
+  );
   const unstagedDiffStatsQuery = useQuery(
     gitWorkingTreeDiffStatsQueryOptions({
       cwd: activeCwd ?? null,
       scope: "unstaged",
-      enabled: scopeCountQueriesEnabled && !diffEnvironmentPending,
+      enabled: resolveDiffPanelCompactScopeCountQueryEnabled({
+        queriesEnabled: scopeCountQueriesEnabled && !diffEnvironmentPending,
+        scope: "unstaged",
+        viewSource,
+      }),
     }),
   );
   const stagedDiffStatsQuery = useQuery(
     gitWorkingTreeDiffStatsQueryOptions({
       cwd: activeCwd ?? null,
       scope: "staged",
-      enabled: scopeCountQueriesEnabled && !diffEnvironmentPending,
+      enabled: resolveDiffPanelCompactScopeCountQueryEnabled({
+        queriesEnabled: scopeCountQueriesEnabled && !diffEnvironmentPending,
+        scope: "staged",
+        viewSource,
+      }),
     }),
   );
   const branchDiffStatsQuery = useQuery(
     gitWorkingTreeDiffStatsQueryOptions({
       cwd: activeCwd ?? null,
       scope: "branch",
-      enabled: scopeCountQueriesEnabled && !diffEnvironmentPending,
+      enabled: resolveDiffPanelCompactScopeCountQueryEnabled({
+        queriesEnabled: scopeCountQueriesEnabled && !diffEnvironmentPending,
+        scope: "branch",
+        viewSource,
+      }),
     }),
   );
   const repoDiffQuery = useQuery(
@@ -683,15 +705,6 @@ export default function DiffPanel({
     setRepoDiffScope,
   ]);
 
-  const viewSource = useMemo(
-    () =>
-      resolveDiffPanelViewSource({
-        diffViewKind,
-        repoDiffScope,
-        selectedTurnId,
-      }),
-    [diffViewKind, repoDiffScope, selectedTurnId],
-  );
   const activeReviewPatch = diffViewKind === "repo" ? repoPatch : selectedPatch;
   const activeReviewError = diffViewKind === "repo" ? repoDiffError : checkpointDiffError;
   const activeReviewIsLoading =
@@ -721,7 +734,11 @@ export default function DiffPanel({
     gitWorkingTreeDiffStatsQueryOptions({
       cwd: activeCwd ?? null,
       scope: "workingTree",
-      enabled: scopeCountQueriesEnabled && !diffEnvironmentPending,
+      enabled: resolveDiffPanelCompactScopeCountQueryEnabled({
+        queriesEnabled: scopeCountQueriesEnabled && !diffEnvironmentPending,
+        scope: "workingTree",
+        viewSource,
+      }),
     }),
   );
   const pickerScopeFileCounts = useMemo(() => {
