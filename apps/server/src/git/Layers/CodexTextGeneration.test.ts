@@ -6,6 +6,7 @@ import { expect } from "vitest";
 import { ServerConfig } from "../../config.ts";
 import {
   CodexTextGenerationLive,
+  selectCodexApiAuthForTextGeneration,
   sanitizeCodexConfigForTextGeneration,
 } from "./CodexTextGeneration.ts";
 import { TextGenerationError } from "../Errors.ts";
@@ -815,6 +816,23 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
     expect(sanitized).not.toContain("read-secrets");
   });
 
+  it("projects only non-rotating API auth into the isolated Codex runtime", () => {
+    expect(
+      selectCodexApiAuthForTextGeneration(
+        JSON.stringify({
+          OPENAI_API_KEY: "test-key",
+          tokens: { access_token: "access", refresh_token: "refresh" },
+          last_refresh: "2026-07-28T00:00:00Z",
+        }),
+      ),
+    ).toBe('{"OPENAI_API_KEY":"test-key"}');
+    expect(
+      selectCodexApiAuthForTextGeneration(
+        JSON.stringify({ tokens: { access_token: "access", refresh_token: "refresh" } }),
+      ),
+    ).toBeNull();
+  });
+
   it.effect("uses the provided codexHomePath and strips local skills config", () =>
     withFakeCodexEnv(
       {
@@ -872,7 +890,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         );
         yield* fs.writeFileString(
           path.join(customCodexHome, "auth.json"),
-          '{"access_token":"test"}',
+          '{"OPENAI_API_KEY":"test-key","tokens":{"refresh_token":"must-not-copy"}}',
         );
         yield* fs.writeFileString(path.join(wrongCodexHome, "config.toml"), 'model = "gpt-5.4"');
 

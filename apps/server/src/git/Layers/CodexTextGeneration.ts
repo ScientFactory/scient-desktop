@@ -153,6 +153,15 @@ export function sanitizeCodexConfigForTextGeneration(content: string): string {
   }
 }
 
+export function selectCodexApiAuthForTextGeneration(content: string): string | null {
+  const parsed = JSON.parse(content) as unknown;
+  if (!isTomlTable(parsed)) return null;
+  const apiKey = parsed.OPENAI_API_KEY;
+  return typeof apiKey === "string" && apiKey.trim().length > 0
+    ? JSON.stringify({ OPENAI_API_KEY: apiKey })
+    : null;
+}
+
 const makeCodexTextGeneration = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -273,27 +282,38 @@ const makeCodexTextGeneration = Effect.gen(function* () {
         .readFileString(path.join(sourceCodexHome, "auth.json"))
         .pipe(Effect.catch(() => Effect.succeed(null)));
       if (sourceAuth !== null) {
-        const isolatedAuthPath = path.join(isolatedHomePath, "auth.json");
-        yield* fileSystem.writeFileString(isolatedAuthPath, sourceAuth).pipe(
-          Effect.mapError(
-            (cause) =>
-              new TextGenerationError({
-                operation,
-                detail: "Failed to copy Codex auth for isolated text generation.",
-                cause,
-              }),
-          ),
-        );
-        yield* fileSystem.chmod(isolatedAuthPath, 0o600).pipe(
-          Effect.mapError(
-            (cause) =>
-              new TextGenerationError({
-                operation,
-                detail: "Failed to secure isolated Codex authentication permissions.",
-                cause,
-              }),
-          ),
-        );
+        const apiAuth = yield* Effect.try({
+          try: () => selectCodexApiAuthForTextGeneration(sourceAuth),
+          catch: (cause) =>
+            new TextGenerationError({
+              operation,
+              detail: "Failed to parse Codex API authentication for isolated text generation.",
+              cause,
+            }),
+        });
+        if (apiAuth !== null) {
+          const isolatedAuthPath = path.join(isolatedHomePath, "auth.json");
+          yield* fileSystem.writeFileString(isolatedAuthPath, apiAuth).pipe(
+            Effect.mapError(
+              (cause) =>
+                new TextGenerationError({
+                  operation,
+                  detail: "Failed to project Codex API auth for isolated text generation.",
+                  cause,
+                }),
+            ),
+          );
+          yield* fileSystem.chmod(isolatedAuthPath, 0o600).pipe(
+            Effect.mapError(
+              (cause) =>
+                new TextGenerationError({
+                  operation,
+                  detail: "Failed to secure isolated Codex authentication permissions.",
+                  cause,
+                }),
+            ),
+          );
+        }
       }
 
       yield* fileSystem.makeDirectory(isolatedWorkingDirectory, { recursive: true }).pipe(
