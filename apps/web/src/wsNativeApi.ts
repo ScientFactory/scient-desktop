@@ -46,6 +46,10 @@ import {
   PROVIDER_SIGN_OUT_METHOD,
   type ProviderSignOutNativeApi,
 } from "@synara/shared/providerSignOutTransport";
+import {
+  GIT_WORKING_TREE_DIFF_STATS_METHOD,
+  type GitDiffStatsNativeApi,
+} from "@synara/shared/gitDiffStatsRpc";
 
 import { showConfirmDialogFallback } from "./confirmDialogFallback";
 import { showContextMenuFallback } from "./contextMenuFallback";
@@ -53,7 +57,9 @@ import { requireHttpExternalUrl } from "./lib/externalUrl";
 import { WsTransport } from "./wsTransport";
 import { emitWsTransportState } from "./wsTransportEvents";
 
-let instance: { api: ProviderSignOutNativeApi; transport: WsTransport } | null = null;
+type ScientNativeApi = GitDiffStatsNativeApi<ProviderSignOutNativeApi>;
+
+let instance: { api: ScientNativeApi; transport: WsTransport } | null = null;
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
 const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
 const serverProviderStatusesUpdatedListeners = new Set<
@@ -341,7 +347,7 @@ export function onServerSettingsUpdated(
   };
 }
 
-export function createWsNativeApi(): ProviderSignOutNativeApi {
+export function createWsNativeApi(): ScientNativeApi {
   if (instance) {
     if (instance.transport.getState() !== "disposed") {
       return instance.api;
@@ -472,7 +478,7 @@ export function createWsNativeApi(): ProviderSignOutNativeApi {
       }
     }
   });
-  const api: ProviderSignOutNativeApi = {
+  const api: ScientNativeApi = {
     dialogs: {
       pickFolder: async () => {
         if (!window.desktopBridge) return null;
@@ -588,6 +594,7 @@ export function createWsNativeApi(): ProviderSignOutNativeApi {
       pull: (input) => transport.request(WS_METHODS.gitPull, input),
       status: (input) => transport.request(WS_METHODS.gitStatus, input),
       readWorkingTreeDiff: (input) => transport.request(WS_METHODS.gitReadWorkingTreeDiff, input),
+      workingTreeDiffStats: (input) => transport.request(GIT_WORKING_TREE_DIFF_STATS_METHOD, input),
       summarizeDiff: (input) =>
         transport.request(WS_METHODS.gitSummarizeDiff, input, {
           timeoutMs: null,

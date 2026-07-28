@@ -119,6 +119,18 @@ export function resolveDiffPanelScopeCountQueriesEnabled(input: {
   return input.queriesEnabled && input.scopePickerOpen;
 }
 
+/** Avoid a second request for the active repo scope: its rendered patch is authoritative. */
+export function resolveDiffPanelCompactScopeCountQueryEnabled(input: {
+  queriesEnabled: boolean;
+  scope: RepoDiffScope;
+  viewSource: DiffPanelViewSource;
+}): boolean {
+  return (
+    !(input.viewSource.kind === "repo" && input.viewSource.scope === input.scope) &&
+    input.queriesEnabled
+  );
+}
+
 export function resolveDiffPanelGitStatusQueriesEnabled(input: {
   queriesEnabled: boolean;
   activeCwd: string | null;
@@ -134,7 +146,16 @@ export function resolveDiffPanelScopeFileCounts(input: {
   pickerScopeCounts: Partial<Record<RepoDiffScope, number>>;
 }): Partial<Record<RepoDiffScope, number>> {
   if (input.scopePickerOpen) {
-    return input.pickerScopeCounts;
+    const counts = { ...input.pickerScopeCounts };
+    if (input.viewSource.kind === "repo") {
+      // A disabled compact query can retain old cached data. Never let it override the
+      // currently rendered patch (including the rendered empty state).
+      delete counts[input.viewSource.scope];
+      if (typeof input.activeScopeFileCount === "number" && input.activeScopeFileCount > 0) {
+        counts[input.viewSource.scope] = input.activeScopeFileCount;
+      }
+    }
+    return counts;
   }
   if (
     input.viewSource.kind === "repo" &&
