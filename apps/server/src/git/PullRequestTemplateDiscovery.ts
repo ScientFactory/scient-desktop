@@ -11,22 +11,8 @@ const EXACT_OBJECT_ENV = {
   GIT_NO_REPLACE_OBJECTS: "1",
 } as const;
 
-const SINGLE_TEMPLATE_PATHS = [
-  ".github/pull_request_template.md",
-  ".github/PULL_REQUEST_TEMPLATE.md",
-  "pull_request_template.md",
-  "PULL_REQUEST_TEMPLATE.md",
-  "docs/pull_request_template.md",
-  "docs/PULL_REQUEST_TEMPLATE.md",
-] as const;
-
-const TEMPLATE_DIRECTORIES = [
-  ".github/PULL_REQUEST_TEMPLATE",
-  "PULL_REQUEST_TEMPLATE",
-  "docs/PULL_REQUEST_TEMPLATE",
-] as const;
-
-const TREE_PATHS = [...SINGLE_TEMPLATE_PATHS, ...TEMPLATE_DIRECTORIES] as const;
+const TEMPLATE_LOCATIONS = [".github", "", "docs"] as const;
+const TEMPLATE_EXTENSIONS = ["md", "txt"] as const;
 
 type PullRequestTemplateUnavailableReason =
   | "base-unavailable"
@@ -89,8 +75,34 @@ function parseTemplateTree(stdout: string): ReadonlyArray<TemplateTreeEntry> {
   return entries;
 }
 
+function parseRootTemplateDirectories(stdout: string): ReadonlyArray<string> {
+  const directories: string[] = [];
+  for (const record of stdout.split("\0")) {
+    if (record.length === 0) continue;
+    const separatorIndex = record.indexOf("\t");
+    if (separatorIndex < 0) continue;
+    const [mode, type, objectId] = record.slice(0, separatorIndex).split(" ");
+    const path = record.slice(separatorIndex + 1);
+    if (
+      mode === "040000" &&
+      type === "tree" &&
+      objectId &&
+      isObjectId(objectId) &&
+      path.toLowerCase() === "pull_request_template"
+    ) {
+      directories.push(path);
+    }
+  }
+  return directories;
+}
+
 function isInvalidTemplateContent(content: string): boolean {
   return content.includes("\0") || content.includes("\uFFFD");
+}
+
+function isSupportedTemplateExtension(path: string): boolean {
+  const extension = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+  return TEMPLATE_EXTENSIONS.some((candidate) => candidate === extension);
 }
 
 export const discoverPullRequestTemplate = Effect.fn("discoverPullRequestTemplate")(
@@ -115,21 +127,67 @@ export const discoverPullRequestTemplate = Effect.fn("discoverPullRequestTemplat
       return { status: "unavailable", reason: "base-unavailable" } as const;
     }
 
-    const tree = yield* gitCore
+    const rootTree = yield* gitCore
       .execute({
-        operation: "PullRequestTemplateDiscovery.listTree",
+        operation: "PullRequestTemplateDiscovery.listRootTree",
         cwd: input.cwd,
-        args: ["ls-tree", "-r", "-z", "--full-tree", baseObjectId, "--", ...TREE_PATHS],
+        args: ["ls-tree", "-z", "--full-tree", baseObjectId],
         env: EXACT_OBJECT_ENV,
         maxOutputBytes: TREE_LIST_MAX_BYTES,
       })
       .pipe(Effect.option);
-    if (tree._tag === "None") {
+    if (rootTree._tag === "None") {
       return { status: "unavailable", reason: "tree-unavailable" } as const;
     }
 
-    const entries = parseTemplateTree(tree.value.stdout);
-    const entriesByPath = new Map(entries.map((entry) => [entry.path, entry] as const));
+    const nestedTree = yield* gitCore
+      .execute({
+        operation: "PullRequestTemplateDiscovery.listNestedTrees",
+        cwd: input.cwd,
+        args: ["ls-tree", "-r", "-z", "--full-tree", baseObjectId, "--", ".github", "docs"],
+        env: EXACT_OBJECT_ENV,
+        maxOutputBytes: TREE_LIST_MAX_BYTES,
+      })
+      .pipe(Effect.option);
+    if (nestedTree._tag === "None") {
+      return { status: "unavailable", reason: "tree-unavailable" } as const;
+    }
+
+    const rootTemplateDirectories = parseRootTemplateDirectories(rootTree.value.stdout);
+    if (rootTemplateDirectories.length > TEMPLATE_DIRECTORY_MAX_CANDIDATES) {
+      return { status: "unavailable", reason: "too-many-template-candidates" } as const;
+    }
+    const rootDirectoryTree =
+      rootTemplateDirectories.length === 0
+        ? null
+        : yield* gitCore
+            .execute({
+              operation: "PullRequestTemplateDiscovery.listRootTemplateDirectories",
+              cwd: input.cwd,
+              args: [
+                "ls-tree",
+                "-r",
+                "-z",
+                "--full-tree",
+                baseObjectId,
+                "--",
+                ...rootTemplateDirectories,
+              ],
+              env: EXACT_OBJECT_ENV,
+              maxOutputBytes: TREE_LIST_MAX_BYTES,
+            })
+            .pipe(Effect.option);
+    if (rootDirectoryTree?._tag === "None") {
+      return { status: "unavailable", reason: "tree-unavailable" } as const;
+    }
+
+    const entries = [
+      ...parseTemplateTree(rootTree.value.stdout),
+      ...parseTemplateTree(nestedTree.value.stdout),
+      ...(rootDirectoryTree?._tag === "Some"
+        ? parseTemplateTree(rootDirectoryTree.value.stdout)
+        : []),
+    ];
 
     const readBlob = (entry: TemplateTreeEntry): Effect.Effect<BlobReadResult> =>
       Effect.gen(function* () {
@@ -170,35 +228,54 @@ export const discoverPullRequestTemplate = Effect.fn("discoverPullRequestTemplat
           return { status: "unavailable", reason: "invalid-template-content" } as const;
         }
 
-        const content = blob.value.stdout.trim();
-        return content.length === 0
+        const content = blob.value.stdout;
+        return content.trim().length === 0
           ? ({ status: "empty" } as const)
           : ({ status: "found", content } as const);
       });
 
-    for (const templatePath of SINGLE_TEMPLATE_PATHS) {
-      const entry = entriesByPath.get(templatePath);
-      if (!entry) continue;
-      const blob = yield* readBlob(entry);
-      if (blob.status === "unavailable") {
-        return blob;
+    for (const location of TEMPLATE_LOCATIONS) {
+      const prefix = location.length > 0 ? `${location}/` : "";
+      const canonicalPrefix = prefix.toLowerCase();
+      const candidates = entries.filter((entry) => {
+        const canonicalPath = entry.path.toLowerCase();
+        if (!canonicalPath.startsWith(canonicalPrefix)) return false;
+        const relativePath = entry.path.slice(prefix.length);
+        return (
+          !relativePath.includes("/") &&
+          relativePath.toLowerCase().startsWith("pull_request_template.") &&
+          isSupportedTemplateExtension(relativePath)
+        );
+      });
+      if (candidates.length > TEMPLATE_DIRECTORY_MAX_CANDIDATES) {
+        return { status: "unavailable", reason: "too-many-template-candidates" } as const;
       }
-      if (blob.status === "found") {
+      const usable: Array<TemplateTreeEntry & { readonly content: string }> = [];
+      for (const entry of candidates) {
+        const blob = yield* readBlob(entry);
+        if (blob.status === "unavailable") return blob;
+        if (blob.status === "found") usable.push({ ...entry, content: blob.content });
+      }
+      if (usable.length > 1) {
         return {
-          status: "found",
-          path: entry.path,
-          blobObjectId: entry.blobObjectId,
-          content: blob.content,
+          status: "ambiguous",
+          paths: usable.map((entry) => entry.path).toSorted(),
         } as const;
+      }
+      const selected = usable[0];
+      if (selected) {
+        return { status: "found", ...selected } as const;
       }
     }
 
-    for (const directory of TEMPLATE_DIRECTORIES) {
-      const prefix = `${directory}/`;
+    for (const location of TEMPLATE_LOCATIONS) {
+      const prefix =
+        location.length > 0 ? `${location}/pull_request_template/` : "pull_request_template/";
+      const canonicalPrefix = prefix.toLowerCase();
       const candidates = entries.filter((entry) => {
-        if (!entry.path.startsWith(prefix)) return false;
+        if (!entry.path.toLowerCase().startsWith(canonicalPrefix)) return false;
         const relativePath = entry.path.slice(prefix.length);
-        return !relativePath.includes("/") && relativePath.toLowerCase().endsWith(".md");
+        return !relativePath.includes("/") && isSupportedTemplateExtension(relativePath);
       });
       if (candidates.length > TEMPLATE_DIRECTORY_MAX_CANDIDATES) {
         return { status: "unavailable", reason: "too-many-template-candidates" } as const;

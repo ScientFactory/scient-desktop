@@ -10,11 +10,11 @@ import { discoverPullRequestTemplate } from "./PullRequestTemplateDiscovery.ts";
 
 const SINGLE_TEMPLATE_PATHS = [
   ".github/pull_request_template.md",
-  ".github/PULL_REQUEST_TEMPLATE.md",
-  "pull_request_template.md",
-  "PULL_REQUEST_TEMPLATE.md",
-  "docs/pull_request_template.md",
-  "docs/PULL_REQUEST_TEMPLATE.md",
+  ".github/PuLl_ReQuEsT_TeMpLaTe.TxT",
+  "pull_request_template.txt",
+  "PULL_REQUEST_TEMPLATE.MD",
+  "docs/pull_request_template.txt",
+  "docs/PuLl_ReQuEsT_TeMpLaTe.Md",
 ] as const;
 
 const TEMPLATE_DIRECTORIES = [
@@ -92,7 +92,7 @@ it.effect.each(SINGLE_TEMPLATE_PATHS)("discovers the canonical path %s", (templa
       expect(result).toMatchObject({
         status: "found",
         path: templatePath,
-        content: `## Template from ${templatePath}`,
+        content: `## Template from ${templatePath}\n`,
       });
       if (result.status === "found") {
         expect(result.blobObjectId).toMatch(/^[0-9a-f]{40,64}$/u);
@@ -111,8 +111,63 @@ it.effect.each(TEMPLATE_DIRECTORIES)("discovers one Markdown file in %s", (direc
       expect(yield* discover(cwd)).toMatchObject({
         status: "found",
         path: templatePath,
-        content: "## Feature template",
+        content: "## Feature template\n",
       });
+    }),
+  ),
+);
+
+it.effect("discovers a mixed-case text template inside the canonical directory", () =>
+  withRepository((cwd) =>
+    Effect.gen(function* () {
+      const templatePath = ".github/PuLl_ReQuEsT_TeMpLaTe/feature.TxT";
+      yield* writeFile(cwd, templatePath, "Feature text template\n");
+      yield* commitAll(cwd);
+
+      expect(yield* discover(cwd)).toMatchObject({
+        status: "found",
+        path: templatePath,
+        content: "Feature text template\n",
+      });
+    }),
+  ),
+);
+
+it.effect("preserves valid UTF-8 template content exactly", () =>
+  withRepository((cwd) =>
+    Effect.gen(function* () {
+      const content = "  ## Indented heading\n\nKeep the final spacing.  \n\n";
+      yield* writeFile(cwd, ".github/pull_request_template.md", content);
+      yield* commitAll(cwd);
+
+      expect(yield* discover(cwd)).toMatchObject({ status: "found", content });
+    }),
+  ),
+);
+
+it.effect("does not choose between multiple default-template extensions", () =>
+  withRepository((cwd) =>
+    Effect.gen(function* () {
+      yield* writeFile(cwd, ".github/PULL_REQUEST_TEMPLATE.md", "Markdown\n");
+      yield* writeFile(cwd, ".github/pull_request_template.txt", "Text\n");
+      yield* commitAll(cwd);
+
+      expect(yield* discover(cwd)).toEqual({
+        status: "ambiguous",
+        paths: [".github/PULL_REQUEST_TEMPLATE.md", ".github/pull_request_template.txt"],
+      });
+    }),
+  ),
+);
+
+it.effect("ignores similarly named files with unsupported extensions", () =>
+  withRepository((cwd) =>
+    Effect.gen(function* () {
+      yield* writeFile(cwd, ".github/pull_request_template.sh", "publish-secret\n");
+      yield* writeFile(cwd, ".github/PULL_REQUEST_TEMPLATE/unsafe.json", "{}\n");
+      yield* commitAll(cwd);
+
+      expect(yield* discover(cwd)).toEqual({ status: "not-found" });
     }),
   ),
 );
@@ -128,7 +183,7 @@ it.effect("reads the exact committed base tree instead of the working tree", () 
 
       expect(yield* discover(cwd, "base-with-template")).toMatchObject({
         status: "found",
-        content: "base template",
+        content: "base template\n",
       });
       expect(yield* discover(cwd, "feature")).toEqual({ status: "not-found" });
     }),
@@ -154,7 +209,7 @@ it.effect("ignores local Git replacement refs when reading committed template ob
       expect(yield* discover(cwd)).toMatchObject({
         status: "found",
         blobObjectId: originalBlob,
-        content: "safe committed template",
+        content: "safe committed template\n",
       });
     }),
   ),
@@ -166,6 +221,7 @@ it.effect("keeps every committed-object read local and replacement-free", () => 
   const calls: ExecuteGitInput[] = [];
   const outputs = [
     { code: 0, stdout: `${commitObjectId}\n`, stderr: "" },
+    { code: 0, stdout: "", stderr: "" },
     {
       code: 0,
       stdout: `100644 blob ${blobObjectId}\t.github/pull_request_template.md\0`,
@@ -187,7 +243,7 @@ it.effect("keeps every committed-object read local and replacement-free", () => 
       blobObjectId,
       content: "template",
     });
-    expect(calls).toHaveLength(4);
+    expect(calls).toHaveLength(5);
     for (const call of calls) {
       expect(call.env).toMatchObject({
         GIT_NO_LAZY_FETCH: "1",
@@ -208,7 +264,7 @@ it.effect("uses deterministic canonical path priority and skips empty files", ()
       expect(yield* discover(cwd)).toMatchObject({
         status: "found",
         path: "pull_request_template.md",
-        content: "## Preferred",
+        content: "## Preferred\n",
       });
     }),
   ),
@@ -277,7 +333,7 @@ it.effect("ignores committed symlinks and never follows them through the worktre
       yield* commitAll(cwd);
 
       const result = yield* discover(cwd);
-      expect(result).toMatchObject({ status: "found", content: "## Safe template" });
+      expect(result).toMatchObject({ status: "found", content: "## Safe template\n" });
       expect(JSON.stringify(result)).not.toContain("SECRET_SENTINEL");
     }),
   ),
