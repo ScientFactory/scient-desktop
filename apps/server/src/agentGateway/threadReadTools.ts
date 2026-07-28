@@ -88,7 +88,10 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
           },
           capabilities: {
             threadRead: context.callerCapabilities.has("thread:read"),
-            threadCreate: turnId !== null && context.callerCapabilities.has("thread:write"),
+            // Drive (synara_send_message / synara_interrupt_thread) needs the
+            // write capability and is only usable while the caller's own turn is
+            // active, so it is reported false without a live turn.
+            threadDrive: turnId !== null && context.callerCapabilities.has("thread:write"),
             threadWait: context.callerCapabilities.has("thread:read"),
             automations: turnId !== null && context.callerCapabilities.has("automation:write"),
           },

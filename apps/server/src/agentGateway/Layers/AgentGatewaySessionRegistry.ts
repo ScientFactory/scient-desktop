@@ -40,10 +40,13 @@ export function makeAgentGatewaySessionRegistry(options?: {
         threadId,
         provider,
         issuedAt,
-        // Least privilege: the read slice mints read-only credentials. Write
-        // and automation capabilities are added by their own reviewed slices as
-        // the drive tools land.
-        capabilities: new Set(["thread:read"]),
+        // Least privilege: the gateway mints read + drive (send/interrupt), the
+        // capabilities the wired tools actually need. The drive capability is
+        // still gated per-request on an active caller turn (requiresActiveTurn)
+        // and the central drive policy. `automation:write` is deliberately not
+        // minted — no automation tool is wired yet, so granting it would be
+        // standing privilege with no consumer.
+        capabilities: new Set(["thread:read", "thread:write"]),
       };
       sessions.set(token, identity);
       sessionsByKey.set(sessionKey, identity);

@@ -35,12 +35,14 @@ describe("makeAgentGatewaySessionRegistry", () => {
       expect(first.sessionKey).not.toBe(second.sessionKey);
     });
 
-    it("issues capabilities that are exactly the read-only set", () => {
+    it("issues exactly the read + drive capabilities and never automation:write", () => {
       const registry = makeRegistry();
       const issued = registry.issue(THREAD, "claudeAgent");
 
-      expect(Array.from(issued.capabilities)).toEqual(["thread:read"]);
-      expect(issued.capabilities.has("thread:write")).toBe(false);
+      expect(Array.from(issued.capabilities)).toEqual(["thread:read", "thread:write"]);
+      expect(issued.capabilities.has("thread:read")).toBe(true);
+      expect(issued.capabilities.has("thread:write")).toBe(true);
+      // No automation tool is wired, so automation:write is never minted.
       expect(issued.capabilities.has("automation:write")).toBe(false);
     });
   });
