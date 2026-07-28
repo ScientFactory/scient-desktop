@@ -28,26 +28,34 @@ const readRecentCommitSubjects = (input: {
   readonly cwd: string;
   readonly execute: GitCoreShape["execute"];
 }) =>
-  input
-    .execute({
+  Effect.gen(function* () {
+    const head = yield* input.execute({
+      operation: "SourceControlWritingPolicy.verifyHead",
+      cwd: input.cwd,
+      args: ["rev-parse", "--verify", "HEAD"],
+      env: LOCAL_HISTORY_ENV,
+      allowNonZeroExit: true,
+      timeoutMs: 5_000,
+      maxOutputBytes: 256,
+    });
+    if (head.code !== 0) return [];
+
+    const result = yield* input.execute({
       operation: "SourceControlWritingPolicy.readRecentCommitSubjects",
       cwd: input.cwd,
       args: ["log", "-n", String(RECENT_COMMIT_LIMIT), "--no-merges", "--format=%s"],
       env: LOCAL_HISTORY_ENV,
       timeoutMs: 5_000,
       maxOutputBytes: RECENT_COMMIT_OUTPUT_MAX_BYTES,
-    })
-    .pipe(
-      Effect.map((result) => {
-        const uniqueSubjects = new Set<string>();
-        for (const rawSubject of result.stdout.split(/\r?\n/u)) {
-          const subject = sanitizeCommitSubjectEvidence(rawSubject);
-          if (subject.length > 0) uniqueSubjects.add(subject);
-          if (uniqueSubjects.size >= RECENT_COMMIT_LIMIT) break;
-        }
-        return [...uniqueSubjects];
-      }),
-    );
+    });
+    const uniqueSubjects = new Set<string>();
+    for (const rawSubject of result.stdout.split(/\r?\n/u)) {
+      const subject = sanitizeCommitSubjectEvidence(rawSubject);
+      if (subject.length > 0) uniqueSubjects.add(subject);
+      if (uniqueSubjects.size >= RECENT_COMMIT_LIMIT) break;
+    }
+    return [...uniqueSubjects];
+  });
 
 export const resolveSourceControlWritingPolicy = Effect.fn("resolveSourceControlWritingPolicy")(
   function* (input: {
@@ -59,12 +67,17 @@ export const resolveSourceControlWritingPolicy = Effect.fn("resolveSourceControl
       case "standard":
         return undefined;
       case "conventional_commits":
-        return { mode: "conventional_commits" } satisfies SourceControlWritingPolicy;
+        return {
+          mode: "conventional_commits",
+        } satisfies SourceControlWritingPolicy;
       case "custom": {
         const customInstructions = input.settings.customInstructions.trim();
         return customInstructions.length === 0
           ? undefined
-          : ({ mode: "custom", customInstructions } satisfies SourceControlWritingPolicy);
+          : ({
+              mode: "custom",
+              customInstructions,
+            } satisfies SourceControlWritingPolicy);
       }
       case "repository_conventions": {
         const recentCommitSubjects = yield* readRecentCommitSubjects(input).pipe(

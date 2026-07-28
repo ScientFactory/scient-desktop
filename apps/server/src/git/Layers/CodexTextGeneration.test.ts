@@ -83,6 +83,10 @@ function makeFakeCodexBinary(dir: string) {
         "  shift",
         "done",
         'case "$PWD" in */synara-codex-work-*) ;; *) printf "%s\\n" "non-isolated cwd" >&2; exit 11 ;; esac',
+        'node -e \'const fs=require("node:fs"); if (process.platform !== "win32" && (fs.statSync(process.argv[1]).mode & 0o777) !== 0o700) process.exit(1)\' "$CODEX_HOME" || { printf "%s\\n" "insecure CODEX_HOME permissions" >&2; exit 13; }',
+        'if [ -f "$CODEX_HOME/auth.json" ]; then',
+        '  node -e \'const fs=require("node:fs"); if (process.platform !== "win32" && (fs.statSync(process.argv[1]).mode & 0o777) !== 0o600) process.exit(1)\' "$CODEX_HOME/auth.json" || { printf "%s\\n" "insecure auth.json permissions" >&2; exit 14; }',
+        "fi",
         'if [ "$seen_shell_disabled$seen_remote_plugin_disabled$seen_skill_install_disabled$seen_agents_disabled$seen_apps_disabled$seen_web_disabled$seen_update_check_disabled" != "1111111" ]; then',
         '  printf "%s\\n" "missing tool-isolation config" >&2',
         "  exit 12",
@@ -168,7 +172,9 @@ function withFakeCodexEnv<A, E, R>(
     Effect.gen(function* () {
       const releaseLock = yield* acquireCodexEnvLock();
       const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "synara-codex-text-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "synara-codex-text-",
+      });
       const binDir = yield* makeFakeCodexBinary(tempDir);
       const previousPath = process.env.PATH;
       const previousScientHome = process.env.SCIENT_HOME;
@@ -735,7 +741,10 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
             .pipe(
               Effect.match({
                 onFailure: (error) => ({ _tag: "Left" as const, left: error }),
-                onSuccess: (value) => ({ _tag: "Right" as const, right: value }),
+                onSuccess: (value) => ({
+                  _tag: "Right" as const,
+                  right: value,
+                }),
               }),
             );
 
@@ -796,7 +805,9 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const wrongCodexHome = yield* fs.makeTempDirectoryScoped({ prefix: "synara-wrong-codex-" });
+        const wrongCodexHome = yield* fs.makeTempDirectoryScoped({
+          prefix: "synara-wrong-codex-",
+        });
         const customCodexHome = yield* fs.makeTempDirectoryScoped({
           prefix: "synara-custom-codex-",
         });
@@ -807,20 +818,23 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
           path.join(customCodexHome, "config.toml"),
           [
             'model_instructions_file = "/unsafe_text_generation_capability/instructions.md"',
-            'mcp_servers.inline = { command = "unsafe_text_generation_capability" }',
+            'skills.config = [{ path = "/unsafe_text_generation_capability/dotted-skill.md", enabled = true }]',
             'model_provider = "azure"',
             "",
             "[model_providers.azure]",
             'env_key = "AZURE_OPENAI_API_KEY"',
             "",
-            "[[skills.config]]",
-            'path = "/broken/skill/SKILL.md"',
-            "enabled = true",
-            "unsafe_text_generation_capability = true",
+            "[mcp_servers]",
+            'unsafe = { command = "unsafe_text_generation_capability" }',
             "",
-            "[mcp_servers.untrusted]",
-            'command = "read-secrets"',
-            "unsafe_text_generation_capability = true",
+            "[profiles.attacker.mcp_servers.untrusted]",
+            'command = "unsafe_text_generation_capability"',
+            "",
+            "[apps]",
+            'unsafe = { command = "unsafe_text_generation_capability" }',
+            "",
+            "[[plugins]]",
+            'path = "/unsafe_text_generation_capability/plugin"',
             "",
             "[hooks]",
             'after_agent = ["publish-output"]',

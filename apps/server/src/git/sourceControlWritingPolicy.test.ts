@@ -1,3 +1,8 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { Effect, Logger } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
@@ -49,7 +54,10 @@ describe("source control writing policy", () => {
           execute,
         }),
       ),
-    ).resolves.toEqual({ mode: "custom", customInstructions: "Use direct wording." });
+    ).resolves.toEqual({
+      mode: "custom",
+      customInstructions: "Use direct wording.",
+    });
     await expect(
       Effect.runPromise(
         resolveSourceControlWritingPolicy({
@@ -99,6 +107,15 @@ describe("source control writing policy", () => {
       mode: "repository_conventions",
       recentCommitSubjects: ["a".repeat(160), "feat: add search", "subjectwith-control"],
     });
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: ["rev-parse", "--verify", "HEAD"],
+        allowNonZeroExit: true,
+        env: { GIT_NO_LAZY_FETCH: "1", GIT_NO_REPLACE_OBJECTS: "1" },
+        maxOutputBytes: 256,
+        timeoutMs: 5000,
+      }),
+    );
     expect(execute).toHaveBeenCalledWith(
       expect.objectContaining({
         args: ["log", "-n", "20", "--no-merges", "--format=%s"],
@@ -158,5 +175,64 @@ describe("source control writing policy", () => {
       ),
     ).resolves.toBeUndefined();
     expect(emptyMessages).toEqual([]);
+  });
+
+  it("treats a real unborn repository as normal empty history", async () => {
+    const repository = mkdtempSync(join(tmpdir(), "synara-unborn-history-"));
+    try {
+      const initialized = spawnSync("git", ["init"], {
+        cwd: repository,
+        encoding: "utf8",
+      });
+      expect(initialized.status).toBe(0);
+
+      const execute = vi.fn<GitCoreShape["execute"]>((input) =>
+        Effect.sync(() => {
+          const result = spawnSync("git", [...input.args], {
+            cwd: input.cwd,
+            encoding: "utf8",
+            env: { ...process.env, ...input.env },
+          });
+          return {
+            code: result.status ?? 1,
+            stdout: result.stdout ?? "",
+            stderr: result.stderr ?? "",
+          };
+        }),
+      );
+      const warningMessages: string[] = [];
+
+      await expect(
+        Effect.runPromise(
+          resolveSourceControlWritingPolicy({
+            cwd: repository,
+            settings: {
+              mode: "repository_conventions",
+              customInstructions: "",
+              followPullRequestTemplate: false,
+            },
+            execute,
+          }).pipe(
+            Effect.provide(
+              Logger.layer(
+                [
+                  Logger.make(({ message }) => {
+                    warningMessages.push(String(message));
+                  }),
+                ],
+                { mergeWithExisting: false },
+              ),
+            ),
+          ),
+        ),
+      ).resolves.toBeUndefined();
+      expect(warningMessages).toEqual([]);
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({ args: ["rev-parse", "--verify", "HEAD"] }),
+      );
+    } finally {
+      rmSync(repository, { recursive: true, force: true });
+    }
   });
 });
