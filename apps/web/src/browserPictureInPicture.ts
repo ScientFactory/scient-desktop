@@ -133,20 +133,6 @@ export function reconcileBrowserPictureInPicture(
   };
 }
 
-export function moveBrowserPictureInPicture(
-  state: BrowserPictureInPictureState | null,
-  expected: BrowserPictureInPictureIdentity,
-  position: BrowserPictureInPicturePoint,
-): BrowserPictureInPictureState | null {
-  if (!state || !browserPictureInPictureIdentityMatches(state, expected)) {
-    return state;
-  }
-  if (state.position?.x === position.x && state.position.y === position.y) {
-    return state;
-  }
-  return { ...state, position };
-}
-
 export function closeBrowserPictureInPicture(
   state: BrowserPictureInPictureState | null,
   expected: BrowserPictureInPictureIdentity,
@@ -180,20 +166,6 @@ export function commitBrowserPictureInPictureLayout(
     return state;
   }
   return { ...state, position: layout.position, size: layout.size };
-}
-
-export function resizeBrowserPictureInPicture(
-  state: BrowserPictureInPictureState | null,
-  expected: BrowserPictureInPictureIdentity,
-  size: BrowserPictureInPictureSize,
-): BrowserPictureInPictureState | null {
-  if (!state || !browserPictureInPictureIdentityMatches(state, expected)) {
-    return state;
-  }
-  if (state.size.width === size.width && state.size.height === size.height) {
-    return state;
-  }
-  return { ...state, size };
 }
 
 function finiteDimension(value: number): number {

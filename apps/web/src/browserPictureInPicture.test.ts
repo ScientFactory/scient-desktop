@@ -10,10 +10,8 @@ import {
   clampBrowserPictureInPictureSize,
   closeBrowserPictureInPicture,
   commitBrowserPictureInPictureLayout,
-  moveBrowserPictureInPicture,
   openBrowserPictureInPicture,
   reconcileBrowserPictureInPicture,
-  resizeBrowserPictureInPicture,
   resolveBrowserPictureInPictureKeyboardLayout,
 } from "./browserPictureInPicture";
 
@@ -117,7 +115,7 @@ describe("browser picture-in-picture lifecycle", () => {
     expect(reconcile(state, stale)).toBe(state);
   });
 
-  it("tracks a newer active-tab replacement and invalidates old pointer callbacks", () => {
+  it("tracks a newer active-tab replacement and invalidates an old close callback", () => {
     const state = openState();
     const replaced = reconcile(
       state,
@@ -129,10 +127,6 @@ describe("browser picture-in-picture lifecycle", () => {
       tabId: "tab-2",
       generation: 9,
     });
-    expect(moveBrowserPictureInPicture(replaced, state.identity, { x: 90, y: 70 })).toBe(replaced);
-    expect(
-      resizeBrowserPictureInPicture(replaced, state.identity, { width: 500, height: 320 }),
-    ).toBe(replaced);
     expect(closeBrowserPictureInPicture(replaced, state.identity)).toBe(replaced);
   });
 
@@ -155,18 +149,17 @@ describe("browser picture-in-picture lifecycle", () => {
     expect(recovered?.observedBrowserVersion).toBe(6);
   });
 
-  it("allows only the current generation to move, resize, or close the surface", () => {
+  it("allows only the current generation to commit layout or close the surface", () => {
     const state = openState();
-    const moved = moveBrowserPictureInPicture(state, state.identity, { x: 20, y: 30 });
-    const resized = resizeBrowserPictureInPicture(moved, state.identity, {
-      width: 520,
-      height: 340,
+    const settled = commitBrowserPictureInPictureLayout(state, state.identity, {
+      position: { x: 20, y: 30 },
+      size: { width: 520, height: 340 },
     });
 
-    expect(moved?.position).toEqual({ x: 20, y: 30 });
-    expect(resized?.size).toEqual({ width: 520, height: 340 });
-    expect(browserPictureInPictureIdentityMatches(resized!, state.identity)).toBe(true);
-    expect(closeBrowserPictureInPicture(resized, state.identity)).toBeNull();
+    expect(settled?.position).toEqual({ x: 20, y: 30 });
+    expect(settled?.size).toEqual({ width: 520, height: 340 });
+    expect(browserPictureInPictureIdentityMatches(settled!, state.identity)).toBe(true);
+    expect(closeBrowserPictureInPicture(settled, state.identity)).toBeNull();
   });
 
   it("separates floating-surface close from closing the owning browser pane", () => {

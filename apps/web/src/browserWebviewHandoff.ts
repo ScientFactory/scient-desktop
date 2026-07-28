@@ -18,8 +18,6 @@ interface ParkedBrowserWebview<T, Handle> {
 export interface BrowserWebviewHandoffRegistry<T> {
   readonly park: (key: string, value: T, finalize: (value: T) => void) => void;
   readonly adopt: (key: string) => T | null;
-  readonly finalize: (key: string) => boolean;
-  readonly has: (key: string) => boolean;
 }
 
 interface StableBrowserWebviewNode {
@@ -64,6 +62,47 @@ export interface BrowserWebviewRuntimeHostGeometry {
   readonly pointerEvents: "auto" | "none";
   readonly ariaHidden: boolean;
   readonly inert: boolean;
+}
+
+export type BrowserWebviewFocusBridgeDirection = "logical-entry" | "before-exit" | "after-exit";
+export type BrowserWebviewFocusBridgeTarget =
+  | "guest"
+  | "logical-before"
+  | "logical-after"
+  | "fallback"
+  | "none";
+
+export function resolveBrowserWebviewFocusBridgeTarget(input: {
+  readonly active: boolean;
+  readonly redirectInProgress: boolean;
+  readonly direction: BrowserWebviewFocusBridgeDirection;
+  readonly primaryAvailable: boolean;
+  readonly fallbackAvailable: boolean;
+}): BrowserWebviewFocusBridgeTarget {
+  if (!input.active || input.redirectInProgress) return "none";
+  if (!input.primaryAvailable) return input.fallbackAvailable ? "fallback" : "none";
+  if (input.direction === "logical-entry") return "guest";
+  return input.direction === "before-exit" ? "logical-before" : "logical-after";
+}
+
+export function browserWebviewFocusGuardsShouldRemainActive(input: {
+  readonly target: BrowserWebviewFocusBridgeTarget;
+  readonly guestReceivedFocus: boolean;
+}): boolean {
+  return input.target === "guest" && input.guestReceivedFocus;
+}
+
+export function browserWebviewRuntimeHostId(threadId: string, tabId: string): string {
+  const encodedThreadId = encodeURIComponent(threadId);
+  const encodedTabId = encodeURIComponent(tabId);
+  return `scient-browser-runtime-${encodedThreadId.length}-${encodedThreadId}-${encodedTabId.length}-${encodedTabId}`;
+}
+
+export function resolveBrowserWebviewLogicalOwnerId(
+  runtimeHostId: string,
+  visible: boolean,
+): string | null {
+  return visible ? runtimeHostId : null;
 }
 
 export function resolveBrowserWebviewRuntimeHostGeometry(input: {
@@ -131,7 +170,5 @@ export function createBrowserWebviewHandoffRegistry<T, Handle>(
       scheduler.cancel(parked.handle);
       return parked.value;
     },
-    finalize: (key) => finalizeEntry(key),
-    has: (key) => parkedByKey.has(key),
   };
 }

@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  browserWebviewFocusGuardsShouldRemainActive,
   browserWebviewHandoffKey,
+  browserWebviewRuntimeHostId,
   createStableBrowserWebviewRuntime,
   createBrowserWebviewHandoffRegistry,
   isStableBrowserWebviewRuntimeIntact,
   resolveBrowserWebviewRuntimeHostGeometry,
+  resolveBrowserWebviewFocusBridgeTarget,
+  resolveBrowserWebviewLogicalOwnerId,
 } from "./browserWebviewHandoff";
 
 function createFixture() {
@@ -60,7 +64,6 @@ describe("browser webview handoff registry", () => {
 
     expect(finalize).toHaveBeenCalledOnce();
     expect(finalize).toHaveBeenCalledWith("webcontents");
-    expect(fixture.registry.has("surface")).toBe(false);
   });
 
   it("finalizes a displaced owner and prevents its stale timer from finalizing the successor", () => {
@@ -76,17 +79,6 @@ describe("browser webview handoff registry", () => {
     expect(finalizeFirst).toHaveBeenCalledOnce();
     expect(finalizeSecond).not.toHaveBeenCalled();
     expect(fixture.registry.adopt("surface")).toBe("second");
-  });
-
-  it("allows explicit final closure without waiting for the lease", () => {
-    const fixture = createFixture();
-    const finalize = vi.fn();
-    fixture.registry.park("surface", "webcontents", finalize);
-
-    expect(fixture.registry.finalize("surface")).toBe(true);
-    expect(fixture.registry.finalize("surface")).toBe(false);
-    expect(finalize).toHaveBeenCalledOnce();
-    expect(fixture.callbacks.size).toBe(0);
   });
 
   it("hands off a stable runtime reference without reparenting its connected guest", () => {
@@ -131,6 +123,20 @@ describe("browser webview stable runtime host", () => {
     expect(host.append).not.toHaveBeenCalled();
   });
 
+  it("creates a deterministic owner id for the live thread and tab", () => {
+    expect(browserWebviewRuntimeHostId("thread/a", "tab 1")).toBe(
+      "scient-browser-runtime-10-thread%2Fa-7-tab%201",
+    );
+    expect(browserWebviewRuntimeHostId("thread/a", "tab 1")).toBe(
+      browserWebviewRuntimeHostId("thread/a", "tab 1"),
+    );
+  });
+
+  it("exposes logical ownership only while the stable host is visible", () => {
+    expect(resolveBrowserWebviewLogicalOwnerId("runtime-host", true)).toBe("runtime-host");
+    expect(resolveBrowserWebviewLogicalOwnerId("runtime-host", false)).toBeNull();
+  });
+
   it("resolves fixed host geometry and hides non-interactive parked ownership", () => {
     expect(
       resolveBrowserWebviewRuntimeHostGeometry({
@@ -162,5 +168,67 @@ describe("browser webview stable runtime host", () => {
       ariaHidden: true,
       inert: true,
     });
+  });
+});
+
+describe("browser webview focus bridge", () => {
+  const resolve = (
+    direction: "logical-entry" | "before-exit" | "after-exit",
+    overrides: Partial<Parameters<typeof resolveBrowserWebviewFocusBridgeTarget>[0]> = {},
+  ) =>
+    resolveBrowserWebviewFocusBridgeTarget({
+      active: true,
+      redirectInProgress: false,
+      direction,
+      primaryAvailable: true,
+      fallbackAvailable: true,
+      ...overrides,
+    });
+
+  it("gates logical entry on active ownership", () => {
+    expect(resolve("logical-entry")).toBe("guest");
+    expect(resolve("logical-entry", { active: false })).toBe("none");
+  });
+
+  it("routes guest exit in both physical directions", () => {
+    expect(resolve("before-exit")).toBe("logical-before");
+    expect(resolve("after-exit")).toBe("logical-after");
+  });
+
+  it("prevents duplicate redirect stops", () => {
+    expect(resolve("after-exit", { redirectInProgress: true })).toBe("none");
+  });
+
+  it("drops physical guards when programmatic guest focus does not take", () => {
+    expect(
+      browserWebviewFocusGuardsShouldRemainActive({
+        target: "guest",
+        guestReceivedFocus: false,
+      }),
+    ).toBe(false);
+    expect(
+      browserWebviewFocusGuardsShouldRemainActive({
+        target: "guest",
+        guestReceivedFocus: true,
+      }),
+    ).toBe(true);
+    expect(
+      browserWebviewFocusGuardsShouldRemainActive({
+        target: "logical-after",
+        guestReceivedFocus: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("uses a mounted fallback when a logical target is stale", () => {
+    expect(resolve("before-exit", { primaryAvailable: false })).toBe("fallback");
+    expect(resolve("before-exit", { primaryAvailable: false, fallbackAvailable: false })).toBe(
+      "none",
+    );
+  });
+
+  it("does nothing while ownership is parked", () => {
+    expect(resolve("before-exit", { active: false })).toBe("none");
+    expect(resolve("after-exit", { active: false })).toBe("none");
   });
 });
