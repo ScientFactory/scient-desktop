@@ -162,6 +162,26 @@ export function selectCodexApiAuthForTextGeneration(content: string): string | n
     : null;
 }
 
+function resolveCodexProviderEnvKey(content: string): string {
+  try {
+    const parsed = parseToml(content);
+    const selectedProvider = parsed.model_provider;
+    if (typeof selectedProvider !== "string" || selectedProvider.trim().length === 0) {
+      return "OPENAI_API_KEY";
+    }
+    const providerTables = parsed.model_providers;
+    const selectedProviderTable = isTomlTable(providerTables)
+      ? providerTables[selectedProvider]
+      : undefined;
+    const envKey = isTomlTable(selectedProviderTable) ? selectedProviderTable.env_key : undefined;
+    return typeof envKey === "string" && envKey.trim().length > 0
+      ? envKey.trim()
+      : "OPENAI_API_KEY";
+  } catch {
+    return "OPENAI_API_KEY";
+  }
+}
+
 const makeCodexTextGeneration = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -197,6 +217,42 @@ const makeCodexTextGeneration = Effect.gen(function* () {
 
   const safeRemoveDirectory = (directoryPath: string): Effect.Effect<void, never> =>
     fileSystem.remove(directoryPath, { recursive: true }).pipe(Effect.catch(() => Effect.void));
+
+  const preflightSourceControlWriting: TextGenerationShape["preflightSourceControlWriting"] =
+    Effect.fn("CodexTextGeneration.preflightSourceControlWriting")(function* (input) {
+      if (input.operations.length === 0) return;
+      const operation = input.operations[0]!;
+      const sourceHome =
+        resolveCodexHomePath(input.codexHomePath, input.providerOptions) ??
+        resolveCodexHome(process.env);
+      const sourceConfig = yield* fileSystem
+        .readFileString(path.join(sourceHome, "config.toml"))
+        .pipe(Effect.catch(() => Effect.succeed("")));
+      const sourceAuth = yield* fileSystem
+        .readFileString(path.join(sourceHome, "auth.json"))
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+      const hasApiAuth =
+        sourceAuth === null
+          ? false
+          : yield* Effect.try({
+              try: () => selectCodexApiAuthForTextGeneration(sourceAuth) !== null,
+              catch: (cause) =>
+                new TextGenerationError({
+                  operation,
+                  detail: "Failed to inspect Codex API authentication for source-control writing.",
+                  cause,
+                }),
+            });
+      const providerEnvKey = resolveCodexProviderEnvKey(sourceConfig);
+      if (!hasApiAuth && !process.env[providerEnvKey]?.trim()) {
+        return yield* new TextGenerationError({
+          operation,
+          detail:
+            "Automatic isolated Codex writing requires API-key authentication. " +
+            `Add ${providerEnvKey} or select another Git writer; ChatGPT OAuth remains with the interactive Codex runtime and is not copied.`,
+        });
+      }
+    });
 
   const prepareIsolatedCodexRuntime = (
     operation: TextGenerationOperation,
@@ -792,6 +848,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
   };
 
   return {
+    preflightSourceControlWriting,
     generateCommitMessage,
     generatePrContent,
     generateDiffSummary,

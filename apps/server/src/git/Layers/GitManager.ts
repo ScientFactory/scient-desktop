@@ -2661,6 +2661,30 @@ The local stash entry was kept for recovery.`,
             ? { followPullRequestTemplate: true }
             : {}),
         };
+        const writingOperations = [
+          ...(input.featureBranch ? (["generateBranchName"] as const) : []),
+          ...(wantsCommit && !input.commitMessage?.trim()
+            ? (["generateCommitMessage"] as const)
+            : []),
+          ...(wantsPr ? (["generatePrContent"] as const) : []),
+        ];
+        if (writingOperations.length > 0) {
+          yield* textGeneration
+            .preflightSourceControlWriting({
+              cwd: input.cwd,
+              operations: writingOperations,
+              ...buildGitTextGenerationCallInput(textGenerationParams),
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                gitManagerError(
+                  "runStackedAction",
+                  `Git writer is not available for this action: ${error.message}`,
+                  error,
+                ),
+              ),
+            );
+        }
         const phases: GitActionProgressPhase[] = [
           ...(input.featureBranch ? (["branch"] as const) : []),
           ...(wantsCommit ? (["commit"] as const) : []),

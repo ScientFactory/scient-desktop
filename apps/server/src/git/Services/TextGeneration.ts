@@ -31,6 +31,17 @@ export type SourceControlWritingPolicy =
       readonly customInstructions: string;
     };
 
+export interface SourceControlWritingPreflightInput {
+  readonly cwd: string;
+  readonly operations: ReadonlyArray<
+    "generateCommitMessage" | "generatePrContent" | "generateBranchName"
+  >;
+  readonly codexHomePath?: string;
+  readonly model?: string;
+  readonly modelSelection?: ModelSelection;
+  readonly providerOptions?: ProviderStartOptions;
+}
+
 export interface PullRequestTemplateContext {
   readonly path: string;
   readonly content: string;
@@ -224,6 +235,11 @@ export interface TextGenerationService {
  * TextGenerationShape - Service API for AI-generated Git and thread text.
  */
 export interface TextGenerationShape {
+  /** Validate that the selected writer can safely complete an SCM action before Git is mutated. */
+  readonly preflightSourceControlWriting: (
+    input: SourceControlWritingPreflightInput,
+  ) => Effect.Effect<void, TextGenerationError>;
+
   /**
    * Generate a commit message from staged change context.
    */

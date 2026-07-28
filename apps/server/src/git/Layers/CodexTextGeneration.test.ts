@@ -833,6 +833,48 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
     ).toBeNull();
   });
 
+  it.effect("rejects OAuth-only SCM writing before launching Codex", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const codexHome = yield* fs.makeTempDirectoryScoped({
+        prefix: "synara-codex-oauth-preflight-",
+      });
+      yield* fs.writeFileString(
+        path.join(codexHome, "auth.json"),
+        JSON.stringify({
+          auth_mode: "chatgpt",
+          tokens: { access_token: "access", refresh_token: "refresh" },
+        }),
+      );
+      const previousApiKey = process.env.OPENAI_API_KEY;
+      yield* Effect.sync(() => {
+        delete process.env.OPENAI_API_KEY;
+      });
+
+      const textGeneration = yield* TextGeneration;
+      const error = yield* textGeneration
+        .preflightSourceControlWriting({
+          cwd: process.cwd(),
+          operations: ["generateCommitMessage", "generatePrContent"],
+          codexHomePath: codexHome,
+          providerOptions: { codex: { binaryPath: "/must-not-launch/codex" } },
+        })
+        .pipe(
+          Effect.flip,
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousApiKey === undefined) delete process.env.OPENAI_API_KEY;
+              else process.env.OPENAI_API_KEY = previousApiKey;
+            }),
+          ),
+        );
+
+      expect(error.message).toContain("requires API-key authentication");
+      expect(error.message).toContain("ChatGPT OAuth");
+    }),
+  );
+
   it.effect("uses the provided codexHomePath and strips local skills config", () =>
     withFakeCodexEnv(
       {

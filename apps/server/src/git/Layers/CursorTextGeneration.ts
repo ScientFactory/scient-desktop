@@ -455,6 +455,7 @@ const makeCursorTextGeneration = Effect.gen(function* () {
     });
 
   return {
+    preflightSourceControlWriting: () => Effect.void,
     generateCommitMessage,
     generatePrContent,
     generateDiffSummary,

@@ -35,6 +35,7 @@ import { ServerConfig } from "../../config.ts";
 import { type ServerSettingsShape, ServerSettingsService } from "../../serverSettings.ts";
 
 interface FakeGitTextGeneration {
+  preflightSourceControlWriting?: TextGenerationShape["preflightSourceControlWriting"];
   generateCommitMessage: (input: {
     cwd: string;
     branch: string | null;
@@ -210,6 +211,17 @@ function createTextGeneration(overrides: Partial<FakeGitTextGeneration> = {}): T
   };
 
   return {
+    preflightSourceControlWriting: (input) =>
+      (implementation.preflightSourceControlWriting?.(input) ?? Effect.void).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "preflightSourceControlWriting",
+              detail: "fake text generation preflight failed",
+              ...(cause !== undefined ? { cause } : {}),
+            }),
+        ),
+      ),
     generateCommitMessage: (input) =>
       implementation.generateCommitMessage(input).pipe(
         Effect.mapError(
@@ -391,7 +403,11 @@ function makeManager(input?: {
 }
 
 const GitManagerTestLayer = GitCoreLive.pipe(
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "synara-git-manager-test-" })),
+  Layer.provide(
+    ServerConfig.layerTest(process.cwd(), {
+      prefix: "synara-git-manager-test-",
+    }),
+  ),
   Layer.provideMerge(NodeServices.layer),
 );
 
@@ -650,6 +666,40 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("fails writer preflight before a stacked action mutates Git state", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("synara-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/preflight-atomicity"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\npreflight\n");
+      const headBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+
+      const { manager, ghCalls } = yield* makeManager({
+        textGeneration: {
+          preflightSourceControlWriting: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: "generateCommitMessage",
+                detail: "OAuth-only writer is not eligible.",
+              }),
+            ),
+        },
+      });
+      const error = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      }).pipe(Effect.flip);
+
+      expect(error.message).toContain("Git writer is not available");
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(headBefore);
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout).toContain("README.md");
+      expect((yield* runGit(remoteDir, ["show-ref"], true)).stdout.trim()).toBe("");
+      expect(ghCalls).toEqual([]);
+    }),
+  );
+
   it.effect("snapshots and applies configured source control writing policy", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("synara-git-manager-");
@@ -667,7 +717,10 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         textGeneration: {
           generateCommitMessage: (input) => {
             capturedPolicy = input.policy;
-            return Effect.succeed({ subject: "Apply writing policy", body: "" });
+            return Effect.succeed({
+              subject: "Apply writing policy",
+              body: "",
+            });
           },
         },
       });
@@ -784,7 +837,10 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         },
       });
 
-      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+      });
       expect(result.commit).toMatchObject({
         status: "created",
         subject: "chore: Update README.md",
@@ -2051,7 +2107,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const checks: GitPullRequestCheck[] = [
         { name: "Format, Lint, Typecheck", status: "pending", url: null },
-        { name: "Release Smoke", status: "success", url: "https://ci.example/2" },
+        {
+          name: "Release Smoke",
+          status: "success",
+          url: "https://ci.example/2",
+        },
       ];
       const comments: GitPullRequestComment[] = [
         {
@@ -2106,7 +2166,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* initRepo(repoDir);
 
       const checks: GitPullRequestCheck[] = [
-        { name: "Format, Lint, Typecheck", status: "success", url: "https://ci.example/1" },
+        {
+          name: "Format, Lint, Typecheck",
+          status: "success",
+          url: "https://ci.example/1",
+        },
       ];
       const { manager } = yield* makeManager({
         ghScenario: {

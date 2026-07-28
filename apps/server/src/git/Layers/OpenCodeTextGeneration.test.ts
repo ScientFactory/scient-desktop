@@ -35,11 +35,19 @@ const runtimeMock = {
     promptUrls: [] as string[],
     promptInputs: [] as Array<Record<string, unknown>>,
     authHeaders: [] as Array<string | null>,
+    clientPasswords: [] as string[],
     closeCalls: [] as string[],
+    startStartedResolvers: [] as Array<() => void>,
+    interruptNextStart: false,
     promptStartedResolvers: [] as Array<() => void>,
     promptWaits: [] as Array<Promise<void>>,
     promptResult: undefined as
-      | { data?: { info?: { error?: unknown }; parts?: Array<{ type: string; text?: string }> } }
+      | {
+          data?: {
+            info?: { error?: unknown };
+            parts?: Array<{ type: string; text?: string }>;
+          };
+        }
       | undefined,
   },
   reset() {
@@ -51,7 +59,10 @@ const runtimeMock = {
     this.state.promptUrls.length = 0;
     this.state.promptInputs.length = 0;
     this.state.authHeaders.length = 0;
+    this.state.clientPasswords.length = 0;
     this.state.closeCalls.length = 0;
+    this.state.startStartedResolvers.length = 0;
+    this.state.interruptNextStart = false;
     this.state.promptStartedResolvers.length = 0;
     this.state.promptWaits.length = 0;
     this.state.promptResult = undefined;
@@ -73,6 +84,11 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           runtimeMock.state.closeCalls.push(url);
         }),
       );
+      runtimeMock.state.startStartedResolvers.shift()?.();
+      if (runtimeMock.state.interruptNextStart) {
+        runtimeMock.state.interruptNextStart = false;
+        return yield* Effect.interrupt;
+      }
 
       return {
         url,
@@ -95,6 +111,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
     ),
   createOpenCodeSdkClient: ({ baseUrl, serverPassword, directory }) => {
     runtimeMock.state.clientDirectories.push(directory);
+    if (serverPassword) runtimeMock.state.clientPasswords.push(serverPassword);
     return {
       session: {
         create: async (input: Record<string, unknown>) => {
@@ -281,6 +298,11 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
         "http://127.0.0.1:4301",
         "http://127.0.0.1:4301",
       ]);
+      expect(env?.OPENCODE_SERVER_PASSWORD).toHaveLength(43);
+      expect(runtimeMock.state.clientPasswords).toEqual([
+        env?.OPENCODE_SERVER_PASSWORD,
+        env?.OPENCODE_SERVER_PASSWORD,
+      ]);
       expect(runtimeMock.state.closeCalls).toEqual([]);
 
       yield* advanceIdleClock;
@@ -300,7 +322,9 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
         });
         const sourceProviderDirectory = path.join(sourceDataHome, "opencode");
         const sourceAuthPath = path.join(sourceProviderDirectory, "auth.json");
-        yield* fileSystem.makeDirectory(sourceProviderDirectory, { recursive: true });
+        yield* fileSystem.makeDirectory(sourceProviderDirectory, {
+          recursive: true,
+        });
         yield* fileSystem.writeFileString(
           sourceAuthPath,
           JSON.stringify({
@@ -313,7 +337,11 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
               accountId: "account",
               extra: "drop-me",
             },
-            organization: { type: "wellknown", key: "remote", token: "remote-token" },
+            organization: {
+              type: "wellknown",
+              key: "remote",
+              token: "remote-token",
+            },
           }),
         );
 
@@ -346,7 +374,8 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
           expect(firstWorkingDirectory).toBeTruthy();
           expect(firstEnv?.OPENCODE_AUTH_CONTENT).toBeUndefined();
           expect(firstEnv?.KILO_AUTH_CONTENT).toBeUndefined();
-          expect(firstEnv?.OPENCODE_SERVER_PASSWORD).toBeUndefined();
+          expect(firstEnv?.OPENCODE_SERVER_PASSWORD).toHaveLength(43);
+          expect(firstEnv?.OPENCODE_SERVER_PASSWORD).not.toBe("must-not-inherit");
           const firstAuth = JSON.parse(
             yield* fileSystem.readFileString(
               path.join(firstEnv?.XDG_DATA_HOME ?? "", "opencode", "auth.json"),
@@ -373,13 +402,17 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
           expect(runtimeMock.state.closeCalls).toEqual(["http://127.0.0.1:4301"]);
           expect(yield* fileSystem.exists(firstAuthPath)).toBe(false);
           const secondEnv = runtimeMock.state.startEnvs[1];
+          expect(secondEnv?.OPENCODE_SERVER_PASSWORD).toHaveLength(43);
+          expect(secondEnv?.OPENCODE_SERVER_PASSWORD).not.toBe(firstEnv?.OPENCODE_SERVER_PASSWORD);
           expect(path.dirname(runtimeMock.state.startCwds[1] ?? "")).not.toBe(firstRuntimeRoot);
           const secondAuth = JSON.parse(
             yield* fileSystem.readFileString(
               path.join(secondEnv?.XDG_DATA_HOME ?? "", "opencode", "auth.json"),
             ),
           );
-          expect(secondAuth).toEqual({ openai: { type: "api", key: "second-key" } });
+          expect(secondAuth).toEqual({
+            openai: { type: "api", key: "second-key" },
+          });
           yield* advanceIdleClock;
           yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 20)));
         }).pipe(
@@ -411,6 +444,31 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
       }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("cleans an interrupted managed-server startup", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const textGeneration = yield* OpenCodeTextGeneration;
+      runtimeMock.state.interruptNextStart = true;
+
+      const exit = yield* Effect.exit(
+        textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/interrupted-writer-start",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        }),
+      );
+      const runtimeRoot = nodePath.dirname(runtimeMock.state.startCwds[0] ?? "");
+
+      yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 50)));
+
+      expect(exit._tag).toBe("Failure");
+      expect(runtimeMock.state.closeCalls).toEqual(["http://127.0.0.1:4301"]);
+      expect(yield* fileSystem.exists(runtimeRoot)).toBe(false);
+    }),
+  );
+
   it.effect("fails closed instead of cloning a rotating OAuth credential", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -419,7 +477,9 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
         prefix: "synara-opencode-oauth-auth-",
       });
       const sourceProviderDirectory = path.join(sourceDataHome, "opencode");
-      yield* fileSystem.makeDirectory(sourceProviderDirectory, { recursive: true });
+      yield* fileSystem.makeDirectory(sourceProviderDirectory, {
+        recursive: true,
+      });
       yield* fileSystem.writeFileString(
         path.join(sourceProviderDirectory, "auth.json"),
         JSON.stringify({
@@ -491,6 +551,9 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
         "http://127.0.0.1:4302",
       ]);
       expect(runtimeMock.state.closeCalls).toEqual(["http://127.0.0.1:4301"]);
+      expect(runtimeMock.state.startEnvs[0]?.OPENCODE_SERVER_PASSWORD).not.toBe(
+        runtimeMock.state.startEnvs[1]?.OPENCODE_SERVER_PASSWORD,
+      );
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -678,7 +741,12 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
     Effect.gen(function* () {
       runtimeMock.state.promptResult = {
         data: {
-          parts: [{ type: "text", text: JSON.stringify({ title: "Meeting recap" }) }],
+          parts: [
+            {
+              type: "text",
+              text: JSON.stringify({ title: "Meeting recap" }),
+            },
+          ],
         },
       };
       const textGeneration = yield* OpenCodeTextGeneration;
@@ -815,6 +883,9 @@ it.layer(KiloTextGenerationTestLayer)("KiloTextGenerationServiceLive", (it) => {
       expect(env?.XDG_DATA_HOME).toMatch(/scient-kilo-writer-/);
       expect(env?.KILO_CONFIG_CONTENT).toBeTruthy();
       expect(env?.KILO_AUTH_CONTENT).toBeUndefined();
+      expect(env?.KILO_SERVER_PASSWORD).toHaveLength(43);
+      expect(env?.OPENCODE_SERVER_PASSWORD).toBeUndefined();
+      expect(runtimeMock.state.clientPasswords).toEqual([env?.KILO_SERVER_PASSWORD]);
       expect(env).toMatchObject({
         OPENCODE_AUTO_SHARE: "false",
         OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
