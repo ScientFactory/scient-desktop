@@ -3441,6 +3441,12 @@ describe("ProviderCommandReactor", () => {
           mode: "custom",
           customInstructions: "Prefer short repository nouns.",
         },
+        providers: {
+          opencode: {
+            binaryPath: "/configured/bin/opencode",
+            experimentalWebSockets: true,
+          },
+        },
       },
     });
     const now = new Date().toISOString();
@@ -3475,6 +3481,13 @@ describe("ProviderCommandReactor", () => {
           text: "The app crashes during startup, fix it",
           attachments: [],
         },
+        providerOptions: {
+          opencode: {
+            binaryPath: "/turn-controlled/bin/opencode",
+            serverUrl: "https://turn-controlled.invalid",
+            serverPassword: "turn-controlled-secret",
+          },
+        },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
@@ -3490,6 +3503,12 @@ describe("ProviderCommandReactor", () => {
       policy: {
         mode: "custom",
         customInstructions: "Prefer short repository nouns.",
+      },
+      providerOptions: {
+        opencode: {
+          binaryPath: "/configured/bin/opencode",
+          experimentalWebSockets: true,
+        },
       },
     });
     await waitFor(() => harness.withActionLock.mock.calls.length === 1);

@@ -67,6 +67,22 @@ const SCM_TEXT_GENERATION_OPERATIONS = new Set<TextGenerationOperation>([
   "generateBranchName",
 ]);
 
+const STABLE_API_CREDENTIAL_METADATA_KEYS: Readonly<
+  Record<string, ReadonlySet<string> | undefined>
+> = {
+  azure: new Set(["resourceName"]),
+  "cloudflare-workers-ai": new Set(["accountId"]),
+  "cloudflare-ai-gateway": new Set(["accountId", "gatewayId"]),
+  "snowflake-cortex": new Set(["account"]),
+};
+
+function unsupportedApiCredentialMetadata(providerId: string): Error {
+  return new Error(
+    `Automatic isolated writing cannot safely project '${providerId}' API credential metadata. ` +
+      "Rotating OAuth and remote-policy credentials remain with their owning provider runtime.",
+  );
+}
+
 function selectOpenCodeApiCredential(content: string, providerId: string): string | null {
   const parsed = JSON.parse(content) as unknown;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -85,16 +101,26 @@ function selectOpenCodeApiCredential(content: string, providerId: string): strin
     );
   }
 
-  const metadata =
-    credential.metadata &&
-    typeof credential.metadata === "object" &&
-    !Array.isArray(credential.metadata)
-      ? Object.fromEntries(
-          Object.entries(credential.metadata as Record<string, unknown>).filter(
-            (entry): entry is [string, string] => typeof entry[1] === "string",
-          ),
-        )
-      : null;
+  let metadata: Record<string, string> | null = null;
+  if (credential.metadata !== undefined) {
+    if (
+      !credential.metadata ||
+      typeof credential.metadata !== "object" ||
+      Array.isArray(credential.metadata)
+    ) {
+      throw unsupportedApiCredentialMetadata(providerId);
+    }
+    const allowedKeys = STABLE_API_CREDENTIAL_METADATA_KEYS[providerId];
+    const entries = Object.entries(credential.metadata as Record<string, unknown>);
+    if (
+      entries.some(([key, value]) => typeof value !== "string" || allowedKeys?.has(key) !== true)
+    ) {
+      throw unsupportedApiCredentialMetadata(providerId);
+    }
+    if (entries.length > 0) {
+      metadata = Object.fromEntries(entries) as Record<string, string>;
+    }
+  }
   return JSON.stringify({
     [providerId]: {
       type: "api",
@@ -751,6 +777,17 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
         serverUrl.length === 0
           ? yield* resolveManagedWriterAuth(input.operation, providerId)
           : null;
+      if (
+        managedAuth?.authContent === null &&
+        SCM_TEXT_GENERATION_OPERATIONS.has(input.operation)
+      ) {
+        return yield* new TextGenerationError({
+          operation: input.operation,
+          detail:
+            `Automatic isolated ${config.displayName} writing requires an API credential for ` +
+            `'${providerId}'. OAuth and remote-policy credentials remain with their owning provider runtime.`,
+        });
+      }
       const rawOutput =
         serverUrl.length > 0
           ? yield* runAgainstServer({

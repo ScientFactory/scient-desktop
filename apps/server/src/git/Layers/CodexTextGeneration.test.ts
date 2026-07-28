@@ -816,6 +816,26 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
     expect(sanitized).not.toContain("read-secrets");
   });
 
+  it("does not let isolated providers dereference arbitrary server environment variables", () => {
+    const sanitized = sanitizeCodexConfigForTextGeneration(
+      [
+        'model_provider = "azure"',
+        "[model_providers.azure]",
+        'base_url = "https://example.invalid/v1"',
+        'env_key = "AZURE_OPENAI_API_KEY"',
+        'query_params = { api-version = "2025-04-01-preview" }',
+        'http_headers = { X-Static = "safe-value" }',
+        'env_http_headers = { X-Backup-Key = "UNRELATED_BACKUP_SECRET" }',
+      ].join("\n"),
+    );
+
+    expect(sanitized).toContain('env_key = "AZURE_OPENAI_API_KEY"');
+    expect(sanitized).toContain('api-version = "2025-04-01-preview"');
+    expect(sanitized).toContain('X-Static = "safe-value"');
+    expect(sanitized).not.toContain("env_http_headers");
+    expect(sanitized).not.toContain("UNRELATED_BACKUP_SECRET");
+  });
+
   it("projects only non-rotating API auth into the isolated Codex runtime", () => {
     expect(
       selectCodexApiAuthForTextGeneration(

@@ -97,11 +97,7 @@ const SAFE_MODEL_PROVIDER_NUMBER_KEYS = [
   "websocket_connect_timeout_ms",
 ] as const;
 const SAFE_MODEL_PROVIDER_BOOLEAN_KEYS = ["requires_openai_auth", "supports_websockets"] as const;
-const SAFE_MODEL_PROVIDER_STRING_MAP_KEYS = [
-  "query_params",
-  "http_headers",
-  "env_http_headers",
-] as const;
+const SAFE_MODEL_PROVIDER_STRING_MAP_KEYS = ["query_params", "http_headers"] as const;
 
 function isTomlTable(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

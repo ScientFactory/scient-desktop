@@ -56,7 +56,10 @@ import {
   type BranchNameGenerationInput,
   type ThreadTitleGenerationInput,
 } from "../../git/Services/TextGeneration.ts";
-import { resolveTextGenerationInputForSelection } from "../../git/textGenerationSelection.ts";
+import {
+  resolveConfiguredTextGenerationProviderOptions,
+  resolveTextGenerationInputForSelection,
+} from "../../git/textGenerationSelection.ts";
 import { resolveSourceControlWritingPolicy } from "../../git/sourceControlWritingPolicy.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -1666,7 +1669,7 @@ const make = Effect.gen(function* () {
     // repository evidence to the active chat provider merely because this rename follows a turn.
     const textGenerationInput = resolveTextGenerationInputForSelection(
       sourceControlSettings.textGenerationModelSelection,
-      input.providerOptions ?? threadProviderOptions.get(input.threadId),
+      resolveConfiguredTextGenerationProviderOptions(sourceControlSettings),
     );
     if (!textGenerationInput) {
       const targetBranch = buildGeneratedWorktreeBranchName(

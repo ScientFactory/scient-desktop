@@ -3,7 +3,7 @@
 // plain-text JSON parsing, and upstream structured-output failures.
 // Depends on: OpenCodeTextGenerationServiceLive, OpenCodeRuntime, ServerConfig, TestClock.
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import nodePath from "node:path";
 
@@ -180,6 +180,14 @@ let originalXdgDataHome: string | undefined;
 beforeAll(() => {
   originalXdgDataHome = process.env.XDG_DATA_HOME;
   process.env.XDG_DATA_HOME = TEST_SOURCE_DATA_HOME;
+  for (const providerDirectory of ["opencode", "kilo"]) {
+    const directory = nodePath.join(TEST_SOURCE_DATA_HOME, providerDirectory);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(
+      nodePath.join(directory, "auth.json"),
+      JSON.stringify({ openai: { type: "api", key: "default-test-key" } }),
+    );
+  }
 });
 
 afterAll(() => {
@@ -520,6 +528,200 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
 
       expect(error.message).toContain("supports API credentials only");
       expect(runtimeMock.state.startCalls).toEqual([]);
+    }),
+  );
+
+  it.effect("rejects OAuth-shaped API metadata before starting a managed server", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sourceDataHome = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "synara-opencode-api-shaped-oauth-",
+      });
+      const sourceProviderDirectory = path.join(sourceDataHome, "opencode");
+      yield* fileSystem.makeDirectory(sourceProviderDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(sourceProviderDirectory, "auth.json"),
+        JSON.stringify({
+          digitalocean: {
+            type: "api",
+            key: "rotating-access-token",
+            metadata: {
+              oauth_access: "rotating-access-token",
+              oauth_expires: "1780000000000",
+              oauth_scopes: "model:access",
+            },
+          },
+        }),
+      );
+      const previousDataHome = process.env.XDG_DATA_HOME;
+      yield* Effect.sync(() => {
+        process.env.XDG_DATA_HOME = sourceDataHome;
+      });
+
+      const textGeneration = yield* OpenCodeTextGeneration;
+      const error = yield* textGeneration
+        .generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/opencode-api-shaped-oauth",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: { provider: "opencode", model: "digitalocean/openai-gpt-5" },
+        })
+        .pipe(
+          Effect.flip,
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousDataHome === undefined) delete process.env.XDG_DATA_HOME;
+              else process.env.XDG_DATA_HOME = previousDataHome;
+            }),
+          ),
+        );
+
+      expect(error.message).toContain("credential metadata");
+      expect(runtimeMock.state.startCalls).toEqual([]);
+      expect(runtimeMock.state.promptInputs).toEqual([]);
+    }),
+  );
+
+  it.effect("preserves stable provider metadata in the isolated API credential", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sourceDataHome = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "synara-opencode-stable-api-metadata-",
+      });
+      const sourceProviderDirectory = path.join(sourceDataHome, "opencode");
+      yield* fileSystem.makeDirectory(sourceProviderDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(sourceProviderDirectory, "auth.json"),
+        JSON.stringify({
+          azure: {
+            type: "api",
+            key: "stable-api-key",
+            metadata: { resourceName: "scient-test-resource" },
+          },
+        }),
+      );
+      const previousDataHome = process.env.XDG_DATA_HOME;
+      yield* Effect.sync(() => {
+        process.env.XDG_DATA_HOME = sourceDataHome;
+      });
+
+      const textGeneration = yield* OpenCodeTextGeneration;
+      yield* textGeneration
+        .generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/opencode-stable-metadata",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: { provider: "opencode", model: "azure/gpt-5" },
+        })
+        .pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousDataHome === undefined) delete process.env.XDG_DATA_HOME;
+              else process.env.XDG_DATA_HOME = previousDataHome;
+            }),
+          ),
+        );
+
+      const env = runtimeMock.state.startEnvs[0];
+      const isolatedAuth = JSON.parse(
+        yield* fileSystem.readFileString(
+          path.join(env?.XDG_DATA_HOME ?? "", "opencode", "auth.json"),
+        ),
+      );
+      expect(isolatedAuth).toEqual({
+        azure: {
+          type: "api",
+          key: "stable-api-key",
+          metadata: { resourceName: "scient-test-resource" },
+        },
+      });
+      yield* advanceIdleClock;
+    }),
+  );
+
+  it.effect("rechecks missing credentials before direct SCM generation", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const sourceDataHome = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "synara-opencode-direct-scm-no-auth-",
+      });
+      const previousDataHome = process.env.XDG_DATA_HOME;
+      yield* Effect.sync(() => {
+        process.env.XDG_DATA_HOME = sourceDataHome;
+      });
+
+      const textGeneration = yield* OpenCodeTextGeneration;
+      const error = yield* textGeneration
+        .generateBranchName({
+          cwd: process.cwd(),
+          message: "Protect direct branch generation",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        })
+        .pipe(
+          Effect.flip,
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousDataHome === undefined) delete process.env.XDG_DATA_HOME;
+              else process.env.XDG_DATA_HOME = previousDataHome;
+            }),
+          ),
+        );
+
+      expect(error.message).toContain("requires an API credential");
+      expect(runtimeMock.state.startCalls).toEqual([]);
+      expect(runtimeMock.state.promptInputs).toEqual([]);
+    }),
+  );
+
+  it.effect("rechecks credentials after preflight before starting SCM generation", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sourceDataHome = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "synara-opencode-stale-preflight-auth-",
+      });
+      const sourceProviderDirectory = path.join(sourceDataHome, "opencode");
+      const sourceAuthPath = path.join(sourceProviderDirectory, "auth.json");
+      yield* fileSystem.makeDirectory(sourceProviderDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(
+        sourceAuthPath,
+        JSON.stringify({ openai: { type: "api", key: "preflight-only-key" } }),
+      );
+      const previousDataHome = process.env.XDG_DATA_HOME;
+      yield* Effect.sync(() => {
+        process.env.XDG_DATA_HOME = sourceDataHome;
+      });
+
+      const textGeneration = yield* OpenCodeTextGeneration;
+      yield* textGeneration.preflightSourceControlWriting({
+        cwd: process.cwd(),
+        operations: ["generateBranchName"],
+        modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+      });
+      yield* fileSystem.remove(sourceAuthPath);
+      const error = yield* textGeneration
+        .generateBranchName({
+          cwd: process.cwd(),
+          message: "Protect stale preflight state",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        })
+        .pipe(
+          Effect.flip,
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousDataHome === undefined) delete process.env.XDG_DATA_HOME;
+              else process.env.XDG_DATA_HOME = previousDataHome;
+            }),
+          ),
+        );
+
+      expect(error.message).toContain("requires an API credential");
+      expect(runtimeMock.state.startCalls).toEqual([]);
+      expect(runtimeMock.state.promptInputs).toEqual([]);
     }),
   );
 
@@ -895,6 +1097,40 @@ it.layer(KiloTextGenerationTestLayer)("KiloTextGenerationServiceLive", (it) => {
         KILO_PURE: "1",
       });
       expect(runtimeMock.state.clientDirectories[0]).toMatch(/scient-kilo-writer-.*\/workspace$/);
+    }),
+  );
+
+  it.effect("rechecks missing credentials before direct Kilo SCM generation", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const sourceDataHome = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "synara-kilo-direct-scm-no-auth-",
+      });
+      const previousDataHome = process.env.XDG_DATA_HOME;
+      yield* Effect.sync(() => {
+        process.env.XDG_DATA_HOME = sourceDataHome;
+      });
+
+      const textGeneration = yield* KiloTextGeneration;
+      const error = yield* textGeneration
+        .generateBranchName({
+          cwd: process.cwd(),
+          message: "Protect direct Kilo branch generation",
+          modelSelection: { provider: "kilo", model: "openai/gpt-5" },
+        })
+        .pipe(
+          Effect.flip,
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousDataHome === undefined) delete process.env.XDG_DATA_HOME;
+              else process.env.XDG_DATA_HOME = previousDataHome;
+            }),
+          ),
+        );
+
+      expect(error.message).toContain("requires an API credential");
+      expect(runtimeMock.state.startCalls).toEqual([]);
+      expect(runtimeMock.state.promptInputs).toEqual([]);
     }),
   );
 });
