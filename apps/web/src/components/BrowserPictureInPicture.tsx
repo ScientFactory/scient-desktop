@@ -23,7 +23,11 @@ import {
   updateFloatingBrowserLayoutFromKey,
 } from "~/browserPictureInPicture";
 import { LayoutSidebarIcon, WindowIcon, XIcon } from "~/lib/icons";
-import { dispatchPanelResizeOverlaySync } from "~/lib/panelResize";
+import {
+  createPanelResizeOverlay,
+  dispatchPanelResizeOverlaySync,
+  removePanelResizeOverlay,
+} from "~/lib/panelResize";
 
 import { IconButton } from "./ui/icon-button";
 
@@ -43,6 +47,7 @@ interface FloatingBrowserAdjustmentState {
   animationFrame: number | null;
   readonly restoreBodyCursor: string;
   readonly restoreBodyUserSelect: string;
+  readonly pointerShield: HTMLDivElement;
   readonly onPointerMove: (event: PointerEvent) => void;
   readonly onPointerEnd: (event: PointerEvent) => void;
   readonly onWindowBlur: () => void;
@@ -148,6 +153,7 @@ export function BrowserPictureInPicture(props: BrowserPictureInPictureProps) {
       window.removeEventListener("pointerup", adjustment.onPointerEnd);
       window.removeEventListener("pointercancel", adjustment.onPointerEnd);
       window.removeEventListener("blur", adjustment.onWindowBlur);
+      removePanelResizeOverlay(adjustment.pointerShield);
       document.body.style.cursor = adjustment.restoreBodyCursor;
       document.body.style.userSelect = adjustment.restoreBodyUserSelect;
       adjustmentRef.current = null;
@@ -172,6 +178,8 @@ export function BrowserPictureInPicture(props: BrowserPictureInPictureProps) {
 
       const identity = identityRef.current;
       const start = fitFloatingBrowserLayout(layoutRef.current, parentArea);
+      const cursor = kind === "move" ? "grabbing" : "nwse-resize";
+      const pointerShield = createPanelResizeOverlay(cursor);
       let adjustment: FloatingBrowserAdjustmentState;
       const onPointerMove = (pointerEvent: PointerEvent) => {
         if (
@@ -228,12 +236,13 @@ export function BrowserPictureInPicture(props: BrowserPictureInPictureProps) {
         animationFrame: null,
         restoreBodyCursor: document.body.style.cursor,
         restoreBodyUserSelect: document.body.style.userSelect,
+        pointerShield,
         onPointerMove,
         onPointerEnd,
         onWindowBlur,
       };
       adjustmentRef.current = adjustment;
-      document.body.style.cursor = kind === "move" ? "grabbing" : "nwse-resize";
+      document.body.style.cursor = cursor;
       document.body.style.userSelect = "none";
       window.addEventListener("pointermove", onPointerMove);
       window.addEventListener("pointerup", onPointerEnd);
@@ -280,9 +289,14 @@ export function BrowserPictureInPicture(props: BrowserPictureInPictureProps) {
         const currentRoot = rootRef.current;
         const currentArea = currentRoot ? parentAreaFor(currentRoot) : null;
         if (!currentArea) return;
-        const fitted = fitFloatingBrowserLayout(layoutRef.current, currentArea);
         const adjustment = adjustmentRef.current;
-        if (adjustment && identitiesEqual(adjustment.identity, identity)) {
+        const adjustmentIsCurrent =
+          adjustment !== null && identitiesEqual(adjustment.identity, identity);
+        const fitted = fitFloatingBrowserLayout(
+          adjustmentIsCurrent ? adjustment.nextLayout : layoutRef.current,
+          currentArea,
+        );
+        if (adjustmentIsCurrent) {
           adjustment.nextLayout = fitted;
         }
         if (!writeLayout(identity, fitted) || adjustment) return;
