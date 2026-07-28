@@ -100,6 +100,9 @@ function selectOpenCodeApiCredential(content: string, providerId: string): strin
       "Automatic isolated writing supports API credentials only; rotating OAuth and remote-policy credentials remain with their owning provider runtime.",
     );
   }
+  if (credential.key.trim().length === 0) {
+    return null;
+  }
 
   let metadata: Record<string, string> | null = null;
   if (credential.metadata !== undefined) {

@@ -819,6 +819,47 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
     }),
   );
 
+  it.effect("rejects an empty API key during SCM preflight", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sourceDataHome = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "synara-opencode-empty-api-key-",
+      });
+      const sourceProviderDirectory = path.join(sourceDataHome, "opencode");
+      yield* fileSystem.makeDirectory(sourceProviderDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(sourceProviderDirectory, "auth.json"),
+        JSON.stringify({ openai: { type: "api", key: "   " } }),
+      );
+      const previousDataHome = process.env.XDG_DATA_HOME;
+      yield* Effect.sync(() => {
+        process.env.XDG_DATA_HOME = sourceDataHome;
+      });
+
+      const textGeneration = yield* OpenCodeTextGeneration;
+      const error = yield* textGeneration
+        .preflightSourceControlWriting({
+          cwd: process.cwd(),
+          operations: ["generateCommitMessage", "generatePrContent"],
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        })
+        .pipe(
+          Effect.flip,
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousDataHome === undefined) delete process.env.XDG_DATA_HOME;
+              else process.env.XDG_DATA_HOME = previousDataHome;
+            }),
+          ),
+        );
+
+      expect(error.message).toContain("requires an API credential");
+      expect(runtimeMock.state.startCalls).toEqual([]);
+      expect(runtimeMock.state.promptInputs).toEqual([]);
+    }),
+  );
+
   it.effect("starts a new server after the warm server idles out", () =>
     Effect.gen(function* () {
       const textGeneration = yield* OpenCodeTextGeneration;
