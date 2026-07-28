@@ -94,6 +94,7 @@ export interface AgentThreadMessageSummary {
   readonly text: string;
   readonly truncated: boolean;
   readonly dispatchOrigin?: string;
+  readonly dispatchSource?: string;
   readonly createdAt: string;
 }
 
@@ -127,6 +128,7 @@ function toAgentThreadMessageSummary(
     text,
     truncated,
     ...(message.dispatchOrigin !== undefined ? { dispatchOrigin: message.dispatchOrigin } : {}),
+    ...(message.dispatchSource !== undefined ? { dispatchSource: message.dispatchSource } : {}),
     createdAt: message.createdAt,
   };
 }

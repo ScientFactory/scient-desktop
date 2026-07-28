@@ -312,6 +312,7 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
                   attachments: [],
                 },
                 dispatchMode,
+                dispatchSource: "agent",
                 runtimeMode: target.runtimeMode,
                 interactionMode: target.interactionMode,
                 createdAt: now(),

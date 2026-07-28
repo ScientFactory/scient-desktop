@@ -181,7 +181,7 @@ function jsonBody(result: McpToolCallResult): Record<string, unknown> {
 }
 
 describe("scient_send_message", () => {
-  it("dispatches a queued turn.start without falsely claiming automation origin", async () => {
+  it("dispatches a queued turn.start with honest additive agent provenance", async () => {
     const { call, commands } = setup({
       threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD, { interactionMode: "plan" }) },
     });
@@ -206,6 +206,7 @@ describe("scient_send_message", () => {
     expect(command.message.attachments).toEqual([]);
     expect(command.dispatchMode).toBe("queue");
     expect(command.dispatchOrigin).toBeUndefined();
+    expect(command.dispatchSource).toBe("agent");
     expect(command.runtimeMode).toBe("full-access");
     expect(command.interactionMode).toBe("plan");
     expect(command.createdAt).toBe(ISO);

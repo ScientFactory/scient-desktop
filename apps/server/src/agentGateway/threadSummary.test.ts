@@ -89,6 +89,7 @@ function makeMessage(
     readonly text?: string;
     readonly role?: string;
     readonly dispatchOrigin?: string;
+    readonly dispatchSource?: string;
     readonly createdAt?: string;
   } = {},
 ): OrchestrationMessage {
@@ -97,6 +98,7 @@ function makeMessage(
     text: overrides.text ?? "hello",
     createdAt: overrides.createdAt ?? "2026-01-01T00:00:00.000Z",
     ...(overrides.dispatchOrigin !== undefined ? { dispatchOrigin: overrides.dispatchOrigin } : {}),
+    ...(overrides.dispatchSource !== undefined ? { dispatchSource: overrides.dispatchSource } : {}),
   } as unknown as OrchestrationMessage;
 }
 
@@ -347,6 +349,15 @@ describe("paginateThreadMessages", () => {
 
     expect(page.messages[0]?.dispatchOrigin).toBe("agent-gateway");
     expect("dispatchOrigin" in (page.messages[1] as object)).toBe(false);
+  });
+
+  it("includes additive dispatchSource only when present on the input message", () => {
+    const page = paginateThreadMessages({
+      messages: [makeMessage({ dispatchSource: "agent" }), makeMessage()],
+    });
+
+    expect(page.messages[0]?.dispatchSource).toBe("agent");
+    expect("dispatchSource" in (page.messages[1] as object)).toBe(false);
   });
 });
 
