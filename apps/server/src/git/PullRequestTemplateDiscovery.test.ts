@@ -166,6 +166,8 @@ it.effect("ignores similarly named files with unsupported extensions", () =>
       yield* writeFile(cwd, ".github/pull_request_template.sh", "publish-secret\n");
       yield* writeFile(cwd, ".github/pull_request_template.backup.md", "archived\n");
       yield* writeFile(cwd, "docs/pull_request_template.notes.txt", "notes\n");
+      yield* writeFile(cwd, ".github/PULL_REQUEST_TEMPLATE/md", "extensionless Markdown\n");
+      yield* writeFile(cwd, "docs/PULL_REQUEST_TEMPLATE/txt", "extensionless text\n");
       yield* writeFile(cwd, ".github/PULL_REQUEST_TEMPLATE/unsafe.json", "{}\n");
       yield* commitAll(cwd);
 

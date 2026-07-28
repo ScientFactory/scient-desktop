@@ -101,7 +101,9 @@ function isInvalidTemplateContent(content: string): boolean {
 }
 
 function isSupportedTemplateExtension(path: string): boolean {
-  const extension = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+  const extensionSeparator = path.lastIndexOf(".");
+  if (extensionSeparator <= 0 || extensionSeparator === path.length - 1) return false;
+  const extension = path.slice(extensionSeparator + 1).toLowerCase();
   return TEMPLATE_EXTENSIONS.some((candidate) => candidate === extension);
 }
 
