@@ -213,6 +213,8 @@ interface SharedOpenCodeTextGenerationServerState {
   binaryPath: string | null;
   providerId: string | null;
   credentialRevision: string | null;
+  isolatedWriter: boolean | null;
+  cwd: string | null;
   clientDirectory: string | null;
   serverPassword: string | null;
   activeRequests: number;
@@ -445,6 +447,8 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
       binaryPath: null,
       providerId: null,
       credentialRevision: null,
+      isolatedWriter: null,
+      cwd: null,
       clientDirectory: null,
       serverPassword: null,
       activeRequests: 0,
@@ -458,6 +462,8 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
       sharedServerState.binaryPath = null;
       sharedServerState.providerId = null;
       sharedServerState.credentialRevision = null;
+      sharedServerState.isolatedWriter = null;
+      sharedServerState.cwd = null;
       sharedServerState.clientDirectory = null;
       sharedServerState.serverPassword = null;
       if (scope !== null) {
@@ -499,6 +505,8 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
       readonly providerId: string;
       readonly authContent: string | null;
       readonly credentialRevision: string;
+      readonly isolatedWriter: boolean;
+      readonly cwd: string;
       readonly operation: TextGenerationOperation;
     }) =>
       sharedServerMutex.withPermit(
@@ -511,17 +519,23 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
                 const serverScope = yield* Scope.make();
                 return yield* restore(
                   Effect.gen(function* () {
-                    const isolatedRuntime = yield* prepareManagedWriterRuntime(
-                      input.operation,
-                      serverScope,
-                      input.authContent,
-                    );
+                    const runtime = input.isolatedWriter
+                      ? yield* prepareManagedWriterRuntime(
+                          input.operation,
+                          serverScope,
+                          input.authContent,
+                        )
+                      : {
+                          workingDirectory: input.cwd,
+                          env: undefined,
+                          serverPassword: "",
+                        };
                     const server = yield* openCodeRuntime
                       .startOpenCodeServerProcess({
                         binaryPath: input.binaryPath,
                         cliSpec: config.cliSpec,
-                        cwd: isolatedRuntime.workingDirectory,
-                        env: isolatedRuntime.env,
+                        cwd: runtime.workingDirectory,
+                        ...(runtime.env ? { env: runtime.env } : {}),
                       })
                       .pipe(
                         Effect.provideService(Scope.Scope, serverScope),
@@ -537,8 +551,8 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
                     return {
                       server,
                       serverScope,
-                      clientDirectory: isolatedRuntime.workingDirectory,
-                      serverPassword: isolatedRuntime.serverPassword,
+                      clientDirectory: runtime.workingDirectory,
+                      serverPassword: runtime.serverPassword,
                     };
                   }),
                 ).pipe(
@@ -554,8 +568,11 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
           if (existingServer !== null) {
             const sameConfigScope =
               sharedServerState.binaryPath === input.binaryPath &&
-              sharedServerState.providerId === input.providerId &&
-              sharedServerState.credentialRevision === input.credentialRevision;
+              sharedServerState.isolatedWriter === input.isolatedWriter &&
+              (input.isolatedWriter
+                ? sharedServerState.providerId === input.providerId &&
+                  sharedServerState.credentialRevision === input.credentialRevision
+                : sharedServerState.cwd === input.cwd);
             if (!sameConfigScope && sharedServerState.activeRequests === 0) {
               yield* closeSharedServer();
             } else {
@@ -600,6 +617,8 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
               sharedServerState.binaryPath = input.binaryPath;
               sharedServerState.providerId = input.providerId;
               sharedServerState.credentialRevision = input.credentialRevision;
+              sharedServerState.isolatedWriter = input.isolatedWriter;
+              sharedServerState.cwd = input.cwd;
               sharedServerState.clientDirectory = clientDirectory;
               sharedServerState.serverPassword = serverPassword;
               sharedServerState.activeRequests = 1;
@@ -773,14 +792,12 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
         usingExternalServer: serverUrl.length > 0,
       });
 
+      const isolatedWriter = SCM_TEXT_GENERATION_OPERATIONS.has(input.operation);
       const managedAuth =
-        serverUrl.length === 0
+        serverUrl.length === 0 && isolatedWriter
           ? yield* resolveManagedWriterAuth(input.operation, providerId)
           : null;
-      if (
-        managedAuth?.authContent === null &&
-        SCM_TEXT_GENERATION_OPERATIONS.has(input.operation)
-      ) {
+      if (managedAuth?.authContent === null && isolatedWriter) {
         return yield* new TextGenerationError({
           operation: input.operation,
           detail:
@@ -792,15 +809,17 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
         serverUrl.length > 0
           ? yield* runAgainstServer({
               url: serverUrl,
-              clientDirectory: externalClientDirectory,
+              clientDirectory: isolatedWriter ? externalClientDirectory : input.cwd,
               ...(serverPassword.length > 0 ? { serverPassword } : {}),
             })
           : yield* Effect.acquireUseRelease(
               acquireSharedServer({
                 binaryPath,
                 providerId,
-                authContent: managedAuth!.authContent,
-                credentialRevision: managedAuth!.credentialRevision,
+                authContent: managedAuth?.authContent ?? null,
+                credentialRevision: managedAuth?.credentialRevision ?? "standard-runtime",
+                isolatedWriter,
+                cwd: input.cwd,
                 operation: input.operation,
               }),
               (acquired) =>

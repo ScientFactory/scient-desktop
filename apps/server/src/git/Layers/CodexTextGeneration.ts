@@ -83,6 +83,13 @@ function normalizeCodexError(
   });
 }
 
+const SCM_TEXT_GENERATION_OPERATIONS = new Set<TextGenerationOperation>([
+  "generateCommitMessage",
+  "generatePrContent",
+  "generateDiffSummary",
+  "generateBranchName",
+]);
+
 const SAFE_MODEL_PROVIDER_STRING_KEYS = [
   "name",
   "base_url",
@@ -227,8 +234,10 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       const sourceAuth = yield* fileSystem
         .readFileString(path.join(sourceHome, "auth.json"))
         .pipe(Effect.catch(() => Effect.succeed(null)));
-      const hasApiAuth =
-        sourceAuth === null
+      const providerEnvKey = resolveCodexProviderEnvKey(sourceConfig);
+      const hasCompatibleApiAuth =
+        providerEnvKey === "OPENAI_API_KEY" &&
+        (sourceAuth === null
           ? false
           : yield* Effect.try({
               try: () => selectCodexApiAuthForTextGeneration(sourceAuth) !== null,
@@ -238,9 +247,8 @@ const makeCodexTextGeneration = Effect.gen(function* () {
                   detail: "Failed to inspect Codex API authentication for source-control writing.",
                   cause,
                 }),
-            });
-      const providerEnvKey = resolveCodexProviderEnvKey(sourceConfig);
-      if (!hasApiAuth && !process.env[providerEnvKey]?.trim()) {
+            }));
+      if (!hasCompatibleApiAuth && !process.env[providerEnvKey]?.trim()) {
         return yield* new TextGenerationError({
           operation,
           detail:
@@ -304,6 +312,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       const sourceConfig = yield* fileSystem
         .readFileString(path.join(sourceCodexHome, "config.toml"))
         .pipe(Effect.catch(() => Effect.succeed(null)));
+      const providerEnvKey = resolveCodexProviderEnvKey(sourceConfig ?? "");
       if (sourceConfig !== null) {
         const isolatedConfigPath = path.join(isolatedHomePath, "config.toml");
         yield* fileSystem
@@ -334,8 +343,13 @@ const makeCodexTextGeneration = Effect.gen(function* () {
         .readFileString(path.join(sourceCodexHome, "auth.json"))
         .pipe(Effect.catch(() => Effect.succeed(null)));
       if (sourceAuth !== null) {
-        const apiAuth = yield* Effect.try({
-          try: () => selectCodexApiAuthForTextGeneration(sourceAuth),
+        const isolatedAuth = yield* Effect.try({
+          try: () =>
+            SCM_TEXT_GENERATION_OPERATIONS.has(operation)
+              ? providerEnvKey === "OPENAI_API_KEY"
+                ? selectCodexApiAuthForTextGeneration(sourceAuth)
+                : null
+              : sourceAuth,
           catch: (cause) =>
             new TextGenerationError({
               operation,
@@ -343,9 +357,9 @@ const makeCodexTextGeneration = Effect.gen(function* () {
               cause,
             }),
         });
-        if (apiAuth !== null) {
+        if (isolatedAuth !== null) {
           const isolatedAuthPath = path.join(isolatedHomePath, "auth.json");
-          yield* fileSystem.writeFileString(isolatedAuthPath, apiAuth).pipe(
+          yield* fileSystem.writeFileString(isolatedAuthPath, isolatedAuth).pipe(
             Effect.mapError(
               (cause) =>
                 new TextGenerationError({

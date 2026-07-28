@@ -895,6 +895,85 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
     }),
   );
 
+  it.effect("rejects unrelated auth.json credentials for a custom Codex provider", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const codexHome = yield* fs.makeTempDirectoryScoped({
+        prefix: "synara-codex-custom-provider-preflight-",
+      });
+      yield* fs.writeFileString(
+        path.join(codexHome, "config.toml"),
+        [
+          'model_provider = "azure"',
+          "[model_providers.azure]",
+          'env_key = "AZURE_OPENAI_API_KEY"',
+        ].join("\n"),
+      );
+      yield* fs.writeFileString(
+        path.join(codexHome, "auth.json"),
+        JSON.stringify({ OPENAI_API_KEY: "unrelated-openai-key" }),
+      );
+      const previousAzureApiKey = process.env.AZURE_OPENAI_API_KEY;
+      yield* Effect.sync(() => {
+        delete process.env.AZURE_OPENAI_API_KEY;
+      });
+
+      const textGeneration = yield* TextGeneration;
+      const error = yield* textGeneration
+        .preflightSourceControlWriting({
+          cwd: process.cwd(),
+          operations: ["generateCommitMessage", "generatePrContent"],
+          codexHomePath: codexHome,
+        })
+        .pipe(
+          Effect.flip,
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousAzureApiKey === undefined) delete process.env.AZURE_OPENAI_API_KEY;
+              else process.env.AZURE_OPENAI_API_KEY = previousAzureApiKey;
+            }),
+          ),
+        );
+
+      expect(error.message).toContain("requires API-key authentication");
+      expect(error.message).toContain("AZURE_OPENAI_API_KEY");
+    }),
+  );
+
+  it.effect("preserves OAuth auth for non-SCM Codex generation", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "OAuth title" }),
+        requireCodexHome: true,
+        requireAuthJson: true,
+      },
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const codexHome = yield* fs.makeTempDirectoryScoped({
+          prefix: "synara-codex-oauth-title-",
+        });
+        yield* fs.writeFileString(
+          path.join(codexHome, "auth.json"),
+          JSON.stringify({
+            auth_mode: "chatgpt",
+            tokens: { access_token: "access", refresh_token: "refresh" },
+          }),
+        );
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Keep OAuth title generation working.",
+          providerOptions: { codex: { homePath: codexHome } },
+        });
+
+        expect(generated.title).toBe("OAuth title");
+      }),
+    ),
+  );
+
   it.effect("uses the provided codexHomePath and strips local skills config", () =>
     withFakeCodexEnv(
       {
@@ -903,7 +982,6 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
           body: "",
         }),
         requireCodexHome: true,
-        requireAuthJson: true,
         codexHomeConfigMustContain: 'model_provider = "azure"',
         codexHomeConfigMustNotContain: "unsafe_text_generation_capability",
       },

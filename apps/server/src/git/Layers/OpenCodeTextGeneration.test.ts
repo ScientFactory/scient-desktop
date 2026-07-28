@@ -531,6 +531,100 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
     }),
   );
 
+  it.effect(
+    "preserves the standard OAuth runtime for non-SCM title, recap, and automation generation",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sourceDataHome = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "synara-opencode-oauth-title-",
+        });
+        const sourceProviderDirectory = path.join(sourceDataHome, "opencode");
+        yield* fileSystem.makeDirectory(sourceProviderDirectory, { recursive: true });
+        yield* fileSystem.writeFileString(
+          path.join(sourceProviderDirectory, "auth.json"),
+          JSON.stringify({
+            openai: {
+              type: "oauth",
+              refresh: "refresh-token",
+              access: "access-token",
+              expires: 123,
+            },
+          }),
+        );
+        const previousDataHome = process.env.XDG_DATA_HOME;
+        yield* Effect.sync(() => {
+          process.env.XDG_DATA_HOME = sourceDataHome;
+        });
+        runtimeMock.state.promptResult = {
+          data: { parts: [{ type: "text", text: JSON.stringify({ title: "OAuth title" }) }] },
+        };
+
+        const textGeneration = yield* OpenCodeTextGeneration;
+        const title = yield* textGeneration
+          .generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Keep OAuth title generation working.",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          })
+          .pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (previousDataHome === undefined) delete process.env.XDG_DATA_HOME;
+                else process.env.XDG_DATA_HOME = previousDataHome;
+              }),
+            ),
+          );
+
+        runtimeMock.state.promptResult = {
+          data: { parts: [{ type: "text", text: JSON.stringify({ recap: "OAuth recap" }) }] },
+        };
+        const recap = yield* textGeneration.generateThreadRecap({
+          cwd: process.cwd(),
+          newMaterial: "The work continued.",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  isAutomation: true,
+                  confidence: 1,
+                  language: "en",
+                  name: "Daily check",
+                  taskPrompt: "Check the repository status.",
+                  schedule: { type: "interval", everySeconds: 86_400 },
+                  mode: "heartbeat",
+                  maxIterations: null,
+                  completionPolicy: { type: "none" },
+                  missingFields: [],
+                  needsConfirmation: false,
+                  reason: null,
+                }),
+              },
+            ],
+          },
+        };
+        const automation = yield* textGeneration.generateAutomationIntent({
+          cwd: process.cwd(),
+          message: "Check the repository every day.",
+          nowIso: "2026-07-28T10:00:00.000Z",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+
+        expect(title.title).toBe("OAuth title");
+        expect(recap.recap).toBe("OAuth recap");
+        expect(automation.name).toBe("Daily check");
+        expect(runtimeMock.state.startCalls).toEqual(["opencode"]);
+        expect(runtimeMock.state.startCwds).toEqual([process.cwd()]);
+        expect(runtimeMock.state.startEnvs).toEqual([undefined]);
+      }),
+  );
+
   it.effect("rejects OAuth-shaped API metadata before starting a managed server", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

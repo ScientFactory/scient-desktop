@@ -29,7 +29,11 @@ import {
 import { GitCore } from "../Services/GitCore.ts";
 import { GitHubCli, type GitHubPullRequestSummary } from "../Services/GitHubCli.ts";
 import { type SourceControlWritingPolicy, TextGeneration } from "../Services/TextGeneration.ts";
-import { buildGitTextGenerationCallInput } from "../textGenerationSelection.ts";
+import {
+  buildGitTextGenerationCallInput,
+  resolveConfiguredTextGenerationProviderOptions,
+  resolveTextGenerationInputForSelection,
+} from "../textGenerationSelection.ts";
 import { sanitizeCommitSubjectForPolicy } from "../textGenerationShared.ts";
 import { discoverPullRequestTemplate } from "../PullRequestTemplateDiscovery.ts";
 import { resolveSourceControlWritingPolicy } from "../sourceControlWritingPolicy.ts";
@@ -2641,17 +2645,18 @@ The local stash entry was kept for recovery.`,
             (input.featureBranch || !initialStatus.hasUpstream || initialStatus.aheadCount > 0));
         const wantsPr = input.action === "create_pr" || input.action === "commit_push_pr";
         const needsWritingPolicy = wantsCommit || wantsPr || input.featureBranch;
-        const sourceControlWriting = needsWritingPolicy
+        const writingSettings = needsWritingPolicy
           ? yield* serverSettings.getSnapshot.pipe(
-              Effect.map((snapshot) => snapshot.settings.sourceControlWriting),
+              Effect.map((snapshot) => snapshot.settings),
               Effect.catch((error) =>
                 Effect.logWarning(
                   "GitManager.runStackedAction: settings snapshot unavailable; using standard source-control writing",
                   { reason: error.message },
-                ).pipe(Effect.as(DEFAULT_SERVER_SETTINGS.sourceControlWriting)),
+                ).pipe(Effect.as(DEFAULT_SERVER_SETTINGS)),
               ),
             )
-          : DEFAULT_SERVER_SETTINGS.sourceControlWriting;
+          : DEFAULT_SERVER_SETTINGS;
+        const sourceControlWriting = writingSettings.sourceControlWriting;
         const writingPolicy = needsWritingPolicy
           ? yield* resolveSourceControlWritingPolicy({
               cwd: input.cwd,
@@ -2659,11 +2664,22 @@ The local stash entry was kept for recovery.`,
               execute: gitCore.execute,
             })
           : undefined;
+        const configuredTextGenerationInput = resolveTextGenerationInputForSelection(
+          writingSettings.textGenerationModelSelection,
+          resolveConfiguredTextGenerationProviderOptions(writingSettings),
+        );
         const textGenerationParams: GitTextGenerationParams = {
-          textGenerationModel: input.textGenerationModel,
-          textGenerationModelSelection: input.textGenerationModelSelection,
-          codexHomePath: input.codexHomePath,
-          providerOptions: input.providerOptions,
+          ...(configuredTextGenerationInput
+            ? {
+                textGenerationModelSelection: configuredTextGenerationInput.modelSelection,
+                ...(configuredTextGenerationInput.codexHomePath
+                  ? { codexHomePath: configuredTextGenerationInput.codexHomePath }
+                  : {}),
+                ...(configuredTextGenerationInput.providerOptions
+                  ? { providerOptions: configuredTextGenerationInput.providerOptions }
+                  : {}),
+              }
+            : {}),
           ...(writingPolicy ? { writingPolicy } : {}),
           ...(sourceControlWriting.followPullRequestTemplate
             ? { followPullRequestTemplate: true }

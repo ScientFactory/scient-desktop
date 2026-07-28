@@ -323,6 +323,9 @@ function runStackedAction(
     expectedBranch?: string;
     featureBranch?: boolean;
     filePaths?: readonly string[];
+    textGenerationModelSelection?: ModelSelection;
+    codexHomePath?: string;
+    providerOptions?: ProviderStartOptions;
   },
   options?: Parameters<GitManagerShape["runStackedAction"]>[1],
 ) {
@@ -811,8 +814,25 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       fs.writeFileSync(path.join(repoDir, "README.md"), "hello\nsnapshot\n");
       let snapshotReads = 0;
       const policies: Array<SourceControlWritingPolicy | undefined> = [];
+      const writerInputs: Array<{
+        modelSelection?: ModelSelection;
+        providerOptions?: ProviderStartOptions;
+      }> = [];
       const settings = {
         ...DEFAULT_SERVER_SETTINGS,
+        textGenerationModelSelection: {
+          provider: "opencode" as const,
+          model: "openai/gpt-5-mini",
+        },
+        providers: {
+          ...DEFAULT_SERVER_SETTINGS.providers,
+          opencode: {
+            ...DEFAULT_SERVER_SETTINGS.providers.opencode,
+            binaryPath: "/configured/opencode",
+            serverUrl: "http://127.0.0.1:4096",
+            serverPassword: "configured-password",
+          },
+        },
         sourceControlWriting: {
           ...DEFAULT_SERVER_SETTINGS.sourceControlWriting,
           mode: "custom" as const,
@@ -834,6 +854,10 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         textGeneration: {
           generateCommitMessage: (input) => {
             policies.push(input.policy);
+            writerInputs.push({
+              ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
+              ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
+            });
             return Effect.succeed({
               subject: "Use one settings snapshot",
               body: "",
@@ -847,10 +871,34 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         cwd: repoDir,
         action: "commit",
         featureBranch: true,
+        textGenerationModelSelection: {
+          provider: "codex",
+          model: "gpt-5.1-codex-mini",
+        },
+        codexHomePath: "/caller-controlled/codex-home",
+        providerOptions: {
+          codex: { binaryPath: "/caller-controlled/codex" },
+        },
       });
 
       expect(snapshotReads).toBe(1);
       expect(policies).toEqual([{ mode: "custom", customInstructions: "Use the captured style." }]);
+      expect(writerInputs).toEqual([
+        {
+          modelSelection: {
+            provider: "opencode",
+            model: "openai/gpt-5-mini",
+          },
+          providerOptions: {
+            opencode: {
+              binaryPath: "/configured/opencode",
+              serverUrl: "http://127.0.0.1:4096",
+              serverPassword: "configured-password",
+              experimentalWebSockets: false,
+            },
+          },
+        },
+      ]);
     }),
   );
 
