@@ -2,8 +2,8 @@
 // Purpose: Hosts the existing browser panel in one draggable, resizable in-chat mini-player.
 // Layer: Chat route UI
 // Depends on: pure browserPictureInPicture layout rules and existing browser runtime surface.
-// Provenance: adapted from third-party donor commits f4c39432 and 32af2f00 (MIT); see
-// THIRD_PARTY_NOTICES.md and apps/desktop/resources/THIRD_PARTY_NOTICES.md.
+// Provenance: Scient-native reimplementation informed by third-party donor commits
+// f4c39432 and 32af2f00 (MIT); full revisions are retained in Git/PR history.
 
 import {
   type KeyboardEvent as ReactKeyboardEvent,

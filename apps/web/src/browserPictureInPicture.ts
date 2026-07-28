@@ -2,8 +2,8 @@
 // Purpose: Pure identity, lifecycle, and layout rules for the in-chat browser mini-player.
 // Layer: Web UI state helper
 // Depends on: browser state metadata only; never owns or persists a browser runtime.
-// Provenance: adapted from third-party donor commits f4c39432 and 32af2f00 (MIT); see
-// THIRD_PARTY_NOTICES.md and apps/desktop/resources/THIRD_PARTY_NOTICES.md.
+// Provenance: Scient-native reimplementation informed by third-party donor commits
+// f4c39432 and 32af2f00 (MIT); full revisions are retained in Git/PR history.
 
 import type { ProjectId, ThreadBrowserState, ThreadId } from "@synara/contracts";
 
