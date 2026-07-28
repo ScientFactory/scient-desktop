@@ -23,6 +23,7 @@ import {
   normalizeAttachmentRelativePath,
   resolveAttachmentRelativePath,
 } from "./attachmentPaths";
+import { agentGatewayRouteLayer } from "./agentGateway/httpRoute.ts";
 import { resolveAttachmentPathById } from "./attachmentStore.ts";
 import { authErrorResponse, makeEffectAuthRequest, serveAuthHttpRoute } from "./auth/http";
 import { ServerAuth } from "./auth/Services/ServerAuth";
@@ -183,6 +184,12 @@ export function makeEffectHttpRouteLayer(readiness: ServerReadiness) {
     editorIconEffectRouteLayer,
     localImageEffectRouteLayer,
     localHtmlPreviewEffectRouteLayer,
+    // Host-served agent gateway MCP endpoint (`POST /mcp`). Bypasses the global
+    // cookie-based auth stack and runs its own per-session bearer check because
+    // provider child processes carry no session cookies. Inert unless the
+    // feature flag is enabled (the route 404s when disabled and no tokens are
+    // minted otherwise).
+    agentGatewayRouteLayer,
     attachmentsEffectRouteLayer,
     staticAndDevEffectRouteLayer,
   );

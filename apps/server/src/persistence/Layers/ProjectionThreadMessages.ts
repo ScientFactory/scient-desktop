@@ -4,6 +4,7 @@ import { Effect, Layer, Option, Schema, Struct } from "effect";
 import {
   ChatAttachment,
   MessageDispatchOrigin,
+  MessageDispatchSource,
   ProviderMentionReference,
   ProviderSkillReference,
   TurnDispatchMode,
@@ -27,6 +28,7 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
     mentions: Schema.NullOr(Schema.fromJsonString(Schema.Array(ProviderMentionReference))),
     dispatchMode: Schema.NullOr(TurnDispatchMode),
     dispatchOrigin: Schema.NullOr(MessageDispatchOrigin),
+    dispatchSource: Schema.NullOr(MessageDispatchSource),
   }),
 );
 
@@ -52,6 +54,7 @@ function toProjectionThreadMessage(
     ...(row.mentions !== null ? { mentions: row.mentions } : {}),
     ...(row.dispatchMode ? { dispatchMode: row.dispatchMode } : {}),
     ...(row.dispatchOrigin ? { dispatchOrigin: row.dispatchOrigin } : {}),
+    ...(row.dispatchSource ? { dispatchSource: row.dispatchSource } : {}),
   };
 }
 
@@ -77,6 +80,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           mentions_json,
           dispatch_mode,
           dispatch_origin,
+          dispatch_source,
           is_streaming,
           source,
           created_at,
@@ -93,6 +97,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           ${nextMentionsJson},
           ${row.dispatchMode ?? null},
           ${row.dispatchOrigin ?? null},
+          ${row.dispatchSource ?? null},
           ${row.isStreaming ? 1 : 0},
           ${row.source},
           ${row.createdAt},
@@ -124,6 +129,10 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
             excluded.dispatch_origin,
             projection_thread_messages.dispatch_origin
           ),
+          dispatch_source = COALESCE(
+            excluded.dispatch_source,
+            projection_thread_messages.dispatch_source
+          ),
           is_streaming = excluded.is_streaming,
           source = excluded.source,
           created_at = excluded.created_at,
@@ -148,6 +157,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           mentions_json AS "mentions",
           dispatch_mode AS "dispatchMode",
           dispatch_origin AS "dispatchOrigin",
+          dispatch_source AS "dispatchSource",
           is_streaming AS "isStreaming",
           source,
           created_at AS "createdAt",
@@ -189,6 +199,7 @@ const makeProjectionThreadMessageRepository = Effect.gen(function* () {
           mentions_json AS "mentions",
           dispatch_mode AS "dispatchMode",
           dispatch_origin AS "dispatchOrigin",
+          dispatch_source AS "dispatchSource",
           is_streaming AS "isStreaming",
           source,
           created_at AS "createdAt",
