@@ -105,9 +105,14 @@ describe("ProjectScriptsControl", () => {
     await expect
       .poll(() => document.querySelector<HTMLButtonElement>('button[aria-label="Edit Setup"]'))
       .not.toBeNull();
-    document.querySelector<HTMLButtonElement>('button[aria-label="Edit Setup"]')?.click();
+    const editButton = document.querySelector<HTMLButtonElement>('button[aria-label="Edit Setup"]');
+    if (!editButton) {
+      throw new Error("Expected the Edit Setup button to be present");
+    }
+    await userEvent.click(editButton);
 
     await expect.poll(() => document.body.textContent).toContain("Edit Action");
+    await expect.poll(() => document.activeElement?.getAttribute("id")).toBe("script-name");
     await expect
       .poll(() => document.querySelector<HTMLButtonElement>('button[aria-label="Edit Setup"]'))
       .toBeNull();
