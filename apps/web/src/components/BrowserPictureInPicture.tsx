@@ -179,7 +179,10 @@ export function BrowserPictureInPicture(props: BrowserPictureInPictureProps) {
       const identity = identityRef.current;
       const start = fitFloatingBrowserLayout(layoutRef.current, parentArea);
       const cursor = kind === "move" ? "grabbing" : "nwse-resize";
-      const pointerShield = createPanelResizeOverlay(cursor);
+      const pointerShield = createPanelResizeOverlay({
+        cursor,
+        occludeNativeBrowser: true,
+      });
       let adjustment: FloatingBrowserAdjustmentState;
       const onPointerMove = (pointerEvent: PointerEvent) => {
         if (

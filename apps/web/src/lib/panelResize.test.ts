@@ -42,8 +42,11 @@ describe("panel resize pointer shield", () => {
     });
     vi.stubGlobal("window", { dispatchEvent });
 
-    expect(createPanelResizeOverlay("grabbing")).toBe(overlay);
+    expect(createPanelResizeOverlay({ cursor: "grabbing", occludeNativeBrowser: true })).toBe(
+      overlay,
+    );
     expect(overlay.setAttribute).toHaveBeenCalledWith("data-panel-resize-overlay", "true");
+    expect(overlay.setAttribute).toHaveBeenCalledWith("data-native-browser-overlay", "true");
     expect(overlay.style.cursor).toBe("grabbing");
     expect(append).toHaveBeenCalledWith(overlay);
 

@@ -1,11 +1,16 @@
 import { readFileSync } from "node:fs";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  hasNativeBrowserObscuringOverlay,
   nativeBrowserHitStackHasObstruction,
   resolveNativeBrowserBoundsSyncMode,
 } from "./BrowserPanel.overlay";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("native browser front-to-back hit stack", () => {
   it("recognizes a real overlay before the logical viewport", () => {
@@ -50,6 +55,29 @@ describe("native browser front-to-back hit stack", () => {
 });
 
 describe("BrowserPanel native overlay markers", () => {
+  it("suppresses the native surface when a marked adjustment shield intersects it", () => {
+    const viewport = {
+      closest: vi.fn(() => null),
+      contains: vi.fn(() => false),
+      getBoundingClientRect: vi.fn(() => ({ left: 100, top: 100, right: 500, bottom: 400 })),
+    } as unknown as HTMLElement;
+    const shield = {
+      closest: vi.fn(() => null),
+      contains: vi.fn(() => false),
+      getAttribute: vi.fn(() => null),
+      getClientRects: vi.fn(() => [{ left: 0, top: 0, right: 900, bottom: 700 }]),
+    } as unknown as HTMLElement;
+
+    vi.stubGlobal("window", {
+      getComputedStyle: vi.fn(() => ({ display: "block", visibility: "visible", opacity: "1" })),
+    });
+    vi.stubGlobal("document", {
+      querySelectorAll: vi.fn(() => [shield]),
+    });
+
+    expect(hasNativeBrowserObscuringOverlay(viewport)).toBe(true);
+  });
+
   it("marks live loading and error surfaces for mutation-driven bounds sync", () => {
     const source = readFileSync(new URL("./BrowserPanel.tsx", import.meta.url), "utf8");
 

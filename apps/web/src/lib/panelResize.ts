@@ -90,10 +90,21 @@ function findComposerForm(paneScopeId: string): HTMLElement | null {
   return null;
 }
 
-// Electron <webview> can swallow pointermove during drag; this keeps resizing in the React layer.
-export function createPanelResizeOverlay(cursor = "col-resize"): HTMLDivElement {
+export interface PanelResizeOverlayOptions {
+  cursor?: string;
+  occludeNativeBrowser?: boolean;
+}
+
+// Embedded browser surfaces can swallow pointermove during drag; this keeps resizing in React.
+export function createPanelResizeOverlay({
+  cursor = "col-resize",
+  occludeNativeBrowser = false,
+}: PanelResizeOverlayOptions = {}): HTMLDivElement {
   const overlay = document.createElement("div");
   overlay.setAttribute("data-panel-resize-overlay", "true");
+  if (occludeNativeBrowser) {
+    overlay.setAttribute("data-native-browser-overlay", "true");
+  }
   overlay.style.position = "fixed";
   overlay.style.inset = "0";
   overlay.style.zIndex = "2147483647";
