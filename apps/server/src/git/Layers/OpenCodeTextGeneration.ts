@@ -3,7 +3,9 @@
 // Layer: Server git/text-generation adapter
 // Depends on: OpenCode SDK runtime, prompt builders, attachment projection, and server config.
 
-import { Effect, Exit, Fiber, Layer, Schema, Scope } from "effect";
+import { homedir } from "node:os";
+
+import { Effect, Exit, Fiber, FileSystem, Layer, Path, Schema, Scope } from "effect";
 import * as Semaphore from "effect/Semaphore";
 
 import type {
@@ -29,6 +31,7 @@ import {
   type OpenCodeServerProcess,
   openCodeRuntimeErrorDetail,
   parseOpenCodeModelSlug,
+  resolveOpenCodeAuthFilePath,
   toOpenCodeFileParts,
 } from "../../provider/opencodeRuntime.ts";
 import { TextGenerationError } from "../Errors.ts";
@@ -151,6 +154,94 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
   Effect.gen(function* () {
     const serverConfig = yield* ServerConfig;
     const openCodeRuntime = yield* OpenCodeRuntime;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const isolatedRuntimeRoot = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: `scient-${config.provider}-writer-`,
+    });
+    const isolatedWorkingDirectory = path.join(isolatedRuntimeRoot, "workspace");
+    const isolatedConfigHome = path.join(isolatedRuntimeRoot, "config");
+    const isolatedConfigDirectory = path.join(isolatedRuntimeRoot, "config-directory");
+    const isolatedDataHome = path.join(isolatedRuntimeRoot, "data");
+    const isolatedProviderDataDirectory = path.join(
+      isolatedDataHome,
+      config.cliSpec.dataDirectoryName,
+    );
+    yield* Effect.all(
+      [
+        isolatedWorkingDirectory,
+        isolatedConfigHome,
+        isolatedConfigDirectory,
+        isolatedProviderDataDirectory,
+      ].map((directory) => fileSystem.makeDirectory(directory, { recursive: true })),
+      { concurrency: "unbounded" },
+    );
+    if (process.platform !== "win32") {
+      yield* Effect.all(
+        [
+          isolatedRuntimeRoot,
+          isolatedWorkingDirectory,
+          isolatedConfigHome,
+          isolatedConfigDirectory,
+          isolatedDataHome,
+          isolatedProviderDataDirectory,
+        ].map((directory) => fileSystem.chmod(directory, 0o700)),
+        { concurrency: "unbounded" },
+      );
+    }
+
+    const sourceAuthPath = resolveOpenCodeAuthFilePath({ home: homedir() }, config.cliSpec);
+    const sourceAuth = yield* fileSystem
+      .readFileString(sourceAuthPath)
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (sourceAuth !== null) {
+      const isolatedAuthPath = path.join(isolatedProviderDataDirectory, "auth.json");
+      yield* fileSystem.writeFileString(isolatedAuthPath, sourceAuth);
+      if (process.platform !== "win32") {
+        yield* fileSystem.chmod(isolatedAuthPath, 0o600);
+      }
+    }
+
+    const isolatedConfigPath = path.join(isolatedConfigHome, "opencode.json");
+    const hardenedInlineConfig = JSON.stringify({
+      autoupdate: false,
+      share: "disabled",
+      snapshot: false,
+      permission: { "*": "deny" },
+      tools: {
+        bash: false,
+        edit: false,
+        write: false,
+        webfetch: false,
+        websearch: false,
+        codesearch: false,
+      },
+      mcp: {},
+      plugin: [],
+      agent: {},
+      command: {},
+      instructions: [],
+    });
+    yield* fileSystem.writeFileString(isolatedConfigPath, hardenedInlineConfig);
+    if (process.platform !== "win32") {
+      yield* fileSystem.chmod(isolatedConfigPath, 0o600);
+    }
+    const isolatedProcessEnv: NodeJS.ProcessEnv = { ...process.env };
+    delete isolatedProcessEnv.OPENCODE_CONFIG;
+    delete isolatedProcessEnv.OPENCODE_CONFIG_DIR;
+    delete isolatedProcessEnv.OPENCODE_CONFIG_CONTENT;
+    delete isolatedProcessEnv.KILO_CONFIG;
+    delete isolatedProcessEnv.KILO_CONFIG_DIR;
+    delete isolatedProcessEnv.KILO_CONFIG_CONTENT;
+    delete isolatedProcessEnv.OPENCODE_ENABLE_EXA;
+    delete isolatedProcessEnv.OPENCODE_EXPERIMENTAL;
+    delete isolatedProcessEnv.OPENCODE_EXPERIMENTAL_LSP_TOOL;
+    isolatedProcessEnv.XDG_CONFIG_HOME = isolatedConfigHome;
+    isolatedProcessEnv.XDG_DATA_HOME = isolatedDataHome;
+    isolatedProcessEnv.APPDATA = isolatedDataHome;
+    isolatedProcessEnv.OPENCODE_CONFIG = isolatedConfigPath;
+    isolatedProcessEnv.OPENCODE_CONFIG_DIR = isolatedConfigDirectory;
+    isolatedProcessEnv[config.cliSpec.configContentEnvVar] = hardenedInlineConfig;
     const idleFiberScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
       Scope.close(scope, Exit.void),
     );
@@ -207,6 +298,7 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
     const acquireSharedServer = (input: {
       readonly binaryPath: string;
       readonly cwd: string;
+      readonly env: NodeJS.ProcessEnv;
       readonly operation: TextGenerationOperation;
     }) =>
       sharedServerMutex.withPermit(
@@ -221,6 +313,7 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
                   binaryPath: input.binaryPath,
                   cliSpec: config.cliSpec,
                   cwd: input.cwd,
+                  env: input.env,
                 })
                 .pipe(
                   Effect.provideService(Scope.Scope, serverScope),
@@ -375,7 +468,7 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
           try: async () => {
             const client = openCodeRuntime.createOpenCodeSdkClient({
               baseUrl: server.url,
-              directory: input.cwd,
+              directory: isolatedWorkingDirectory,
               ...(serverPassword.length > 0 ? { serverPassword } : {}),
               cliSpec: config.cliSpec,
             });
@@ -449,7 +542,8 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
           : yield* Effect.acquireUseRelease(
               acquireSharedServer({
                 binaryPath,
-                cwd: input.cwd,
+                cwd: isolatedWorkingDirectory,
+                env: isolatedProcessEnv,
                 operation: input.operation,
               }),
               (acquired) => runAgainstServer(acquired.server),

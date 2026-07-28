@@ -29,6 +29,14 @@ const readRecentCommitSubjects = (input: {
   readonly execute: GitCoreShape["execute"];
 }) =>
   Effect.gen(function* () {
+    yield* input.execute({
+      operation: "SourceControlWritingPolicy.verifyRepository",
+      cwd: input.cwd,
+      args: ["rev-parse", "--is-inside-work-tree"],
+      env: LOCAL_HISTORY_ENV,
+      timeoutMs: 5_000,
+      maxOutputBytes: 16,
+    });
     const head = yield* input.execute({
       operation: "SourceControlWritingPolicy.verifyHead",
       cwd: input.cwd,
@@ -38,7 +46,17 @@ const readRecentCommitSubjects = (input: {
       timeoutMs: 5_000,
       maxOutputBytes: 256,
     });
-    if (head.code !== 0) return [];
+    if (head.code !== 0) {
+      yield* input.execute({
+        operation: "SourceControlWritingPolicy.verifyUnbornHead",
+        cwd: input.cwd,
+        args: ["symbolic-ref", "--quiet", "HEAD"],
+        env: LOCAL_HISTORY_ENV,
+        timeoutMs: 5_000,
+        maxOutputBytes: 256,
+      });
+      return [];
+    }
 
     const result = yield* input.execute({
       operation: "SourceControlWritingPolicy.readRecentCommitSubjects",

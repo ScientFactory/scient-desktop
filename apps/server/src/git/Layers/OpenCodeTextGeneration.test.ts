@@ -22,6 +22,8 @@ const runtimeMock = {
   state: {
     startCalls: [] as string[],
     startCwds: [] as Array<string | undefined>,
+    startEnvs: [] as Array<NodeJS.ProcessEnv | undefined>,
+    clientDirectories: [] as string[],
     sessionCreateInputs: [] as Array<Record<string, unknown>>,
     promptUrls: [] as string[],
     promptInputs: [] as Array<Record<string, unknown>>,
@@ -36,6 +38,8 @@ const runtimeMock = {
   reset() {
     this.state.startCalls.length = 0;
     this.state.startCwds.length = 0;
+    this.state.startEnvs.length = 0;
+    this.state.clientDirectories.length = 0;
     this.state.sessionCreateInputs.length = 0;
     this.state.promptUrls.length = 0;
     this.state.promptInputs.length = 0;
@@ -48,12 +52,13 @@ const runtimeMock = {
 };
 
 const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
-  startOpenCodeServerProcess: ({ binaryPath, cwd }) =>
+  startOpenCodeServerProcess: ({ binaryPath, cwd, env }) =>
     Effect.gen(function* () {
       const index = runtimeMock.state.startCalls.length + 1;
       const url = `http://127.0.0.1:${4_300 + index}`;
       runtimeMock.state.startCalls.push(binaryPath);
       runtimeMock.state.startCwds.push(cwd);
+      runtimeMock.state.startEnvs.push(env);
 
       // Mirror the production scoped cleanup so we can assert idle shutdown behavior.
       yield* Effect.addFinalizer(() =>
@@ -81,8 +86,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         cause: null,
       }),
     ),
-  createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
-    ({
+  createOpenCodeSdkClient: ({ baseUrl, serverPassword, directory }) => {
+    runtimeMock.state.clientDirectories.push(directory);
+    return {
       session: {
         create: async (input: Record<string, unknown>) => {
           runtimeMock.state.sessionCreateInputs.push(input);
@@ -117,7 +123,8 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           );
         },
       },
-    }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
+    } as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>;
+  },
   loadOpenCodeInventory: () =>
     Effect.fail(
       new OpenCodeRuntimeError({
@@ -202,6 +209,22 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
       });
 
       expect(runtimeMock.state.startCalls).toEqual(["opencode"]);
+      expect(runtimeMock.state.startCwds).toHaveLength(1);
+      expect(runtimeMock.state.startCwds[0]).toMatch(/scient-opencode-writer-.*\/workspace$/);
+      const env = runtimeMock.state.startEnvs[0];
+      expect(env?.XDG_CONFIG_HOME).toMatch(/scient-opencode-writer-/);
+      expect(env?.XDG_DATA_HOME).toMatch(/scient-opencode-writer-/);
+      expect(env?.OPENCODE_CONFIG_DIR).toMatch(/scient-opencode-writer-/);
+      expect(JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? "{}")).toMatchObject({
+        autoupdate: false,
+        share: "disabled",
+        snapshot: false,
+        permission: { "*": "deny" },
+        plugin: [],
+        mcp: {},
+        agent: {},
+        instructions: [],
+      });
       expect(runtimeMock.state.promptUrls).toEqual([
         "http://127.0.0.1:4301",
         "http://127.0.0.1:4301",
@@ -245,10 +268,12 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("starts managed OpenCode servers in the request cwd", () =>
+  it.effect("isolates managed server and client paths from repository configuration", () =>
     Effect.gen(function* () {
       const textGeneration = yield* OpenCodeTextGeneration;
       const cwd = "/repo/with-local-opencode-config";
+      yield* advanceIdleClock;
+      runtimeMock.state.closeCalls.length = 0;
 
       yield* textGeneration.generateCommitMessage({
         cwd,
@@ -258,14 +283,19 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
         modelSelection: DEFAULT_TEST_MODEL_SELECTION,
       });
 
-      expect(runtimeMock.state.startCalls).toEqual(["opencode"]);
-      expect(runtimeMock.state.startCwds).toEqual([cwd]);
+      expect(runtimeMock.state.clientDirectories).toHaveLength(1);
+      expect(runtimeMock.state.clientDirectories[0]).not.toBe(cwd);
+      expect(runtimeMock.state.clientDirectories[0]).toMatch(
+        /scient-opencode-writer-.*\/workspace$/,
+      );
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("starts a separate warm server when the request cwd changes", () =>
+  it.effect("reuses the isolated warm server when the request repository changes", () =>
     Effect.gen(function* () {
       const textGeneration = yield* OpenCodeTextGeneration;
+      yield* advanceIdleClock;
+      runtimeMock.state.closeCalls.length = 0;
 
       yield* textGeneration.generateCommitMessage({
         cwd: "/repo/alpha",
@@ -282,14 +312,19 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
         modelSelection: DEFAULT_TEST_MODEL_SELECTION,
       });
 
-      expect(runtimeMock.state.startCalls).toEqual(["opencode", "opencode"]);
-      expect(runtimeMock.state.startCwds).toEqual(["/repo/alpha", "/repo/beta"]);
+      expect(runtimeMock.state.clientDirectories).toHaveLength(2);
+      expect(new Set(runtimeMock.state.clientDirectories).size).toBe(1);
+      expect(runtimeMock.state.clientDirectories[0]).not.toContain("/repo/");
+      expect(runtimeMock.state.promptUrls).toHaveLength(2);
+      expect(new Set(runtimeMock.state.promptUrls).size).toBe(1);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("does not reuse an active managed server for a different request cwd", () =>
+  it.effect("keeps concurrent repository requests inside the same isolated server scope", () =>
     Effect.gen(function* () {
       const textGeneration = yield* OpenCodeTextGeneration;
+      yield* advanceIdleClock;
+      runtimeMock.state.closeCalls.length = 0;
       let releaseFirstPrompt!: () => void;
       const firstPromptStarted = new Promise<void>((resolve) => {
         runtimeMock.state.promptStartedResolvers.push(resolve);
@@ -323,13 +358,12 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
       releaseFirstPrompt();
       yield* Fiber.join(firstFiber);
 
-      expect(runtimeMock.state.startCalls).toEqual(["opencode", "opencode"]);
-      expect(runtimeMock.state.startCwds).toEqual(["/repo/alpha", "/repo/beta"]);
-      expect(runtimeMock.state.promptUrls).toEqual([
-        "http://127.0.0.1:4301",
-        "http://127.0.0.1:4302",
-      ]);
-      expect(runtimeMock.state.closeCalls).toContain("http://127.0.0.1:4302");
+      expect(runtimeMock.state.clientDirectories).toHaveLength(2);
+      expect(new Set(runtimeMock.state.clientDirectories).size).toBe(1);
+      expect(runtimeMock.state.clientDirectories[0]).not.toContain("/repo/");
+      expect(runtimeMock.state.promptUrls).toHaveLength(2);
+      expect(new Set(runtimeMock.state.promptUrls).size).toBe(1);
+      expect(runtimeMock.state.closeCalls).toEqual([]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

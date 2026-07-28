@@ -10,13 +10,15 @@ import type { GitCoreShape } from "./Services/GitCore.ts";
 import { resolveSourceControlWritingPolicy } from "./sourceControlWritingPolicy.ts";
 
 function makeExecute(stdout = "") {
-  return vi.fn<GitCoreShape["execute"]>(() =>
-    Effect.succeed({
+  return vi.fn<GitCoreShape["execute"]>((input) => {
+    const isRepositoryCheck = input.args.join(" ") === "rev-parse --is-inside-work-tree";
+    const isHeadCheck = input.args.join(" ") === "rev-parse --verify HEAD";
+    return Effect.succeed({
       code: 0,
-      stdout,
+      stdout: isRepositoryCheck ? "true\n" : isHeadCheck ? "abc123\n" : stdout,
       stderr: "",
-    }),
-  );
+    });
+  });
 }
 
 describe("source control writing policy", () => {
@@ -109,6 +111,14 @@ describe("source control writing policy", () => {
     });
     expect(execute).toHaveBeenCalledWith(
       expect.objectContaining({
+        args: ["rev-parse", "--is-inside-work-tree"],
+        env: { GIT_NO_LAZY_FETCH: "1", GIT_NO_REPLACE_OBJECTS: "1" },
+        maxOutputBytes: 16,
+        timeoutMs: 5000,
+      }),
+    );
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
         args: ["rev-parse", "--verify", "HEAD"],
         allowNonZeroExit: true,
         env: { GIT_NO_LAZY_FETCH: "1", GIT_NO_REPLACE_OBJECTS: "1" },
@@ -175,6 +185,45 @@ describe("source control writing policy", () => {
       ),
     ).resolves.toBeUndefined();
     expect(emptyMessages).toEqual([]);
+
+    const nonzeroHeadExecute = vi.fn<GitCoreShape["execute"]>((input) => {
+      const command = input.args.join(" ");
+      if (command === "rev-parse --is-inside-work-tree") {
+        return Effect.succeed({ code: 0, stdout: "true\n", stderr: "" });
+      }
+      if (command === "rev-parse --verify HEAD") {
+        return Effect.succeed({ code: 128, stdout: "", stderr: "invalid HEAD" });
+      }
+      return Effect.fail({ _tag: "GitCommandError" } as never);
+    });
+    const nonzeroHeadWarnings: string[] = [];
+    await expect(
+      Effect.runPromise(
+        resolveSourceControlWritingPolicy({
+          cwd: "/repo",
+          settings: {
+            mode: "repository_conventions",
+            customInstructions: "",
+            followPullRequestTemplate: false,
+          },
+          execute: nonzeroHeadExecute,
+        }).pipe(
+          Effect.provide(
+            Logger.layer(
+              [
+                Logger.make(({ message }) => {
+                  nonzeroHeadWarnings.push(String(message));
+                }),
+              ],
+              { mergeWithExisting: false },
+            ),
+          ),
+        ),
+      ),
+    ).resolves.toBeUndefined();
+    expect(nonzeroHeadWarnings).toContain(
+      "source-control writing could not read local commit subjects; using standard behavior",
+    );
   });
 
   it("treats a real unborn repository as normal empty history", async () => {
@@ -227,9 +276,12 @@ describe("source control writing policy", () => {
         ),
       ).resolves.toBeUndefined();
       expect(warningMessages).toEqual([]);
-      expect(execute).toHaveBeenCalledTimes(1);
+      expect(execute).toHaveBeenCalledTimes(3);
       expect(execute).toHaveBeenCalledWith(
         expect.objectContaining({ args: ["rev-parse", "--verify", "HEAD"] }),
+      );
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({ args: ["symbolic-ref", "--quiet", "HEAD"] }),
       );
     } finally {
       rmSync(repository, { recursive: true, force: true });

@@ -4,7 +4,10 @@ import { Effect, FileSystem, Layer, Path } from "effect";
 import { expect } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
-import { CodexTextGenerationLive } from "./CodexTextGeneration.ts";
+import {
+  CodexTextGenerationLive,
+  sanitizeCodexConfigForTextGeneration,
+} from "./CodexTextGeneration.ts";
 import { TextGenerationError } from "../Errors.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
 
@@ -82,7 +85,7 @@ function makeFakeCodexBinary(dir: string) {
         "  fi",
         "  shift",
         "done",
-        'case "$PWD" in */synara-codex-work-*) ;; *) printf "%s\\n" "non-isolated cwd" >&2; exit 11 ;; esac',
+        'case "$PWD" in */synara-codex-runtime-*/workspace) ;; *) printf "%s\\n" "non-isolated cwd" >&2; exit 11 ;; esac',
         'node -e \'const fs=require("node:fs"); if (process.platform !== "win32" && (fs.statSync(process.argv[1]).mode & 0o777) !== 0o700) process.exit(1)\' "$CODEX_HOME" || { printf "%s\\n" "insecure CODEX_HOME permissions" >&2; exit 13; }',
         'if [ -f "$CODEX_HOME/auth.json" ]; then',
         '  node -e \'const fs=require("node:fs"); if (process.platform !== "win32" && (fs.statSync(process.argv[1]).mode & 0o777) !== 0o600) process.exit(1)\' "$CODEX_HOME/auth.json" || { printf "%s\\n" "insecure auth.json permissions" >&2; exit 14; }',
@@ -789,6 +792,28 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
       }),
     ),
   );
+
+  it("preserves selected provider WebSocket transport without executable configuration", () => {
+    const sanitized = sanitizeCodexConfigForTextGeneration(
+      [
+        'model_provider = "azure"',
+        "supports_websockets = false",
+        "[model_providers.azure]",
+        'base_url = "https://example.invalid/v1"',
+        "supports_websockets = true",
+        "websocket_connect_timeout_ms = 4321",
+        "[profiles.unsafe.mcp_servers.repo]",
+        'command = "read-secrets"',
+      ].join("\n"),
+    );
+
+    expect(sanitized).toContain('model_provider = "azure"');
+    expect(sanitized).toContain("supports_websockets = true");
+    expect(sanitized).toContain("websocket_connect_timeout_ms = 4321");
+    expect(sanitized).not.toContain("profiles");
+    expect(sanitized).not.toContain("mcp_servers");
+    expect(sanitized).not.toContain("read-secrets");
+  });
 
   it.effect("uses the provided codexHomePath and strips local skills config", () =>
     withFakeCodexEnv(
