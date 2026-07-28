@@ -25,6 +25,7 @@ import {
   type WsPushMessage,
 } from "@synara/contracts";
 import { GitMutationRpcGroup } from "@synara/shared/gitMutationRpc";
+import { GitDiffStatsRpcGroup } from "@synara/shared/gitDiffStatsRpc";
 import { LiveHtmlPreviewRpcGroup } from "@synara/shared/liveHtmlPreviewTransport";
 import { ProviderSignOutRpcGroup } from "@synara/shared/providerSignOutTransport";
 import {
@@ -87,8 +88,9 @@ class WsTransportRpcError extends Data.TaggedError("WsTransportRpcError")<{
   readonly cause?: unknown;
 }> {}
 
-const ScientWsRpcGroup =
-  LiveHtmlPreviewRpcGroup.merge(GitMutationRpcGroup).merge(ProviderSignOutRpcGroup);
+const ScientWsRpcGroup = LiveHtmlPreviewRpcGroup.merge(GitMutationRpcGroup)
+  .merge(ProviderSignOutRpcGroup)
+  .merge(GitDiffStatsRpcGroup);
 const makeRpcClient = RpcClient.make(ScientWsRpcGroup);
 
 // Every RPC promise must settle: React Query (and any other awaiting caller)

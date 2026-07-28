@@ -410,6 +410,7 @@ describe("decider project scripts", () => {
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "approval-required",
+          dispatchSource: "agent",
           createdAt: now,
         },
         readModel,
@@ -420,6 +421,10 @@ describe("decider project scripts", () => {
     const events = Array.isArray(result) ? result : [result];
     expect(events).toHaveLength(2);
     expect(events[0]?.type).toBe("thread.message-sent");
+    if (events[0]?.type === "thread.message-sent") {
+      expect(events[0].payload.dispatchSource).toBe("agent");
+      expect(events[0].payload.dispatchOrigin).toBeUndefined();
+    }
     const turnStartEvent = events[1];
     expect(turnStartEvent?.type).toBe("thread.turn-start-requested");
     expect(turnStartEvent?.causationEventId).toBe(events[0]?.eventId ?? null);
