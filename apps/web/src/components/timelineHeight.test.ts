@@ -119,6 +119,19 @@ describe("estimateTimelineMessageHeight", () => {
     ).toBe(170.125);
   });
 
+  it("reserves the same marker geometry for agent and automation provenance", () => {
+    const base = { role: "user" as const, text: "continue" };
+    const unmarked = estimateTimelineMessageHeight(base);
+    const agent = estimateTimelineMessageHeight({ ...base, dispatchSource: "agent" });
+    const automation = estimateTimelineMessageHeight({
+      ...base,
+      dispatchOrigin: "automation",
+    });
+
+    expect(agent).toBe(automation);
+    expect(agent).toBeGreaterThan(unmarked);
+  });
+
   it("adds terminal context chrome without counting the hidden block as message text", () => {
     const prompt = appendTerminalContextsToPrompt("Investigate this", [
       {

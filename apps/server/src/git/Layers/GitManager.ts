@@ -16,6 +16,7 @@ import {
   sanitizeFeatureBranchName,
 } from "@synara/shared/git";
 import { parseGitHubRepositoryNameWithOwnerFromRemoteUrl } from "@synara/shared/githubRepository";
+import { summarizeUnifiedPatchTotals } from "@synara/shared/unifiedPatchStats";
 import { resolveWorktreeHandoffIntent } from "@synara/shared/worktreeHandoff";
 
 import { GitManagerError } from "../Errors.ts";
@@ -1444,6 +1445,13 @@ export const makeGitManager = Effect.gen(function* () {
     },
   );
 
+  const readWorkingTreeDiffStats: GitManagerShape["readWorkingTreeDiffStats"] = Effect.fnUntraced(
+    function* (input) {
+      const { patch } = yield* readWorkingTreeDiff(input);
+      return summarizeUnifiedPatchTotals(patch) ?? { additions: 0, deletions: 0, fileCount: 0 };
+    },
+  );
+
   // Keep diff summaries read-only by summarizing the patch already selected in the UI.
   const summarizeDiff: GitManagerShape["summarizeDiff"] = Effect.fnUntraced(function* (input) {
     const patch = input.patch.trim();
@@ -2853,6 +2861,7 @@ The local stash entry was kept for recovery.`,
   return {
     status,
     readWorkingTreeDiff,
+    readWorkingTreeDiffStats,
     summarizeDiff,
     resolvePullRequest,
     pullRequestSnapshot,

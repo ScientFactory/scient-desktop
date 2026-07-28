@@ -72,6 +72,7 @@ const makeConfigLayer = () =>
         autoBootstrapProjectFromCwd: false,
         logProviderEvents: false,
         logWebSocketEvents: false,
+        agentGatewayEnabled: false,
       } satisfies ServerConfigShape;
     }),
   );

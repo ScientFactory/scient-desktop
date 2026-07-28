@@ -63,6 +63,7 @@ function makeServerConfig(overrides: Partial<ServerConfigShape> = {}): ServerCon
     autoBootstrapProjectFromCwd: false,
     logProviderEvents: false,
     logWebSocketEvents: false,
+    agentGatewayEnabled: false,
     ...overrides,
   } as ServerConfigShape;
 }

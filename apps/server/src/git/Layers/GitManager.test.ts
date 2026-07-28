@@ -412,6 +412,77 @@ const GitManagerTestLayer = GitCoreLive.pipe(
 );
 
 it.layer(GitManagerTestLayer)("GitManager", (it) => {
+  it.effect("returns compact totals for every working-tree diff scope", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("synara-git-manager-stats-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/diff-stats"]);
+
+      fs.writeFileSync(path.join(repoDir, "branch.txt"), "branch\n");
+      yield* runGit(repoDir, ["add", "branch.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Add branch file"]);
+
+      fs.writeFileSync(path.join(repoDir, "staged.txt"), "staged\n");
+      yield* runGit(repoDir, ["add", "staged.txt"]);
+      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\nunstaged\n");
+      fs.writeFileSync(path.join(repoDir, "untracked.txt"), "first\nsecond\n");
+
+      const { manager } = yield* makeManager();
+
+      expect(yield* manager.readWorkingTreeDiffStats({ cwd: repoDir, scope: "branch" })).toEqual({
+        additions: 1,
+        deletions: 0,
+        fileCount: 1,
+      });
+      expect(yield* manager.readWorkingTreeDiffStats({ cwd: repoDir, scope: "staged" })).toEqual({
+        additions: 1,
+        deletions: 0,
+        fileCount: 1,
+      });
+      expect(yield* manager.readWorkingTreeDiffStats({ cwd: repoDir, scope: "unstaged" })).toEqual({
+        additions: 3,
+        deletions: 0,
+        fileCount: 2,
+      });
+      expect(
+        yield* manager.readWorkingTreeDiffStats({ cwd: repoDir, scope: "workingTree" }),
+      ).toEqual({ additions: 4, deletions: 0, fileCount: 3 });
+    }),
+  );
+
+  it.effect("returns zero totals for a clean scope", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("synara-git-manager-stats-clean-");
+      yield* initRepo(repoDir);
+      const { manager } = yield* makeManager();
+
+      expect(yield* manager.readWorkingTreeDiffStats({ cwd: repoDir, scope: "staged" })).toEqual({
+        additions: 0,
+        deletions: 0,
+        fileCount: 0,
+      });
+    }),
+  );
+
+  it.effect("preserves git errors when stats cannot read a repository", () =>
+    Effect.gen(function* () {
+      const directory = yield* makeTempDir("synara-git-manager-stats-error-");
+      const { manager } = yield* makeManager();
+
+      const error = yield* manager
+        .readWorkingTreeDiffStats({
+          cwd: path.join(directory, "missing"),
+          scope: "workingTree",
+        })
+        .pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(GitCommandError);
+    }),
+  );
+
   it.effect("status includes PR metadata when branch already has an open PR", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("synara-git-manager-");

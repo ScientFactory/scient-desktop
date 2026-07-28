@@ -518,7 +518,7 @@ it.effect("decodes thread.meta-updated payloads with explicit provider", () =>
   }),
 );
 
-it.effect("strips client-sent dispatchOrigin from thread.turn.start commands", () =>
+it.effect("strips client-sent dispatcher provenance from thread.turn.start commands", () =>
   Effect.gen(function* () {
     // dispatchOrigin is server-assigned (automation engine only). The client command
     // schema deliberately omits it, so a spoofed value must not survive decoding —
@@ -535,12 +535,35 @@ it.effect("strips client-sent dispatchOrigin from thread.turn.start commands", (
       },
       dispatchMode: "queue",
       dispatchOrigin: "automation",
+      dispatchSource: "agent",
       runtimeMode: "full-access",
       interactionMode: "default",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(command.type, "thread.turn.start");
     assert.strictEqual("dispatchOrigin" in command, false);
+    assert.strictEqual("dispatchSource" in command, false);
+  }),
+);
+
+it.effect("decodes trusted additive agent dispatch provenance", () =>
+  Effect.gen(function* () {
+    const command = yield* Schema.decodeUnknownEffect(ThreadTurnStartCommand)({
+      type: "thread.turn.start",
+      commandId: "cmd-agent-turn-start",
+      threadId: "thread-1",
+      message: {
+        messageId: "message-agent-1",
+        role: "user",
+        text: "continue",
+        attachments: [],
+      },
+      dispatchSource: "agent",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(command.dispatchSource, "agent");
   }),
 );
 

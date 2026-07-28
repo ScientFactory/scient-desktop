@@ -25,6 +25,7 @@ import {
 } from "@synara/contracts";
 import { LIVE_HTML_PREVIEW_PREPARE_V1_METHOD } from "@synara/shared/liveHtmlPreviewTransport";
 import { PROVIDER_SIGN_OUT_METHOD } from "@synara/shared/providerSignOutTransport";
+import { GIT_WORKING_TREE_DIFF_STATS_METHOD } from "@synara/shared/gitDiffStatsRpc";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestMock = vi.fn<(...args: Array<unknown>) => Promise<unknown>>();
@@ -162,6 +163,17 @@ describe("wsNativeApi", () => {
     expect(confirmed).toBe(true);
     expect(showConfirmDialogFallbackMock).toHaveBeenCalledOnce();
     expect(showConfirmDialogFallbackMock).toHaveBeenCalledWith("Continue in browser?");
+  });
+
+  it("routes working-tree diff stats without requesting patch text", async () => {
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    const input = { cwd: "/repo/a", scope: "staged" as const };
+    const result = { additions: 4, deletions: 2, fileCount: 3 };
+    requestMock.mockResolvedValue(result);
+
+    await expect(api.git.workingTreeDiffStats(input)).resolves.toEqual(result);
+    expect(requestMock).toHaveBeenCalledWith(GIT_WORKING_TREE_DIFF_STATS_METHOD, input);
   });
 
   it("seeds renderer transport state from the new transport immediately", async () => {
