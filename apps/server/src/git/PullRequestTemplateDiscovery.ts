@@ -105,6 +105,13 @@ function isSupportedTemplateExtension(path: string): boolean {
   return TEMPLATE_EXTENSIONS.some((candidate) => candidate === extension);
 }
 
+function isDefaultTemplateFileName(path: string): boolean {
+  const canonicalPath = path.toLowerCase();
+  return TEMPLATE_EXTENSIONS.some(
+    (extension) => canonicalPath === `pull_request_template.${extension}`,
+  );
+}
+
 export const discoverPullRequestTemplate = Effect.fn("discoverPullRequestTemplate")(
   function* (input: { readonly cwd: string; readonly baseRef: string }) {
     const gitCore = yield* GitCore;
@@ -241,11 +248,7 @@ export const discoverPullRequestTemplate = Effect.fn("discoverPullRequestTemplat
         const canonicalPath = entry.path.toLowerCase();
         if (!canonicalPath.startsWith(canonicalPrefix)) return false;
         const relativePath = entry.path.slice(prefix.length);
-        return (
-          !relativePath.includes("/") &&
-          relativePath.toLowerCase().startsWith("pull_request_template.") &&
-          isSupportedTemplateExtension(relativePath)
-        );
+        return !relativePath.includes("/") && isDefaultTemplateFileName(relativePath);
       });
       if (candidates.length > TEMPLATE_DIRECTORY_MAX_CANDIDATES) {
         return { status: "unavailable", reason: "too-many-template-candidates" } as const;

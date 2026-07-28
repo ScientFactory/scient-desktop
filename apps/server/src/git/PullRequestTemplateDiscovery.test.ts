@@ -164,10 +164,32 @@ it.effect("ignores similarly named files with unsupported extensions", () =>
   withRepository((cwd) =>
     Effect.gen(function* () {
       yield* writeFile(cwd, ".github/pull_request_template.sh", "publish-secret\n");
+      yield* writeFile(cwd, ".github/pull_request_template.backup.md", "archived\n");
+      yield* writeFile(cwd, "docs/pull_request_template.notes.txt", "notes\n");
       yield* writeFile(cwd, ".github/PULL_REQUEST_TEMPLATE/unsafe.json", "{}\n");
       yield* commitAll(cwd);
 
       expect(yield* discover(cwd)).toEqual({ status: "not-found" });
+    }),
+  ),
+);
+
+it.effect("does not inspect extra-suffix decoys beside a canonical default template", () =>
+  withRepository((cwd) =>
+    Effect.gen(function* () {
+      yield* writeFile(cwd, ".github/PuLl_ReQuEsT_TeMpLaTe.Md", "canonical\n");
+      yield* writeFile(
+        cwd,
+        ".github/pull_request_template.private.md",
+        "sensitive-looking decoy\n".repeat(1_000),
+      );
+      yield* commitAll(cwd);
+
+      expect(yield* discover(cwd)).toMatchObject({
+        status: "found",
+        path: ".github/PuLl_ReQuEsT_TeMpLaTe.Md",
+        content: "canonical\n",
+      });
     }),
   ),
 );
