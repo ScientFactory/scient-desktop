@@ -46,10 +46,13 @@ export function isKeyboardShortcutsHelpChord(
     return false;
   }
 
-  // Some Windows layouts translate Ctrl+- to "/" while retaining the physical
-  // minus code. Keep the existing semantic-or-physical slash behavior everywhere
-  // else, including remapped layouts and either command modifier.
-  if (platform.isWindows && (chord.code === "Minus" || chord.code === "NumpadSubtract")) {
+  // Windows can report Ctrl+- through either the semantic key or the physical code.
+  // Reserve every minus signal for native zoom, while keeping remapped physical Slash
+  // behavior unchanged on other platforms.
+  if (
+    platform.isWindows &&
+    (chord.key === "-" || chord.code === "Minus" || chord.code === "NumpadSubtract")
+  ) {
     return false;
   }
 

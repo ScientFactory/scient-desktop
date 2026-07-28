@@ -421,7 +421,7 @@ describe("DesktopBrowserManager reliability", () => {
     manager.dispose();
   });
 
-  it("gives the shell first refusal on browser guest keyboard input", () => {
+  it("gives the shell first refusal on translated semantic-minus browser guest input", () => {
     const beforeInputEvent = vi.fn((event: { preventDefault(): void }) => {
       event.preventDefault();
       return true;
@@ -440,7 +440,7 @@ describe("DesktopBrowserManager reliability", () => {
     const input = {
       type: "keyDown",
       key: "-",
-      code: "Minus",
+      code: "Slash",
       isAutoRepeat: false,
       isComposing: false,
       shift: false,

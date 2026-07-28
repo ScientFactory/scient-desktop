@@ -58,7 +58,7 @@ describe("isKeyboardShortcutsHelpChord", () => {
     ).toBe(true);
   });
 
-  it("rejects Windows physical minus codes without changing other platforms", () => {
+  it("rejects Windows semantic and physical minus signals without changing other platforms", () => {
     expect(
       isKeyboardShortcutsHelpChord(
         { ...baseChord, ctrl: true, code: "Minus" },
@@ -74,6 +74,12 @@ describe("isKeyboardShortcutsHelpChord", () => {
     expect(
       isKeyboardShortcutsHelpChord(
         { ...baseChord, ctrl: true, code: "NumpadSubtract" },
+        { isWindows: true },
+      ),
+    ).toBe(false);
+    expect(
+      isKeyboardShortcutsHelpChord(
+        { ...baseChord, ctrl: true, key: "-", code: "Slash" },
         { isWindows: true },
       ),
     ).toBe(false);

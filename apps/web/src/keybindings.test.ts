@@ -41,7 +41,7 @@ function event(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
 }
 
 describe("isKeyboardShortcutsHelpShortcut", () => {
-  it("does not mistake the physical minus keys for shortcuts help on Windows", () => {
+  it("does not mistake semantic or physical minus signals for shortcuts help on Windows", () => {
     assert.isFalse(
       isKeyboardShortcutsHelpShortcut(event({ ctrlKey: true, key: "/", code: "Minus" }), "Win32"),
     );
@@ -51,9 +51,12 @@ describe("isKeyboardShortcutsHelpShortcut", () => {
         "Win32",
       ),
     );
+    assert.isFalse(
+      isKeyboardShortcutsHelpShortcut(event({ ctrlKey: true, key: "-", code: "Slash" }), "Win32"),
+    );
   });
 
-  it("preserves semantic or physical slash matching on Windows", () => {
+  it("preserves semantic or physical slash matching when no minus signal is present", () => {
     assert.isTrue(
       isKeyboardShortcutsHelpShortcut(event({ ctrlKey: true, key: "/", code: "Slash" }), "Win32"),
     );
@@ -62,9 +65,6 @@ describe("isKeyboardShortcutsHelpShortcut", () => {
         event({ ctrlKey: true, key: "/", code: "NumpadDivide" }),
         "Win32",
       ),
-    );
-    assert.isTrue(
-      isKeyboardShortcutsHelpShortcut(event({ ctrlKey: true, key: "-", code: "Slash" }), "Win32"),
     );
   });
 
