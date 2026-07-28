@@ -5,14 +5,18 @@
 // what gets rendered and what gets measured can never drift apart.
 // Layer: web chat feature (pure logic, no I/O).
 
-// Automation-dispatched turns take precedence over the steer marker; a turn is
-// never both (automations always dispatch with dispatchMode "queue").
-export type UserTurnMarkerKind = "automation" | "steer";
+// Trusted non-human provenance takes precedence over the steer marker; these
+// dispatchers use queue mode, while steer remains a human interaction state.
+export type UserTurnMarkerKind = "agent" | "automation" | "steer";
 
 export function resolveUserTurnMarker(message: {
   readonly dispatchMode?: "queue" | "steer" | undefined;
   readonly dispatchOrigin?: "user" | "automation" | undefined;
+  readonly dispatchSource?: "agent" | undefined;
 }): UserTurnMarkerKind | null {
+  if (message.dispatchSource === "agent") {
+    return "agent";
+  }
   if (message.dispatchOrigin === "automation") {
     return "automation";
   }

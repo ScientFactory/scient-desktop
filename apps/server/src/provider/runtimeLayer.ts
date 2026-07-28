@@ -2,6 +2,7 @@ import { Effect, FileSystem, Layer, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import { AgentGatewayCredentials } from "../agentGateway/Services/AgentGatewayCredentials";
 import { ServerConfig } from "../config";
 import { ServerSettingsLive } from "../serverSettings";
 import { AnalyticsService } from "../telemetry/Services/AnalyticsService";
@@ -31,6 +32,7 @@ export function makeServerProviderLayer(): Layer.Layer<
   ProviderUnsupportedError,
   | SqlClient.SqlClient
   | ServerConfig
+  | AgentGatewayCredentials
   | FileSystem.FileSystem
   | Path.Path
   | AnalyticsService

@@ -248,19 +248,22 @@ const USER_TURN_MARKER_PRESENTATION: Record<
   { readonly Icon: LucideIcon; readonly label: string }
 > = {
   automation: { Icon: ClockIcon, label: "Sent via Automation" },
+  agent: { Icon: BotIcon, label: "Sent by Agent" },
   steer: { Icon: SteerIcon, label: "Steering conversation" },
 };
 
 function UserDispatchModeChip({
   dispatchMode,
   dispatchOrigin,
+  dispatchSource,
   hasLeadingMedia,
 }: {
   dispatchMode: TimelineMessage["dispatchMode"];
   dispatchOrigin: TimelineMessage["dispatchOrigin"];
+  dispatchSource: TimelineMessage["dispatchSource"];
   hasLeadingMedia: boolean;
 }) {
-  const markerKind = resolveUserTurnMarker({ dispatchMode, dispatchOrigin });
+  const markerKind = resolveUserTurnMarker({ dispatchMode, dispatchOrigin, dispatchSource });
   if (!markerKind) {
     return null;
   }
@@ -1138,6 +1141,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                 <UserDispatchModeChip
                   dispatchMode={row.message.dispatchMode}
                   dispatchOrigin={row.message.dispatchOrigin}
+                  dispatchSource={row.message.dispatchSource}
                   hasLeadingMedia={hasLeadingMedia}
                 />
                 {renderedAssistantSelections.length > 0 && (

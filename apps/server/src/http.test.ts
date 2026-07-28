@@ -73,6 +73,7 @@ async function makeConfig(overrides: Partial<ServerConfigShape> = {}): Promise<S
     autoBootstrapProjectFromCwd: false,
     logProviderEvents: false,
     logWebSocketEvents: false,
+    agentGatewayEnabled: false,
     ...overrides,
   };
 }
