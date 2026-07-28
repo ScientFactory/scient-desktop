@@ -1,14 +1,13 @@
 // FILE: BrowserPictureInPicture.tsx
-// Purpose: Hosts the existing browser panel in one draggable, resizable in-chat mini-player.
+// Purpose: Hosts the existing browser panel in one movable, resizable in-chat surface.
 // Layer: Chat route UI
-// Depends on: pure browserPictureInPicture layout rules and existing browser runtime surface.
-// Provenance: Scient-native reimplementation informed by third-party donor commits
-// f4c39432 and 32af2f00 (MIT); full revisions are retained in Git/PR history.
+// Depends on: pure floating-browser layout rules and the existing browser runtime surface.
 
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -19,29 +18,34 @@ import {
   type BrowserPictureInPictureLayout,
   type BrowserPictureInPicturePoint,
   type BrowserPictureInPictureSize,
-  BROWSER_PIP_EDGE_GAP,
-  clampBrowserPictureInPicturePosition,
-  clampBrowserPictureInPictureSize,
-  resolveBrowserPictureInPictureKeyboardLayout,
+  FLOATING_BROWSER_FRAME_MARGIN,
+  fitFloatingBrowserLayout,
+  updateFloatingBrowserLayoutFromKey,
 } from "~/browserPictureInPicture";
 import { LayoutSidebarIcon, WindowIcon, XIcon } from "~/lib/icons";
 import { dispatchPanelResizeOverlaySync } from "~/lib/panelResize";
 
 import { IconButton } from "./ui/icon-button";
 
-interface PointerOperation {
-  readonly pointerId: number;
-  readonly target: HTMLElement;
-  readonly identity: BrowserPictureInPictureIdentity;
-  readonly pointerX: number;
-  readonly pointerY: number;
-  readonly layout: BrowserPictureInPictureLayout;
-}
+type FloatingBrowserAdjustmentKind = "move" | "resize";
 
-interface PendingLayout {
+interface FloatingBrowserAdjustmentState {
+  readonly kind: FloatingBrowserAdjustmentKind;
+  readonly pointerId: number;
   readonly identity: BrowserPictureInPictureIdentity;
-  readonly layout: BrowserPictureInPictureLayout;
-  readonly commit: boolean;
+  readonly startClientX: number;
+  readonly startClientY: number;
+  readonly startLeft: number;
+  readonly startTop: number;
+  readonly startWidth: number;
+  readonly startHeight: number;
+  nextLayout: BrowserPictureInPictureLayout;
+  animationFrame: number | null;
+  readonly restoreBodyCursor: string;
+  readonly restoreBodyUserSelect: string;
+  readonly onPointerMove: (event: PointerEvent) => void;
+  readonly onPointerEnd: (event: PointerEvent) => void;
+  readonly onWindowBlur: () => void;
 }
 
 interface BrowserPictureInPictureProps {
@@ -82,289 +86,241 @@ function layoutsEqual(
   );
 }
 
-function releasePointer(operation: PointerOperation | null): void {
-  if (!operation) return;
-  try {
-    if (operation.target.hasPointerCapture(operation.pointerId)) {
-      operation.target.releasePointerCapture(operation.pointerId);
-    }
-  } catch {
-    // The surface may have unmounted during a route or browser-tab transition.
-  }
+function parentAreaFor(root: HTMLElement): BrowserPictureInPictureSize | null {
+  const parent = root.offsetParent;
+  return parent instanceof HTMLElement
+    ? { width: parent.clientWidth, height: parent.clientHeight }
+    : null;
 }
 
 export function BrowserPictureInPicture(props: BrowserPictureInPictureProps) {
   const rootRef = useRef<HTMLElement | null>(null);
-  const dragRef = useRef<PointerOperation | null>(null);
-  const resizeRef = useRef<PointerOperation | null>(null);
-  const frameRef = useRef<number | null>(null);
-  const pendingLayoutRef = useRef<PendingLayout | null>(null);
-  const initializedLayoutRef = useRef(false);
+  const adjustmentRef = useRef<FloatingBrowserAdjustmentState | null>(null);
+  const workspaceFrameRef = useRef<number | null>(null);
   const focusedOnMountRef = useRef(false);
   const identityRef = useRef(props.identity);
   identityRef.current = props.identity;
+  const onLayoutCommitRef = useRef(props.onLayoutCommit);
+  onLayoutCommitRef.current = props.onLayoutCommit;
+  const requestedLayoutRef = useRef({ position: props.position, size: props.size });
+  requestedLayoutRef.current = { position: props.position, size: props.size };
   const layoutRef = useRef<BrowserPictureInPictureLayout>({
-    position: props.position ?? { x: BROWSER_PIP_EDGE_GAP, y: BROWSER_PIP_EDGE_GAP },
+    position: props.position ?? {
+      x: FLOATING_BROWSER_FRAME_MARGIN,
+      y: FLOATING_BROWSER_FRAME_MARGIN,
+    },
     size: props.size,
   });
 
-  const applyLayout = (pending: PendingLayout) => {
-    if (!identitiesEqual(identityRef.current, pending.identity)) return;
-    const root = rootRef.current;
-    if (!root) return;
-    initializedLayoutRef.current = true;
-    const changed = !layoutsEqual(layoutRef.current, pending.layout);
-    layoutRef.current = pending.layout;
-    if (changed) {
-      root.style.removeProperty("right");
-      root.style.left = `${pending.layout.position.x}px`;
-      root.style.top = `${pending.layout.position.y}px`;
-      root.style.width = `${pending.layout.size.width}px`;
-      root.style.height = `${pending.layout.size.height}px`;
-      // BrowserPanel listens for this shared event. One signal per animation frame keeps
-      // main-owned local HTML WebContentsView bounds aligned with drag/parent clamping.
-      dispatchPanelResizeOverlaySync();
-    }
-    if (pending.commit) {
-      props.onLayoutCommit(pending.identity, pending.layout);
-    }
-  };
-
-  const flushPendingLayout = (commit: boolean) => {
-    if (frameRef.current !== null) {
-      window.cancelAnimationFrame(frameRef.current);
-      frameRef.current = null;
-    }
-    const pending = pendingLayoutRef.current;
-    pendingLayoutRef.current = null;
-    if (pending) {
-      applyLayout({ ...pending, commit: commit || pending.commit });
-      return;
-    }
-    if (commit) {
-      props.onLayoutCommit(identityRef.current, layoutRef.current);
-    }
-  };
-
-  const scheduleLayout = (pending: PendingLayout) => {
-    const previous = pendingLayoutRef.current;
-    pendingLayoutRef.current = {
-      ...pending,
-      commit: pending.commit || previous?.commit === true,
-    };
-    if (frameRef.current !== null) return;
-    frameRef.current = window.requestAnimationFrame(() => {
-      frameRef.current = null;
-      const next = pendingLayoutRef.current;
-      pendingLayoutRef.current = null;
-      if (next) applyLayout(next);
-    });
-  };
-
-  useEffect(() => {
-    return () => {
-      if (frameRef.current !== null) {
-        window.cancelAnimationFrame(frameRef.current);
-      }
-      releasePointer(dragRef.current);
-      releasePointer(resizeRef.current);
-      frameRef.current = null;
-      pendingLayoutRef.current = null;
-      dragRef.current = null;
-      resizeRef.current = null;
-    };
-  }, []);
-
-  // A tab handoff increments generation. Cancel animation and pointer ownership in a layout
-  // effect, before the replacement browser surface can paint or receive stale gesture work.
-  useLayoutEffect(() => {
-    if (frameRef.current !== null) {
-      window.cancelAnimationFrame(frameRef.current);
-    }
-    releasePointer(dragRef.current);
-    releasePointer(resizeRef.current);
-    frameRef.current = null;
-    pendingLayoutRef.current = null;
-    dragRef.current = null;
-    resizeRef.current = null;
-    initializedLayoutRef.current = false;
-  }, [props.identity.generation]);
-
-  useLayoutEffect(() => {
-    const clampToParent = () => {
+  const writeLayout = useCallback(
+    (identity: BrowserPictureInPictureIdentity, layout: BrowserPictureInPictureLayout) => {
+      if (!identitiesEqual(identityRef.current, identity)) return false;
       const root = rootRef.current;
-      const parent = root?.offsetParent;
-      if (!root || !(parent instanceof HTMLElement)) return;
-      const container = { width: parent.clientWidth, height: parent.clientHeight };
-      const size = clampBrowserPictureInPictureSize(layoutRef.current.size, container);
-      const position = clampBrowserPictureInPicturePosition(
-        initializedLayoutRef.current
-          ? layoutRef.current.position
-          : (props.position ?? { x: root.offsetLeft, y: root.offsetTop }),
-        container,
-        size,
-      );
-      scheduleLayout({
-        identity: identityRef.current,
-        layout: { position, size },
-        // A root ResizeObserver fires while pointer resizing changes the element's size.
-        // Keep those updates local to the rAF pipeline and persist once on pointer release.
-        commit: dragRef.current === null && resizeRef.current === null,
-      });
-    };
+      if (!root) return false;
 
+      const changed = !layoutsEqual(layoutRef.current, layout);
+      layoutRef.current = layout;
+      if (changed) {
+        root.style.removeProperty("right");
+        root.style.left = `${layout.position.x}px`;
+        root.style.top = `${layout.position.y}px`;
+        root.style.width = `${layout.size.width}px`;
+        root.style.height = `${layout.size.height}px`;
+        dispatchPanelResizeOverlaySync();
+      }
+      return true;
+    },
+    [],
+  );
+
+  const finishAdjustment = useCallback(
+    (commit: boolean, pointerId?: number) => {
+      const adjustment = adjustmentRef.current;
+      if (!adjustment || (pointerId !== undefined && adjustment.pointerId !== pointerId)) return;
+
+      if (adjustment.animationFrame !== null) {
+        window.cancelAnimationFrame(adjustment.animationFrame);
+      }
+      const current = identitiesEqual(identityRef.current, adjustment.identity);
+      if (current) writeLayout(adjustment.identity, adjustment.nextLayout);
+
+      window.removeEventListener("pointermove", adjustment.onPointerMove);
+      window.removeEventListener("pointerup", adjustment.onPointerEnd);
+      window.removeEventListener("pointercancel", adjustment.onPointerEnd);
+      window.removeEventListener("blur", adjustment.onWindowBlur);
+      document.body.style.cursor = adjustment.restoreBodyCursor;
+      document.body.style.userSelect = adjustment.restoreBodyUserSelect;
+      adjustmentRef.current = null;
+
+      if (commit && current) {
+        onLayoutCommitRef.current(adjustment.identity, adjustment.nextLayout);
+      }
+    },
+    [writeLayout],
+  );
+
+  const beginAdjustment = useCallback(
+    (kind: FloatingBrowserAdjustmentKind, event: ReactPointerEvent<HTMLElement>) => {
+      if (event.button !== 0) return;
+      const root = rootRef.current;
+      const parentArea = root ? parentAreaFor(root) : null;
+      if (!root || !parentArea) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      finishAdjustment(false);
+
+      const identity = identityRef.current;
+      const start = fitFloatingBrowserLayout(layoutRef.current, parentArea);
+      let adjustment: FloatingBrowserAdjustmentState;
+      const onPointerMove = (pointerEvent: PointerEvent) => {
+        if (
+          pointerEvent.pointerId !== adjustment.pointerId ||
+          !identitiesEqual(identityRef.current, adjustment.identity)
+        ) {
+          return;
+        }
+        const currentRoot = rootRef.current;
+        const currentArea = currentRoot ? parentAreaFor(currentRoot) : null;
+        if (!currentArea) return;
+
+        const horizontalChange = pointerEvent.clientX - adjustment.startClientX;
+        const verticalChange = pointerEvent.clientY - adjustment.startClientY;
+        const requested =
+          adjustment.kind === "move"
+            ? {
+                position: {
+                  x: adjustment.startLeft + horizontalChange,
+                  y: adjustment.startTop + verticalChange,
+                },
+                size: { width: adjustment.startWidth, height: adjustment.startHeight },
+              }
+            : {
+                position: { x: adjustment.startLeft, y: adjustment.startTop },
+                size: {
+                  width: adjustment.startWidth + horizontalChange,
+                  height: adjustment.startHeight + verticalChange,
+                },
+              };
+        adjustment.nextLayout = fitFloatingBrowserLayout(requested, currentArea);
+        if (adjustment.animationFrame !== null) return;
+        adjustment.animationFrame = window.requestAnimationFrame(() => {
+          adjustment.animationFrame = null;
+          writeLayout(adjustment.identity, adjustment.nextLayout);
+        });
+      };
+      const onPointerEnd = (pointerEvent: PointerEvent) => {
+        finishAdjustment(true, pointerEvent.pointerId);
+      };
+      const onWindowBlur = () => finishAdjustment(true);
+
+      adjustment = {
+        kind,
+        pointerId: event.pointerId,
+        identity,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startLeft: start.position.x,
+        startTop: start.position.y,
+        startWidth: start.size.width,
+        startHeight: start.size.height,
+        nextLayout: start,
+        animationFrame: null,
+        restoreBodyCursor: document.body.style.cursor,
+        restoreBodyUserSelect: document.body.style.userSelect,
+        onPointerMove,
+        onPointerEnd,
+        onWindowBlur,
+      };
+      adjustmentRef.current = adjustment;
+      document.body.style.cursor = kind === "move" ? "grabbing" : "nwse-resize";
+      document.body.style.userSelect = "none";
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerEnd);
+      window.addEventListener("pointercancel", onPointerEnd);
+      window.addEventListener("blur", onWindowBlur);
+    },
+    [finishAdjustment, writeLayout],
+  );
+
+  useEffect(() => () => finishAdjustment(false), [finishAdjustment]);
+
+  // A tab handoff increments generation. Ending the old gesture here prevents an animation
+  // frame from mutating the replacement browser surface before it paints.
+  useLayoutEffect(() => {
+    finishAdjustment(false);
+  }, [finishAdjustment, props.identity.generation]);
+
+  useLayoutEffect(() => {
     const root = rootRef.current;
     const parent = root?.offsetParent;
     if (!root || !(parent instanceof HTMLElement)) return;
-    // Focus enters the floating surface deterministically after the dock action disappears,
-    // but a browser-tab generation handoff must not steal focus back from browser controls.
+    const identity = identityRef.current;
+    const requested = requestedLayoutRef.current;
+    const initial = fitFloatingBrowserLayout(
+      {
+        position: requested.position ?? { x: root.offsetLeft, y: root.offsetTop },
+        size: requested.size,
+      },
+      { width: parent.clientWidth, height: parent.clientHeight },
+    );
+    writeLayout(identity, initial);
+    onLayoutCommitRef.current(identity, initial);
+
     if (!focusedOnMountRef.current) {
       root.focus({ preventScroll: true });
       focusedOnMountRef.current = true;
     }
-    clampToParent();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(clampToParent);
-    observer.observe(root);
-    observer.observe(parent);
-    return () => observer.disconnect();
-  }, [props.identity.generation]);
 
-  const beginDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    const root = rootRef.current;
-    const parent = root?.offsetParent;
-    if (!root || !(parent instanceof HTMLElement)) return;
-    const rootRect = root.getBoundingClientRect();
-    const parentRect = parent.getBoundingClientRect();
-    const operation: PointerOperation = {
-      pointerId: event.pointerId,
-      target: event.currentTarget,
-      identity: identityRef.current,
-      pointerX: event.clientX,
-      pointerY: event.clientY,
-      layout: {
-        position: {
-          x: rootRect.left - parentRect.left,
-          y: rootRect.top - parentRect.top,
-        },
-        size: { width: root.offsetWidth, height: root.offsetHeight },
-      },
+    const fitToWorkspace = () => {
+      if (workspaceFrameRef.current !== null) return;
+      workspaceFrameRef.current = window.requestAnimationFrame(() => {
+        workspaceFrameRef.current = null;
+        if (!identitiesEqual(identityRef.current, identity)) return;
+        const currentRoot = rootRef.current;
+        const currentArea = currentRoot ? parentAreaFor(currentRoot) : null;
+        if (!currentArea) return;
+        const fitted = fitFloatingBrowserLayout(layoutRef.current, currentArea);
+        const adjustment = adjustmentRef.current;
+        if (adjustment && identitiesEqual(adjustment.identity, identity)) {
+          adjustment.nextLayout = fitted;
+        }
+        if (!writeLayout(identity, fitted) || adjustment) return;
+        onLayoutCommitRef.current(identity, fitted);
+      });
     };
-    dragRef.current = operation;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    event.preventDefault();
-  };
 
-  const moveDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const operation = dragRef.current;
-    const root = rootRef.current;
-    const parent = root?.offsetParent;
-    if (
-      !operation ||
-      operation.pointerId !== event.pointerId ||
-      !root ||
-      !(parent instanceof HTMLElement)
-    ) {
-      return;
-    }
-    scheduleLayout({
-      identity: operation.identity,
-      layout: {
-        position: clampBrowserPictureInPicturePosition(
-          {
-            x: operation.layout.position.x + event.clientX - operation.pointerX,
-            y: operation.layout.position.y + event.clientY - operation.pointerY,
-          },
-          { width: parent.clientWidth, height: parent.clientHeight },
-          operation.layout.size,
-        ),
-        size: operation.layout.size,
-      },
-      commit: false,
-    });
-  };
-
-  const endDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const operation = dragRef.current;
-    if (operation?.pointerId !== event.pointerId) return;
-    dragRef.current = null;
-    flushPendingLayout(identitiesEqual(identityRef.current, operation.identity));
-    releasePointer(operation);
-  };
-
-  const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    const root = rootRef.current;
-    if (!root) return;
-    const operation: PointerOperation = {
-      pointerId: event.pointerId,
-      target: event.currentTarget,
-      identity: identityRef.current,
-      pointerX: event.clientX,
-      pointerY: event.clientY,
-      layout: layoutRef.current,
+    const observer =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(fitToWorkspace);
+    observer?.observe(parent);
+    window.addEventListener("resize", fitToWorkspace);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", fitToWorkspace);
+      if (workspaceFrameRef.current !== null) {
+        window.cancelAnimationFrame(workspaceFrameRef.current);
+        workspaceFrameRef.current = null;
+      }
     };
-    resizeRef.current = operation;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
-  const moveResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const operation = resizeRef.current;
-    const root = rootRef.current;
-    const parent = root?.offsetParent;
-    if (
-      !operation ||
-      operation.pointerId !== event.pointerId ||
-      !root ||
-      !(parent instanceof HTMLElement)
-    ) {
-      return;
-    }
-    const container = { width: parent.clientWidth, height: parent.clientHeight };
-    const size = clampBrowserPictureInPictureSize(
-      {
-        width: operation.layout.size.width + event.clientX - operation.pointerX,
-        height: operation.layout.size.height + event.clientY - operation.pointerY,
-      },
-      container,
-    );
-    scheduleLayout({
-      identity: operation.identity,
-      layout: {
-        position: clampBrowserPictureInPicturePosition(operation.layout.position, container, size),
-        size,
-      },
-      commit: false,
-    });
-  };
-
-  const endResize = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const operation = resizeRef.current;
-    if (operation?.pointerId !== event.pointerId) return;
-    resizeRef.current = null;
-    flushPendingLayout(identitiesEqual(identityRef.current, operation.identity));
-    releasePointer(operation);
-  };
+  }, [props.identity.generation, writeLayout]);
 
   const handleKeyboardLayout = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.target !== event.currentTarget) return;
     const root = rootRef.current;
-    const parent = root?.offsetParent;
-    if (!root || !(parent instanceof HTMLElement)) return;
-    const layout = resolveBrowserPictureInPictureKeyboardLayout({
+    const parentArea = root ? parentAreaFor(root) : null;
+    if (!parentArea) return;
+    const layout = updateFloatingBrowserLayoutFromKey({
       key: event.key,
       shiftKey: event.shiftKey,
       altKey: event.altKey,
       position: layoutRef.current.position,
       size: layoutRef.current.size,
-      container: { width: parent.clientWidth, height: parent.clientHeight },
+      container: parentArea,
     });
     if (!layout) return;
     event.preventDefault();
-    scheduleLayout({ identity: identityRef.current, layout, commit: true });
+    const identity = identityRef.current;
+    if (writeLayout(identity, layout)) onLayoutCommitRef.current(identity, layout);
   };
 
   return (
@@ -383,8 +339,8 @@ export function BrowserPictureInPicture(props: BrowserPictureInPictureProps) {
               height: props.size.height,
             }
           : {
-              right: BROWSER_PIP_EDGE_GAP,
-              top: BROWSER_PIP_EDGE_GAP,
+              right: FLOATING_BROWSER_FRAME_MARGIN,
+              top: FLOATING_BROWSER_FRAME_MARGIN,
               width: props.size.width,
               height: props.size.height,
             }
@@ -393,11 +349,7 @@ export function BrowserPictureInPicture(props: BrowserPictureInPictureProps) {
     >
       <div
         className="flex h-8 shrink-0 cursor-grab items-center gap-2 border-b border-border px-2 active:cursor-grabbing"
-        onPointerDown={beginDrag}
-        onPointerMove={moveDrag}
-        onPointerUp={endDrag}
-        onPointerCancel={endDrag}
-        onLostPointerCapture={endDrag}
+        onPointerDown={(event) => beginAdjustment("move", event)}
       >
         <WindowIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
@@ -429,19 +381,14 @@ export function BrowserPictureInPicture(props: BrowserPictureInPictureProps) {
       <div data-native-browser-surface="true" className="relative min-h-0 flex-1 select-text">
         {props.children}
       </div>
-      {/* Keep the resize target outside the native browser bounds. Main-process-owned local
-          HTML surfaces paint above renderer DOM, so an overlapping corner handle would be
-          unreachable even though it looks correct for renderer-owned webviews. */}
+      {/* Native local-HTML surfaces sit above renderer DOM, so the resize target stays in a
+          dedicated footer rather than overlapping the browser's main-process-owned bounds. */}
       <div className="flex h-5 shrink-0 items-center justify-end border-t border-border bg-[var(--color-background-surface)]">
         <div
           aria-hidden="true"
           title="Resize floating preview"
           className="relative size-5 cursor-nwse-resize rounded-br-xl after:absolute after:bottom-1 after:right-1 after:size-2 after:border-b after:border-r after:border-foreground/45"
-          onPointerDown={beginResize}
-          onPointerMove={moveResize}
-          onPointerUp={endResize}
-          onPointerCancel={endResize}
-          onLostPointerCapture={endResize}
+          onPointerDown={(event) => beginAdjustment("resize", event)}
         />
       </div>
     </section>

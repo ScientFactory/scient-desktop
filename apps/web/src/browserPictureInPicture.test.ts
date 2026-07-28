@@ -2,17 +2,16 @@ import { ProjectId, ThreadId, type ThreadBrowserState } from "@synara/contracts"
 import { describe, expect, it } from "vitest";
 
 import {
-  BROWSER_PIP_DEFAULT_SIZE,
-  BROWSER_PIP_MIN_SIZE,
+  FLOATING_BROWSER_INITIAL_SIZE,
+  FLOATING_BROWSER_MINIMUM_SIZE,
   browserPictureInPictureIdentityMatches,
   browserPictureInPictureOwnerPaneIdToClose,
-  clampBrowserPictureInPicturePosition,
-  clampBrowserPictureInPictureSize,
   closeBrowserPictureInPicture,
   commitBrowserPictureInPictureLayout,
+  fitFloatingBrowserLayout,
   openBrowserPictureInPicture,
   reconcileBrowserPictureInPicture,
-  resolveBrowserPictureInPictureKeyboardLayout,
+  updateFloatingBrowserLayoutFromKey,
 } from "./browserPictureInPicture";
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-1");
@@ -92,7 +91,7 @@ describe("browser picture-in-picture lifecycle", () => {
       },
       observedBrowserVersion: 4,
       position: null,
-      size: BROWSER_PIP_DEFAULT_SIZE,
+      size: FLOATING_BROWSER_INITIAL_SIZE,
     });
   });
 
@@ -188,22 +187,28 @@ describe("browser picture-in-picture lifecycle", () => {
 describe("browser picture-in-picture layout", () => {
   it("enforces minimum size while staying within its container", () => {
     expect(
-      clampBrowserPictureInPictureSize({ width: 20, height: 30 }, { width: 1_000, height: 800 }),
-    ).toEqual(BROWSER_PIP_MIN_SIZE);
+      fitFloatingBrowserLayout(
+        { position: { x: 12, y: 12 }, size: { width: 20, height: 30 } },
+        { width: 1_000, height: 800 },
+      ).size,
+    ).toEqual(FLOATING_BROWSER_MINIMUM_SIZE);
     expect(
-      clampBrowserPictureInPictureSize(
-        { width: 2_000, height: 2_000 },
+      fitFloatingBrowserLayout(
+        { position: { x: 12, y: 12 }, size: { width: 2_000, height: 2_000 } },
         { width: 500, height: 300 },
-      ),
+      ).size,
     ).toEqual({ width: 476, height: 276 });
   });
 
   it("remains representable in a container smaller than the preferred minimum", () => {
     expect(
-      clampBrowserPictureInPictureSize(
-        { width: Number.POSITIVE_INFINITY, height: Number.NaN },
+      fitFloatingBrowserLayout(
+        {
+          position: { x: 12, y: 12 },
+          size: { width: Number.POSITIVE_INFINITY, height: Number.NaN },
+        },
         { width: 180, height: 120 },
-      ),
+      ).size,
     ).toEqual({ width: 156, height: 96 });
   });
 
@@ -212,11 +217,22 @@ describe("browser picture-in-picture layout", () => {
     const player = { width: 440, height: 300 };
 
     expect(
-      clampBrowserPictureInPicturePosition({ x: -30, y: Number.NaN }, container, player),
+      fitFloatingBrowserLayout({ position: { x: -30, y: Number.NaN }, size: player }, container)
+        .position,
     ).toEqual({ x: 12, y: 12 });
-    expect(clampBrowserPictureInPicturePosition({ x: 1_000, y: 1_000 }, container, player)).toEqual(
-      { x: 460, y: 400 },
-    );
+    expect(
+      fitFloatingBrowserLayout({ position: { x: 1_000, y: 1_000 }, size: player }, container)
+        .position,
+    ).toEqual({ x: 460, y: 400 });
+  });
+
+  it("fits size and position together after the workspace shrinks", () => {
+    expect(
+      fitFloatingBrowserLayout(
+        { position: { x: 600, y: 500 }, size: { width: 700, height: 500 } },
+        { width: 500, height: 300 },
+      ),
+    ).toEqual({ position: { x: 24, y: 24 }, size: { width: 476, height: 276 } });
   });
 
   it("maps keyboard arrows to bounded movement and Alt-arrows to resizing", () => {
@@ -228,14 +244,14 @@ describe("browser picture-in-picture layout", () => {
     };
 
     expect(
-      resolveBrowserPictureInPictureKeyboardLayout({
+      updateFloatingBrowserLayoutFromKey({
         ...common,
         key: "ArrowRight",
         altKey: false,
       }),
     ).toEqual({ position: { x: 28, y: 30 }, size: common.size });
     expect(
-      resolveBrowserPictureInPictureKeyboardLayout({
+      updateFloatingBrowserLayoutFromKey({
         ...common,
         key: "ArrowDown",
         shiftKey: true,
@@ -243,7 +259,7 @@ describe("browser picture-in-picture layout", () => {
       }),
     ).toEqual({ position: common.position, size: { width: 440, height: 332 } });
     expect(
-      resolveBrowserPictureInPictureKeyboardLayout({
+      updateFloatingBrowserLayoutFromKey({
         ...common,
         key: "Enter",
         altKey: false,

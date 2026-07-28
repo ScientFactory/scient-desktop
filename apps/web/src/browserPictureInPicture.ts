@@ -1,15 +1,13 @@
 // FILE: browserPictureInPicture.ts
-// Purpose: Pure identity, lifecycle, and layout rules for the in-chat browser mini-player.
+// Purpose: Pure identity, lifecycle, and frame rules for the floating in-chat browser.
 // Layer: Web UI state helper
 // Depends on: browser state metadata only; never owns or persists a browser runtime.
-// Provenance: Scient-native reimplementation informed by third-party donor commits
-// f4c39432 and 32af2f00 (MIT); full revisions are retained in Git/PR history.
 
 import type { ProjectId, ThreadBrowserState, ThreadId } from "@synara/contracts";
 
-export const BROWSER_PIP_EDGE_GAP = 12;
-export const BROWSER_PIP_DEFAULT_SIZE = { width: 440, height: 300 } as const;
-export const BROWSER_PIP_MIN_SIZE = { width: 280, height: 190 } as const;
+export const FLOATING_BROWSER_FRAME_MARGIN = 12;
+export const FLOATING_BROWSER_INITIAL_SIZE = { width: 440, height: 300 } as const;
+export const FLOATING_BROWSER_MINIMUM_SIZE = { width: 280, height: 190 } as const;
 
 export interface BrowserPictureInPicturePoint {
   readonly x: number;
@@ -59,7 +57,7 @@ export function openBrowserPictureInPicture(input: {
     },
     observedBrowserVersion: input.browserVersion,
     position: null,
-    size: BROWSER_PIP_DEFAULT_SIZE,
+    size: FLOATING_BROWSER_INITIAL_SIZE,
   };
 }
 
@@ -168,53 +166,51 @@ export function commitBrowserPictureInPictureLayout(
   return { ...state, position: layout.position, size: layout.size };
 }
 
-function finiteDimension(value: number): number {
-  return Number.isFinite(value) ? Math.max(0, value) : 0;
+function nonnegative(value: number): number {
+  return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-export function clampBrowserPictureInPictureSize(
-  size: BrowserPictureInPictureSize,
-  container: BrowserPictureInPictureSize,
-): BrowserPictureInPictureSize {
-  const availableWidth = Math.max(1, finiteDimension(container.width) - BROWSER_PIP_EDGE_GAP * 2);
-  const availableHeight = Math.max(1, finiteDimension(container.height) - BROWSER_PIP_EDGE_GAP * 2);
+function between(value: number, lower: number, upper: number): number {
+  const numericValue = Number.isFinite(value) ? value : lower;
+  return Math.round(Math.max(lower, Math.min(numericValue, upper)));
+}
+
+function fitLength(requested: number, available: number, preferredMinimum: number): number {
+  const maximum = Math.max(1, nonnegative(available) - FLOATING_BROWSER_FRAME_MARGIN * 2);
+  const minimum = Math.min(preferredMinimum, maximum);
+  return between(requested, minimum, maximum);
+}
+
+function fitOrigin(requested: number, available: number, length: number): number {
+  const areaLength = nonnegative(available);
+  const nearEdge =
+    areaLength >= FLOATING_BROWSER_FRAME_MARGIN * 2 ? FLOATING_BROWSER_FRAME_MARGIN : 0;
+  const farEdge = Math.max(nearEdge, areaLength - length);
+  return between(requested, nearEdge, farEdge);
+}
+
+export function fitFloatingBrowserLayout(
+  requested: BrowserPictureInPictureLayout,
+  available: BrowserPictureInPictureSize,
+): BrowserPictureInPictureLayout {
+  const size = {
+    width: fitLength(requested.size.width, available.width, FLOATING_BROWSER_MINIMUM_SIZE.width),
+    height: fitLength(
+      requested.size.height,
+      available.height,
+      FLOATING_BROWSER_MINIMUM_SIZE.height,
+    ),
+  };
   return {
-    width: Math.round(
-      Math.min(availableWidth, Math.max(BROWSER_PIP_MIN_SIZE.width, finiteDimension(size.width))),
-    ),
-    height: Math.round(
-      Math.min(
-        availableHeight,
-        Math.max(BROWSER_PIP_MIN_SIZE.height, finiteDimension(size.height)),
-      ),
-    ),
+    position: {
+      x: fitOrigin(requested.position.x, available.width, size.width),
+      y: fitOrigin(requested.position.y, available.height, size.height),
+    },
+    size,
   };
 }
 
-function clampCoordinate(value: number, extent: number): number {
-  const safeExtent = finiteDimension(extent);
-  const inset = safeExtent >= BROWSER_PIP_EDGE_GAP * 2 ? BROWSER_PIP_EDGE_GAP : 0;
-  return Math.round(Math.min(Math.max(finiteDimension(value), inset), Math.max(inset, safeExtent)));
-}
-
-export function clampBrowserPictureInPicturePosition(
-  position: BrowserPictureInPicturePoint,
-  container: BrowserPictureInPictureSize,
-  player: BrowserPictureInPictureSize,
-): BrowserPictureInPicturePoint {
-  return {
-    x: clampCoordinate(
-      position.x,
-      finiteDimension(container.width) - finiteDimension(player.width),
-    ),
-    y: clampCoordinate(
-      position.y,
-      finiteDimension(container.height) - finiteDimension(player.height),
-    ),
-  };
-}
-
-export function resolveBrowserPictureInPictureKeyboardLayout(input: {
+export function updateFloatingBrowserLayoutFromKey(input: {
   readonly key: string;
   readonly shiftKey: boolean;
   readonly altKey: boolean;
@@ -222,40 +218,33 @@ export function resolveBrowserPictureInPictureKeyboardLayout(input: {
   readonly size: BrowserPictureInPictureSize;
   readonly container: BrowserPictureInPictureSize;
 }): BrowserPictureInPictureLayout | null {
-  const direction =
-    input.key === "ArrowLeft"
-      ? { x: -1, y: 0 }
-      : input.key === "ArrowRight"
-        ? { x: 1, y: 0 }
-        : input.key === "ArrowUp"
-          ? { x: 0, y: -1 }
-          : input.key === "ArrowDown"
-            ? { x: 0, y: 1 }
-            : null;
-  if (!direction) return null;
-  const step = input.shiftKey ? 32 : 8;
-  if (input.altKey) {
-    const size = clampBrowserPictureInPictureSize(
-      {
-        width: input.size.width + direction.x * step,
-        height: input.size.height + direction.y * step,
-      },
-      input.container,
-    );
-    return {
-      position: clampBrowserPictureInPicturePosition(input.position, input.container, size),
-      size,
-    };
-  }
-  return {
-    position: clampBrowserPictureInPicturePosition(
-      {
-        x: input.position.x + direction.x * step,
-        y: input.position.y + direction.y * step,
-      },
-      input.container,
-      input.size,
-    ),
-    size: input.size,
+  if (!input.key.startsWith("Arrow")) return null;
+  const amount = input.shiftKey ? 32 : 8;
+  const requested = {
+    position: { ...input.position },
+    size: { ...input.size },
   };
+
+  switch (input.key) {
+    case "ArrowLeft":
+      if (input.altKey) requested.size.width -= amount;
+      else requested.position.x -= amount;
+      break;
+    case "ArrowRight":
+      if (input.altKey) requested.size.width += amount;
+      else requested.position.x += amount;
+      break;
+    case "ArrowUp":
+      if (input.altKey) requested.size.height -= amount;
+      else requested.position.y -= amount;
+      break;
+    case "ArrowDown":
+      if (input.altKey) requested.size.height += amount;
+      else requested.position.y += amount;
+      break;
+    default:
+      return null;
+  }
+
+  return fitFloatingBrowserLayout(requested, input.container);
 }
