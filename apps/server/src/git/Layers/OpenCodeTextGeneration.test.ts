@@ -5,7 +5,7 @@
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Duration, Effect, Fiber, Layer } from "effect";
+import { Duration, Effect, Fiber, FileSystem, Layer, Path } from "effect";
 import { TestClock } from "effect/testing";
 import { beforeEach, expect } from "vitest";
 
@@ -15,8 +15,11 @@ import {
   OpenCodeRuntimeError,
   type OpenCodeRuntimeShape,
 } from "../../provider/opencodeRuntime.ts";
-import { OpenCodeTextGeneration } from "../Services/TextGeneration.ts";
-import { OpenCodeTextGenerationServiceLive } from "./OpenCodeTextGeneration.ts";
+import { KiloTextGeneration, OpenCodeTextGeneration } from "../Services/TextGeneration.ts";
+import {
+  KiloTextGenerationServiceLive,
+  OpenCodeTextGenerationServiceLive,
+} from "./OpenCodeTextGeneration.ts";
 
 const runtimeMock = {
   state: {
@@ -159,6 +162,10 @@ const OpenCodeTextGenerationExistingServerConfigLayer = ServerConfig.layerTest(p
   prefix: "synara-opencode-text-generation-existing-server-test-",
 });
 
+const KiloTextGenerationServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
+  prefix: "synara-kilo-text-generation-test-",
+});
+
 const OpenCodeTextGenerationTestLayer = Layer.mergeAll(
   NodeServices.layer,
   OpenCodeTextGenerationServiceLive.pipe(
@@ -172,6 +179,15 @@ const OpenCodeTextGenerationExistingServerTestLayer = Layer.mergeAll(
   NodeServices.layer,
   OpenCodeTextGenerationServiceLive.pipe(
     Layer.provide(OpenCodeTextGenerationExistingServerConfigLayer),
+    Layer.provide(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+    Layer.provide(NodeServices.layer),
+  ),
+);
+
+const KiloTextGenerationTestLayer = Layer.mergeAll(
+  NodeServices.layer,
+  KiloTextGenerationServiceLive.pipe(
+    Layer.provide(KiloTextGenerationServerConfigLayer),
     Layer.provide(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
     Layer.provide(NodeServices.layer),
   ),
@@ -214,7 +230,23 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
       const env = runtimeMock.state.startEnvs[0];
       expect(env?.XDG_CONFIG_HOME).toMatch(/scient-opencode-writer-/);
       expect(env?.XDG_DATA_HOME).toMatch(/scient-opencode-writer-/);
+      expect(env?.XDG_CACHE_HOME).toMatch(/scient-opencode-writer-/);
+      expect(env?.XDG_STATE_HOME).toMatch(/scient-opencode-writer-/);
       expect(env?.OPENCODE_CONFIG_DIR).toMatch(/scient-opencode-writer-/);
+      expect(env).toMatchObject({
+        OPENCODE_AUTO_SHARE: "false",
+        OPENCODE_DISABLE_AUTOUPDATE: "1",
+        OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
+        OPENCODE_DISABLE_LSP_DOWNLOAD: "1",
+        OPENCODE_DISABLE_CLAUDE_CODE: "1",
+        OPENCODE_DISABLE_CLAUDE_CODE_PROMPT: "1",
+        OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: "1",
+        OPENCODE_EXPERIMENTAL_WEBSOCKETS: "false",
+        OPENCODE_PURE: "1",
+        KILO_DISABLE_DEFAULT_PLUGINS: "1",
+        KILO_DISABLE_CODEBASE_INDEXING: "vscode-no-workspace",
+        KILO_PURE: "1",
+      });
       expect(JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? "{}")).toMatchObject({
         autoupdate: false,
         share: "disabled",
@@ -234,6 +266,112 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
       yield* advanceIdleClock;
 
       expect(runtimeMock.state.closeCalls).toEqual(["http://127.0.0.1:4301"]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("refreshes sanitized credentials and removes runtime data after idle shutdown", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const sourceDataHome = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "synara-opencode-source-auth-",
+      });
+      const sourceProviderDirectory = path.join(sourceDataHome, "opencode");
+      const sourceAuthPath = path.join(sourceProviderDirectory, "auth.json");
+      yield* fileSystem.makeDirectory(sourceProviderDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(
+        sourceAuthPath,
+        JSON.stringify({
+          openai: { type: "api", key: "first-key", extra: "drop-me" },
+          oauth: {
+            type: "oauth",
+            refresh: "refresh-token",
+            access: "access-token",
+            expires: 123,
+            accountId: "account",
+            extra: "drop-me",
+          },
+          organization: { type: "wellknown", key: "remote", token: "remote-token" },
+        }),
+      );
+
+      const previousDataHome = process.env.XDG_DATA_HOME;
+      yield* Effect.sync(() => {
+        process.env.XDG_DATA_HOME = sourceDataHome;
+      });
+
+      const textGeneration = yield* OpenCodeTextGeneration;
+      yield* Effect.gen(function* () {
+        yield* textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/opencode-credential-refresh",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+
+        const firstEnv = runtimeMock.state.startEnvs[0];
+        const firstWorkingDirectory = runtimeMock.state.startCwds[0];
+        expect(firstEnv?.XDG_DATA_HOME).toBeTruthy();
+        expect(firstWorkingDirectory).toBeTruthy();
+        const firstAuth = JSON.parse(
+          yield* fileSystem.readFileString(
+            path.join(firstEnv?.XDG_DATA_HOME ?? "", "opencode", "auth.json"),
+          ),
+        );
+        expect(firstAuth).toEqual({
+          openai: { type: "api", key: "first-key" },
+          oauth: {
+            type: "oauth",
+            refresh: "refresh-token",
+            access: "access-token",
+            expires: 123,
+            accountId: "account",
+          },
+        });
+
+        const firstRuntimeRoot = path.dirname(firstWorkingDirectory ?? "");
+        const firstAuthPath = path.join(firstEnv?.XDG_DATA_HOME ?? "", "opencode", "auth.json");
+        yield* advanceIdleClock;
+        yield* Effect.forEach(Array.from({ length: 10 }), () => Effect.yieldNow, {
+          discard: true,
+        });
+        yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 20)));
+        expect(runtimeMock.state.closeCalls).toEqual(["http://127.0.0.1:4301"]);
+        expect(yield* fileSystem.exists(firstAuthPath)).toBe(false);
+
+        yield* fileSystem.writeFileString(
+          sourceAuthPath,
+          JSON.stringify({ openai: { type: "api", key: "second-key" } }),
+        );
+        yield* textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/opencode-credential-refresh",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+        const secondEnv = runtimeMock.state.startEnvs[1];
+        expect(path.dirname(runtimeMock.state.startCwds[1] ?? "")).not.toBe(firstRuntimeRoot);
+        const secondAuth = JSON.parse(
+          yield* fileSystem.readFileString(
+            path.join(secondEnv?.XDG_DATA_HOME ?? "", "opencode", "auth.json"),
+          ),
+        );
+        expect(secondAuth).toEqual({ openai: { type: "api", key: "second-key" } });
+        yield* advanceIdleClock;
+        yield* Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 20)));
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previousDataHome === undefined) {
+              delete process.env.XDG_DATA_HOME;
+            } else {
+              process.env.XDG_DATA_HOME = previousDataHome;
+            }
+          }),
+        ),
+      );
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -522,51 +660,63 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationServiceLive", (
 it.layer(OpenCodeTextGenerationExistingServerTestLayer)(
   "OpenCodeTextGenerationServiceLive with configured server URL",
   (it) => {
-    it.effect("reuses a configured OpenCode server URL without spawning or applying idle TTL", () =>
+    it.effect("fails closed before sending source-control content to an external server", () =>
       Effect.gen(function* () {
         const textGeneration = yield* OpenCodeTextGeneration;
 
-        yield* textGeneration.generateCommitMessage({
-          cwd: process.cwd(),
-          branch: "feature/opencode-reuse",
-          stagedSummary: "M README.md",
-          stagedPatch: "diff --git a/README.md b/README.md",
-          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-          providerOptions: {
-            opencode: {
-              serverUrl: "http://127.0.0.1:9999",
-              serverPassword: "secret-password",
+        const error = yield* textGeneration
+          .generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/opencode-reuse",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            providerOptions: {
+              opencode: {
+                serverUrl: "http://127.0.0.1:9999",
+                serverPassword: "secret-password",
+              },
             },
-          },
-        });
-        yield* textGeneration.generateCommitMessage({
-          cwd: process.cwd(),
-          branch: "feature/opencode-reuse",
-          stagedSummary: "M README.md",
-          stagedPatch: "diff --git a/README.md b/README.md",
-          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-          providerOptions: {
-            opencode: {
-              serverUrl: "http://127.0.0.1:9999",
-              serverPassword: "secret-password",
-            },
-          },
-        });
+          })
+          .pipe(Effect.flip);
 
+        expect(error.message).toContain("not permitted for automatic source-control writing");
         expect(runtimeMock.state.startCalls).toEqual([]);
-        expect(runtimeMock.state.promptUrls).toEqual([
-          "http://127.0.0.1:9999",
-          "http://127.0.0.1:9999",
-        ]);
-        expect(runtimeMock.state.authHeaders).toEqual([
-          `Basic ${btoa("opencode:secret-password")}`,
-          `Basic ${btoa("opencode:secret-password")}`,
-        ]);
-
-        yield* advanceIdleClock;
-
-        expect(runtimeMock.state.closeCalls).toEqual([]);
-      }).pipe(Effect.provide(TestClock.layer())),
+        expect(runtimeMock.state.sessionCreateInputs).toEqual([]);
+        expect(runtimeMock.state.promptUrls).toEqual([]);
+      }),
     );
   },
 );
+
+it.layer(KiloTextGenerationTestLayer)("KiloTextGenerationServiceLive", (it) => {
+  it.effect("uses the same isolated no-extension runtime boundary for Kilo", () =>
+    Effect.gen(function* () {
+      const textGeneration = yield* KiloTextGeneration;
+      yield* textGeneration.generateCommitMessage({
+        cwd: process.cwd(),
+        branch: "feature/kilo-isolation",
+        stagedSummary: "M README.md",
+        stagedPatch: "diff --git a/README.md b/README.md",
+        modelSelection: {
+          provider: "kilo",
+          model: "openai/gpt-5",
+        },
+      });
+
+      expect(runtimeMock.state.startCalls).toEqual(["kilo"]);
+      const env = runtimeMock.state.startEnvs[0];
+      expect(env?.XDG_DATA_HOME).toMatch(/scient-kilo-writer-/);
+      expect(env?.KILO_CONFIG_CONTENT).toBeTruthy();
+      expect(env).toMatchObject({
+        OPENCODE_AUTO_SHARE: "false",
+        OPENCODE_DISABLE_DEFAULT_PLUGINS: "1",
+        OPENCODE_DISABLE_CLAUDE_CODE: "1",
+        KILO_DISABLE_DEFAULT_PLUGINS: "1",
+        KILO_DISABLE_CODEBASE_INDEXING: "vscode-no-workspace",
+        KILO_PURE: "1",
+      });
+      expect(runtimeMock.state.clientDirectories[0]).toMatch(/scient-kilo-writer-.*\/workspace$/);
+    }),
+  );
+});

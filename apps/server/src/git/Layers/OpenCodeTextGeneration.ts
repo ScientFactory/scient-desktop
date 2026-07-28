@@ -59,6 +59,69 @@ import {
 } from "../textGenerationShared.ts";
 
 const OPENCODE_TEXT_GENERATION_IDLE_TTL = "30 seconds";
+const SCM_TEXT_GENERATION_OPERATIONS = new Set<TextGenerationOperation>([
+  "generateCommitMessage",
+  "generatePrContent",
+  "generateDiffSummary",
+  "generateBranchName",
+]);
+
+function sanitizeOpenCodeAuthFile(content: string): string {
+  const parsed = JSON.parse(content) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return "{}";
+  }
+
+  const sanitized: Record<string, unknown> = {};
+  for (const [providerId, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+
+    const credential = value as Record<string, unknown>;
+    if (
+      credential.type === "oauth" &&
+      typeof credential.refresh === "string" &&
+      typeof credential.access === "string" &&
+      typeof credential.expires === "number"
+    ) {
+      sanitized[providerId] = {
+        type: "oauth",
+        refresh: credential.refresh,
+        access: credential.access,
+        expires: credential.expires,
+        ...(typeof credential.accountId === "string" ? { accountId: credential.accountId } : {}),
+        ...(typeof credential.enterpriseUrl === "string"
+          ? { enterpriseUrl: credential.enterpriseUrl }
+          : {}),
+      };
+      continue;
+    }
+
+    if (credential.type === "api" && typeof credential.key === "string") {
+      const metadata =
+        credential.metadata &&
+        typeof credential.metadata === "object" &&
+        !Array.isArray(credential.metadata)
+          ? Object.fromEntries(
+              Object.entries(credential.metadata as Record<string, unknown>).filter(
+                (entry): entry is [string, string] => typeof entry[1] === "string",
+              ),
+            )
+          : null;
+      sanitized[providerId] = {
+        type: "api",
+        key: credential.key,
+        ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
+      };
+    }
+
+    // `wellknown` credentials can load remote organization configuration, so the
+    // automatic writer deliberately excludes them from its auth-only overlay.
+  }
+
+  return JSON.stringify(sanitized);
+}
 
 function getOpenCodePromptErrorMessage(error: unknown): string | null {
   if (!error || typeof error !== "object") {
@@ -107,7 +170,8 @@ interface SharedOpenCodeTextGenerationServerState {
   server: OpenCodeServerProcess | null;
   serverScope: Scope.Closeable | null;
   binaryPath: string | null;
-  cwd: string | null;
+  clientDirectory: string | null;
+  runtimeRoot: string | null;
   activeRequests: number;
   idleCloseFiber: Fiber.Fiber<void, never> | null;
 }
@@ -116,6 +180,8 @@ interface AcquiredOpenCodeTextGenerationServer {
   server: OpenCodeServerProcess;
   shared: boolean;
   serverScope: Scope.Closeable | null;
+  clientDirectory: string;
+  runtimeRoot: string;
 }
 
 type OpenCodeCompatibleTextGenerationProvider = "opencode" | "kilo";
@@ -132,7 +198,11 @@ function resolveOpenCodeCompatibleModelSelection(
   config: OpenCodeCompatibleTextGenerationConfig,
   input: {
     readonly model?: string;
-    readonly modelSelection?: { provider: string; model: string; options?: unknown };
+    readonly modelSelection?: {
+      provider: string;
+      model: string;
+      options?: unknown;
+    };
   },
 ): OpenCodeCompatibleModelSelection | null {
   if (input.modelSelection?.provider === config.provider) {
@@ -156,53 +226,6 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
     const openCodeRuntime = yield* OpenCodeRuntime;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const isolatedRuntimeRoot = yield* fileSystem.makeTempDirectoryScoped({
-      prefix: `scient-${config.provider}-writer-`,
-    });
-    const isolatedWorkingDirectory = path.join(isolatedRuntimeRoot, "workspace");
-    const isolatedConfigHome = path.join(isolatedRuntimeRoot, "config");
-    const isolatedConfigDirectory = path.join(isolatedRuntimeRoot, "config-directory");
-    const isolatedDataHome = path.join(isolatedRuntimeRoot, "data");
-    const isolatedProviderDataDirectory = path.join(
-      isolatedDataHome,
-      config.cliSpec.dataDirectoryName,
-    );
-    yield* Effect.all(
-      [
-        isolatedWorkingDirectory,
-        isolatedConfigHome,
-        isolatedConfigDirectory,
-        isolatedProviderDataDirectory,
-      ].map((directory) => fileSystem.makeDirectory(directory, { recursive: true })),
-      { concurrency: "unbounded" },
-    );
-    if (process.platform !== "win32") {
-      yield* Effect.all(
-        [
-          isolatedRuntimeRoot,
-          isolatedWorkingDirectory,
-          isolatedConfigHome,
-          isolatedConfigDirectory,
-          isolatedDataHome,
-          isolatedProviderDataDirectory,
-        ].map((directory) => fileSystem.chmod(directory, 0o700)),
-        { concurrency: "unbounded" },
-      );
-    }
-
-    const sourceAuthPath = resolveOpenCodeAuthFilePath({ home: homedir() }, config.cliSpec);
-    const sourceAuth = yield* fileSystem
-      .readFileString(sourceAuthPath)
-      .pipe(Effect.catch(() => Effect.succeed(null)));
-    if (sourceAuth !== null) {
-      const isolatedAuthPath = path.join(isolatedProviderDataDirectory, "auth.json");
-      yield* fileSystem.writeFileString(isolatedAuthPath, sourceAuth);
-      if (process.platform !== "win32") {
-        yield* fileSystem.chmod(isolatedAuthPath, 0o600);
-      }
-    }
-
-    const isolatedConfigPath = path.join(isolatedConfigHome, "opencode.json");
     const hardenedInlineConfig = JSON.stringify({
       autoupdate: false,
       share: "disabled",
@@ -222,26 +245,141 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
       command: {},
       instructions: [],
     });
-    yield* fileSystem.writeFileString(isolatedConfigPath, hardenedInlineConfig);
+    const externalClientRoot = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: `scient-${config.provider}-external-writer-`,
+    });
+    const externalClientDirectory = path.join(externalClientRoot, "workspace");
+    yield* fileSystem.makeDirectory(externalClientDirectory, {
+      recursive: true,
+    });
     if (process.platform !== "win32") {
-      yield* fileSystem.chmod(isolatedConfigPath, 0o600);
+      yield* Effect.all(
+        [externalClientRoot, externalClientDirectory].map((directory) =>
+          fileSystem.chmod(directory, 0o700),
+        ),
+        { concurrency: "unbounded" },
+      );
     }
-    const isolatedProcessEnv: NodeJS.ProcessEnv = { ...process.env };
-    delete isolatedProcessEnv.OPENCODE_CONFIG;
-    delete isolatedProcessEnv.OPENCODE_CONFIG_DIR;
-    delete isolatedProcessEnv.OPENCODE_CONFIG_CONTENT;
-    delete isolatedProcessEnv.KILO_CONFIG;
-    delete isolatedProcessEnv.KILO_CONFIG_DIR;
-    delete isolatedProcessEnv.KILO_CONFIG_CONTENT;
-    delete isolatedProcessEnv.OPENCODE_ENABLE_EXA;
-    delete isolatedProcessEnv.OPENCODE_EXPERIMENTAL;
-    delete isolatedProcessEnv.OPENCODE_EXPERIMENTAL_LSP_TOOL;
-    isolatedProcessEnv.XDG_CONFIG_HOME = isolatedConfigHome;
-    isolatedProcessEnv.XDG_DATA_HOME = isolatedDataHome;
-    isolatedProcessEnv.APPDATA = isolatedDataHome;
-    isolatedProcessEnv.OPENCODE_CONFIG = isolatedConfigPath;
-    isolatedProcessEnv.OPENCODE_CONFIG_DIR = isolatedConfigDirectory;
-    isolatedProcessEnv[config.cliSpec.configContentEnvVar] = hardenedInlineConfig;
+
+    const prepareManagedWriterRuntime = (
+      operation: TextGenerationOperation,
+      serverScope: Scope.Closeable,
+    ) =>
+      Effect.gen(function* () {
+        const runtimeRoot = yield* fileSystem.makeTempDirectory({
+          prefix: `scient-${config.provider}-writer-`,
+        });
+        yield* Scope.addFinalizer(
+          serverScope,
+          fileSystem.remove(runtimeRoot, { recursive: true }).pipe(Effect.catch(() => Effect.void)),
+        );
+        const workingDirectory = path.join(runtimeRoot, "workspace");
+        const configHome = path.join(runtimeRoot, "config");
+        const configDirectory = path.join(runtimeRoot, "config-directory");
+        const dataHome = path.join(runtimeRoot, "data");
+        const cacheHome = path.join(runtimeRoot, "cache");
+        const stateHome = path.join(runtimeRoot, "state");
+        const claudeConfigDirectory = path.join(runtimeRoot, "claude-config");
+        const providerDataDirectory = path.join(dataHome, config.cliSpec.dataDirectoryName);
+        yield* Effect.all(
+          [
+            workingDirectory,
+            configHome,
+            configDirectory,
+            providerDataDirectory,
+            cacheHome,
+            stateHome,
+            claudeConfigDirectory,
+          ].map((directory) => fileSystem.makeDirectory(directory, { recursive: true })),
+          { concurrency: "unbounded" },
+        );
+        if (process.platform !== "win32") {
+          yield* Effect.all(
+            [
+              runtimeRoot,
+              workingDirectory,
+              configHome,
+              configDirectory,
+              dataHome,
+              providerDataDirectory,
+              cacheHome,
+              stateHome,
+              claudeConfigDirectory,
+            ].map((directory) => fileSystem.chmod(directory, 0o700)),
+            { concurrency: "unbounded" },
+          );
+        }
+
+        const sourceAuthPath = resolveOpenCodeAuthFilePath({ home: homedir() }, config.cliSpec);
+        const sourceAuth = yield* fileSystem
+          .readFileString(sourceAuthPath)
+          .pipe(Effect.catch(() => Effect.succeed(null)));
+        if (sourceAuth !== null) {
+          const isolatedAuthPath = path.join(providerDataDirectory, "auth.json");
+          const sanitizedAuth = yield* Effect.try({
+            try: () => sanitizeOpenCodeAuthFile(sourceAuth),
+            catch: (cause) =>
+              new TextGenerationError({
+                operation,
+                detail: `Failed to parse ${config.displayName} credentials for isolated text generation.`,
+                cause,
+              }),
+          });
+          yield* fileSystem.writeFileString(isolatedAuthPath, sanitizedAuth);
+          if (process.platform !== "win32") {
+            yield* fileSystem.chmod(isolatedAuthPath, 0o600);
+          }
+        }
+
+        const configPath = path.join(configHome, "opencode.json");
+        yield* fileSystem.writeFileString(configPath, hardenedInlineConfig);
+        if (process.platform !== "win32") {
+          yield* fileSystem.chmod(configPath, 0o600);
+        }
+        const env: NodeJS.ProcessEnv = { ...process.env };
+        delete env.OPENCODE_CONFIG;
+        delete env.OPENCODE_CONFIG_DIR;
+        delete env.OPENCODE_CONFIG_CONTENT;
+        delete env.KILO_CONFIG;
+        delete env.KILO_CONFIG_DIR;
+        delete env.KILO_CONFIG_CONTENT;
+        delete env.OPENCODE_ENABLE_EXA;
+        delete env.OPENCODE_EXPERIMENTAL;
+        delete env.OPENCODE_EXPERIMENTAL_LSP_TOOL;
+        delete env.OPENCODE_EXPERIMENTAL_WEBSOCKETS;
+        env.XDG_CONFIG_HOME = configHome;
+        env.XDG_DATA_HOME = dataHome;
+        env.XDG_CACHE_HOME = cacheHome;
+        env.XDG_STATE_HOME = stateHome;
+        env.APPDATA = dataHome;
+        env.CLAUDE_CONFIG_DIR = claudeConfigDirectory;
+        env.OPENCODE_CONFIG = configPath;
+        env.OPENCODE_CONFIG_DIR = configDirectory;
+        env[config.cliSpec.configContentEnvVar] = hardenedInlineConfig;
+        env.OPENCODE_AUTO_SHARE = "false";
+        env.OPENCODE_DISABLE_AUTOUPDATE = "1";
+        env.OPENCODE_DISABLE_DEFAULT_PLUGINS = "1";
+        env.OPENCODE_DISABLE_LSP_DOWNLOAD = "1";
+        env.OPENCODE_DISABLE_CLAUDE_CODE = "1";
+        env.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT = "1";
+        env.OPENCODE_DISABLE_CLAUDE_CODE_SKILLS = "1";
+        env.OPENCODE_EXPERIMENTAL_WEBSOCKETS = "false";
+        env.OPENCODE_PURE = "1";
+        env.KILO_DISABLE_DEFAULT_PLUGINS = "1";
+        env.KILO_DISABLE_CODEBASE_INDEXING = "vscode-no-workspace";
+        env.KILO_PURE = "1";
+        return { runtimeRoot, workingDirectory, env };
+      }).pipe(
+        Effect.provideService(Scope.Scope, serverScope),
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation,
+              detail: `Failed to prepare isolated ${config.displayName} text-generation runtime.`,
+              cause,
+            }),
+        ),
+      );
     const idleFiberScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
       Scope.close(scope, Exit.void),
     );
@@ -250,19 +388,27 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
       server: null,
       serverScope: null,
       binaryPath: null,
-      cwd: null,
+      clientDirectory: null,
+      runtimeRoot: null,
       activeRequests: 0,
       idleCloseFiber: null,
     };
 
     const closeSharedServer = Effect.fn("closeSharedServer")(function* () {
       const scope = sharedServerState.serverScope;
+      const runtimeRoot = sharedServerState.runtimeRoot;
       sharedServerState.server = null;
       sharedServerState.serverScope = null;
       sharedServerState.binaryPath = null;
-      sharedServerState.cwd = null;
+      sharedServerState.clientDirectory = null;
+      sharedServerState.runtimeRoot = null;
       if (scope !== null) {
         yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
+      }
+      if (runtimeRoot !== null) {
+        yield* fileSystem
+          .remove(runtimeRoot, { recursive: true })
+          .pipe(Effect.catch(() => Effect.void));
       }
     });
 
@@ -297,8 +443,6 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
 
     const acquireSharedServer = (input: {
       readonly binaryPath: string;
-      readonly cwd: string;
-      readonly env: NodeJS.ProcessEnv;
       readonly operation: TextGenerationOperation;
     }) =>
       sharedServerMutex.withPermit(
@@ -307,13 +451,21 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
 
           const startServer = Effect.fn("startOpenCodeTextGenerationServer")(function* () {
             const serverScope = yield* Scope.make();
+            const isolatedRuntimeExit = yield* Effect.exit(
+              prepareManagedWriterRuntime(input.operation, serverScope),
+            );
+            if (isolatedRuntimeExit._tag === "Failure") {
+              yield* Scope.close(serverScope, Exit.void).pipe(Effect.ignore);
+              return yield* Effect.failCause(isolatedRuntimeExit.cause);
+            }
+            const isolatedRuntime = isolatedRuntimeExit.value;
             const startedExit = yield* Effect.exit(
               openCodeRuntime
                 .startOpenCodeServerProcess({
                   binaryPath: input.binaryPath,
                   cliSpec: config.cliSpec,
-                  cwd: input.cwd,
-                  env: input.env,
+                  cwd: isolatedRuntime.workingDirectory,
+                  env: isolatedRuntime.env,
                 })
                 .pipe(
                   Effect.provideService(Scope.Scope, serverScope),
@@ -336,14 +488,14 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
             return {
               server: startedExit.value,
               serverScope,
+              clientDirectory: isolatedRuntime.workingDirectory,
+              runtimeRoot: isolatedRuntime.runtimeRoot,
             };
           });
 
           const existingServer = sharedServerState.server;
           if (existingServer !== null) {
-            const sameConfigScope =
-              sharedServerState.binaryPath === input.binaryPath &&
-              sharedServerState.cwd === input.cwd;
+            const sameConfigScope = sharedServerState.binaryPath === input.binaryPath;
             if (!sameConfigScope && sharedServerState.activeRequests === 0) {
               yield* closeSharedServer();
             } else {
@@ -351,12 +503,8 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
                 yield* Effect.logWarning(
                   `${config.displayName} shared server config scope mismatch: requested ` +
                     input.binaryPath +
-                    " at " +
-                    input.cwd +
                     " but active server uses " +
                     sharedServerState.binaryPath +
-                    " at " +
-                    sharedServerState.cwd +
                     "; starting a dedicated server for this request",
                 );
                 const dedicated = yield* startServer();
@@ -364,6 +512,8 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
                   server: dedicated.server,
                   shared: false,
                   serverScope: dedicated.serverScope,
+                  clientDirectory: dedicated.clientDirectory,
+                  runtimeRoot: dedicated.runtimeRoot,
                 } satisfies AcquiredOpenCodeTextGenerationServer;
               }
               sharedServerState.activeRequests += 1;
@@ -371,22 +521,28 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
                 server: existingServer,
                 shared: true,
                 serverScope: null,
+                clientDirectory: sharedServerState.clientDirectory!,
+                runtimeRoot: sharedServerState.runtimeRoot!,
               } satisfies AcquiredOpenCodeTextGenerationServer;
             }
           }
 
           return yield* Effect.uninterruptibleMask((restore) =>
             Effect.gen(function* () {
-              const { server, serverScope } = yield* restore(startServer());
+              const { server, serverScope, clientDirectory, runtimeRoot } =
+                yield* restore(startServer());
               sharedServerState.server = server;
               sharedServerState.serverScope = serverScope;
               sharedServerState.binaryPath = input.binaryPath;
-              sharedServerState.cwd = input.cwd;
+              sharedServerState.clientDirectory = clientDirectory;
+              sharedServerState.runtimeRoot = runtimeRoot;
               sharedServerState.activeRequests = 1;
               return {
                 server,
                 shared: true,
                 serverScope: null,
+                clientDirectory,
+                runtimeRoot,
               } satisfies AcquiredOpenCodeTextGenerationServer;
             }),
           );
@@ -400,6 +556,9 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
             if (acquired.serverScope !== null) {
               yield* Scope.close(acquired.serverScope, Exit.void).pipe(Effect.ignore);
             }
+            yield* fileSystem
+              .remove(acquired.runtimeRoot, { recursive: true })
+              .pipe(Effect.catch(() => Effect.void));
             return;
           }
           if (sharedServerState.server !== acquired.server) {
@@ -444,6 +603,14 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
       const binaryPath = providerOptions?.binaryPath?.trim() || config.cliSpec.defaultBinaryPath;
       const serverUrl = providerOptions?.serverUrl?.trim() || "";
       const serverPassword = providerOptions?.serverPassword?.trim() || "";
+      if (serverUrl.length > 0 && SCM_TEXT_GENERATION_OPERATIONS.has(input.operation)) {
+        return yield* new TextGenerationError({
+          operation: input.operation,
+          detail:
+            `Configured external ${config.displayName} servers are not permitted for automatic ` +
+            "source-control writing because Scient cannot verify their sharing or extension policy.",
+        });
+      }
       const providerId = parsedModel.providerID;
       const modelId = parsedModel.modelID;
       const modelOptions = input.modelSelection.options as OpenCodeModelOptions | undefined;
@@ -460,15 +627,21 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
       const fileParts = toOpenCodeFileParts({
         attachments: input.attachments,
         resolveAttachmentPath: (attachment) =>
-          resolveAttachmentPath({ attachmentsDir: serverConfig.attachmentsDir, attachment }),
+          resolveAttachmentPath({
+            attachmentsDir: serverConfig.attachmentsDir,
+            attachment,
+          }),
       });
 
-      const runAgainstServer = (server: Pick<OpenCodeServerConnection, "url">) =>
+      const runAgainstServer = (server: {
+        readonly url: string;
+        readonly clientDirectory: string;
+      }) =>
         Effect.tryPromise({
           try: async () => {
             const client = openCodeRuntime.createOpenCodeSdkClient({
               baseUrl: server.url,
-              directory: isolatedWorkingDirectory,
+              directory: server.clientDirectory,
               ...(serverPassword.length > 0 ? { serverPassword } : {}),
               cliSpec: config.cliSpec,
             });
@@ -538,15 +711,20 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
 
       const rawOutput =
         serverUrl.length > 0
-          ? yield* runAgainstServer({ url: serverUrl })
+          ? yield* runAgainstServer({
+              url: serverUrl,
+              clientDirectory: externalClientDirectory,
+            })
           : yield* Effect.acquireUseRelease(
               acquireSharedServer({
                 binaryPath,
-                cwd: isolatedWorkingDirectory,
-                env: isolatedProcessEnv,
                 operation: input.operation,
               }),
-              (acquired) => runAgainstServer(acquired.server),
+              (acquired) =>
+                runAgainstServer({
+                  url: acquired.server.url,
+                  clientDirectory: acquired.clientDirectory,
+                }),
               releaseSharedServer,
             );
 
