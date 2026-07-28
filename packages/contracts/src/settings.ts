@@ -4,6 +4,7 @@ import { DEFAULT_GIT_TEXT_GENERATION_MODEL } from "./model";
 import { ModelSelection, ProviderKind, ThreadEnvironmentMode } from "./orchestration";
 
 const StringSetting = TrimmedString.check(Schema.isMaxLength(4096));
+const SourceControlCustomInstructions = TrimmedString.check(Schema.isMaxLength(2000));
 const CustomModels = Schema.Array(Schema.String.check(Schema.isMaxLength(256))).pipe(
   Schema.withDecodingDefault(() => []),
 );
@@ -106,6 +107,21 @@ export const TelemetryPrivacyLevel = Schema.Literals([
 ]);
 export type TelemetryPrivacyLevel = typeof TelemetryPrivacyLevel.Type;
 
+export const SourceControlWritingMode = Schema.Literals([
+  "standard",
+  "repository_conventions",
+  "conventional_commits",
+  "custom",
+]);
+export type SourceControlWritingMode = typeof SourceControlWritingMode.Type;
+
+export const SourceControlWritingSettings = Schema.Struct({
+  mode: SourceControlWritingMode.pipe(Schema.withDecodingDefault(() => "standard")),
+  customInstructions: SourceControlCustomInstructions.pipe(Schema.withDecodingDefault(() => "")),
+  followPullRequestTemplate: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+});
+export type SourceControlWritingSettings = typeof SourceControlWritingSettings.Type;
+
 export const ServerSettings = Schema.Struct({
   telemetryPrivacyLevel: TelemetryPrivacyLevel.pipe(Schema.withDecodingDefault(() => "essential")),
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
@@ -118,6 +134,7 @@ export const ServerSettings = Schema.Struct({
       model: DEFAULT_GIT_TEXT_GENERATION_MODEL,
     })),
   ),
+  sourceControlWriting: SourceControlWritingSettings.pipe(Schema.withDecodingDefault(() => ({}))),
   providers: Schema.Struct({
     codex: CodexServerProviderSettings.pipe(Schema.withDecodingDefault(() => ({}))),
     claudeAgent: ClaudeServerProviderSettings.pipe(Schema.withDecodingDefault(() => ({}))),
@@ -154,6 +171,13 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvironmentMode),
   addProjectBaseDirectory: Schema.optionalKey(StringSetting),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
+  sourceControlWriting: Schema.optionalKey(
+    Schema.Struct({
+      mode: Schema.optionalKey(SourceControlWritingMode),
+      customInstructions: Schema.optionalKey(SourceControlCustomInstructions),
+      followPullRequestTemplate: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
   providers: Schema.optionalKey(
     Schema.Struct({
       codex: Schema.optionalKey(

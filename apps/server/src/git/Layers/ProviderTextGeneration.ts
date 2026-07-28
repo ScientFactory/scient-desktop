@@ -35,6 +35,8 @@ const makeProviderTextGeneration = Effect.gen(function* () {
   };
 
   return {
+    preflightSourceControlWriting: (input) =>
+      resolveImplementation(input).preflightSourceControlWriting(input),
     generateCommitMessage: (input) => resolveImplementation(input).generateCommitMessage(input),
     generatePrContent: (input) => resolveImplementation(input).generatePrContent(input),
     generateDiffSummary: (input) => resolveImplementation(input).generateDiffSummary(input),

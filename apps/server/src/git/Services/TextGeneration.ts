@@ -18,6 +18,35 @@ import type {
 
 import type { TextGenerationError } from "../Errors.ts";
 
+export type SourceControlWritingPolicy =
+  | {
+      readonly mode: "repository_conventions";
+      /** Bounded, local-only examples treated as repository evidence rather than instructions. */
+      readonly recentCommitSubjects: ReadonlyArray<string>;
+    }
+  | { readonly mode: "conventional_commits" }
+  | {
+      readonly mode: "custom";
+      /** User-authored style guidance. Baseline safety and output rules remain authoritative. */
+      readonly customInstructions: string;
+    };
+
+export interface SourceControlWritingPreflightInput {
+  readonly cwd: string;
+  readonly operations: ReadonlyArray<
+    "generateCommitMessage" | "generatePrContent" | "generateBranchName"
+  >;
+  readonly codexHomePath?: string;
+  readonly model?: string;
+  readonly modelSelection?: ModelSelection;
+  readonly providerOptions?: ProviderStartOptions;
+}
+
+export interface PullRequestTemplateContext {
+  readonly path: string;
+  readonly content: string;
+}
+
 export interface CommitMessageGenerationInput {
   cwd: string;
   branch: string | null;
@@ -32,6 +61,8 @@ export interface CommitMessageGenerationInput {
   modelSelection?: ModelSelection;
   /** Optional provider startup overrides, such as custom binary paths or server URLs. */
   providerOptions?: ProviderStartOptions;
+  /** Optional Scient-resolved style policy for this single Git action. */
+  policy?: SourceControlWritingPolicy;
 }
 
 export interface CommitMessageGenerationResult {
@@ -55,6 +86,10 @@ export interface PrContentGenerationInput {
   modelSelection?: ModelSelection;
   /** Optional provider startup overrides, such as custom binary paths or server URLs. */
   providerOptions?: ProviderStartOptions;
+  /** Optional Scient-resolved style policy for this single Git action. */
+  policy?: SourceControlWritingPolicy;
+  /** Bounded content read from the exact committed pull-request base tree. */
+  pullRequestTemplate?: PullRequestTemplateContext;
 }
 
 export interface PrContentGenerationResult {
@@ -88,6 +123,8 @@ export interface BranchNameGenerationInput {
   modelSelection?: ModelSelection;
   /** Optional provider startup overrides, such as custom binary paths or server URLs. */
   providerOptions?: ProviderStartOptions;
+  /** Optional Scient-resolved style policy for this branch-name generation. */
+  policy?: SourceControlWritingPolicy;
 }
 
 export interface BranchNameGenerationResult {
@@ -198,6 +235,11 @@ export interface TextGenerationService {
  * TextGenerationShape - Service API for AI-generated Git and thread text.
  */
 export interface TextGenerationShape {
+  /** Validate that the selected writer can safely complete an SCM action before Git is mutated. */
+  readonly preflightSourceControlWriting: (
+    input: SourceControlWritingPreflightInput,
+  ) => Effect.Effect<void, TextGenerationError>;
+
   /**
    * Generate a commit message from staged change context.
    */

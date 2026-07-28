@@ -134,6 +134,11 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
           expect(
             requests.find((request) => request.method === "initialize")?.params?.clientCapabilities,
           ).toHaveProperty("_meta.parameterizedModelPicker");
+          const sessionWorkingDirectory = requests.find(
+            (request) => request.method === "session/new",
+          )?.params?.cwd;
+          expect(sessionWorkingDirectory).toEqual(expect.stringContaining("scient-cursor-text-"));
+          expect(sessionWorkingDirectory).not.toBe(process.cwd());
           expect(
             requests.some(
               (request) =>

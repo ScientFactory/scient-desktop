@@ -35,6 +35,11 @@ describe("ServerSettingsService", () => {
       provider: "codex",
       model: DEFAULT_GIT_TEXT_GENERATION_MODEL,
     });
+    expect(settings.sourceControlWriting).toEqual({
+      mode: "standard",
+      customInstructions: "",
+      followPullRequestTemplate: false,
+    });
   });
 
   it("persists updates and reloads them", async () => {
@@ -49,6 +54,11 @@ describe("ServerSettingsService", () => {
           telemetryPrivacyLevel: "product",
           enableAssistantStreaming: true,
           enableProviderUpdateChecks: false,
+          sourceControlWriting: {
+            mode: "custom",
+            customInstructions: "Prefer concise user outcomes.",
+            followPullRequestTemplate: true,
+          },
           providers: {
             codex: {
               binaryPath: "/usr/local/bin/codex",
@@ -64,17 +74,52 @@ describe("ServerSettingsService", () => {
     expect(result.updated.enableAssistantStreaming).toBe(true);
     expect(result.updated.telemetryPrivacyLevel).toBe("product");
     expect(result.updated.enableProviderUpdateChecks).toBe(false);
+    expect(result.updated.sourceControlWriting).toEqual({
+      mode: "custom",
+      customInstructions: "Prefer concise user outcomes.",
+      followPullRequestTemplate: true,
+    });
     expect(result.updated.providers.codex.binaryPath).toBe("/usr/local/bin/codex");
     expect(result.parsed).toMatchObject({
       telemetryPrivacyLevel: "product",
       enableAssistantStreaming: true,
       enableProviderUpdateChecks: false,
+      sourceControlWriting: {
+        mode: "custom",
+        customInstructions: "Prefer concise user outcomes.",
+        followPullRequestTemplate: true,
+      },
       providers: {
         codex: {
           binaryPath: "/usr/local/bin/codex",
           customModels: ["gpt-custom"],
         },
       },
+    });
+  });
+
+  it("merges partial source control writing updates without erasing sibling choices", async () => {
+    const settings = await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsService;
+        yield* service.updateSettings({
+          sourceControlWriting: {
+            mode: "custom",
+            customInstructions: "Prefer user outcomes.",
+          },
+        });
+        return yield* service.updateSettings({
+          sourceControlWriting: {
+            followPullRequestTemplate: true,
+          },
+        });
+      }).pipe(Effect.provide(ServerSettingsService.layerTest())),
+    );
+
+    expect(settings.sourceControlWriting).toEqual({
+      mode: "custom",
+      customInstructions: "Prefer user outcomes.",
+      followPullRequestTemplate: true,
     });
   });
 
