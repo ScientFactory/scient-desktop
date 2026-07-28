@@ -1943,7 +1943,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(result.pr.number).toBe(88);
       expect(capturedTemplate).toEqual({
         path: ".github/pull_request_template.md",
-        content: "## User effect\n\n## Verification",
+        content: "## User effect\n\n## Verification\n",
       });
       expect(
         ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),
