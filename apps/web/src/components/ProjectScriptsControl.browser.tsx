@@ -5,7 +5,7 @@
 import "../index.css";
 
 import { type ProjectScript, type ResolvedKeybindingsConfig } from "@synara/contracts";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
@@ -86,6 +86,48 @@ describe("ProjectScriptsControl", () => {
     await page.getByLabelText("Script actions").click();
     await expect.poll(() => document.body.textContent).toContain("Setup (setup)");
     await expect.poll(() => document.body.textContent).toContain("Add action");
+  });
+
+  it("closes the actions menu before opening the edit dialog", async () => {
+    const setupScript: ProjectScript = {
+      id: "setup",
+      name: "Setup",
+      command: "bun install",
+      icon: "configure",
+      runOnWorktreeCreate: true,
+    };
+    await using control = await mountProjectScriptsControl({
+      scripts: [setupScript],
+      preferredScriptId: "setup",
+    });
+
+    await page.getByLabelText("Script actions").click();
+    await expect
+      .poll(() => document.querySelector<HTMLButtonElement>('button[aria-label="Edit Setup"]'))
+      .not.toBeNull();
+    const editButton = document.querySelector<HTMLButtonElement>('button[aria-label="Edit Setup"]');
+    if (!editButton) {
+      throw new Error("Expected the Edit Setup button to be present");
+    }
+    await userEvent.click(editButton);
+
+    await expect.poll(() => document.body.textContent).toContain("Edit Action");
+    await expect.poll(() => document.activeElement?.getAttribute("id")).toBe("script-name");
+    await expect
+      .poll(() => document.querySelector<HTMLButtonElement>('button[aria-label="Edit Setup"]'))
+      .toBeNull();
+    expect(control.onRunScript).not.toHaveBeenCalled();
+
+    await userEvent.keyboard("{Escape}");
+    await expect.poll(() => document.body.textContent).not.toContain("Edit Action");
+    expect(document.querySelector<HTMLButtonElement>('button[aria-label="Edit Setup"]')).toBeNull();
+
+    await page.getByLabelText("Script actions").click();
+    await expect
+      .poll(() => document.querySelector<HTMLButtonElement>('button[aria-label="Edit Setup"]'))
+      .not.toBeNull();
+    await page.getByText("Setup (setup)").click();
+    expect(control.onRunScript).toHaveBeenCalledWith(setupScript);
   });
 
   it("keeps the edit dialog delete action legible", async () => {
