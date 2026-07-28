@@ -31,6 +31,10 @@ import {
   type AuthorizedGitPullInput,
   type AuthorizedGitRunStackedActionInput,
 } from "@synara/shared/gitMutationRpc";
+import {
+  GIT_WORKING_TREE_DIFF_STATS_METHOD,
+  GitDiffStatsRpcGroup,
+} from "@synara/shared/gitDiffStatsRpc";
 
 import { AutomationService } from "./automation/Services/AutomationService";
 import { authErrorResponse, makeEffectAuthRequest } from "./auth/http";
@@ -95,7 +99,8 @@ import { cloneProjectSource, getRepositorySourceStatuses } from "./projectSource
 
 const MAX_DIAGNOSTIC_CHILD_PROCESSES = 80;
 const MAX_DIAGNOSTIC_ARGS_CHARS = 500;
-const ScientWsRpcGroup = LiveHtmlPreviewRpcGroup.merge(GitMutationRpcGroup);
+const ScientWsRpcGroup =
+  LiveHtmlPreviewRpcGroup.merge(GitMutationRpcGroup).merge(GitDiffStatsRpcGroup);
 
 // Relative subdirectories scaffolded under a freshly created chat container workspace root.
 // The Studio layout lives in studioWorkspaceScaffold.ts alongside its instruction files.
@@ -864,7 +869,7 @@ export const makeWsRpcLayer = () =>
           rpcEffect(gitStatusBroadcaster.getStatus(input), "Failed to read git status"),
         [WS_METHODS.gitReadWorkingTreeDiff]: (input) =>
           rpcEffect(gitManager.readWorkingTreeDiff(input), "Failed to read working tree diff"),
-        [WS_METHODS.gitWorkingTreeDiffStats]: (input) =>
+        [GIT_WORKING_TREE_DIFF_STATS_METHOD]: (input) =>
           rpcEffect(
             gitManager.readWorkingTreeDiffStats(input),
             "Failed to read working tree diff stats",

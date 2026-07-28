@@ -17,7 +17,6 @@ import {
   GitPullRequestSnapshotResult,
   GitReadWorkingTreeDiffInput,
   GitReadWorkingTreeDiffResult,
-  GitWorkingTreeDiffStatsResult,
   GitResolvePullRequestResult,
   GitRunStackedActionResult,
   GitStatusInput,
@@ -26,6 +25,7 @@ import {
   GitSummarizeDiffResult,
 } from "@synara/contracts";
 import type { AuthorizedGitRunStackedActionInput } from "@synara/shared/gitMutationRpc";
+import type { GitWorkingTreeDiffStatsResult } from "@synara/shared/gitDiffStatsRpc";
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 import type { GitManagerServiceError } from "../Errors.ts";

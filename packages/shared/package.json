@@ -20,6 +20,10 @@
       "types": "./src/gitMutationRpc.ts",
       "import": "./src/gitMutationRpc.ts"
     },
+    "./gitDiffStatsRpc": {
+      "types": "./src/gitDiffStatsRpc.ts",
+      "import": "./src/gitDiffStatsRpc.ts"
+    },
     "./githubAvatar": {
       "types": "./src/githubAvatar.ts",
       "import": "./src/githubAvatar.ts"

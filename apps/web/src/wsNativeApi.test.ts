@@ -24,6 +24,7 @@ import {
   type ServerProviderStatus,
 } from "@synara/contracts";
 import { LIVE_HTML_PREVIEW_PREPARE_V1_METHOD } from "@synara/shared/liveHtmlPreviewTransport";
+import { GIT_WORKING_TREE_DIFF_STATS_METHOD } from "@synara/shared/gitDiffStatsRpc";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const requestMock = vi.fn<(...args: Array<unknown>) => Promise<unknown>>();
@@ -139,7 +140,7 @@ describe("wsNativeApi", () => {
     requestMock.mockResolvedValue(result);
 
     await expect(api.git.workingTreeDiffStats(input)).resolves.toEqual(result);
-    expect(requestMock).toHaveBeenCalledWith(WS_METHODS.gitWorkingTreeDiffStats, input);
+    expect(requestMock).toHaveBeenCalledWith(GIT_WORKING_TREE_DIFF_STATS_METHOD, input);
   });
 
   it("seeds renderer transport state from the new transport immediately", async () => {

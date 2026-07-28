@@ -9,6 +9,7 @@ import type {
   AuthorizedGitPullInput,
   AuthorizedGitRunStackedActionInput,
 } from "@synara/shared/gitMutationRpc";
+import { asGitDiffStatsNativeApi } from "@synara/shared/gitDiffStatsRpc";
 import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureNativeApi } from "../nativeApi";
 import { buildPatchCacheKey } from "./diffRendering";
@@ -264,7 +265,7 @@ export function gitWorkingTreeDiffStatsQueryOptions(input: {
   return queryOptions({
     queryKey: gitQueryKeys.workingTreeDiffStats(input.cwd, scope),
     queryFn: async () => {
-      const api = ensureNativeApi();
+      const api = asGitDiffStatsNativeApi(ensureNativeApi());
       if (!input.cwd) {
         throw new Error("Working tree diff stats are unavailable.");
       }
