@@ -3433,6 +3433,10 @@ describe("ProviderCommandReactor", () => {
   it("renames temporary worktree branches and keeps associated worktree metadata in sync", async () => {
     const harness = await createHarness({
       serverSettings: {
+        textGenerationModelSelection: {
+          provider: "opencode",
+          model: "openai/gpt-5.4-mini",
+        },
         sourceControlWriting: {
           mode: "custom",
           customInstructions: "Prefer short repository nouns.",
@@ -3479,6 +3483,10 @@ describe("ProviderCommandReactor", () => {
 
     await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
     expect(harness.generateBranchName.mock.calls[0]?.[0]).toMatchObject({
+      modelSelection: {
+        provider: "opencode",
+        model: "openai/gpt-5.4-mini",
+      },
       policy: {
         mode: "custom",
         customInstructions: "Prefer short repository nouns.",
@@ -3517,7 +3525,7 @@ describe("ProviderCommandReactor", () => {
     );
   });
 
-  it("falls back to prompt-based worktree branch names when the provider cannot generate one", async () => {
+  it("falls back to prompt-based worktree branch names when the configured writer fails", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
 
@@ -3557,7 +3565,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.renameBranch.mock.calls.length === 1);
-    expect(harness.generateBranchName).not.toHaveBeenCalled();
+    expect(harness.generateBranchName).toHaveBeenCalledTimes(1);
     expect(harness.renameBranch.mock.calls[0]?.[0]).toMatchObject({
       oldBranch: `${WORKTREE_BRANCH_PREFIX}/cb661f0d`,
       newBranch: `${WORKTREE_BRANCH_PREFIX}/fix-provider-startup-timeouts`,

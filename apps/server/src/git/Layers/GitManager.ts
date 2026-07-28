@@ -1123,7 +1123,6 @@ export const makeGitManager = Effect.gen(function* () {
                 return {
                   ...fallback,
                   subject,
-                  ...(input.includeBranch ? { branch: sanitizeFeatureBranchName(subject) } : {}),
                 };
               }),
             ),

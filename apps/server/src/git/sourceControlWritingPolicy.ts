@@ -47,7 +47,6 @@ const readRecentCommitSubjects = (input: {
         }
         return [...uniqueSubjects];
       }),
-      Effect.catch(() => Effect.succeed([])),
     );
 
 export const resolveSourceControlWritingPolicy = Effect.fn("resolveSourceControlWritingPolicy")(
@@ -68,7 +67,14 @@ export const resolveSourceControlWritingPolicy = Effect.fn("resolveSourceControl
           : ({ mode: "custom", customInstructions } satisfies SourceControlWritingPolicy);
       }
       case "repository_conventions": {
-        const recentCommitSubjects = yield* readRecentCommitSubjects(input);
+        const recentCommitSubjects = yield* readRecentCommitSubjects(input).pipe(
+          Effect.catch(() =>
+            Effect.logWarning(
+              "source-control writing could not read local commit subjects; using standard behavior",
+            ).pipe(Effect.as(null)),
+          ),
+        );
+        if (recentCommitSubjects === null) return undefined;
         return recentCommitSubjects.length === 0
           ? undefined
           : ({

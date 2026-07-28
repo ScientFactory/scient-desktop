@@ -1662,12 +1662,12 @@ const make = Effect.gen(function* () {
         ).pipe(Effect.as(DEFAULT_SERVER_SETTINGS)),
       ),
     );
-    const textGenerationInput = yield* resolveThreadTextGenerationInput({
-      threadId: input.threadId,
-      ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
-      ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
-      configuredSettings: sourceControlSettings,
-    });
+    // SCM writing has its own configured provider boundary. Never send its custom policy or
+    // repository evidence to the active chat provider merely because this rename follows a turn.
+    const textGenerationInput = resolveTextGenerationInputForSelection(
+      sourceControlSettings.textGenerationModelSelection,
+      input.providerOptions ?? threadProviderOptions.get(input.threadId),
+    );
     if (!textGenerationInput) {
       const targetBranch = buildGeneratedWorktreeBranchName(
         input.messageText.trim() || attachmentTitleSeed(attachments[0]) || "",
@@ -1710,14 +1710,15 @@ const make = Effect.gen(function* () {
     yield* textGeneration.generateBranchName(branchNameGenerationInput).pipe(
       Effect.catch((error) =>
         Effect.logWarning(
-          "provider command reactor failed to generate worktree branch name; skipping rename",
+          "provider command reactor failed to generate worktree branch name; using deterministic fallback",
           { threadId: input.threadId, cwd, oldBranch, reason: error.message },
-        ),
+        ).pipe(Effect.as(null)),
       ),
       Effect.flatMap((generated) => {
-        if (!generated) return Effect.void;
-
-        const targetBranch = buildGeneratedWorktreeBranchName(generated.branch);
+        const targetBranch = buildGeneratedWorktreeBranchName(
+          generated?.branch ??
+            (input.messageText.trim() || attachmentTitleSeed(attachments[0]) || ""),
+        );
         return renameTemporaryWorktreeBranch({
           threadId: input.threadId,
           cwd,

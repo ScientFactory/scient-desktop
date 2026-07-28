@@ -1,5 +1,8 @@
 import { Effect, Layer, Option, Ref, Schema } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import type { CursorModelSelection, ProviderStartOptions } from "@synara/contracts";
 import { sanitizeGeneratedThreadTitle } from "@synara/shared/chatThreads";
@@ -90,7 +93,6 @@ const makeCursorTextGeneration = Effect.gen(function* () {
 
   const runCursorJson = <S extends Schema.Top>({
     operation,
-    cwd,
     prompt,
     outputSchemaJson,
     rawTextFallback,
@@ -107,12 +109,31 @@ const makeCursorTextGeneration = Effect.gen(function* () {
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
       const outputRef = yield* Ref.make("");
+      const isolatedWorkingDirectory = yield* Effect.acquireRelease(
+        Effect.tryPromise({
+          try: () => mkdtemp(path.join(tmpdir(), "scient-cursor-text-")),
+          catch: (cause) =>
+            mapCursorAcpError(
+              operation,
+              "Failed to create an isolated Cursor text-generation workspace.",
+              cause,
+            ),
+        }),
+        (directory) =>
+          Effect.promise(() => rm(directory, { recursive: true, force: true })).pipe(Effect.ignore),
+      );
       const runtime = yield* makeCursorAcpRuntime({
         cursorSettings: resolveCursorSettings(providerOptions),
         childProcessSpawner: commandSpawner,
-        cwd,
+        cwd: isolatedWorkingDirectory,
         clientInfo: { name: "synara-git-text", version: "0.0.0" },
       });
+
+      // Text generation is a pure prompt-to-JSON operation. Reject every ACP tool permission;
+      // repository-controlled evidence must never turn this helper into an agentic read path.
+      yield* runtime.handleRequestPermission(() =>
+        Effect.succeed({ outcome: { outcome: "cancelled" } }),
+      );
 
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;

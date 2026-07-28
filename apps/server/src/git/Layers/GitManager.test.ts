@@ -910,7 +910,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
-  it.effect("falls back to a derived feature branch when text generation fails", () =>
+  it.effect("keeps conventional syntax out of a fallback feature branch name", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("synara-git-manager-");
       yield* initRepo(repoDir);
@@ -920,6 +920,9 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       fs.writeFileSync(path.join(repoDir, "README.md"), "hello\nfeature-fallback\n");
 
       const { manager } = yield* makeManager({
+        serverSettings: {
+          sourceControlWriting: { mode: "conventional_commits" },
+        },
         textGeneration: {
           generateCommitMessage: () =>
             Effect.fail(
@@ -940,7 +943,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(result.branch.status).toBe("created");
       expect(result.branch.name).toBe("feature/update-readme-md");
       expect(result.commit.status).toBe("created");
-      expect(result.commit.subject).toBe("Update README.md");
+      expect(result.commit.subject).toBe("chore: Update README.md");
       expect(result.push.status).toBe("pushed");
       expect(
         yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]).pipe(

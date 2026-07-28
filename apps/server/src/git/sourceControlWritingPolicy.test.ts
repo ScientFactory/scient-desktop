@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Logger } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
 import type { GitCoreShape } from "./Services/GitCore.ts";
@@ -79,7 +79,7 @@ describe("source control writing policy", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("reads only bounded local commit subjects and treats unavailable history as standard", async () => {
+  it("reads only bounded local commit subjects and distinguishes empty from unavailable history", async () => {
     const execute = makeExecute(
       `${"a".repeat(200)}\nfeat: add search\nfeat: add search\nsubject\u0000with-control\n`,
     );
@@ -111,6 +111,10 @@ describe("source control writing policy", () => {
     const unavailableExecute = vi.fn<GitCoreShape["execute"]>(() =>
       Effect.fail({ _tag: "GitCommandError" } as never),
     );
+    const warningMessages: string[] = [];
+    const warningLogger = Logger.make(({ message }) => {
+      warningMessages.push(String(message));
+    });
     await expect(
       Effect.runPromise(
         resolveSourceControlWritingPolicy({
@@ -121,8 +125,38 @@ describe("source control writing policy", () => {
             followPullRequestTemplate: false,
           },
           execute: unavailableExecute,
-        }),
+        }).pipe(Effect.provide(Logger.layer([warningLogger], { mergeWithExisting: false }))),
       ),
     ).resolves.toBeUndefined();
+    expect(warningMessages).toContain(
+      "source-control writing could not read local commit subjects; using standard behavior",
+    );
+
+    const emptyMessages: string[] = [];
+    await expect(
+      Effect.runPromise(
+        resolveSourceControlWritingPolicy({
+          cwd: "/repo",
+          settings: {
+            mode: "repository_conventions",
+            customInstructions: "",
+            followPullRequestTemplate: false,
+          },
+          execute: makeExecute(""),
+        }).pipe(
+          Effect.provide(
+            Logger.layer(
+              [
+                Logger.make(({ message }) => {
+                  emptyMessages.push(String(message));
+                }),
+              ],
+              { mergeWithExisting: false },
+            ),
+          ),
+        ),
+      ),
+    ).resolves.toBeUndefined();
+    expect(emptyMessages).toEqual([]);
   });
 });

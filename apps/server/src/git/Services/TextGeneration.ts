@@ -18,13 +18,18 @@ import type {
 
 import type { TextGenerationError } from "../Errors.ts";
 
-export interface SourceControlWritingPolicy {
-  readonly mode: "repository_conventions" | "conventional_commits" | "custom";
-  /** User-authored style guidance. Baseline safety and output rules remain authoritative. */
-  readonly customInstructions?: string | undefined;
-  /** Bounded, local-only examples treated as repository evidence rather than instructions. */
-  readonly recentCommitSubjects?: ReadonlyArray<string> | undefined;
-}
+export type SourceControlWritingPolicy =
+  | {
+      readonly mode: "repository_conventions";
+      /** Bounded, local-only examples treated as repository evidence rather than instructions. */
+      readonly recentCommitSubjects: ReadonlyArray<string>;
+    }
+  | { readonly mode: "conventional_commits" }
+  | {
+      readonly mode: "custom";
+      /** User-authored style guidance. Baseline safety and output rules remain authoritative. */
+      readonly customInstructions: string;
+    };
 
 export interface PullRequestTemplateContext {
   readonly path: string;

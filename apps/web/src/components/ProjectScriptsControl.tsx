@@ -168,6 +168,7 @@ export default function ProjectScriptsControl({
   onDeleteScript,
 }: ProjectScriptsControlProps) {
   const addScriptFormId = React.useId();
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [editingScriptId, setEditingScriptId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [name, setName] = useState("");
@@ -259,6 +260,7 @@ export default function ProjectScriptsControl({
   };
 
   const openEditDialog = (script: ProjectScript) => {
+    setActionsMenuOpen(false);
     setEditingScriptId(script.id);
     setName(script.name);
     setCommand(script.command);
@@ -302,7 +304,11 @@ export default function ProjectScriptsControl({
             </span>
           </ChatHeaderButton>
           <ChatHeaderSplitDivider />
-          <Menu highlightItemOnHover={false}>
+          <Menu
+            highlightItemOnHover={false}
+            open={actionsMenuOpen}
+            onOpenChange={setActionsMenuOpen}
+          >
             <MenuTrigger
               render={
                 <ChatHeaderIconButton

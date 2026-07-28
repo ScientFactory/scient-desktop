@@ -85,31 +85,37 @@ function normalizeCodexError(
 function sanitizeCodexConfigForTextGeneration(content: string): string {
   const lines = content.split(/\r?\n/g);
   const sanitized: string[] = [];
-  let skippingSkillsConfig = false;
+  let skippingBlockedTable = false;
 
   for (const line of lines) {
     const trimmed = line.trim();
 
-    if (trimmed.startsWith("[[")) {
-      if (trimmed === "[[skills.config]]") {
-        skippingSkillsConfig = true;
-        continue;
-      }
-
-      skippingSkillsConfig = false;
-      sanitized.push(line);
-      continue;
-    }
-
     if (trimmed.startsWith("[")) {
-      skippingSkillsConfig = false;
+      const normalizedHeader = trimmed.toLowerCase();
+      skippingBlockedTable =
+        normalizedHeader === "[[skills.config]]" ||
+        normalizedHeader === "[hooks]" ||
+        normalizedHeader.startsWith("[mcp_servers.") ||
+        normalizedHeader.startsWith("[apps.") ||
+        normalizedHeader.startsWith("[agents.") ||
+        normalizedHeader.startsWith("[plugins.");
+      if (skippingBlockedTable) continue;
       sanitized.push(line);
       continue;
     }
 
-    if (!skippingSkillsConfig) {
-      sanitized.push(line);
-    }
+    if (skippingBlockedTable) continue;
+
+    const assignmentKey = trimmed.split("=", 1)[0]?.trim().toLowerCase() ?? "";
+    const blockedAssignment =
+      assignmentKey === "notify" ||
+      assignmentKey === "developer_instructions" ||
+      assignmentKey === "model_instructions_file" ||
+      assignmentKey === "experimental_compact_prompt_file" ||
+      ["mcp_servers", "apps", "agents", "hooks", "plugins"].some(
+        (prefix) => assignmentKey === prefix || assignmentKey.startsWith(`${prefix}.`),
+      );
+    if (!blockedAssignment) sanitized.push(line);
   }
 
   return sanitized.join("\n").trimEnd();
@@ -269,7 +275,6 @@ const makeCodexTextGeneration = Effect.gen(function* () {
 
   const runCodexJson = <S extends Schema.Top>({
     operation,
-    cwd,
     prompt,
     outputSchemaJson,
     imagePaths = [],
@@ -300,6 +305,20 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       );
       const outputPath = yield* writeTempFile(operation, "codex-output", "");
       const isolatedCodexHome = yield* prepareIsolatedCodexHome(operation, resolvedCodexHomePath);
+      const isolatedWorkingDirectory = path.join(
+        tempDir,
+        `synara-codex-work-${process.pid}-${randomUUID()}`,
+      );
+      yield* fileSystem.makeDirectory(isolatedWorkingDirectory, { recursive: true }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation,
+              detail: "Failed to create an isolated Codex text-generation workspace.",
+              cause,
+            }),
+        ),
+      );
 
       const runCodexCommand = Effect.gen(function* () {
         const env = yield* Effect.promise(() =>
@@ -311,6 +330,20 @@ const makeCodexTextGeneration = Effect.gen(function* () {
           "--skip-git-repo-check",
           "--config",
           'approval_policy="never"',
+          "--config",
+          "features.shell_tool=false",
+          "--config",
+          "features.remote_plugin=false",
+          "--config",
+          "features.skill_mcp_dependency_install=false",
+          "--config",
+          "agents.enabled=false",
+          "--config",
+          "apps._default.enabled=false",
+          "--config",
+          'web_search="disabled"',
+          "--config",
+          "check_for_update_on_startup=false",
           "-s",
           "read-only",
           "--model",
@@ -324,9 +357,12 @@ const makeCodexTextGeneration = Effect.gen(function* () {
           ...imagePaths.flatMap((imagePath) => ["--image", imagePath]),
           "-",
         ];
-        const prepared = prepareWindowsSafeProcess(codexBinaryPath, args, { cwd, env });
+        const prepared = prepareWindowsSafeProcess(codexBinaryPath, args, {
+          cwd: isolatedWorkingDirectory,
+          env,
+        });
         const command = ChildProcess.make(prepared.command, prepared.args, {
-          cwd,
+          cwd: isolatedWorkingDirectory,
           env,
           shell: prepared.shell,
           ...(prepared.windowsVerbatimArguments ? { windowsVerbatimArguments: true } : {}),
@@ -386,6 +422,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
           safeUnlink(schemaPath),
           safeUnlink(outputPath),
           safeRemoveDirectory(isolatedCodexHome.homePath),
+          safeRemoveDirectory(isolatedWorkingDirectory),
           ...cleanupPaths.map((filePath) => safeUnlink(filePath)),
         ],
         {
