@@ -25,6 +25,7 @@ export function makeAgentGatewaySessionRegistry(options?: {
   const randomId = options?.randomId ?? randomUUID;
   const sessions = new Map<string, AgentGatewaySessionIdentity>();
   const sessionsByKey = new Map<string, AgentGatewaySessionIdentity>();
+  const revocationListeners = new Set<(identity: AgentGatewaySessionIdentity) => void>();
 
   return {
     issue: (threadId, provider) => {
@@ -81,11 +82,16 @@ export function makeAgentGatewaySessionRegistry(options?: {
         identity.provider === authority.provider
       );
     },
+    subscribeRevocations: (listener) => {
+      revocationListeners.add(listener);
+      return () => revocationListeners.delete(listener);
+    },
     revoke: (token) => {
       const identity = sessions.get(token);
       if (!identity) return;
       sessions.delete(token);
       sessionsByKey.delete(identity.sessionKey);
+      for (const listener of revocationListeners) listener(identity);
     },
   };
 }

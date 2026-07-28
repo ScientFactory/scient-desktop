@@ -67,6 +67,7 @@ export const makeAgentGatewayCredentials = Effect.gen(function* () {
     verifySession: sessionRegistry.verify,
     bindWriteAuthority: sessionRegistry.bindWriteAuthority,
     verifyWriteAuthority: sessionRegistry.verifyWriteAuthority,
+    subscribeSessionRevocations: sessionRegistry.subscribeRevocations,
     revokeSessionToken: sessionRegistry.revoke,
     connectionForThread: (threadId, provider) => ({
       url: endpoint.url,

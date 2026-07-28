@@ -7,7 +7,6 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   ModelSelection,
-  MessageDispatchOrigin,
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationGetFullThreadDiffInput,
@@ -49,13 +48,6 @@ const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpda
 const decodeModelSelection = Schema.decodeUnknownEffect(ModelSelection);
 const decodeClientOrchestrationCommand = Schema.decodeUnknownEffect(ClientOrchestrationCommand);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
-
-it.effect("accepts agent as an honest server-owned message dispatch origin", () =>
-  Effect.gen(function* () {
-    const origin = yield* Schema.decodeUnknownEffect(MessageDispatchOrigin)("agent");
-    assert.strictEqual(origin, "agent");
-  }),
-);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadPullRequest = Schema.decodeUnknownEffect(OrchestrationThreadPullRequest);
 

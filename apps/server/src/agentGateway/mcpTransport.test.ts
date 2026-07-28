@@ -273,7 +273,8 @@ describe("makeAgentGatewayMcpTransport JSON-RPC handling", () => {
     expect(serialized).not.toContain("/Users/alice/private/.env");
     expect(protectedLogs.join("\n")).toContain('toolName="scient_defect"');
     expect(protectedLogs.join("\n")).toContain("[redacted]");
-    expect(protectedLogs.join("\n")).toContain("/Users/alice/private/.env");
+    expect(protectedLogs.join("\n")).toContain("[redacted-path]");
+    expect(protectedLogs.join("\n")).not.toContain("/Users/alice/private/.env");
     expect(protectedLogs.join("\n")).not.toContain("sk-sentinel");
   });
 

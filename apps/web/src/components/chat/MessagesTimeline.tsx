@@ -248,7 +248,6 @@ const USER_TURN_MARKER_PRESENTATION: Record<
   { readonly Icon: LucideIcon; readonly label: string }
 > = {
   automation: { Icon: ClockIcon, label: "Sent via Automation" },
-  agent: { Icon: BotIcon, label: "Sent by Agent" },
   steer: { Icon: SteerIcon, label: "Steering conversation" },
 };
 

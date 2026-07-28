@@ -107,6 +107,21 @@ describe("makeAgentGatewaySessionRegistry", () => {
   });
 
   describe("revoke", () => {
+    it("notifies lifecycle subscribers exactly once with the revoked session", () => {
+      const registry = makeRegistry();
+      const issued = registry.issue(THREAD, "claudeAgent");
+      const revoked: string[] = [];
+      const unsubscribe = registry.subscribeRevocations((identity) => {
+        revoked.push(identity.sessionKey);
+      });
+
+      registry.revoke(issued.token);
+      registry.revoke(issued.token);
+      unsubscribe();
+
+      expect(revoked).toEqual([issued.sessionKey]);
+    });
+
     it("clears both the token and sessionKey maps", () => {
       const registry = makeRegistry();
       const issued = registry.issue(THREAD, "claudeAgent");

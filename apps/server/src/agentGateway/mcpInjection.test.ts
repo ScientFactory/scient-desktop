@@ -8,7 +8,7 @@ import {
 } from "./mcpInjection.ts";
 
 describe("exported constants", () => {
-  it("SCIENT_MCP_SERVER_NAME is 'synara'", () => {
+  it("SCIENT_MCP_SERVER_NAME is 'scient'", () => {
     expect(SCIENT_MCP_SERVER_NAME).toBe("scient");
   });
 

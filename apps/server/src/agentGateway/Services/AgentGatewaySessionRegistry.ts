@@ -44,6 +44,9 @@ export interface AgentGatewaySessionRegistryShape {
   readonly verify: (token: string) => AgentGatewaySessionIdentity | null;
   readonly bindWriteAuthority: (token: string, turnId: string) => AgentGatewayWriteAuthority | null;
   readonly verifyWriteAuthority: (authority: AgentGatewayWriteAuthority) => boolean;
+  readonly subscribeRevocations: (
+    listener: (identity: AgentGatewaySessionIdentity) => void,
+  ) => () => void;
   readonly revoke: (token: string) => void;
 }
 

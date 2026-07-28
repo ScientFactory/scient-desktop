@@ -682,49 +682,6 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("Steering conversation");
   });
 
-  it("renders a 'Sent by Agent' chip above agent-dispatched user messages", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
-    const markup = renderToStaticMarkup(
-      <MessagesTimeline
-        hasMessages
-        isWorking={false}
-        activeTurnInProgress={false}
-        activeTurnStartedAt={null}
-        timelineEntries={[
-          {
-            id: "entry-agent-user-message",
-            kind: "message",
-            createdAt: "2026-03-17T19:12:28.000Z",
-            message: {
-              id: MessageId.makeUnsafe("message-agent-user"),
-              role: "user",
-              text: "hello from another agent",
-              dispatchOrigin: "agent",
-              createdAt: "2026-03-17T19:12:28.000Z",
-              streaming: false,
-            },
-          },
-        ]}
-        turnDiffSummaryByAssistantMessageId={new Map()}
-        nowIso="2026-03-17T19:12:30.000Z"
-        expandedWorkGroups={{}}
-        onToggleWorkGroup={() => {}}
-        onOpenTurnDiff={() => {}}
-        revertTurnCountByUserMessageId={new Map()}
-        onRevertUserMessage={() => {}}
-        isRevertingCheckpoint={false}
-        onImageExpand={() => {}}
-        markdownCwd={undefined}
-        resolvedTheme="light"
-        timestampFormat="locale"
-        workspaceRoot={undefined}
-      />,
-    );
-
-    expect(markup).toContain("Sent by Agent");
-    expect(markup).not.toContain("Sent via Automation");
-  });
-
   it("pushes the steering chip higher when the user message has chips or photos", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

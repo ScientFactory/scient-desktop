@@ -47,10 +47,13 @@ import {
 /**
  * Cap on the idempotency map. Each provider runtime is short-lived and drives at
  * human pace, so a few hundred remembered sends comfortably covers realistic
- * retry windows while bounding memory. Eviction is insertion-order (oldest
- * first), which for a retry burst keeps the most recently issued ids.
+ * retry windows while bounding memory. Completed claims live for the exact
+ * provider session and are cleared on credential revocation; they are never
+ * evicted while that session remains live, preserving request-id semantics.
  */
 const SEND_DEDUP_MAX_ENTRIES = 512;
+const SEND_MAX_PENDING_PER_SESSION = 16;
+const SEND_MAX_PENDING_BYTES_PER_SESSION = 4 * 1024 * 1024;
 const SEND_REQUEST_ID_MAX_UTF8_BYTES = 256;
 const SEND_MESSAGE_MAX_UTF8_BYTES = 512 * 1024;
 
@@ -97,6 +100,9 @@ export interface ThreadWriteToolsInput {
   readonly now?: () => string;
   /** Injectable id source for non-idempotent commands. Defaults to a UUID. */
   readonly randomId?: () => string;
+  readonly subscribeSessionRevocations?: (
+    listener: (identity: { readonly sessionKey: string }) => void,
+  ) => () => void;
 }
 
 export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArray<ToolEntry> {
@@ -104,26 +110,26 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
   const now = input.now ?? (() => new Date().toISOString());
   const randomId = input.randomId ?? randomUUID;
 
-  const sendDedup = new Map<string, SendDedupEntry>();
-  const rememberSend = (key: string, entry: SendDedupEntry) => {
-    sendDedup.set(key, entry);
-    while (sendDedup.size > SEND_DEDUP_MAX_ENTRIES) {
-      const oldestCompleted = [...sendDedup].find(
-        ([, candidate]) => candidate.state === "completed",
-      );
-      if (oldestCompleted === undefined) break;
-      sendDedup.delete(oldestCompleted[0]);
-    }
+  const sendDedupBySession = new Map<string, Map<string, SendDedupEntry>>();
+  const pendingBySession = new Map<string, { count: number; bytes: number }>();
+  const getSessionDedup = (sessionKey: string) => {
+    const existing = sendDedupBySession.get(sessionKey);
+    if (existing !== undefined) return existing;
+    const created = new Map<string, SendDedupEntry>();
+    sendDedupBySession.set(sessionKey, created);
+    return created;
   };
+  void input.subscribeSessionRevocations?.((identity) => {
+    sendDedupBySession.delete(identity.sessionKey);
+    pendingBySession.delete(identity.sessionKey);
+  });
 
-  const reserveSend = (key: string, fingerprint: string): PendingSendDedupEntry | null => {
-    if (sendDedup.size >= SEND_DEDUP_MAX_ENTRIES) {
-      const oldestCompleted = [...sendDedup].find(
-        ([, candidate]) => candidate.state === "completed",
-      );
-      if (oldestCompleted === undefined) return null;
-      sendDedup.delete(oldestCompleted[0]);
-    }
+  const reserveSend = (
+    sessionDedup: Map<string, SendDedupEntry>,
+    key: string,
+    fingerprint: string,
+  ): PendingSendDedupEntry | null => {
+    if (sessionDedup.size >= SEND_DEDUP_MAX_ENTRIES) return null;
     let resolve!: (resolution: PendingSendResolution) => void;
     const resolution = new Promise<PendingSendResolution>((complete) => {
       resolve = complete;
@@ -134,7 +140,7 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
       resolution,
       resolve,
     };
-    sendDedup.set(key, entry);
+    sessionDedup.set(key, entry);
     return entry;
   };
 
@@ -202,131 +208,164 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
       annotations: { title: "Send a Scient message", ...WRITE_TOOL_ANNOTATIONS },
     },
     handler: (args, context) =>
-      Effect.gen(function* () {
-        const threadId = readStringArg(args, "threadId", { required: true })!;
-        const message = readStringArg(args, "message", {
-          required: true,
-          maxUtf8Bytes: SEND_MESSAGE_MAX_UTF8_BYTES,
-        })!;
-        const modeArg = readStringArg(args, "mode") ?? "queue";
-        if (modeArg !== "queue" && modeArg !== "steer") {
-          throw new ToolInputError('Argument "mode" must be "queue" or "steer".');
-        }
-        const requestId = readStringArg(args, "requestId", {
-          maxUtf8Bytes: SEND_REQUEST_ID_MAX_UTF8_BYTES,
-        });
-
-        const dispatchMode: TurnDispatchMode = modeArg;
-        const fingerprint = createHash("sha256")
-          .update(JSON.stringify([threadId, message, dispatchMode]))
-          .digest("hex");
-        // Replay identity belongs to the concrete provider session, not merely
-        // its thread: a replacement runtime must never inherit stale success.
-        const dedupKey =
-          requestId === undefined ? null : idempotencyIdentity(context.callerSessionKey, requestId);
-        let reservation: PendingSendDedupEntry | null = null;
-        if (dedupKey !== null) {
-          const prior = sendDedup.get(dedupKey);
-          if (prior !== undefined) {
-            if (prior.fingerprint !== fingerprint) {
-              return gatewayToolErrorResult(
-                new GatewayToolError(
-                  "idempotency_conflict",
-                  "This requestId was already used for a different send operation in this provider session.",
-                ),
-              );
-            }
-            if (prior.state === "completed") {
-              return mcpToolResultJson({ ...prior.payload, deduplicated: true });
-            }
-            const concurrent = yield* Effect.promise(() => prior.resolution);
-            if (concurrent.failure !== undefined) return concurrent.failure;
-            return mcpToolResultJson({ ...concurrent.payload!, deduplicated: true });
-          }
-          reservation = reserveSend(dedupKey, fingerprint);
-          if (reservation === null) {
-            return gatewayToolErrorResult(
+      Effect.suspend(() => {
+        const pendingBytes =
+          typeof args.message === "string" ? Buffer.byteLength(args.message, "utf8") : 0;
+        const pending = pendingBySession.get(context.callerSessionKey) ?? { count: 0, bytes: 0 };
+        if (
+          pending.count >= SEND_MAX_PENDING_PER_SESSION ||
+          pending.bytes + pendingBytes > SEND_MAX_PENDING_BYTES_PER_SESSION
+        ) {
+          return Effect.succeed(
+            gatewayToolErrorResult(
               new GatewayToolError(
                 "gateway_busy",
                 "Too many send operations are currently pending. Retry shortly.",
               ),
-            );
-          }
+            ),
+          );
         }
+        pending.count += 1;
+        pending.bytes += pendingBytes;
+        pendingBySession.set(context.callerSessionKey, pending);
 
-        const attempt = yield* Effect.gen(function* () {
-          const caller = yield* requireThreadShell(context.callerThreadId);
-          const target = yield* resolveTarget(threadId);
-          const decision = authorizeDrive(context, caller, target, threadId);
-          if (!decision.allow) {
-            return {
-              failure: gatewayToolErrorResult(
-                new GatewayToolError(decision.code, decision.message),
-              ),
-            } satisfies PendingSendResolution;
+        return Effect.gen(function* () {
+          const threadId = readStringArg(args, "threadId", { required: true })!;
+          const message = readStringArg(args, "message", {
+            required: true,
+            maxUtf8Bytes: SEND_MESSAGE_MAX_UTF8_BYTES,
+          })!;
+          const modeArg = readStringArg(args, "mode") ?? "queue";
+          if (modeArg !== "queue" && modeArg !== "steer") {
+            throw new ToolInputError('Argument "mode" must be "queue" or "steer".');
+          }
+          const requestId = readStringArg(args, "requestId", {
+            maxUtf8Bytes: SEND_REQUEST_ID_MAX_UTF8_BYTES,
+          });
+
+          const dispatchMode: TurnDispatchMode = modeArg;
+          const fingerprint = createHash("sha256")
+            .update(JSON.stringify([threadId, message, dispatchMode]))
+            .digest("hex");
+          // Replay identity belongs to the concrete provider session, not merely
+          // its thread: a replacement runtime must never inherit stale success.
+          const dedupKey =
+            requestId === undefined
+              ? null
+              : idempotencyIdentity(context.callerSessionKey, requestId);
+          const sessionDedup = getSessionDedup(context.callerSessionKey);
+          let reservation: PendingSendDedupEntry | null = null;
+          if (dedupKey !== null) {
+            const prior = sessionDedup.get(dedupKey);
+            if (prior !== undefined) {
+              if (prior.fingerprint !== fingerprint) {
+                return gatewayToolErrorResult(
+                  new GatewayToolError(
+                    "idempotency_conflict",
+                    "This requestId was already used for a different send operation in this provider session.",
+                  ),
+                );
+              }
+              if (prior.state === "completed") {
+                return mcpToolResultJson({ ...prior.payload, deduplicated: true });
+              }
+              const concurrent = yield* Effect.promise(() => prior.resolution);
+              if (concurrent.failure !== undefined) return concurrent.failure;
+              return mcpToolResultJson({ ...concurrent.payload!, deduplicated: true });
+            }
+            reservation = reserveSend(sessionDedup, dedupKey, fingerprint);
+            if (reservation === null) {
+              return gatewayToolErrorResult(
+                new GatewayToolError(
+                  "gateway_busy",
+                  "This provider session has reached its idempotency-history limit.",
+                ),
+              );
+            }
           }
 
-          const commandSuffix =
-            requestId === undefined
-              ? randomId()
-              : idempotencyIdentity(context.callerSessionKey, requestId);
-          yield* orchestrationEngine
-            .dispatch({
-              type: "thread.turn.start",
-              commandId: CommandId.makeUnsafe(`agent:${commandSuffix}:send`),
-              threadId: target.id,
-              message: {
-                messageId: MessageId.makeUnsafe(`agent:${commandSuffix}:message`),
-                role: "user",
-                text: message,
-                attachments: [],
+          const attempt = yield* Effect.gen(function* () {
+            const caller = yield* requireThreadShell(context.callerThreadId);
+            const target = yield* resolveTarget(threadId);
+            const decision = authorizeDrive(context, caller, target, threadId);
+            if (!decision.allow) {
+              return {
+                failure: gatewayToolErrorResult(
+                  new GatewayToolError(decision.code, decision.message),
+                ),
+              } satisfies PendingSendResolution;
+            }
+
+            const commandSuffix =
+              requestId === undefined
+                ? randomId()
+                : idempotencyIdentity(context.callerSessionKey, requestId);
+            yield* orchestrationEngine
+              .dispatch({
+                type: "thread.turn.start",
+                commandId: CommandId.makeUnsafe(`agent:${commandSuffix}:send`),
+                threadId: target.id,
+                message: {
+                  messageId: MessageId.makeUnsafe(`agent:${commandSuffix}:message`),
+                  role: "user",
+                  text: message,
+                  attachments: [],
+                },
+                dispatchMode,
+                runtimeMode: target.runtimeMode,
+                interactionMode: target.interactionMode,
+                createdAt: now(),
+              })
+              .pipe(
+                Effect.mapError((error) =>
+                  unexpectedGatewayToolError(error, { operation: "send_message_dispatch" }),
+                ),
+              );
+
+            return {
+              payload: {
+                threadId: target.id,
+                dispatched: dispatchMode,
+                requestId: requestId ?? null,
               },
-              dispatchMode,
-              dispatchOrigin: "agent",
-              runtimeMode: target.runtimeMode,
-              interactionMode: target.interactionMode,
-              createdAt: now(),
-            })
-            .pipe(
-              Effect.mapError((error) =>
-                unexpectedGatewayToolError(error, { operation: "send_message_dispatch" }),
-              ),
-            );
+            } satisfies PendingSendResolution;
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.succeed({
+                failure: gatewayToolFailureResult(Cause.squash(cause)),
+              } satisfies PendingSendResolution),
+            ),
+          );
 
-          return {
-            payload: {
-              threadId: target.id,
-              dispatched: dispatchMode,
-              requestId: requestId ?? null,
-            },
-          } satisfies PendingSendResolution;
-        }).pipe(
-          Effect.catchCause((cause) =>
-            Effect.succeed({
-              failure: gatewayToolFailureResult(Cause.squash(cause)),
-            } satisfies PendingSendResolution),
-          ),
-        );
+          if (attempt.failure !== undefined) {
+            if (
+              dedupKey !== null &&
+              reservation !== null &&
+              sessionDedup.get(dedupKey) === reservation
+            ) {
+              sessionDedup.delete(dedupKey);
+              reservation.resolve(attempt);
+            }
+            return attempt.failure;
+          }
 
-        if (attempt.failure !== undefined) {
-          if (
-            dedupKey !== null &&
-            reservation !== null &&
-            sendDedup.get(dedupKey) === reservation
-          ) {
-            sendDedup.delete(dedupKey);
+          const payload = attempt.payload!;
+          if (dedupKey !== null && reservation !== null) {
+            sessionDedup.set(dedupKey, { state: "completed", fingerprint, payload });
             reservation.resolve(attempt);
           }
-          return attempt.failure;
-        }
-
-        const payload = attempt.payload!;
-        if (dedupKey !== null && reservation !== null) {
-          rememberSend(dedupKey, { state: "completed", fingerprint, payload });
-          reservation.resolve(attempt);
-        }
-        return mcpToolResultJson({ ...payload, deduplicated: false });
-      }).pipe(Effect.catch((error) => Effect.succeed(gatewayToolFailureResult(error)))),
+          return mcpToolResultJson({ ...payload, deduplicated: false });
+        }).pipe(
+          Effect.catch((error) => Effect.succeed(gatewayToolFailureResult(error))),
+          Effect.ensuring(
+            Effect.sync(() => {
+              pending.count -= 1;
+              pending.bytes -= pendingBytes;
+              if (pending.count === 0) pendingBySession.delete(context.callerSessionKey);
+            }),
+          ),
+        );
+      }),
   };
 
   const interruptThread: ToolEntry = {

@@ -87,6 +87,8 @@ function redactDiagnostic(value: string): string {
       /\b(api[_-]?key|access[_-]?token|auth[_-]?token|password)\s*[:=]\s*[^\s,;]+/gi,
       "$1=[redacted]",
     )
+    .replace(/(?:\/Users|\/home)\/[^\s,;]+/g, "[redacted-path]")
+    .replace(/[A-Z]:\\Users\\[^\s,;]+/gi, "[redacted-path]")
     .slice(0, 500);
 }
 

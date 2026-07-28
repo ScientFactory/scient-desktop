@@ -38,6 +38,10 @@ export interface AgentGatewayCredentialsShape {
   readonly bindWriteAuthority: (token: string, turnId: string) => AgentGatewayWriteAuthority | null;
   /** Recheck that a previously bound authority still belongs to a live session. */
   readonly verifyWriteAuthority: (authority: AgentGatewayWriteAuthority) => boolean;
+  /** Subscribe to exact provider-session revocation for lifecycle-owned caches. */
+  readonly subscribeSessionRevocations: (
+    listener: (identity: AgentGatewaySessionIdentity) => void,
+  ) => () => void;
   /** Revoke exactly one provider session credential. */
   readonly revokeSessionToken: (token: string) => void;
   /** Convenience bundle used when injecting MCP config into provider sessions. */

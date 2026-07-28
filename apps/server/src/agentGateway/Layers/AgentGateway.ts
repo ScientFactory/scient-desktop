@@ -39,7 +39,12 @@ export const makeAgentGateway = Effect.gen(function* () {
 
   const tools = [
     ...makeThreadReadTools({ snapshotQuery, requireThreadShell }),
-    ...makeThreadWriteTools({ snapshotQuery, orchestrationEngine, requireThreadShell }),
+    ...makeThreadWriteTools({
+      snapshotQuery,
+      orchestrationEngine,
+      requireThreadShell,
+      subscribeSessionRevocations: credentials.subscribeSessionRevocations,
+    }),
   ];
 
   return {

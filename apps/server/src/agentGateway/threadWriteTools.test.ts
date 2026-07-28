@@ -8,7 +8,7 @@
  * interrupt no-active-turn no-op.
  */
 import type { OrchestrationThreadShell } from "@synara/contracts";
-import { Effect, Option } from "effect";
+import { Effect, Fiber, Option } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
@@ -96,12 +96,18 @@ function makeContext(overrides?: Partial<ToolContext>): ToolContext {
 }
 
 interface Setup {
+  readonly callEffect: (
+    name: string,
+    args: Record<string, unknown>,
+    context?: ToolContext,
+  ) => Effect.Effect<McpToolCallResult>;
   readonly call: (
     name: string,
     args: Record<string, unknown>,
     context?: ToolContext,
   ) => Promise<McpToolCallResult>;
   readonly commands: AnyCommand[];
+  readonly revokeSession: (sessionKey: string) => void;
 }
 
 function setup(options?: {
@@ -130,14 +136,21 @@ function setup(options?: {
     const found = threadShells[id];
     return found ? Effect.succeed(found) : Effect.fail(new Error(`Thread "${id}" was not found.`));
   };
+  let revocationListener: ((identity: { readonly sessionKey: string }) => void) | undefined;
   const tools = makeThreadWriteTools({
     snapshotQuery,
     orchestrationEngine: engine,
     requireThreadShell,
     now: () => ISO,
     randomId: options?.randomId ?? (() => "rand-id"),
+    subscribeSessionRevocations: (listener) => {
+      revocationListener = listener;
+      return () => {
+        revocationListener = undefined;
+      };
+    },
   });
-  const call = (
+  const callEffect = (
     name: string,
     args: Record<string, unknown>,
     context: ToolContext = makeContext(),
@@ -146,13 +159,21 @@ function setup(options?: {
     if (!tool) throw new Error(`tool ${name} not found`);
     // Mirror the transport's defect net: a thrown ToolInputError is a defect,
     // not an Effect failure, so unit calls must catch defects too.
-    return Effect.runPromise(
-      tool
-        .handler(args, context)
-        .pipe(Effect.catchDefect((defect) => Effect.succeed(gatewayToolFailureResult(defect)))),
-    );
+    return tool
+      .handler(args, context)
+      .pipe(Effect.catchDefect((defect) => Effect.succeed(gatewayToolFailureResult(defect))));
   };
-  return { call, commands };
+  const call = (
+    name: string,
+    args: Record<string, unknown>,
+    context: ToolContext = makeContext(),
+  ) => Effect.runPromise(callEffect(name, args, context));
+  return {
+    call,
+    callEffect,
+    commands,
+    revokeSession: (sessionKey) => revocationListener?.({ sessionKey }),
+  };
 }
 
 function jsonBody(result: McpToolCallResult): Record<string, unknown> {
@@ -160,7 +181,7 @@ function jsonBody(result: McpToolCallResult): Record<string, unknown> {
 }
 
 describe("scient_send_message", () => {
-  it("dispatches a queued turn.start with honest agent origin and target runtime", async () => {
+  it("dispatches a queued turn.start without falsely claiming automation origin", async () => {
     const { call, commands } = setup({
       threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD, { interactionMode: "plan" }) },
     });
@@ -184,7 +205,7 @@ describe("scient_send_message", () => {
     expect(command.message.text).toBe("please continue");
     expect(command.message.attachments).toEqual([]);
     expect(command.dispatchMode).toBe("queue");
-    expect(command.dispatchOrigin).toBe("agent");
+    expect(command.dispatchOrigin).toBeUndefined();
     expect(command.runtimeMode).toBe("full-access");
     expect(command.interactionMode).toBe("plan");
     expect(command.createdAt).toBe(ISO);
@@ -415,6 +436,84 @@ describe("scient_send_message", () => {
     expect(commands).toHaveLength(2);
   });
 
+  it("bounds all pending sends per session even without requestIds and releases slots", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { call, commands } = setup({
+      threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
+      dispatch: () => Effect.promise(async () => (await gate, { sequence: 1 })),
+    });
+    const pending = Array.from({ length: 16 }, (_, index) =>
+      call("scient_send_message", { threadId: TARGET_THREAD, message: `pending-${index}` }),
+    );
+    await vi.waitFor(() => expect(commands).toHaveLength(16));
+    const saturated = await call("scient_send_message", {
+      threadId: TARGET_THREAD,
+      message: "seventeenth",
+    });
+    expect((jsonBody(saturated).error as { code: string }).code).toBe("gateway_busy");
+    expect(commands).toHaveLength(16);
+    release();
+    await Promise.all(pending);
+    expect(
+      (
+        await call("scient_send_message", {
+          threadId: TARGET_THREAD,
+          message: "after-release",
+        })
+      ).isError,
+    ).toBeUndefined();
+    expect(commands).toHaveLength(17);
+  });
+
+  it("enforces the aggregate pending-message byte budget", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { call, commands } = setup({
+      threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
+      dispatch: () => Effect.promise(async () => (await gate, { sequence: 1 })),
+    });
+    const maxMessage = "x".repeat(512 * 1024);
+    const pending = Array.from({ length: 8 }, () =>
+      call("scient_send_message", { threadId: TARGET_THREAD, message: maxMessage }),
+    );
+    await vi.waitFor(() => expect(commands).toHaveLength(8));
+    const overBudget = await call("scient_send_message", {
+      threadId: TARGET_THREAD,
+      message: "one-byte-over-budget",
+    });
+    expect((jsonBody(overBudget).error as { code: string }).code).toBe("gateway_busy");
+    expect(commands).toHaveLength(8);
+    release();
+    await Promise.all(pending);
+  });
+
+  it("releases pending capacity when an in-flight send is interrupted", async () => {
+    let attempts = 0;
+    const { call, callEffect, commands } = setup({
+      threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
+      dispatch: () => (++attempts === 1 ? Effect.never : Effect.succeed({ sequence: attempts })),
+    });
+    const fiber = Effect.runFork(
+      callEffect("scient_send_message", { threadId: TARGET_THREAD, message: "interrupt me" }),
+    );
+    await vi.waitFor(() => expect(commands).toHaveLength(1));
+    await Effect.runPromise(Fiber.interrupt(fiber));
+
+    const probes = Array.from({ length: 16 }, (_, index) =>
+      call("scient_send_message", {
+        threadId: TARGET_THREAD,
+        message: `probe-${index}`,
+      }),
+    );
+    await vi.waitFor(() => expect(commands).toHaveLength(17));
+    await Promise.all(probes);
+  });
+
   it("rejects oversized request ids and messages before dispatch", async () => {
     const { call, commands } = setup({ threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) } });
     expect(
@@ -444,21 +543,48 @@ describe("scient_send_message", () => {
     expect(commands).toHaveLength(2);
   });
 
-  it("evicts the oldest completed idempotency record after 512 entries", async () => {
+  it("preserves completed idempotency claims for the session at the 512-entry cap", async () => {
     const { call, commands } = setup({ threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) } });
-    for (let index = 0; index < 513; index += 1) {
+    for (let index = 0; index < 512; index += 1) {
       await call("scient_send_message", {
         threadId: TARGET_THREAD,
         message: `message-${index}`,
         requestId: `request-${index}`,
       });
     }
-    await call("scient_send_message", {
+    const atCapacity = await call("scient_send_message", {
       threadId: TARGET_THREAD,
-      message: "message-0",
+      message: "new payload",
+      requestId: "request-512",
+    });
+    expect((jsonBody(atCapacity).error as { code: string }).code).toBe("gateway_busy");
+    const identical = jsonBody(
+      await call("scient_send_message", {
+        threadId: TARGET_THREAD,
+        message: "message-0",
+        requestId: "request-0",
+      }),
+    );
+    expect(identical.deduplicated).toBe(true);
+    const conflict = await call("scient_send_message", {
+      threadId: TARGET_THREAD,
+      message: "changed payload",
       requestId: "request-0",
     });
-    expect(commands).toHaveLength(514);
+    expect((jsonBody(conflict).error as { code: string }).code).toBe("idempotency_conflict");
+    expect(commands).toHaveLength(512);
+  });
+
+  it("clears completed idempotency claims when the owning session is revoked", async () => {
+    const { call, commands, revokeSession } = setup({
+      threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
+    });
+    const context = makeContext({ callerSessionKey: "gateway-session:revoked" });
+    const args = { threadId: TARGET_THREAD, message: "first", requestId: "same" };
+    await call("scient_send_message", args, context);
+    revokeSession(context.callerSessionKey);
+    await call("scient_send_message", { ...args, message: "replacement" }, context);
+    expect(commands).toHaveLength(2);
   });
 
   it("does not share dedup across caller threads", async () => {
