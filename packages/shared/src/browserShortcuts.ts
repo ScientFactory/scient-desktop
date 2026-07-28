@@ -19,7 +19,6 @@ export interface BrowserShortcutChord {
 }
 
 export interface KeyboardShortcutPlatform {
-  readonly isMac: boolean;
   readonly isWindows: boolean;
 }
 
@@ -48,18 +47,16 @@ export function isKeyboardShortcutsHelpChord(
   }
 
   // Some Windows layouts translate Ctrl+- to "/" while retaining the physical
-  // minus code. Outside Windows, "/" remains authoritative for remapped layouts.
-  if (
-    chord.key === "-" ||
-    (platform.isWindows && (chord.code === "Minus" || chord.code === "NumpadSubtract"))
-  ) {
+  // minus code. Keep the existing semantic-or-physical slash behavior everywhere
+  // else, including remapped layouts and either command modifier.
+  if (platform.isWindows && (chord.code === "Minus" || chord.code === "NumpadSubtract")) {
     return false;
   }
 
-  const isSlash = chord.code === "Slash" || chord.code === "NumpadDivide" || chord.key === "/";
+  const isSlash = chord.code === "Slash" || chord.key === "/";
   if (!isSlash) {
     return false;
   }
 
-  return platform.isMac ? chord.meta && !chord.ctrl : chord.ctrl && !chord.meta;
+  return chord.meta || chord.ctrl;
 }

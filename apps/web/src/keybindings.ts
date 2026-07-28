@@ -737,7 +737,6 @@ export function isKeyboardShortcutsHelpShortcut(
       ...(event.repeat !== undefined ? { repeat: event.repeat } : {}),
     },
     {
-      isMac: isMacPlatform(platform),
       isWindows: isWindowsPlatform(platform),
     },
   );

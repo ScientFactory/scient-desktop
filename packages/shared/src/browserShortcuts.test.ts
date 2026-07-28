@@ -46,15 +46,15 @@ describe("isKeyboardShortcutsHelpChord", () => {
     repeat: false,
   };
 
-  it("matches the platform modifier and physical slash keys", () => {
+  it("preserves either command modifier and their combination", () => {
+    expect(isKeyboardShortcutsHelpChord({ ...baseChord, meta: true }, { isWindows: false })).toBe(
+      true,
+    );
+    expect(isKeyboardShortcutsHelpChord({ ...baseChord, ctrl: true }, { isWindows: false })).toBe(
+      true,
+    );
     expect(
-      isKeyboardShortcutsHelpChord({ ...baseChord, meta: true }, { isMac: true, isWindows: false }),
-    ).toBe(true);
-    expect(
-      isKeyboardShortcutsHelpChord(
-        { ...baseChord, ctrl: true, code: "NumpadDivide" },
-        { isMac: false, isWindows: true },
-      ),
+      isKeyboardShortcutsHelpChord({ ...baseChord, meta: true, ctrl: true }, { isWindows: false }),
     ).toBe(true);
   });
 
@@ -62,22 +62,34 @@ describe("isKeyboardShortcutsHelpChord", () => {
     expect(
       isKeyboardShortcutsHelpChord(
         { ...baseChord, ctrl: true, code: "Minus" },
-        { isMac: false, isWindows: true },
+        { isWindows: true },
       ),
     ).toBe(false);
     expect(
       isKeyboardShortcutsHelpChord(
         { ...baseChord, ctrl: true, code: "Minus" },
-        { isMac: false, isWindows: false },
+        { isWindows: false },
+      ),
+    ).toBe(true);
+    expect(
+      isKeyboardShortcutsHelpChord(
+        { ...baseChord, ctrl: true, code: "NumpadSubtract" },
+        { isWindows: true },
+      ),
+    ).toBe(false);
+  });
+
+  it("preserves a remapped physical Slash outside Windows", () => {
+    expect(
+      isKeyboardShortcutsHelpChord(
+        { ...baseChord, ctrl: true, key: "-", code: "Slash" },
+        { isWindows: false },
       ),
     ).toBe(true);
   });
 
-  it("rejects translated minus, repeat, key-up, and modified chords", () => {
-    const platform = { isMac: false, isWindows: true };
-    expect(
-      isKeyboardShortcutsHelpChord({ ...baseChord, ctrl: true, key: "-", code: "Slash" }, platform),
-    ).toBe(false);
+  it("rejects repeat, key-up, modified, and unrelated chords", () => {
+    const platform = { isWindows: true };
     expect(isKeyboardShortcutsHelpChord({ ...baseChord, ctrl: true, repeat: true }, platform)).toBe(
       false,
     );
@@ -87,5 +99,11 @@ describe("isKeyboardShortcutsHelpChord", () => {
     expect(isKeyboardShortcutsHelpChord({ ...baseChord, ctrl: true, alt: true }, platform)).toBe(
       false,
     );
+    expect(
+      isKeyboardShortcutsHelpChord(
+        { ...baseChord, ctrl: true, key: "-", code: "NumpadDivide" },
+        platform,
+      ),
+    ).toBe(false);
   });
 });

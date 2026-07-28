@@ -51,12 +51,9 @@ describe("isKeyboardShortcutsHelpShortcut", () => {
         "Win32",
       ),
     );
-    assert.isFalse(
-      isKeyboardShortcutsHelpShortcut(event({ ctrlKey: true, key: "-", code: "Slash" }), "Win32"),
-    );
   });
 
-  it("recognizes the physical slash keys on Windows", () => {
+  it("preserves semantic or physical slash matching on Windows", () => {
     assert.isTrue(
       isKeyboardShortcutsHelpShortcut(event({ ctrlKey: true, key: "/", code: "Slash" }), "Win32"),
     );
@@ -66,9 +63,12 @@ describe("isKeyboardShortcutsHelpShortcut", () => {
         "Win32",
       ),
     );
+    assert.isTrue(
+      isKeyboardShortcutsHelpShortcut(event({ ctrlKey: true, key: "-", code: "Slash" }), "Win32"),
+    );
   });
 
-  it("uses Cmd+/ on macOS without accepting Ctrl+/", () => {
+  it("preserves Meta, Ctrl, and combined modifiers on macOS", () => {
     assert.isTrue(
       isKeyboardShortcutsHelpShortcut(
         event({ metaKey: true, key: "/", code: "Slash" }),
@@ -81,15 +81,21 @@ describe("isKeyboardShortcutsHelpShortcut", () => {
         "MacIntel",
       ),
     );
-    assert.isFalse(
+    assert.isTrue(
       isKeyboardShortcutsHelpShortcut(
         event({ ctrlKey: true, key: "/", code: "Slash" }),
         "MacIntel",
       ),
     );
+    assert.isTrue(
+      isKeyboardShortcutsHelpShortcut(
+        event({ metaKey: true, ctrlKey: true, key: "/", code: "Slash" }),
+        "MacIntel",
+      ),
+    );
   });
 
-  it("uses Ctrl+/ on Linux without accepting Meta+/", () => {
+  it("preserves Meta, Ctrl, and remapped physical Slash on Linux", () => {
     assert.isTrue(
       isKeyboardShortcutsHelpShortcut(event({ ctrlKey: true, key: "/", code: "Slash" }), "Linux"),
     );
@@ -102,8 +108,11 @@ describe("isKeyboardShortcutsHelpShortcut", () => {
         "Linux",
       ),
     );
-    assert.isFalse(
+    assert.isTrue(
       isKeyboardShortcutsHelpShortcut(event({ metaKey: true, key: "/", code: "Slash" }), "Linux"),
+    );
+    assert.isTrue(
+      isKeyboardShortcutsHelpShortcut(event({ ctrlKey: true, key: "-", code: "Slash" }), "Linux"),
     );
   });
 

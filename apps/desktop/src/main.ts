@@ -374,7 +374,6 @@ const browserManager = new DesktopBrowserManager(LOCAL_HTML_CAPABILITY_KEY, {
           repeat: input.isAutoRepeat,
         },
         {
-          isMac: process.platform === "darwin",
           isWindows: process.platform === "win32",
         },
       )
