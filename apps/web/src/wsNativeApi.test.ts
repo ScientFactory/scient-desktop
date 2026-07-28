@@ -348,6 +348,11 @@ describe("wsNativeApi", () => {
         defaultThreadEnvMode: "local",
         addProjectBaseDirectory: "",
         textGenerationModelSelection: { provider: "codex", model: "gpt-5.4-mini" },
+        sourceControlWriting: {
+          mode: "standard",
+          customInstructions: "",
+          followPullRequestTemplate: false,
+        },
         providers: {
           codex: { enabled: true, binaryPath: "codex", homePath: "", customModels: [] },
           claudeAgent: { enabled: true, binaryPath: "claude", launchArgs: "", customModels: [] },

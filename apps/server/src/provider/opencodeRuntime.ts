@@ -190,6 +190,7 @@ export interface OpenCodeRuntimeShape {
     readonly hostname?: string;
     readonly timeoutMs?: number;
     readonly experimentalWebSockets?: boolean;
+    readonly env?: NodeJS.ProcessEnv;
   }) => Effect.Effect<OpenCodeServerProcess, OpenCodeRuntimeError, Scope.Scope>;
   readonly connectToOpenCodeServer: (input: {
     readonly binaryPath: string;
@@ -898,6 +899,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
           ChildProcess.make(input.binaryPath, args, {
             env: buildOpenCodeServerProcessEnv({
               cliSpec,
+              ...(input.env ? { baseEnv: input.env } : {}),
               ...(input.experimentalWebSockets !== undefined
                 ? { experimentalWebSockets: input.experimentalWebSockets }
                 : {}),
