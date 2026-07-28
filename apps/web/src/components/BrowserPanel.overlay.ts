@@ -41,6 +41,7 @@ const NATIVE_BROWSER_OBSCURING_OVERLAY_SELECTOR = [
 // blocker, but treating its portal as one would hide the browser across the whole app.
 const NATIVE_BROWSER_NON_OBSCURING_OVERLAY_SELECTOR = [
   "[data-panel-resize-overlay='true']",
+  "[data-browser-webview-runtime-host='true']",
   "[data-slot='toast-portal']",
   "[data-slot='toast-portal-anchored']",
   "[data-slot='toast-viewport']",

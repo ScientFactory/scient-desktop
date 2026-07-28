@@ -22,6 +22,71 @@ export interface BrowserWebviewHandoffRegistry<T> {
   readonly has: (key: string) => boolean;
 }
 
+interface StableBrowserWebviewNode {
+  readonly isConnected: boolean;
+  readonly parentNode: unknown;
+}
+
+interface StableBrowserWebviewHost<Node> {
+  readonly isConnected: boolean;
+  readonly append: (node: Node) => void;
+}
+
+export interface StableBrowserWebviewRuntime<Node, Host> {
+  readonly node: Node;
+  readonly host: Host;
+}
+
+export function createStableBrowserWebviewRuntime<
+  Node extends StableBrowserWebviewNode,
+  Host extends StableBrowserWebviewHost<Node>,
+>(host: Host, node: Node): StableBrowserWebviewRuntime<Node, Host> | null {
+  if (!host.isConnected || node.isConnected) return null;
+  host.append(node);
+  return isStableBrowserWebviewRuntimeIntact({ host, node }) ? { host, node } : null;
+}
+
+export function isStableBrowserWebviewRuntimeIntact<
+  Node extends StableBrowserWebviewNode,
+  Host extends StableBrowserWebviewHost<Node>,
+>(runtime: StableBrowserWebviewRuntime<Node, Host>): boolean {
+  return (
+    runtime.host.isConnected && runtime.node.isConnected && runtime.node.parentNode === runtime.host
+  );
+}
+
+export interface BrowserWebviewRuntimeHostGeometry {
+  readonly left: string;
+  readonly top: string;
+  readonly width: string;
+  readonly height: string;
+  readonly visibility: "visible" | "hidden";
+  readonly pointerEvents: "auto" | "none";
+  readonly ariaHidden: boolean;
+  readonly inert: boolean;
+}
+
+export function resolveBrowserWebviewRuntimeHostGeometry(input: {
+  readonly rect: {
+    readonly left: number;
+    readonly top: number;
+    readonly width: number;
+    readonly height: number;
+  };
+  readonly visible: boolean;
+}): BrowserWebviewRuntimeHostGeometry {
+  return {
+    left: `${input.rect.left}px`,
+    top: `${input.rect.top}px`,
+    width: `${Math.max(0, input.rect.width)}px`,
+    height: `${Math.max(0, input.rect.height)}px`,
+    visibility: input.visible ? "visible" : "hidden",
+    pointerEvents: input.visible ? "auto" : "none",
+    ariaHidden: !input.visible,
+    inert: !input.visible,
+  };
+}
+
 export function browserWebviewHandoffKey(input: {
   readonly threadId: string;
   readonly tabId: string;

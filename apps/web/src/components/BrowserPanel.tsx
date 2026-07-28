@@ -51,7 +51,10 @@ import { serverLocalServersQueryOptions } from "~/lib/serverReactQuery";
 import { cn, isMacPlatform } from "~/lib/utils";
 import {
   browserWebviewHandoffKey,
+  createStableBrowserWebviewRuntime,
   createBrowserWebviewHandoffRegistry,
+  isStableBrowserWebviewRuntimeIntact,
+  resolveBrowserWebviewRuntimeHostGeometry,
 } from "~/browserWebviewHandoff";
 
 import {
@@ -107,14 +110,17 @@ const BROWSER_BOUNDS_SYNC_BURST_FRAMES = 30;
 const BROWSER_BOUNDS_SYNC_STABLE_FRAME_TARGET = 2;
 const BROWSER_PERF_SAMPLE_INTERVAL_MS = 5_000;
 const BROWSER_WEBVIEW_HANDOFF_LEASE_MS = 250;
+// The PiP shell is z-30. Its renderer-owned browser viewport must paint one layer above the
+// shell content, while the existing top-layer occlusion path hides it for dialogs and menus.
+const BROWSER_WEBVIEW_RUNTIME_HOST_Z_INDEX = 31;
 const SYNARA_BROWSER_LABEL = "Scient browser";
 
 interface ParkedRendererBrowserWebview {
   readonly webview: BrowserWebviewElement;
+  readonly runtimeHost: HTMLDivElement;
   readonly tabId: string;
   readonly attachKey: string | null;
   readonly webContentsId: number | undefined;
-  readonly parkingHost: HTMLDivElement;
 }
 
 const rendererBrowserWebviewHandoffs = createBrowserWebviewHandoffRegistry<
@@ -125,24 +131,42 @@ const rendererBrowserWebviewHandoffs = createBrowserWebviewHandoffRegistry<
   cancel: (handle) => window.clearTimeout(handle),
 });
 
-function createRendererBrowserWebviewParkingHost(size: {
-  readonly width: number;
-  readonly height: number;
-}): HTMLDivElement {
+function createRendererBrowserWebviewRuntimeHost(): HTMLDivElement {
   const host = document.createElement("div");
   host.setAttribute("aria-hidden", "true");
-  host.setAttribute("data-browser-webview-parking", "true");
+  host.setAttribute("data-browser-webview-runtime-host", "true");
   host.style.position = "fixed";
-  host.style.left = "-10000px";
-  host.style.top = "-10000px";
-  // Preserve the guest's viewport while ownership crosses React hosts. Shrinking the
-  // parked webview can fire responsive layout work and disturb virtualized page state.
-  host.style.width = `${Math.max(1, Math.round(size.width))}px`;
-  host.style.height = `${Math.max(1, Math.round(size.height))}px`;
+  host.style.left = "0";
+  host.style.top = "0";
+  host.style.width = "0";
+  host.style.height = "0";
+  host.style.zIndex = String(BROWSER_WEBVIEW_RUNTIME_HOST_Z_INDEX);
+  host.style.visibility = "hidden";
   host.style.overflow = "hidden";
   host.style.pointerEvents = "none";
+  host.setAttribute("inert", "");
   document.body.append(host);
   return host;
+}
+
+function syncRendererBrowserWebviewRuntimeHost(
+  host: HTMLDivElement | null,
+  rect: {
+    readonly left: number;
+    readonly top: number;
+    readonly width: number;
+    readonly height: number;
+  },
+  visible: boolean,
+): void {
+  if (!host) return;
+  const { ariaHidden, inert, ...geometry } = resolveBrowserWebviewRuntimeHostGeometry({
+    rect,
+    visible,
+  });
+  Object.assign(host.style, geometry);
+  host.toggleAttribute("aria-hidden", ariaHidden);
+  host.toggleAttribute("inert", inert);
 }
 // The address field and tab pills share one chrome-control surface so the whole row reads
 // as a single cohesive control: matching height, radius, border width, and type scale.
@@ -425,6 +449,7 @@ export function BrowserPanel({
   const browserTabsBarRef = useRef<HTMLDivElement>(null);
   const browserViewportRef = useRef<HTMLDivElement>(null);
   const browserWebviewRef = useRef<BrowserWebviewElement | null>(null);
+  const browserWebviewRuntimeHostRef = useRef<HTMLDivElement | null>(null);
   const browserWebviewTabIdRef = useRef<string | null>(null);
   const browserWebviewAttachKeyRef = useRef<string | null>(null);
   const copyScreenshotButtonRef = useRef<HTMLButtonElement>(null);
@@ -778,7 +803,7 @@ export function BrowserPanel({
   );
 
   // Explicit tab/partition changes are final ownership changes, so detach immediately.
-  // Host-to-host moves use the short parking lease below instead.
+  // React host handoffs transfer only the stable runtime reference through the short lease.
   const detachRendererBrowserWebview = useCallback(() => {
     const webview = browserWebviewRef.current;
     const tabId = browserWebviewTabIdRef.current;
@@ -798,16 +823,25 @@ export function BrowserPanel({
     }
 
     webview?.remove();
+    browserWebviewRuntimeHostRef.current?.remove();
     browserWebviewRef.current = null;
+    browserWebviewRuntimeHostRef.current = null;
     browserWebviewTabIdRef.current = null;
     browserWebviewAttachKeyRef.current = null;
   }, [api, isLiveRuntime, threadId]);
 
   const parkRendererBrowserWebview = useCallback(() => {
     const webview = browserWebviewRef.current;
+    const runtimeHost = browserWebviewRuntimeHostRef.current;
     const tabId = browserWebviewTabIdRef.current;
     const partition = webview?.getAttribute("partition") ?? "";
-    if (!webview || !tabId || partition.length === 0) {
+    if (
+      !webview ||
+      !runtimeHost ||
+      !isStableBrowserWebviewRuntimeIntact({ host: runtimeHost, node: webview }) ||
+      !tabId ||
+      partition.length === 0
+    ) {
       detachRendererBrowserWebview();
       return;
     }
@@ -818,22 +852,17 @@ export function BrowserPanel({
     } catch {
       webContentsId = undefined;
     }
-    const webviewBounds = webview.getBoundingClientRect();
-    const parkingHost = createRendererBrowserWebviewParkingHost({
-      width: webviewBounds.width,
-      height: webviewBounds.height,
-    });
+    syncRendererBrowserWebviewRuntimeHost(runtimeHost, runtimeHost.getBoundingClientRect(), false);
     setBrowserWebviewOverlayOcclusion(webview, true);
-    parkingHost.append(webview);
     const key = browserWebviewHandoffKey({ threadId, tabId, partition });
     rendererBrowserWebviewHandoffs.park(
       key,
       {
         webview,
+        runtimeHost,
         tabId,
         attachKey: browserWebviewAttachKeyRef.current,
         webContentsId,
-        parkingHost,
       },
       (parked) => {
         if (api && isLiveRuntime && parked.webContentsId && parked.webContentsId > 0) {
@@ -846,10 +875,11 @@ export function BrowserPanel({
             .catch(ignoreBrowserWebviewDetachError);
         }
         parked.webview.remove();
-        parked.parkingHost.remove();
+        parked.runtimeHost.remove();
       },
     );
     browserWebviewRef.current = null;
+    browserWebviewRuntimeHostRef.current = null;
     browserWebviewTabIdRef.current = null;
     browserWebviewAttachKeyRef.current = null;
   }, [api, detachRendererBrowserWebview, isLiveRuntime, threadId]);
@@ -977,13 +1007,36 @@ export function BrowserPanel({
         }),
       );
       if (parked) {
-        webview = parked.webview;
-        browserWebviewRef.current = webview;
-        browserWebviewTabIdRef.current = parked.tabId;
-        browserWebviewAttachKeyRef.current = parked.attachKey;
-        setBrowserWebviewOverlayOcclusion(webview, false);
-        host.append(webview);
-        parked.parkingHost.remove();
+        if (
+          isStableBrowserWebviewRuntimeIntact({
+            host: parked.runtimeHost,
+            node: parked.webview,
+          })
+        ) {
+          webview = parked.webview;
+          browserWebviewRef.current = webview;
+          browserWebviewRuntimeHostRef.current = parked.runtimeHost;
+          browserWebviewTabIdRef.current = parked.tabId;
+          browserWebviewAttachKeyRef.current = parked.attachKey;
+          syncRendererBrowserWebviewRuntimeHost(
+            parked.runtimeHost,
+            host.getBoundingClientRect(),
+            true,
+          );
+          setBrowserWebviewOverlayOcclusion(webview, false);
+        } else {
+          if (parked.webContentsId && parked.webContentsId > 0) {
+            void api.browser
+              .detachWebview({
+                threadId,
+                tabId: parked.tabId,
+                webContentsId: parked.webContentsId,
+              })
+              .catch(ignoreBrowserWebviewDetachError);
+          }
+          parked.webview.remove();
+          parked.runtimeHost.remove();
+        }
       }
     }
     // The exact parked guest can be adopted before the new host's open RPC completes.
@@ -1011,10 +1064,25 @@ export function BrowserPanel({
       // UA on the shared persistent partition, so this webview (and OAuth popups) inherit the
       // same identity. This keeps in-app Google/OAuth sign-in working without duplicating the
       // UA string into the renderer.
+      const runtimeHost = createRendererBrowserWebviewRuntimeHost();
+      const runtime = createStableBrowserWebviewRuntime(runtimeHost, webview);
+      if (!runtime) {
+        webview.remove();
+        runtimeHost.remove();
+        return;
+      }
       browserWebviewRef.current = webview;
-      host.append(webview);
-    } else if (webview.parentElement !== host) {
-      host.append(webview);
+      browserWebviewRuntimeHostRef.current = runtimeHost;
+      syncRendererBrowserWebviewRuntimeHost(runtimeHost, host.getBoundingClientRect(), true);
+    } else {
+      const runtimeHost = browserWebviewRuntimeHostRef.current;
+      if (
+        !runtimeHost ||
+        !isStableBrowserWebviewRuntimeIntact({ host: runtimeHost, node: webview })
+      ) {
+        detachRendererBrowserWebview();
+        return;
+      }
     }
 
     const initialUrl = activeTab.lastCommittedUrl ?? activeTab.url ?? BROWSER_BLANK_URL;
@@ -1131,6 +1199,11 @@ export function BrowserPanel({
         obscuredByOverlay,
         paneIsActuallyHidden,
       });
+      syncRendererBrowserWebviewRuntimeHost(
+        browserWebviewRuntimeHostRef.current,
+        rect,
+        surface === "renderer" && boundsSyncMode === "send",
+      );
       // Renderer-owned webviews can be hidden locally while bounds updates are suppressed.
       // Main-owned local HTML views instead receive an explicit transient occlusion signal;
       // sending null bounds would incorrectly start the pane's suspension lifecycle.
@@ -1272,7 +1345,15 @@ export function BrowserPanel({
     document.addEventListener("transitioncancel", handleTransitionBounds, true);
 
     return () => {
-      setBrowserWebviewOverlayOcclusion(browserWebviewRef.current, false);
+      setBrowserWebviewOverlayOcclusion(browserWebviewRef.current, true);
+      const runtimeHost = browserWebviewRuntimeHostRef.current;
+      if (runtimeHost) {
+        syncRendererBrowserWebviewRuntimeHost(
+          runtimeHost,
+          runtimeHost.getBoundingClientRect(),
+          false,
+        );
+      }
       observer.disconnect();
       overlayObserver.disconnect();
       window.removeEventListener("resize", scheduleSyncBounds);
