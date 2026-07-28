@@ -1492,6 +1492,14 @@ export function BrowserPanel({
       });
     };
 
+    const handlePanelResizeOverlaySync = () => {
+      // Native WebContentsView surfaces sit above renderer DOM. Suppress or restore them
+      // in this event turn so a pointer cannot cross the adjustment shield first, then
+      // reconcile once more after layout and overlay mutations settle.
+      syncBounds();
+      scheduleSyncBounds();
+    };
+
     const handleTransitionBounds = (event: TransitionEvent) => {
       if (!isNativeBrowserTransitionSignalTarget(event.target, element)) {
         perfCountersRef.current.ignoredTransitionSignals += 1;
@@ -1538,7 +1546,7 @@ export function BrowserPanel({
       subtree: true,
     });
     window.addEventListener("resize", scheduleSyncBounds);
-    window.addEventListener(PANEL_RESIZE_OVERLAY_SYNC_EVENT, scheduleSyncBounds);
+    window.addEventListener(PANEL_RESIZE_OVERLAY_SYNC_EVENT, handlePanelResizeOverlaySync);
     document.addEventListener("transitionrun", handleTransitionBounds, true);
     document.addEventListener("transitionend", handleTransitionBounds, true);
     document.addEventListener("transitioncancel", handleTransitionBounds, true);
@@ -1557,7 +1565,7 @@ export function BrowserPanel({
       observer.disconnect();
       overlayObserver.disconnect();
       window.removeEventListener("resize", scheduleSyncBounds);
-      window.removeEventListener(PANEL_RESIZE_OVERLAY_SYNC_EVENT, scheduleSyncBounds);
+      window.removeEventListener(PANEL_RESIZE_OVERLAY_SYNC_EVENT, handlePanelResizeOverlaySync);
       document.removeEventListener("transitionrun", handleTransitionBounds, true);
       document.removeEventListener("transitionend", handleTransitionBounds, true);
       document.removeEventListener("transitioncancel", handleTransitionBounds, true);

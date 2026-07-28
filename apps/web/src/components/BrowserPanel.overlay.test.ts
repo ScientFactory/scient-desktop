@@ -88,4 +88,18 @@ describe("BrowserPanel native overlay markers", () => {
       /data-browser-error-overlay="true"\s+data-native-browser-overlay="true"/,
     );
   });
+
+  it("synchronizes native adjustment occlusion before its deferred reconciliation", () => {
+    const source = readFileSync(new URL("./BrowserPanel.tsx", import.meta.url), "utf8");
+
+    expect(source).toMatch(
+      /const handlePanelResizeOverlaySync = \(\) => \{[\s\S]*?syncBounds\(\);[\s\S]*?scheduleSyncBounds\(\);[\s\S]*?\};/,
+    );
+    expect(source).toContain(
+      "window.addEventListener(PANEL_RESIZE_OVERLAY_SYNC_EVENT, handlePanelResizeOverlaySync);",
+    );
+    expect(source).toContain(
+      "window.removeEventListener(PANEL_RESIZE_OVERLAY_SYNC_EVENT, handlePanelResizeOverlaySync);",
+    );
+  });
 });
