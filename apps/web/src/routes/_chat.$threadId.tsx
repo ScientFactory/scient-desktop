@@ -40,6 +40,7 @@ import {
 import { Schema } from "effect";
 
 import ChatView from "../components/ChatView";
+import { BrowserPictureInPicture } from "../components/BrowserPictureInPicture";
 import { ProviderIcon } from "../components/ProviderIcon";
 import { ChatPaneDropOverlay } from "../components/chat-drop-overlay/ChatPaneDropOverlay";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
@@ -50,6 +51,7 @@ import {
   type DiffPanelMode,
 } from "../components/DiffPanelShell";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { selectThreadBrowserState, useBrowserStateStore } from "../browserStateStore";
 import { useDockPaneRuntimeActivation } from "../hooks/useDockPaneRuntimeActivation";
 import { useDockWorkspaceExplorer } from "../components/chat/useDockWorkspaceExplorer";
 import {
@@ -96,6 +98,7 @@ import { RightDock } from "../components/chat/RightDock";
 import { RightDockEmptyState } from "../components/chat/RightDockEmptyState";
 import {
   restoreRightDockFocusAfterBrowserClose,
+  restoreChatFocusAfterFloatingBrowserClose,
   restoreSplitChatFocusAfterBrowserClose,
 } from "../components/chat/browserPanelFocus";
 import {
@@ -122,7 +125,7 @@ import {
   readDockFileExplorerOpen,
   storeDockFileExplorerOpen,
 } from "../lib/dockFileExplorerPreference";
-import { FoldersIcon } from "../lib/icons";
+import { FoldersIcon, LayoutSidebarIcon, WindowIcon } from "../lib/icons";
 import { passiveGitStatusQueryOptions } from "../lib/gitReactQuery";
 import {
   projectInspectHtmlArtifactQueryOptions,
@@ -191,6 +194,17 @@ import {
   CHAT_MAIN_VIEWPORT_SHELL_CLASS_NAME,
 } from "../components/chat/composerPickerStyles";
 import { cn } from "~/lib/utils";
+import {
+  browserPictureInPictureIdentityMatches,
+  browserPictureInPictureOwnerPaneIdToClose,
+  closeBrowserPictureInPicture,
+  commitBrowserPictureInPictureLayout,
+  openBrowserPictureInPicture,
+  reconcileBrowserPictureInPicture,
+  type BrowserPictureInPictureIdentity,
+  type BrowserPictureInPictureLayout,
+  type BrowserPictureInPictureState,
+} from "~/browserPictureInPicture";
 import {
   pullRequestDetailInputFromPane,
   pullRequestPaneTabLabel,
@@ -1503,6 +1517,7 @@ function SingleChatSurface(props: {
   const createSplitView = useSplitViewStore((store) => store.createFromThread);
   const createSplitViewFromDrop = useSplitViewStore((store) => store.createFromDrop);
   const dockState = useRightDockStore(selectRightDockState(props.threadId));
+  const threadBrowserState = useBrowserStateStore(selectThreadBrowserState(props.threadId));
   const openPane = useRightDockStore((store) => store.openPane);
   const toggleSingletonPane = useRightDockStore((store) => store.toggleSingletonPane);
   const closePane = useRightDockStore((store) => store.closePane);
@@ -1599,8 +1614,18 @@ function SingleChatSurface(props: {
   const [editorDiffFilesLoading, setEditorDiffFilesLoading] = useState(false);
   const [editorDiffOptionsControl, setEditorDiffOptionsControl] = useState<ReactNode | null>(null);
   const [dockFileExplorerOpen, setDockFileExplorerOpen] = useState(readDockFileExplorerOpen);
+  const [browserPictureInPicture, setBrowserPictureInPicture] =
+    useState<BrowserPictureInPictureState | null>(null);
+  const nextBrowserPictureInPictureGenerationRef = useRef(0);
 
   const activePane = resolveActivePane(dockState);
+  const browserPane = dockState.panes.find((pane) => pane.kind === "browser") ?? null;
+  const browserPictureInPictureIsActive = Boolean(
+    browserPictureInPicture &&
+    browserPictureInPicture.identity.threadId === props.threadId &&
+    browserPictureInPicture.identity.projectId === props.projectId &&
+    browserPictureInPicture.identity.paneId === browserPane?.id,
+  );
   const retainedActivePane =
     dockState.panes.find((pane) => pane.id === dockState.activePaneId) ??
     dockState.panes[0] ??
@@ -1614,14 +1639,140 @@ function SingleChatSurface(props: {
     activePane,
   });
 
+  useEffect(() => {
+    setBrowserPictureInPicture((current) =>
+      editorViewActive
+        ? null
+        : reconcileBrowserPictureInPicture(current, {
+            threadId: props.threadId,
+            projectId: props.projectId,
+            browserPaneId: browserPane?.id ?? null,
+            browserState: threadBrowserState,
+          }),
+    );
+  }, [browserPane?.id, editorViewActive, props.projectId, props.threadId, threadBrowserState]);
+
+  useEffect(() => {
+    const generation = browserPictureInPicture?.identity.generation ?? 0;
+    nextBrowserPictureInPictureGenerationRef.current = Math.max(
+      nextBrowserPictureInPictureGenerationRef.current,
+      generation,
+    );
+  }, [browserPictureInPicture?.identity.generation]);
+
+  const handleFloatBrowserPreview = useCallback(() => {
+    if (activePane?.kind !== "browser" || !threadBrowserState?.activeTabId) {
+      return;
+    }
+    if (!threadBrowserState.tabs.some((tab) => tab.id === threadBrowserState.activeTabId)) {
+      return;
+    }
+    nextBrowserPictureInPictureGenerationRef.current += 1;
+    setBrowserPictureInPicture(
+      openBrowserPictureInPicture({
+        threadId: props.threadId,
+        projectId: props.projectId,
+        paneId: activePane.id,
+        tabId: threadBrowserState.activeTabId,
+        browserVersion: threadBrowserState.version,
+        generation: nextBrowserPictureInPictureGenerationRef.current,
+      }),
+    );
+    requestImmediateDockHydration("browser");
+    setDockOpen(props.threadId, false);
+  }, [
+    activePane,
+    props.projectId,
+    props.threadId,
+    requestImmediateDockHydration,
+    setDockOpen,
+    threadBrowserState,
+  ]);
+
+  const handleCloseFloatingBrowserPreview = useCallback(
+    (identity: BrowserPictureInPictureIdentity) => {
+      if (
+        !browserPictureInPicture ||
+        !browserPictureInPictureIdentityMatches(browserPictureInPicture, identity)
+      ) {
+        return;
+      }
+      setBrowserPictureInPicture((current) => closeBrowserPictureInPicture(current, identity));
+      window.requestAnimationFrame(() => {
+        restoreChatFocusAfterFloatingBrowserClose(document);
+      });
+    },
+    [browserPictureInPicture],
+  );
+
+  const handleCloseFloatingBrowserOwnership = useCallback(
+    (identity: BrowserPictureInPictureIdentity) => {
+      const paneId = browserPictureInPictureOwnerPaneIdToClose(browserPictureInPicture, identity);
+      if (
+        paneId === null ||
+        identity.threadId !== props.threadId ||
+        identity.projectId !== props.projectId ||
+        paneId !== browserPane?.id
+      ) {
+        return;
+      }
+      setBrowserPictureInPicture(null);
+      closePane(props.threadId, paneId);
+      window.requestAnimationFrame(() => {
+        restoreChatFocusAfterFloatingBrowserClose(document);
+      });
+    },
+    [browserPictureInPicture, browserPane?.id, closePane, props.projectId, props.threadId],
+  );
+
+  const handleReturnFloatingBrowserPreview = useCallback(
+    (identity: BrowserPictureInPictureIdentity) => {
+      if (
+        !browserPictureInPicture ||
+        !browserPictureInPictureIdentityMatches(browserPictureInPicture, identity) ||
+        identity.threadId !== props.threadId ||
+        identity.projectId !== props.projectId ||
+        identity.paneId !== browserPane?.id
+      ) {
+        return;
+      }
+      setBrowserPictureInPicture(null);
+      requestImmediateDockHydration("browser");
+      setActivePane(props.threadId, identity.paneId);
+      setDockOpen(props.threadId, true);
+      window.requestAnimationFrame(() => {
+        restoreRightDockFocusAfterBrowserClose(document);
+      });
+    },
+    [
+      browserPictureInPicture,
+      browserPane?.id,
+      props.projectId,
+      props.threadId,
+      requestImmediateDockHydration,
+      setActivePane,
+      setDockOpen,
+    ],
+  );
+
+  const handleFloatingBrowserLayoutCommit = useCallback(
+    (identity: BrowserPictureInPictureIdentity, layout: BrowserPictureInPictureLayout) => {
+      setBrowserPictureInPicture((current) =>
+        commitBrowserPictureInPictureLayout(current, identity, layout),
+      );
+    },
+    [],
+  );
+
   // Bridge the dock's active browser/diff pane back into the panelState shape the
   // chat shell still consumes (diff badge, toggle pressed state, transcript gating).
   const chatPanelState = useMemo<SplitViewPanePanelState>(
     () => ({
-      panel:
-        dockState.open &&
-        activePane &&
-        (activePane.kind === "browser" || activePane.kind === "diff")
+      panel: browserPictureInPictureIsActive
+        ? "browser"
+        : dockState.open &&
+            activePane &&
+            (activePane.kind === "browser" || activePane.kind === "diff")
           ? activePane.kind
           : null,
       diffTurnId: activePane?.kind === "diff" ? activePane.diffTurnId : null,
@@ -1629,7 +1780,7 @@ function SingleChatSurface(props: {
       hasOpenedPanel: dockState.panes.length > 0,
       lastOpenPanel: "browser",
     }),
-    [activePane, dockState.open, dockState.panes.length],
+    [activePane, browserPictureInPictureIsActive, dockState.open, dockState.panes.length],
   );
 
   const handleToggleDiff = useCallback(() => {
@@ -1637,9 +1788,20 @@ function SingleChatSurface(props: {
     toggleSingletonPane(props.threadId, { kind: "diff" });
   }, [props.threadId, requestImmediateDockHydration, toggleSingletonPane]);
   const handleToggleBrowser = useCallback(() => {
+    if (browserPictureInPictureIsActive && browserPictureInPicture) {
+      handleReturnFloatingBrowserPreview(browserPictureInPicture.identity);
+      return;
+    }
     requestImmediateDockHydration("browser");
     toggleSingletonPane(props.threadId, { kind: "browser" });
-  }, [props.threadId, requestImmediateDockHydration, toggleSingletonPane]);
+  }, [
+    browserPictureInPicture,
+    browserPictureInPictureIsActive,
+    handleReturnFloatingBrowserPreview,
+    props.threadId,
+    requestImmediateDockHydration,
+    toggleSingletonPane,
+  ]);
   const handleToggleRightDock = useCallback(() => {
     if (!dockState.open && retainedActivePane) {
       requestImmediateDockHydration(retainedActivePane.kind);
@@ -2375,6 +2537,14 @@ function SingleChatSurface(props: {
     ): ReactNode => {
       switch (pane.kind) {
         case "browser":
+          if (
+            browserPictureInPictureIsActive &&
+            browserPictureInPicture?.identity.paneId === pane.id
+          ) {
+            return (
+              <PanelStateMessage>The browser is open as a floating preview.</PanelStateMessage>
+            );
+          }
           return (
             <Suspense fallback={<PanelStateMessage>Loading browser...</PanelStateMessage>}>
               <BrowserPanel
@@ -2506,6 +2676,8 @@ function SingleChatSurface(props: {
     },
     [
       closePane,
+      browserPictureInPicture,
+      browserPictureInPictureIsActive,
       dockState.open,
       handleAskWhyInChat,
       handleCommentInChat,
@@ -2689,6 +2861,29 @@ function SingleChatSurface(props: {
                 onClick: handleOpenEditorView,
               }}
             />
+            {browserPictureInPictureIsActive && browserPictureInPicture ? (
+              <div className="pointer-events-none absolute inset-0 z-30 overflow-hidden">
+                <BrowserPictureInPicture
+                  identity={browserPictureInPicture.identity}
+                  position={browserPictureInPicture.position}
+                  size={browserPictureInPicture.size}
+                  onLayoutCommit={handleFloatingBrowserLayoutCommit}
+                  onClose={handleCloseFloatingBrowserPreview}
+                  onReturnToDock={handleReturnFloatingBrowserPreview}
+                >
+                  <Suspense fallback={<PanelStateMessage>Loading browser...</PanelStateMessage>}>
+                    <BrowserPanel
+                      mode="sidebar"
+                      threadId={browserPictureInPicture.identity.threadId}
+                      onClosePanel={() =>
+                        handleCloseFloatingBrowserOwnership(browserPictureInPicture.identity)
+                      }
+                      runtimeMode="live"
+                    />
+                  </Suspense>
+                </BrowserPictureInPicture>
+              </div>
+            ) : null}
           </RouteInsetSurface>
         </ChatPaneDropOverlay>
         <RightDock
@@ -2698,7 +2893,36 @@ function SingleChatSurface(props: {
           shouldAcceptWidth={shouldAcceptDockWidth}
           addMenuKinds={RIGHT_DOCK_ADD_MENU_KINDS}
           activePaneAction={
-            activePane?.kind === "file" && activePane.filePath !== null ? (
+            activePane?.kind === "browser" ? (
+              browserPictureInPictureIsActive && browserPictureInPicture ? (
+                <IconButton
+                  variant="chrome"
+                  size="icon-xs"
+                  label="Return floating preview to right panel"
+                  tooltip="Return floating preview"
+                  tooltipSide="bottom"
+                  className={DOCK_HEADER_ICON_BUTTON_CLASS}
+                  onClick={() =>
+                    handleReturnFloatingBrowserPreview(browserPictureInPicture.identity)
+                  }
+                >
+                  <LayoutSidebarIcon />
+                </IconButton>
+              ) : (
+                <IconButton
+                  variant="chrome"
+                  size="icon-xs"
+                  label="Float browser preview over chat"
+                  tooltip="Float preview over chat"
+                  tooltipSide="bottom"
+                  className={DOCK_HEADER_ICON_BUTTON_CLASS}
+                  disabled={!threadBrowserState?.activeTabId}
+                  onClick={handleFloatBrowserPreview}
+                >
+                  <WindowIcon />
+                </IconButton>
+              )
+            ) : activePane?.kind === "file" && activePane.filePath !== null ? (
               <IconButton
                 variant="chrome"
                 size="icon-xs"
