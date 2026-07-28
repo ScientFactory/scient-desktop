@@ -49,6 +49,10 @@ import { IMAGE_SIZE_LIMIT_LABEL } from "~/lib/composerSend";
 import { PANEL_RESIZE_OVERLAY_SYNC_EVENT } from "~/lib/panelResize";
 import { serverLocalServersQueryOptions } from "~/lib/serverReactQuery";
 import { cn, isMacPlatform } from "~/lib/utils";
+import {
+  browserWebviewHandoffKey,
+  createBrowserWebviewHandoffRegistry,
+} from "~/browserWebviewHandoff";
 
 import {
   useBrowserStateStore,
@@ -102,7 +106,44 @@ interface BrowserPanelProps {
 const BROWSER_BOUNDS_SYNC_BURST_FRAMES = 30;
 const BROWSER_BOUNDS_SYNC_STABLE_FRAME_TARGET = 2;
 const BROWSER_PERF_SAMPLE_INTERVAL_MS = 5_000;
+const BROWSER_WEBVIEW_HANDOFF_LEASE_MS = 250;
 const SYNARA_BROWSER_LABEL = "Scient browser";
+
+interface ParkedRendererBrowserWebview {
+  readonly webview: BrowserWebviewElement;
+  readonly tabId: string;
+  readonly attachKey: string | null;
+  readonly webContentsId: number | undefined;
+  readonly parkingHost: HTMLDivElement;
+}
+
+const rendererBrowserWebviewHandoffs = createBrowserWebviewHandoffRegistry<
+  ParkedRendererBrowserWebview,
+  number
+>({
+  schedule: (callback) => window.setTimeout(callback, BROWSER_WEBVIEW_HANDOFF_LEASE_MS),
+  cancel: (handle) => window.clearTimeout(handle),
+});
+
+function createRendererBrowserWebviewParkingHost(size: {
+  readonly width: number;
+  readonly height: number;
+}): HTMLDivElement {
+  const host = document.createElement("div");
+  host.setAttribute("aria-hidden", "true");
+  host.setAttribute("data-browser-webview-parking", "true");
+  host.style.position = "fixed";
+  host.style.left = "-10000px";
+  host.style.top = "-10000px";
+  // Preserve the guest's viewport while ownership crosses React hosts. Shrinking the
+  // parked webview can fire responsive layout work and disturb virtualized page state.
+  host.style.width = `${Math.max(1, Math.round(size.width))}px`;
+  host.style.height = `${Math.max(1, Math.round(size.height))}px`;
+  host.style.overflow = "hidden";
+  host.style.pointerEvents = "none";
+  document.body.append(host);
+  return host;
+}
 // The address field and tab pills share one chrome-control surface so the whole row reads
 // as a single cohesive control: matching height, radius, border width, and type scale.
 const BROWSER_CHROME_CONTROL_CLASS_NAME = "h-8 rounded-lg border text-xs";
@@ -736,8 +777,8 @@ export function BrowserPanel({
     [api, refreshLocalHtmlPreview, threadId, upsertThreadState],
   );
 
-  // Renderer-owned <webview>s are adopted by the desktop manager. Always detach before
-  // removing the DOM node so main never keeps a stale webContents runtime.
+  // Explicit tab/partition changes are final ownership changes, so detach immediately.
+  // Host-to-host moves use the short parking lease below instead.
   const detachRendererBrowserWebview = useCallback(() => {
     const webview = browserWebviewRef.current;
     const tabId = browserWebviewTabIdRef.current;
@@ -761,6 +802,57 @@ export function BrowserPanel({
     browserWebviewTabIdRef.current = null;
     browserWebviewAttachKeyRef.current = null;
   }, [api, isLiveRuntime, threadId]);
+
+  const parkRendererBrowserWebview = useCallback(() => {
+    const webview = browserWebviewRef.current;
+    const tabId = browserWebviewTabIdRef.current;
+    const partition = webview?.getAttribute("partition") ?? "";
+    if (!webview || !tabId || partition.length === 0) {
+      detachRendererBrowserWebview();
+      return;
+    }
+
+    let webContentsId: number | undefined;
+    try {
+      webContentsId = webview.getWebContentsId?.();
+    } catch {
+      webContentsId = undefined;
+    }
+    const webviewBounds = webview.getBoundingClientRect();
+    const parkingHost = createRendererBrowserWebviewParkingHost({
+      width: webviewBounds.width,
+      height: webviewBounds.height,
+    });
+    setBrowserWebviewOverlayOcclusion(webview, true);
+    parkingHost.append(webview);
+    const key = browserWebviewHandoffKey({ threadId, tabId, partition });
+    rendererBrowserWebviewHandoffs.park(
+      key,
+      {
+        webview,
+        tabId,
+        attachKey: browserWebviewAttachKeyRef.current,
+        webContentsId,
+        parkingHost,
+      },
+      (parked) => {
+        if (api && isLiveRuntime && parked.webContentsId && parked.webContentsId > 0) {
+          void api.browser
+            .detachWebview({
+              threadId,
+              tabId: parked.tabId,
+              webContentsId: parked.webContentsId,
+            })
+            .catch(ignoreBrowserWebviewDetachError);
+        }
+        parked.webview.remove();
+        parked.parkingHost.remove();
+      },
+    );
+    browserWebviewRef.current = null;
+    browserWebviewTabIdRef.current = null;
+    browserWebviewAttachKeyRef.current = null;
+  }, [api, detachRendererBrowserWebview, isLiveRuntime, threadId]);
 
   useEffect(() => {
     if (!api || !isLiveRuntime) {
@@ -848,7 +940,7 @@ export function BrowserPanel({
   }, [activeTab]);
 
   useLayoutEffect(() => {
-    if (!api || !isLiveRuntime || !workspaceReady || !activeTab) {
+    if (!api || !isLiveRuntime || !activeTab) {
       return;
     }
 
@@ -875,6 +967,29 @@ export function BrowserPanel({
     if (webview?.getAttribute("partition") !== expectedPartition) {
       detachRendererBrowserWebview();
       webview = null;
+    }
+    if (!webview) {
+      const parked = rendererBrowserWebviewHandoffs.adopt(
+        browserWebviewHandoffKey({
+          threadId,
+          tabId: activeTab.id,
+          partition: expectedPartition,
+        }),
+      );
+      if (parked) {
+        webview = parked.webview;
+        browserWebviewRef.current = webview;
+        browserWebviewTabIdRef.current = parked.tabId;
+        browserWebviewAttachKeyRef.current = parked.attachKey;
+        setBrowserWebviewOverlayOcclusion(webview, false);
+        host.append(webview);
+        parked.parkingHost.remove();
+      }
+    }
+    // The exact parked guest can be adopted before the new host's open RPC completes.
+    // Creating a fresh guest still waits for workspace readiness as before.
+    if (!webview && !workspaceReady) {
+      return;
     }
     if (!webview) {
       webview = document.createElement("webview") as BrowserWebviewElement;
@@ -958,11 +1073,11 @@ export function BrowserPanel({
     workspaceReady,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     return () => {
-      detachRendererBrowserWebview();
+      parkRendererBrowserWebview();
     };
-  }, [detachRendererBrowserWebview]);
+  }, [parkRendererBrowserWebview]);
 
   useEffect(() => {
     const liveTabIds = new Set(threadBrowserState?.tabs.map((tab) => tab.id) ?? []);

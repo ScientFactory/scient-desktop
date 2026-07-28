@@ -98,6 +98,7 @@ import { RightDock } from "../components/chat/RightDock";
 import { RightDockEmptyState } from "../components/chat/RightDockEmptyState";
 import {
   restoreRightDockFocusAfterBrowserClose,
+  restoreChatFocusAfterFloatingBrowserClose,
   restoreSplitChatFocusAfterBrowserClose,
 } from "../components/chat/browserPanelFocus";
 import {
@@ -195,12 +196,13 @@ import {
 import { cn } from "~/lib/utils";
 import {
   browserPictureInPictureIdentityMatches,
+  browserPictureInPictureOwnerPaneIdToClose,
   closeBrowserPictureInPicture,
-  moveBrowserPictureInPicture,
+  commitBrowserPictureInPictureLayout,
   openBrowserPictureInPicture,
   reconcileBrowserPictureInPicture,
-  resizeBrowserPictureInPicture,
   type BrowserPictureInPictureIdentity,
+  type BrowserPictureInPictureLayout,
   type BrowserPictureInPictureState,
 } from "~/browserPictureInPicture";
 import {
@@ -1689,9 +1691,38 @@ function SingleChatSurface(props: {
 
   const handleCloseFloatingBrowserPreview = useCallback(
     (identity: BrowserPictureInPictureIdentity) => {
+      if (
+        !browserPictureInPicture ||
+        !browserPictureInPictureIdentityMatches(browserPictureInPicture, identity)
+      ) {
+        return;
+      }
       setBrowserPictureInPicture((current) => closeBrowserPictureInPicture(current, identity));
+      window.requestAnimationFrame(() => {
+        restoreChatFocusAfterFloatingBrowserClose(document);
+      });
     },
-    [],
+    [browserPictureInPicture],
+  );
+
+  const handleCloseFloatingBrowserOwnership = useCallback(
+    (identity: BrowserPictureInPictureIdentity) => {
+      const paneId = browserPictureInPictureOwnerPaneIdToClose(browserPictureInPicture, identity);
+      if (
+        paneId === null ||
+        identity.threadId !== props.threadId ||
+        identity.projectId !== props.projectId ||
+        paneId !== browserPane?.id
+      ) {
+        return;
+      }
+      setBrowserPictureInPicture(null);
+      closePane(props.threadId, paneId);
+      window.requestAnimationFrame(() => {
+        restoreChatFocusAfterFloatingBrowserClose(document);
+      });
+    },
+    [browserPictureInPicture, browserPane?.id, closePane, props.projectId, props.threadId],
   );
 
   const handleReturnFloatingBrowserPreview = useCallback(
@@ -1709,6 +1740,9 @@ function SingleChatSurface(props: {
       requestImmediateDockHydration("browser");
       setActivePane(props.threadId, identity.paneId);
       setDockOpen(props.threadId, true);
+      window.requestAnimationFrame(() => {
+        restoreRightDockFocusAfterBrowserClose(document);
+      });
     },
     [
       browserPictureInPicture,
@@ -1721,25 +1755,10 @@ function SingleChatSurface(props: {
     ],
   );
 
-  const handleMoveFloatingBrowserPreview = useCallback(
-    (
-      identity: BrowserPictureInPictureIdentity,
-      position: { readonly x: number; readonly y: number },
-    ) => {
+  const handleFloatingBrowserLayoutCommit = useCallback(
+    (identity: BrowserPictureInPictureIdentity, layout: BrowserPictureInPictureLayout) => {
       setBrowserPictureInPicture((current) =>
-        moveBrowserPictureInPicture(current, identity, position),
-      );
-    },
-    [],
-  );
-
-  const handleResizeFloatingBrowserPreview = useCallback(
-    (
-      identity: BrowserPictureInPictureIdentity,
-      size: { readonly width: number; readonly height: number },
-    ) => {
-      setBrowserPictureInPicture((current) =>
-        resizeBrowserPictureInPicture(current, identity, size),
+        commitBrowserPictureInPictureLayout(current, identity, layout),
       );
     },
     [],
@@ -2848,8 +2867,7 @@ function SingleChatSurface(props: {
                   identity={browserPictureInPicture.identity}
                   position={browserPictureInPicture.position}
                   size={browserPictureInPicture.size}
-                  onMove={handleMoveFloatingBrowserPreview}
-                  onResize={handleResizeFloatingBrowserPreview}
+                  onLayoutCommit={handleFloatingBrowserLayoutCommit}
                   onClose={handleCloseFloatingBrowserPreview}
                   onReturnToDock={handleReturnFloatingBrowserPreview}
                 >
@@ -2858,7 +2876,7 @@ function SingleChatSurface(props: {
                       mode="sidebar"
                       threadId={browserPictureInPicture.identity.threadId}
                       onClosePanel={() =>
-                        handleCloseFloatingBrowserPreview(browserPictureInPicture.identity)
+                        handleCloseFloatingBrowserOwnership(browserPictureInPicture.identity)
                       }
                       runtimeMode="live"
                     />

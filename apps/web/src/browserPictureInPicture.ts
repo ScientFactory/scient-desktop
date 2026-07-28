@@ -2,6 +2,8 @@
 // Purpose: Pure identity, lifecycle, and layout rules for the in-chat browser mini-player.
 // Layer: Web UI state helper
 // Depends on: browser state metadata only; never owns or persists a browser runtime.
+// Provenance: adapted from third-party donor commits f4c39432 and 32af2f00 (MIT); see
+// THIRD_PARTY_NOTICES.md and apps/desktop/resources/THIRD_PARTY_NOTICES.md.
 
 import type { ProjectId, ThreadBrowserState, ThreadId } from "@synara/contracts";
 
@@ -31,6 +33,11 @@ export interface BrowserPictureInPictureState {
   readonly identity: BrowserPictureInPictureIdentity;
   readonly observedBrowserVersion: number;
   readonly position: BrowserPictureInPicturePoint | null;
+  readonly size: BrowserPictureInPictureSize;
+}
+
+export interface BrowserPictureInPictureLayout {
+  readonly position: BrowserPictureInPicturePoint;
   readonly size: BrowserPictureInPictureSize;
 }
 
@@ -147,6 +154,34 @@ export function closeBrowserPictureInPicture(
   return state && browserPictureInPictureIdentityMatches(state, expected) ? null : state;
 }
 
+export function browserPictureInPictureOwnerPaneIdToClose(
+  state: BrowserPictureInPictureState | null,
+  expected: BrowserPictureInPictureIdentity,
+): string | null {
+  return state && browserPictureInPictureIdentityMatches(state, expected)
+    ? state.identity.paneId
+    : null;
+}
+
+export function commitBrowserPictureInPictureLayout(
+  state: BrowserPictureInPictureState | null,
+  expected: BrowserPictureInPictureIdentity,
+  layout: BrowserPictureInPictureLayout,
+): BrowserPictureInPictureState | null {
+  if (!state || !browserPictureInPictureIdentityMatches(state, expected)) {
+    return state;
+  }
+  if (
+    state.position?.x === layout.position.x &&
+    state.position.y === layout.position.y &&
+    state.size.width === layout.size.width &&
+    state.size.height === layout.size.height
+  ) {
+    return state;
+  }
+  return { ...state, position: layout.position, size: layout.size };
+}
+
 export function resizeBrowserPictureInPicture(
   state: BrowserPictureInPictureState | null,
   expected: BrowserPictureInPictureIdentity,
@@ -204,5 +239,51 @@ export function clampBrowserPictureInPicturePosition(
       position.y,
       finiteDimension(container.height) - finiteDimension(player.height),
     ),
+  };
+}
+
+export function resolveBrowserPictureInPictureKeyboardLayout(input: {
+  readonly key: string;
+  readonly shiftKey: boolean;
+  readonly altKey: boolean;
+  readonly position: BrowserPictureInPicturePoint;
+  readonly size: BrowserPictureInPictureSize;
+  readonly container: BrowserPictureInPictureSize;
+}): BrowserPictureInPictureLayout | null {
+  const direction =
+    input.key === "ArrowLeft"
+      ? { x: -1, y: 0 }
+      : input.key === "ArrowRight"
+        ? { x: 1, y: 0 }
+        : input.key === "ArrowUp"
+          ? { x: 0, y: -1 }
+          : input.key === "ArrowDown"
+            ? { x: 0, y: 1 }
+            : null;
+  if (!direction) return null;
+  const step = input.shiftKey ? 32 : 8;
+  if (input.altKey) {
+    const size = clampBrowserPictureInPictureSize(
+      {
+        width: input.size.width + direction.x * step,
+        height: input.size.height + direction.y * step,
+      },
+      input.container,
+    );
+    return {
+      position: clampBrowserPictureInPicturePosition(input.position, input.container, size),
+      size,
+    };
+  }
+  return {
+    position: clampBrowserPictureInPicturePosition(
+      {
+        x: input.position.x + direction.x * step,
+        y: input.position.y + direction.y * step,
+      },
+      input.container,
+      input.size,
+    ),
+    size: input.size,
   };
 }

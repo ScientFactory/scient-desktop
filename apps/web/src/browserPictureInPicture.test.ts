@@ -5,13 +5,16 @@ import {
   BROWSER_PIP_DEFAULT_SIZE,
   BROWSER_PIP_MIN_SIZE,
   browserPictureInPictureIdentityMatches,
+  browserPictureInPictureOwnerPaneIdToClose,
   clampBrowserPictureInPicturePosition,
   clampBrowserPictureInPictureSize,
   closeBrowserPictureInPicture,
+  commitBrowserPictureInPictureLayout,
   moveBrowserPictureInPicture,
   openBrowserPictureInPicture,
   reconcileBrowserPictureInPicture,
   resizeBrowserPictureInPicture,
+  resolveBrowserPictureInPictureKeyboardLayout,
 } from "./browserPictureInPicture";
 
 const THREAD_ID = ThreadId.makeUnsafe("thread-1");
@@ -165,6 +168,28 @@ describe("browser picture-in-picture lifecycle", () => {
     expect(browserPictureInPictureIdentityMatches(resized!, state.identity)).toBe(true);
     expect(closeBrowserPictureInPicture(resized, state.identity)).toBeNull();
   });
+
+  it("separates floating-surface close from closing the owning browser pane", () => {
+    const state = openState();
+    const staleIdentity = { ...state.identity, generation: state.identity.generation - 1 };
+
+    expect(browserPictureInPictureOwnerPaneIdToClose(state, staleIdentity)).toBeNull();
+    expect(browserPictureInPictureOwnerPaneIdToClose(state, state.identity)).toBe("browser-pane");
+    expect(closeBrowserPictureInPicture(state, state.identity)).toBeNull();
+  });
+
+  it("rejects a settled layout from a stale gesture identity", () => {
+    const state = openState();
+    const staleIdentity = { ...state.identity, tabId: "replaced-tab" };
+    const layout = { position: { x: 44, y: 52 }, size: { width: 500, height: 320 } };
+
+    expect(commitBrowserPictureInPictureLayout(state, staleIdentity, layout)).toBe(state);
+    expect(commitBrowserPictureInPictureLayout(state, state.identity, layout)).toEqual({
+      ...state,
+      position: layout.position,
+      size: layout.size,
+    });
+  });
 });
 
 describe("browser picture-in-picture layout", () => {
@@ -199,5 +224,37 @@ describe("browser picture-in-picture layout", () => {
     expect(clampBrowserPictureInPicturePosition({ x: 1_000, y: 1_000 }, container, player)).toEqual(
       { x: 460, y: 400 },
     );
+  });
+
+  it("maps keyboard arrows to bounded movement and Alt-arrows to resizing", () => {
+    const common = {
+      shiftKey: false,
+      position: { x: 20, y: 30 },
+      size: { width: 440, height: 300 },
+      container: { width: 900, height: 700 },
+    };
+
+    expect(
+      resolveBrowserPictureInPictureKeyboardLayout({
+        ...common,
+        key: "ArrowRight",
+        altKey: false,
+      }),
+    ).toEqual({ position: { x: 28, y: 30 }, size: common.size });
+    expect(
+      resolveBrowserPictureInPictureKeyboardLayout({
+        ...common,
+        key: "ArrowDown",
+        shiftKey: true,
+        altKey: true,
+      }),
+    ).toEqual({ position: common.position, size: { width: 440, height: 332 } });
+    expect(
+      resolveBrowserPictureInPictureKeyboardLayout({
+        ...common,
+        key: "Enter",
+        altKey: false,
+      }),
+    ).toBeNull();
   });
 });

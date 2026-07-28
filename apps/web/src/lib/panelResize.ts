@@ -21,6 +21,12 @@ const COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX = 160;
 // name has a single source of truth across the chat route and BrowserPanel.
 export const PANEL_RESIZE_OVERLAY_SYNC_EVENT = "scient:panel-resize-overlay-sync";
 
+export function dispatchPanelResizeOverlaySync(
+  target: Pick<EventTarget, "dispatchEvent"> = window,
+): void {
+  target.dispatchEvent(new Event(PANEL_RESIZE_OVERLAY_SYNC_EVENT));
+}
+
 // Probe whether the composer can render at `nextWidth` without overflowing its
 // viewport or violating its minimum control width. Applies the width, measures,
 // then resets — callers own the real commit.
@@ -94,11 +100,11 @@ export function createPanelResizeOverlay(): HTMLDivElement {
   overlay.style.cursor = "col-resize";
   overlay.style.background = "transparent";
   document.body.append(overlay);
-  window.dispatchEvent(new Event(PANEL_RESIZE_OVERLAY_SYNC_EVENT));
+  dispatchPanelResizeOverlaySync();
   return overlay;
 }
 
 export function removePanelResizeOverlay(overlay: HTMLDivElement): void {
   overlay.remove();
-  window.dispatchEvent(new Event(PANEL_RESIZE_OVERLAY_SYNC_EVENT));
+  dispatchPanelResizeOverlaySync();
 }
