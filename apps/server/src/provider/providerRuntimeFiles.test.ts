@@ -29,7 +29,13 @@ afterEach(async () => {
   );
 });
 
-function createDeflateZip(entries: ReadonlyArray<{ name: string; data: Buffer }>): Buffer {
+function createDeflateZip(
+  entries: ReadonlyArray<{
+    name: string;
+    data: Buffer;
+    centralUncompressedSize?: number;
+  }>,
+): Buffer {
   const localParts: Buffer[] = [];
   const centralParts: Buffer[] = [];
   let localOffset = 0;
@@ -56,7 +62,7 @@ function createDeflateZip(entries: ReadonlyArray<{ name: string; data: Buffer }>
     central.writeUInt16LE(8, 10);
     central.writeUInt32LE(crc, 16);
     central.writeUInt32LE(compressed.length, 20);
-    central.writeUInt32LE(entry.data.length, 24);
+    central.writeUInt32LE(entry.centralUncompressedSize ?? entry.data.length, 24);
     central.writeUInt16LE(name.length, 28);
     central.writeUInt32LE(localOffset, 42);
     name.copy(central, 46);
@@ -206,6 +212,58 @@ describe("provider runtime files", () => {
     });
   });
 
+  it("enforces the actual expanded-byte limit when zip metadata understates a file", async () => {
+    const root = await temporaryRoot();
+    const archivePath = Path.join(root, "runtime.zip");
+    await FS.writeFile(
+      archivePath,
+      createDeflateZip([
+        {
+          name: "codex.exe",
+          data: Buffer.alloc(256, 7),
+          centralUncompressedSize: 1,
+        },
+      ]),
+    );
+
+    await expect(
+      extractProviderRuntime({
+        archivePath,
+        destination: Path.join(root, "release"),
+        format: "zip",
+        executablePath: "codex.exe",
+        maxExpandedBytes: 64,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("exceeds extraction limits");
+  });
+
+  it("rejects data hidden behind a zip directory type", async () => {
+    const root = await temporaryRoot();
+    const archivePath = Path.join(root, "runtime.zip");
+    await FS.writeFile(
+      archivePath,
+      createDeflateZip([
+        {
+          name: "payload/",
+          data: Buffer.from("hidden-directory-payload"),
+          centralUncompressedSize: 0,
+        },
+        { name: "codex.exe", data: Buffer.from("codex-binary") },
+      ]),
+    );
+
+    await expect(
+      extractProviderRuntime({
+        archivePath,
+        destination: Path.join(root, "release"),
+        format: "zip",
+        executablePath: "codex.exe",
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("entry type changed during extraction");
+  });
+
   it("extracts a regular tar entry and marks the expected executable private", async () => {
     const root = await temporaryRoot();
     const source = Path.join(root, "source");
@@ -248,6 +306,29 @@ describe("provider runtime files", () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toBeInstanceOf(ProviderRuntimeFileError);
+  });
+
+  it("stops tar extraction at the first expanded-size violation", async () => {
+    const root = await temporaryRoot();
+    const source = Path.join(root, "source");
+    const completeArchive = Path.join(root, "complete.tar");
+    const truncatedArchive = Path.join(root, "runtime.tar");
+    await FS.mkdir(source);
+    await FS.writeFile(Path.join(source, "provider"), Buffer.alloc(4096, 7));
+    await Tar.c({ cwd: source, file: completeArchive }, ["provider"]);
+    const archive = await FS.readFile(completeArchive);
+    await FS.writeFile(truncatedArchive, archive.subarray(0, 512));
+
+    await expect(
+      extractProviderRuntime({
+        archivePath: truncatedArchive,
+        destination: Path.join(root, "release"),
+        format: "tar.gz",
+        executablePath: "provider",
+        maxExpandedBytes: 64,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("exceeds extraction limits");
   });
 
   it("honors cancellation before raw extraction", async () => {

@@ -232,6 +232,13 @@ async function extractTarGzip(input: {
   let expandedBytes = 0;
   const seen = new Set<string>();
   let validationError: ProviderRuntimeFileError | DOMException | null = null;
+  const validationController = new AbortController();
+  const extractionSignal = AbortSignal.any([input.signal, validationController.signal]);
+  const rejectEntry = (error: ProviderRuntimeFileError | DOMException): false => {
+    validationError = error;
+    validationController.abort(error);
+    return false;
+  };
   const extractor = Tar.x({
     cwd: input.destination,
     strict: true,
@@ -241,46 +248,51 @@ async function extractTarGzip(input: {
       if (validationError) return false;
       try {
         if (input.signal.aborted) {
-          validationError = new DOMException("Extraction cancelled.", "AbortError");
-          return false;
+          return rejectEntry(new DOMException("Extraction cancelled.", "AbortError"));
         }
         safeArchivePath(input.destination, entryPath);
         const normalized = entryPath.replaceAll("\\", "/");
         if (seen.has(normalized)) {
-          validationError = new ProviderRuntimeFileError(
-            `Provider runtime archive contains a duplicate path: ${entryPath}`,
+          return rejectEntry(
+            new ProviderRuntimeFileError(
+              `Provider runtime archive contains a duplicate path: ${entryPath}`,
+            ),
           );
-          return false;
         }
         seen.add(normalized);
         const entryType = "type" in entry ? entry.type : entry.isDirectory() ? "Directory" : "File";
         if (entryType !== "File" && entryType !== "Directory") {
-          validationError = new ProviderRuntimeFileError(
-            `Unsupported provider runtime archive entry: ${entryPath}`,
+          return rejectEntry(
+            new ProviderRuntimeFileError(
+              `Unsupported provider runtime archive entry: ${entryPath}`,
+            ),
           );
-          return false;
         }
         files += 1;
         expandedBytes += entry.size;
         if (files > input.maxFiles || expandedBytes > input.maxExpandedBytes) {
-          validationError = new ProviderRuntimeFileError(
-            "Provider runtime archive exceeds extraction limits.",
+          return rejectEntry(
+            new ProviderRuntimeFileError("Provider runtime archive exceeds extraction limits."),
           );
-          return false;
         }
         return true;
       } catch (cause) {
-        validationError =
+        const error =
           cause instanceof ProviderRuntimeFileError
             ? cause
             : new ProviderRuntimeFileError("Provider runtime archive validation failed.", {
                 cause,
               });
-        return false;
+        return rejectEntry(error);
       }
     },
   });
-  await pipeline(createReadStream(input.archivePath), extractor, { signal: input.signal });
+  try {
+    await pipeline(createReadStream(input.archivePath), extractor, { signal: extractionSignal });
+  } catch (cause) {
+    if (validationError) throw validationError;
+    throw cause;
+  }
   if (validationError) throw validationError;
 }
 
@@ -347,8 +359,24 @@ async function extractZip(input: {
       }
       extracted.add(normalized);
       const destination = safeArchivePath(input.destination, entry.path);
+      if (entry.type !== expected.type) {
+        entry.autodrain();
+        throw new ProviderRuntimeFileError(
+          `Provider runtime archive entry type changed during extraction: ${entry.path}`,
+        );
+      }
       if (expected.type === "Directory") {
-        await entry.autodrain().promise();
+        for await (const chunk of entry) {
+          actualExpandedBytes += Buffer.byteLength(chunk as Buffer);
+          if (actualExpandedBytes > input.maxExpandedBytes) {
+            throw new ProviderRuntimeFileError(
+              "Provider runtime archive exceeds extraction limits.",
+            );
+          }
+          throw new ProviderRuntimeFileError(
+            `Provider runtime archive directory contains data: ${entry.path}`,
+          );
+        }
         await FS.mkdir(destination, { recursive: true });
         continue;
       }
