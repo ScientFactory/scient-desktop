@@ -35,7 +35,7 @@ import {
   buildPrContentPrompt,
   buildThreadRecapPrompt,
   buildThreadTitlePrompt,
-  sanitizeCommitSubject,
+  sanitizeCommitSubjectForPolicy,
   sanitizeDiffSummary,
   sanitizeThreadRecap,
   sanitizePrTitle,
@@ -438,6 +438,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       stagedSummary: input.stagedSummary,
       stagedPatch: input.stagedPatch,
       includeBranch: wantsBranch,
+      ...(input.policy ? { policy: input.policy } : {}),
     });
 
     return runCodexJson({
@@ -453,7 +454,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       Effect.map(
         (generated) =>
           ({
-            subject: sanitizeCommitSubject(generated.subject),
+            subject: sanitizeCommitSubjectForPolicy(generated, input.policy),
             body: generated.body.trim(),
             ...("branch" in generated && typeof generated.branch === "string"
               ? { branch: sanitizeFeatureBranchName(generated.branch) }
@@ -470,6 +471,8 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       commitSummary: input.commitSummary,
       diffSummary: input.diffSummary,
       diffPatch: input.diffPatch,
+      ...(input.policy ? { policy: input.policy } : {}),
+      ...(input.pullRequestTemplate ? { pullRequestTemplate: input.pullRequestTemplate } : {}),
     });
 
     return runCodexJson({
@@ -525,6 +528,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
       const { prompt, outputSchemaJson } = buildBranchNamePrompt({
         message: input.message,
         ...(input.attachments ? { attachments: input.attachments } : {}),
+        ...(input.policy ? { policy: input.policy } : {}),
       });
 
       const generated = yield* runCodexJson({

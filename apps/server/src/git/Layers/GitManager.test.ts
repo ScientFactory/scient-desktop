@@ -5,7 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
 import { expect } from "vitest";
-import type { GitActionProgressEvent } from "@synara/contracts";
+import { DEFAULT_SERVER_SETTINGS, type GitActionProgressEvent } from "@synara/contracts";
 import type {
   GitPullRequestCheck,
   GitPullRequestComment,
@@ -24,12 +24,15 @@ import {
   type TextGenerationShape,
   TextGeneration,
   type ThreadRecapGenerationInput,
+  type PullRequestTemplateContext,
+  type SourceControlWritingPolicy,
 } from "../Services/TextGeneration.ts";
 import { GitCoreLive } from "./GitCore.ts";
 import { GitCore } from "../Services/GitCore.ts";
 import { createGitHubCliWithFakeGh, type FakeGhScenario } from "../testing/fakeGitHubCli.ts";
 import { makeGitManager } from "./GitManager.ts";
 import { ServerConfig } from "../../config.ts";
+import { type ServerSettingsShape, ServerSettingsService } from "../../serverSettings.ts";
 
 interface FakeGitTextGeneration {
   generateCommitMessage: (input: {
@@ -42,6 +45,7 @@ interface FakeGitTextGeneration {
     includeBranch?: boolean;
     model?: string;
     modelSelection?: ModelSelection;
+    policy?: SourceControlWritingPolicy;
   }) => Effect.Effect<
     { subject: string; body: string; branch?: string | undefined },
     TextGenerationError
@@ -57,6 +61,8 @@ interface FakeGitTextGeneration {
     providerOptions?: ProviderStartOptions;
     model?: string;
     modelSelection?: ModelSelection;
+    policy?: SourceControlWritingPolicy;
+    pullRequestTemplate?: PullRequestTemplateContext;
   }) => Effect.Effect<{ title: string; body: string }, TextGenerationError>;
   generateDiffSummary: (input: {
     cwd: string;
@@ -72,6 +78,7 @@ interface FakeGitTextGeneration {
     providerOptions?: ProviderStartOptions;
     model?: string;
     modelSelection?: ModelSelection;
+    policy?: SourceControlWritingPolicy;
   }) => Effect.Effect<{ branch: string }, TextGenerationError>;
   generateThreadTitle: (input: {
     cwd: string;
@@ -354,6 +361,8 @@ function handoffThread(
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   textGeneration?: Partial<FakeGitTextGeneration>;
+  serverSettings?: Parameters<typeof ServerSettingsService.layerTest>[0];
+  serverSettingsService?: ServerSettingsShape;
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
@@ -369,6 +378,9 @@ function makeManager(input?: {
   const managerLayer = Layer.mergeAll(
     Layer.succeed(GitHubCli, gitHubCli),
     Layer.succeed(TextGeneration, textGeneration),
+    input?.serverSettingsService
+      ? Layer.succeed(ServerSettingsService, input.serverSettingsService)
+      : ServerSettingsService.layerTest(input?.serverSettings),
     gitCoreLayer,
   ).pipe(Layer.provideMerge(NodeServices.layer));
 
@@ -638,6 +650,86 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("snapshots and applies configured source control writing policy", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("synara-git-manager-");
+      yield* initRepo(repoDir);
+      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\npolicy\n");
+      let capturedPolicy: SourceControlWritingPolicy | undefined;
+
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          sourceControlWriting: {
+            mode: "custom",
+            customInstructions: "Use direct, user-centered wording.",
+          },
+        },
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            capturedPolicy = input.policy;
+            return Effect.succeed({ subject: "Apply writing policy", body: "" });
+          },
+        },
+      });
+      yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
+
+      expect(capturedPolicy).toEqual({
+        mode: "custom",
+        customInstructions: "Use direct, user-centered wording.",
+      });
+    }),
+  );
+
+  it.effect("uses one immutable writing-settings snapshot for a stacked action", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("synara-git-manager-");
+      yield* initRepo(repoDir);
+      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\nsnapshot\n");
+      let snapshotReads = 0;
+      const policies: Array<SourceControlWritingPolicy | undefined> = [];
+      const settings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        sourceControlWriting: {
+          ...DEFAULT_SERVER_SETTINGS.sourceControlWriting,
+          mode: "custom" as const,
+          customInstructions: "Use the captured style.",
+        },
+      };
+
+      const { manager } = yield* makeManager({
+        serverSettingsService: {
+          getSnapshot: Effect.sync(() => {
+            snapshotReads += 1;
+            return {
+              settings,
+              revision: snapshotReads,
+              providerRevisions: new Map(),
+            };
+          }),
+        } as unknown as ServerSettingsShape,
+        textGeneration: {
+          generateCommitMessage: (input) => {
+            policies.push(input.policy);
+            return Effect.succeed({
+              subject: "Use one settings snapshot",
+              body: "",
+              ...(input.includeBranch ? { branch: "settings-snapshot" } : {}),
+            });
+          },
+        },
+      });
+
+      yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        featureBranch: true,
+      });
+
+      expect(snapshotReads).toBe(1);
+      expect(policies).toEqual([{ mode: "custom", customInstructions: "Use the captured style." }]);
+    }),
+  );
+
   it.effect("falls back to a heuristic commit message when text generation fails", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("synara-git-manager-");
@@ -668,6 +760,35 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           Effect.map((gitResult) => gitResult.stdout.trim()),
         ),
       ).toBe("Update README.md");
+    }),
+  );
+
+  it.effect("keeps conventional commit syntax when text generation falls back", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("synara-git-manager-");
+      yield* initRepo(repoDir);
+      fs.writeFileSync(path.join(repoDir, "README.md"), "hello\nconventional fallback\n");
+
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          sourceControlWriting: { mode: "conventional_commits" },
+        },
+        textGeneration: {
+          generateCommitMessage: () =>
+            Effect.fail(
+              new TextGenerationError({
+                operation: "generateCommitMessage",
+                detail: "writer unavailable",
+              }),
+            ),
+        },
+      });
+
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
+      expect(result.commit).toMatchObject({
+        status: "created",
+        subject: "chore: Update README.md",
+      });
     }),
   );
 
@@ -1633,6 +1754,13 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("synara-git-manager-");
       yield* initRepo(repoDir);
+      fs.mkdirSync(path.join(repoDir, ".github"));
+      fs.writeFileSync(
+        path.join(repoDir, ".github", "pull_request_template.md"),
+        "## User effect\n\n## Verification\n",
+      );
+      yield* runGit(repoDir, ["add", ".github/pull_request_template.md"]);
+      yield* runGit(repoDir, ["commit", "-m", "Add pull request template"]);
       yield* runGit(repoDir, ["checkout", "-b", "feature-create-pr"]);
       const remoteDir = yield* createBareRemote();
       yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
@@ -1642,7 +1770,22 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       yield* runGit(repoDir, ["push", "-u", "origin", "feature-create-pr"]);
       yield* runGit(repoDir, ["config", "branch.feature-create-pr.gh-merge-base", "main"]);
 
+      let capturedTemplate: PullRequestTemplateContext | undefined;
       const { manager, ghCalls } = yield* makeManager({
+        serverSettings: {
+          sourceControlWriting: {
+            followPullRequestTemplate: true,
+          },
+        },
+        textGeneration: {
+          generatePrContent: (input) => {
+            capturedTemplate = input.pullRequestTemplate;
+            return Effect.succeed({
+              title: "Add stacked git actions",
+              body: "## User effect\nAdded stacked actions.\n\n## Verification\n- Tests pass.",
+            });
+          },
+        },
         ghScenario: {
           prListSequence: [
             "[]",
@@ -1668,6 +1811,10 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
       expect(result.branch.status).toBe("skipped_not_requested");
       expect(result.pr.status).toBe("created");
       expect(result.pr.number).toBe(88);
+      expect(capturedTemplate).toEqual({
+        path: ".github/pull_request_template.md",
+        content: "## User effect\n\n## Verification",
+      });
       expect(
         ghCalls.some((call) => call.includes("pr create --base main --head feature-create-pr")),
       ).toBe(true);

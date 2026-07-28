@@ -18,6 +18,19 @@ import type {
 
 import type { TextGenerationError } from "../Errors.ts";
 
+export interface SourceControlWritingPolicy {
+  readonly mode: "repository_conventions" | "conventional_commits" | "custom";
+  /** User-authored style guidance. Baseline safety and output rules remain authoritative. */
+  readonly customInstructions?: string | undefined;
+  /** Bounded, local-only examples treated as repository evidence rather than instructions. */
+  readonly recentCommitSubjects?: ReadonlyArray<string> | undefined;
+}
+
+export interface PullRequestTemplateContext {
+  readonly path: string;
+  readonly content: string;
+}
+
 export interface CommitMessageGenerationInput {
   cwd: string;
   branch: string | null;
@@ -32,6 +45,8 @@ export interface CommitMessageGenerationInput {
   modelSelection?: ModelSelection;
   /** Optional provider startup overrides, such as custom binary paths or server URLs. */
   providerOptions?: ProviderStartOptions;
+  /** Optional Scient-resolved style policy for this single Git action. */
+  policy?: SourceControlWritingPolicy;
 }
 
 export interface CommitMessageGenerationResult {
@@ -55,6 +70,10 @@ export interface PrContentGenerationInput {
   modelSelection?: ModelSelection;
   /** Optional provider startup overrides, such as custom binary paths or server URLs. */
   providerOptions?: ProviderStartOptions;
+  /** Optional Scient-resolved style policy for this single Git action. */
+  policy?: SourceControlWritingPolicy;
+  /** Bounded content read from the exact committed pull-request base tree. */
+  pullRequestTemplate?: PullRequestTemplateContext;
 }
 
 export interface PrContentGenerationResult {
@@ -88,6 +107,8 @@ export interface BranchNameGenerationInput {
   modelSelection?: ModelSelection;
   /** Optional provider startup overrides, such as custom binary paths or server URLs. */
   providerOptions?: ProviderStartOptions;
+  /** Optional Scient-resolved style policy for this branch-name generation. */
+  policy?: SourceControlWritingPolicy;
 }
 
 export interface BranchNameGenerationResult {

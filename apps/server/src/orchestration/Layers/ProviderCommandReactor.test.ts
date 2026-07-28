@@ -134,6 +134,7 @@ describe("ProviderCommandReactor", () => {
     readonly studioOutputReactor?: Partial<StudioOutputReactorShape>;
     readonly forkThreadResult?: ProviderForkThreadResult | null;
     readonly skillAuthoringEnabled?: boolean;
+    readonly serverSettings?: Parameters<typeof ServerSettingsService.layerTest>[0];
     readonly filePersistence?: boolean;
     readonly seedInitialState?: boolean;
   }) {
@@ -426,8 +427,9 @@ describe("ProviderCommandReactor", () => {
         } as unknown as TextGenerationShape),
       ),
       Layer.provideMerge(
-        ServerSettingsService.layerTest(
-          input?.skillAuthoringEnabled === undefined
+        ServerSettingsService.layerTest({
+          ...input?.serverSettings,
+          ...(input?.skillAuthoringEnabled === undefined
             ? {}
             : {
                 skills: {
@@ -438,8 +440,8 @@ describe("ProviderCommandReactor", () => {
                     },
                   ],
                 },
-              },
-        ),
+              }),
+        }),
       ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -3429,7 +3431,14 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("renames temporary worktree branches and keeps associated worktree metadata in sync", async () => {
-    const harness = await createHarness();
+    const harness = await createHarness({
+      serverSettings: {
+        sourceControlWriting: {
+          mode: "custom",
+          customInstructions: "Prefer short repository nouns.",
+        },
+      },
+    });
     const now = new Date().toISOString();
     harness.generateBranchName.mockImplementation(() =>
       Effect.succeed({
@@ -3469,6 +3478,12 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
+    expect(harness.generateBranchName.mock.calls[0]?.[0]).toMatchObject({
+      policy: {
+        mode: "custom",
+        customInstructions: "Prefer short repository nouns.",
+      },
+    });
     await waitFor(() => harness.withActionLock.mock.calls.length === 1);
     await waitFor(() => harness.renameBranch.mock.calls.length === 1);
     await waitFor(() => harness.publishBranch.mock.calls.length === 1);

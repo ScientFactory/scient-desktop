@@ -24,6 +24,7 @@ import {
   ThreadId,
   type ProviderSession,
   type RuntimeMode,
+  type ServerSettings,
   TurnId,
 } from "@synara/contracts";
 import { Cache, Cause, Duration, Effect, Equal, Layer, Option, Schema, Stream } from "effect";
@@ -56,6 +57,7 @@ import {
   type ThreadTitleGenerationInput,
 } from "../../git/Services/TextGeneration.ts";
 import { resolveTextGenerationInputForSelection } from "../../git/textGenerationSelection.ts";
+import { resolveSourceControlWritingPolicy } from "../../git/sourceControlWritingPolicy.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ServerConfig } from "../../config.ts";
@@ -462,6 +464,7 @@ const make = Effect.gen(function* () {
     readonly modelSelection?: ModelSelection;
     readonly providerOptions?: ProviderStartOptions;
     readonly useConfiguredFallback?: boolean;
+    readonly configuredSettings?: ServerSettings;
   }) {
     const thread = yield* resolveThread(input.threadId);
     const modelSelection =
@@ -479,7 +482,7 @@ const make = Effect.gen(function* () {
     }
 
     // Non-generating chat providers still get AI titles via the configured git-writing model.
-    const settings = yield* serverSettings.getSettings;
+    const settings = input.configuredSettings ?? (yield* serverSettings.getSettings);
     return resolveTextGenerationInputForSelection(
       settings.textGenerationModelSelection,
       providerOptions,
@@ -1650,10 +1653,20 @@ const make = Effect.gen(function* () {
     const oldBranch = input.branch;
     const cwd = input.worktreePath;
     const attachments = input.attachments ?? [];
+    const sourceControlSettings = yield* serverSettings.getSnapshot.pipe(
+      Effect.map((snapshot) => snapshot.settings),
+      Effect.catch((error) =>
+        Effect.logWarning(
+          "provider command reactor could not snapshot source-control writing settings; using standard behavior",
+          { threadId: input.threadId, reason: error.message },
+        ).pipe(Effect.as(DEFAULT_SERVER_SETTINGS)),
+      ),
+    );
     const textGenerationInput = yield* resolveThreadTextGenerationInput({
       threadId: input.threadId,
       ...(input.modelSelection ? { modelSelection: input.modelSelection } : {}),
       ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
+      configuredSettings: sourceControlSettings,
     });
     if (!textGenerationInput) {
       const targetBranch = buildGeneratedWorktreeBranchName(
@@ -1674,10 +1687,16 @@ const make = Effect.gen(function* () {
       );
       return;
     }
+    const writingPolicy = yield* resolveSourceControlWritingPolicy({
+      cwd,
+      settings: sourceControlSettings.sourceControlWriting,
+      execute: git.execute,
+    });
     const branchNameGenerationInput: BranchNameGenerationInput = {
       cwd,
       message: input.messageText,
       ...(attachments.length > 0 ? { attachments } : {}),
+      ...(writingPolicy ? { policy: writingPolicy } : {}),
       ...("model" in textGenerationInput && typeof textGenerationInput.model === "string"
         ? { model: textGenerationInput.model }
         : {}),

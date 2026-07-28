@@ -411,6 +411,34 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
     ),
   );
 
+  it.effect("formats conventional commits from schema-validated structured fields", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          subject: "Improve repository search.",
+          body: "",
+          conventionalType: "perf",
+          conventionalScope: "Search UI",
+          breaking: false,
+        }),
+        stdinMustContain: "Scient formats the final conventional-commit subject deterministically",
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/codex-effect",
+          stagedSummary: "M search.ts",
+          stagedPatch: "diff --git a/search.ts b/search.ts",
+          policy: { mode: "conventional_commits" },
+        });
+
+        expect(generated.subject).toBe("perf(search-ui): Improve repository search");
+      }),
+    ),
+  );
+
   it.effect("generates PR content and trims markdown body", () =>
     withFakeCodexEnv(
       {
@@ -434,6 +462,36 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         expect(generated.title).toBe("Improve orchestration flow");
         expect(generated.body.startsWith("## Summary")).toBe(true);
         expect(generated.body.endsWith("\n\n")).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("passes a committed pull request template as a subordinate outline", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          title: "Improve orchestration flow",
+          body: "## User effect\n- Faster orchestration\n\n## Verification\n- Tests pass",
+        }),
+        stdinMustContain: "## User effect",
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generatePrContent({
+          cwd: process.cwd(),
+          baseBranch: "main",
+          headBranch: "feature/codex-effect",
+          commitSummary: "feat: improve orchestration flow",
+          diffSummary: "2 files changed",
+          diffPatch: "diff --git a/a.ts b/a.ts",
+          pullRequestTemplate: {
+            path: ".github/pull_request_template.md",
+            content: "## User effect\n\n## Verification",
+          },
+        });
+
+        expect(generated.body).toContain("## User effect");
       }),
     ),
   );

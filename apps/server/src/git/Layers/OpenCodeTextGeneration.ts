@@ -49,7 +49,7 @@ import {
   buildThreadTitlePrompt,
   decodeStructuredTextGenerationOutput,
   type RawTextFallback,
-  sanitizeCommitSubject,
+  sanitizeCommitSubjectForPolicy,
   sanitizeDiffSummary,
   sanitizeThreadRecap,
   sanitizePrTitle,
@@ -481,6 +481,7 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
         stagedSummary: input.stagedSummary,
         stagedPatch: input.stagedPatch,
         includeBranch: input.includeBranch === true,
+        ...(input.policy ? { policy: input.policy } : {}),
       });
       const generated = yield* runOpenCodeJson({
         operation: "generateCommitMessage",
@@ -492,7 +493,7 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
       });
 
       return {
-        subject: sanitizeCommitSubject(generated.subject),
+        subject: sanitizeCommitSubjectForPolicy(generated, input.policy),
         body: generated.body.trim(),
         ...("branch" in generated && typeof generated.branch === "string"
           ? { branch: sanitizeFeatureBranchName(generated.branch) }
@@ -517,6 +518,8 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
         commitSummary: input.commitSummary,
         diffSummary: input.diffSummary,
         diffPatch: input.diffPatch,
+        ...(input.policy ? { policy: input.policy } : {}),
+        ...(input.pullRequestTemplate ? { pullRequestTemplate: input.pullRequestTemplate } : {}),
       });
       const generated = yield* runOpenCodeJson({
         operation: "generatePrContent",
@@ -576,6 +579,7 @@ const makeOpenCodeCompatibleTextGeneration = (config: OpenCodeCompatibleTextGene
       const { prompt, outputSchemaJson, rawTextFallback } = buildBranchNamePrompt({
         message: input.message,
         ...(input.attachments ? { attachments: input.attachments } : {}),
+        ...(input.policy ? { policy: input.policy } : {}),
       });
       const generated = yield* runOpenCodeJson({
         operation: "generateBranchName",
