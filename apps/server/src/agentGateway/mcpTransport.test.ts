@@ -9,7 +9,7 @@
  */
 import { ProjectId, ThreadId, type OrchestrationThreadShell } from "@synara/contracts";
 import { Effect, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { makeAgentGatewayMcpTransport } from "./mcpTransport.ts";
@@ -79,7 +79,7 @@ function makeSnapshotQuery(
 
 const echoTool: ToolEntry = {
   definition: {
-    name: "synara_echo",
+    name: "scient_echo",
     description: "Echo the arguments back.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
@@ -88,7 +88,7 @@ const echoTool: ToolEntry = {
 
 const writeTool: ToolEntry = {
   definition: {
-    name: "synara_write_thing",
+    name: "scient_write_thing",
     description: "A write tool that requires an active turn.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
@@ -98,7 +98,7 @@ const writeTool: ToolEntry = {
 
 const defectTool: ToolEntry = {
   definition: {
-    name: "synara_defect",
+    name: "scient_defect",
     description: "Throw an unexpected internal error.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
@@ -198,7 +198,7 @@ describe("makeAgentGatewayMcpTransport ingress auth", () => {
 });
 
 describe("makeAgentGatewayMcpTransport JSON-RPC handling", () => {
-  it("answers initialize with a negotiated protocol + synara serverInfo", async () => {
+  it("answers initialize with a negotiated protocol + Scient serverInfo", async () => {
     const res = await run(makeTransport(), {
       authorizationHeader: auth(VALID_TOKEN),
       body: {
@@ -213,7 +213,7 @@ describe("makeAgentGatewayMcpTransport JSON-RPC handling", () => {
       result: { protocolVersion: string; serverInfo: { name: string }; instructions: string };
     };
     expect(body.result.protocolVersion).toBe("2025-06-18");
-    expect(body.result.serverInfo.name).toBe("synara");
+    expect(body.result.serverInfo.name).toBe("scient");
     expect(body.result.instructions).toBe("TEST_INSTRUCTIONS");
   });
 
@@ -233,8 +233,8 @@ describe("makeAgentGatewayMcpTransport JSON-RPC handling", () => {
     });
     const body = res.body as { result: { tools: Array<{ name: string }> } };
     expect(body.result.tools.map((tool) => tool.name)).toEqual([
-      "synara_echo",
-      "synara_write_thing",
+      "scient_echo",
+      "scient_write_thing",
     ]);
   });
 
@@ -245,7 +245,7 @@ describe("makeAgentGatewayMcpTransport JSON-RPC handling", () => {
         jsonrpc: "2.0",
         id: 3,
         method: "tools/call",
-        params: { name: "synara_echo", arguments: { hello: "world" } },
+        params: { name: "scient_echo", arguments: { hello: "world" } },
       },
     });
     expect(res.status).toBe(200);
@@ -253,20 +253,28 @@ describe("makeAgentGatewayMcpTransport JSON-RPC handling", () => {
   });
 
   it("does not reflect unexpected handler diagnostics to the provider", async () => {
+    const protectedLogs: string[] = [];
+    const logSpy = vi.spyOn(console, "error").mockImplementation((line) => {
+      protectedLogs.push(String(line));
+    });
     const res = await run(makeTransport({ tools: [defectTool] }), {
       authorizationHeader: auth(VALID_TOKEN),
       body: {
         jsonrpc: "2.0",
         id: 31,
         method: "tools/call",
-        params: { name: "synara_defect", arguments: {} },
+        params: { name: "scient_defect", arguments: {} },
       },
-    });
+    }).finally(() => logSpy.mockRestore());
     expect(res.status).toBe(200);
     const serialized = JSON.stringify(res.body);
     expect(serialized).toContain(UNEXPECTED_GATEWAY_TOOL_ERROR_MESSAGE);
     expect(serialized).not.toContain("sk-sentinel");
     expect(serialized).not.toContain("/Users/alice/private/.env");
+    expect(protectedLogs.join("\n")).toContain('toolName="scient_defect"');
+    expect(protectedLogs.join("\n")).toContain("[redacted]");
+    expect(protectedLogs.join("\n")).toContain("/Users/alice/private/.env");
+    expect(protectedLogs.join("\n")).not.toContain("sk-sentinel");
   });
 
   it("rejects an unknown tool with invalid params", async () => {
@@ -276,12 +284,12 @@ describe("makeAgentGatewayMcpTransport JSON-RPC handling", () => {
         jsonrpc: "2.0",
         id: 4,
         method: "tools/call",
-        params: { name: "synara_nope" },
+        params: { name: "scient_nope" },
       },
     });
     const body = res.body as { error: { code: number; message: string } };
     expect(body.error.code).toBe(-32602);
-    expect(body.error.message).toContain("synara_nope");
+    expect(body.error.message).toContain("scient_nope");
   });
 
   it("rejects a tools/call with a non-string tool name", async () => {
@@ -316,7 +324,7 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
         jsonrpc: "2.0",
         id: 1,
         method: "tools/call",
-        params: { name: "synara_write_thing", arguments: {} },
+        params: { name: "scient_write_thing", arguments: {} },
       },
     });
     const parsed = toolResultJson(res.body) as {
@@ -344,7 +352,7 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
           jsonrpc: "2.0",
           id: 1,
           method: "tools/call",
-          params: { name: "synara_write_thing", arguments: {} },
+          params: { name: "scient_write_thing", arguments: {} },
         },
       },
     );
@@ -374,7 +382,7 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
           jsonrpc: "2.0",
           id: 1,
           method: "tools/call",
-          params: { name: "synara_write_thing", arguments: {} },
+          params: { name: "scient_write_thing", arguments: {} },
         },
       },
     );
@@ -407,7 +415,7 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
           jsonrpc: "2.0",
           id: 1,
           method: "tools/call",
-          params: { name: "synara_write_thing", arguments: {} },
+          params: { name: "scient_write_thing", arguments: {} },
         },
       },
     );

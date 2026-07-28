@@ -1,8 +1,8 @@
 /**
- * AgentGateway - Synara app-control tool surface for provider agents.
+ * AgentGateway - Scient app-control tool surface for provider agents.
  *
- * Serves the `synara_*` MCP tools that let a provider session (Claude, Codex,
- * ...) observe sibling Synara threads in its project: list projects and
+ * Serves the `scient_*` MCP tools that let a provider session (Claude, Codex,
+ * ...) observe sibling Scient threads in its project: list projects and
  * threads, read thread status/transcripts, and wait for thread outcomes. The
  * HTTP route delegates every `POST /mcp` request here; authentication and
  * JSON-RPC handling both live behind this interface.

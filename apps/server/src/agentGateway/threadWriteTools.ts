@@ -1,16 +1,16 @@
 /**
- * Drive MCP tools for the Synara agent gateway.
+ * Drive MCP tools for the Scient agent gateway.
  *
  * Serves the two coordination *writes* an agent uses to drive a sibling thread
- * in its own project: `synara_send_message` (queue or steer a turn) and
- * `synara_interrupt_thread` (stop the running turn). Both funnel through the
+ * in its own project: `scient_send_message` (queue or steer a turn) and
+ * `scient_interrupt_thread` (stop the running turn). Both funnel through the
  * central {@link authorizeThreadDrive} policy (project scope + privilege and
  * worktree caps) and both are flagged `requiresActiveTurn`, so the transport
  * only admits them while the caller's own turn is live (see
  * {@link makeAgentGatewayMcpTransport}). Cross-project and higher-privilege
  * drives are denied.
  *
- * `synara_send_message` accepts an optional `requestId` for idempotency: a
+ * `scient_send_message` accepts an optional `requestId` for idempotency: a
  * transport retry carrying the same id returns the prior outcome without
  * dispatching a second turn. The dedup is a bounded in-memory map (this slice's
  * right-sized guard, not the durable creation saga), backed up by a
@@ -28,12 +28,12 @@ import {
   type OrchestrationThreadShell,
   type TurnDispatchMode,
 } from "@synara/contracts";
-import { Effect, Option } from "effect";
+import { Cause, Effect, Option } from "effect";
 
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { authorizeThreadDrive } from "./authorization.ts";
-import { mcpToolResultJson } from "./protocol.ts";
+import { mcpToolResultJson, type McpToolCallResult } from "./protocol.ts";
 import { readStringArg, ToolInputError } from "./toolInput.ts";
 import {
   gatewayToolFailureResult,
@@ -51,6 +51,8 @@ import {
  * first), which for a retry burst keeps the most recently issued ids.
  */
 const SEND_DEDUP_MAX_ENTRIES = 512;
+const SEND_REQUEST_ID_MAX_UTF8_BYTES = 256;
+const SEND_MESSAGE_MAX_UTF8_BYTES = 512 * 1024;
 
 interface SendResultPayload {
   readonly threadId: string;
@@ -58,10 +60,25 @@ interface SendResultPayload {
   readonly requestId: string | null;
 }
 
-interface SendDedupEntry {
+interface CompletedSendDedupEntry {
+  readonly state: "completed";
   readonly fingerprint: string;
   readonly payload: SendResultPayload;
 }
+
+interface PendingSendResolution {
+  readonly payload?: SendResultPayload;
+  readonly failure?: McpToolCallResult;
+}
+
+interface PendingSendDedupEntry {
+  readonly state: "pending";
+  readonly fingerprint: string;
+  readonly resolution: Promise<PendingSendResolution>;
+  readonly resolve: (resolution: PendingSendResolution) => void;
+}
+
+type SendDedupEntry = CompletedSendDedupEntry | PendingSendDedupEntry;
 
 function idempotencyIdentity(sessionKey: string, requestId: string): string {
   return createHash("sha256")
@@ -91,10 +108,34 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
   const rememberSend = (key: string, entry: SendDedupEntry) => {
     sendDedup.set(key, entry);
     while (sendDedup.size > SEND_DEDUP_MAX_ENTRIES) {
-      const oldest = sendDedup.keys().next().value;
-      if (oldest === undefined) break;
-      sendDedup.delete(oldest);
+      const oldestCompleted = [...sendDedup].find(
+        ([, candidate]) => candidate.state === "completed",
+      );
+      if (oldestCompleted === undefined) break;
+      sendDedup.delete(oldestCompleted[0]);
     }
+  };
+
+  const reserveSend = (key: string, fingerprint: string): PendingSendDedupEntry | null => {
+    if (sendDedup.size >= SEND_DEDUP_MAX_ENTRIES) {
+      const oldestCompleted = [...sendDedup].find(
+        ([, candidate]) => candidate.state === "completed",
+      );
+      if (oldestCompleted === undefined) return null;
+      sendDedup.delete(oldestCompleted[0]);
+    }
+    let resolve!: (resolution: PendingSendResolution) => void;
+    const resolution = new Promise<PendingSendResolution>((complete) => {
+      resolve = complete;
+    });
+    const entry: PendingSendDedupEntry = {
+      state: "pending",
+      fingerprint,
+      resolution,
+      resolve,
+    };
+    sendDedup.set(key, entry);
+    return entry;
   };
 
   // Resolve a target thread by id. A missing target denies as thread_not_found;
@@ -102,7 +143,9 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
   // drive policy with the same code, so the caller cannot distinguish the two.
   const resolveTarget = (threadId: string) =>
     snapshotQuery.getThreadShellById(ThreadId.makeUnsafe(threadId)).pipe(
-      Effect.mapError(() => unexpectedGatewayToolError()),
+      Effect.mapError((error) =>
+        unexpectedGatewayToolError(error, { operation: "resolve_drive_target" }),
+      ),
       Effect.flatMap(
         Option.match({
           onNone: () =>
@@ -135,9 +178,9 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
   const sendMessage: ToolEntry = {
     requiresActiveTurn: true,
     definition: {
-      name: "synara_send_message",
+      name: "scient_send_message",
       description:
-        'Send a follow-up message to another Synara thread in your project. mode "queue" (default) appends the message to run after the thread\'s current turn; mode "steer" redirects a running turn where the provider supports it (otherwise the host queues it). Pass a stable requestId to make retries idempotent (the same id never sends twice). You can only drive threads in your own project, and not ones running at a higher privilege than yours.',
+        'Send a follow-up message to another Scient thread in your project. mode "queue" (default) appends the message to run after the thread\'s current turn; mode "steer" redirects a running turn where the provider supports it (otherwise the host queues it). Pass a stable requestId to make retries idempotent (the same id never sends twice). You can only drive threads in your own project, and not ones running at a higher privilege than yours.',
       inputSchema: {
         type: "object",
         properties: {
@@ -156,24 +199,32 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
         required: ["threadId", "message"],
         additionalProperties: false,
       },
-      annotations: { title: "Send a Synara message", ...WRITE_TOOL_ANNOTATIONS },
+      annotations: { title: "Send a Scient message", ...WRITE_TOOL_ANNOTATIONS },
     },
     handler: (args, context) =>
       Effect.gen(function* () {
         const threadId = readStringArg(args, "threadId", { required: true })!;
-        const message = readStringArg(args, "message", { required: true })!;
+        const message = readStringArg(args, "message", {
+          required: true,
+          maxUtf8Bytes: SEND_MESSAGE_MAX_UTF8_BYTES,
+        })!;
         const modeArg = readStringArg(args, "mode") ?? "queue";
         if (modeArg !== "queue" && modeArg !== "steer") {
           throw new ToolInputError('Argument "mode" must be "queue" or "steer".');
         }
-        const requestId = readStringArg(args, "requestId");
+        const requestId = readStringArg(args, "requestId", {
+          maxUtf8Bytes: SEND_REQUEST_ID_MAX_UTF8_BYTES,
+        });
 
         const dispatchMode: TurnDispatchMode = modeArg;
-        const fingerprint = JSON.stringify([threadId, message, dispatchMode]);
+        const fingerprint = createHash("sha256")
+          .update(JSON.stringify([threadId, message, dispatchMode]))
+          .digest("hex");
         // Replay identity belongs to the concrete provider session, not merely
         // its thread: a replacement runtime must never inherit stale success.
         const dedupKey =
-          requestId === undefined ? null : JSON.stringify([context.callerSessionKey, requestId]);
+          requestId === undefined ? null : idempotencyIdentity(context.callerSessionKey, requestId);
+        let reservation: PendingSendDedupEntry | null = null;
         if (dedupKey !== null) {
           const prior = sendDedup.get(dedupKey);
           if (prior !== undefined) {
@@ -185,52 +236,95 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
                 ),
               );
             }
-            return mcpToolResultJson({ ...prior.payload, deduplicated: true });
+            if (prior.state === "completed") {
+              return mcpToolResultJson({ ...prior.payload, deduplicated: true });
+            }
+            const concurrent = yield* Effect.promise(() => prior.resolution);
+            if (concurrent.failure !== undefined) return concurrent.failure;
+            return mcpToolResultJson({ ...concurrent.payload!, deduplicated: true });
+          }
+          reservation = reserveSend(dedupKey, fingerprint);
+          if (reservation === null) {
+            return gatewayToolErrorResult(
+              new GatewayToolError(
+                "gateway_busy",
+                "Too many send operations are currently pending. Retry shortly.",
+              ),
+            );
           }
         }
 
-        const caller = yield* requireThreadShell(context.callerThreadId);
-        const target = yield* resolveTarget(threadId);
-        const decision = authorizeDrive(context, caller, target, threadId);
-        if (!decision.allow) {
-          return gatewayToolErrorResult(new GatewayToolError(decision.code, decision.message));
+        const attempt = yield* Effect.gen(function* () {
+          const caller = yield* requireThreadShell(context.callerThreadId);
+          const target = yield* resolveTarget(threadId);
+          const decision = authorizeDrive(context, caller, target, threadId);
+          if (!decision.allow) {
+            return {
+              failure: gatewayToolErrorResult(
+                new GatewayToolError(decision.code, decision.message),
+              ),
+            } satisfies PendingSendResolution;
+          }
+
+          const commandSuffix =
+            requestId === undefined
+              ? randomId()
+              : idempotencyIdentity(context.callerSessionKey, requestId);
+          yield* orchestrationEngine
+            .dispatch({
+              type: "thread.turn.start",
+              commandId: CommandId.makeUnsafe(`agent:${commandSuffix}:send`),
+              threadId: target.id,
+              message: {
+                messageId: MessageId.makeUnsafe(`agent:${commandSuffix}:message`),
+                role: "user",
+                text: message,
+                attachments: [],
+              },
+              dispatchMode,
+              dispatchOrigin: "agent",
+              runtimeMode: target.runtimeMode,
+              interactionMode: target.interactionMode,
+              createdAt: now(),
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                unexpectedGatewayToolError(error, { operation: "send_message_dispatch" }),
+              ),
+            );
+
+          return {
+            payload: {
+              threadId: target.id,
+              dispatched: dispatchMode,
+              requestId: requestId ?? null,
+            },
+          } satisfies PendingSendResolution;
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.succeed({
+              failure: gatewayToolFailureResult(Cause.squash(cause)),
+            } satisfies PendingSendResolution),
+          ),
+        );
+
+        if (attempt.failure !== undefined) {
+          if (
+            dedupKey !== null &&
+            reservation !== null &&
+            sendDedup.get(dedupKey) === reservation
+          ) {
+            sendDedup.delete(dedupKey);
+            reservation.resolve(attempt);
+          }
+          return attempt.failure;
         }
 
-        // Deterministic command id when idempotent so a duplicate that slips past
-        // the in-memory map still collapses within this exact provider session.
-        const commandSuffix =
-          requestId === undefined
-            ? randomId()
-            : idempotencyIdentity(context.callerSessionKey, requestId);
-        yield* orchestrationEngine
-          .dispatch({
-            type: "thread.turn.start",
-            commandId: CommandId.makeUnsafe(`agent:${commandSuffix}:send`),
-            threadId: target.id,
-            message: {
-              messageId: MessageId.makeUnsafe(`agent:${commandSuffix}:message`),
-              role: "user",
-              text: message,
-              attachments: [],
-            },
-            dispatchMode,
-            // The frozen MessageDispatchOrigin enum has no "agent" value yet, so
-            // gateway drives ride the "automation" provenance label as an interim
-            // (nothing branches on the value — verified). Upgrade to "agent" when
-            // a release re-baseline can extend the enum.
-            dispatchOrigin: "automation",
-            runtimeMode: target.runtimeMode,
-            interactionMode: target.interactionMode,
-            createdAt: now(),
-          })
-          .pipe(Effect.mapError(() => unexpectedGatewayToolError()));
-
-        const payload: SendResultPayload = {
-          threadId: target.id,
-          dispatched: dispatchMode,
-          requestId: requestId ?? null,
-        };
-        if (dedupKey !== null) rememberSend(dedupKey, { fingerprint, payload });
+        const payload = attempt.payload!;
+        if (dedupKey !== null && reservation !== null) {
+          rememberSend(dedupKey, { state: "completed", fingerprint, payload });
+          reservation.resolve(attempt);
+        }
         return mcpToolResultJson({ ...payload, deduplicated: false });
       }).pipe(Effect.catch((error) => Effect.succeed(gatewayToolFailureResult(error)))),
   };
@@ -238,9 +332,9 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
   const interruptThread: ToolEntry = {
     requiresActiveTurn: true,
     definition: {
-      name: "synara_interrupt_thread",
+      name: "scient_interrupt_thread",
       description:
-        "Interrupt the currently running turn of another Synara thread in your project. If the thread has no running turn this is a no-op and reports interrupted: false. You can only drive threads in your own project, and not ones running at a higher privilege than yours.",
+        "Interrupt the currently running turn of another Scient thread in your project. If the thread has no running turn this is a no-op and reports interrupted: false. You can only drive threads in your own project, and not ones running at a higher privilege than yours.",
       inputSchema: {
         type: "object",
         properties: {
@@ -249,7 +343,7 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
         required: ["threadId"],
         additionalProperties: false,
       },
-      annotations: { title: "Interrupt a Synara thread", ...WRITE_TOOL_ANNOTATIONS },
+      annotations: { title: "Interrupt a Scient thread", ...WRITE_TOOL_ANNOTATIONS },
     },
     handler: (args, context) =>
       Effect.gen(function* () {
@@ -283,7 +377,11 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
             turnId: runningTurnId,
             createdAt: now(),
           })
-          .pipe(Effect.mapError(() => unexpectedGatewayToolError()));
+          .pipe(
+            Effect.mapError((error) =>
+              unexpectedGatewayToolError(error, { operation: "interrupt_thread_dispatch" }),
+            ),
+          );
         return mcpToolResultJson({
           threadId: target.id,
           interrupted: true,

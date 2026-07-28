@@ -1,5 +1,5 @@
 /**
- * MCP streamable-HTTP transport for the Synara agent gateway.
+ * MCP streamable-HTTP transport for the Scient agent gateway.
  *
  * Owns the per-request auth spine: verify the bearer session, re-check that the
  * caller thread still exists and is still owned by the same provider, pin write
@@ -114,7 +114,14 @@ export function makeAgentGatewayMcpTransport(input: {
             }
           }
           const result = yield* Effect.suspend(() => tool.handler(args, invocationContext)).pipe(
-            Effect.catchDefect((defect) => Effect.succeed(gatewayToolFailureResult(defect))),
+            Effect.catchDefect((defect) =>
+              Effect.succeed(
+                gatewayToolFailureResult(defect, {
+                  operation: "tool_handler_defect",
+                  toolName,
+                }),
+              ),
+            ),
           );
           return jsonRpcResult(request.id, result);
         }
@@ -177,7 +184,7 @@ export function makeAgentGatewayMcpTransport(input: {
             return yield* Effect.fail(
               new GatewayToolError(
                 "caller_turn_inactive",
-                "This Synara write was rejected because no caller turn was active when the MCP request arrived.",
+                "This Scient write was rejected because no caller turn was active when the MCP request arrived.",
                 { callerThreadId },
               ),
             );
@@ -186,7 +193,7 @@ export function makeAgentGatewayMcpTransport(input: {
             return yield* Effect.fail(
               new GatewayToolError(
                 "caller_session_inactive",
-                "This Synara write was rejected because its provider-session authority is no longer active.",
+                "This Scient write was rejected because its provider-session authority is no longer active.",
                 { callerThreadId },
               ),
             );
@@ -198,7 +205,7 @@ export function makeAgentGatewayMcpTransport(input: {
                 (error) =>
                   new GatewayToolError(
                     "caller_turn_inactive",
-                    "This Synara write was rejected because the caller thread could no longer be verified.",
+                    "This Scient write was rejected because the caller thread could no longer be verified.",
                     { callerThreadId },
                   ),
               ),
@@ -210,7 +217,7 @@ export function makeAgentGatewayMcpTransport(input: {
             return yield* Effect.fail(
               new GatewayToolError(
                 "caller_turn_inactive",
-                "This Synara write was rejected because the turn that received this MCP request is no longer active. In-flight requests cannot inherit authority from a later turn.",
+                "This Scient write was rejected because the turn that received this MCP request is no longer active. In-flight requests cannot inherit authority from a later turn.",
                 {
                   callerThreadId,
                   authorizedTurnId: callerWriteAuthority.turnId,

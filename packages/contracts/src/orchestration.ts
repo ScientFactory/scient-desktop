@@ -229,9 +229,9 @@ export type AssistantDeliveryMode = typeof AssistantDeliveryMode.Type;
 export const TurnDispatchMode = Schema.Literals(["queue", "steer"]);
 export type TurnDispatchMode = typeof TurnDispatchMode.Type;
 export const DEFAULT_TURN_DISPATCH_MODE: TurnDispatchMode = "queue";
-// Marks who dispatched a user turn: a person typing, or an automation run.
-// Absent is treated as "user"; only automation-dispatched turns carry the flag.
-export const MessageDispatchOrigin = Schema.Literals(["user", "automation"]);
+// Marks who dispatched a user turn: a person, an automation, or another agent.
+// Absent is treated as "user"; non-human turns carry an explicit origin.
+export const MessageDispatchOrigin = Schema.Literals(["user", "automation", "agent"]);
 export type MessageDispatchOrigin = typeof MessageDispatchOrigin.Type;
 export const ProviderReviewTarget = Schema.Union([
   Schema.Struct({

@@ -2,7 +2,7 @@
  * AgentGatewaySessionRegistryLive - In-memory session registry layer.
  *
  * Tokens are opaque, minted per provider runtime, revocable independently, and
- * deliberately do not survive a Synara restart.
+ * deliberately do not survive a Scient restart.
  *
  * @module agentGateway/Layers/AgentGatewaySessionRegistry
  */

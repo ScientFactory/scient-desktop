@@ -14,18 +14,18 @@ describe("renderSynaraHarnessPolicy", () => {
   it("includes the marker and read-tool/untrusted-data guidance when control is available", () => {
     const policy = renderSynaraHarnessPolicy({ gatewayControlAvailable: true });
     expect(policy).toContain(SYNARA_HARNESS_POLICY_MARKER);
-    expect(policy).toContain("synara_context");
-    expect(policy).toContain("synara_list_projects");
-    expect(policy).toContain("synara_list_threads");
-    expect(policy).toContain("synara_read_thread");
-    expect(policy).toContain("synara_wait_for_threads");
+    expect(policy).toContain("scient_context");
+    expect(policy).toContain("scient_list_projects");
+    expect(policy).toContain("scient_list_threads");
+    expect(policy).toContain("scient_read_thread");
+    expect(policy).toContain("scient_wait_for_threads");
     expect(policy).toContain("untrusted data");
   });
 
   it("describes the drive tools and their guardrails when control is available", () => {
     const policy = renderSynaraHarnessPolicy({ gatewayControlAvailable: true });
-    expect(policy).toContain("synara_send_message");
-    expect(policy).toContain("synara_interrupt_thread");
+    expect(policy).toContain("scient_send_message");
+    expect(policy).toContain("scient_interrupt_thread");
     // The active-turn and privilege guardrails must be stated to the model.
     expect(policy).toContain("while your own turn is active");
     expect(policy).toContain("higher-privilege");
@@ -34,11 +34,11 @@ describe("renderSynaraHarnessPolicy", () => {
   it("states control is unavailable and does not claim tool access when unavailable", () => {
     const policy = renderSynaraHarnessPolicy({ gatewayControlAvailable: false });
     expect(policy).toContain(SYNARA_HARNESS_POLICY_MARKER);
-    expect(policy).toContain("Synara MCP control is unavailable in this provider session.");
-    expect(policy).not.toContain("synara_context");
-    expect(policy).not.toContain("synara_read_thread");
-    expect(policy).not.toContain("synara_send_message");
-    expect(policy).not.toContain("synara_interrupt_thread");
+    expect(policy).toContain("Scient MCP control is unavailable in this provider session.");
+    expect(policy).not.toContain("scient_context");
+    expect(policy).not.toContain("scient_read_thread");
+    expect(policy).not.toContain("scient_send_message");
+    expect(policy).not.toContain("scient_interrupt_thread");
   });
 });
 
@@ -77,8 +77,8 @@ describe("takeSynaraHarnessPolicyForSession", () => {
     const result = takeSynaraHarnessPolicyForSession(state, { gatewayControlAvailable: true });
     expect(typeof result).toBe("string");
     expect(result).not.toBeNull();
-    expect(result?.startsWith("<synara_host_context>")).toBe(true);
-    expect(result?.endsWith("</synara_host_context>")).toBe(true);
+    expect(result?.startsWith("<scient_host_context>")).toBe(true);
+    expect(result?.endsWith("</scient_host_context>")).toBe(true);
     expect(state.harnessPolicyDelivered).toBe(true);
   });
 
@@ -114,8 +114,8 @@ describe("takeSynaraHarnessPolicyForProviderSession", () => {
       scopedGatewayConnectionAvailable: true,
     });
     expect(result).not.toBeNull();
-    expect(result).toContain("Synara MCP control is unavailable in this provider session.");
-    expect(result).not.toContain("synara_read_thread");
+    expect(result).toContain("Scient MCP control is unavailable in this provider session.");
+    expect(result).not.toContain("scient_read_thread");
   });
 });
 
@@ -146,6 +146,6 @@ describe("takeSynaraHarnessPolicyTextPartForProviderSession", () => {
     });
     expect(result).not.toBeNull();
     expect(result?.type).toBe("text");
-    expect(result?.text).toContain("Synara MCP control is unavailable in this provider session.");
+    expect(result?.text).toContain("Scient MCP control is unavailable in this provider session.");
   });
 });

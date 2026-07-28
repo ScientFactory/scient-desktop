@@ -1,8 +1,8 @@
 /**
- * Contracts for the Synara agent-control gateway (read surface).
+ * Contracts for the Scient agent-control gateway (read surface).
  *
- * The gateway serves thread-scoped `synara_*` MCP tools that let an agent in
- * one Synara thread observe sibling threads in the same project. This slice
+ * The gateway serves thread-scoped `scient_*` MCP tools that let an agent in
+ * one Scient thread observe sibling threads in the same project. This slice
  * ships the read/coordination tools only (context, list, read, wait); the
  * creation and drive tools land in later, separately-reviewed slices.
  *
@@ -35,6 +35,8 @@ export const SynaraGatewayErrorCode = Schema.Literals([
   "capability_denied",
   "thread_not_found",
   "wait_timed_out",
+  "idempotency_conflict",
+  "gateway_busy",
   "operation_failed",
 ]);
 export type SynaraGatewayErrorCode = typeof SynaraGatewayErrorCode.Type;
@@ -53,7 +55,7 @@ export type SynaraGatewayErrorResult = typeof SynaraGatewayErrorResult.Type;
 
 export const SynaraContextResult = Schema.Struct({
   harness: Schema.Struct({
-    name: Schema.Literal("Synara"),
+    name: Schema.Literal("Scient"),
     policyVersion: Schema.String,
   }),
   caller: Schema.Struct({
@@ -98,7 +100,7 @@ export const SynaraWaitedThreadResult = Schema.Struct({
   summaryTruncated: Schema.Boolean,
   error: Schema.NullOr(Schema.String),
   readThread: Schema.Struct({
-    tool: Schema.Literal("synara_read_thread"),
+    tool: Schema.Literal("scient_read_thread"),
     arguments: Schema.Struct({ threadId: ThreadId }),
   }),
 });

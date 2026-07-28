@@ -1,10 +1,10 @@
 /**
  * Behavioral tests for the agent gateway read/coordination tools.
  *
- * Drives each `synara_*` read tool handler directly against a fake
+ * Drives each `scient_*` read tool handler directly against a fake
  * ProjectionSnapshotQuery, asserting project-scope enforcement (the central
  * read policy), pagination/summarization shaping, and the poll-based
- * `synara_wait_for_threads` terminal/timeout/cross-project paths.
+ * `scient_wait_for_threads` terminal/timeout/cross-project paths.
  */
 import type {
   OrchestrationMessage,
@@ -155,7 +155,7 @@ function jsonBody(result: McpToolCallResult): Record<string, unknown> {
   return JSON.parse(rawText(result)) as Record<string, unknown>;
 }
 
-describe("synara_context", () => {
+describe("scient_context", () => {
   it("reports harness identity, caller scope, and capability flags", async () => {
     const fakes: Fakes = {
       threadShells: {
@@ -164,12 +164,12 @@ describe("synara_context", () => {
         }),
       },
     };
-    const body = jsonBody(await callTool(fakes, "synara_context", {})) as {
+    const body = jsonBody(await callTool(fakes, "scient_context", {})) as {
       harness: { name: string };
       caller: { threadId: string; turnId: string | null; projectId: string; provider: string };
       capabilities: Record<string, boolean>;
     };
-    expect(body.harness.name).toBe("Synara");
+    expect(body.harness.name).toBe("Scient");
     expect(body.caller.threadId).toBe(CALLER_THREAD);
     expect(body.caller.turnId).toBe("turn-1");
     expect(body.caller.projectId).toBe(CALLER_PROJECT);
@@ -192,7 +192,7 @@ describe("synara_context", () => {
     const context = makeContext({
       callerCapabilities: new Set<Capability>(["thread:read", "thread:write"]),
     });
-    const body = jsonBody(await callTool(fakes, "synara_context", {}, context)) as {
+    const body = jsonBody(await callTool(fakes, "scient_context", {}, context)) as {
       capabilities: Record<string, boolean>;
     };
     expect(body.capabilities.threadDrive).toBe(true);
@@ -206,24 +206,24 @@ describe("synara_context", () => {
     const context = makeContext({
       callerCapabilities: new Set<Capability>(["thread:read", "thread:write"]),
     });
-    const body = jsonBody(await callTool(fakes, "synara_context", {}, context)) as {
+    const body = jsonBody(await callTool(fakes, "scient_context", {}, context)) as {
       capabilities: Record<string, boolean>;
     };
     expect(body.capabilities.threadDrive).toBe(false);
   });
 });
 
-describe("synara_list_projects", () => {
+describe("scient_list_projects", () => {
   it("returns only the caller's own project", async () => {
     const fakes: Fakes = { projects: [projectShell(CALLER_PROJECT), projectShell(OTHER_PROJECT)] };
-    const body = jsonBody(await callTool(fakes, "synara_list_projects", {})) as {
+    const body = jsonBody(await callTool(fakes, "scient_list_projects", {})) as {
       projects: Array<{ projectId: string }>;
     };
     expect(body.projects.map((project) => project.projectId)).toEqual([CALLER_PROJECT]);
   });
 });
 
-describe("synara_list_threads", () => {
+describe("scient_list_threads", () => {
   const fakes: Fakes = {
     threads: [
       shell("t-a", { updatedAt: "2026-01-03T00:00:00.000Z" }),
@@ -235,7 +235,7 @@ describe("synara_list_threads", () => {
   };
 
   it("lists only same-project, non-archived threads sorted newest-first", async () => {
-    const body = jsonBody(await callTool(fakes, "synara_list_threads", {})) as {
+    const body = jsonBody(await callTool(fakes, "scient_list_threads", {})) as {
       threads: Array<{ threadId: string; isSelf: boolean }>;
       totalMatching: number;
     };
@@ -246,20 +246,20 @@ describe("synara_list_threads", () => {
 
   it("filters by parentThreadId", async () => {
     const body = jsonBody(
-      await callTool(fakes, "synara_list_threads", { parentThreadId: CALLER_THREAD }),
+      await callTool(fakes, "scient_list_threads", { parentThreadId: CALLER_THREAD }),
     ) as { threads: Array<{ threadId: string }> };
     expect(body.threads.map((thread) => thread.threadId)).toEqual(["t-b"]);
   });
 
   it("includes archived threads only when asked", async () => {
     const body = jsonBody(
-      await callTool(fakes, "synara_list_threads", { includeArchived: true }),
+      await callTool(fakes, "scient_list_threads", { includeArchived: true }),
     ) as { threads: Array<{ threadId: string }> };
     expect(body.threads.map((thread) => thread.threadId)).toContain("t-archived");
   });
 
   it("clamps to the requested limit but reports the full match count", async () => {
-    const body = jsonBody(await callTool(fakes, "synara_list_threads", { limit: 1 })) as {
+    const body = jsonBody(await callTool(fakes, "scient_list_threads", { limit: 1 })) as {
       threads: unknown[];
       totalMatching: number;
     };
@@ -268,7 +268,7 @@ describe("synara_list_threads", () => {
   });
 });
 
-describe("synara_read_thread", () => {
+describe("scient_read_thread", () => {
   it("reads a same-project thread's detail and messages", async () => {
     const fakes: Fakes = {
       threadDetails: {
@@ -277,7 +277,7 @@ describe("synara_read_thread", () => {
         }),
       },
     };
-    const body = jsonBody(await callTool(fakes, "synara_read_thread", { threadId: "t-a" })) as {
+    const body = jsonBody(await callTool(fakes, "scient_read_thread", { threadId: "t-a" })) as {
       threadId: string;
       messages: unknown[];
       totalMessages: number;
@@ -291,7 +291,7 @@ describe("synara_read_thread", () => {
     // Non-disclosure: an unknown thread must be indistinguishable from a thread
     // that exists in another project — same JSON error shape, same code, same
     // message — so the caller cannot use the response to probe existence.
-    const result = await callTool({}, "synara_read_thread", { threadId: "t-missing" });
+    const result = await callTool({}, "scient_read_thread", { threadId: "t-missing" });
     expect(result.isError).toBe(true);
     const body = jsonBody(result) as { error: { code: string; message: string } };
     expect(body.error.code).toBe("thread_not_found");
@@ -302,7 +302,7 @@ describe("synara_read_thread", () => {
     const otherFakes: Fakes = {
       threadDetails: { "t-other": detail("t-other", OTHER_PROJECT) },
     };
-    const result = await callTool(otherFakes, "synara_read_thread", { threadId: "t-other" });
+    const result = await callTool(otherFakes, "scient_read_thread", { threadId: "t-other" });
     expect(result.isError).toBe(true);
     const body = jsonBody(result) as { error: { code: string; message: string } };
     expect(body.error.code).toBe("thread_not_found");
@@ -310,7 +310,7 @@ describe("synara_read_thread", () => {
   });
 });
 
-describe("synara_wait_for_threads", () => {
+describe("scient_wait_for_threads", () => {
   it("returns immediately when the pinned turn is already terminal", async () => {
     // The initial pin reads getThreadShellById; the poll loop reads the whole
     // shell snapshot — both must see the thread.
@@ -325,7 +325,7 @@ describe("synara_wait_for_threads", () => {
       },
     };
     const body = jsonBody(
-      await callTool(waitFakes, "synara_wait_for_threads", { threadIds: ["t-a"] }),
+      await callTool(waitFakes, "scient_wait_for_threads", { threadIds: ["t-a"] }),
     ) as {
       allTerminal: boolean;
       timedOut: boolean;
@@ -352,7 +352,7 @@ describe("synara_wait_for_threads", () => {
       },
     };
     const body = jsonBody(
-      await callTool(waitFakes, "synara_wait_for_threads", { threadIds: ["t-a"] }),
+      await callTool(waitFakes, "scient_wait_for_threads", { threadIds: ["t-a"] }),
     ) as { threads: Array<{ error: string | null }> };
     expect(body.threads[0]!.error).toBe("Turn failed.");
     expect(JSON.stringify(body)).not.toContain(sentinel);
@@ -365,7 +365,7 @@ describe("synara_wait_for_threads", () => {
       threadShells: { "t-a": running },
     };
     const body = jsonBody(
-      await callTool(waitFakes, "synara_wait_for_threads", { threadIds: ["t-a"], timeoutMs: 0 }),
+      await callTool(waitFakes, "scient_wait_for_threads", { threadIds: ["t-a"], timeoutMs: 0 }),
     ) as {
       allTerminal: boolean;
       timedOut: boolean;
@@ -387,7 +387,7 @@ describe("synara_wait_for_threads", () => {
         }),
       },
     };
-    const result = await callTool(waitFakes, "synara_wait_for_threads", { threadIds: ["t-other"] });
+    const result = await callTool(waitFakes, "scient_wait_for_threads", { threadIds: ["t-other"] });
     expect(result.isError).toBe(true);
     const body = jsonBody(result) as { error: { code: string } };
     expect(body.error.code).toBe("thread_not_found");
@@ -399,7 +399,7 @@ describe("synara_wait_for_threads", () => {
         "t-a": shell("t-a", { latestTurn: { turnId: "turn-a", state: "running" } }),
       },
     };
-    const result = await callTool(waitFakes, "synara_wait_for_threads", {
+    const result = await callTool(waitFakes, "scient_wait_for_threads", {
       threadIds: ["t-a"],
       runIds: ["turn-a", "turn-b"],
     });

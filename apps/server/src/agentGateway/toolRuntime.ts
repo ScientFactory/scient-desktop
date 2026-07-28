@@ -10,6 +10,7 @@
 import type { ProviderKind } from "@synara/contracts";
 import type { Effect } from "effect";
 
+import { createLogger } from "../logger.ts";
 import {
   mcpToolResultError,
   mcpToolResultJson,
@@ -17,6 +18,8 @@ import {
   type McpToolCallResult,
   type McpToolDefinition,
 } from "./protocol.ts";
+
+const log = createLogger("agent-gateway");
 
 export const UNEXPECTED_GATEWAY_TOOL_ERROR_MESSAGE = "The gateway tool failed unexpectedly.";
 
@@ -75,6 +78,29 @@ export class GatewayToolError extends Error {
 /** An authored argument-validation failure whose message is safe for the model. */
 export class ToolInputError extends Error {}
 
+function redactDiagnostic(value: string): string {
+  return value
+    .replace(/(authorization\s*[:=]\s*(?:bearer\s+)?)[^\s,;]+/gi, "$1[redacted]")
+    .replace(/(bearer\s+)[A-Za-z0-9._~+/=-]+/gi, "$1[redacted]")
+    .replace(/\b(sk|pk|ghp|gho|ghs|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{8,}\b/gi, "[redacted]")
+    .replace(
+      /\b(api[_-]?key|access[_-]?token|auth[_-]?token|password)\s*[:=]\s*[^\s,;]+/gi,
+      "$1=[redacted]",
+    )
+    .slice(0, 500);
+}
+
+function logUnexpectedGatewayFailure(error: unknown, context?: Record<string, unknown>) {
+  const errorName = error instanceof Error ? error.name : typeof error;
+  const errorMessage =
+    error instanceof Error ? redactDiagnostic(error.message) : redactDiagnostic(String(error));
+  log.error("unexpected gateway tool failure", {
+    ...context,
+    errorName,
+    errorMessage,
+  });
+}
+
 export function gatewayToolErrorResult(error: GatewayToolError) {
   return {
     ...mcpToolResultJson({
@@ -92,12 +118,17 @@ export function gatewayToolErrorResult(error: GatewayToolError) {
  * Keep authored policy/input failures useful without reflecting arbitrary
  * internal exception text across the provider boundary.
  */
-export function gatewayToolFailureResult(error: unknown) {
+export function gatewayToolFailureResult(error: unknown, context?: Record<string, unknown>) {
   if (error instanceof GatewayToolError) return gatewayToolErrorResult(error);
   if (error instanceof ToolInputError) return mcpToolResultError(error.message);
+  logUnexpectedGatewayFailure(error, context);
   return mcpToolResultError(UNEXPECTED_GATEWAY_TOOL_ERROR_MESSAGE);
 }
 
-export function unexpectedGatewayToolError(): GatewayToolError {
+export function unexpectedGatewayToolError(
+  cause?: unknown,
+  context?: Record<string, unknown>,
+): GatewayToolError {
+  if (cause !== undefined) logUnexpectedGatewayFailure(cause, context);
   return new GatewayToolError("operation_failed", UNEXPECTED_GATEWAY_TOOL_ERROR_MESSAGE);
 }

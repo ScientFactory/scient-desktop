@@ -62,7 +62,7 @@ describe("parseMcpMessage", () => {
       jsonrpc: "2.0",
       id: 7,
       method: "tools/call",
-      params: { name: "synara_context", arguments: { threadId: "t1" } },
+      params: { name: "scient_context", arguments: { threadId: "t1" } },
     });
     expect(result).toEqual({
       kind: "request",
@@ -70,7 +70,7 @@ describe("parseMcpMessage", () => {
         jsonrpc: "2.0",
         id: 7,
         method: "tools/call",
-        params: { name: "synara_context", arguments: { threadId: "t1" } },
+        params: { name: "scient_context", arguments: { threadId: "t1" } },
       },
     });
   });
@@ -138,7 +138,7 @@ describe("buildMcpInitializeResult", () => {
     expect(result).toEqual({
       protocolVersion: "2025-03-26",
       capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: "synara", title: "Synara App Control", version: "1.2.3" },
+      serverInfo: { name: "scient", title: "Scient App Control", version: "1.2.3" },
       instructions: "hello there",
     });
   });

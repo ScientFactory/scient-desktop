@@ -1,31 +1,31 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  SYNARA_AGENT_GATEWAY_TOKEN_ENV,
-  SYNARA_MCP_SERVER_NAME,
+  SCIENT_AGENT_GATEWAY_TOKEN_ENV,
+  SCIENT_MCP_SERVER_NAME,
   buildClaudeMcpServers,
   buildCodexMcpConfigToml,
 } from "./mcpInjection.ts";
 
 describe("exported constants", () => {
-  it("SYNARA_MCP_SERVER_NAME is 'synara'", () => {
-    expect(SYNARA_MCP_SERVER_NAME).toBe("synara");
+  it("SCIENT_MCP_SERVER_NAME is 'synara'", () => {
+    expect(SCIENT_MCP_SERVER_NAME).toBe("scient");
   });
 
-  it("SYNARA_AGENT_GATEWAY_TOKEN_ENV is 'SYNARA_AGENT_GATEWAY_TOKEN'", () => {
-    expect(SYNARA_AGENT_GATEWAY_TOKEN_ENV).toBe("SYNARA_AGENT_GATEWAY_TOKEN");
+  it("SCIENT_AGENT_GATEWAY_TOKEN_ENV is 'SCIENT_AGENT_GATEWAY_TOKEN'", () => {
+    expect(SCIENT_AGENT_GATEWAY_TOKEN_ENV).toBe("SCIENT_AGENT_GATEWAY_TOKEN");
   });
 });
 
 describe("buildClaudeMcpServers", () => {
-  it("returns a record keyed by the synara server name with an http config", () => {
+  it("returns a record keyed by the Scient server name with an http config", () => {
     const servers = buildClaudeMcpServers({
       url: "https://example.test/mcp",
       bearerToken: "secret-token",
     });
 
-    expect(Object.keys(servers)).toEqual([SYNARA_MCP_SERVER_NAME]);
-    const entry = servers[SYNARA_MCP_SERVER_NAME];
+    expect(Object.keys(servers)).toEqual([SCIENT_MCP_SERVER_NAME]);
+    const entry = servers[SCIENT_MCP_SERVER_NAME];
     expect(entry).toBeDefined();
     expect(entry?.type).toBe("http");
     expect(entry?.url).toBe("https://example.test/mcp");
@@ -36,17 +36,17 @@ describe("buildClaudeMcpServers", () => {
 describe("buildCodexMcpConfigToml", () => {
   const toml = buildCodexMcpConfigToml("https://example.test/mcp");
 
-  it("contains the mcp_servers.synara table header", () => {
-    expect(toml).toContain("[mcp_servers.synara]");
+  it("contains the mcp_servers.scient table header", () => {
+    expect(toml).toContain("[mcp_servers.scient]");
   });
 
   it("contains the json-quoted url", () => {
     expect(toml).toContain(`url = ${JSON.stringify("https://example.test/mcp")}`);
   });
 
-  it("references the bearer_token_env_var as SYNARA_AGENT_GATEWAY_TOKEN", () => {
+  it("references the bearer_token_env_var as SCIENT_AGENT_GATEWAY_TOKEN", () => {
     expect(toml).toContain(
-      `bearer_token_env_var = ${JSON.stringify("SYNARA_AGENT_GATEWAY_TOKEN")}`,
+      `bearer_token_env_var = ${JSON.stringify("SCIENT_AGENT_GATEWAY_TOKEN")}`,
     );
   });
 
@@ -55,6 +55,6 @@ describe("buildCodexMcpConfigToml", () => {
   });
 
   it("excludes the token env var from the shell environment policy", () => {
-    expect(toml).toContain(`exclude = [${JSON.stringify("SYNARA_AGENT_GATEWAY_TOKEN")}]`);
+    expect(toml).toContain(`exclude = [${JSON.stringify("SCIENT_AGENT_GATEWAY_TOKEN")}]`);
   });
 });

@@ -33,7 +33,7 @@ export const errorText = (error: unknown): string =>
 export function readStringArg(
   args: Record<string, unknown>,
   name: string,
-  options?: { readonly required?: boolean },
+  options?: { readonly required?: boolean; readonly maxUtf8Bytes?: number },
 ): string | undefined {
   const value = args[name];
   if (value === undefined || value === null) {
@@ -43,7 +43,16 @@ export function readStringArg(
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new ToolInputError(`Argument "${name}" must be a non-empty string.`);
   }
-  return value.trim();
+  const trimmed = value.trim();
+  if (
+    options?.maxUtf8Bytes !== undefined &&
+    Buffer.byteLength(trimmed, "utf8") > options.maxUtf8Bytes
+  ) {
+    throw new ToolInputError(
+      `Argument "${name}" must be at most ${options.maxUtf8Bytes} UTF-8 bytes.`,
+    );
+  }
+  return trimmed;
 }
 
 export function readNumberArg(args: Record<string, unknown>, name: string): number | undefined {
@@ -68,6 +77,6 @@ export function decodeWaitForThreadsInput(value: unknown) {
   try {
     return Schema.decodeUnknownSync(SynaraWaitForThreadsInput)(value);
   } catch (error) {
-    throw new ToolInputError(`Invalid Synara wait request: ${errorText(error)}`);
+    throw new ToolInputError(`Invalid Scient wait request: ${errorText(error)}`);
   }
 }

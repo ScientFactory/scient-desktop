@@ -1,14 +1,14 @@
 /**
- * Read/coordination MCP tools for the Synara agent gateway.
+ * Read/coordination MCP tools for the Scient agent gateway.
  *
  * Serves the read surface an agent uses to observe sibling threads in its own
- * project: `synara_context`, `synara_list_projects`, `synara_list_threads`,
- * `synara_read_thread`, and `synara_wait_for_threads`. Every tool that names a
+ * project: `scient_context`, `scient_list_projects`, `scient_list_threads`,
+ * `scient_read_thread`, and `scient_wait_for_threads`. Every tool that names a
  * target thread funnels through the central {@link authorizeThreadRead} policy;
  * cross-project observation is denied. All tools are read-only and none require
  * an active turn.
  *
- * `synara_wait_for_threads` is poll-based over the shell snapshot: it pins each
+ * `scient_wait_for_threads` is poll-based over the shell snapshot: it pins each
  * thread to a run id and long-polls until every pinned turn is terminal or the
  * deadline elapses. A pinned turn that is no longer the thread's latest turn is
  * reported as best-effort `completed` (the shell alone cannot distinguish the
@@ -64,12 +64,12 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
 
   const contextTool: ToolEntry = {
     definition: {
-      name: "synara_context",
+      name: "scient_context",
       description:
-        "Inspect the current Synara harness identity, caller thread/turn, and authorized coordination capabilities.",
+        "Inspect the current Scient harness identity, caller thread/turn, and authorized coordination capabilities.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       annotations: {
-        title: "Synara context",
+        title: "Scient context",
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
@@ -81,7 +81,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
         const caller = yield* requireThreadShell(context.callerThreadId);
         const turnId = caller.latestTurn?.state === "running" ? caller.latestTurn.turnId : null;
         return mcpToolResultJson({
-          harness: { name: "Synara", policyVersion: SYNARA_HARNESS_POLICY_VERSION },
+          harness: { name: "Scient", policyVersion: SYNARA_HARNESS_POLICY_VERSION },
           caller: {
             threadId: caller.id,
             turnId,
@@ -90,7 +90,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
           },
           capabilities: {
             threadRead: context.callerCapabilities.has("thread:read"),
-            // Drive (synara_send_message / synara_interrupt_thread) needs the
+            // Drive (scient_send_message / scient_interrupt_thread) needs the
             // write capability and is only usable while the caller's own turn is
             // active, so it is reported false without a live turn.
             threadDrive: turnId !== null && context.callerCapabilities.has("thread:write"),
@@ -103,11 +103,11 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
 
   const listProjects: ToolEntry = {
     definition: {
-      name: "synara_list_projects",
+      name: "scient_list_projects",
       description:
-        "List the Synara project you belong to (id, title, workspace root). Cross-project observation is not permitted.",
+        "List the Scient project you belong to (id, title, workspace root). Cross-project observation is not permitted.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
-      annotations: { title: "List Synara projects", ...READ_ONLY_TOOL_ANNOTATIONS },
+      annotations: { title: "List Scient projects", ...READ_ONLY_TOOL_ANNOTATIONS },
     },
     handler: (_args, context) =>
       snapshotQuery.getShellSnapshot().pipe(
@@ -129,9 +129,9 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
 
   const listThreads: ToolEntry = {
     definition: {
-      name: "synara_list_threads",
+      name: "scient_list_threads",
       description:
-        "List Synara threads in your project with status (working/idle/waiting-for-approval/...), provider, model and hierarchy. Filter by parentThreadId (e.g. your own thread id). Archived threads are hidden unless includeArchived is true. Only threads in your own project are returned.",
+        "List Scient threads in your project with status (working/idle/waiting-for-approval/...), provider, model and hierarchy. Filter by parentThreadId (e.g. your own thread id). Archived threads are hidden unless includeArchived is true. Only threads in your own project are returned.",
       inputSchema: {
         type: "object",
         properties: {
@@ -144,7 +144,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
         },
         additionalProperties: false,
       },
-      annotations: { title: "List Synara threads", ...READ_ONLY_TOOL_ANNOTATIONS },
+      annotations: { title: "List Scient threads", ...READ_ONLY_TOOL_ANNOTATIONS },
     },
     handler: (args, context) =>
       Effect.gen(function* () {
@@ -159,7 +159,11 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
         );
         const snapshot = yield* snapshotQuery
           .getShellSnapshot()
-          .pipe(Effect.mapError(() => unexpectedGatewayToolError()));
+          .pipe(
+            Effect.mapError((error) =>
+              unexpectedGatewayToolError(error, { operation: "list_threads_snapshot" }),
+            ),
+          );
         // Project scope is enforced here, not accepted as an argument: an agent
         // can only ever enumerate threads in its own project.
         const matching = snapshot.threads
@@ -176,9 +180,9 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
 
   const readThread: ToolEntry = {
     definition: {
-      name: "synara_read_thread",
+      name: "scient_read_thread",
       description:
-        "Read one Synara thread's status and recent messages (newest last, truncated). Pass the returned nextCursor as cursor to page older messages. Only threads in your own project can be read.",
+        "Read one Scient thread's status and recent messages (newest last, truncated). Pass the returned nextCursor as cursor to page older messages. Only threads in your own project can be read.",
       inputSchema: {
         type: "object",
         properties: {
@@ -193,7 +197,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
         required: ["threadId"],
         additionalProperties: false,
       },
-      annotations: { title: "Read a Synara thread", ...READ_ONLY_TOOL_ANNOTATIONS },
+      annotations: { title: "Read a Scient thread", ...READ_ONLY_TOOL_ANNOTATIONS },
     },
     handler: (args, context) =>
       Effect.gen(function* () {
@@ -202,7 +206,9 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
         const messageLimit = readNumberArg(args, "messageLimit");
         const maxMessageChars = readNumberArg(args, "maxMessageChars");
         const detail = yield* snapshotQuery.getThreadDetailById(ThreadId.makeUnsafe(threadId)).pipe(
-          Effect.mapError(() => unexpectedGatewayToolError()),
+          Effect.mapError((error) =>
+            unexpectedGatewayToolError(error, { operation: "read_thread_detail" }),
+          ),
           Effect.flatMap(
             Option.match({
               // Not-found must be byte-for-byte indistinguishable from the
@@ -240,8 +246,8 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
 
   const waitForThreads: ToolEntry = {
     definition: {
-      name: "synara_wait_for_threads",
-      description: `Wait for the pinned turns of 1–20 Synara threads in your project and return every outcome in input order. Assistant summaries are capped at ${WAIT_THREAD_SUMMARY_MAX_CHARS} characters; use each result's readThread call to page the full transcript. Timeouts only report progress; they never retry, replace, cancel, or create work. Only threads in your own project can be waited on.`,
+      name: "scient_wait_for_threads",
+      description: `Wait for the pinned turns of 1–20 Scient threads in your project and return every outcome in input order. Assistant summaries are capped at ${WAIT_THREAD_SUMMARY_MAX_CHARS} characters; use each result's readThread call to page the full transcript. Timeouts only report progress; they never retry, replace, cancel, or create work. Only threads in your own project can be waited on.`,
       inputSchema: {
         type: "object",
         properties: {
@@ -268,7 +274,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
         additionalProperties: false,
       },
       annotations: {
-        title: "Wait for Synara threads",
+        title: "Wait for Scient threads",
         readOnlyHint: true,
         destructiveHint: false,
         idempotentHint: true,
@@ -285,7 +291,9 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
         const deadline = Date.now() + timeoutMs;
         const pinned = yield* Effect.forEach(waitInput.threadIds, (threadId, index) =>
           snapshotQuery.getThreadShellById(threadId).pipe(
-            Effect.mapError(() => unexpectedGatewayToolError()),
+            Effect.mapError((error) =>
+              unexpectedGatewayToolError(error, { operation: "wait_thread_pin" }),
+            ),
             Effect.flatMap(
               Option.match({
                 onNone: () =>
@@ -314,7 +322,9 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
         // One shell-snapshot read per poll; index the pinned threads out of it.
         const readPinnedStates = () =>
           snapshotQuery.getShellSnapshot().pipe(
-            Effect.mapError(() => unexpectedGatewayToolError()),
+            Effect.mapError((error) =>
+              unexpectedGatewayToolError(error, { operation: "wait_threads_snapshot" }),
+            ),
             Effect.flatMap((snapshot) => {
               const shellsById = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
               const missing = pinned.find((pin) => !shellsById.has(pin.threadId));
@@ -355,7 +365,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
                     summaryTruncated: false,
                     error: null as string | null,
                     readThread: {
-                      tool: "synara_read_thread" as const,
+                      tool: "scient_read_thread" as const,
                       arguments: { threadId: pin.threadId },
                     },
                   };
@@ -378,7 +388,9 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
               return { ...result, timedOut: !result.terminal && timedOut };
             }
             const detail = yield* snapshotQuery.getThreadDetailById(result.threadId).pipe(
-              Effect.mapError(() => unexpectedGatewayToolError()),
+              Effect.mapError((error) =>
+                unexpectedGatewayToolError(error, { operation: "wait_thread_detail" }),
+              ),
               Effect.flatMap(
                 Option.match({
                   onNone: () =>

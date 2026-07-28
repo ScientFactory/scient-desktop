@@ -1,5 +1,5 @@
 /**
- * AgentGatewayLive - Live layer wiring the Synara agent gateway read + drive
+ * AgentGatewayLive - Live layer wiring the Scient agent gateway read + drive
  * surface.
  *
  * Composes the credential service, the read-model snapshot query, the

@@ -1,7 +1,7 @@
 /**
  * Behavioral tests for the agent gateway drive tools.
  *
- * Drives `synara_send_message` and `synara_interrupt_thread` directly against a
+ * Drives `scient_send_message` and `scient_interrupt_thread` directly against a
  * fake ProjectionSnapshotQuery and a capturing OrchestrationEngine, asserting:
  * the dispatched command shape (origin/mode/turn pinning), the central drive
  * policy (project scope, privilege cap, worktree cap), send idempotency, and the
@@ -9,11 +9,13 @@
  */
 import type { OrchestrationThreadShell } from "@synara/contracts";
 import { Effect, Option } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { makeAgentGatewayMcpTransport } from "./mcpTransport.ts";
 import type { McpToolCallResult } from "./protocol.ts";
+import type { AgentGatewayCredentialsShape } from "./Services/AgentGatewayCredentials.ts";
 import { makeThreadWriteTools } from "./threadWriteTools.ts";
 import { gatewayToolFailureResult, type ToolContext } from "./toolRuntime.ts";
 
@@ -58,7 +60,12 @@ function makeSnapshotQuery(
   } as unknown as ProjectionSnapshotQueryShape;
 }
 
-function makeEngine(options?: { readonly failWith?: string }): {
+function makeEngine(options?: {
+  readonly failWith?: string;
+  readonly dispatch?: (
+    command: AnyCommand,
+  ) => Effect.Effect<{ readonly sequence: number }, unknown>;
+}): {
   readonly engine: OrchestrationEngineShape;
   readonly commands: AnyCommand[];
 } {
@@ -66,6 +73,7 @@ function makeEngine(options?: { readonly failWith?: string }): {
   const engine = {
     dispatch: (command: AnyCommand) => {
       commands.push(command);
+      if (options?.dispatch !== undefined) return options.dispatch(command);
       if (options?.failWith !== undefined) return Effect.fail(new Error(options.failWith));
       return Effect.succeed({ sequence: commands.length });
     },
@@ -100,6 +108,9 @@ function setup(options?: {
   readonly threadShells?: Record<string, OrchestrationThreadShell>;
   readonly caller?: OrchestrationThreadShell;
   readonly failDispatchWith?: string;
+  readonly dispatch?: (
+    command: AnyCommand,
+  ) => Effect.Effect<{ readonly sequence: number }, unknown>;
   readonly randomId?: () => string;
 }): Setup {
   const caller = options?.caller ?? shell(CALLER_THREAD);
@@ -109,7 +120,11 @@ function setup(options?: {
   };
   const snapshotQuery = makeSnapshotQuery(threadShells);
   const { engine, commands } = makeEngine(
-    options?.failDispatchWith !== undefined ? { failWith: options.failDispatchWith } : {},
+    options?.failDispatchWith !== undefined
+      ? { failWith: options.failDispatchWith }
+      : options?.dispatch !== undefined
+        ? { dispatch: options.dispatch }
+        : {},
   );
   const requireThreadShell = (id: string) => {
     const found = threadShells[id];
@@ -144,12 +159,12 @@ function jsonBody(result: McpToolCallResult): Record<string, unknown> {
   return JSON.parse(result.content[0]!.text) as Record<string, unknown>;
 }
 
-describe("synara_send_message", () => {
-  it("dispatches a queued turn.start with the interim automation origin and target runtime", async () => {
+describe("scient_send_message", () => {
+  it("dispatches a queued turn.start with honest agent origin and target runtime", async () => {
     const { call, commands } = setup({
       threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD, { interactionMode: "plan" }) },
     });
-    const result = await call("synara_send_message", {
+    const result = await call("scient_send_message", {
       threadId: TARGET_THREAD,
       message: "please continue",
     });
@@ -169,7 +184,7 @@ describe("synara_send_message", () => {
     expect(command.message.text).toBe("please continue");
     expect(command.message.attachments).toEqual([]);
     expect(command.dispatchMode).toBe("queue");
-    expect(command.dispatchOrigin).toBe("automation");
+    expect(command.dispatchOrigin).toBe("agent");
     expect(command.runtimeMode).toBe("full-access");
     expect(command.interactionMode).toBe("plan");
     expect(command.createdAt).toBe(ISO);
@@ -180,7 +195,7 @@ describe("synara_send_message", () => {
   it("passes steer mode through to the dispatch", async () => {
     const { call, commands } = setup({ threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) } });
     const body = jsonBody(
-      await call("synara_send_message", {
+      await call("scient_send_message", {
         threadId: TARGET_THREAD,
         message: "redirect",
         mode: "steer",
@@ -192,7 +207,7 @@ describe("synara_send_message", () => {
 
   it("rejects an invalid mode", async () => {
     const { call, commands } = setup({ threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) } });
-    const result = await call("synara_send_message", {
+    const result = await call("scient_send_message", {
       threadId: TARGET_THREAD,
       message: "hi",
       mode: "bogus",
@@ -205,14 +220,14 @@ describe("synara_send_message", () => {
   it("is idempotent across a retry with the same requestId (single dispatch)", async () => {
     const { call, commands } = setup({ threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) } });
     const first = jsonBody(
-      await call("synara_send_message", {
+      await call("scient_send_message", {
         threadId: TARGET_THREAD,
         message: "once",
         requestId: "req-1",
       }),
     );
     const second = jsonBody(
-      await call("synara_send_message", {
+      await call("scient_send_message", {
         threadId: TARGET_THREAD,
         message: "once",
         requestId: "req-1",
@@ -237,11 +252,213 @@ describe("synara_send_message", () => {
     expect(commands[0].message.messageId).toBe(commands[0].commandId.replace(/:send$/, ":message"));
   });
 
+  it("single-flights concurrent retries with the same requestId and fingerprint", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { call, commands } = setup({
+      threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
+      dispatch: () => Effect.promise(async () => (await gate, { sequence: 1 })),
+    });
+    const args = { threadId: TARGET_THREAD, message: "once", requestId: "concurrent" };
+    const first = call("scient_send_message", args);
+    await vi.waitFor(() => expect(commands).toHaveLength(1));
+    const retry = call("scient_send_message", args);
+    await Promise.resolve();
+    expect(commands).toHaveLength(1);
+    release();
+    expect(jsonBody(await first).deduplicated).toBe(false);
+    expect(jsonBody(await retry).deduplicated).toBe(true);
+    expect(commands).toHaveLength(1);
+  });
+
+  it("rejects a conflicting concurrent reuse before the first dispatch settles", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { call, commands } = setup({
+      threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
+      dispatch: () => Effect.promise(async () => (await gate, { sequence: 1 })),
+    });
+    const first = call("scient_send_message", {
+      threadId: TARGET_THREAD,
+      message: "first",
+      requestId: "concurrent-conflict",
+    });
+    await vi.waitFor(() => expect(commands).toHaveLength(1));
+    const conflict = await call("scient_send_message", {
+      threadId: TARGET_THREAD,
+      message: "different",
+      requestId: "concurrent-conflict",
+    });
+    expect((jsonBody(conflict).error as { code: string }).code).toBe("idempotency_conflict");
+    expect(commands).toHaveLength(1);
+    release();
+    await first;
+  });
+
+  it("single-flights concurrent retries through the real MCP transport", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const caller = shell(CALLER_THREAD, {
+      session: { providerName: "claudeAgent", status: "running" },
+      latestTurn: { turnId: "turn-caller", state: "running" },
+    });
+    const target = shell(TARGET_THREAD);
+    const snapshotQuery = makeSnapshotQuery({ [CALLER_THREAD]: caller, [TARGET_THREAD]: target });
+    const { engine, commands } = makeEngine({
+      dispatch: () => Effect.promise(async () => (await gate, { sequence: 1 })),
+    });
+    const requireThreadShell = (id: string) =>
+      Effect.succeed(id === CALLER_THREAD ? caller : target);
+    const tools = makeThreadWriteTools({
+      snapshotQuery,
+      orchestrationEngine: engine,
+      requireThreadShell,
+    });
+    const credentials = {
+      verifySession: () => ({
+        sessionKey: "gateway-session:test",
+        threadId: CALLER_THREAD,
+        provider: "claudeAgent",
+        issuedAt: 0,
+        capabilities: new Set<Capability>(["thread:read", "thread:write"]),
+      }),
+      bindWriteAuthority: () => ({
+        sessionKey: "gateway-session:test",
+        threadId: CALLER_THREAD,
+        provider: "claudeAgent",
+        turnId: "turn-caller",
+      }),
+      verifyWriteAuthority: () => true,
+    } as unknown as AgentGatewayCredentialsShape;
+    const transport = makeAgentGatewayMcpTransport({
+      credentials,
+      snapshotQuery,
+      tools,
+      instructions: "test",
+      requireThreadShell,
+    });
+    const request = Effect.runPromise(
+      transport({
+        authorizationHeader: "Bearer test",
+        body: [
+          {
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: {
+              name: "scient_send_message",
+              arguments: { threadId: TARGET_THREAD, message: "once", requestId: "batch-retry" },
+            },
+          },
+          {
+            jsonrpc: "2.0",
+            id: 2,
+            method: "tools/call",
+            params: {
+              name: "scient_send_message",
+              arguments: { threadId: TARGET_THREAD, message: "once", requestId: "batch-retry" },
+            },
+          },
+        ],
+      }),
+    );
+    await vi.waitFor(() => expect(commands).toHaveLength(1));
+    release();
+    const response = await request;
+    const bodies = (response.body as Array<{ result: McpToolCallResult }>).map((item) =>
+      jsonBody(item.result),
+    );
+    expect(bodies.map((body) => body.deduplicated).toSorted()).toEqual([false, true]);
+    expect(commands).toHaveLength(1);
+  });
+
+  it("releases a failed reservation so a later retry can dispatch", async () => {
+    let attempts = 0;
+    const { call, commands } = setup({
+      threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
+      dispatch: () =>
+        ++attempts === 1 ? Effect.fail(new Error("first failed")) : Effect.succeed({ sequence: 2 }),
+    });
+    const args = { threadId: TARGET_THREAD, message: "retry", requestId: "retry-after-failure" };
+    expect((await call("scient_send_message", args)).isError).toBe(true);
+    expect((await call("scient_send_message", args)).isError).toBeUndefined();
+    expect(commands).toHaveLength(2);
+  });
+
+  it("unblocks concurrent waiters on failure and permits a later retry", async () => {
+    let fail!: (error: Error) => void;
+    const firstAttempt = new Promise<{ readonly sequence: number }>((_resolve, reject) => {
+      fail = reject;
+    });
+    let attempts = 0;
+    const { call, commands } = setup({
+      threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
+      dispatch: () =>
+        ++attempts === 1
+          ? Effect.tryPromise(() => firstAttempt)
+          : Effect.succeed({ sequence: attempts }),
+    });
+    const args = { threadId: TARGET_THREAD, message: "retry", requestId: "shared-failure" };
+    const first = call("scient_send_message", args);
+    await vi.waitFor(() => expect(commands).toHaveLength(1));
+    const waiter = call("scient_send_message", args);
+    fail(new Error("dispatch failed"));
+    expect((await first).isError).toBe(true);
+    expect((await waiter).isError).toBe(true);
+    expect((await call("scient_send_message", args)).isError).toBeUndefined();
+    expect(commands).toHaveLength(2);
+  });
+
+  it("rejects oversized request ids and messages before dispatch", async () => {
+    const { call, commands } = setup({ threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) } });
+    expect(
+      (
+        await call("scient_send_message", {
+          threadId: TARGET_THREAD,
+          message: "x",
+          requestId: "r".repeat(257),
+        })
+      ).isError,
+    ).toBe(true);
+    expect(
+      (
+        await call("scient_send_message", {
+          threadId: TARGET_THREAD,
+          message: "🧪".repeat(131_073),
+        })
+      ).isError,
+    ).toBe(true);
+    expect(commands).toHaveLength(0);
+  });
+
   it("dispatches separately for distinct requestIds", async () => {
     const { call, commands } = setup({ threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) } });
-    await call("synara_send_message", { threadId: TARGET_THREAD, message: "a", requestId: "r-a" });
-    await call("synara_send_message", { threadId: TARGET_THREAD, message: "b", requestId: "r-b" });
+    await call("scient_send_message", { threadId: TARGET_THREAD, message: "a", requestId: "r-a" });
+    await call("scient_send_message", { threadId: TARGET_THREAD, message: "b", requestId: "r-b" });
     expect(commands).toHaveLength(2);
+  });
+
+  it("evicts the oldest completed idempotency record after 512 entries", async () => {
+    const { call, commands } = setup({ threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) } });
+    for (let index = 0; index < 513; index += 1) {
+      await call("scient_send_message", {
+        threadId: TARGET_THREAD,
+        message: `message-${index}`,
+        requestId: `request-${index}`,
+      });
+    }
+    await call("scient_send_message", {
+      threadId: TARGET_THREAD,
+      message: "message-0",
+      requestId: "request-0",
+    });
+    expect(commands).toHaveLength(514);
   });
 
   it("does not share dedup across caller threads", async () => {
@@ -249,9 +466,9 @@ describe("synara_send_message", () => {
     const { call, commands } = setup({
       threadShells: { "thread-caller-2": other, [TARGET_THREAD]: shell(TARGET_THREAD) },
     });
-    await call("synara_send_message", { threadId: TARGET_THREAD, message: "a", requestId: "same" });
+    await call("scient_send_message", { threadId: TARGET_THREAD, message: "a", requestId: "same" });
     await call(
-      "synara_send_message",
+      "scient_send_message",
       { threadId: TARGET_THREAD, message: "a", requestId: "same" },
       makeContext({
         callerThreadId: "thread-caller-2",
@@ -264,12 +481,12 @@ describe("synara_send_message", () => {
   it("does not share dedup across replacement provider sessions on one thread", async () => {
     const { call, commands } = setup({ threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) } });
     await call(
-      "synara_send_message",
+      "scient_send_message",
       { threadId: TARGET_THREAD, message: "first session", requestId: "same" },
       makeContext({ callerSessionKey: "gateway-session:first" }),
     );
     await call(
-      "synara_send_message",
+      "scient_send_message",
       { threadId: TARGET_THREAD, message: "replacement session", requestId: "same" },
       makeContext({ callerSessionKey: "gateway-session:replacement" }),
     );
@@ -297,12 +514,12 @@ describe("synara_send_message", () => {
         "thread-target-2": shell("thread-target-2"),
       },
     });
-    await call("synara_send_message", {
+    await call("scient_send_message", {
       threadId: TARGET_THREAD,
       message: "once",
       requestId: "same",
     });
-    const conflict = await call("synara_send_message", second);
+    const conflict = await call("scient_send_message", second);
     expect(conflict.isError).toBe(true);
     expect((jsonBody(conflict).error as { code: string }).code).toBe("idempotency_conflict");
     expect(commands).toHaveLength(1);
@@ -312,7 +529,7 @@ describe("synara_send_message", () => {
     const { call, commands } = setup({
       threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD, { projectId: OTHER_PROJECT }) },
     });
-    const result = await call("synara_send_message", { threadId: TARGET_THREAD, message: "x" });
+    const result = await call("scient_send_message", { threadId: TARGET_THREAD, message: "x" });
     expect(result.isError).toBe(true);
     expect((jsonBody(result).error as { code: string }).code).toBe("thread_not_found");
     expect(commands).toHaveLength(0);
@@ -323,7 +540,7 @@ describe("synara_send_message", () => {
       caller: shell(CALLER_THREAD, { runtimeMode: "approval-required" }),
       threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD, { runtimeMode: "full-access" }) },
     });
-    const result = await call("synara_send_message", { threadId: TARGET_THREAD, message: "x" });
+    const result = await call("scient_send_message", { threadId: TARGET_THREAD, message: "x" });
     expect(result.isError).toBe(true);
     expect((jsonBody(result).error as { code: string }).code).toBe("capability_denied");
     expect(commands).toHaveLength(0);
@@ -334,7 +551,7 @@ describe("synara_send_message", () => {
       caller: shell(CALLER_THREAD, { envMode: "worktree" }),
       threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD, { envMode: "local" }) },
     });
-    const result = await call("synara_send_message", { threadId: TARGET_THREAD, message: "x" });
+    const result = await call("scient_send_message", { threadId: TARGET_THREAD, message: "x" });
     expect(result.isError).toBe(true);
     expect((jsonBody(result).error as { code: string }).code).toBe("capability_denied");
     expect(commands).toHaveLength(0);
@@ -342,7 +559,7 @@ describe("synara_send_message", () => {
 
   it("reports thread_not_found for a missing target", async () => {
     const { call, commands } = setup();
-    const result = await call("synara_send_message", { threadId: "ghost", message: "x" });
+    const result = await call("scient_send_message", { threadId: "ghost", message: "x" });
     expect(result.isError).toBe(true);
     expect((jsonBody(result).error as { code: string }).code).toBe("thread_not_found");
     expect(commands).toHaveLength(0);
@@ -353,7 +570,7 @@ describe("synara_send_message", () => {
       threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
       failDispatchWith: "engine boom",
     });
-    const result = await call("synara_send_message", { threadId: TARGET_THREAD, message: "x" });
+    const result = await call("scient_send_message", { threadId: TARGET_THREAD, message: "x" });
     expect(result.isError).toBe(true);
     const error = jsonBody(result).error as { code: string; message: string };
     expect(error.code).toBe("operation_failed");
@@ -366,14 +583,14 @@ describe("synara_send_message", () => {
       threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
       failDispatchWith: "engine boom",
     });
-    await call("synara_send_message", { threadId: TARGET_THREAD, message: "x", requestId: "r" });
-    await call("synara_send_message", { threadId: TARGET_THREAD, message: "x", requestId: "r" });
+    await call("scient_send_message", { threadId: TARGET_THREAD, message: "x", requestId: "r" });
+    await call("scient_send_message", { threadId: TARGET_THREAD, message: "x", requestId: "r" });
     // Both attempts dispatch: a failure is retryable, never cached as success.
     expect(commands).toHaveLength(2);
   });
 });
 
-describe("synara_interrupt_thread", () => {
+describe("scient_interrupt_thread", () => {
   it("interrupts a running turn, pinned to the observed turn id", async () => {
     const { call, commands } = setup({
       threadShells: {
@@ -382,7 +599,7 @@ describe("synara_interrupt_thread", () => {
         }),
       },
     });
-    const body = jsonBody(await call("synara_interrupt_thread", { threadId: TARGET_THREAD }));
+    const body = jsonBody(await call("scient_interrupt_thread", { threadId: TARGET_THREAD }));
     expect(body).toEqual({ threadId: TARGET_THREAD, interrupted: true, turnId: "turn-x" });
     expect(commands).toHaveLength(1);
     expect(commands[0].type).toBe("thread.turn.interrupt");
@@ -400,7 +617,7 @@ describe("synara_interrupt_thread", () => {
         }),
       },
     });
-    const body = jsonBody(await call("synara_interrupt_thread", { threadId: TARGET_THREAD }));
+    const body = jsonBody(await call("scient_interrupt_thread", { threadId: TARGET_THREAD }));
     expect(body).toEqual({
       threadId: TARGET_THREAD,
       interrupted: false,
@@ -413,7 +630,7 @@ describe("synara_interrupt_thread", () => {
     const { call, commands } = setup({
       threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD, { latestTurn: null }) },
     });
-    const body = jsonBody(await call("synara_interrupt_thread", { threadId: TARGET_THREAD }));
+    const body = jsonBody(await call("scient_interrupt_thread", { threadId: TARGET_THREAD }));
     expect(body.interrupted).toBe(false);
     expect(commands).toHaveLength(0);
   });
@@ -427,7 +644,7 @@ describe("synara_interrupt_thread", () => {
         }),
       },
     });
-    const result = await call("synara_interrupt_thread", { threadId: TARGET_THREAD });
+    const result = await call("scient_interrupt_thread", { threadId: TARGET_THREAD });
     expect(result.isError).toBe(true);
     expect((jsonBody(result).error as { code: string }).code).toBe("thread_not_found");
     expect(commands).toHaveLength(0);
@@ -443,7 +660,7 @@ describe("synara_interrupt_thread", () => {
         }),
       },
     });
-    const result = await call("synara_interrupt_thread", { threadId: TARGET_THREAD });
+    const result = await call("scient_interrupt_thread", { threadId: TARGET_THREAD });
     expect(result.isError).toBe(true);
     expect((jsonBody(result).error as { code: string }).code).toBe("capability_denied");
     expect(commands).toHaveLength(0);
@@ -451,7 +668,7 @@ describe("synara_interrupt_thread", () => {
 
   it("reports thread_not_found for a missing target", async () => {
     const { call, commands } = setup();
-    const result = await call("synara_interrupt_thread", { threadId: "ghost" });
+    const result = await call("scient_interrupt_thread", { threadId: "ghost" });
     expect(result.isError).toBe(true);
     expect((jsonBody(result).error as { code: string }).code).toBe("thread_not_found");
     expect(commands).toHaveLength(0);
@@ -466,8 +683,8 @@ describe("makeThreadWriteTools", () => {
       requireThreadShell: (id: string) => Effect.fail(new Error(id)),
     });
     expect(tools.map((tool) => tool.definition.name)).toEqual([
-      "synara_send_message",
-      "synara_interrupt_thread",
+      "scient_send_message",
+      "scient_interrupt_thread",
     ]);
     expect(tools.every((tool) => tool.requiresActiveTurn === true)).toBe(true);
     // Drive tools must carry write annotations (not read-only).
