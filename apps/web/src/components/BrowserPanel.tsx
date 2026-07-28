@@ -57,6 +57,7 @@ import {
   createBrowserWebviewHandoffRegistry,
   isStableBrowserWebviewRuntimeIntact,
   resolveBrowserWebviewRuntimeHostGeometry,
+  resolveBrowserWebviewFocusGuardsAfterDocumentFocusIn,
   resolveBrowserWebviewFocusBridgeTarget,
   resolveBrowserWebviewLogicalOwnerId,
   type BrowserWebviewFocusBridgeDirection,
@@ -917,13 +918,33 @@ export function BrowserPanel({
         redirectRendererBrowserWebviewFocus("before-exit", runtimeHost, webview);
       const handleAfterExit = () =>
         redirectRendererBrowserWebviewFocus("after-exit", runtimeHost, webview);
+      const handleDocumentFocusIn = (event: FocusEvent) => {
+        const focusTarget =
+          event.target === webview
+            ? "guest"
+            : event.target === beforeGuard
+              ? "before-guard"
+              : event.target === afterGuard
+                ? "after-guard"
+                : "outside";
+        const guardsActive = beforeGuard?.tabIndex === 0 || afterGuard?.tabIndex === 0;
+        setRendererBrowserWebviewFocusGuardsActive(
+          runtimeHost,
+          resolveBrowserWebviewFocusGuardsAfterDocumentFocusIn({
+            currentlyActive: guardsActive,
+            target: focusTarget,
+          }),
+        );
+      };
 
       webview.tabIndex = -1;
       setRendererBrowserWebviewFocusGuardsActive(runtimeHost, false);
+      document.addEventListener("focusin", handleDocumentFocusIn, true);
       webview.addEventListener("focus", handleGuestFocus);
       beforeGuard?.addEventListener("focus", handleBeforeExit);
       afterGuard?.addEventListener("focus", handleAfterExit);
       const cleanup = () => {
+        document.removeEventListener("focusin", handleDocumentFocusIn, true);
         webview.removeEventListener("focus", handleGuestFocus);
         beforeGuard?.removeEventListener("focus", handleBeforeExit);
         afterGuard?.removeEventListener("focus", handleAfterExit);

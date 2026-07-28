@@ -8,6 +8,7 @@ import {
   createBrowserWebviewHandoffRegistry,
   isStableBrowserWebviewRuntimeIntact,
   resolveBrowserWebviewRuntimeHostGeometry,
+  resolveBrowserWebviewFocusGuardsAfterDocumentFocusIn,
   resolveBrowserWebviewFocusBridgeTarget,
   resolveBrowserWebviewLogicalOwnerId,
 } from "./browserWebviewHandoff";
@@ -216,6 +217,42 @@ describe("browser webview focus bridge", () => {
       browserWebviewFocusGuardsShouldRemainActive({
         target: "logical-after",
         guestReceivedFocus: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("drops active guards when document focus moves outside the guest runtime", () => {
+    expect(
+      resolveBrowserWebviewFocusGuardsAfterDocumentFocusIn({
+        currentlyActive: true,
+        target: "outside",
+      }),
+    ).toBe(false);
+    expect(
+      resolveBrowserWebviewFocusGuardsAfterDocumentFocusIn({
+        currentlyActive: false,
+        target: "outside",
+      }),
+    ).toBe(false);
+  });
+
+  it("preserves guards through capture so a true guest Tab exit can route synchronously", () => {
+    expect(
+      resolveBrowserWebviewFocusGuardsAfterDocumentFocusIn({
+        currentlyActive: true,
+        target: "before-guard",
+      }),
+    ).toBe(true);
+    expect(
+      resolveBrowserWebviewFocusGuardsAfterDocumentFocusIn({
+        currentlyActive: true,
+        target: "after-guard",
+      }),
+    ).toBe(true);
+    expect(
+      resolveBrowserWebviewFocusGuardsAfterDocumentFocusIn({
+        currentlyActive: false,
+        target: "guest",
       }),
     ).toBe(false);
   });

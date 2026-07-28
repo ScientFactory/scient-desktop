@@ -92,6 +92,19 @@ export function browserWebviewFocusGuardsShouldRemainActive(input: {
   return input.target === "guest" && input.guestReceivedFocus;
 }
 
+export type BrowserWebviewDocumentFocusTarget =
+  | "guest"
+  | "before-guard"
+  | "after-guard"
+  | "outside";
+
+export function resolveBrowserWebviewFocusGuardsAfterDocumentFocusIn(input: {
+  readonly currentlyActive: boolean;
+  readonly target: BrowserWebviewDocumentFocusTarget;
+}): boolean {
+  return input.target === "outside" ? false : input.currentlyActive;
+}
+
 export function browserWebviewRuntimeHostId(threadId: string, tabId: string): string {
   const encodedThreadId = encodeURIComponent(threadId);
   const encodedTabId = encodeURIComponent(tabId);
