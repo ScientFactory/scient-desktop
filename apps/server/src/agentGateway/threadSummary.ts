@@ -223,6 +223,15 @@ export interface AgentThreadDetail {
   readonly nextCursor?: string;
 }
 
+/**
+ * Provider diagnostics can contain paths, commands, URLs, or credential
+ * fragments. Sibling models receive only this stable status; the owning UI and
+ * protected logs retain the original diagnostic through their existing paths.
+ */
+export function toAgentSafeThreadError(lastError: string | null | undefined): string | null {
+  return lastError == null ? null : "Turn failed.";
+}
+
 export function summarizeThreadDetail(input: {
   readonly thread: OrchestrationThread;
   readonly callerThreadId: string;
@@ -251,7 +260,7 @@ export function summarizeThreadDetail(input: {
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     archived: (thread.archivedAt ?? null) !== null,
-    lastError: thread.session?.lastError ?? null,
+    lastError: toAgentSafeThreadError(thread.session?.lastError),
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     messages: page.messages,

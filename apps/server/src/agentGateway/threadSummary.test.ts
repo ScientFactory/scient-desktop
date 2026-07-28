@@ -405,7 +405,8 @@ describe("summarizeThreadDetail", () => {
     expect(detail.model).toBe("gpt-5-codex");
     expect(detail.status).toBe("idle");
     expect(detail.sessionStatus).toBe("ready");
-    expect(detail.lastError).toBe("boom");
+    expect(detail.lastError).toBe("Turn failed.");
+    expect(JSON.stringify(detail)).not.toContain("boom");
     expect(detail.latestTurnState).toBe("completed");
     expect(detail.parentThreadId).toBe("thread-parent");
     expect(detail.envMode).toBe("cloud");

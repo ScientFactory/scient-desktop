@@ -13,10 +13,9 @@ import { describe, expect, it } from "vitest";
 
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { mcpToolResultError, type McpToolCallResult } from "./protocol.ts";
+import type { McpToolCallResult } from "./protocol.ts";
 import { makeThreadWriteTools } from "./threadWriteTools.ts";
-import { errorText } from "./toolInput.ts";
-import type { ToolContext } from "./toolRuntime.ts";
+import { gatewayToolFailureResult, type ToolContext } from "./toolRuntime.ts";
 
 const CALLER_THREAD = "thread-caller";
 const TARGET_THREAD = "thread-target";
@@ -135,9 +134,7 @@ function setup(options?: {
     return Effect.runPromise(
       tool
         .handler(args, context)
-        .pipe(
-          Effect.catchDefect((defect) => Effect.succeed(mcpToolResultError(errorText(defect)))),
-        ),
+        .pipe(Effect.catchDefect((defect) => Effect.succeed(gatewayToolFailureResult(defect)))),
     );
   };
   return { call, commands };
@@ -234,9 +231,10 @@ describe("synara_send_message", () => {
       deduplicated: true,
     });
     expect(commands).toHaveLength(1);
-    // Idempotent sends derive a deterministic command id from the request id.
-    expect(commands[0].commandId).toBe(`agent:${CALLER_THREAD}:req-1:send`);
-    expect(commands[0].message.messageId).toBe(`agent:${CALLER_THREAD}:req-1:message`);
+    // Idempotent sends derive a bounded deterministic identity from the exact
+    // provider session plus request id.
+    expect(commands[0].commandId).toMatch(/^agent:[0-9a-f]{32}:send$/);
+    expect(commands[0].message.messageId).toBe(commands[0].commandId.replace(/:send$/, ":message"));
   });
 
   it("dispatches separately for distinct requestIds", async () => {
@@ -255,9 +253,59 @@ describe("synara_send_message", () => {
     await call(
       "synara_send_message",
       { threadId: TARGET_THREAD, message: "a", requestId: "same" },
-      makeContext({ callerThreadId: "thread-caller-2" }),
+      makeContext({
+        callerThreadId: "thread-caller-2",
+        callerSessionKey: "gateway-session:thread-caller-2",
+      }),
     );
     expect(commands).toHaveLength(2);
+  });
+
+  it("does not share dedup across replacement provider sessions on one thread", async () => {
+    const { call, commands } = setup({ threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) } });
+    await call(
+      "synara_send_message",
+      { threadId: TARGET_THREAD, message: "first session", requestId: "same" },
+      makeContext({ callerSessionKey: "gateway-session:first" }),
+    );
+    await call(
+      "synara_send_message",
+      { threadId: TARGET_THREAD, message: "replacement session", requestId: "same" },
+      makeContext({ callerSessionKey: "gateway-session:replacement" }),
+    );
+    expect(commands).toHaveLength(2);
+    expect(commands[0].commandId).not.toBe(commands[1].commandId);
+  });
+
+  it.each([
+    {
+      label: "target",
+      second: { threadId: "thread-target-2", message: "once", requestId: "same" },
+    },
+    {
+      label: "message",
+      second: { threadId: TARGET_THREAD, message: "changed", requestId: "same" },
+    },
+    {
+      label: "mode",
+      second: { threadId: TARGET_THREAD, message: "once", mode: "steer", requestId: "same" },
+    },
+  ])("rejects requestId reuse with a different $label in one session", async ({ second }) => {
+    const { call, commands } = setup({
+      threadShells: {
+        [TARGET_THREAD]: shell(TARGET_THREAD),
+        "thread-target-2": shell("thread-target-2"),
+      },
+    });
+    await call("synara_send_message", {
+      threadId: TARGET_THREAD,
+      message: "once",
+      requestId: "same",
+    });
+    const conflict = await call("synara_send_message", second);
+    expect(conflict.isError).toBe(true);
+    expect((jsonBody(conflict).error as { code: string }).code).toBe("idempotency_conflict");
+    expect(commands).toHaveLength(1);
   });
 
   it("denies a cross-project send as thread_not_found without dispatching", async () => {
@@ -307,7 +355,10 @@ describe("synara_send_message", () => {
     });
     const result = await call("synara_send_message", { threadId: TARGET_THREAD, message: "x" });
     expect(result.isError).toBe(true);
-    expect((jsonBody(result).error as { code: string }).code).toBe("operation_failed");
+    const error = jsonBody(result).error as { code: string; message: string };
+    expect(error.code).toBe("operation_failed");
+    expect(error.message).toBe("The gateway tool failed unexpectedly.");
+    expect(result.content[0]!.text).not.toContain("engine boom");
   });
 
   it("does not remember a failed dispatch for later replay", async () => {

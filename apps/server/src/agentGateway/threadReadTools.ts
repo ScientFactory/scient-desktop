@@ -23,26 +23,28 @@ import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/Pro
 import { authorizeThreadRead } from "./authorization.ts";
 import { SYNARA_GATEWAY_MAX_THREADS_PER_OPERATION } from "./contract.ts";
 import { SYNARA_HARNESS_POLICY_VERSION } from "./harnessPolicy.ts";
-import { mcpToolResultError, mcpToolResultJson } from "./protocol.ts";
+import { mcpToolResultJson } from "./protocol.ts";
 import {
   summarizeThreadDetail,
+  toAgentSafeThreadError,
   summarizeThreadShell,
   summarizeWaitThreadText,
   WAIT_THREAD_SUMMARY_MAX_CHARS,
 } from "./threadSummary.ts";
 import {
   decodeWaitForThreadsInput,
-  errorText,
   readBooleanArg,
   readNumberArg,
   readStringArg,
   ToolInputError,
 } from "./toolInput.ts";
 import {
+  gatewayToolFailureResult,
   gatewayToolErrorResult,
   GatewayToolError,
   READ_ONLY_TOOL_ANNOTATIONS,
   type ToolEntry,
+  unexpectedGatewayToolError,
 } from "./toolRuntime.ts";
 
 const LIST_THREADS_DEFAULT_LIMIT = 50;
@@ -96,7 +98,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
             automations: turnId !== null && context.callerCapabilities.has("automation:write"),
           },
         });
-      }).pipe(Effect.catch((error) => Effect.succeed(mcpToolResultError(errorText(error))))),
+      }).pipe(Effect.catch((error) => Effect.succeed(gatewayToolFailureResult(error)))),
   };
 
   const listProjects: ToolEntry = {
@@ -121,7 +123,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
               })),
           }),
         ),
-        Effect.catch((error) => Effect.succeed(mcpToolResultError(errorText(error)))),
+        Effect.catch((error) => Effect.succeed(gatewayToolFailureResult(error))),
       ),
   };
 
@@ -157,7 +159,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
         );
         const snapshot = yield* snapshotQuery
           .getShellSnapshot()
-          .pipe(Effect.mapError((error) => new ToolInputError(errorText(error))));
+          .pipe(Effect.mapError(() => unexpectedGatewayToolError()));
         // Project scope is enforced here, not accepted as an argument: an agent
         // can only ever enumerate threads in its own project.
         const matching = snapshot.threads
@@ -169,7 +171,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
           .slice(0, limit)
           .map((thread) => summarizeThreadShell(thread, context.callerThreadId));
         return mcpToolResultJson({ threads, totalMatching: matching.length });
-      }).pipe(Effect.catch((error) => Effect.succeed(mcpToolResultError(errorText(error))))),
+      }).pipe(Effect.catch((error) => Effect.succeed(gatewayToolFailureResult(error)))),
   };
 
   const readThread: ToolEntry = {
@@ -200,7 +202,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
         const messageLimit = readNumberArg(args, "messageLimit");
         const maxMessageChars = readNumberArg(args, "maxMessageChars");
         const detail = yield* snapshotQuery.getThreadDetailById(ThreadId.makeUnsafe(threadId)).pipe(
-          Effect.mapError((error) => new ToolInputError(errorText(error))),
+          Effect.mapError(() => unexpectedGatewayToolError()),
           Effect.flatMap(
             Option.match({
               // Not-found must be byte-for-byte indistinguishable from the
@@ -233,15 +235,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
             maxMessageChars,
           }),
         );
-      }).pipe(
-        Effect.catch((error) =>
-          Effect.succeed(
-            error instanceof GatewayToolError
-              ? gatewayToolErrorResult(error)
-              : mcpToolResultError(errorText(error)),
-          ),
-        ),
-      ),
+      }).pipe(Effect.catch((error) => Effect.succeed(gatewayToolFailureResult(error)))),
   };
 
   const waitForThreads: ToolEntry = {
@@ -291,7 +285,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
         const deadline = Date.now() + timeoutMs;
         const pinned = yield* Effect.forEach(waitInput.threadIds, (threadId, index) =>
           snapshotQuery.getThreadShellById(threadId).pipe(
-            Effect.mapError((error) => new ToolInputError(errorText(error))),
+            Effect.mapError(() => unexpectedGatewayToolError()),
             Effect.flatMap(
               Option.match({
                 onNone: () =>
@@ -320,7 +314,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
         // One shell-snapshot read per poll; index the pinned threads out of it.
         const readPinnedStates = () =>
           snapshotQuery.getShellSnapshot().pipe(
-            Effect.mapError((error) => new ToolInputError(errorText(error))),
+            Effect.mapError(() => unexpectedGatewayToolError()),
             Effect.flatMap((snapshot) => {
               const shellsById = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
               const missing = pinned.find((pin) => !shellsById.has(pin.threadId));
@@ -384,7 +378,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
               return { ...result, timedOut: !result.terminal && timedOut };
             }
             const detail = yield* snapshotQuery.getThreadDetailById(result.threadId).pipe(
-              Effect.mapError((error) => new ToolInputError(errorText(error))),
+              Effect.mapError(() => unexpectedGatewayToolError()),
               Effect.flatMap(
                 Option.match({
                   onNone: () =>
@@ -408,7 +402,9 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
               summary: summary.summary,
               summaryTruncated: summary.truncated,
               error:
-                result.state === "error" ? (detail.session?.lastError ?? "Turn failed.") : null,
+                result.state === "error"
+                  ? (toAgentSafeThreadError(detail.session?.lastError) ?? "Turn failed.")
+                  : null,
             };
           }),
         );
@@ -419,15 +415,7 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
           timedOut,
           threads: finalResults,
         });
-      }).pipe(
-        Effect.catch((error) =>
-          Effect.succeed(
-            error instanceof GatewayToolError
-              ? gatewayToolErrorResult(error)
-              : mcpToolResultError(errorText(error)),
-          ),
-        ),
-      ),
+      }).pipe(Effect.catch((error) => Effect.succeed(gatewayToolFailureResult(error)))),
   };
 
   return [contextTool, listProjects, listThreads, readThread, waitForThreads];

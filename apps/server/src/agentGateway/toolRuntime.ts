@@ -11,11 +11,14 @@ import type { ProviderKind } from "@synara/contracts";
 import type { Effect } from "effect";
 
 import {
+  mcpToolResultError,
   mcpToolResultJson,
   type JsonRpcId,
   type McpToolCallResult,
   type McpToolDefinition,
 } from "./protocol.ts";
+
+export const UNEXPECTED_GATEWAY_TOOL_ERROR_MESSAGE = "The gateway tool failed unexpectedly.";
 
 export const READ_ONLY_TOOL_ANNOTATIONS = {
   readOnlyHint: true,
@@ -69,6 +72,9 @@ export class GatewayToolError extends Error {
   }
 }
 
+/** An authored argument-validation failure whose message is safe for the model. */
+export class ToolInputError extends Error {}
+
 export function gatewayToolErrorResult(error: GatewayToolError) {
   return {
     ...mcpToolResultJson({
@@ -80,4 +86,18 @@ export function gatewayToolErrorResult(error: GatewayToolError) {
     }),
     isError: true as const,
   };
+}
+
+/**
+ * Keep authored policy/input failures useful without reflecting arbitrary
+ * internal exception text across the provider boundary.
+ */
+export function gatewayToolFailureResult(error: unknown) {
+  if (error instanceof GatewayToolError) return gatewayToolErrorResult(error);
+  if (error instanceof ToolInputError) return mcpToolResultError(error.message);
+  return mcpToolResultError(UNEXPECTED_GATEWAY_TOOL_ERROR_MESSAGE);
+}
+
+export function unexpectedGatewayToolError(): GatewayToolError {
+  return new GatewayToolError("operation_failed", UNEXPECTED_GATEWAY_TOOL_ERROR_MESSAGE);
 }

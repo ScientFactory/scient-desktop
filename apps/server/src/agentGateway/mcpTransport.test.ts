@@ -16,7 +16,7 @@ import { makeAgentGatewayMcpTransport } from "./mcpTransport.ts";
 import { mcpToolResultJson } from "./protocol.ts";
 import type { AgentGatewayCredentialsShape } from "./Services/AgentGatewayCredentials.ts";
 import type { AgentGatewaySessionIdentity } from "./Services/AgentGatewaySessionRegistry.ts";
-import { type ToolEntry } from "./toolRuntime.ts";
+import { type ToolEntry, UNEXPECTED_GATEWAY_TOOL_ERROR_MESSAGE } from "./toolRuntime.ts";
 
 const CALLER_THREAD = "thread-caller";
 const CALLER_PROJECT = "project-1";
@@ -94,6 +94,15 @@ const writeTool: ToolEntry = {
   },
   handler: () => Effect.succeed(mcpToolResultJson({ wrote: true })),
   requiresActiveTurn: true,
+};
+
+const defectTool: ToolEntry = {
+  definition: {
+    name: "synara_defect",
+    description: "Throw an unexpected internal error.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  handler: () => Effect.die(new Error("SECRET=sk-sentinel path=/Users/alice/private/.env")),
 };
 
 function makeTransport(cfg?: {
@@ -241,6 +250,23 @@ describe("makeAgentGatewayMcpTransport JSON-RPC handling", () => {
     });
     expect(res.status).toBe(200);
     expect(toolResultJson(res.body)).toEqual({ echoed: { hello: "world" } });
+  });
+
+  it("does not reflect unexpected handler diagnostics to the provider", async () => {
+    const res = await run(makeTransport({ tools: [defectTool] }), {
+      authorizationHeader: auth(VALID_TOKEN),
+      body: {
+        jsonrpc: "2.0",
+        id: 31,
+        method: "tools/call",
+        params: { name: "synara_defect", arguments: {} },
+      },
+    });
+    expect(res.status).toBe(200);
+    const serialized = JSON.stringify(res.body);
+    expect(serialized).toContain(UNEXPECTED_GATEWAY_TOOL_ERROR_MESSAGE);
+    expect(serialized).not.toContain("sk-sentinel");
+    expect(serialized).not.toContain("/Users/alice/private/.env");
   });
 
   it("rejects an unknown tool with invalid params", async () => {

@@ -403,6 +403,7 @@ describe("ClaudeAdapterLive", () => {
         return query;
       },
     }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-command-generation", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -507,6 +508,7 @@ describe("ClaudeAdapterLive", () => {
         return query;
       },
     }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-command-inflight", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -568,6 +570,7 @@ describe("ClaudeAdapterLive", () => {
       },
       discoveryTimeoutMs: 30_000,
     }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-discovery-stop", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -643,6 +646,7 @@ describe("ClaudeAdapterLive", () => {
       },
       discoveryTimeoutMs: 30_000,
     }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-discovery-close-failure", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -692,6 +696,7 @@ describe("ClaudeAdapterLive", () => {
       createQuery: () => query,
       discoveryTimeoutMs: 30_000,
     }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-discovery-finalizer", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -727,6 +732,7 @@ describe("ClaudeAdapterLive", () => {
         return query;
       },
     }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-model-generation", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -793,6 +799,7 @@ describe("ClaudeAdapterLive", () => {
         return query;
       },
     }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-agent-generation", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -870,6 +877,7 @@ describe("ClaudeAdapterLive", () => {
         return query;
       },
     }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-command-generation", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -985,6 +993,7 @@ describe("ClaudeAdapterLive", () => {
       createQuery: () => harness.query,
       discoveryTimeoutMs: 10,
     }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-discovery-timeout", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -1019,6 +1028,7 @@ describe("ClaudeAdapterLive", () => {
       createQuery: () => harness.query,
       discoveryTimeoutMs: 10,
     }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-model-timeout", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -1203,6 +1213,7 @@ describe("ClaudeAdapterLive", () => {
         return query;
       },
     }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-agent-discovery", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );

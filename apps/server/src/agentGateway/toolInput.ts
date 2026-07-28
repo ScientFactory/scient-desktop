@@ -11,6 +11,7 @@ import { type ProviderKind } from "@synara/contracts";
 import { Schema } from "effect";
 
 import { SynaraWaitForThreadsInput } from "./contract.ts";
+import { ToolInputError } from "./toolRuntime.ts";
 
 export const PROVIDER_KINDS: ReadonlyArray<ProviderKind> = [
   "codex",
@@ -24,7 +25,7 @@ export const PROVIDER_KINDS: ReadonlyArray<ProviderKind> = [
   "pi",
 ];
 
-export class ToolInputError extends Error {}
+export { ToolInputError };
 
 export const errorText = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);

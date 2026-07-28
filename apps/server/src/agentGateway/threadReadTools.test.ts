@@ -16,9 +16,8 @@ import { describe, expect, it } from "vitest";
 
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { makeThreadReadTools } from "./threadReadTools.ts";
-import { mcpToolResultError, type McpToolCallResult } from "./protocol.ts";
-import { errorText } from "./toolInput.ts";
-import type { ToolContext } from "./toolRuntime.ts";
+import type { McpToolCallResult } from "./protocol.ts";
+import { gatewayToolFailureResult, type ToolContext } from "./toolRuntime.ts";
 
 const CALLER_THREAD = "thread-caller";
 const CALLER_PROJECT = "project-1";
@@ -144,7 +143,7 @@ function callTool(
   return Effect.runPromise(
     tool
       .handler(args, context)
-      .pipe(Effect.catchDefect((defect) => Effect.succeed(mcpToolResultError(errorText(defect))))),
+      .pipe(Effect.catchDefect((defect) => Effect.succeed(gatewayToolFailureResult(defect)))),
   );
 }
 
@@ -337,6 +336,26 @@ describe("synara_wait_for_threads", () => {
     expect(body.threads[0]!.state).toBe("completed");
     expect(body.threads[0]!.terminal).toBe(true);
     expect(body.threads[0]!.summary).toBe("the answer");
+  });
+
+  it("returns an agent-safe failure instead of raw provider diagnostics", async () => {
+    const sentinel = "SECRET=sk-sentinel path=/Users/alice/private/.env";
+    const failed = shell("t-a", { latestTurn: { turnId: "turn-a", state: "error" } });
+    const waitFakes: Fakes = {
+      threads: [failed],
+      threadShells: { "t-a": failed },
+      threadDetails: {
+        "t-a": detail("t-a", CALLER_PROJECT, {
+          session: { providerName: "claudeAgent", status: "error", lastError: sentinel },
+          latestTurn: { turnId: "turn-a", state: "error" },
+        }),
+      },
+    };
+    const body = jsonBody(
+      await callTool(waitFakes, "synara_wait_for_threads", { threadIds: ["t-a"] }),
+    ) as { threads: Array<{ error: string | null }> };
+    expect(body.threads[0]!.error).toBe("Turn failed.");
+    expect(JSON.stringify(body)).not.toContain(sentinel);
   });
 
   it("reports a timeout when a pinned turn stays running", async () => {

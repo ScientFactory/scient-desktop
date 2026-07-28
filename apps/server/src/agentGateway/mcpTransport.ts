@@ -24,13 +24,13 @@ import {
   JSON_RPC_INVALID_PARAMS,
   JSON_RPC_INVALID_REQUEST,
   JSON_RPC_METHOD_NOT_FOUND,
-  mcpToolResultError,
   parseMcpMessage,
   type JsonRpcRequest,
 } from "./protocol.ts";
 import { errorText } from "./toolInput.ts";
 import {
   GatewayToolError,
+  gatewayToolFailureResult,
   gatewayToolErrorResult,
   type ToolContext,
   type ToolEntry,
@@ -114,7 +114,7 @@ export function makeAgentGatewayMcpTransport(input: {
             }
           }
           const result = yield* Effect.suspend(() => tool.handler(args, invocationContext)).pipe(
-            Effect.catchDefect((defect) => Effect.succeed(mcpToolResultError(errorText(defect)))),
+            Effect.catchDefect((defect) => Effect.succeed(gatewayToolFailureResult(defect))),
           );
           return jsonRpcResult(request.id, result);
         }
@@ -199,7 +199,7 @@ export function makeAgentGatewayMcpTransport(input: {
                   new GatewayToolError(
                     "caller_turn_inactive",
                     "This Synara write was rejected because the caller thread could no longer be verified.",
-                    { callerThreadId, error: errorText(error) },
+                    { callerThreadId },
                   ),
               ),
             );
@@ -274,9 +274,7 @@ export function makeAgentGatewayMcpTransport(input: {
             responses.push(
               yield* handleRequest(parsed.request, context).pipe(
                 Effect.catch((error) =>
-                  Effect.succeed(
-                    jsonRpcResult(parsed.request.id, mcpToolResultError(errorText(error))),
-                  ),
+                  Effect.succeed(jsonRpcResult(parsed.request.id, gatewayToolFailureResult(error))),
                 ),
               ),
             );

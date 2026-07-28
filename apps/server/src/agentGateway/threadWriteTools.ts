@@ -19,7 +19,7 @@
  *
  * @module agentGateway/threadWriteTools
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import {
   CommandId,
@@ -33,11 +33,13 @@ import { Effect, Option } from "effect";
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { authorizeThreadDrive } from "./authorization.ts";
-import { mcpToolResultError, mcpToolResultJson } from "./protocol.ts";
-import { errorText, readStringArg, ToolInputError } from "./toolInput.ts";
+import { mcpToolResultJson } from "./protocol.ts";
+import { readStringArg, ToolInputError } from "./toolInput.ts";
 import {
+  gatewayToolFailureResult,
   gatewayToolErrorResult,
   GatewayToolError,
+  unexpectedGatewayToolError,
   WRITE_TOOL_ANNOTATIONS,
   type ToolEntry,
 } from "./toolRuntime.ts";
@@ -54,6 +56,18 @@ interface SendResultPayload {
   readonly threadId: string;
   readonly dispatched: TurnDispatchMode;
   readonly requestId: string | null;
+}
+
+interface SendDedupEntry {
+  readonly fingerprint: string;
+  readonly payload: SendResultPayload;
+}
+
+function idempotencyIdentity(sessionKey: string, requestId: string): string {
+  return createHash("sha256")
+    .update(JSON.stringify([sessionKey, requestId]))
+    .digest("hex")
+    .slice(0, 32);
 }
 
 export interface ThreadWriteToolsInput {
@@ -73,9 +87,9 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
   const now = input.now ?? (() => new Date().toISOString());
   const randomId = input.randomId ?? randomUUID;
 
-  const sendDedup = new Map<string, SendResultPayload>();
-  const rememberSend = (key: string, payload: SendResultPayload) => {
-    sendDedup.set(key, payload);
+  const sendDedup = new Map<string, SendDedupEntry>();
+  const rememberSend = (key: string, entry: SendDedupEntry) => {
+    sendDedup.set(key, entry);
     while (sendDedup.size > SEND_DEDUP_MAX_ENTRIES) {
       const oldest = sendDedup.keys().next().value;
       if (oldest === undefined) break;
@@ -88,7 +102,7 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
   // drive policy with the same code, so the caller cannot distinguish the two.
   const resolveTarget = (threadId: string) =>
     snapshotQuery.getThreadShellById(ThreadId.makeUnsafe(threadId)).pipe(
-      Effect.mapError((error) => new GatewayToolError("operation_failed", errorText(error))),
+      Effect.mapError(() => unexpectedGatewayToolError()),
       Effect.flatMap(
         Option.match({
           onNone: () =>
@@ -154,14 +168,24 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
         }
         const requestId = readStringArg(args, "requestId");
 
-        // Idempotent replay: return the prior outcome without a second dispatch.
-        // Keyed per caller so two callers never collide on one requestId; a thread
-        // id contains no space, so the first space unambiguously splits the key.
-        const dedupKey = requestId === undefined ? null : `${context.callerThreadId} ${requestId}`;
+        const dispatchMode: TurnDispatchMode = modeArg;
+        const fingerprint = JSON.stringify([threadId, message, dispatchMode]);
+        // Replay identity belongs to the concrete provider session, not merely
+        // its thread: a replacement runtime must never inherit stale success.
+        const dedupKey =
+          requestId === undefined ? null : JSON.stringify([context.callerSessionKey, requestId]);
         if (dedupKey !== null) {
           const prior = sendDedup.get(dedupKey);
           if (prior !== undefined) {
-            return mcpToolResultJson({ ...prior, deduplicated: true });
+            if (prior.fingerprint !== fingerprint) {
+              return gatewayToolErrorResult(
+                new GatewayToolError(
+                  "idempotency_conflict",
+                  "This requestId was already used for a different send operation in this provider session.",
+                ),
+              );
+            }
+            return mcpToolResultJson({ ...prior.payload, deduplicated: true });
           }
         }
 
@@ -172,11 +196,12 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
           return gatewayToolErrorResult(new GatewayToolError(decision.code, decision.message));
         }
 
-        const dispatchMode: TurnDispatchMode = modeArg;
         // Deterministic command id when idempotent so a duplicate that slips past
-        // the in-memory map still collapses at the orchestration receipt layer.
+        // the in-memory map still collapses within this exact provider session.
         const commandSuffix =
-          requestId === undefined ? randomId() : `${context.callerThreadId}:${requestId}`;
+          requestId === undefined
+            ? randomId()
+            : idempotencyIdentity(context.callerSessionKey, requestId);
         yield* orchestrationEngine
           .dispatch({
             type: "thread.turn.start",
@@ -198,26 +223,16 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
             interactionMode: target.interactionMode,
             createdAt: now(),
           })
-          .pipe(
-            Effect.mapError((error) => new GatewayToolError("operation_failed", errorText(error))),
-          );
+          .pipe(Effect.mapError(() => unexpectedGatewayToolError()));
 
         const payload: SendResultPayload = {
           threadId: target.id,
           dispatched: dispatchMode,
           requestId: requestId ?? null,
         };
-        if (dedupKey !== null) rememberSend(dedupKey, payload);
+        if (dedupKey !== null) rememberSend(dedupKey, { fingerprint, payload });
         return mcpToolResultJson({ ...payload, deduplicated: false });
-      }).pipe(
-        Effect.catch((error) =>
-          Effect.succeed(
-            error instanceof GatewayToolError
-              ? gatewayToolErrorResult(error)
-              : mcpToolResultError(errorText(error)),
-          ),
-        ),
-      ),
+      }).pipe(Effect.catch((error) => Effect.succeed(gatewayToolFailureResult(error)))),
   };
 
   const interruptThread: ToolEntry = {
@@ -268,23 +283,13 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
             turnId: runningTurnId,
             createdAt: now(),
           })
-          .pipe(
-            Effect.mapError((error) => new GatewayToolError("operation_failed", errorText(error))),
-          );
+          .pipe(Effect.mapError(() => unexpectedGatewayToolError()));
         return mcpToolResultJson({
           threadId: target.id,
           interrupted: true,
           turnId: runningTurnId,
         });
-      }).pipe(
-        Effect.catch((error) =>
-          Effect.succeed(
-            error instanceof GatewayToolError
-              ? gatewayToolErrorResult(error)
-              : mcpToolResultError(errorText(error)),
-          ),
-        ),
-      ),
+      }).pipe(Effect.catch((error) => Effect.succeed(gatewayToolFailureResult(error)))),
   };
 
   return [sendMessage, interruptThread];
