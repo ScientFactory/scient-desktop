@@ -39,6 +39,7 @@ describe("Claude discovery isolation", () => {
       extraArgs: {
         "mcp-config": "/tmp/unsafe-mcp.json",
       },
+      settings: { disableAllHooks: false },
     });
 
     expect(result).toMatchObject({
@@ -52,6 +53,7 @@ describe("Claude discovery isolation", () => {
       settingSources: ["user", "project", "local"],
       mcpServers: {},
       strictMcpConfig: true,
+      settings: { disableAllHooks: true },
       env: {
         HOME: "/Users/tester",
         PATH: "/custom/bin",

@@ -192,6 +192,11 @@ describe("Claude account capability probing", () => {
       expect(invocation.args).toContain("--strict-mcp-config");
       expect(invocation.args).not.toContain("--mcp-config");
       expect(invocation.args).toContain("--setting-sources=user,project,local");
+      const settingsArgumentIndex = invocation.args.indexOf("--settings");
+      expect(settingsArgumentIndex).toBeGreaterThanOrEqual(0);
+      expect(JSON.parse(invocation.args[settingsArgumentIndex + 1] ?? "null")).toMatchObject({
+        disableAllHooks: true,
+      });
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

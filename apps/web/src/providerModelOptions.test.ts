@@ -9,6 +9,7 @@ import {
   buildModelSelection,
   buildNextProviderOptions,
   buildProviderOptionPatch,
+  filterProviderModelOptionsForRuntime,
   formatProviderModelOptionName,
   groupProviderModelOptions,
   groupProviderModelOptionsWithFavorites,
@@ -157,6 +158,7 @@ describe("mergeDynamicModelOptions", () => {
     expect(
       mergeDynamicModelOptions({
         provider: "claudeAgent",
+        providerVersion: "2.1.219",
         staticOptions: [],
         dynamicModels: [
           {
@@ -192,6 +194,107 @@ describe("mergeDynamicModelOptions", () => {
         supportedReasoningEfforts: [{ value: "low" }, { value: "high" }],
       },
     ]);
+  });
+
+  it("uses Claude SDK resolution before a moving provider alias", () => {
+    expect(
+      mergeDynamicModelOptions({
+        provider: "claudeAgent",
+        providerVersion: "2.1.219",
+        staticOptions: [],
+        dynamicModels: [
+          {
+            slug: "opus[1m]",
+            name: "Opus",
+            resolvedModel: "claude-opus-5[1m]",
+          },
+          {
+            slug: "opus",
+            name: "Opus fallback",
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        slug: "claude-opus-5",
+        name: "Opus",
+        resolvedModel: "claude-opus-5[1m]",
+      },
+    ]);
+  });
+
+  it.each([undefined, "2.1.218"])(
+    "hides Opus 5 when Claude Code %s cannot support it",
+    (providerVersion) => {
+      expect(
+        mergeDynamicModelOptions({
+          provider: "claudeAgent",
+          providerVersion,
+          staticOptions: [
+            { slug: "claude-opus-5", name: "Claude Opus 5" },
+            { slug: "claude-opus-4-8", name: "Claude Opus 4.8" },
+          ],
+          dynamicModels: [
+            {
+              slug: "opus[1m]",
+              name: "Opus",
+              resolvedModel: "claude-opus-4-8[1m]",
+            },
+          ],
+        }),
+      ).toEqual([
+        {
+          slug: "claude-opus-4-8",
+          name: "Claude Opus 4.8",
+          resolvedModel: "claude-opus-4-8[1m]",
+        },
+      ]);
+    },
+  );
+
+  it("does not invent Opus 5 when the exact Claude catalog omits it", () => {
+    expect(
+      mergeDynamicModelOptions({
+        provider: "claudeAgent",
+        providerVersion: "2.1.219",
+        staticOptions: [{ slug: "claude-opus-5", name: "Claude Opus 5" }],
+        dynamicModels: [{ slug: "sonnet", name: "Sonnet", resolvedModel: "claude-sonnet-5" }],
+      }),
+    ).toEqual([
+      {
+        slug: "claude-sonnet-5",
+        name: "Claude Sonnet 5",
+        resolvedModel: "claude-sonnet-5",
+      },
+    ]);
+
+    expect(
+      mergeDynamicModelOptions({
+        provider: "claudeAgent",
+        providerVersion: "2.1.219",
+        staticOptions: [{ slug: "claude-opus-5", name: "Claude Opus 5" }],
+        dynamicModels: [],
+      }),
+    ).toEqual([]);
+  });
+
+  it("keeps Opus 5 hidden until both the exact runtime version and catalog authorize it", () => {
+    const opus5 = { slug: "claude-opus-5", name: "Claude Opus 5" };
+    const opus48 = { slug: "claude-opus-4-8", name: "Claude Opus 4.8" };
+    const staticOptions = [opus5, opus48];
+    const filter = (runtimeModels: ReadonlyArray<{ slug: string; resolvedModel?: string }>) =>
+      filterProviderModelOptionsForRuntime({
+        provider: "claudeAgent",
+        providerVersion: "2.1.219",
+        runtimeModels,
+        options: staticOptions,
+      });
+
+    expect(filter([])).toEqual([opus48]);
+    expect(filter([{ slug: "sonnet", resolvedModel: "claude-sonnet-5" }])).toEqual([opus48]);
+    expect(filter([{ slug: "opus" }])).toEqual([opus48]);
+    expect(filter([{ slug: "opus-5" }])).toEqual([opus48]);
+    expect(filter([{ slug: "opus", resolvedModel: "claude-opus-5" }])).toEqual(staticOptions);
   });
 });
 

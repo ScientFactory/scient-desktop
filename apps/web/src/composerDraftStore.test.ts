@@ -2959,9 +2959,66 @@ describe("composerDraftStore modelSelection", () => {
     });
 
     expect(state).toEqual({
-      selectedModel: "opus[1m]",
+      selectedModel: "claude-opus-4-8",
       modelOptions: { claudeAgent: { effort: "high" } },
     });
+  });
+
+  it("preserves the historical persisted opus alias as Opus 4.8", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: { modelSelectionByProvider: {}, activeProvider: "claudeAgent" },
+      selectedProvider: "claudeAgent",
+      threadModelSelection: modelSelection("claudeAgent", "opus"),
+      projectModelSelection: null,
+      customModelsByProvider: {
+        codex: [],
+        claudeAgent: [],
+        cursor: [],
+        antigravity: [],
+        grok: [],
+        droid: [],
+        kilo: [],
+        opencode: [],
+        pi: [],
+      },
+      availableModelOptionsByProvider: {
+        claudeAgent: [
+          { slug: "claude-opus-4-8", name: "Claude Opus 4.8" },
+          { slug: "claude-sonnet-5", name: "Claude Sonnet 5" },
+        ],
+      },
+    });
+
+    expect(state.selectedModel).toBe("claude-opus-4-8");
+  });
+
+  it("preserves unavailable persisted explicit Opus 5 so runtime gating fails closed", () => {
+    const model = "claude-opus-5";
+    const state = deriveEffectiveComposerModelState({
+      draft: { modelSelectionByProvider: {}, activeProvider: "claudeAgent" },
+      selectedProvider: "claudeAgent",
+      threadModelSelection: modelSelection("claudeAgent", model),
+      projectModelSelection: null,
+      customModelsByProvider: {
+        codex: [],
+        claudeAgent: [],
+        cursor: [],
+        antigravity: [],
+        grok: [],
+        droid: [],
+        kilo: [],
+        opencode: [],
+        pi: [],
+      },
+      availableModelOptionsByProvider: {
+        claudeAgent: [
+          { slug: "claude-opus-4-8", name: "Claude Opus 4.8" },
+          { slug: "claude-sonnet-5", name: "Claude Sonnet 5" },
+        ],
+      },
+    });
+
+    expect(state.selectedModel).toBe("claude-opus-5");
   });
 
   it("selects Droid Auto without adding a reasoning override", () => {

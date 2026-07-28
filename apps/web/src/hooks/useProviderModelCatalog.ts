@@ -20,7 +20,11 @@ import {
   providerAgentsQueryOptions,
   providerModelsQueryOptions,
 } from "../lib/providerDiscoveryReactQuery";
-import { mergeDynamicModelOptions, type ProviderModelOption } from "../providerModelOptions";
+import {
+  filterProviderModelOptionsForRuntime,
+  mergeDynamicModelOptions,
+  type ProviderModelOption,
+} from "../providerModelOptions";
 
 export interface ProviderModelCatalog {
   modelOptionsByProvider: Record<
@@ -61,10 +65,15 @@ export function useProviderModelCatalog(input: {
   const discoveryCwd = input.cwd ?? null;
   const { settings } = useAppSettings();
   const customModelsByProvider = useMemo(() => getCustomModelsByProvider(settings), [settings]);
-
   const claudeDynamicModelsQuery = useQuery(
-    providerModelsQueryOptions({ provider: "claudeAgent" }),
+    providerModelsQueryOptions({
+      provider: "claudeAgent",
+      binaryPath: settings.claudeBinaryPath || null,
+      cwd: discoveryCwd,
+      enabled: selectedProvider === "claudeAgent" || discoveryEnabled,
+    }),
   );
+  const claudeProviderVersion = claudeDynamicModelsQuery.data?.runtimeVersion ?? null;
   const codexDynamicModelsQuery = useQuery(providerModelsQueryOptions({ provider: "codex" }));
   const cursorDynamicModelsQuery = useQuery(
     providerModelsQueryOptions({
@@ -129,7 +138,9 @@ export function useProviderModelCatalog(input: {
   const claudeDynamicAgentsQuery = useQuery(
     providerAgentsQueryOptions({
       provider: "claudeAgent",
-      enabled: selectedProvider === "claudeAgent",
+      binaryPath: settings.claudeBinaryPath || null,
+      cwd: discoveryCwd,
+      enabled: selectedProvider === "claudeAgent" || discoveryEnabled,
     }),
   );
   const codexDynamicAgentsQuery = useQuery(
@@ -207,13 +218,21 @@ export function useProviderModelCatalog(input: {
     ) && isInitialModelDiscoveryPending(antigravityModelsQuery);
 
   const modelOptionsByProvider = useMemo(() => {
-    const staticOptions: Record<ProviderKind, ReturnType<typeof getAppModelOptions>> = {
+    const staticOptions: Record<
+      ProviderKind,
+      ReadonlyArray<ProviderModelOption & { isCustom?: boolean }>
+    > = {
       codex: getAppModelOptions("codex", customModelsByProvider.codex, modelHintByProvider?.codex),
-      claudeAgent: getAppModelOptions(
-        "claudeAgent",
-        customModelsByProvider.claudeAgent,
-        modelHintByProvider?.claudeAgent,
-      ),
+      claudeAgent: filterProviderModelOptionsForRuntime({
+        provider: "claudeAgent",
+        providerVersion: claudeProviderVersion,
+        runtimeModels: claudeDynamicModelsQuery.data?.models,
+        options: getAppModelOptions(
+          "claudeAgent",
+          customModelsByProvider.claudeAgent,
+          modelHintByProvider?.claudeAgent,
+        ),
+      }),
       cursor: getAppModelOptions(
         "cursor",
         customModelsByProvider.cursor,
@@ -269,6 +288,7 @@ export function useProviderModelCatalog(input: {
       if (dynamicModels && dynamicModels.length > 0) {
         result[provider] = mergeDynamicModelOptions({
           provider,
+          ...(provider === "claudeAgent" ? { providerVersion: claudeProviderVersion } : {}),
           staticOptions: staticOptions[provider],
           dynamicModels,
         });
@@ -278,6 +298,7 @@ export function useProviderModelCatalog(input: {
     return result;
   }, [
     claudeDynamicModelsQuery.data,
+    claudeProviderVersion,
     antigravityModelsQuery.data,
     codexDynamicModelsQuery.data,
     cursorDynamicModelsQuery.data,

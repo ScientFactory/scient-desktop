@@ -587,6 +587,7 @@ import {
 import {
   buildModelSelection,
   buildNextProviderOptions,
+  filterProviderModelOptionsForRuntime,
   mergeDynamicModelOptions,
   type ProviderModelOption,
 } from "../providerModelOptions";
@@ -2216,9 +2217,20 @@ export default function ChatView({
     activeProjectCwd: activeProject?.cwd ?? null,
     serverCwd: serverConfigQuery.data?.cwd ?? null,
   });
+  const claudeDiscoveryEnabled =
+    selectedProvider === "claudeAgent" ||
+    lockedProvider === "claudeAgent" ||
+    pendingProviderSelection === "claudeAgent" ||
+    isModelPickerOpen;
   const claudeDynamicModelsQuery = useQuery(
-    providerModelsQueryOptions({ provider: "claudeAgent" }),
+    providerModelsQueryOptions({
+      provider: "claudeAgent",
+      binaryPath: settings.claudeBinaryPath || null,
+      cwd: providerModelDiscoveryCwd,
+      enabled: claudeDiscoveryEnabled,
+    }),
   );
+  const claudeProviderVersion = claudeDynamicModelsQuery.data?.runtimeVersion ?? null;
   const codexDynamicModelsQuery = useQuery(providerModelsQueryOptions({ provider: "codex" }));
   const openCodeModelDiscoveryEnabled =
     selectedProvider === "opencode" ||
@@ -2308,7 +2320,12 @@ export default function ChatView({
     }),
   );
   const claudeDynamicAgentsQuery = useQuery(
-    providerAgentsQueryOptions({ provider: "claudeAgent" }),
+    providerAgentsQueryOptions({
+      provider: "claudeAgent",
+      binaryPath: settings.claudeBinaryPath || null,
+      cwd: providerModelDiscoveryCwd,
+      enabled: claudeDiscoveryEnabled,
+    }),
   );
   const codexDynamicAgentsQuery = useQuery(providerAgentsQueryOptions({ provider: "codex" }));
   const openCodeDynamicAgentsQuery = useQuery(
@@ -2398,17 +2415,25 @@ export default function ChatView({
     ],
   );
   const modelOptionsByProvider = useMemo(() => {
-    const staticOptions: Record<ProviderKind, ReturnType<typeof getAppModelOptions>> = {
+    const staticOptions: Record<
+      ProviderKind,
+      ReadonlyArray<ProviderModelOption & { isCustom?: boolean }>
+    > = {
       codex: getAppModelOptions(
         "codex",
         customModelsByProvider.codex,
         composerModelHintByProvider.codex,
       ),
-      claudeAgent: getAppModelOptions(
-        "claudeAgent",
-        customModelsByProvider.claudeAgent,
-        composerModelHintByProvider.claudeAgent,
-      ),
+      claudeAgent: filterProviderModelOptionsForRuntime({
+        provider: "claudeAgent",
+        providerVersion: claudeProviderVersion,
+        runtimeModels: claudeDynamicModelsQuery.data?.models,
+        options: getAppModelOptions(
+          "claudeAgent",
+          customModelsByProvider.claudeAgent,
+          composerModelHintByProvider.claudeAgent,
+        ),
+      }),
       cursor: getAppModelOptions(
         "cursor",
         customModelsByProvider.cursor,
@@ -2476,6 +2501,7 @@ export default function ChatView({
       if (dynamicModels && dynamicModels.length > 0) {
         result[provider] = mergeDynamicModelOptions({
           provider,
+          ...(provider === "claudeAgent" ? { providerVersion: claudeProviderVersion } : {}),
           staticOptions: staticOptions[provider],
           dynamicModels,
         });
@@ -2485,6 +2511,7 @@ export default function ChatView({
     return result;
   }, [
     claudeDynamicModelsQuery.data,
+    claudeProviderVersion,
     composerModelHintByProvider,
     codexDynamicModelsQuery.data,
     cursorDynamicModelsQuery.data,
@@ -3505,11 +3532,13 @@ export default function ChatView({
       cwd: composerSkillCwd,
       threadId,
       binaryPath:
-        (selectedProvider === "opencode"
-          ? providerOptionsForDispatch?.opencode?.binaryPath
-          : selectedProvider === "kilo"
-            ? providerOptionsForDispatch?.kilo?.binaryPath
-            : null) ?? null,
+        (selectedProvider === "claudeAgent"
+          ? providerOptionsForDispatch?.claudeAgent?.binaryPath
+          : selectedProvider === "opencode"
+            ? providerOptionsForDispatch?.opencode?.binaryPath
+            : selectedProvider === "kilo"
+              ? providerOptionsForDispatch?.kilo?.binaryPath
+              : null) ?? null,
       serverUrl:
         (selectedProvider === "opencode"
           ? providerOptionsForDispatch?.opencode?.serverUrl
@@ -10309,6 +10338,7 @@ export default function ChatView({
     fastModeEnabled,
     providerNativeCommands,
     providerCommandDiscoveryCwd: composerSkillCwd,
+    providerCommandDiscoveryBinaryPath: settings.claudeBinaryPath || null,
     selectedProvider,
     currentProviderModelOptions,
     selectedModelSelection,
