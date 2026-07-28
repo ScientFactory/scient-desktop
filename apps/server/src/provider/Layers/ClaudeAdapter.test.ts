@@ -24,6 +24,8 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Exit, Fiber, Layer, Random, Stream } from "effect";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
+import { AgentGatewayCredentialsWithSecretsLive } from "../../agentGateway/Layers/AgentGatewayCredentials.ts";
+import { AgentGatewayCredentials } from "../../agentGateway/Services/AgentGatewayCredentials.ts";
 import { ServerConfig } from "../../config.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
@@ -231,6 +233,7 @@ function makeHarness(config?: {
 
   return {
     layer: makeClaudeAdapterLive(adapterOptions).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(
         ServerConfig.layerTest(
           config?.cwd ?? "/tmp/claude-adapter-test",
@@ -261,6 +264,7 @@ function makeMultiQueryHarness(config?: { readonly failCreateAt?: number }) {
       return query;
     },
   }).pipe(
+    Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
     Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -3064,6 +3068,7 @@ describe("ClaudeAdapterLive", () => {
         return query;
       },
     }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -5906,6 +5911,7 @@ describe("ClaudeAdapterLive", () => {
       throw new Error("session start must not probe agent discovery");
     };
     const layer = makeClaudeAdapterLive({ createQuery: () => query }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -5923,6 +5929,58 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(yield* adapter.hasSession(THREAD_ID), true);
       assert.equal((yield* adapter.listSessions()).length, 1);
       yield* adapter.stopAll();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect("revokes the minted gateway token when the SDK query fails to build", () => {
+    // Regression guard: the gateway token is minted just before createQuery.
+    // If createQuery throws, the installation gen (and its Effect.ensuring
+    // revoke) is never entered, so a dedicated tapError must revoke the token —
+    // otherwise a failed spawn leaks a live credential.
+    let capturedOptions: ClaudeQueryOptions | undefined;
+    const layer = makeClaudeAdapterLive({
+      createQuery: (input) => {
+        capturedOptions = input.options;
+        throw new Error("simulated Claude spawn failure");
+      },
+    }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
+      Layer.provideMerge(
+        ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp", { agentGatewayEnabled: true }),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const credentials = yield* AgentGatewayCredentials;
+
+      const result = yield* Effect.exit(
+        adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+        }),
+      );
+
+      assert.ok(Exit.isFailure(result));
+      assert.equal(yield* adapter.hasSession(THREAD_ID), false);
+
+      // The token was minted and injected into the MCP config before the
+      // (failing) spawn — recover it from the config createQuery received.
+      const injected = capturedOptions?.mcpServers as unknown as
+        | Record<string, { readonly headers?: Record<string, string> }>
+        | undefined;
+      const server = injected ? Object.values(injected)[0] : undefined;
+      const bearer = server?.headers?.Authorization ?? "";
+      assert.ok(bearer.startsWith("Bearer "), "gateway MCP config should carry a bearer token");
+      const token = bearer.slice("Bearer ".length);
+
+      // The failed spawn must have revoked it: no live session resolves.
+      assert.equal(credentials.verifySessionToken(token), null);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(layer),
