@@ -25,7 +25,6 @@ import {
   type ProviderWithDefaultModel,
   CodexReasoningEffort,
 } from "@synara/contracts";
-
 const MODEL_SLUG_SET_BY_PROVIDER: Record<ProviderKind, ReadonlySet<ModelSlug>> = {
   claudeAgent: new Set(MODEL_OPTIONS_BY_PROVIDER.claudeAgent.map((option) => option.slug)),
   codex: new Set(MODEL_OPTIONS_BY_PROVIDER.codex.map((option) => option.slug)),
@@ -51,7 +50,7 @@ export type RecommendedModelCandidate = SelectableModelOption &
 
 const RECOMMENDED_MODEL_IDENTIFIERS: Record<ProviderKind, ReadonlyArray<ReadonlyArray<string>>> = {
   codex: [["gpt-5-6-sol"], ["gpt-5-6"], ["gpt-5-5"]],
-  claudeAgent: [["claude-opus-4-8"], ["opus"]],
+  claudeAgent: [["claude-opus-4-8"]],
   cursor: [["gpt-5-6-sol"], ["auto"]],
   antigravity: [["gemini-3-6-flash"], ["gemini-3-5-flash"]],
   grok: [["grok-build-latest"], ["grok-4-5-latest"], ["grok-4-5"], ["grok-build"]],
@@ -102,20 +101,6 @@ function findRecommendedCandidate(
     }
   }
 
-  if (provider === "claudeAgent") {
-    return candidates
-      .filter((candidate) =>
-        candidateModelIdentities(candidate).some((identity) => identity.includes("opus")),
-      )
-      .toSorted((left, right) =>
-        candidateModelIdentities(right)
-          .join(" ")
-          .localeCompare(candidateModelIdentities(left).join(" "), undefined, {
-            numeric: true,
-          }),
-      )[0];
-  }
-
   return undefined;
 }
 
@@ -153,9 +138,15 @@ function recommendedModelSelection(
         ...(highEffort ? { options: { reasoningEffort: "high" } } : {}),
       };
     case "claudeAgent":
+      // Claude's short aliases (for example `opus`) move across releases. A
+      // runtime recommendation must persist the exact resolved model so a fresh
+      // composer cannot silently change identity when Scient's alias table moves.
+      const exactClaudeModel =
+        normalizeModelSlug(candidate.resolvedModel ?? candidate.slug, "claudeAgent") ??
+        candidate.slug;
       return {
         provider,
-        model: candidate.slug,
+        model: exactClaudeModel,
         ...(highEffort ? { options: { effort: "high" } } : {}),
       };
     case "cursor":
@@ -211,10 +202,9 @@ export function resolveRecommendedModelSelection(
     return getRecommendedDefaultModelSelection(provider);
   }
 
+  const recommendedCandidate = findRecommendedCandidate(provider, candidates);
   const candidate =
-    findRecommendedCandidate(provider, candidates) ??
-    candidates.find((option) => option.isDefault === true) ??
-    candidates[0];
+    recommendedCandidate ?? candidates.find((option) => option.isDefault === true) ?? candidates[0];
   return candidate ? recommendedModelSelection(provider, candidate) : null;
 }
 
@@ -707,8 +697,9 @@ export function normalizeCodexModelOptions(
 export function normalizeClaudeModelOptions(
   model: string | null | undefined,
   modelOptions: ClaudeModelOptions | null | undefined,
+  runtimeCapabilities?: ModelCapabilities | undefined,
 ): ClaudeModelOptions | undefined {
-  const caps = getModelCapabilities("claudeAgent", model);
+  const caps = runtimeCapabilities ?? getModelCapabilities("claudeAgent", model);
   const defaultReasoningEffort = getDefaultEffort(caps);
   const defaultAutoCompactWindow = getDefaultAutoCompactWindow(caps);
   const resolvedEffort = trimOrNull(modelOptions?.effort);
@@ -738,6 +729,20 @@ export function normalizeClaudeModelOptions(
     ...(autoCompactWindow ? { autoCompactWindow } : {}),
   };
   return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
+}
+
+export function normalizeClaudeModelSelectionForRuntime(
+  modelSelection: Extract<ModelSelection, { provider: "claudeAgent" }>,
+): Extract<ModelSelection, { provider: "claudeAgent" }> {
+  const contextWindowSuffix = modelSelection.model.trim().match(/\[[^\]]+\]$/u)?.[0] ?? "";
+  const normalizedModel =
+    normalizeModelSlug(modelSelection.model, "claudeAgent") ?? getDefaultModel("claudeAgent");
+  const model = `${normalizedModel}${contextWindowSuffix}`;
+  return {
+    provider: "claudeAgent",
+    model,
+    ...(modelSelection.options ? { options: modelSelection.options } : {}),
+  };
 }
 
 export function resolveApiModelId(modelSelection: ModelSelection): string {

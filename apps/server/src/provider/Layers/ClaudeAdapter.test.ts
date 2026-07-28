@@ -4,6 +4,7 @@ import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
+  AgentInfo,
   Options as ClaudeQueryOptions,
   ModelInfo,
   PermissionMode,
@@ -11,6 +12,7 @@ import type {
   SDKControlGetContextUsageResponse,
   SDKMessage,
   SDKUserMessage,
+  SlashCommand,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
   ApprovalRequestId,
@@ -22,6 +24,8 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Exit, Fiber, Layer, Random, Stream } from "effect";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
+import { AgentGatewayCredentialsWithSecretsLive } from "../../agentGateway/Layers/AgentGatewayCredentials.ts";
+import { AgentGatewayCredentials } from "../../agentGateway/Services/AgentGatewayCredentials.ts";
 import { ServerConfig } from "../../config.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
@@ -125,8 +129,20 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
     return [];
   };
 
-  readonly supportedModels = async (): Promise<[]> => {
-    return [];
+  readonly supportedModels = async (): Promise<ModelInfo[]> => {
+    return [
+      {
+        value: "claude-opus-5",
+        resolvedModel: "claude-opus-5",
+        displayName: "Claude Opus 5",
+        description: "Complex agentic coding",
+        supportsEffort: true,
+        supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+        supportsAdaptiveThinking: true,
+        supportsFastMode: true,
+        supportsAutoMode: false,
+      },
+    ];
   };
 
   readonly supportedAgents = async (): Promise<[]> => {
@@ -172,11 +188,20 @@ class FakeClaudeQuery implements AsyncIterable<SDKMessage> {
   }
 }
 
+function claudeInitMessage(version: string): SDKMessage {
+  return {
+    type: "system",
+    subtype: "init",
+    claude_code_version: version,
+  } as unknown as SDKMessage;
+}
+
 function makeHarness(config?: {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: ClaudeAdapterLiveOptions["nativeEventLogger"];
   readonly cwd?: string;
   readonly baseDir?: string;
+  readonly discoveryTimeoutMs?: number;
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -191,6 +216,9 @@ function makeHarness(config?: {
       createInput = input;
       return query;
     },
+    ...(config?.discoveryTimeoutMs !== undefined
+      ? { discoveryTimeoutMs: config.discoveryTimeoutMs }
+      : {}),
     ...(config?.nativeEventLogger
       ? {
           nativeEventLogger: config.nativeEventLogger,
@@ -205,6 +233,7 @@ function makeHarness(config?: {
 
   return {
     layer: makeClaudeAdapterLive(adapterOptions).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(
         ServerConfig.layerTest(
           config?.cwd ?? "/tmp/claude-adapter-test",
@@ -235,6 +264,7 @@ function makeMultiQueryHarness(config?: { readonly failCreateAt?: number }) {
       return query;
     },
   }).pipe(
+    Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
     Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -310,6 +340,11 @@ function effortLevelFromOptions(
   return settings && typeof settings === "object" ? settings.effortLevel : undefined;
 }
 
+function fastModeFromOptions(options: ClaudeQueryOptions | undefined): boolean | undefined {
+  const settings = options?.settings;
+  return settings && typeof settings === "object" ? settings.fastMode : undefined;
+}
+
 const THREAD_ID = ThreadId.makeUnsafe("thread-claude-1");
 const RESUME_THREAD_ID = ThreadId.makeUnsafe("thread-claude-resume");
 
@@ -345,10 +380,571 @@ describe("ClaudeAdapterLive", () => {
       );
       assert.equal(harness.getLastCreateQueryInput()?.options.permissionMode, "plan");
       assert.equal(harness.getLastCreateQueryInput()?.options.persistSession, false);
+      assert.deepEqual(harness.getLastCreateQueryInput()?.options.settings, {
+        disableAllHooks: true,
+      });
       assert.equal(harness.query.closeCalls, 1);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not reuse an active session across command discovery generations", () => {
+    const queries: FakeClaudeQuery[] = [];
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => {
+        const query = new FakeClaudeQuery();
+        const source = queries.length === 0 ? "active-session" : "isolated-discovery";
+        Object.assign(query, {
+          supportedCommands: async () => [{ name: source, description: source, argumentHint: "" }],
+        });
+        queries.push(query);
+        return query;
+      },
+    }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-command-generation", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listCommands) {
+        return assert.fail("Claude adapter should support command discovery.");
+      }
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+        cwd: "/tmp/claude-command-generation",
+        providerOptions: { claudeAgent: { binaryPath: "/managed/claude" } },
+      });
+
+      const result = yield* adapter.listCommands({
+        provider: "claudeAgent",
+        cwd: "/tmp/claude-command-generation",
+        binaryPath: "/managed/claude",
+        threadId: THREAD_ID,
+        discoveryGeneration: "new-account-generation",
+      });
+
+      assert.equal(queries.length, 2);
+      assert.deepEqual(
+        result.commands.map((command) => command.name),
+        ["isolated-discovery"],
+      );
+      assert.equal(queries[0]?.closeCalls, 0);
+      assert.equal(queries[1]?.closeCalls, 1);
+      yield* adapter.stopSession(THREAD_ID);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect(
+    "does not retain completed command discovery across exact cwd and binary queries",
+    () => {
+      const harness = makeMultiQueryHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        if (!adapter.listCommands) {
+          return assert.fail("Claude adapter should support command discovery.");
+        }
+
+        yield* adapter.listCommands({
+          provider: "claudeAgent",
+          cwd: "/tmp/claude-command-cache",
+          binaryPath: "/managed/claude-a",
+        });
+        yield* adapter.listCommands({
+          provider: "claudeAgent",
+          cwd: "/tmp/claude-command-cache",
+          binaryPath: "/managed/claude-b",
+        });
+        yield* adapter.listCommands({
+          provider: "claudeAgent",
+          cwd: "/tmp/claude-command-cache",
+          binaryPath: "/managed/claude-a",
+        });
+
+        assert.deepEqual(
+          harness.createInputs.map((input) => input.options.pathToClaudeCodeExecutable),
+          ["/managed/claude-a", "/managed/claude-b", "/managed/claude-a"],
+        );
+        assert.deepEqual(
+          harness.createInputs.map((input) => input.options.cwd),
+          ["/tmp/claude-command-cache", "/tmp/claude-command-cache", "/tmp/claude-command-cache"],
+        );
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect("keeps in-flight discovery owned after one deduplicated waiter is interrupted", () => {
+    let resolveCommands: (
+      commands: Array<{ name: string; description: string; argumentHint: string }>,
+    ) => void = () => undefined;
+    const commands = new Promise<
+      Array<{ name: string; description: string; argumentHint: string }>
+    >((resolve) => {
+      resolveCommands = resolve;
+    });
+    const queries: Array<FakeClaudeQuery> = [];
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => {
+        const query = new FakeClaudeQuery();
+        (
+          query as {
+            supportedCommands: () => Promise<
+              Array<{ name: string; description: string; argumentHint: string }>
+            >;
+          }
+        ).supportedCommands = () => commands;
+        queries.push(query);
+        return query;
+      },
+    }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-command-inflight", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listCommands) {
+        return assert.fail("Claude adapter should support command discovery.");
+      }
+      const input = {
+        provider: "claudeAgent" as const,
+        cwd: "/tmp/claude-command-inflight",
+        binaryPath: "/managed/claude",
+      };
+
+      const first = yield* adapter.listCommands(input).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      const second = yield* adapter.listCommands(input).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* Fiber.interrupt(first);
+      const third = yield* adapter.listCommands(input).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      assert.equal(queries.length, 1);
+      resolveCommands([]);
+      yield* Fiber.join(second);
+      yield* Fiber.join(third);
+      assert.equal(queries.length, 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect("closes every hung temporary discovery immediately when the adapter stops", () => {
+    let resolveCommands: ((value: SlashCommand[]) => void) | undefined;
+    let resolveModels: ((value: ModelInfo[]) => void) | undefined;
+    let resolveAgents: ((value: AgentInfo[]) => void) | undefined;
+    const commands = new Promise<SlashCommand[]>((resolve) => {
+      resolveCommands = resolve;
+    });
+    const models = new Promise<ModelInfo[]>((resolve) => {
+      resolveModels = resolve;
+    });
+    const agents = new Promise<AgentInfo[]>((resolve) => {
+      resolveAgents = resolve;
+    });
+    const queries: FakeClaudeQuery[] = [];
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => {
+        const query = new FakeClaudeQuery();
+        Object.assign(query, {
+          supportedCommands: () => commands,
+          supportedModels: () => models,
+          supportedAgents: () => agents,
+        });
+        queries.push(query);
+        return query;
+      },
+      discoveryTimeoutMs: 30_000,
+    }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-discovery-stop", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listCommands || !adapter.listModels || !adapter.listAgents) {
+        return assert.fail("Claude adapter should support temporary discovery.");
+      }
+
+      const commandFiber = yield* adapter
+        .listCommands({ provider: "claudeAgent", cwd: "/tmp/claude-discovery-stop" })
+        .pipe(Effect.forkChild);
+      const modelFiber = yield* adapter
+        .listModels({ provider: "claudeAgent", cwd: "/tmp/claude-discovery-stop" })
+        .pipe(Effect.forkChild);
+      const agentFiber = yield* adapter
+        .listAgents({ provider: "claudeAgent", cwd: "/tmp/claude-discovery-stop" })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      assert.equal(queries.length, 3);
+      yield* adapter.stopAll();
+      assert.deepEqual(
+        queries.map((query) => query.closeCalls),
+        [1, 1, 1],
+      );
+
+      resolveCommands?.([]);
+      resolveModels?.([]);
+      resolveAgents?.([]);
+      const exits = yield* Effect.all([
+        Fiber.await(commandFiber),
+        Fiber.await(modelFiber),
+        Fiber.await(agentFiber),
+      ]);
+      assert.ok(Exit.isFailure(exits[0]));
+      assert.ok(Exit.isFailure(exits[1]));
+      assert.ok(Exit.isFailure(exits[2]));
+
+      const afterStop = yield* Effect.exit(
+        adapter.listAgents({ provider: "claudeAgent", cwd: "/tmp/claude-discovery-stop" }),
+      );
+      assert.ok(Exit.isFailure(afterStop));
+      assert.equal(queries.length, 3);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect("continues shutdown when one temporary discovery close throws", () => {
+    const throwingDiscovery = new FakeClaudeQuery();
+    const hangingDiscovery = new FakeClaudeQuery();
+    let throwingCloseAttempts = 0;
+    Object.assign(throwingDiscovery, {
+      supportedCommands: () => new Promise<SlashCommand[]>(() => undefined),
+      close: () => {
+        throwingCloseAttempts += 1;
+        throwingDiscovery.finish();
+        throw new Error("simulated discovery close failure");
+      },
+    });
+    Object.assign(hangingDiscovery, {
+      supportedAgents: () => new Promise<AgentInfo[]>(() => undefined),
+    });
+    const queries = [throwingDiscovery, hangingDiscovery];
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => {
+        const next = queries.shift();
+        if (!next) throw new Error("Unexpected Claude query creation.");
+        return next;
+      },
+      discoveryTimeoutMs: 30_000,
+    }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-discovery-close-failure", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listCommands || !adapter.listAgents) {
+        return assert.fail("Claude adapter should support temporary discovery.");
+      }
+      const throwingFiber = yield* adapter
+        .listCommands({ provider: "claudeAgent", cwd: "/tmp/claude-discovery-close-failure" })
+        .pipe(Effect.forkChild);
+      const hangingFiber = yield* adapter
+        .listAgents({ provider: "claudeAgent", cwd: "/tmp/claude-discovery-close-failure" })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      yield* adapter.stopAll();
+
+      assert.equal(throwingCloseAttempts, 1);
+      assert.equal(hangingDiscovery.closeCalls, 1);
+      assert.ok(Exit.isFailure(yield* Fiber.await(throwingFiber)));
+      assert.ok(Exit.isFailure(yield* Fiber.await(hangingFiber)));
+      assert.ok(
+        Exit.isFailure(
+          yield* Effect.exit(
+            adapter.listAgents({
+              provider: "claudeAgent",
+              cwd: "/tmp/claude-discovery-close-failure",
+            }),
+          ),
+        ),
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect("closes a hung temporary discovery when the adapter layer finalizes", () => {
+    const query = new FakeClaudeQuery();
+    Object.assign(query, {
+      supportedAgents: () => new Promise<AgentInfo[]>(() => undefined),
+    });
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => query,
+      discoveryTimeoutMs: 30_000,
+    }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-discovery-finalizer", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      yield* Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        if (!adapter.listAgents)
+          return assert.fail("Claude adapter should support agent discovery.");
+        Effect.runFork(
+          adapter.listAgents({
+            provider: "claudeAgent",
+            cwd: "/tmp/claude-discovery-finalizer",
+          }),
+        );
+        yield* Effect.yieldNow;
+        assert.equal(query.closeCalls, 0);
+      }).pipe(Effect.provide(layer));
+
+      assert.equal(query.closeCalls, 1);
+    }).pipe(Effect.provideService(Random.Random, makeDeterministicRandomService()));
+  });
+
+  it.effect("separates in-flight model discovery across provider auth generations", () => {
+    const queries: FakeClaudeQuery[] = [];
+    const modelResolvers: Array<(models: ModelInfo[]) => void> = [];
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => {
+        const query = new FakeClaudeQuery();
+        const models = new Promise<ModelInfo[]>((resolve) => modelResolvers.push(resolve));
+        Object.assign(query, { supportedModels: () => models });
+        queries.push(query);
+        return query;
+      },
+    }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-model-generation", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listModels) return assert.fail("Claude adapter should support model discovery.");
+      const input = {
+        provider: "claudeAgent" as const,
+        cwd: "/tmp/claude-model-generation",
+        binaryPath: "/managed/claude",
+      };
+      const oldFirst = yield* adapter
+        .listModels({ ...input, discoveryGeneration: "signed-out:1" })
+        .pipe(Effect.forkChild);
+      const oldSecond = yield* adapter
+        .listModels({ ...input, discoveryGeneration: "signed-out:1" })
+        .pipe(Effect.forkChild);
+      const intermediate = yield* adapter
+        .listModels({ ...input, discoveryGeneration: "signed-in" })
+        .pipe(Effect.forkChild);
+      const current = yield* adapter
+        .listModels({ ...input, discoveryGeneration: "signed-out:2" })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      assert.equal(queries.length, 3);
+      queries[0]?.emit(claudeInitMessage("2.1.219"));
+      queries[1]?.emit(claudeInitMessage("2.1.220"));
+      queries[2]?.emit(claudeInitMessage("2.1.221"));
+      modelResolvers[0]?.([]);
+      modelResolvers[1]?.([]);
+      modelResolvers[2]?.([]);
+      const [oldFirstResult, oldSecondResult, intermediateResult, currentResult] =
+        yield* Effect.all([
+          Fiber.join(oldFirst),
+          Fiber.join(oldSecond),
+          Fiber.join(intermediate),
+          Fiber.join(current),
+        ]);
+      assert.equal(oldFirstResult.runtimeVersion, "2.1.219");
+      assert.equal(oldSecondResult.runtimeVersion, "2.1.219");
+      assert.equal(intermediateResult.runtimeVersion, "2.1.220");
+      assert.equal(currentResult.runtimeVersion, "2.1.221");
+      assert.deepEqual(
+        queries.map((query) => query.closeCalls),
+        [1, 1, 1],
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect("separates in-flight agent discovery across provider auth generations", () => {
+    const queries: FakeClaudeQuery[] = [];
+    const agentResolvers: Array<(agents: AgentInfo[]) => void> = [];
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => {
+        const query = new FakeClaudeQuery();
+        const agents = new Promise<AgentInfo[]>((resolve) => agentResolvers.push(resolve));
+        Object.assign(query, { supportedAgents: () => agents });
+        queries.push(query);
+        return query;
+      },
+    }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-agent-generation", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listAgents) return assert.fail("Claude adapter should support agent discovery.");
+      const input = {
+        provider: "claudeAgent" as const,
+        cwd: "/tmp/claude-agent-generation",
+        binaryPath: "/managed/claude",
+      };
+      const oldFirst = yield* adapter
+        .listAgents({ ...input, discoveryGeneration: "signed-out:1" })
+        .pipe(Effect.forkChild);
+      const oldSecond = yield* adapter
+        .listAgents({ ...input, discoveryGeneration: "signed-out:1" })
+        .pipe(Effect.forkChild);
+      const intermediate = yield* adapter
+        .listAgents({ ...input, discoveryGeneration: "signed-in" })
+        .pipe(Effect.forkChild);
+      const current = yield* adapter
+        .listAgents({ ...input, discoveryGeneration: "signed-out:2" })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      assert.equal(queries.length, 3);
+      agentResolvers[0]?.([{ name: "old-agent", description: "old", model: "inherit" }]);
+      agentResolvers[1]?.([
+        { name: "intermediate-agent", description: "middle", model: "inherit" },
+      ]);
+      agentResolvers[2]?.([{ name: "current-agent", description: "new", model: "inherit" }]);
+      const [oldFirstResult, oldSecondResult, intermediateResult, currentResult] =
+        yield* Effect.all([
+          Fiber.join(oldFirst),
+          Fiber.join(oldSecond),
+          Fiber.join(intermediate),
+          Fiber.join(current),
+        ]);
+      assert.deepEqual(
+        oldFirstResult.agents.map((agent) => agent.name),
+        ["old-agent"],
+      );
+      assert.deepEqual(
+        oldSecondResult.agents.map((agent) => agent.name),
+        ["old-agent"],
+      );
+      assert.deepEqual(
+        intermediateResult.agents.map((agent) => agent.name),
+        ["intermediate-agent"],
+      );
+      assert.deepEqual(
+        currentResult.agents.map((agent) => agent.name),
+        ["current-agent"],
+      );
+      assert.deepEqual(
+        queries.map((query) => query.closeCalls),
+        [1, 1, 1],
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect("separates in-flight command discovery across provider auth generations", () => {
+    const queries: FakeClaudeQuery[] = [];
+    const commandResolvers: Array<(commands: SlashCommand[]) => void> = [];
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => {
+        const query = new FakeClaudeQuery();
+        const commands = new Promise<SlashCommand[]>((resolve) => commandResolvers.push(resolve));
+        Object.assign(query, { supportedCommands: () => commands });
+        queries.push(query);
+        return query;
+      },
+    }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-command-generation", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listCommands) {
+        return assert.fail("Claude adapter should support command discovery.");
+      }
+      const input = {
+        provider: "claudeAgent" as const,
+        cwd: "/tmp/claude-command-generation",
+        binaryPath: "/managed/claude",
+      };
+      const oldFirst = yield* adapter
+        .listCommands({ ...input, discoveryGeneration: "signed-out:1" })
+        .pipe(Effect.forkChild);
+      const oldSecond = yield* adapter
+        .listCommands({ ...input, discoveryGeneration: "signed-out:1" })
+        .pipe(Effect.forkChild);
+      const intermediate = yield* adapter
+        .listCommands({ ...input, discoveryGeneration: "signed-in" })
+        .pipe(Effect.forkChild);
+      const current = yield* adapter
+        .listCommands({ ...input, discoveryGeneration: "signed-out:2" })
+        .pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+
+      // The two "signed-out:1" callers share one in-flight discovery; the other
+      // generations each get their own, so a later auth generation never joins an
+      // older CLI. Each generation still completes independently.
+      assert.equal(queries.length, 3);
+      commandResolvers[0]?.([{ name: "old", description: "old" }] as unknown as SlashCommand[]);
+      commandResolvers[1]?.([
+        { name: "intermediate", description: "middle" },
+      ] as unknown as SlashCommand[]);
+      commandResolvers[2]?.([{ name: "current", description: "new" }] as unknown as SlashCommand[]);
+      const [oldFirstResult, oldSecondResult, intermediateResult, currentResult] =
+        yield* Effect.all([
+          Fiber.join(oldFirst),
+          Fiber.join(oldSecond),
+          Fiber.join(intermediate),
+          Fiber.join(current),
+        ]);
+      assert.deepEqual(
+        oldFirstResult.commands.map((command) => command.name),
+        ["old"],
+      );
+      assert.deepEqual(
+        oldSecondResult.commands.map((command) => command.name),
+        ["old"],
+      );
+      assert.deepEqual(
+        intermediateResult.commands.map((command) => command.name),
+        ["intermediate"],
+      );
+      assert.deepEqual(
+        currentResult.commands.map((command) => command.name),
+        ["current"],
+      );
+      assert.deepEqual(
+        queries.map((query) => query.closeCalls),
+        [1, 1, 1],
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
     );
   });
 
@@ -384,22 +980,99 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("bounds and closes a temporary command query when discovery hangs", () => {
+    const harness = makeHarness();
+    (
+      harness.query as {
+        supportedCommands: () => Promise<
+          Array<{ name: string; description: string; argumentHint: string }>
+        >;
+      }
+    ).supportedCommands = () => new Promise(() => undefined);
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => harness.query,
+      discoveryTimeoutMs: 10,
+    }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-discovery-timeout", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listCommands) {
+        return assert.fail("Claude adapter should support command discovery.");
+      }
+
+      const result = yield* Effect.exit(
+        adapter.listCommands({
+          provider: "claudeAgent",
+          cwd: "/tmp/claude-command-discovery-timeout",
+        }),
+      );
+
+      assert.ok(Exit.isFailure(result));
+      assert.equal(harness.query.closeCalls, 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect("bounds exact-process model catalog and version discovery together", () => {
+    const harness = makeHarness();
+    Object.assign(harness.query, {
+      supportedModels: () => new Promise<ModelInfo[]>(() => undefined),
+    });
+    const layer = makeClaudeAdapterLive({
+      createQuery: () => harness.query,
+      discoveryTimeoutMs: 10,
+    }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-model-timeout", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listModels) {
+        return assert.fail("Claude adapter should support model discovery.");
+      }
+
+      const result = yield* Effect.exit(
+        adapter.listModels({
+          provider: "claudeAgent",
+          cwd: "/tmp/claude-model-timeout",
+        }),
+      );
+
+      assert.ok(Exit.isFailure(result));
+      assert.equal(harness.query.closeCalls, 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
   it.effect("uses the configured Claude executable for pre-session model discovery", () => {
     const harness = makeHarness();
     (harness.query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels =
-      async () => [
-        {
-          value: "opus[1m]",
-          resolvedModel: "claude-opus-4-8[1m]",
-          displayName: "Claude Opus 4.8 (1M context)",
-          description: "Complex agentic coding",
-          supportsEffort: true,
-          supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
-          supportsAdaptiveThinking: true,
-          supportsFastMode: true,
-          supportsAutoMode: false,
-        },
-      ];
+      async () => {
+        setTimeout(() => harness.query.emit(claudeInitMessage("2.1.219")), 0);
+        return [
+          {
+            value: "opus[1m]",
+            resolvedModel: "claude-opus-4-8[1m]",
+            displayName: "Claude Opus 4.8 (1M context)",
+            description: "Complex agentic coding",
+            supportsEffort: true,
+            supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+            supportsAdaptiveThinking: true,
+            supportsFastMode: true,
+            supportsAutoMode: false,
+          },
+        ];
+      };
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       if (!adapter.listModels) {
@@ -425,6 +1098,7 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(harness.getLastCreateQueryInput()?.options.permissionMode, "plan");
       assert.equal(harness.getLastCreateQueryInput()?.options.persistSession, false);
       assert.equal(harness.query.closeCalls, 1);
+      assert.equal(result.runtimeVersion, "2.1.219");
       assert.deepEqual(result.models, [
         {
           slug: "opus[1m]",
@@ -438,12 +1112,172 @@ describe("ClaudeAdapterLive", () => {
             { value: "xhigh", label: "Extra High" },
             { value: "max", label: "Max" },
           ],
+          supportsReasoningEffort: true,
           supportsFastMode: true,
         },
       ]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("keeps a usable model catalog when the runtime omits its init version", () => {
+    const harness = makeHarness({ discoveryTimeoutMs: 100 });
+    Object.assign(harness.query, {
+      supportedModels: async () => {
+        return [
+          {
+            value: "sonnet",
+            resolvedModel: "claude-sonnet-4-6",
+            displayName: "Claude Sonnet 4.6",
+            description: "General coding",
+            supportsEffort: true,
+            supportedEffortLevels: ["low", "high"],
+            supportsAdaptiveThinking: true,
+            supportsFastMode: false,
+            supportsAutoMode: false,
+          },
+        ] satisfies ModelInfo[];
+      },
+    });
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listModels) {
+        return assert.fail("Claude adapter should support model discovery.");
+      }
+      const result = yield* adapter.listModels({
+        provider: "claudeAgent",
+        cwd: "/tmp/claude-adapter-test",
+        binaryPath: "/managed/claude",
+        discoveryGeneration: "runtime-without-init",
+      });
+
+      assert.equal(result.runtimeVersion, null);
+      assert.deepEqual(result.models, [
+        {
+          slug: "sonnet",
+          name: "Claude Sonnet 4.6",
+          resolvedModel: "claude-sonnet-4-6",
+          description: "General coding",
+          supportedReasoningEfforts: [
+            { value: "low", label: "Low" },
+            { value: "high", label: "High" },
+          ],
+          supportsReasoningEffort: true,
+          supportsFastMode: false,
+        },
+      ]);
+      // The temporary query deliberately remains open until discovery closes
+      // it. Returning this catalog must not depend on iterator completion.
+      assert.equal(harness.query.closeCalls, 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("scopes and refreshes pre-session agent discovery", () => {
+    const queries: FakeClaudeQuery[] = [];
+    const discoveryContexts: Array<{
+      executable: string | undefined;
+      cwd: string | undefined;
+    }> = [];
+    const layer = makeClaudeAdapterLive({
+      createQuery: (input) => {
+        const query = new FakeClaudeQuery();
+        const executable = input.options.pathToClaudeCodeExecutable;
+        const cwd = input.options.cwd;
+        discoveryContexts.push({ executable, cwd });
+        const matchingProjectDiscoveryCount = discoveryContexts.filter(
+          (context) => context.executable === "/managed/claude-a" && context.cwd === "/tmp/project",
+        ).length;
+        Object.assign(query, {
+          supportedAgents: async () => [
+            {
+              name:
+                executable === "/managed/claude-a" && cwd === "/tmp/project"
+                  ? matchingProjectDiscoveryCount === 1
+                    ? "agent-a"
+                    : "agent-a-refreshed"
+                  : executable === "/managed/claude-b"
+                    ? "agent-b"
+                    : "agent-other-cwd",
+              description: `from ${executable} in ${cwd}`,
+              model: "inherit",
+            },
+          ],
+        });
+        queries.push(query);
+        return query;
+      },
+    }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
+      Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-agent-discovery", "/tmp")),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      if (!adapter.listAgents) {
+        return assert.fail("Claude adapter should support agent discovery.");
+      }
+
+      const first = yield* adapter.listAgents({
+        provider: "claudeAgent",
+        cwd: "/tmp/project",
+        binaryPath: "/managed/claude-a",
+      });
+      const second = yield* adapter.listAgents({
+        provider: "claudeAgent",
+        cwd: "/tmp/project",
+        binaryPath: "/managed/claude-b",
+      });
+      const otherCwd = yield* adapter.listAgents({
+        provider: "claudeAgent",
+        cwd: "/tmp/other-project",
+        binaryPath: "/managed/claude-a",
+      });
+      const firstRefreshed = yield* adapter.listAgents({
+        provider: "claudeAgent",
+        cwd: "/tmp/project",
+        binaryPath: "/managed/claude-a",
+      });
+
+      assert.deepEqual(discoveryContexts, [
+        { executable: "/managed/claude-a", cwd: "/tmp/project" },
+        { executable: "/managed/claude-b", cwd: "/tmp/project" },
+        { executable: "/managed/claude-a", cwd: "/tmp/other-project" },
+        { executable: "/managed/claude-a", cwd: "/tmp/project" },
+      ]);
+      assert.deepEqual(
+        first.agents.map((agent) => agent.name),
+        ["agent-a"],
+      );
+      assert.deepEqual(
+        second.agents.map((agent) => agent.name),
+        ["agent-b"],
+      );
+      assert.deepEqual(
+        otherCwd.agents.map((agent) => agent.name),
+        ["agent-other-cwd"],
+      );
+      assert.equal(first.cached, false);
+      assert.equal(second.cached, false);
+      assert.equal(otherCwd.cached, false);
+      assert.equal(firstRefreshed.cached, false);
+      assert.deepEqual(
+        firstRefreshed.agents.map((agent) => agent.name),
+        ["agent-a-refreshed"],
+      );
+      assert.deepEqual(
+        queries.map((query) => query.closeCalls),
+        [1, 1, 1, 1],
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
     );
   });
 
@@ -715,6 +1549,266 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(autoCompactWindowFromOptions(createInput?.options), 1_000_000);
       assert.equal(createInput?.options.effort, undefined);
       assert.equal(effortLevelFromOptions(createInput?.options), "xhigh");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect(
+    "starts the explicit Opus 5 alias with its native context suffix and supported options",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "opus-5[1m]",
+            options: {
+              effort: "xhigh",
+              autoCompactWindow: "1m",
+              fastMode: true,
+            },
+          },
+          runtimeMode: "full-access",
+        });
+
+        const createInput = harness.getLastCreateQueryInput();
+        assert.equal(createInput?.options.model, undefined);
+        assert.equal(autoCompactWindowFromOptions(createInput?.options), 1_000_000);
+        assert.equal(effortLevelFromOptions(createInput?.options), "xhigh");
+        assert.equal(fastModeFromOptions(createInput?.options), true);
+
+        harness.query.emit(claudeInitMessage("2.1.219"));
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          attachments: [],
+        });
+        assert.deepEqual(harness.query.setModelCalls, ["claude-opus-5[1m]"]);
+        assert.deepEqual(harness.query.applyFlagSettingsCalls, []);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect("uses a relative Claude executable in the exact session cwd", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        cwd: "/tmp/project-with-relative-claude",
+        providerOptions: { claudeAgent: { binaryPath: "./claude" } },
+        modelSelection: { provider: "claudeAgent", model: "claude-opus-5" },
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(
+        harness.getLastCreateQueryInput()?.options.cwd,
+        "/tmp/project-with-relative-claude",
+      );
+      assert.equal(
+        harness.getLastCreateQueryInput()?.options.pathToClaudeCodeExecutable,
+        "./claude",
+      );
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("rejects an Opus 5 alias when the exact SDK runtime is too old", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "opus-5[1m]",
+          options: { effort: "ultracode", fastMode: true },
+        },
+        runtimeMode: "full-access",
+      });
+      harness.query.emit(claudeInitMessage("2.1.218"));
+      const result = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "opus-5[1m]",
+            options: { effort: "ultracode", fastMode: true },
+          },
+          input: "hello",
+          attachments: [],
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.equal(result.failure._tag, "ProviderAdapterRequestError");
+        assert.match(result.failure.message, /requires Claude Code 2\.1\.219 or newer/u);
+        assert.match(result.failure.message, /installed Claude Code version is 2\.1\.218/u);
+      }
+      assert.notEqual(harness.getLastCreateQueryInput(), undefined);
+      assert.deepEqual(harness.query.setModelCalls, []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("rejects Opus 5 when the Claude runtime version is unknown", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-opus-5",
+        },
+        runtimeMode: "full-access",
+      });
+      harness.query.emit(claudeInitMessage(""));
+      const result = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-opus-5",
+          },
+          input: "hello",
+          attachments: [],
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.equal(result.failure._tag, "ProviderAdapterRequestError");
+        assert.match(result.failure.message, /version could not be confirmed/u);
+      }
+      assert.notEqual(harness.getLastCreateQueryInput(), undefined);
+      assert.deepEqual(harness.query.setModelCalls, []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not authorize Opus 5 when the exact SDK process is too old", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: { provider: "claudeAgent", model: "claude-opus-5" },
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(harness.getLastCreateQueryInput()?.options.model, undefined);
+      harness.query.emit(claudeInitMessage("2.1.218"));
+      const result = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          modelSelection: { provider: "claudeAgent", model: "claude-opus-5" },
+          attachments: [],
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      assert.deepEqual(harness.query.setModelCalls, []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not authorize Opus 5 when the exact SDK catalog omits it", () => {
+    const harness = makeHarness();
+    (harness.query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels =
+      async () => [
+        {
+          value: "sonnet",
+          resolvedModel: "claude-sonnet-5",
+          displayName: "Claude Sonnet 5",
+          description: "General coding",
+          supportsEffort: true,
+          supportedEffortLevels: ["low", "high"],
+          supportsAdaptiveThinking: true,
+          supportsFastMode: false,
+          supportsAutoMode: false,
+        },
+      ];
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: { provider: "claudeAgent", model: "claude-opus-5" },
+        runtimeMode: "full-access",
+      });
+
+      harness.query.emit(claudeInitMessage("2.1.219"));
+      const result = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          modelSelection: { provider: "claudeAgent", model: "claude-opus-5" },
+          attachments: [],
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.match(result.failure.message, /not available in this account and project runtime/u);
+      }
+      assert.deepEqual(harness.query.setModelCalls, []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("fails closed when live Opus 5 catalog discovery does not settle", () => {
+    const harness = makeHarness({ discoveryTimeoutMs: 10 });
+    (harness.query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels = () =>
+      new Promise<ModelInfo[]>(() => {});
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        modelSelection: { provider: "claudeAgent", model: "claude-opus-5" },
+        runtimeMode: "full-access",
+      });
+
+      harness.query.emit(claudeInitMessage("2.1.219"));
+      const result = yield* adapter
+        .sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          modelSelection: { provider: "claudeAgent", model: "claude-opus-5" },
+          attachments: [],
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.match(result.failure.message, /model discovery timed out/u);
+      }
+      assert.deepEqual(harness.query.setModelCalls, []);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -1985,6 +3079,7 @@ describe("ClaudeAdapterLive", () => {
         return query;
       },
     }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );
@@ -4287,6 +5382,99 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("preserves an explicit Opus 5 alias context suffix when changing models live", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+      harness.query.emit(claudeInitMessage("2.1.219"));
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "opus-5[1m]",
+        },
+        attachments: [],
+      });
+
+      assert.deepEqual(harness.query.setModelCalls, ["claude-opus-5[1m]"]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("rejects a live switch to Opus 5 when the Claude runtime is too old", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+      harness.query.emit(claudeInitMessage("2.1.218"));
+      const result = yield* adapter
+        .sendTurn({
+          threadId: session.threadId,
+          input: "hello",
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "opus-5[1m]",
+          },
+          attachments: [],
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.equal(result.failure._tag, "ProviderAdapterRequestError");
+        assert.match(result.failure.message, /requires Claude Code 2\.1\.219 or newer/u);
+      }
+      assert.deepEqual(harness.query.setModelCalls, []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("does not authorize a live Opus 5 switch from an older SDK process", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+      harness.query.emit(claudeInitMessage("2.1.218"));
+      const input = {
+        threadId: session.threadId,
+        input: "hello",
+        modelSelection: {
+          provider: "claudeAgent" as const,
+          model: "claude-opus-5",
+        },
+        attachments: [],
+      };
+
+      const result = yield* adapter.sendTurn(input).pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      assert.deepEqual(harness.query.setModelCalls, []);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("updates the auto-compact budget live without changing the Claude model id", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -4725,18 +5913,62 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("closes an uninstalled Claude query when post-spawn setup fails", () => {
+  it.effect("does not probe discovery metadata while starting a real session", () => {
     const query = new FakeClaudeQuery();
-    (query as { supportedModels: () => Promise<[]> }).supportedModels = () => {
-      throw new Error("simulated post-spawn setup failure");
+    (query as { supportedModels: () => Promise<ModelInfo[]> }).supportedModels = () => {
+      throw new Error("session start must not probe model discovery");
+    };
+    (query as { supportedAgents: () => Promise<[]> }).supportedAgents = () => {
+      throw new Error("session start must not probe agent discovery");
     };
     const layer = makeClaudeAdapterLive({ createQuery: () => query }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
       Layer.provideMerge(ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp")),
       Layer.provideMerge(NodeServices.layer),
     );
 
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
+      const result = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(result.threadId, THREAD_ID);
+      assert.equal(query.closeCalls, 0);
+      assert.equal(yield* adapter.hasSession(THREAD_ID), true);
+      assert.equal((yield* adapter.listSessions()).length, 1);
+      yield* adapter.stopAll();
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(layer),
+    );
+  });
+
+  it.effect("revokes the minted gateway token when the SDK query fails to build", () => {
+    // Regression guard: the gateway token is minted just before createQuery.
+    // If createQuery throws, the installation gen (and its Effect.ensuring
+    // revoke) is never entered, so a dedicated tapError must revoke the token —
+    // otherwise a failed spawn leaks a live credential.
+    let capturedOptions: ClaudeQueryOptions | undefined;
+    const layer = makeClaudeAdapterLive({
+      createQuery: (input) => {
+        capturedOptions = input.options;
+        throw new Error("simulated Claude spawn failure");
+      },
+    }).pipe(
+      Layer.provideMerge(AgentGatewayCredentialsWithSecretsLive),
+      Layer.provideMerge(
+        ServerConfig.layerTest("/tmp/claude-adapter-test", "/tmp", { agentGatewayEnabled: true }),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const credentials = yield* AgentGatewayCredentials;
+
       const result = yield* Effect.exit(
         adapter.startSession({
           threadId: THREAD_ID,
@@ -4746,9 +5978,20 @@ describe("ClaudeAdapterLive", () => {
       );
 
       assert.ok(Exit.isFailure(result));
-      assert.equal(query.closeCalls, 1);
       assert.equal(yield* adapter.hasSession(THREAD_ID), false);
-      assert.equal((yield* adapter.listSessions()).length, 0);
+
+      // The token was minted and injected into the MCP config before the
+      // (failing) spawn — recover it from the config createQuery received.
+      const injected = capturedOptions?.mcpServers as unknown as
+        | Record<string, { readonly headers?: Record<string, string> }>
+        | undefined;
+      const server = injected ? Object.values(injected)[0] : undefined;
+      const bearer = server?.headers?.Authorization ?? "";
+      assert.ok(bearer.startsWith("Bearer "), "gateway MCP config should carry a bearer token");
+      const token = bearer.slice("Bearer ".length);
+
+      // The failed spawn must have revoked it: no live session resolves.
+      assert.equal(credentials.verifySessionToken(token), null);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(layer),

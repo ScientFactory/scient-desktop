@@ -134,6 +134,7 @@ describe("ProviderCommandReactor", () => {
     readonly studioOutputReactor?: Partial<StudioOutputReactorShape>;
     readonly forkThreadResult?: ProviderForkThreadResult | null;
     readonly skillAuthoringEnabled?: boolean;
+    readonly serverSettings?: Parameters<typeof ServerSettingsService.layerTest>[0];
     readonly filePersistence?: boolean;
     readonly seedInitialState?: boolean;
   }) {
@@ -337,6 +338,7 @@ describe("ProviderCommandReactor", () => {
       }),
     );
     const publishBranch = vi.fn(() => Effect.void);
+    const withActionLock = vi.fn<GitCoreShape["withActionLock"]>((_cwd, effect) => effect);
     const generateBranchName = vi.fn<TextGenerationShape["generateBranchName"]>(() =>
       Effect.fail(
         new TextGenerationError({
@@ -412,7 +414,11 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(Layer.succeed(StudioOutputReactor, studioOutputReactor)),
       Layer.provideMerge(Layer.succeed(CheckpointStore, checkpointStore)),
       Layer.provideMerge(
-        Layer.succeed(GitCore, { renameBranch, publishBranch } as unknown as GitCoreShape),
+        Layer.succeed(GitCore, {
+          renameBranch,
+          publishBranch,
+          withActionLock,
+        } as unknown as GitCoreShape),
       ),
       Layer.provideMerge(
         Layer.succeed(TextGeneration, {
@@ -421,8 +427,9 @@ describe("ProviderCommandReactor", () => {
         } as unknown as TextGenerationShape),
       ),
       Layer.provideMerge(
-        ServerSettingsService.layerTest(
-          input?.skillAuthoringEnabled === undefined
+        ServerSettingsService.layerTest({
+          ...input?.serverSettings,
+          ...(input?.skillAuthoringEnabled === undefined
             ? {}
             : {
                 skills: {
@@ -433,8 +440,8 @@ describe("ProviderCommandReactor", () => {
                     },
                   ],
                 },
-              },
-        ),
+              }),
+        }),
       ),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -511,6 +518,7 @@ describe("ProviderCommandReactor", () => {
       clearSessionResumeCursor,
       renameBranch,
       publishBranch,
+      withActionLock,
       generateBranchName,
       generateThreadTitle,
       captureStudioOutputBaseline,
@@ -3423,7 +3431,24 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("renames temporary worktree branches and keeps associated worktree metadata in sync", async () => {
-    const harness = await createHarness();
+    const harness = await createHarness({
+      serverSettings: {
+        textGenerationModelSelection: {
+          provider: "opencode",
+          model: "openai/gpt-5.4-mini",
+        },
+        sourceControlWriting: {
+          mode: "custom",
+          customInstructions: "Prefer short repository nouns.",
+        },
+        providers: {
+          opencode: {
+            binaryPath: "/configured/bin/opencode",
+            experimentalWebSockets: true,
+          },
+        },
+      },
+    });
     const now = new Date().toISOString();
     harness.generateBranchName.mockImplementation(() =>
       Effect.succeed({
@@ -3456,6 +3481,13 @@ describe("ProviderCommandReactor", () => {
           text: "The app crashes during startup, fix it",
           attachments: [],
         },
+        providerOptions: {
+          opencode: {
+            binaryPath: "/turn-controlled/bin/opencode",
+            serverUrl: "https://turn-controlled.invalid",
+            serverPassword: "turn-controlled-secret",
+          },
+        },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
@@ -3463,6 +3495,23 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
+    expect(harness.generateBranchName.mock.calls[0]?.[0]).toMatchObject({
+      modelSelection: {
+        provider: "opencode",
+        model: "openai/gpt-5.4-mini",
+      },
+      policy: {
+        mode: "custom",
+        customInstructions: "Prefer short repository nouns.",
+      },
+      providerOptions: {
+        opencode: {
+          binaryPath: "/configured/bin/opencode",
+          experimentalWebSockets: true,
+        },
+      },
+    });
+    await waitFor(() => harness.withActionLock.mock.calls.length === 1);
     await waitFor(() => harness.renameBranch.mock.calls.length === 1);
     await waitFor(() => harness.publishBranch.mock.calls.length === 1);
 
@@ -3487,9 +3536,15 @@ describe("ProviderCommandReactor", () => {
       associatedWorktreeBranch: `${WORKTREE_BRANCH_PREFIX}/app-startup-crash`,
       associatedWorktreeRef: `${WORKTREE_BRANCH_PREFIX}/app-startup-crash`,
     });
+    expect(harness.withActionLock.mock.calls[0]?.[0]).toBe(
+      "/tmp/provider-project/.worktrees/cb661f0d",
+    );
+    expect(harness.withActionLock.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.renameBranch.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
   });
 
-  it("falls back to prompt-based worktree branch names when the provider cannot generate one", async () => {
+  it("falls back to prompt-based worktree branch names when the configured writer fails", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
 
@@ -3529,7 +3584,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(() => harness.renameBranch.mock.calls.length === 1);
-    expect(harness.generateBranchName).not.toHaveBeenCalled();
+    expect(harness.generateBranchName).toHaveBeenCalledTimes(1);
     expect(harness.renameBranch.mock.calls[0]?.[0]).toMatchObject({
       oldBranch: `${WORKTREE_BRANCH_PREFIX}/cb661f0d`,
       newBranch: `${WORKTREE_BRANCH_PREFIX}/fix-provider-startup-timeouts`,

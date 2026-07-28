@@ -12,6 +12,7 @@ import {
 } from "./Layers/OpenCodeTextGeneration";
 import { ProviderTextGenerationLive } from "./Layers/ProviderTextGeneration";
 import { OpenCodeRuntimeLive } from "../provider/opencodeRuntime";
+import { ServerSettingsLive } from "../serverSettings";
 
 export const TextGenerationLayerLive = ProviderTextGenerationLive.pipe(
   Layer.provide(CodexTextGenerationServiceLive),
@@ -24,6 +25,7 @@ export const GitManagerLayerLive = GitManagerLive.pipe(
   Layer.provideMerge(GitCoreLive),
   Layer.provideMerge(GitHubCliLive),
   Layer.provideMerge(TextGenerationLayerLive),
+  Layer.provideMerge(ServerSettingsLive),
 );
 
 export const GitStatusBroadcasterLayerLive = GitStatusBroadcasterLive.pipe(

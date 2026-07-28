@@ -61,6 +61,11 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly autoBootstrapProjectFromCwd: boolean;
   readonly logProviderEvents: boolean;
   readonly logWebSocketEvents: boolean;
+  /**
+   * Enables the host-served Synara agent gateway MCP endpoint and its provider
+   * injection. Disabled by default; gated by `SYNARA_AGENT_GATEWAY_ENABLED`.
+   */
+  readonly agentGatewayEnabled: boolean;
 }
 
 export const deriveServerPaths = Effect.fn(function* (
@@ -151,7 +156,11 @@ export const resolveCanonicalWorkspaceRoots = Effect.fn(function* (input: {
 export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigShape>()(
   "synara/config/ServerConfig",
 ) {
-  static readonly layerTest = (cwd: string, baseDirOrPrefix: string | { prefix: string }) =>
+  static readonly layerTest = (
+    cwd: string,
+    baseDirOrPrefix: string | { prefix: string },
+    overrides: Partial<ServerConfigShape> = {},
+  ) =>
     Layer.effect(
       ServerConfig,
       Effect.gen(function* () {
@@ -188,12 +197,14 @@ export class ServerConfig extends ServiceMap.Service<ServerConfig, ServerConfigS
           autoBootstrapProjectFromCwd: false,
           logProviderEvents: false,
           logWebSocketEvents: false,
+          agentGatewayEnabled: false,
           port: 0,
           host: undefined,
           authToken: undefined,
           staticDir: undefined,
           devUrl,
           noBrowser: false,
+          ...overrides,
         } satisfies ServerConfigShape;
       }),
     );

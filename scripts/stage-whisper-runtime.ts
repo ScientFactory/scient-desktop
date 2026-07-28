@@ -23,6 +23,14 @@ import { dirname, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { resolveWindowsSystemRoot } from "@synara/shared/windowsProcess";
+import {
+  assertValidTimestampedWindowsAuthenticodeSignature,
+  isWindowsAuthenticodeSignatureDetails,
+  WINDOWS_AUTHENTICODE_READER_FUNCTION_LINES,
+  type WindowsAuthenticodeSignatureDetails,
+} from "./lib/windows-authenticode";
+
+export type { WindowsAuthenticodeSignatureDetails } from "./lib/windows-authenticode";
 
 export const WHISPER_CPP_VERSION = "v1.9.1";
 
@@ -89,14 +97,6 @@ export type WhisperRuntimeFileVerification =
   | "mac-code-signature"
   | "sha256"
   | "windows-authenticode-or-sha256";
-
-export interface WindowsAuthenticodeSignatureDetails {
-  readonly signerSubject: string | null;
-  readonly signerThumbprint: string | null;
-  readonly status: string;
-  readonly statusMessage: string;
-  readonly timestampSubject: string | null;
-}
 
 export interface WindowsAuthenticodeVerificationDetails {
   readonly app: WindowsAuthenticodeSignatureDetails;
@@ -232,16 +232,7 @@ export const WINDOWS_AUTHENTICODE_VERIFY_SCRIPT = [
   ")",
   "Set-StrictMode -Version Latest",
   "$ErrorActionPreference = 'Stop'",
-  "function Read-AuthenticodeSignature([string]$Path) {",
-  "  $Signature = Get-AuthenticodeSignature -LiteralPath $Path",
-  "  [pscustomobject]@{",
-  "    status = [string]$Signature.Status",
-  "    statusMessage = [string]$Signature.StatusMessage",
-  "    signerSubject = if ($null -eq $Signature.SignerCertificate) { $null } else { [string]$Signature.SignerCertificate.Subject }",
-  "    signerThumbprint = if ($null -eq $Signature.SignerCertificate) { $null } else { [string]$Signature.SignerCertificate.Thumbprint }",
-  "    timestampSubject = if ($null -eq $Signature.TimeStamperCertificate) { $null } else { [string]$Signature.TimeStamperCertificate.Subject }",
-  "  }",
-  "}",
+  ...WINDOWS_AUTHENTICODE_READER_FUNCTION_LINES,
   "[pscustomobject]@{",
   "  app = Read-AuthenticodeSignature $AppPath",
   "  executable = Read-AuthenticodeSignature $ExecutablePath",
@@ -524,20 +515,6 @@ async function verifyMacWhisperSignature(input: {
   assertMacWhisperSignatureDetails({ appDetails, executableDetails, mode: input.mode });
 }
 
-function isWindowsAuthenticodeSignatureDetails(
-  value: unknown,
-): value is WindowsAuthenticodeSignatureDetails {
-  if (typeof value !== "object" || value === null) return false;
-  const candidate = value as Partial<WindowsAuthenticodeSignatureDetails>;
-  return (
-    typeof candidate.status === "string" &&
-    typeof candidate.statusMessage === "string" &&
-    (typeof candidate.signerSubject === "string" || candidate.signerSubject === null) &&
-    (typeof candidate.signerThumbprint === "string" || candidate.signerThumbprint === null) &&
-    (typeof candidate.timestampSubject === "string" || candidate.timestampSubject === null)
-  );
-}
-
 function nonEmptySignatureValue(value: string | null, label: string): string {
   const normalized = value?.trim();
   if (!normalized) throw new Error(`${label} is missing.`);
@@ -552,14 +529,7 @@ export function assertWindowsAuthenticodeSignatureDetails(
     ["Packaged whisper-server.exe", input.executable],
   ] as const;
   for (const [label, signature] of signatures) {
-    if (signature.status !== "Valid") {
-      throw new Error(
-        `${label} Authenticode signature is not valid (${signature.status}: ${signature.statusMessage}).`,
-      );
-    }
-    nonEmptySignatureValue(signature.signerSubject, `${label} signer subject`);
-    nonEmptySignatureValue(signature.signerThumbprint, `${label} signer thumbprint`);
-    nonEmptySignatureValue(signature.timestampSubject, `${label} timestamp signer`);
+    assertValidTimestampedWindowsAuthenticodeSignature(signature, label);
   }
   const appPublisher = nonEmptySignatureValue(
     input.app.signerSubject,

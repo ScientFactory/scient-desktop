@@ -21,6 +21,8 @@ import {
   type RuntimeMode,
   type ServerConfigShape,
 } from "./config";
+import { AgentGatewayLive } from "./agentGateway/Layers/AgentGateway";
+import { AgentGatewayCredentialsWithSecretsLive } from "./agentGateway/Layers/AgentGatewayCredentials";
 import { fixPath, resolveBaseDir } from "./os-jank";
 import { Open } from "./open";
 import * as SqlitePersistence from "./persistence/Layers/Sqlite";
@@ -60,6 +62,7 @@ interface CliInput {
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logProviderEvents: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
+  readonly agentGatewayEnabled: Option.Option<boolean>;
 }
 
 /**
@@ -139,6 +142,10 @@ const CliEnvConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  agentGatewayEnabled: Config.boolean("SYNARA_AGENT_GATEWAY_ENABLED").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const resolveBooleanFlag = (flag: Option.Option<boolean>, envValue: boolean) =>
@@ -203,6 +210,13 @@ const ServerConfigLive = (input: CliInput) =>
         input.logWebSocketEvents,
         env.logWebSocketEvents ?? false,
       );
+      // Host-served agent gateway MCP endpoint + provider injection. Off by
+      // default: it opens a new cross-thread control surface, so it ships dark
+      // until each slice is proven.
+      const agentGatewayEnabled = resolveBooleanFlag(
+        input.agentGatewayEnabled,
+        env.agentGatewayEnabled ?? false,
+      );
       const staticDir = devUrl ? undefined : yield* cliConfig.resolveStaticDir;
       const host =
         Option.getOrUndefined(input.host) ??
@@ -229,6 +243,7 @@ const ServerConfigLive = (input: CliInput) =>
         autoBootstrapProjectFromCwd,
         logProviderEvents,
         logWebSocketEvents,
+        agentGatewayEnabled,
       } satisfies ServerConfigShape;
 
       return config;
@@ -246,7 +261,12 @@ const LayerLive = (input: CliInput) => {
   const providerHealthLayer = Effect.gen(function* () {
     const providerRuntimeManager = yield* ProviderRuntimeManager;
     return makeProviderHealthLive({
-      resolveProviderRuntime: providerRuntimeManager.resolve,
+      providerRuntime: {
+        resolve: providerRuntimeManager.resolve,
+        getSnapshot: providerRuntimeManager.getSnapshot,
+        getRevision: providerRuntimeManager.getRevision,
+        streamChanges: providerRuntimeManager.streamChanges,
+      },
     }).pipe(
       // Provider health reads persisted provider settings while constructing its
       // cache, so build it with the same runtime services layer exposed to Server.
@@ -276,6 +296,27 @@ const LayerLive = (input: CliInput) => {
     // the UI and the rest of the runtime.
     Layer.provideMerge(ServerSettingsLive),
   );
+  // Agent gateway (host-served MCP for cross-thread coordination). A single
+  // shared credential layer backs both the HTTP `/mcp` route and provider-side
+  // token minting, so a token issued by a provider adapter verifies against the
+  // same in-memory session registry the route checks. Effect memoizes layers by
+  // reference, so reusing `agentGatewayCredentialsLayer` for both the tool
+  // surface and the provider adapters yields exactly one instance. Behavior is
+  // gated at runtime by `config.agentGatewayEnabled`; when disabled, no tokens
+  // are minted and the route 404s, so these layers stay inert.
+  const agentGatewayCredentialsLayer = AgentGatewayCredentialsWithSecretsLive;
+  // Bundle the same memoized runtime-services and provider layers used at the
+  // top level (Effect memoizes by reference, so this adds no duplicate
+  // construction). The read tools need `ProjectionSnapshotQuery` from the
+  // runtime stack, which in turn requires `ProviderService`; bundling
+  // `providerLayer` here self-satisfies that transitive requirement so the
+  // gateway resolves regardless of its position in the final merge chain,
+  // mirroring how `providerSessionReaperLayer` is composed above.
+  const agentGatewayLayer = AgentGatewayLive.pipe(
+    Layer.provideMerge(runtimeServicesLayer),
+    Layer.provideMerge(providerLayer),
+    Layer.provideMerge(agentGatewayCredentialsLayer),
+  );
 
   return Layer.empty.pipe(
     Layer.provideMerge(runtimeServicesLayer),
@@ -284,6 +325,11 @@ const LayerLive = (input: CliInput) => {
     Layer.provideMerge(providerConnectionLayer),
     Layer.provideMerge(providerClientStatusProjectionLayer),
     Layer.provideMerge(providerSessionReaperLayer),
+    // Provided below the provider layer so `AgentGatewayCredentials` satisfies
+    // the provider adapters' token-minting requirement, and above persistence /
+    // config so the gateway layers' own requirements resolve.
+    Layer.provideMerge(agentGatewayCredentialsLayer),
+    Layer.provideMerge(agentGatewayLayer),
     Layer.provideMerge(SqlitePersistence.layerConfig),
     Layer.provideMerge(ServerLoggerLive),
     Layer.provideMerge(analyticsLayer),
@@ -438,6 +484,12 @@ const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
   Flag.withAlias("log-ws-events"),
   Flag.optional,
 );
+const agentGatewayEnabledFlag = Flag.boolean("agent-gateway-enabled").pipe(
+  Flag.withDescription(
+    "Enable the host-served agent gateway MCP endpoint and provider injection (equivalent to SYNARA_AGENT_GATEWAY_ENABLED). Disabled by default.",
+  ),
+  Flag.optional,
+);
 
 export const scientCli = Command.make("scient", {
   mode: modeFlag,
@@ -450,6 +502,7 @@ export const scientCli = Command.make("scient", {
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logProviderEvents: logProviderEventsFlag,
   logWebSocketEvents: logWebSocketEventsFlag,
+  agentGatewayEnabled: agentGatewayEnabledFlag,
 }).pipe(
   Command.withDescription("Run the Scient server."),
   Command.withHandler((input) => Effect.scoped(makeServerProgram(input))),

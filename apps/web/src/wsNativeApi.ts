@@ -38,6 +38,18 @@ import {
   type WsWelcomePayload,
   type AutomationStreamEvent,
 } from "@synara/contracts";
+import {
+  asLiveHtmlDesktopBridge,
+  LIVE_HTML_PREVIEW_PREPARE_V1_METHOD,
+} from "@synara/shared/liveHtmlPreviewTransport";
+import {
+  PROVIDER_SIGN_OUT_METHOD,
+  type ProviderSignOutNativeApi,
+} from "@synara/shared/providerSignOutTransport";
+import {
+  GIT_WORKING_TREE_DIFF_STATS_METHOD,
+  type GitDiffStatsNativeApi,
+} from "@synara/shared/gitDiffStatsRpc";
 
 import { showConfirmDialogFallback } from "./confirmDialogFallback";
 import { showContextMenuFallback } from "./contextMenuFallback";
@@ -45,7 +57,9 @@ import { requireHttpExternalUrl } from "./lib/externalUrl";
 import { WsTransport } from "./wsTransport";
 import { emitWsTransportState } from "./wsTransportEvents";
 
-let instance: { api: NativeApi; transport: WsTransport } | null = null;
+type ScientNativeApi = GitDiffStatsNativeApi<ProviderSignOutNativeApi>;
+
+let instance: { api: ScientNativeApi; transport: WsTransport } | null = null;
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
 const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
 const serverProviderStatusesUpdatedListeners = new Set<
@@ -140,12 +154,24 @@ function createFallbackTab(
   url = "about:blank",
   kind: BrowserTabKind = "web",
   displayUrl?: string,
+  previewCwd?: string,
+  sourceIdentity?: string,
+  sourceRoot?: string,
+  watchDiscoveryLimited?: boolean,
 ): BrowserTabState {
   return {
     id: crypto.randomUUID(),
     kind,
     url,
     displayUrl: displayUrl?.trim() || null,
+    ...(kind === "local-html" && previewCwd?.trim()
+      ? {
+          previewCwd: previewCwd.trim(),
+          ...(sourceIdentity ? { sourceIdentity } : {}),
+          ...(sourceRoot ? { sourceRoot } : {}),
+          ...(watchDiscoveryLimited ? { sourceWatchLimited: true } : {}),
+        }
+      : {}),
     title: defaultBrowserTitle(url),
     status: "live" as const,
     isLoading: false,
@@ -321,7 +347,7 @@ export function onServerSettingsUpdated(
   };
 }
 
-export function createWsNativeApi(): NativeApi {
+export function createWsNativeApi(): ScientNativeApi {
   if (instance) {
     if (instance.transport.getState() !== "disposed") {
       return instance.api;
@@ -452,7 +478,7 @@ export function createWsNativeApi(): NativeApi {
       }
     }
   });
-  const api: NativeApi = {
+  const api: ScientNativeApi = {
     dialogs: {
       pickFolder: async () => {
         if (!window.desktopBridge) return null;
@@ -475,6 +501,7 @@ export function createWsNativeApi(): NativeApi {
         return null;
       },
       confirm: async (message) => {
+        if (window.desktopBridge?.confirm) return window.desktopBridge.confirm(message);
         return showConfirmDialogFallback(message);
       },
     },
@@ -510,6 +537,8 @@ export function createWsNativeApi(): NativeApi {
         transport.request(WS_METHODS.projectsInspectHtmlArtifact, input),
       prepareHtmlArtifactPreview: (input) =>
         transport.request(WS_METHODS.projectsPrepareHtmlArtifactPreview, input),
+      prepareLiveHtmlPreview: (input) =>
+        transport.request(LIVE_HTML_PREVIEW_PREPARE_V1_METHOD, input),
       revokeHtmlArtifactPreview: (input) =>
         transport.request(WS_METHODS.projectsRevokeHtmlArtifactPreview, input),
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
@@ -565,6 +594,7 @@ export function createWsNativeApi(): NativeApi {
       pull: (input) => transport.request(WS_METHODS.gitPull, input),
       status: (input) => transport.request(WS_METHODS.gitStatus, input),
       readWorkingTreeDiff: (input) => transport.request(WS_METHODS.gitReadWorkingTreeDiff, input),
+      workingTreeDiffStats: (input) => transport.request(GIT_WORKING_TREE_DIFF_STATS_METHOD, input),
       summarizeDiff: (input) =>
         transport.request(WS_METHODS.gitSummarizeDiff, input, {
           timeoutMs: null,
@@ -666,6 +696,7 @@ export function createWsNativeApi(): NativeApi {
         transport.request(WS_METHODS.serverStartProviderConnection, input),
       cancelProviderConnection: (input) =>
         transport.request(WS_METHODS.serverCancelProviderConnection, input),
+      signOutProvider: (input) => transport.request(PROVIDER_SIGN_OUT_METHOD, input),
       submitProviderConnectionAuthorizationCode: (input) =>
         transport.request(WS_METHODS.serverSubmitProviderConnectionAuthorizationCode, input),
       prepareProviderInstall: (input) =>
@@ -795,12 +826,30 @@ export function createWsNativeApi(): NativeApi {
           const activeTab = resolveFallbackBrowserTab(state);
           const kind = input.kind ?? "web";
           if (activeTab.kind !== kind) {
-            const tab = createFallbackTab(input.initialUrl, kind, input.displayUrl);
+            const tab = createFallbackTab(
+              input.initialUrl,
+              kind,
+              input.displayUrl,
+              input.previewCwd,
+              input.sourceIdentity,
+              input.sourceRoot,
+              input.watchDiscoveryLimited,
+            );
             state.tabs = [...state.tabs, tab];
             state.activeTabId = tab.id;
           } else {
             activeTab.url = input.initialUrl;
             activeTab.displayUrl = input.displayUrl?.trim() || null;
+            const previewCwd = kind === "local-html" ? input.previewCwd?.trim() : undefined;
+            if (previewCwd) {
+              activeTab.previewCwd = previewCwd;
+              if (input.sourceIdentity) activeTab.sourceIdentity = input.sourceIdentity;
+              if (input.sourceRoot) activeTab.sourceRoot = input.sourceRoot;
+              if (input.watchDiscoveryLimited) activeTab.sourceWatchLimited = true;
+              else delete activeTab.sourceWatchLimited;
+            } else {
+              delete activeTab.previewCwd;
+            }
             activeTab.title = defaultBrowserTitle(input.initialUrl);
             activeTab.lastCommittedUrl = input.initialUrl;
           }
@@ -895,6 +944,35 @@ export function createWsNativeApi(): NativeApi {
         }
         return cloneBrowserState(getFallbackBrowserState(input.threadId));
       },
+      replaceLocalHtmlPreview: async (input) => {
+        if (window.desktopBridge) {
+          return asLiveHtmlDesktopBridge(window.desktopBridge).browser.replaceLocalHtmlPreview(
+            input,
+          );
+        }
+        const state = ensureFallbackBrowserWorkspace(input.threadId);
+        const tab = resolveFallbackBrowserTab(state, input.tabId);
+        tab.url = input.url;
+        tab.displayUrl = input.displayUrl;
+        tab.previewCwd = input.previewCwd;
+        if (input.sourceIdentity) tab.sourceIdentity = input.sourceIdentity;
+        if (input.sourceRoot) tab.sourceRoot = input.sourceRoot;
+        if (input.watchDiscoveryLimited) tab.sourceWatchLimited = true;
+        else delete tab.sourceWatchLimited;
+        if (input.allowedExternalUrls) {
+          tab.allowedExternalUrls = input.allowedExternalUrls;
+        } else {
+          delete tab.allowedExternalUrls;
+        }
+        tab.title = defaultBrowserTitle(input.url);
+        tab.lastCommittedUrl = input.url;
+        tab.lastError = null;
+        if (input.activate !== false) {
+          state.activeTabId = tab.id;
+        }
+        markFallbackBrowserStateChanged(state);
+        return emitFallbackBrowserState(input.threadId);
+      },
       goBack: async (input) => {
         if (window.desktopBridge) {
           return window.desktopBridge.browser.goBack(input);
@@ -912,7 +990,15 @@ export function createWsNativeApi(): NativeApi {
           return window.desktopBridge.browser.newTab(input);
         }
         const state = ensureFallbackBrowserWorkspace(input.threadId);
-        const tab = createFallbackTab(input.url, input.kind ?? "web", input.displayUrl);
+        const tab = createFallbackTab(
+          input.url,
+          input.kind ?? "web",
+          input.displayUrl,
+          input.previewCwd,
+          input.sourceIdentity,
+          input.sourceRoot,
+          input.watchDiscoveryLimited,
+        );
         state.tabs = [...state.tabs, tab];
         if (input.activate !== false || !state.activeTabId) {
           state.activeTabId = tab.id;

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { syncShellEnvironment } from "./syncShellEnvironment";
+import { shouldSynchronizeShellEnvironment, syncShellEnvironment } from "./syncShellEnvironment";
 
 describe("syncShellEnvironment", () => {
   it("hydrates PATH and missing SSH_AUTH_SOCK from the login shell on macOS", () => {
@@ -256,5 +256,11 @@ describe("syncShellEnvironment", () => {
     expect(readEnvironment).not.toHaveBeenCalled();
     expect(env.PATH).toBe("/usr/bin");
     expect(env.SSH_AUTH_SOCK).toBe("/tmp/inherited.sock");
+  });
+
+  it("lets an isolated packaged smoke prevent host environment rehydration", () => {
+    expect(shouldSynchronizeShellEnvironment({ SCIENT_DISABLE_SHELL_ENV_SYNC: "1" })).toBe(false);
+    expect(shouldSynchronizeShellEnvironment({ SCIENT_DISABLE_SHELL_ENV_SYNC: "0" })).toBe(true);
+    expect(shouldSynchronizeShellEnvironment({})).toBe(true);
   });
 });

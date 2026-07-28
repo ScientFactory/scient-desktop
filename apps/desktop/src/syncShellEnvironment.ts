@@ -122,3 +122,7 @@ export function syncShellEnvironment(
     logWarning("Failed to synchronize the desktop shell environment.", error);
   }
 }
+
+export function shouldSynchronizeShellEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.SCIENT_DISABLE_SHELL_ENV_SYNC !== "1";
+}

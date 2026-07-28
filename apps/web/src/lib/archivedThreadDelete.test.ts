@@ -2,13 +2,58 @@
 // Purpose: Verifies archived-thread delete coordination without rendering settings UI.
 // Layer: Web orchestration helper tests
 
+import type { NativeApi, ThreadBrowserState } from "@synara/contracts";
 import { ThreadId } from "@synara/contracts";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { useBrowserStateStore } from "../browserStateStore";
+import { createMemoryStorage } from "./storage";
 
 import {
   deleteArchivedThreadFromClient,
   deleteArchivedThreadsFromClient,
 } from "./archivedThreadDelete";
+
+const originalLocalStorage = globalThis.localStorage;
+
+beforeEach(() => {
+  globalThis.localStorage = createMemoryStorage() as Storage;
+});
+
+afterEach(() => {
+  useBrowserStateStore.setState({ threadStatesByThreadId: {}, recentHistoryByThreadId: {} });
+  globalThis.localStorage = originalLocalStorage;
+});
+
+function archivedDeleteApi(dispatchCommand: ReturnType<typeof vi.fn>) {
+  return {
+    orchestration: { dispatchCommand },
+    browser: {
+      getState: vi.fn(async ({ threadId }: { threadId: ThreadId }) => ({
+        threadId,
+        version: 0,
+        open: false,
+        activeTabId: null,
+        tabs: [],
+        lastError: null,
+      })) as unknown as NativeApi["browser"]["getState"],
+      close: vi.fn(
+        async ({ threadId }: { threadId: ThreadId }) =>
+          ({
+            threadId,
+            version: 1,
+            open: false,
+            activeTabId: null,
+            tabs: [],
+            lastError: null,
+          }) satisfies ThreadBrowserState,
+      ) as unknown as NativeApi["browser"]["close"],
+    },
+    projects: {
+      revokeHtmlArtifactPreview: vi.fn(async () => ({ revoked: true })),
+    },
+  } as unknown as Pick<NativeApi, "browser" | "orchestration" | "projects">;
+}
 
 describe("deleteArchivedThreadFromClient", () => {
   it("dispatches delete, then removes the local row", async () => {
@@ -17,7 +62,7 @@ describe("deleteArchivedThreadFromClient", () => {
     const removeDeletedThreadFromClientState = vi.fn();
 
     await deleteArchivedThreadFromClient({
-      api: { dispatchCommand },
+      api: archivedDeleteApi(dispatchCommand),
       threadId,
       removeDeletedThreadFromClientState,
     });
@@ -42,7 +87,7 @@ describe("deleteArchivedThreadFromClient", () => {
     const removeDeletedThreadFromClientState = vi.fn();
 
     await deleteArchivedThreadsFromClient({
-      api: { dispatchCommand },
+      api: archivedDeleteApi(dispatchCommand),
       threadIds: [threadA, threadA, threadB],
       removeDeletedThreadFromClientState,
     });
@@ -73,7 +118,7 @@ describe("deleteArchivedThreadFromClient", () => {
 
     await expect(
       deleteArchivedThreadsFromClient({
-        api: { dispatchCommand },
+        api: archivedDeleteApi(dispatchCommand),
         threadIds: [threadA, threadB],
         removeDeletedThreadFromClientState,
       }),

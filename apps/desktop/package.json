@@ -11,6 +11,7 @@
     "start": "bun run scripts/start-electron.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
+    "test:backend-crash-breaker-acceptance": "node scripts/run-backend-crash-breaker-acceptance.mjs",
     "test:browser-overlay-lifecycle": "bun scripts/run-browser-overlay-lifecycle.mjs",
     "smoke-test": "node scripts/smoke-test.mjs"
   },

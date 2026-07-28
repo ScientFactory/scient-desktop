@@ -21,6 +21,7 @@ import {
   isSupportedLocalHtmlPath,
   localFileViewerKindForPath,
 } from "@synara/shared/localPreviewFiles";
+import { asLiveHtmlNativeApi } from "@synara/shared/liveHtmlPreviewTransport";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
@@ -39,6 +40,7 @@ import {
 import { Schema } from "effect";
 
 import ChatView from "../components/ChatView";
+import { BrowserPictureInPicture } from "../components/BrowserPictureInPicture";
 import { ProviderIcon } from "../components/ProviderIcon";
 import { ChatPaneDropOverlay } from "../components/chat-drop-overlay/ChatPaneDropOverlay";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
@@ -49,6 +51,7 @@ import {
   type DiffPanelMode,
 } from "../components/DiffPanelShell";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { selectThreadBrowserState, useBrowserStateStore } from "../browserStateStore";
 import { useDockPaneRuntimeActivation } from "../hooks/useDockPaneRuntimeActivation";
 import { useDockWorkspaceExplorer } from "../components/chat/useDockWorkspaceExplorer";
 import {
@@ -95,6 +98,7 @@ import { RightDock } from "../components/chat/RightDock";
 import { RightDockEmptyState } from "../components/chat/RightDockEmptyState";
 import {
   restoreRightDockFocusAfterBrowserClose,
+  restoreChatFocusAfterFloatingBrowserClose,
   restoreSplitChatFocusAfterBrowserClose,
 } from "../components/chat/browserPanelFocus";
 import {
@@ -121,7 +125,7 @@ import {
   readDockFileExplorerOpen,
   storeDockFileExplorerOpen,
 } from "../lib/dockFileExplorerPreference";
-import { FoldersIcon } from "../lib/icons";
+import { FoldersIcon, LayoutSidebarIcon, WindowIcon } from "../lib/icons";
 import { passiveGitStatusQueryOptions } from "../lib/gitReactQuery";
 import {
   projectInspectHtmlArtifactQueryOptions,
@@ -172,12 +176,15 @@ import {
   DialogTitle,
 } from "../components/ui/dialog";
 import {
+  browserStateOwnsLocalHtmlRevision,
+  localHtmlPreviewPathsEqual,
   resolveDockDiffAvailable,
   resolveFilePreviewWorkspaceRoot,
   resolveRoutePanelBootstrap,
   resolveSplitPaneCloseDecision,
   resolveSplitPaneMaximizeDecision,
   resolveThreadPickerTitle,
+  retiredLocalHtmlPreviewUrl,
   resolveToggledChatPanelPatch,
 } from "./-chatThreadRoute.logic";
 import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
@@ -187,6 +194,17 @@ import {
   CHAT_MAIN_VIEWPORT_SHELL_CLASS_NAME,
 } from "../components/chat/composerPickerStyles";
 import { cn } from "~/lib/utils";
+import {
+  browserPictureInPictureIdentityMatches,
+  browserPictureInPictureOwnerPaneIdToClose,
+  closeBrowserPictureInPicture,
+  commitBrowserPictureInPictureLayout,
+  openBrowserPictureInPicture,
+  reconcileBrowserPictureInPicture,
+  type BrowserPictureInPictureIdentity,
+  type BrowserPictureInPictureLayout,
+  type BrowserPictureInPictureState,
+} from "~/browserPictureInPicture";
 import {
   pullRequestDetailInputFromPane,
   pullRequestPaneTabLabel,
@@ -743,6 +761,7 @@ function DeferredChatView(props: {
     onClick: () => void;
   } | null;
   onChangeThread?: () => void;
+  onSelectThread?: (threadId: ThreadIdType) => void;
   onCloseThreadPane?: () => void;
   onMounted?: () => void;
 }) {
@@ -798,6 +817,7 @@ function DeferredChatView(props: {
       {...(props.onMaximize ? { onMaximizeSurface: props.onMaximize } : {})}
       {...(props.viewModeAction !== undefined ? { viewModeAction: props.viewModeAction } : {})}
       {...(props.onChangeThread ? { onChangeThreadInSplitPane: props.onChangeThread } : {})}
+      {...(props.onSelectThread ? { onActivateThreadInSplitPane: props.onSelectThread } : {})}
       {...(props.onCloseThreadPane ? { onCloseThreadPane: props.onCloseThreadPane } : {})}
     />
   );
@@ -896,6 +916,7 @@ function SplitPaneSurface(props: {
               onOpenTurnDiff={props.onOpenTurnDiff}
               onMaximize={props.onMaximize}
               onChangeThread={props.onChooseThread}
+              onSelectThread={props.onSelectThread}
               onCloseThreadPane={props.onCloseThreadPane}
               onMounted={props.onChatMounted}
             />
@@ -1496,6 +1517,7 @@ function SingleChatSurface(props: {
   const createSplitView = useSplitViewStore((store) => store.createFromThread);
   const createSplitViewFromDrop = useSplitViewStore((store) => store.createFromDrop);
   const dockState = useRightDockStore(selectRightDockState(props.threadId));
+  const threadBrowserState = useBrowserStateStore(selectThreadBrowserState(props.threadId));
   const openPane = useRightDockStore((store) => store.openPane);
   const toggleSingletonPane = useRightDockStore((store) => store.toggleSingletonPane);
   const closePane = useRightDockStore((store) => store.closePane);
@@ -1592,8 +1614,18 @@ function SingleChatSurface(props: {
   const [editorDiffFilesLoading, setEditorDiffFilesLoading] = useState(false);
   const [editorDiffOptionsControl, setEditorDiffOptionsControl] = useState<ReactNode | null>(null);
   const [dockFileExplorerOpen, setDockFileExplorerOpen] = useState(readDockFileExplorerOpen);
+  const [browserPictureInPicture, setBrowserPictureInPicture] =
+    useState<BrowserPictureInPictureState | null>(null);
+  const nextBrowserPictureInPictureGenerationRef = useRef(0);
 
   const activePane = resolveActivePane(dockState);
+  const browserPane = dockState.panes.find((pane) => pane.kind === "browser") ?? null;
+  const browserPictureInPictureIsActive = Boolean(
+    browserPictureInPicture &&
+    browserPictureInPicture.identity.threadId === props.threadId &&
+    browserPictureInPicture.identity.projectId === props.projectId &&
+    browserPictureInPicture.identity.paneId === browserPane?.id,
+  );
   const retainedActivePane =
     dockState.panes.find((pane) => pane.id === dockState.activePaneId) ??
     dockState.panes[0] ??
@@ -1607,14 +1639,140 @@ function SingleChatSurface(props: {
     activePane,
   });
 
+  useEffect(() => {
+    setBrowserPictureInPicture((current) =>
+      editorViewActive
+        ? null
+        : reconcileBrowserPictureInPicture(current, {
+            threadId: props.threadId,
+            projectId: props.projectId,
+            browserPaneId: browserPane?.id ?? null,
+            browserState: threadBrowserState,
+          }),
+    );
+  }, [browserPane?.id, editorViewActive, props.projectId, props.threadId, threadBrowserState]);
+
+  useEffect(() => {
+    const generation = browserPictureInPicture?.identity.generation ?? 0;
+    nextBrowserPictureInPictureGenerationRef.current = Math.max(
+      nextBrowserPictureInPictureGenerationRef.current,
+      generation,
+    );
+  }, [browserPictureInPicture?.identity.generation]);
+
+  const handleFloatBrowserPreview = useCallback(() => {
+    if (activePane?.kind !== "browser" || !threadBrowserState?.activeTabId) {
+      return;
+    }
+    if (!threadBrowserState.tabs.some((tab) => tab.id === threadBrowserState.activeTabId)) {
+      return;
+    }
+    nextBrowserPictureInPictureGenerationRef.current += 1;
+    setBrowserPictureInPicture(
+      openBrowserPictureInPicture({
+        threadId: props.threadId,
+        projectId: props.projectId,
+        paneId: activePane.id,
+        tabId: threadBrowserState.activeTabId,
+        browserVersion: threadBrowserState.version,
+        generation: nextBrowserPictureInPictureGenerationRef.current,
+      }),
+    );
+    requestImmediateDockHydration("browser");
+    setDockOpen(props.threadId, false);
+  }, [
+    activePane,
+    props.projectId,
+    props.threadId,
+    requestImmediateDockHydration,
+    setDockOpen,
+    threadBrowserState,
+  ]);
+
+  const handleCloseFloatingBrowserPreview = useCallback(
+    (identity: BrowserPictureInPictureIdentity) => {
+      if (
+        !browserPictureInPicture ||
+        !browserPictureInPictureIdentityMatches(browserPictureInPicture, identity)
+      ) {
+        return;
+      }
+      setBrowserPictureInPicture((current) => closeBrowserPictureInPicture(current, identity));
+      window.requestAnimationFrame(() => {
+        restoreChatFocusAfterFloatingBrowserClose(document);
+      });
+    },
+    [browserPictureInPicture],
+  );
+
+  const handleCloseFloatingBrowserOwnership = useCallback(
+    (identity: BrowserPictureInPictureIdentity) => {
+      const paneId = browserPictureInPictureOwnerPaneIdToClose(browserPictureInPicture, identity);
+      if (
+        paneId === null ||
+        identity.threadId !== props.threadId ||
+        identity.projectId !== props.projectId ||
+        paneId !== browserPane?.id
+      ) {
+        return;
+      }
+      setBrowserPictureInPicture(null);
+      closePane(props.threadId, paneId);
+      window.requestAnimationFrame(() => {
+        restoreChatFocusAfterFloatingBrowserClose(document);
+      });
+    },
+    [browserPictureInPicture, browserPane?.id, closePane, props.projectId, props.threadId],
+  );
+
+  const handleReturnFloatingBrowserPreview = useCallback(
+    (identity: BrowserPictureInPictureIdentity) => {
+      if (
+        !browserPictureInPicture ||
+        !browserPictureInPictureIdentityMatches(browserPictureInPicture, identity) ||
+        identity.threadId !== props.threadId ||
+        identity.projectId !== props.projectId ||
+        identity.paneId !== browserPane?.id
+      ) {
+        return;
+      }
+      setBrowserPictureInPicture(null);
+      requestImmediateDockHydration("browser");
+      setActivePane(props.threadId, identity.paneId);
+      setDockOpen(props.threadId, true);
+      window.requestAnimationFrame(() => {
+        restoreRightDockFocusAfterBrowserClose(document);
+      });
+    },
+    [
+      browserPictureInPicture,
+      browserPane?.id,
+      props.projectId,
+      props.threadId,
+      requestImmediateDockHydration,
+      setActivePane,
+      setDockOpen,
+    ],
+  );
+
+  const handleFloatingBrowserLayoutCommit = useCallback(
+    (identity: BrowserPictureInPictureIdentity, layout: BrowserPictureInPictureLayout) => {
+      setBrowserPictureInPicture((current) =>
+        commitBrowserPictureInPictureLayout(current, identity, layout),
+      );
+    },
+    [],
+  );
+
   // Bridge the dock's active browser/diff pane back into the panelState shape the
   // chat shell still consumes (diff badge, toggle pressed state, transcript gating).
   const chatPanelState = useMemo<SplitViewPanePanelState>(
     () => ({
-      panel:
-        dockState.open &&
-        activePane &&
-        (activePane.kind === "browser" || activePane.kind === "diff")
+      panel: browserPictureInPictureIsActive
+        ? "browser"
+        : dockState.open &&
+            activePane &&
+            (activePane.kind === "browser" || activePane.kind === "diff")
           ? activePane.kind
           : null,
       diffTurnId: activePane?.kind === "diff" ? activePane.diffTurnId : null,
@@ -1622,7 +1780,7 @@ function SingleChatSurface(props: {
       hasOpenedPanel: dockState.panes.length > 0,
       lastOpenPanel: "browser",
     }),
-    [activePane, dockState.open, dockState.panes.length],
+    [activePane, browserPictureInPictureIsActive, dockState.open, dockState.panes.length],
   );
 
   const handleToggleDiff = useCallback(() => {
@@ -1630,9 +1788,20 @@ function SingleChatSurface(props: {
     toggleSingletonPane(props.threadId, { kind: "diff" });
   }, [props.threadId, requestImmediateDockHydration, toggleSingletonPane]);
   const handleToggleBrowser = useCallback(() => {
+    if (browserPictureInPictureIsActive && browserPictureInPicture) {
+      handleReturnFloatingBrowserPreview(browserPictureInPicture.identity);
+      return;
+    }
     requestImmediateDockHydration("browser");
     toggleSingletonPane(props.threadId, { kind: "browser" });
-  }, [props.threadId, requestImmediateDockHydration, toggleSingletonPane]);
+  }, [
+    browserPictureInPicture,
+    browserPictureInPictureIsActive,
+    handleReturnFloatingBrowserPreview,
+    props.threadId,
+    requestImmediateDockHydration,
+    toggleSingletonPane,
+  ]);
   const handleToggleRightDock = useCallback(() => {
     if (!dockState.open && retainedActivePane) {
       requestImmediateDockHydration(retainedActivePane.kind);
@@ -1814,7 +1983,8 @@ function SingleChatSurface(props: {
       if (inspection.mode !== "static-document") {
         return null;
       }
-      const api = readNativeApi();
+      const nativeApi = readNativeApi();
+      const api = nativeApi ? asLiveHtmlNativeApi(nativeApi) : undefined;
       if (!api) {
         return null;
       }
@@ -1840,7 +2010,8 @@ function SingleChatSurface(props: {
         return false;
       }
       void (async () => {
-        const api = readNativeApi();
+        const nativeApi = readNativeApi();
+        const api = nativeApi ? asLiveHtmlNativeApi(nativeApi) : undefined;
         if (!api) {
           throw new Error("The file opener is not available.");
         }
@@ -1857,7 +2028,7 @@ function SingleChatSurface(props: {
         }
         let previewUrlToRevoke: string | null = null;
         try {
-          const prepared = await api.projects.prepareHtmlArtifactPreview({
+          const prepared = await api.projects.prepareLiveHtmlPreview({
             cwd: htmlCwd,
             path: absolutePath,
           });
@@ -1900,6 +2071,12 @@ function SingleChatSurface(props: {
           if (!url) {
             throw new Error("This HTML file is not available for preview.");
           }
+          if (
+            browserKind === "local-html" &&
+            (!prepared.localHtmlCapabilityProof || !prepared.localHtmlNetworkPolicy)
+          ) {
+            throw new Error("This HTML preview is missing its server-issued capability proof.");
+          }
           if (prepared.warnings.length > 0) {
             transientAlertManager.add({
               type: "warning",
@@ -1912,18 +2089,87 @@ function SingleChatSurface(props: {
           }
           requestImmediateDockHydration("browser");
           openPane(props.threadId, { kind: "browser" });
-          await api.browser.open({
-            threadId: props.threadId,
-            initialUrl: url,
-            kind: browserKind,
-            displayUrl: absolutePath,
-            ...(browserKind === "local-html" &&
+          const allowedExternalUrls =
+            browserKind === "local-html" &&
             prepared.mode === "static-document" &&
             prepared.allowedExternalUrls
-              ? { allowedExternalUrls: prepared.allowedExternalUrls }
-              : {}),
-          });
-          previewUrlToRevoke = null;
+              ? prepared.allowedExternalUrls
+              : undefined;
+          const currentBrowserState = await api.browser.getState({ threadId: props.threadId });
+          const existingSourceTab =
+            browserKind === "local-html"
+              ? currentBrowserState.tabs.find(
+                  (tab) =>
+                    tab.kind === "local-html" &&
+                    (prepared.sourceIdentity
+                      ? localHtmlPreviewPathsEqual(tab.sourceIdentity, prepared.sourceIdentity) &&
+                        localHtmlPreviewPathsEqual(tab.sourceRoot, prepared.sourceRoot)
+                      : localHtmlPreviewPathsEqual(tab.displayUrl, absolutePath) &&
+                        localHtmlPreviewPathsEqual(tab.previewCwd, htmlCwd)),
+                )
+              : undefined;
+          if (browserKind === "local-html") {
+            const retiredPreviewUrl = existingSourceTab?.url ?? null;
+            const nextBrowserState = await api.browser.replaceLocalHtmlPreview({
+              threadId: props.threadId,
+              tabId: existingSourceTab?.id ?? "",
+              url,
+              displayUrl: absolutePath,
+              previewCwd: htmlCwd,
+              ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
+              ...(prepared.sourceRoot ? { sourceRoot: prepared.sourceRoot } : {}),
+              watchedPaths: prepared.watchedPaths ?? [absolutePath],
+              ...(prepared.watchDiscoveryLimited !== undefined
+                ? { watchDiscoveryLimited: prepared.watchDiscoveryLimited }
+                : {}),
+              ...(prepared.localHtmlCapabilityProof
+                ? { localHtmlCapabilityProof: prepared.localHtmlCapabilityProof }
+                : {}),
+              ...(prepared.localHtmlNetworkPolicy
+                ? { localHtmlNetworkPolicy: prepared.localHtmlNetworkPolicy }
+                : {}),
+              ...(allowedExternalUrls ? { allowedExternalUrls } : {}),
+              activate: true,
+            });
+            const installedRevision = {
+              url,
+              displayUrl: absolutePath,
+              previewCwd: htmlCwd,
+              ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
+              ...(prepared.sourceRoot ? { sourceRoot: prepared.sourceRoot } : {}),
+            };
+            const retiredUrl = retiredLocalHtmlPreviewUrl({
+              previousUrl: retiredPreviewUrl,
+              nextState: nextBrowserState,
+              installed: installedRevision,
+            });
+            if (browserStateOwnsLocalHtmlRevision(nextBrowserState, installedRevision)) {
+              previewUrlToRevoke = null;
+              if (retiredUrl) {
+                await api.projects
+                  .revokeHtmlArtifactPreview({ previewUrl: retiredUrl })
+                  .catch(() => undefined);
+              }
+            }
+          } else {
+            const nextBrowserState = await api.browser.open({
+              threadId: props.threadId,
+              initialUrl: url,
+              kind: browserKind,
+              displayUrl: absolutePath,
+              ...(allowedExternalUrls ? { allowedExternalUrls } : {}),
+            });
+            if (
+              browserStateOwnsLocalHtmlRevision(nextBrowserState, {
+                url,
+                displayUrl: absolutePath,
+                previewCwd: htmlCwd,
+                ...(prepared.sourceIdentity ? { sourceIdentity: prepared.sourceIdentity } : {}),
+              })
+            ) {
+              previewUrlToRevoke = null;
+            }
+          }
         } finally {
           if (previewUrlToRevoke) {
             await api.projects
@@ -2291,6 +2537,14 @@ function SingleChatSurface(props: {
     ): ReactNode => {
       switch (pane.kind) {
         case "browser":
+          if (
+            browserPictureInPictureIsActive &&
+            browserPictureInPicture?.identity.paneId === pane.id
+          ) {
+            return (
+              <PanelStateMessage>The browser is open as a floating preview.</PanelStateMessage>
+            );
+          }
           return (
             <Suspense fallback={<PanelStateMessage>Loading browser...</PanelStateMessage>}>
               <BrowserPanel
@@ -2422,6 +2676,8 @@ function SingleChatSurface(props: {
     },
     [
       closePane,
+      browserPictureInPicture,
+      browserPictureInPictureIsActive,
       dockState.open,
       handleAskWhyInChat,
       handleCommentInChat,
@@ -2605,6 +2861,29 @@ function SingleChatSurface(props: {
                 onClick: handleOpenEditorView,
               }}
             />
+            {browserPictureInPictureIsActive && browserPictureInPicture ? (
+              <div className="pointer-events-none absolute inset-0 z-30 overflow-hidden">
+                <BrowserPictureInPicture
+                  identity={browserPictureInPicture.identity}
+                  position={browserPictureInPicture.position}
+                  size={browserPictureInPicture.size}
+                  onLayoutCommit={handleFloatingBrowserLayoutCommit}
+                  onClose={handleCloseFloatingBrowserPreview}
+                  onReturnToDock={handleReturnFloatingBrowserPreview}
+                >
+                  <Suspense fallback={<PanelStateMessage>Loading browser...</PanelStateMessage>}>
+                    <BrowserPanel
+                      mode="sidebar"
+                      threadId={browserPictureInPicture.identity.threadId}
+                      onClosePanel={() =>
+                        handleCloseFloatingBrowserOwnership(browserPictureInPicture.identity)
+                      }
+                      runtimeMode="live"
+                    />
+                  </Suspense>
+                </BrowserPictureInPicture>
+              </div>
+            ) : null}
           </RouteInsetSurface>
         </ChatPaneDropOverlay>
         <RightDock
@@ -2614,7 +2893,36 @@ function SingleChatSurface(props: {
           shouldAcceptWidth={shouldAcceptDockWidth}
           addMenuKinds={RIGHT_DOCK_ADD_MENU_KINDS}
           activePaneAction={
-            activePane?.kind === "file" && activePane.filePath !== null ? (
+            activePane?.kind === "browser" ? (
+              browserPictureInPictureIsActive && browserPictureInPicture ? (
+                <IconButton
+                  variant="chrome"
+                  size="icon-xs"
+                  label="Return floating preview to right panel"
+                  tooltip="Return floating preview"
+                  tooltipSide="bottom"
+                  className={DOCK_HEADER_ICON_BUTTON_CLASS}
+                  onClick={() =>
+                    handleReturnFloatingBrowserPreview(browserPictureInPicture.identity)
+                  }
+                >
+                  <LayoutSidebarIcon />
+                </IconButton>
+              ) : (
+                <IconButton
+                  variant="chrome"
+                  size="icon-xs"
+                  label="Float browser preview over chat"
+                  tooltip="Float preview over chat"
+                  tooltipSide="bottom"
+                  className={DOCK_HEADER_ICON_BUTTON_CLASS}
+                  disabled={!threadBrowserState?.activeTabId}
+                  onClick={handleFloatBrowserPreview}
+                >
+                  <WindowIcon />
+                </IconButton>
+              )
+            ) : activePane?.kind === "file" && activePane.filePath !== null ? (
               <IconButton
                 variant="chrome"
                 size="icon-xs"
@@ -2622,6 +2930,7 @@ function SingleChatSurface(props: {
                 tooltip={dockFileExplorerOpen ? "Hide file explorer" : "Show file explorer"}
                 tooltipSide="bottom"
                 aria-pressed={dockFileExplorerOpen}
+                data-pressed={dockFileExplorerOpen ? "" : undefined}
                 className={DOCK_HEADER_ICON_BUTTON_CLASS}
                 onClick={handleToggleDockFileExplorer}
               >

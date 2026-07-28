@@ -1,28 +1,33 @@
 [
   {
-    "version": "0.5.13",
-    "date": "2026-07-25",
-    "headline": "A calmer, safer way to work in every project",
+    "version": "0.5.14",
+    "date": "July 29, 2026",
+    "headline": "A floating browser, a hand with commits, and a smoother workspace.",
     "features": [
       {
-        "id": "workspace-intent",
-        "title": "New threads stay in the right project",
-        "description": "Start a conversation in the project's default workspace, or choose a specific branch or worktree when you want to continue focused work."
+        "id": "floating-browser-preview",
+        "title": "Pop the browser out into a floating window",
+        "description": "Lift the built-in browser into a small window that floats above your work and stays put while you move and resize it. Perfect for keeping a live preview in view without giving up room for the thing you're building."
       },
       {
-        "id": "folder-drop",
-        "title": "Add projects with a simple drop",
-        "description": "Drop a folder into the project picker to add it safely, with clear feedback when the drop is outside the picker."
+        "id": "source-control-writing-help",
+        "title": "Get a hand writing commits and pull requests",
+        "description": "Scient can now draft commit messages and pull request summaries for you, taking cues from your project's own recent history so they read like they belong. You stay in control and can edit anything before it's used."
       },
       {
-        "id": "open-code-reliability",
-        "title": "More reliable provider sessions",
-        "description": "OpenCode and Kilo sessions recover more predictably when a turn finishes, a server exits, or a connection needs attention."
+        "id": "smoother-typing-and-layout",
+        "title": "Smoother typing and a tidier layout",
+        "description": "Composing feels steadier: pressing Enter while typing in languages that use input composition no longer sends your message early, zoom shortcuts behave as expected, and the space between your conversation and the composer stays neat while a task panel is open."
       },
       {
-        "id": "local-file-viewer",
-        "title": "Open local files with confidence",
-        "description": "Preview supported local files in a protected viewer while keeping existing Markdown previews and project boundaries intact."
+        "id": "faster-start-more-private",
+        "title": "Faster to start, and more private",
+        "description": "The app now carries its own fonts instead of fetching them from the web, so it loads cleanly on first run and keeps more of your activity to itself."
+      },
+      {
+        "id": "steadier-previews-and-connections",
+        "title": "Steadier previews and connections",
+        "description": "Local previews stay live as your files change, updates to your connected tools wait for your confirmation, and the app recovers more gracefully if something hiccups quietly in the background."
       }
     ]
   }

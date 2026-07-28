@@ -8,6 +8,7 @@ import {
   OrchestrationProjectShell,
   OrchestrationProposedPlanId,
   MessageDispatchOrigin,
+  MessageDispatchSource,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
   OrchestrationThreadDetailSnapshot,
@@ -69,6 +70,7 @@ import {
 
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeShellSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapshot);
+const decodeProjectShells = Schema.decodeUnknownEffect(Schema.Array(OrchestrationProjectShell));
 const decodeThreadDetail = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeThreadDetailSnapshot = Schema.decodeUnknownEffect(OrchestrationThreadDetailSnapshot);
 const decodeModelSelection = Schema.decodeUnknownEffect(ModelSelection);
@@ -92,6 +94,7 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
     mentions: Schema.NullOr(Schema.fromJsonString(Schema.Array(ProviderMentionReference))),
     dispatchMode: Schema.NullOr(TurnDispatchMode),
     dispatchOrigin: Schema.NullOr(MessageDispatchOrigin),
+    dispatchSource: Schema.NullOr(MessageDispatchSource),
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
@@ -341,6 +344,7 @@ function toProjectedMessage(row: ProjectionThreadMessageDbRow): OrchestrationMes
     ...(row.mentions !== null ? { mentions: row.mentions } : {}),
     ...(row.dispatchMode ? { dispatchMode: row.dispatchMode } : {}),
     ...(row.dispatchOrigin ? { dispatchOrigin: row.dispatchOrigin } : {}),
+    ...(row.dispatchSource ? { dispatchSource: row.dispatchSource } : {}),
     turnId: row.turnId,
     streaming: row.isStreaming === 1,
     source: row.source,
@@ -769,6 +773,28 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
+  const listActiveProjectRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionProjectDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          project_id AS "projectId",
+          kind,
+          title,
+          workspace_root AS "workspaceRoot",
+          default_model_selection_json AS "defaultModelSelection",
+          scripts_json AS "scripts",
+          is_pinned AS "isPinned",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          deleted_at AS "deletedAt"
+        FROM projection_projects
+        WHERE deleted_at IS NULL
+        ORDER BY created_at ASC, project_id ASC
+      `,
+  });
+
   const listThreadRows = SqlSchema.findAll({
     Request: Schema.Void,
     Result: ProjectionThreadDbRowSchema,
@@ -880,6 +906,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           mentions_json AS "mentions",
           dispatch_mode AS "dispatchMode",
           dispatch_origin AS "dispatchOrigin",
+          dispatch_source AS "dispatchSource",
           is_streaming AS "isStreaming",
           source,
           created_at AS "createdAt",
@@ -1286,6 +1313,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           mentions_json AS "mentions",
           dispatch_mode AS "dispatchMode",
           dispatch_origin AS "dispatchOrigin",
+          dispatch_source AS "dispatchSource",
           is_streaming AS "isStreaming",
           source,
           created_at AS "createdAt",
@@ -2000,6 +2028,31 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       ),
     );
 
+  const listActiveProjectShells: ProjectionSnapshotQueryShape["listActiveProjectShells"] = () =>
+    listActiveProjectRows(undefined).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listActiveProjectShells:query",
+          "ProjectionSnapshotQuery.listActiveProjectShells:decodeRows",
+        ),
+      ),
+      Effect.flatMap((rows) =>
+        decodeProjectionProjectRows(
+          rows,
+          "ProjectionSnapshotQuery.listActiveProjectShells:decodeModelSelections",
+        ),
+      ),
+      Effect.flatMap((rows) =>
+        decodeProjectShells(rows.map(toProjectedProjectShell)).pipe(
+          Effect.mapError(
+            toPersistenceDecodeError(
+              "ProjectionSnapshotQuery.listActiveProjectShells:decodeProjectShells",
+            ),
+          ),
+        ),
+      ),
+    );
+
   const getSnapshotSequence: ProjectionSnapshotQueryShape["getSnapshotSequence"] = () =>
     listProjectionStateRows(undefined).pipe(
       Effect.mapError(
@@ -2474,6 +2527,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getCommandReadModel,
     getSnapshot,
     getShellSnapshot,
+    listActiveProjectShells,
     getCounts,
     getSnapshotSequence,
     getActiveProjectByWorkspaceRoot,

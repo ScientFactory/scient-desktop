@@ -9,12 +9,14 @@ import type {
   ModelSelection,
   ProviderStartOptions,
 } from "@synara/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@synara/contracts";
 import {
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
 } from "@synara/shared/git";
 import { parseGitHubRepositoryNameWithOwnerFromRemoteUrl } from "@synara/shared/githubRepository";
+import { summarizeUnifiedPatchTotals } from "@synara/shared/unifiedPatchStats";
 import { resolveWorktreeHandoffIntent } from "@synara/shared/worktreeHandoff";
 
 import { GitManagerError } from "../Errors.ts";
@@ -26,9 +28,17 @@ import {
 } from "../Services/GitManager.ts";
 import { GitCore } from "../Services/GitCore.ts";
 import { GitHubCli, type GitHubPullRequestSummary } from "../Services/GitHubCli.ts";
-import { TextGeneration } from "../Services/TextGeneration.ts";
-import { buildGitTextGenerationCallInput } from "../textGenerationSelection.ts";
+import { type SourceControlWritingPolicy, TextGeneration } from "../Services/TextGeneration.ts";
+import {
+  buildGitTextGenerationCallInput,
+  resolveConfiguredTextGenerationProviderOptions,
+  resolveTextGenerationInputForSelection,
+} from "../textGenerationSelection.ts";
+import { sanitizeCommitSubjectForPolicy } from "../textGenerationShared.ts";
+import { discoverPullRequestTemplate } from "../PullRequestTemplateDiscovery.ts";
+import { resolveSourceControlWritingPolicy } from "../sourceControlWritingPolicy.ts";
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 
 const COMMIT_TIMEOUT_MS = 10 * 60_000;
 const MAX_PROGRESS_TEXT_LENGTH = 500;
@@ -81,6 +91,8 @@ interface GitTextGenerationParams {
   textGenerationModelSelection?: ModelSelection | undefined;
   codexHomePath?: string | undefined;
   providerOptions?: ProviderStartOptions | undefined;
+  writingPolicy?: SourceControlWritingPolicy | undefined;
+  followPullRequestTemplate?: boolean | undefined;
 }
 
 interface FailedLocalHandoffRecovery {
@@ -691,6 +703,18 @@ export const makeGitManager = Effect.gen(function* () {
   const gitCore = yield* GitCore;
   const gitHubCli = yield* GitHubCli;
   const textGeneration = yield* TextGeneration;
+  const serverSettings = yield* ServerSettingsService;
+
+  const assertBranchAuthority = (cwd: string, expectedBranch: string, operation: string) =>
+    Effect.gen(function* () {
+      const actualBranch = (yield* gitCore.statusDetails(cwd)).branch;
+      if (actualBranch !== expectedBranch) {
+        return yield* gitManagerError(
+          operation,
+          `The current branch changed from '${expectedBranch}' to '${actualBranch ?? "detached HEAD"}'. Review the current branch and try again.`,
+        );
+      }
+    });
 
   const createProgressEmitter = (
     input: { cwd: string; action: GitStackedAction },
@@ -1075,6 +1099,7 @@ export const makeGitManager = Effect.gen(function* () {
           stagedSummary: limitContext(context.stagedSummary, 8_000),
           stagedPatch: limitContext(context.stagedPatch, 50_000),
           ...(input.includeBranch ? { includeBranch: true } : {}),
+          ...(input.writingPolicy ? { policy: input.writingPolicy } : {}),
           ...buildGitTextGenerationCallInput(input),
         })
         .pipe(
@@ -1083,12 +1108,28 @@ export const makeGitManager = Effect.gen(function* () {
             Effect.logWarning(
               `GitManager.resolveCommitAndBranchSuggestion: falling back to heuristic commit message in ${input.cwd}: ${error.message}`,
             ).pipe(
-              Effect.as(
-                createFallbackCommitSuggestion({
+              Effect.map(() => {
+                const fallback = createFallbackCommitSuggestion({
                   stagedSummary: context.stagedSummary,
                   ...(input.includeBranch ? { includeBranch: true } : {}),
-                }),
-              ),
+                });
+                if (input.writingPolicy?.mode !== "conventional_commits") {
+                  return fallback;
+                }
+                const subject = sanitizeCommitSubjectForPolicy(
+                  {
+                    subject: fallback.subject,
+                    conventionalType: "chore",
+                    conventionalScope: null,
+                    breaking: false,
+                  },
+                  input.writingPolicy,
+                );
+                return {
+                  ...fallback,
+                  subject,
+                };
+              }),
             ),
           ),
         );
@@ -1125,6 +1166,10 @@ export const makeGitManager = Effect.gen(function* () {
 
       let suggestion: CommitAndBranchSuggestion | null | undefined = preResolvedSuggestion;
       if (!suggestion) {
+        if (!branch) {
+          return yield* gitManagerError("runCommitStep", "Cannot commit from detached HEAD.");
+        }
+        yield* assertBranchAuthority(cwd, branch, "runCommitStep");
         const needsGeneration = !commitMessage?.trim();
         if (needsGeneration) {
           yield* emit({
@@ -1138,12 +1183,17 @@ export const makeGitManager = Effect.gen(function* () {
           branch,
           ...(commitMessage ? { commitMessage } : {}),
           ...(filePaths ? { filePaths } : {}),
-          ...(textGenerationParams ?? {}),
+          ...textGenerationParams,
         });
       }
       if (!suggestion) {
         return { status: "skipped_no_changes" as const };
       }
+
+      if (!branch) {
+        return yield* gitManagerError("runCommitStep", "Cannot commit from detached HEAD.");
+      }
+      yield* assertBranchAuthority(cwd, branch, "runCommitStep");
 
       yield* emit({
         kind: "phase_started",
@@ -1261,6 +1311,22 @@ export const makeGitManager = Effect.gen(function* () {
         );
       }
       const rangeContext = yield* gitCore.readRangeContext(cwd, baseBranch);
+      const templateResult = textGenerationParams?.followPullRequestTemplate
+        ? yield* discoverPullRequestTemplate({ cwd, baseRef: baseBranch }).pipe(
+            Effect.provideService(GitCore, gitCore),
+          )
+        : ({ status: "not-found" } as const);
+      if (templateResult.status === "unavailable") {
+        yield* Effect.logWarning(
+          "GitManager.runPrStep: pull request template unavailable; using the standard prompt",
+          { reason: templateResult.reason },
+        );
+      } else if (templateResult.status === "ambiguous") {
+        yield* Effect.logWarning(
+          "GitManager.runPrStep: multiple pull request templates found; using the standard prompt",
+          { candidateCount: templateResult.paths.length },
+        );
+      }
 
       const generated = yield* textGeneration.generatePrContent({
         cwd,
@@ -1269,6 +1335,17 @@ export const makeGitManager = Effect.gen(function* () {
         commitSummary: limitContext(rangeContext.commitSummary, 20_000),
         diffSummary: limitContext(rangeContext.diffSummary, 20_000),
         diffPatch: limitContext(rangeContext.diffPatch, 60_000),
+        ...(textGenerationParams?.writingPolicy
+          ? { policy: textGenerationParams.writingPolicy }
+          : {}),
+        ...(templateResult.status === "found"
+          ? {
+              pullRequestTemplate: {
+                path: templateResult.path,
+                content: templateResult.content,
+              },
+            }
+          : {}),
         ...buildGitTextGenerationCallInput(textGenerationParams ?? {}),
       });
 
@@ -1369,6 +1446,13 @@ export const makeGitManager = Effect.gen(function* () {
         default:
           return yield* gitCore.readWorkingTreePatch(input.cwd);
       }
+    },
+  );
+
+  const readWorkingTreeDiffStats: GitManagerShape["readWorkingTreeDiffStats"] = Effect.fnUntraced(
+    function* (input) {
+      const { patch } = yield* readWorkingTreeDiff(input);
+      return summarizeUnifiedPatchTotals(patch) ?? { additions: 0, deletions: 0, fileCount: 0 };
     },
   );
 
@@ -2415,7 +2499,7 @@ The local stash entry was kept for recovery.`,
         ...(commitMessage ? { commitMessage } : {}),
         ...(filePaths ? { filePaths } : {}),
         includeBranch: true,
-        ...(textGenerationParams ?? {}),
+        ...textGenerationParams,
       });
       if (!suggestion && !options?.allowCommittedHead) {
         return yield* gitManagerError(
@@ -2446,8 +2530,17 @@ The local stash entry was kept for recovery.`,
         committedHeadBranchBase,
       );
 
+      if (!branch) {
+        return yield* gitManagerError(
+          "runFeatureBranchStep",
+          "Cannot create a feature branch from detached HEAD.",
+        );
+      }
+      yield* assertBranchAuthority(cwd, branch, "runFeatureBranchStep");
       yield* gitCore.createBranch({ cwd, branch: resolvedBranch });
+      yield* assertBranchAuthority(cwd, branch, "runFeatureBranchStep");
       yield* Effect.scoped(gitCore.checkoutBranch({ cwd, branch: resolvedBranch }));
+      yield* assertBranchAuthority(cwd, resolvedBranch, "runFeatureBranchStep");
       if (options?.restoreOriginalBranchRef && branch) {
         // Move the original branch back to its trusted remote/upstream ref so
         // "create feature branch and continue" actually removes the commits
@@ -2537,12 +2630,12 @@ The local stash entry was kept for recovery.`,
 
       const runAction = Effect.gen(function* () {
         const initialStatus = yield* gitCore.statusDetails(input.cwd);
-        const textGenerationParams: GitTextGenerationParams = {
-          textGenerationModel: input.textGenerationModel,
-          textGenerationModelSelection: input.textGenerationModelSelection,
-          codexHomePath: input.codexHomePath,
-          providerOptions: input.providerOptions,
-        };
+        if (initialStatus.branch !== input.expectedBranch) {
+          return yield* gitManagerError(
+            "runStackedAction",
+            `The current branch changed from '${input.expectedBranch}' to '${initialStatus.branch ?? "detached HEAD"}'. Review the current branch and try again.`,
+          );
+        }
         const wantsCommit = isCommitAction(input.action);
         const wantsPush =
           input.action === "push" ||
@@ -2551,6 +2644,71 @@ The local stash entry was kept for recovery.`,
           (input.action === "create_pr" &&
             (input.featureBranch || !initialStatus.hasUpstream || initialStatus.aheadCount > 0));
         const wantsPr = input.action === "create_pr" || input.action === "commit_push_pr";
+        const needsWritingPolicy = wantsCommit || wantsPr || input.featureBranch;
+        const writingSettings = needsWritingPolicy
+          ? yield* serverSettings.getSnapshot.pipe(
+              Effect.map((snapshot) => snapshot.settings),
+              Effect.catch((error) =>
+                Effect.logWarning(
+                  "GitManager.runStackedAction: settings snapshot unavailable; using standard source-control writing",
+                  { reason: error.message },
+                ).pipe(Effect.as(DEFAULT_SERVER_SETTINGS)),
+              ),
+            )
+          : DEFAULT_SERVER_SETTINGS;
+        const sourceControlWriting = writingSettings.sourceControlWriting;
+        const writingPolicy = needsWritingPolicy
+          ? yield* resolveSourceControlWritingPolicy({
+              cwd: input.cwd,
+              settings: sourceControlWriting,
+              execute: gitCore.execute,
+            })
+          : undefined;
+        const configuredTextGenerationInput = resolveTextGenerationInputForSelection(
+          writingSettings.textGenerationModelSelection,
+          resolveConfiguredTextGenerationProviderOptions(writingSettings),
+        );
+        const textGenerationParams: GitTextGenerationParams = {
+          ...(configuredTextGenerationInput
+            ? {
+                textGenerationModelSelection: configuredTextGenerationInput.modelSelection,
+                ...(configuredTextGenerationInput.codexHomePath
+                  ? { codexHomePath: configuredTextGenerationInput.codexHomePath }
+                  : {}),
+                ...(configuredTextGenerationInput.providerOptions
+                  ? { providerOptions: configuredTextGenerationInput.providerOptions }
+                  : {}),
+              }
+            : {}),
+          ...(writingPolicy ? { writingPolicy } : {}),
+          ...(sourceControlWriting.followPullRequestTemplate
+            ? { followPullRequestTemplate: true }
+            : {}),
+        };
+        const writingOperations = [
+          ...(input.featureBranch ? (["generateBranchName"] as const) : []),
+          ...(wantsCommit && !input.commitMessage?.trim()
+            ? (["generateCommitMessage"] as const)
+            : []),
+          ...(wantsPr ? (["generatePrContent"] as const) : []),
+        ];
+        if (writingOperations.length > 0) {
+          yield* textGeneration
+            .preflightSourceControlWriting({
+              cwd: input.cwd,
+              operations: writingOperations,
+              ...buildGitTextGenerationCallInput(textGenerationParams),
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                gitManagerError(
+                  "runStackedAction",
+                  `Git writer is not available for this action: ${error.message}`,
+                  error,
+                ),
+              ),
+            );
+        }
         const phases: GitActionProgressPhase[] = [
           ...(input.featureBranch ? (["branch"] as const) : []),
           ...(wantsCommit ? (["commit"] as const) : []),
@@ -2651,6 +2809,13 @@ The local stash entry was kept for recovery.`,
                 Effect.flatMap(() =>
                   Effect.gen(function* () {
                     currentPhase = "push";
+                    if (!currentBranch) {
+                      return yield* gitManagerError(
+                        "runStackedAction",
+                        "Cannot push from detached HEAD.",
+                      );
+                    }
+                    yield* assertBranchAuthority(input.cwd, currentBranch, "runStackedAction");
                     return yield* gitCore.pushCurrentBranch(input.cwd, currentBranch);
                   }),
                 ),
@@ -2668,6 +2833,13 @@ The local stash entry was kept for recovery.`,
                 Effect.flatMap(() =>
                   Effect.gen(function* () {
                     currentPhase = "pr";
+                    if (!currentBranch) {
+                      return yield* gitManagerError(
+                        "runStackedAction",
+                        "Cannot create a pull request from detached HEAD.",
+                      );
+                    }
+                    yield* assertBranchAuthority(input.cwd, currentBranch, "runStackedAction");
                     return yield* runPrStep(input.cwd, currentBranch, textGenerationParams);
                   }),
                 ),
@@ -2688,7 +2860,7 @@ The local stash entry was kept for recovery.`,
         return result;
       });
 
-      return yield* runAction.pipe(
+      return yield* gitCore.withActionLock(input.cwd, runAction).pipe(
         Effect.catch((error) =>
           progress
             .emit({
@@ -2705,6 +2877,7 @@ The local stash entry was kept for recovery.`,
   return {
     status,
     readWorkingTreeDiff,
+    readWorkingTreeDiffStats,
     summarizeDiff,
     resolvePullRequest,
     pullRequestSnapshot,

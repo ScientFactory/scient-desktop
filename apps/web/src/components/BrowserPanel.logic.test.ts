@@ -5,11 +5,62 @@ import {
   browserCopyFeedbackMatches,
   buildBrowserAddressSuggestions,
   normalizeBrowserAddressInput,
+  localHtmlSourceKey,
+  localHtmlTabsShareSource,
+  pruneConsumedLocalHtmlSourceGenerations,
   reconcileHtmlPreviewGrants,
   resolveBrowserChromeStatus,
   resolveBrowserAddressSync,
   shouldCloseBrowserPanelAfterTabClose,
 } from "./BrowserPanel.logic";
+
+describe("local HTML source authority", () => {
+  it("keeps retargeted canonical sources distinct despite one display path", () => {
+    const first = {
+      kind: "local-html" as const,
+      displayUrl: "/workspace/current/report.html",
+      previewCwd: "/workspace",
+      sourceIdentity: "/workspace/source-a/report.html",
+      sourceRoot: "/workspace/source-a",
+    };
+    const second = {
+      ...first,
+      sourceIdentity: "/workspace/source-b/report.html",
+      sourceRoot: "/workspace/source-b",
+    };
+
+    expect(localHtmlSourceKey("thread-a", first)).not.toBe(localHtmlSourceKey("thread-a", second));
+    expect(localHtmlTabsShareSource(first, second)).toBe(false);
+    expect(localHtmlTabsShareSource(first, { ...first })).toBe(true);
+    expect(
+      localHtmlTabsShareSource(first, {
+        kind: "local-html",
+        displayUrl: first.displayUrl,
+        previewCwd: first.previewCwd,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("pruneConsumedLocalHtmlSourceGenerations", () => {
+  it("bounds bookkeeping across replacement tab ids and clears it after close", () => {
+    const consumed = new Map<string, number>(
+      Array.from({ length: 100 }, (_, index) => [`thread-a\0retired-${index}`, index] as const),
+    );
+    consumed.set("thread-a\0current", 100);
+    consumed.set("thread-b\0old-owner", 5);
+
+    pruneConsumedLocalHtmlSourceGenerations(consumed, "thread-a", [
+      { id: "current", kind: "local-html" },
+      { id: "web", kind: "web" },
+    ]);
+
+    expect([...consumed]).toEqual([["thread-a\0current", 100]]);
+
+    pruneConsumedLocalHtmlSourceGenerations(consumed, "thread-a", []);
+    expect(consumed.size).toBe(0);
+  });
+});
 
 describe("reconcileHtmlPreviewGrants", () => {
   it("keeps the original grant while its local HTML tab navigates", () => {
@@ -35,6 +86,34 @@ describe("reconcileHtmlPreviewGrants", () => {
 
     expect(result.revoked).toEqual([previewUrl]);
     expect(result.active.size).toBe(0);
+  });
+
+  it("rotates grant ownership when a refreshed capability keeps the logical tab id", () => {
+    const previousUrl = "http://g-old.preview.localhost:5000/index.html";
+    const replacementUrl = "http://g-new.preview.localhost:5000/index.html";
+    const result = reconcileHtmlPreviewGrants(new Map([["tab-local", previousUrl]]), [
+      { id: "tab-local", kind: "local-html", url: replacementUrl },
+    ]);
+
+    expect(result.active.get("tab-local")).toBe(replacementUrl);
+    expect(result.revoked).toEqual([previousUrl]);
+
+    const closed = reconcileHtmlPreviewGrants(result.active, []);
+    expect(closed.revoked).toEqual([replacementUrl]);
+  });
+
+  it("keeps the original preview grant when its tab navigates onto the web", () => {
+    const previousUrl = "http://g-preview.preview.localhost:5000/index.html";
+    const result = reconcileHtmlPreviewGrants(new Map([["tab-local", previousUrl]]), [
+      {
+        id: "tab-local",
+        kind: "local-html",
+        url: "https://example.com/details",
+      },
+    ]);
+
+    expect(result.active.get("tab-local")).toBe(previousUrl);
+    expect(result.revoked).toEqual([]);
   });
 
   it("keeps a shared local-site grant until its final tab closes", () => {
@@ -249,6 +328,22 @@ describe("resolveBrowserChromeStatus", () => {
         workspaceReady: true,
       }),
     ).toBeNull();
+  });
+
+  it("surfaces bounded automatic-refresh degradation without treating the page as failed", () => {
+    expect(
+      resolveBrowserChromeStatus({
+        localError: null,
+        localNotice: "Automatic refresh is limited. Use Reload after dependency changes.",
+        threadLastError: null,
+        activeTabStatus: "live",
+        hasActiveTab: true,
+        workspaceReady: true,
+      }),
+    ).toEqual({
+      tone: "default",
+      label: "Automatic refresh is limited. Use Reload after dependency changes.",
+    });
   });
 
   it("keeps onboarding copy for empty browser states", () => {

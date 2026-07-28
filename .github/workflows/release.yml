@@ -22,8 +22,7 @@ on:
         type: boolean
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: scient-desktop-release
@@ -53,7 +52,7 @@ jobs:
       ref: ${{ github.sha }}
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -134,6 +133,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Fetch official release lineage
+        run: git fetch --no-tags origin +refs/heads/release/stable:refs/remotes/origin/release/stable
+
+      - name: Verify append-only migration lineage
+        run: bun run migration:check
+
       - id: release_meta
         name: Resolve release policy
         env:
@@ -202,6 +207,8 @@ jobs:
 
   build:
     name: Build ${{ matrix.label }}
+    permissions:
+      contents: read
     needs: preflight
     runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
@@ -235,10 +242,11 @@ jobs:
             timeout_minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.preflight.outputs.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
@@ -303,6 +311,7 @@ jobs:
             "${{ needs.preflight.outputs.version }}"
 
       - name: Build Windows desktop artifact
+        id: build_windows
         if: matrix.platform == 'win'
         shell: bash
         env:
@@ -380,6 +389,31 @@ jobs:
             fi
           fi
 
+      - name: Smoke exact packaged desktop startup
+        if: ${{ matrix.platform != 'linux' }}
+        shell: bash
+        env:
+          SCIENT_PACKAGED_STARTUP_DIAGNOSTICS_DIR: ${{ github.workspace }}/packaged-startup-diagnostics
+          SCIENT_WINDOWS_PUBLISHER_SUBJECT: ${{ vars.SCIENT_WINDOWS_PUBLISHER_SUBJECT }}
+        run: |
+          node scripts/verify-packaged-desktop-startup.ts \
+            --assets-dir release-publish \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ matrix.arch }}" \
+            --version "${{ needs.preflight.outputs.version }}" \
+            --commit "${{ github.sha }}" \
+            --allow-unsigned-windows "${{ steps.build_windows.outputs.windows_signed != 'true' }}" \
+            --windows-publisher-subject "$SCIENT_WINDOWS_PUBLISHER_SUBJECT"
+
+      - name: Upload packaged startup failure diagnostics
+        if: ${{ failure() && matrix.platform != 'linux' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: packaged-startup-diagnostics-${{ matrix.platform }}-${{ matrix.arch }}
+          path: packaged-startup-diagnostics/*
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -389,13 +423,16 @@ jobs:
 
   publish_cli:
     name: Publish CLI to npm
+    permissions:
+      contents: read
+      id-token: write
     if: ${{ needs.preflight.outputs.publish_release == 'true' && vars.SCIENT_PUBLISH_CLI == '1' }}
     needs: [preflight, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
@@ -426,13 +463,15 @@ jobs:
 
   release:
     name: Publish GitHub Release
+    permissions:
+      contents: write
     if: ${{ needs.preflight.outputs.publish_release == 'true' }}
     needs: [preflight, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
@@ -702,7 +741,7 @@ jobs:
             runner: macos-15-intel
     steps:
       - name: Checkout exact release source
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.preflight.outputs.ref }}
 
@@ -763,7 +802,7 @@ jobs:
           owner: ${{ github.repository_owner }}
 
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0

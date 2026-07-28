@@ -60,6 +60,36 @@ describe("localHtmlPreviewPolicy", () => {
         resourceType: "xhr",
       }),
     ).toBe(false);
+    expect(
+      localHtmlPreviewRequestAllowed({
+        url: "https://frames.example/embed",
+        allowedOrigin: ORIGIN,
+        allowedExternalUrls: ["https://frames.example/embed"],
+        resourceType: "subFrame",
+      }),
+    ).toBe(false);
+    expect(
+      localHtmlPreviewRequestAllowed({
+        url: `${ORIGIN}/local-child.html`,
+        allowedOrigin: ORIGIN,
+        resourceType: "subFrame",
+      }),
+    ).toBe(true);
+    expect(
+      localHtmlPreviewRequestAllowed({
+        url: "data:text/html,<script>top.postMessage('active','*')</script>",
+        allowedOrigin: ORIGIN,
+        resourceType: "subFrame",
+      }),
+    ).toBe(false);
+    expect(
+      localHtmlPreviewRequestAllowed({
+        url: "https://frames.example/object",
+        allowedOrigin: ORIGIN,
+        allowedExternalUrls: ["https://frames.example/object"],
+        resourceType: "object",
+      }),
+    ).toBe(false);
   });
 
   it("denies local services, private networks, privileged schemes, and malformed URLs", () => {
@@ -107,6 +137,13 @@ describe("localHtmlPreviewPolicy", () => {
     expect(
       localHtmlPreviewNavigationDisposition({
         url: "https://frames.example/",
+        allowedOrigin: ORIGIN,
+        isMainFrame: false,
+      }),
+    ).toBe("deny");
+    expect(
+      localHtmlPreviewNavigationDisposition({
+        url: `${ORIGIN}/local-child.html`,
         allowedOrigin: ORIGIN,
         isMainFrame: false,
       }),

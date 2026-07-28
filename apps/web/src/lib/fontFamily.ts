@@ -129,3 +129,38 @@ export function normalizeMonospaceFontFamilyCssValue(
     ? normalizedValue
     : `${normalizedValue}, ${DEFAULT_MONOSPACE_FONT_FAMILY_STACK}`;
 }
+
+// Families self-hosted via `@fontsource-variable/*` register their CSS
+// `font-family` with a " Variable" suffix (e.g. "Inter Variable"), whereas
+// themes and user input reference the plain name ("Inter"). A plain name alone
+// would not match the bundled @font-face and would fall through to a system (or
+// serif) fallback once the Google Fonts CDN link is gone. Map the plain names
+// to the bundled variable families here.
+const BUNDLED_VARIABLE_FONT_ALIASES = new Map<string, string>([
+  ["inter", "Inter Variable"],
+  ["geist", "Geist Variable"],
+  ["geist mono", "Geist Mono Variable"],
+]);
+
+// Prepends the self-hosted variable family for any bundled font referenced by
+// its plain name, keeping the plain name after it as a fallback for anyone who
+// has the static face installed locally. Everything else passes through
+// untouched, so system fonts, generics, and CSS-wide keywords are preserved.
+export function expandBundledVariableFontAliases(value: string | null | undefined): string | null {
+  const normalizedValue = normalizeFontFamilyCssValue(value);
+  if (normalizedValue === null) {
+    return null;
+  }
+
+  const families: string[] = [];
+  for (const family of splitFontFamilyList(normalizedValue)) {
+    const bundledFamily = BUNDLED_VARIABLE_FONT_ALIASES.get(
+      unquoteFontFamily(family).toLowerCase(),
+    );
+    if (bundledFamily) {
+      families.push(quoteFontFamily(bundledFamily));
+    }
+    families.push(family);
+  }
+  return families.join(", ");
+}

@@ -5,6 +5,11 @@ import type {
   NativeApi,
   ProviderStartOptions,
 } from "@synara/contracts";
+import type {
+  AuthorizedGitPullInput,
+  AuthorizedGitRunStackedActionInput,
+} from "@synara/shared/gitMutationRpc";
+import { asGitDiffStatsNativeApi } from "@synara/shared/gitDiffStatsRpc";
 import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureNativeApi } from "../nativeApi";
 import { buildPatchCacheKey } from "./diffRendering";
@@ -21,6 +26,19 @@ const GIT_DIFF_SUMMARY_GC_TIME_MS = 30 * 60_000;
 const GIT_WORKING_TREE_DIFF_STALE_TIME_MS = 5_000;
 export const GIT_WORKING_TREE_DIFF_LIVE_REFETCH_INTERVAL_MS = 4_000;
 
+type AuthorizedGitMutations = {
+  pull: (input: AuthorizedGitPullInput) => ReturnType<NativeApi["git"]["pull"]>;
+  runStackedAction: (
+    input: AuthorizedGitRunStackedActionInput,
+  ) => ReturnType<NativeApi["git"]["runStackedAction"]>;
+};
+
+function authorizedGitMutations(api: NativeApi): AuthorizedGitMutations {
+  // The released NativeApi declaration is frozen by migration dependency lineage.
+  // The live RPC group overlays the stronger request schemas at the same method tags.
+  return api.git as NativeApi["git"] & AuthorizedGitMutations;
+}
+
 export const gitQueryKeys = {
   all: ["git"] as const,
   statuses: ["git", "status"] as const,
@@ -33,6 +51,11 @@ export const gitQueryKeys = {
     cwd: string | null,
     scope: GitReadWorkingTreeDiffInput["scope"] = "workingTree",
   ) => ["git", "working-tree-diff", cwd, scope] as const,
+  // Keep stats under the patch prefix so existing invalidations refresh both forms.
+  workingTreeDiffStats: (
+    cwd: string | null,
+    scope: GitReadWorkingTreeDiffInput["scope"] = "workingTree",
+  ) => ["git", "working-tree-diff", cwd, scope, "stats"] as const,
   diffSummary: (
     cacheScope: string | null,
     model: string | null,
@@ -89,7 +112,7 @@ export function invalidateGitQueriesForCwds(queryClient: QueryClient, cwds: Iter
   );
 }
 
-export function gitStatusQueryOptions(cwd: string | null) {
+export function gitStatusQueryOptions(cwd: string | null, enabled = true) {
   return queryOptions({
     queryKey: gitQueryKeys.status(cwd),
     queryFn: async () => {
@@ -97,7 +120,7 @@ export function gitStatusQueryOptions(cwd: string | null) {
       if (!cwd) throw new Error("Git status is unavailable.");
       return api.git.status({ cwd });
     },
-    enabled: cwd !== null,
+    enabled: enabled && cwd !== null,
     staleTime: GIT_STATUS_STALE_TIME_MS,
     refetchOnWindowFocus: true,
     refetchOnReconnect: "always",
@@ -221,6 +244,32 @@ export function gitWorkingTreeDiffQueryOptions(input: {
         throw new Error("Working tree diff is unavailable.");
       }
       return api.git.readWorkingTreeDiff({ cwd: input.cwd, scope });
+    },
+    enabled: (input.enabled ?? true) && input.cwd !== null,
+    staleTime: GIT_WORKING_TREE_DIFF_STALE_TIME_MS,
+    ...(refetchInterval !== undefined ? { refetchInterval } : {}),
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+  });
+}
+
+/** Compact scope totals resolved on the server without returning the patch text. */
+export function gitWorkingTreeDiffStatsQueryOptions(input: {
+  cwd: string | null;
+  scope?: GitReadWorkingTreeDiffInput["scope"];
+  enabled?: boolean;
+  refetchInterval?: number | false;
+}) {
+  const scope = input.scope ?? "workingTree";
+  const refetchInterval = input.refetchInterval;
+  return queryOptions({
+    queryKey: gitQueryKeys.workingTreeDiffStats(input.cwd, scope),
+    queryFn: async () => {
+      const api = asGitDiffStatsNativeApi(ensureNativeApi());
+      if (!input.cwd) {
+        throw new Error("Working tree diff stats are unavailable.");
+      }
+      return api.git.workingTreeDiffStats({ cwd: input.cwd, scope });
     },
     enabled: (input.enabled ?? true) && input.cwd !== null,
     staleTime: GIT_WORKING_TREE_DIFF_STALE_TIME_MS,
@@ -398,6 +447,7 @@ export function gitRunStackedActionMutationOptions(input: {
     {
       actionId: string;
       action: GitStackedAction;
+      expectedBranch: string;
       commitMessage?: string;
       featureBranch?: boolean;
       filePaths?: string[];
@@ -408,11 +458,16 @@ export function gitRunStackedActionMutationOptions(input: {
     queryClient: input.queryClient,
     mutationKey: gitMutationKeys.runStackedAction(input.cwd),
     unavailableMessage: "Git action is unavailable.",
-    run: (api, cwd, { actionId, action, commitMessage, featureBranch, filePaths }) =>
-      api.git.runStackedAction({
+    run: (
+      api,
+      cwd,
+      { actionId, action, expectedBranch, commitMessage, featureBranch, filePaths },
+    ) =>
+      authorizedGitMutations(api).runStackedAction({
         actionId,
         cwd,
         action,
+        expectedBranch,
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
@@ -425,12 +480,16 @@ export function gitRunStackedActionMutationOptions(input: {
 }
 
 export function gitPullMutationOptions(input: { cwd: string | null; queryClient: QueryClient }) {
-  return makeGitMutationOptions<void, Awaited<ReturnType<NativeApi["git"]["pull"]>>>({
+  return makeGitMutationOptions<
+    { expectedBranch: string },
+    Awaited<ReturnType<NativeApi["git"]["pull"]>>
+  >({
     cwd: input.cwd,
     queryClient: input.queryClient,
     mutationKey: gitMutationKeys.pull(input.cwd),
     unavailableMessage: "Git pull is unavailable.",
-    run: (api, cwd) => api.git.pull({ cwd }),
+    run: (api, cwd, { expectedBranch }) =>
+      authorizedGitMutations(api).pull({ cwd, expectedBranch }),
   });
 }
 

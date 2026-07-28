@@ -13,6 +13,9 @@ export const DEFAULT_CURSOR_AGENT_BINARY = "cursor-agent";
 export const LEGACY_CURSOR_AGENT_BINARY = "agent";
 export const CURSOR_EDITOR_BINARY = "cursor";
 export const CURSOR_AGENT_BROWSERLESS_ENV = {
+  // Cursor Agent's own browser launcher checks this exact variable.
+  NO_OPEN_BROWSER: "true",
+  // Keep the older generic guard and inert browser fallback for compatibility.
   NO_BROWSER: "true",
   BROWSER: "www-browser",
 } as const satisfies Readonly<Record<string, string>>;

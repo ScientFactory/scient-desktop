@@ -7,6 +7,16 @@ import * as NodeSqliteClient from "./NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
+it("keeps executable migration identity references immutable", () => {
+  const firstEntry = migrationEntries[0];
+  const originalName = firstEntry[1];
+
+  assert.isTrue(Object.isFrozen(migrationEntries));
+  assert.isTrue(Object.isFrozen(firstEntry));
+  assert.isFalse(Reflect.set(firstEntry, 1, "RenamedAtRuntime"));
+  assert.strictEqual(firstEntry[1], originalName);
+});
+
 const trackerRows = (sql: SqlClient.SqlClient) =>
   sql<{ readonly migration_id: number; readonly name: string }>`
     SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id ASC

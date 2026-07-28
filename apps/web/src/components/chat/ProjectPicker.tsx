@@ -3,7 +3,15 @@
 //          folders while always creating chats as rows inside the shared Chats container.
 // Layer: Chat / empty-state entrypoint
 
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+  type ReactElement,
+} from "react";
 import { type ProjectDirectoryEntry, type ProjectId } from "@synara/contracts";
 import { readNativeApi } from "../../nativeApi";
 import { useStore } from "../../store";
@@ -19,6 +27,7 @@ import {
   ComboboxEmpty,
   ComboboxGroup,
   ComboboxGroupLabel,
+  ComboboxInput,
   ComboboxItem,
   ComboboxList,
   ComboboxPopup,
@@ -35,11 +44,13 @@ interface ProjectPickerProps {
   selectedProjectId?: ProjectId | null;
   selectedWorkspaceRoot?: string | null;
   onSelectProject?: ((projectId: ProjectId) => void | Promise<void>) | undefined;
-  onSelectWorkspaceRoot?: ((workspaceRoot: string) => void) | undefined;
-  onCreateProjectFromPath?: ((workspaceRoot: string) => void | Promise<void>) | undefined;
+  onSelectWorkspaceRoot?: ((workspaceRoot: string) => void | Promise<void>) | undefined;
+  onCreateProject?: (() => void | Promise<void>) | undefined;
   onResetToHome?: (() => void | Promise<void>) | undefined;
   /** Class override for the trigger button (e.g. tighter height in the composer tray). */
   triggerClassName?: string;
+  /** Replaces the standard picker button while retaining the combobox trigger semantics. */
+  renderTrigger?: ReactElement<Record<string, unknown>>;
 }
 
 interface ActiveFolderOption {
@@ -87,16 +98,16 @@ export const ProjectPicker = memo(function ProjectPicker({
   selectedWorkspaceRoot = null,
   onSelectProject,
   onSelectWorkspaceRoot,
-  onCreateProjectFromPath,
+  onCreateProject,
   onResetToHome,
   triggerClassName,
+  renderTrigger,
 }: ProjectPickerProps) {
   const projects = useStore((state) => state.projects);
   const sidebarThreads = useStore(useMemo(() => createSidebarDisplayThreadsSelector(), []));
   const homeDir = useWorkspaceStore((state) => state.homeDir);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const deferredQuery = useDeferredValue(query);
   const [isPicking, setIsPicking] = useState(false);
   const [isLoadingDirectories, setIsLoadingDirectories] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -178,7 +189,10 @@ export const ProjectPicker = memo(function ProjectPicker({
     [homeDir],
   );
 
-  const normalizedQuery = deferredQuery.trim().toLowerCase();
+  // Keep the combobox's semantic item set synchronous with the live input. In
+  // particular, Enter must never activate an aria-activedescendant left over
+  // from a deferred render of the previous query.
+  const normalizedQuery = query.trim().toLowerCase();
   const filteredActiveFolderOptions = useMemo(() => {
     if (normalizedQuery.length === 0) return activeFolderOptions;
     return activeFolderOptions.filter((entry) =>
@@ -257,6 +271,17 @@ export const ProjectPicker = memo(function ProjectPicker({
     }
   }, []);
 
+  const reopenWithError = useCallback((error: unknown, fallback: string) => {
+    const message = error instanceof Error ? error.message : fallback;
+    // Combobox item activation can emit its own close after the item's click handler. Reopen in
+    // the next task so a rejected mutation keeps recoverable feedback visible instead of letting
+    // the primitive's trailing close erase it.
+    globalThis.setTimeout(() => {
+      setOpen(true);
+      setErrorMessage(message);
+    }, 0);
+  }, []);
+
   useEffect(() => {
     if (
       isProjectSelectionMode ||
@@ -303,6 +328,11 @@ export const ProjectPicker = memo(function ProjectPicker({
 
   const handleSelectActiveFolder = useCallback(
     (folder: ActiveFolderOption) => {
+      // Close before awaiting route/project work so a second picker choice cannot race an already
+      // issued navigation. Reopen only when the owning action reports an error.
+      setOpen(false);
+      setQuery("");
+      setErrorMessage(null);
       try {
         // Existing projects should switch the draft into that project; raw paths stay workspace roots.
         const selection =
@@ -313,57 +343,87 @@ export const ProjectPicker = memo(function ProjectPicker({
               : onSelectWorkspaceRoot?.(folder.cwd);
         void Promise.resolve(selection)
           .then(() => {
-            setOpen(false);
+            setErrorMessage(null);
           })
           .catch((error) => {
-            setErrorMessage(error instanceof Error ? error.message : "Unable to select project.");
+            reopenWithError(error, "Unable to select project.");
           });
       } catch (error) {
-        setErrorMessage(error instanceof Error ? error.message : "Unable to select project.");
+        reopenWithError(error, "Unable to select project.");
       }
     },
-    [isProjectSelectionMode, onSelectProject, onSelectWorkspaceRoot],
+    [isProjectSelectionMode, onSelectProject, onSelectWorkspaceRoot, reopenWithError],
+  );
+
+  const handleSelectWorkspaceRoot = useCallback(
+    (workspaceRoot: string) => {
+      setOpen(false);
+      setQuery("");
+      setErrorMessage(null);
+      try {
+        void Promise.resolve(onSelectWorkspaceRoot?.(workspaceRoot))
+          .then(() => {
+            setErrorMessage(null);
+          })
+          .catch((error) => {
+            reopenWithError(error, "Unable to select folder.");
+          });
+      } catch (error) {
+        reopenWithError(error, "Unable to select folder.");
+      }
+    },
+    [onSelectWorkspaceRoot, reopenWithError],
   );
 
   const handleAddNewProject = useCallback(async () => {
     if (isPicking) return;
-    const api = readNativeApi();
-    if (!api) {
-      setErrorMessage("App is still connecting. Try again in a moment.");
-      return;
-    }
-
     setIsPicking(true);
     setErrorMessage(null);
+    // Close before the native dialog or any asynchronous creation work. The owning callback starts
+    // its lifetime guard synchronously, so neither navigation nor another picker choice can make
+    // this request current again after its first await.
+    setOpen(false);
+    setQuery("");
     try {
+      if (onCreateProject) {
+        await onCreateProject();
+        setIsPicking(false);
+        return;
+      }
+
+      const api = readNativeApi();
+      if (!api) {
+        throw new Error("App is still connecting. Try again in a moment.");
+      }
       const pickedPath = await api.dialogs.pickFolder();
       if (!pickedPath) {
         setIsPicking(false);
         return;
       }
-      if (onCreateProjectFromPath) {
-        await onCreateProjectFromPath(pickedPath);
-      } else {
-        onSelectWorkspaceRoot?.(pickedPath);
-      }
+      await onSelectWorkspaceRoot?.(pickedPath);
       setIsPicking(false);
-      setOpen(false);
     } catch (error) {
       setIsPicking(false);
+      setOpen(true);
       setErrorMessage(error instanceof Error ? error.message : "Unable to open the folder picker.");
     }
-  }, [isPicking, onCreateProjectFromPath, onSelectWorkspaceRoot]);
+  }, [isPicking, onCreateProject, onSelectWorkspaceRoot]);
 
   const handleResetToHome = useCallback(() => {
+    setOpen(false);
+    setQuery("");
+    setErrorMessage(null);
     try {
       void Promise.resolve(onResetToHome?.())
         .then(() => {
-          setOpen(false);
+          setErrorMessage(null);
         })
         .catch((error) => {
+          setOpen(true);
           setErrorMessage(error instanceof Error ? error.message : "Unable to update project.");
         });
     } catch (error) {
+      setOpen(true);
       setErrorMessage(error instanceof Error ? error.message : "Unable to update project.");
     }
   }, [onResetToHome]);
@@ -373,6 +433,23 @@ export const ProjectPicker = memo(function ProjectPicker({
   const loadingAddProjectLabel = isProjectSelectionMode
     ? "Adding project..."
     : "Opening folder picker...";
+
+  const handleSearchKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+    const activeItemId = event.currentTarget.getAttribute("aria-activedescendant");
+    const activeItem = activeItemId
+      ? event.currentTarget.ownerDocument.getElementById(activeItemId)
+      : null;
+    if (!activeItem?.matches('[data-slot="combobox-item"]')) {
+      return;
+    }
+    // Base UI normally activates the highlighted item on Enter. Keep this explicit guard because
+    // this picker controls and filters its items outside the primitive, which can otherwise leave
+    // the highlighted DOM item visible without dispatching its activation click.
+    event.preventDefault();
+    event.stopPropagation();
+    activeItem.click();
+  }, []);
 
   const renderActiveFolderOption = (folder: ActiveFolderOption, index: number) => {
     const selected = isProjectSelectionMode
@@ -414,20 +491,24 @@ export const ProjectPicker = memo(function ProjectPicker({
       items={selectableDirectoryPaths}
       filteredItems={filteredDirectoryPaths}
       autoHighlight
+      inputValue={query}
+      onInputValueChange={setQuery}
       onOpenChange={handleOpenChange}
       open={open}
     >
       <ComboboxTrigger
         render={
-          <PickerTriggerButton
-            data-testid={
-              isProjectSelectionMode ? "project-picker-trigger" : "workspace-picker-trigger"
-            }
-            icon={<FolderClosed className="size-3.5" />}
-            label={triggerLabel}
-            hideChevron
-            {...(triggerClassName ? { className: triggerClassName } : {})}
-          />
+          renderTrigger ?? (
+            <PickerTriggerButton
+              data-testid={
+                isProjectSelectionMode ? "project-picker-trigger" : "workspace-picker-trigger"
+              }
+              icon={<FolderClosed className="size-3.5" />}
+              label={triggerLabel}
+              hideChevron
+              {...(triggerClassName ? { className: triggerClassName } : {})}
+            />
+          )
         }
       />
       <ComboboxPopup align={align} side={side} className="p-0">
@@ -435,6 +516,17 @@ export const ProjectPicker = memo(function ProjectPicker({
           searchPlaceholder="Search projects"
           query={query}
           onQueryChange={setQuery}
+          searchControl={
+            <ComboboxInput
+              autoFocus
+              inputClassName="rounded-md border-border/60 bg-background shadow-none before:hidden has-focus-visible:border-neutral-500/15 has-focus-visible:ring-0 [&_input]:font-sans"
+              placeholder="Search projects"
+              showTrigger={false}
+              size="sm"
+              type="search"
+              onKeyDownCapture={handleSearchKeyDown}
+            />
+          }
           footer={
             <>
               <button
@@ -459,7 +551,9 @@ export const ProjectPicker = memo(function ProjectPicker({
                 </button>
               ) : null}
               {errorMessage ? (
-                <div className="px-2 pb-1 text-destructive text-xs">{errorMessage}</div>
+                <div aria-live="polite" role="alert" className="px-2 pb-1 text-destructive text-xs">
+                  {errorMessage}
+                </div>
               ) : null}
             </>
           }
@@ -497,10 +591,7 @@ export const ProjectPicker = memo(function ProjectPicker({
                     key={absolutePath}
                     index={filteredActiveFolderOptions.length + index}
                     value={absolutePath}
-                    onClick={() => {
-                      onSelectWorkspaceRoot?.(absolutePath);
-                      setOpen(false);
-                    }}
+                    onClick={() => handleSelectWorkspaceRoot(absolutePath)}
                     className={cn(
                       absolutePath === selectedWorkspaceRoot &&
                         "bg-[var(--color-background-elevated-secondary)] text-[var(--color-text-foreground)]",

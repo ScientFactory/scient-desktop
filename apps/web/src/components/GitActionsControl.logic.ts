@@ -536,6 +536,13 @@ export function resolveLiveThreadBranchUpdate(input: {
     return null;
   }
 
+  // Branch discovery and status are separate queries. Status can resolve first
+  // (or remain cached while branches refresh), so null is not yet evidence of
+  // a real branch mismatch and must not start an invalidation loop.
+  if (input.threadBranch === null) {
+    return null;
+  }
+
   if (input.gitStatus.branch === null && input.threadBranch !== null) {
     return null;
   }
@@ -556,6 +563,28 @@ export function resolveLiveThreadBranchUpdate(input: {
   return {
     branch: input.gitStatus.branch,
   };
+}
+
+export function resolveGitStatusForActions(input: {
+  repositoryConfirmed: boolean;
+  currentBranch: string | null;
+  gitStatus: GitStatusResult | null;
+}): GitStatusResult | null {
+  // Branch discovery is the action-safety authority. Cached status from a
+  // previous branch must not enable mutations on the newly discovered branch. A confirmed
+  // detached status remains visible so the existing recovery controls can offer branch creation;
+  // the mutation path separately requires a named branch.
+  if (!input.repositoryConfirmed || !input.gitStatus) {
+    return null;
+  }
+
+  if (input.currentBranch === null) {
+    return input.gitStatus.branch === null ? input.gitStatus : null;
+  }
+
+  if (input.gitStatus.branch !== input.currentBranch) return null;
+
+  return input.gitStatus;
 }
 
 // Re-export from shared for backwards compatibility in this module's exports

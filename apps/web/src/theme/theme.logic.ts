@@ -5,6 +5,7 @@
 
 import { THEME_SEED_CATALOG } from "./theme.seed.generated";
 import {
+  expandBundledVariableFontAliases,
   normalizeFontFamilyCssValue,
   normalizeMonospaceFontFamilyCssValue,
 } from "../lib/fontFamily";
@@ -800,12 +801,15 @@ export function buildThemeCssVariables(
     "--sidebar-foreground": readCodexVariable("--color-text-foreground"),
     "--success": pack.theme.semanticColors.diffAdded,
     "--success-foreground": pack.theme.surface,
-    "--theme-font-code-family": normalizeMonospaceFontFamilyCssValue(pack.theme.fonts.code) ?? "",
+    "--theme-font-code-family":
+      expandBundledVariableFontAliases(
+        normalizeMonospaceFontFamilyCssValue(pack.theme.fonts.code),
+      ) ?? "",
     // Empty string → the applier removes the property, so the base -apple-system stack
     // (SF Pro on macOS) takes over when the user prefers the native font.
     "--theme-font-ui-family": options?.systemUiFont
       ? ""
-      : (normalizeFontFamilyCssValue(pack.theme.fonts.ui) ?? ""),
+      : (expandBundledVariableFontAliases(normalizeFontFamilyCssValue(pack.theme.fonts.ui)) ?? ""),
     "--warning": warningColor,
     "--warning-foreground": pack.theme.surface,
   };

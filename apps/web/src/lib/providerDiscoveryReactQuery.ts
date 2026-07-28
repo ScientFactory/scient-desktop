@@ -12,6 +12,8 @@ import type {
 import { queryOptions } from "@tanstack/react-query";
 import { ensureNativeApi } from "~/nativeApi";
 
+import { getProviderDiscoveryGeneration } from "./providerDiscoveryInvalidation";
+
 const EMPTY_SKILLS_RESULT: ProviderListSkillsResult = {
   skills: [],
   source: "empty",
@@ -50,16 +52,35 @@ const EMPTY_PLUGINS_RESULT: ProviderListPluginsResult = {
 // side effect of returning to the Scient window.
 const PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS = false;
 
+class StaleProviderDiscoveryGenerationError extends Error {
+  constructor(kind: "model" | "agent" | "command") {
+    super(`Discarded a stale Claude ${kind} catalog from an earlier provider state.`);
+    this.name = "StaleProviderDiscoveryGenerationError";
+  }
+}
+
+function shouldRetryProviderDiscovery(failureCount: number, error: unknown): boolean {
+  return !(error instanceof StaleProviderDiscoveryGenerationError) && failureCount < 3;
+}
+
 export const providerDiscoveryQueryKeys = {
   all: ["provider-discovery"] as const,
   composerCapabilities: (provider: ProviderKind) =>
     ["provider-discovery", "composer-capabilities", provider] as const,
+  commandsForProvider: (provider: ProviderKind) =>
+    ["provider-discovery", "commands", provider] as const,
   commands: (
     provider: ProviderKind,
     cwd: string | null,
     agentDir: string | null,
     connectionKey: string | null,
-  ) => ["provider-discovery", "commands", provider, cwd, agentDir, connectionKey] as const,
+  ) =>
+    [
+      ...providerDiscoveryQueryKeys.commandsForProvider(provider),
+      cwd,
+      agentDir,
+      connectionKey,
+    ] as const,
   // The skill list is query-independent (filtering is client-side), so the key
   // deliberately excludes the typed filter to avoid a refetch per keystroke.
   skills: (provider: ProviderKind, cwd: string | null, agentDir: string | null) =>
@@ -164,19 +185,25 @@ export function providerCommandsQueryOptions(input: {
     hasServerPassword: Boolean(input.serverPassword),
     experimentalWebSockets: input.experimentalWebSockets ?? null,
   });
+  const discoveryGeneration =
+    input.provider === "claudeAgent" ? getProviderDiscoveryGeneration() : null;
+  const baseQueryKey = providerDiscoveryQueryKeys.commands(
+    input.provider,
+    input.cwd,
+    input.agentDir ?? null,
+    connectionKey,
+  );
   return queryOptions({
-    queryKey: providerDiscoveryQueryKeys.commands(
-      input.provider,
-      input.cwd,
-      input.agentDir ?? null,
-      connectionKey,
-    ),
+    queryKey:
+      discoveryGeneration === null
+        ? baseQueryKey
+        : ([...baseQueryKey, discoveryGeneration] as const),
     queryFn: async () => {
       const api = ensureNativeApi();
       if (!input.cwd) {
         throw new Error("Command discovery is unavailable.");
       }
-      return api.provider.listCommands({
+      const result = await api.provider.listCommands({
         provider: input.provider,
         cwd: input.cwd,
         ...(input.threadId ? { threadId: input.threadId } : {}),
@@ -187,12 +214,32 @@ export function providerCommandsQueryOptions(input: {
           ? { experimentalWebSockets: input.experimentalWebSockets }
           : {}),
         ...(input.agentDir ? { agentDir: input.agentDir } : {}),
+        ...(discoveryGeneration ? { discoveryGeneration } : {}),
       });
+      if (
+        discoveryGeneration !== null &&
+        discoveryGeneration !== getProviderDiscoveryGeneration()
+      ) {
+        throw new StaleProviderDiscoveryGenerationError("command");
+      }
+      return result;
     },
     enabled: (input.enabled ?? true) && input.cwd !== null,
+    // A stale-generation discard is terminal, not a transient failure: retrying it
+    // would re-throw and, worse, spawn another temporary Claude discovery process
+    // per attempt. Fail fast on it for claudeAgent, as models/agents already do.
+    ...(input.provider === "claudeAgent" ? { retry: shouldRetryProviderDiscovery } : {}),
     staleTime: 30_000,
     refetchOnWindowFocus: PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS,
-    placeholderData: (previous) => previous ?? EMPTY_COMMANDS_RESULT,
+    // Never carry a Claude command list across a discovery-generation change: a
+    // stale list from an earlier account/runtime must not linger while fresh
+    // discovery is pending. Other providers keep the anti-flicker placeholder.
+    ...(input.provider === "claudeAgent"
+      ? {}
+      : {
+          placeholderData: (previous: ProviderListCommandsResult | undefined) =>
+            previous ?? EMPTY_COMMANDS_RESULT,
+        }),
   });
 }
 
@@ -218,31 +265,59 @@ export function providerModelsQueryOptions(input: {
   cwd?: string | null;
   enabled?: boolean;
 }) {
+  const discoveryGeneration =
+    input.provider === "claudeAgent" ? getProviderDiscoveryGeneration() : null;
+  const baseQueryKey = providerDiscoveryQueryKeys.models(
+    input.provider,
+    input.binaryPath ?? null,
+    input.apiEndpoint ?? null,
+    input.agentDir ?? null,
+    input.cwd ?? null,
+  );
   return queryOptions({
-    queryKey: providerDiscoveryQueryKeys.models(
-      input.provider,
-      input.binaryPath ?? null,
-      input.apiEndpoint ?? null,
-      input.agentDir ?? null,
-      input.cwd ?? null,
-    ),
+    queryKey:
+      discoveryGeneration === null
+        ? baseQueryKey
+        : ([...baseQueryKey, discoveryGeneration] as const),
     queryFn: async (): Promise<ProviderListModelsResult> => {
       const api = ensureNativeApi();
-      return api.provider.listModels({
+      const result = await api.provider.listModels({
         provider: input.provider,
         ...(input.binaryPath ? { binaryPath: input.binaryPath } : {}),
         ...(input.apiEndpoint ? { apiEndpoint: input.apiEndpoint } : {}),
         ...(input.agentDir ? { agentDir: input.agentDir } : {}),
         ...(input.cwd ? { cwd: input.cwd } : {}),
+        ...(discoveryGeneration ? { discoveryGeneration } : {}),
       });
+      if (
+        discoveryGeneration !== null &&
+        discoveryGeneration !== getProviderDiscoveryGeneration()
+      ) {
+        throw new StaleProviderDiscoveryGenerationError("model");
+      }
+      return result;
     },
     enabled: input.enabled ?? true,
     // Cursor/droid failures are permanent for a session (missing CLI/auth): fail
     // fast so the picker settles to static options instead of spinning (#103).
-    retry: input.provider === "droid" || input.provider === "cursor" ? 0 : 3,
+    retry:
+      input.provider === "droid" || input.provider === "cursor"
+        ? 0
+        : input.provider === "claudeAgent"
+          ? shouldRetryProviderDiscovery
+          : 3,
     staleTime: input.provider === "droid" ? 5 * 60_000 : 60_000,
     refetchOnWindowFocus: PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS,
-    placeholderData: (previous) => previous ?? EMPTY_MODELS_RESULT,
+    // Never carry a Claude catalog across an executable/cwd cache-key change.
+    // That placeholder can carry an older runtimeVersion and briefly authorize
+    // an Opus 5 row for a different binary or project while fresh discovery is
+    // still pending. Other providers retain the anti-flicker behavior from #103.
+    ...(input.provider === "claudeAgent"
+      ? {}
+      : {
+          placeholderData: (previous: ProviderListModelsResult | undefined) =>
+            previous ?? EMPTY_MODELS_RESULT,
+        }),
   });
 }
 
@@ -252,24 +327,44 @@ export function providerAgentsQueryOptions(input: {
   cwd?: string | null;
   enabled?: boolean;
 }) {
+  const discoveryGeneration =
+    input.provider === "claudeAgent" ? getProviderDiscoveryGeneration() : null;
+  const baseQueryKey = providerDiscoveryQueryKeys.agents(
+    input.provider,
+    input.binaryPath ?? null,
+    input.cwd ?? null,
+  );
   return queryOptions({
-    queryKey: providerDiscoveryQueryKeys.agents(
-      input.provider,
-      input.binaryPath ?? null,
-      input.cwd ?? null,
-    ),
+    queryKey:
+      discoveryGeneration === null
+        ? baseQueryKey
+        : ([...baseQueryKey, discoveryGeneration] as const),
     queryFn: async () => {
       const api = ensureNativeApi();
-      return api.provider.listAgents({
+      const result = await api.provider.listAgents({
         provider: input.provider,
         ...(input.binaryPath ? { binaryPath: input.binaryPath } : {}),
         ...(input.cwd ? { cwd: input.cwd } : {}),
+        ...(discoveryGeneration ? { discoveryGeneration } : {}),
       });
+      if (
+        discoveryGeneration !== null &&
+        discoveryGeneration !== getProviderDiscoveryGeneration()
+      ) {
+        throw new StaleProviderDiscoveryGenerationError("agent");
+      }
+      return result;
     },
     enabled: input.enabled ?? true,
+    ...(input.provider === "claudeAgent" ? { retry: shouldRetryProviderDiscovery } : {}),
     staleTime: 60_000,
     refetchOnWindowFocus: PROVIDER_DISCOVERY_REFETCH_ON_WINDOW_FOCUS,
-    placeholderData: (previous) => previous ?? EMPTY_AGENTS_RESULT,
+    ...(input.provider === "claudeAgent"
+      ? {}
+      : {
+          placeholderData: (previous: ProviderListAgentsResult | undefined) =>
+            previous ?? EMPTY_AGENTS_RESULT,
+        }),
   });
 }
 

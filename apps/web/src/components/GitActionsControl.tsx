@@ -33,6 +33,7 @@ import {
   type DefaultBranchConfirmableAction,
   requiresFeatureBranchForDefaultBranchAction,
   requiresDefaultBranchConfirmation,
+  resolveGitStatusForActions,
   resolveLiveThreadBranchUpdate,
   resolveDefaultCreateBranchName,
   resolveDefaultBranchActionDialogCopy,
@@ -359,13 +360,20 @@ export default function GitActionsControl({
     });
   }, []);
 
-  const { data: gitStatus = null, error: gitStatusError } = useQuery(gitStatusQueryOptions(gitCwd));
-
-  const { data: branchList = null } = useQuery(gitBranchesQueryOptions(gitCwd));
+  const { data: branchList = null, isSuccess: branchListReady } = useQuery(
+    gitBranchesQueryOptions(gitCwd),
+  );
   // Default to true while loading so we don't flash init controls.
   const isRepo = branchList?.isRepo ?? true;
+  const repositoryConfirmed = branchListReady && branchList?.isRepo === true;
   const hasOriginRemote = branchList?.hasOriginRemote ?? false;
   const currentBranch = branchList?.branches.find((branch) => branch.current)?.name ?? null;
+  // Do not poll status until branch discovery confirms this cwd is a repo.
+  // Besides avoiding unnecessary failures for non-repo projects, this keeps a
+  // status response from racing ahead and starting a permanent refresh loop.
+  const { data: gitStatus = null, error: gitStatusError } = useQuery(
+    gitStatusQueryOptions(gitCwd, repositoryConfirmed),
+  );
   const liveThreadBranchUpdate = useMemo(
     () =>
       resolveLiveThreadBranchUpdate({
@@ -381,7 +389,11 @@ export default function GitActionsControl({
     void invalidateGitQueries(queryClient);
   }, [isGitStatusOutOfSync, queryClient]);
 
-  const gitStatusForActions = isGitStatusOutOfSync ? null : gitStatus;
+  const gitStatusForActions = resolveGitStatusForActions({
+    repositoryConfirmed,
+    currentBranch,
+    gitStatus,
+  });
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
@@ -648,6 +660,8 @@ export default function GitActionsControl({
   }, [gitStatusForActions]);
 
   const runSyncWithRemote = useCallback(() => {
+    const expectedBranch = gitStatusForActions?.branch;
+    if (!expectedBranch) return;
     const activityKey = `git:${gitActivityScope}:pull`;
     activityManager.publish({
       dedupeKey: activityKey,
@@ -657,7 +671,7 @@ export default function GitActionsControl({
       title: "Syncing with remote...",
       destination: threadActivityDestination,
     });
-    void pullMutation.mutateAsync().then(
+    void pullMutation.mutateAsync({ expectedBranch }).then(
       (result) => {
         activityManager.publish({
           dedupeKey: activityKey,
@@ -684,7 +698,7 @@ export default function GitActionsControl({
         });
       },
     );
-  }, [gitActivityScope, pullMutation, threadActivityDestination]);
+  }, [gitActivityScope, gitStatusForActions?.branch, pullMutation, threadActivityDestination]);
 
   const runGitAction = useCallback(
     async function runGitAction({
@@ -699,6 +713,11 @@ export default function GitActionsControl({
     }: RunGitActionInput) {
       const actionStatus = statusOverride ?? gitStatusForActions;
       const actionBranch = actionStatus?.branch ?? null;
+      // Every mutating action requires a branch status that branch discovery has independently
+      // confirmed. The server receives the same branch as an execution-time compare-and-set guard.
+      if (!actionStatus || !actionBranch) {
+        return;
+      }
       const actionIsDefaultBranch =
         isDefaultBranchOverride ?? (featureBranch ? false : isDefaultBranch);
       const includesCommit =
@@ -771,6 +790,7 @@ export default function GitActionsControl({
       const promise = runImmediateGitActionMutation.mutateAsync({
         actionId,
         action,
+        expectedBranch: actionBranch,
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),
         ...(filePaths ? { filePaths } : {}),
@@ -841,6 +861,13 @@ export default function GitActionsControl({
     if (!pendingDefaultBranchAction) return;
     const { action, commitMessage, forcePushOnlyProgress, filePaths } = pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
+    if (gitStatusForActions?.branch !== pendingDefaultBranchAction.branchName) {
+      transientAlertManager.add({
+        title: "Git branch changed",
+        description: "No action was run. Review the current branch and try again.",
+      });
+      return;
+    }
     void runGitAction({
       action,
       ...(commitMessage ? { commitMessage } : {}),
@@ -848,13 +875,21 @@ export default function GitActionsControl({
       ...(filePaths ? { filePaths } : {}),
       ...(requiresFeatureBranchForDefaultBranchAction(action) ? { featureBranch: true } : {}),
       skipDefaultBranchPrompt: true,
+      statusOverride: gitStatusForActions,
     });
-  }, [pendingDefaultBranchAction, runGitAction]);
+  }, [gitStatusForActions, pendingDefaultBranchAction, runGitAction]);
 
   const checkoutFeatureBranchAndContinuePendingAction = useCallback(() => {
     if (!pendingDefaultBranchAction) return;
     const { action, commitMessage, forcePushOnlyProgress, filePaths } = pendingDefaultBranchAction;
     setPendingDefaultBranchAction(null);
+    if (gitStatusForActions?.branch !== pendingDefaultBranchAction.branchName) {
+      transientAlertManager.add({
+        title: "Git branch changed",
+        description: "No action was run. Review the current branch and try again.",
+      });
+      return;
+    }
     void runGitAction({
       action,
       ...(commitMessage ? { commitMessage } : {}),
@@ -862,8 +897,9 @@ export default function GitActionsControl({
       ...(filePaths ? { filePaths } : {}),
       featureBranch: true,
       skipDefaultBranchPrompt: true,
+      statusOverride: gitStatusForActions,
     });
-  }, [pendingDefaultBranchAction, runGitAction]);
+  }, [gitStatusForActions, pendingDefaultBranchAction, runGitAction]);
 
   const runDialogActionOnNewBranch = useCallback(() => {
     if (!isCommitDialogOpen) return;

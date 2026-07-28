@@ -53,7 +53,10 @@ function copyWorkspaceManifestFixture(targetRoot: string): void {
   });
 }
 
-function writeMacManifestFixtures(targetRoot: string): { arm64Path: string; x64Path: string } {
+function writeMacManifestFixtures(targetRoot: string): {
+  arm64Path: string;
+  x64Path: string;
+} {
   const assetDirectory = resolve(targetRoot, "release-assets");
   mkdirSync(assetDirectory, { recursive: true });
 
@@ -137,9 +140,12 @@ function verifyReleaseRepositoryPolicy(): void {
 
 interface ReleaseWorkflowStep {
   readonly env?: Record<string, unknown>;
+  readonly id?: string;
   readonly if?: string;
   readonly name?: string;
   readonly run?: string;
+  readonly uses?: string;
+  readonly with?: Record<string, unknown>;
 }
 
 function assertScopedSigningEnvironment(
@@ -185,7 +191,10 @@ function verifyCanonicalIdentity(): void {
     throw new Error("Expected packaged Scient clients to use the approved update channel.");
   }
 
-  const linux = createDesktopPlatformBuildConfig({ platform: "linux", target: "AppImage" }).linux;
+  const linux = createDesktopPlatformBuildConfig({
+    platform: "linux",
+    target: "AppImage",
+  }).linux;
   if (!linux || linux.executableName !== "scient") {
     throw new Error("Expected Linux desktop releases to install the scient executable.");
   }
@@ -229,6 +238,10 @@ function verifyReleaseWorkflowSafety(): void {
     resolve(repoRoot, ".github/workflows/release.yml"),
     "utf8",
   ).replaceAll("\r\n", "\n");
+  const ciWorkflow = readFileSync(resolve(repoRoot, ".github/workflows/ci.yml"), "utf8").replaceAll(
+    "\r\n",
+    "\n",
+  );
   const releaseBuildScript = readFileSync(
     resolve(repoRoot, "scripts/build-release-desktop-artifact.sh"),
     "utf8",
@@ -238,13 +251,89 @@ function verifyReleaseWorkflowSafety(): void {
     "utf8",
   ).replaceAll("\r\n", "\n");
   const parsedWorkflow = parseYaml(workflow) as {
+    permissions?: Record<string, string>;
     jobs?: {
-      build?: { steps?: Array<ReleaseWorkflowStep> };
+      build?: {
+        permissions?: Record<string, string>;
+        steps?: Array<ReleaseWorkflowStep>;
+        strategy?: { matrix?: { include?: Array<Record<string, unknown>> } };
+      };
       preflight?: { steps?: Array<ReleaseWorkflowStep> };
+      publish_cli?: { permissions?: Record<string, string> };
+      release?: { permissions?: Record<string, string> };
     };
   };
+  const parsedCiWorkflow = parseYaml(ciWorkflow) as {
+    jobs?: { windows_process?: { steps?: Array<ReleaseWorkflowStep> } };
+  };
+  const windowsProcessSteps = parsedCiWorkflow.jobs?.windows_process?.steps ?? [];
+  const windowsLauncherTest = windowsProcessSteps.find(
+    (step) => step.name === "Test packaged startup Windows launcher",
+  );
+  if (
+    windowsLauncherTest?.run !== "bun x vitest run scripts/verify-packaged-desktop-startup.test.ts"
+  ) {
+    throw new Error(
+      "Expected Windows CI to compile and exercise packaged-startup Job launcher authority and cancellation.",
+    );
+  }
   const buildSteps = parsedWorkflow.jobs?.build?.steps ?? [];
+  const buildMatrix = parsedWorkflow.jobs?.build?.strategy?.matrix?.include ?? [];
   const preflightSteps = parsedWorkflow.jobs?.preflight?.steps ?? [];
+  const buildPermissions = parsedWorkflow.jobs?.build?.permissions ?? {};
+  const buildCheckout = buildSteps.find((step) => step.name === "Checkout");
+  const requiredNativeBuildMatrix = [
+    {
+      label: "macOS arm64",
+      runner: "macos-14",
+      platform: "mac",
+      target: "dmg",
+      arch: "arm64",
+      timeout_minutes: 120,
+    },
+    {
+      label: "macOS x64",
+      runner: "macos-15-intel",
+      platform: "mac",
+      target: "dmg",
+      arch: "x64",
+      timeout_minutes: 120,
+    },
+    {
+      label: "Linux x64",
+      runner: "ubuntu-24.04",
+      platform: "linux",
+      target: "AppImage",
+      arch: "x64",
+      timeout_minutes: 30,
+    },
+    {
+      label: "Windows x64",
+      runner: "windows-2022",
+      platform: "win",
+      target: "nsis",
+      arch: "x64",
+      timeout_minutes: 30,
+    },
+  ];
+  if (
+    parsedWorkflow.permissions?.contents !== "read" ||
+    Object.keys(parsedWorkflow.permissions ?? {}).length !== 1 ||
+    buildPermissions.contents !== "read" ||
+    "id-token" in buildPermissions ||
+    buildCheckout?.with?.["persist-credentials"] !== false ||
+    parsedWorkflow.jobs?.publish_cli?.permissions?.["id-token"] !== "write" ||
+    parsedWorkflow.jobs?.release?.permissions?.contents !== "write"
+  ) {
+    throw new Error(
+      "Expected native payload execution to have read-only contents, no OIDC, and no persisted checkout credential.",
+    );
+  }
+  if (JSON.stringify(buildMatrix) !== JSON.stringify(requiredNativeBuildMatrix)) {
+    throw new Error(
+      "Expected the exact macOS arm64, macOS x64, Linux x64, and Windows x64 native release matrix and runners.",
+    );
+  }
   const requireBuildStep = (name: string) => {
     const step = buildSteps.find((candidate) => candidate.name === name);
     if (!step) {
@@ -288,6 +377,299 @@ function verifyReleaseWorkflowSafety(): void {
   ) {
     throw new Error("Expected the release-note gate to verify the exact resolved version.");
   }
+  const collectAssetsIndex = buildSteps.findIndex((step) => step.name === "Collect release assets");
+  const packagedStartupIndex = buildSteps.findIndex(
+    (step) => step.name === "Smoke exact packaged desktop startup",
+  );
+  const uploadArtifactsIndex = buildSteps.findIndex(
+    (step) => step.name === "Upload build artifacts",
+  );
+  const packagedStartupStep = buildSteps[packagedStartupIndex];
+  if (
+    collectAssetsIndex < 0 ||
+    packagedStartupIndex <= collectAssetsIndex ||
+    uploadArtifactsIndex <= packagedStartupIndex ||
+    packagedStartupStep?.if !== "${{ matrix.platform != 'linux' }}" ||
+    !packagedStartupStep.run?.includes("node scripts/verify-packaged-desktop-startup.ts") ||
+    !packagedStartupStep.run.includes("--assets-dir release-publish") ||
+    !packagedStartupStep.run.includes('--commit "${{ github.sha }}"') ||
+    !packagedStartupStep.run.includes(
+      "--allow-unsigned-windows \"${{ steps.build_windows.outputs.windows_signed != 'true' }}\"",
+    ) ||
+    !packagedStartupStep.run.includes(
+      '--windows-publisher-subject "$SCIENT_WINDOWS_PUBLISHER_SUBJECT"',
+    ) ||
+    packagedStartupStep.env?.SCIENT_WINDOWS_PUBLISHER_SUBJECT !==
+      "${{ vars.SCIENT_WINDOWS_PUBLISHER_SUBJECT }}" ||
+    packagedStartupStep.run.includes("${{ vars.SCIENT_WINDOWS_PUBLISHER_SUBJECT }}")
+  ) {
+    throw new Error(
+      "Expected exact macOS and Windows packaged-startup proof after collection and before upload.",
+    );
+  }
+  const packagedDiagnosticsIndex = buildSteps.findIndex(
+    (step) => step.name === "Upload packaged startup failure diagnostics",
+  );
+  const packagedDiagnosticsStep = buildSteps[packagedDiagnosticsIndex];
+  if (
+    packagedDiagnosticsIndex !== packagedStartupIndex + 1 ||
+    packagedDiagnosticsStep?.if !== "${{ failure() && matrix.platform != 'linux' }}" ||
+    packagedDiagnosticsStep.uses !==
+      "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" ||
+    packagedDiagnosticsStep.with?.path !== "packaged-startup-diagnostics/*"
+  ) {
+    throw new Error(
+      "Expected bounded packaged-startup failure diagnostics to upload from native runners.",
+    );
+  }
+  const packagedStartupVerifier = readFileSync(
+    resolve(repoRoot, "scripts/verify-packaged-desktop-startup.ts"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  const posixStartupSentinel = readFileSync(
+    resolve(repoRoot, "scripts/lib/packaged-startup-posix-sentinel.mjs"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  const windowsStartupJobLauncher = readFileSync(
+    resolve(repoRoot, "scripts/lib/packaged-startup-windows-job.ps1"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  execFileSync(
+    process.execPath,
+    ["--input-type=module", "--eval", 'import("./scripts/verify-packaged-desktop-startup.ts")'],
+    { cwd: repoRoot, stdio: "pipe" },
+  );
+  const desktopMain = readFileSync(
+    resolve(repoRoot, "apps/desktop/src/main.ts"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  const webMain = readFileSync(resolve(repoRoot, "apps/web/src/main.tsx"), "utf8").replaceAll(
+    "\r\n",
+    "\n",
+  );
+  const webRendererReadiness = readFileSync(
+    resolve(repoRoot, "apps/web/src/lib/packagedStartupRendererReadiness.ts"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  const webRootRoute = readFileSync(
+    resolve(repoRoot, "apps/web/src/routes/__root.tsx"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  const rendererReadiness = readFileSync(
+    resolve(repoRoot, "apps/desktop/src/packagedStartupRendererReadiness.ts"),
+    "utf8",
+  ).replaceAll("\r\n", "\n");
+  assertContains(
+    desktopMain,
+    "const FULL_COMMIT_HASH_PATTERN = /^[0-9a-f]{40}$/i;",
+    "Expected packaged startup identity to accept only a complete embedded commit.",
+  );
+  assertContains(
+    desktopMain,
+    "packaged identity name=${app.getName()} version=${app.getVersion()} commit=${commit}",
+    "Expected the running packaged app to expose its exact embedded identity to the verifier.",
+  );
+  if (
+    desktopMain.indexOf("configureAppIdentity();", desktopMain.indexOf("app.whenReady()")) < 0 ||
+    desktopMain.indexOf("configureAppIdentity();", desktopMain.indexOf("app.whenReady()")) >
+      desktopMain.indexOf(
+        "writePackagedStartupSmokeIdentity();",
+        desktopMain.indexOf("app.whenReady()"),
+      )
+  ) {
+    throw new Error(
+      "Expected Scient runtime identity to be configured before smoke identity proof.",
+    );
+  }
+  assertContains(
+    webRendererReadiness,
+    "await input.hydrateShell();",
+    "Expected packaged startup readiness to wait for authoritative shell hydration.",
+  );
+  assertContains(
+    webRootRoute,
+    "hydrateShellForPackagedStartupRenderer",
+    "Expected the server-welcome router lifecycle to own packaged renderer readiness.",
+  );
+  assertContains(
+    webRendererReadiness,
+    "input.state.generation !== generation",
+    "Expected renderer readiness to reject stale reconnect hydration generations.",
+  );
+  assertContains(
+    webRootRoute,
+    "disposePackagedStartupRendererReadiness(packagedStartupRendererReadiness)",
+    "Expected router disposal to invalidate pending renderer readiness.",
+  );
+  assertNotContains(
+    webMain,
+    "scientRendererReady",
+    "The renderer entrypoint must not certify readiness before its preload and server lifecycle complete.",
+  );
+  assertContains(
+    rendererReadiness,
+    "document.documentElement.dataset.scientRendererReady === 'true'",
+    "Expected packaged startup proof to reject a renderer that never committed React.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    "SCIENT_HOME: scientHome",
+    "Expected packaged startup verification to isolate Scient state.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    'SYNARA_TELEMETRY_ENABLED: "false"',
+    "Expected packaged startup verification to disable production telemetry.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    'SCIENT_DISABLE_SHELL_ENV_SYNC: "1"',
+    "Expected packaged startup verification to prevent host environment rehydration.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    "PACKAGED_SMOKE_INHERITED_ENVIRONMENT_ALLOWLIST",
+    "Expected packaged startup verification to inherit only explicit host variables.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    "spawnContainedPackagedDesktop",
+    "Expected native startup proof to launch inside verifier-owned OS containment.",
+  );
+  assertNotContains(
+    packagedStartupVerifier,
+    "taskkill",
+    "Packaged startup cleanup must not restore numeric Windows process signaling authority.",
+  );
+  assertContains(
+    windowsStartupJobLauncher,
+    "Add-Type -Path $AssemblyPath",
+    "Expected runtime Windows launch to load the assembly compiled during preparation.",
+  );
+  if (
+    windowsStartupJobLauncher.indexOf("Add-Type -TypeDefinition $source") < 0 ||
+    windowsStartupJobLauncher.indexOf("Add-Type -TypeDefinition $source") >
+      windowsStartupJobLauncher.indexOf("exit 0") ||
+    windowsStartupJobLauncher.indexOf("exit 0") >
+      windowsStartupJobLauncher.indexOf("Add-Type -Path $AssemblyPath")
+  ) {
+    throw new Error(
+      "Expected Windows launcher compilation to exit in preparation before runtime Job launch.",
+    );
+  }
+  assertContains(
+    posixStartupSentinel,
+    'process.on("SIGTERM", () => beginSentinelOwnedShutdown(false))',
+    "Expected the POSIX sentinel to own graceful process-group cleanup.",
+  );
+  assertContains(
+    posixStartupSentinel,
+    'process.on("message", (message)',
+    "Expected POSIX cleanup requests to use the retained sentinel IPC channel.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    'stdio: ["ignore", "pipe", "pipe", "ipc"]',
+    "Expected the POSIX sentinel launch to retain a cleanup control channel.",
+  );
+  assertNotContains(
+    packagedStartupVerifier,
+    'child.kill("SIGTERM")',
+    "POSIX verifier cleanup must never signal a reusable numeric sentinel PID.",
+  );
+  assertContains(
+    posixStartupSentinel,
+    "process.ppid !== verifierParentPid",
+    "Expected the POSIX sentinel to terminate its group when its verifier parent dies.",
+  );
+  assertContains(
+    windowsStartupJobLauncher,
+    "GetStdHandle(STD_INPUT_HANDLE)",
+    "Expected Windows startup containment to inherit a private verifier control pipe.",
+  );
+  if (
+    windowsStartupJobLauncher.indexOf("EnsureVerifierControlConnected(verifierControl)") < 0 ||
+    windowsStartupJobLauncher.indexOf("EnsureVerifierControlConnected(verifierControl)") >
+      windowsStartupJobLauncher.indexOf("if (!CreateProcess(")
+  ) {
+    throw new Error("Expected Windows verifier pipe authority before payload creation.");
+  }
+  assertContains(
+    windowsStartupJobLauncher,
+    "PeekNamedPipe(",
+    "Expected Windows Job cleanup to observe verifier pipe closure without PID lookup.",
+  );
+  assertNotContains(
+    windowsStartupJobLauncher,
+    "VerifierProcessId",
+    "Windows verifier authority must not be reconstructed from a reusable numeric PID.",
+  );
+  assertNotContains(
+    windowsStartupJobLauncher,
+    "OpenProcess(",
+    "Windows verifier authority must remain bound to the inherited control pipe.",
+  );
+  assertContains(
+    windowsStartupJobLauncher,
+    "JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE",
+    "Expected Windows startup proof to use kill-on-close Job Object containment.",
+  );
+  assertContains(
+    windowsStartupJobLauncher,
+    "PROC_THREAD_ATTRIBUTE_JOB_LIST",
+    "Expected Windows startup proof to assign the native process to its Job Object atomically at creation.",
+  );
+  assertNotContains(
+    windowsStartupJobLauncher,
+    "AssignProcessToJobObject",
+    "Windows startup proof must not restore a pre-containment process-creation window.",
+  );
+  if (
+    windowsStartupJobLauncher.indexOf("if (!UpdateProcThreadAttribute(") < 0 ||
+    windowsStartupJobLauncher.indexOf("if (!UpdateProcThreadAttribute(") >
+      windowsStartupJobLauncher.indexOf("if (!CreateProcess(") ||
+    windowsStartupJobLauncher.indexOf("if (!CreateProcess(") >
+      windowsStartupJobLauncher.indexOf("ResumeThread(child.hThread)")
+  ) {
+    throw new Error(
+      "Expected Windows startup proof to create Electron atomically inside the Job Object before resume.",
+    );
+  }
+  assertContains(
+    packagedStartupVerifier,
+    'log.includes("packaged main window visible")',
+    "Expected packaged startup proof to require a visible native window.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    'log.includes("renderer main frame loaded")',
+    "Expected packaged startup proof to require successful renderer loading.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    'log.includes("backend semantic ready generation=")',
+    "Expected packaged startup proof to require semantic backend readiness.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    'log.includes("packaged responsiveness confirmed generation=")',
+    "Expected packaged startup proof to require delayed active renderer and backend responsiveness.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    "packaged identity name=Scient version=${expected.version} commit=${expected.commit}",
+    "Expected packaged startup proof to bind the running product, version, and commit.",
+  );
+  assertContains(
+    packagedStartupVerifier,
+    '!log.includes("renderer main window unresponsive")',
+    "Expected packaged startup proof to reject an unresponsive renderer process.",
+  );
+  assertNotContains(
+    packagedStartupVerifier,
+    '"linux" | "mac" | "win"',
+    "The extracted startup verifier must not absorb deferred Linux packaging policy.",
+  );
   const appleSigningNames = [
     "CSC_LINK",
     "CSC_KEY_PASSWORD",
@@ -314,6 +696,9 @@ function verifyReleaseWorkflowSafety(): void {
   }
   if (windowsBuildStep.if !== "matrix.platform == 'win'") {
     throw new Error("Expected Windows signing credentials to be gated to Windows builders.");
+  }
+  if (windowsBuildStep.id !== "build_windows") {
+    throw new Error("Expected Windows packaging to expose its actual signing mode.");
   }
   assertScopedSigningEnvironment(macBuildStep, appleSigningNames, windowsSigningNames);
   assertScopedSigningEnvironment(windowsBuildStep, windowsSigningNames, appleSigningNames);
@@ -488,6 +873,11 @@ function verifyReleaseWorkflowSafety(): void {
     "Expected public Windows releases to fail closed without signing.",
   );
   assertContains(
+    releaseBuildScript,
+    'printf \'windows_signed=%s\\n\' "$windows_signed" >> "$GITHUB_OUTPUT"',
+    "Expected Windows packaging to report whether the produced artifact was signed.",
+  );
+  assertContains(
     workflow,
     'node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"\n          bun install --lockfile-only --ignore-scripts',
     "Expected every native builder to refresh the lock after release version alignment.",
@@ -529,6 +919,21 @@ function verifyDesktopStageLockAuthority(): void {
     resolve(repoRoot, "scripts/build-desktop-artifact.ts"),
     "utf8",
   ).replaceAll("\r\n", "\n");
+  assertContains(
+    buildScript,
+    'spawnSync("git", ["rev-parse", "HEAD"]',
+    "Expected packaged release metadata to embed the complete source commit.",
+  );
+  assertContains(
+    buildScript,
+    "scientCommitHash: commitHash",
+    "Expected the complete source commit to cross the desktop staging boundary.",
+  );
+  assertNotContains(
+    buildScript,
+    '"--short=12"',
+    "Packaged release metadata must not truncate the commit required by exact-payload proof.",
+  );
   assertContains(
     buildScript,
     "bun install --omit dev --ignore-scripts --linker hoisted --filter @scientfactory/cli --filter @synara/desktop",

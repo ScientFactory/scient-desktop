@@ -28,6 +28,10 @@ const WORKSPACE_CACHE_TTL_MS = 15_000;
 const WORKSPACE_CACHE_MAX_KEYS = 4;
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_SCAN_READDIR_CONCURRENCY = 32;
+// Bounds for the direct disk scan used to resolve a bare/partial reference when
+// the cached index is truncated (and therefore an unreliable source of truth).
+const WORKSPACE_SUFFIX_SCAN_MAX_MATCHES = 64;
+const WORKSPACE_SUFFIX_SCAN_MAX_DIRECTORIES = 20_000;
 const PROJECT_SCRIPT_DISCOVERY_DEFAULT_DEPTH = 2;
 const PROJECT_PACKAGE_JSON_MAX_BYTES = 1024 * 1024;
 const PROJECT_PACKAGE_SCAN_MAX_TARGETS = 80;
@@ -226,6 +230,56 @@ function isPathInIgnoredDirectory(relativePath: string): boolean {
   const firstSegment = relativePath.split("/")[0];
   if (!firstSegment) return false;
   return IGNORED_DIRECTORY_NAMES.has(firstSegment);
+}
+
+// A linked git worktree records its `.git` as a regular file holding a
+// `gitdir:` pointer into the parent repo's `.git/worktrees/<name>`. Such a
+// directory is a second checkout of a repo that is already indexed elsewhere,
+// so walking into it produces duplicate paths that make a bare/partial
+// reference look ambiguous even though it points at a single logical file.
+//
+// A git *submodule* also records `.git` as a regular file, but its pointer
+// targets `.git/modules/<name>` and its working tree is a *distinct* repository
+// whose files legitimately belong to the workspace. We must never prune those,
+// so we discriminate by the pointer target rather than treating every `.git`
+// file as a worktree marker (which would silently hide submodule files).
+function isLinkedWorktreeGitdir(gitdirTarget: string): boolean {
+  const segments = toPosixPath(gitdirTarget.trim()).split("/");
+  const worktreesIndex = segments.indexOf("worktrees");
+  return worktreesIndex > 0 && segments[worktreesIndex - 1] === ".git";
+}
+
+// Resolve whether a walked directory is a linked worktree that should be pruned.
+// Reads the `.git` pointer file only when one is present (rare), so the common
+// directory stays a single cheap `some(...)` scan. On any read/parse failure we
+// fail open (do not prune) so an unreadable pointer can never hide real files.
+async function isLinkedWorktreeDirectory(
+  absoluteDir: string,
+  dirents: readonly Dirent[],
+): Promise<boolean> {
+  const hasGitFile = dirents.some((dirent) => dirent.name === ".git" && dirent.isFile());
+  if (!hasGitFile) {
+    return false;
+  }
+  try {
+    const contents = await fs.readFile(path.join(absoluteDir, ".git"), "utf8");
+    const match = /^gitdir:\s*(.+?)\s*$/m.exec(contents);
+    const target = match?.[1];
+    return target !== undefined && isLinkedWorktreeGitdir(target);
+  } catch {
+    return false;
+  }
+}
+
+// Shared per-entry skip rule for the workspace walk and the direct suffix scan:
+// drop `.`/`..`, any `.git` entry (file pointer or directory), ignored
+// directories, and anything that is neither a regular file nor a directory.
+function shouldSkipWalkedDirent(dirent: Dirent): boolean {
+  if (!dirent.name || dirent.name === "." || dirent.name === "..") return true;
+  if (dirent.name === ".git") return true;
+  if (dirent.isDirectory() && IGNORED_DIRECTORY_NAMES.has(dirent.name)) return true;
+  if (!dirent.isDirectory() && !dirent.isFile()) return true;
+  return false;
 }
 
 export type ProjectPackageManager = "bun" | "pnpm" | "yarn" | "npm";
@@ -645,20 +699,33 @@ async function buildWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
       },
     );
 
-    const candidateEntriesByDirectory = directoryEntries.map((directoryEntry) => {
+    // Reading the `.git` pointer to classify worktrees is async, so resolve it
+    // once per directory up front and consult the result in the sync map below.
+    const linkedWorktreeFlags = await Promise.all(
+      directoryEntries.map((directoryEntry) =>
+        directoryEntry.dirents
+          ? isLinkedWorktreeDirectory(
+              directoryEntry.relativeDir ? path.join(cwd, directoryEntry.relativeDir) : cwd,
+              directoryEntry.dirents,
+            )
+          : Promise.resolve(false),
+      ),
+    );
+
+    const candidateEntriesByDirectory = directoryEntries.map((directoryEntry, directoryIndex) => {
       const { relativeDir, dirents } = directoryEntry;
       if (!dirents) return [] as Array<{ dirent: Dirent; relativePath: string }>;
+      // Prune linked git worktrees: their contents duplicate another checkout
+      // that is indexed under its own root, so indexing them here makes bare
+      // references resolve ambiguously and inflates the index toward its cap.
+      if (linkedWorktreeFlags[directoryIndex]) {
+        return [] as Array<{ dirent: Dirent; relativePath: string }>;
+      }
 
       dirents.sort((left, right) => left.name.localeCompare(right.name));
       const candidates: Array<{ dirent: Dirent; relativePath: string }> = [];
       for (const dirent of dirents) {
-        if (!dirent.name || dirent.name === "." || dirent.name === "..") {
-          continue;
-        }
-        if (dirent.isDirectory() && IGNORED_DIRECTORY_NAMES.has(dirent.name)) {
-          continue;
-        }
-        if (!dirent.isDirectory() && !dirent.isFile()) {
+        if (shouldSkipWalkedDirent(dirent)) {
           continue;
         }
 
@@ -834,37 +901,166 @@ export async function searchWorkspaceEntries(
   };
 }
 
+// Outcome of resolving a bare/partial workspace-relative reference:
+// "resolved" carries the single matching tracked path, "ambiguous" carries the
+// competing matches so the caller can surface an honest, actionable error,
+// "indeterminate" means the workspace was too large to scan conclusively (so we
+// refuse to guess a unique match), and "unresolved" means no tracked file
+// matched.
+export type WorkspaceFileSuffixResolution =
+  | { readonly status: "resolved"; readonly relativePath: string }
+  | { readonly status: "ambiguous"; readonly matches: readonly string[] }
+  | { readonly status: "indeterminate" }
+  | { readonly status: "unresolved" };
+
+function matchesSuffixReference(
+  candidatePath: string,
+  normalized: string,
+  suffix: string,
+): boolean {
+  return candidatePath === normalized || candidatePath.endsWith(suffix);
+}
+
+// Turn a set of candidate paths into a resolution. Resolve only when a single
+// distinct file matches; two genuinely different files sharing a basename stay
+// ambiguous rather than being silently disambiguated to the wrong one. When the
+// candidates come from an incomplete scan (`complete === false`) that saw fewer
+// than two matches, we can prove neither uniqueness nor absence, so we fail
+// closed to "indeterminate" rather than claim a possibly-wrong unique match.
+export function classifySuffixMatches(
+  matches: readonly string[],
+  complete = true,
+): WorkspaceFileSuffixResolution {
+  const unique = [...new Set(matches)];
+  if (unique.length >= 2) {
+    return {
+      status: "ambiguous",
+      matches: unique.toSorted((left, right) => left.localeCompare(right)),
+    };
+  }
+  if (!complete) {
+    return { status: "indeterminate" };
+  }
+  if (unique.length === 1) {
+    return { status: "resolved", relativePath: unique[0] as string };
+  }
+  return { status: "unresolved" };
+}
+
+// Directly walk the workspace for files matching a suffix reference, applying the
+// same ignore/worktree pruning as the index build. Used only when the cached
+// index is truncated (and therefore an unreliable source of truth). Bounded by a
+// match count and a scanned-directory cap so a pathological tree cannot stall;
+// `complete` reports whether the walk finished before hitting a cap, so callers
+// can refuse to claim a unique match from a scan that stopped early (a second
+// match may sit in the unscanned remainder). The limits are injectable so tests
+// can exercise the truncation path without materializing a pathological tree.
+export async function findWorkspaceFilesBySuffixOnDisk(
+  cwd: string,
+  normalized: string,
+  limits: { readonly maxMatches: number; readonly maxDirectories: number } = {
+    maxMatches: WORKSPACE_SUFFIX_SCAN_MAX_MATCHES,
+    maxDirectories: WORKSPACE_SUFFIX_SCAN_MAX_DIRECTORIES,
+  },
+): Promise<{ readonly matches: string[]; readonly complete: boolean }> {
+  const suffix = `/${normalized}`;
+  const matches: string[] = [];
+  let scannedDirectories = 0;
+  let pendingDirectories: string[] = [""];
+
+  while (pendingDirectories.length > 0) {
+    const currentDirectories = pendingDirectories;
+    pendingDirectories = [];
+
+    const directoryEntries = await mapWithConcurrency(
+      currentDirectories,
+      WORKSPACE_SCAN_READDIR_CONCURRENCY,
+      async (relativeDir) => {
+        const absoluteDir = relativeDir ? path.join(cwd, relativeDir) : cwd;
+        try {
+          return { relativeDir, dirents: await fs.readdir(absoluteDir, { withFileTypes: true }) };
+        } catch {
+          return { relativeDir, dirents: null as Dirent[] | null };
+        }
+      },
+    );
+
+    for (const { relativeDir, dirents } of directoryEntries) {
+      if (!dirents) {
+        continue;
+      }
+      scannedDirectories += 1;
+      if (scannedDirectories > limits.maxDirectories) {
+        return { matches, complete: false };
+      }
+      const absoluteDir = relativeDir ? path.join(cwd, relativeDir) : cwd;
+      if (await isLinkedWorktreeDirectory(absoluteDir, dirents)) {
+        continue;
+      }
+
+      for (const dirent of dirents) {
+        if (shouldSkipWalkedDirent(dirent)) {
+          continue;
+        }
+        const relativePath = toPosixPath(
+          relativeDir ? path.join(relativeDir, dirent.name) : dirent.name,
+        );
+        if (isPathInIgnoredDirectory(relativePath)) {
+          continue;
+        }
+        if (dirent.isDirectory()) {
+          pendingDirectories.push(relativePath);
+        } else if (matchesSuffixReference(relativePath, normalized, suffix)) {
+          matches.push(relativePath);
+          if (matches.length >= limits.maxMatches) {
+            return { matches, complete: false };
+          }
+        }
+      }
+    }
+  }
+
+  return { matches, complete: true };
+}
+
 // Resolve a workspace-relative reference that omits its leading directories.
 // Agents (and rendered chat links) frequently cite a file by just its basename
 // (e.g. `chatReferences.test.ts`) or a partial tail (`lib/chatReferences.ts`),
 // which resolves to a non-existent path under the workspace root. Match it
 // against the tracked workspace index by exact path or `/`-anchored suffix and
-// only resolve when exactly one file matches, so an ambiguous name (many
-// `index.ts`) stays unresolved rather than opening the wrong file.
+// only resolve when a single distinct file matches, so an ambiguous name (many
+// `index.ts`) reports the competing matches rather than opening the wrong file.
 export async function resolveWorkspaceFileBySuffix(input: {
   cwd: string;
   relativePath: string;
-}): Promise<string | null> {
+}): Promise<WorkspaceFileSuffixResolution> {
   const normalized = toPosixPath(input.relativePath.trim()).replace(/^\/+/, "");
   if (normalized.length === 0) {
-    return null;
+    return { status: "unresolved" };
   }
 
   const index = await getWorkspaceIndex(input.cwd);
+  // A truncated index may have dropped the real file or some of its duplicates,
+  // so a lookup against it could both miss and falsely look unique. Re-scan the
+  // tree directly for a trustworthy candidate set in that case, and carry the
+  // scan's completeness through so an early-stopped scan cannot claim a unique
+  // match it never proved.
+  if (index.truncated) {
+    const scan = await findWorkspaceFilesBySuffixOnDisk(input.cwd, normalized);
+    return classifySuffixMatches(scan.matches, scan.complete);
+  }
+
   const suffix = `/${normalized}`;
-  let match: string | null = null;
+  const matches: string[] = [];
   for (const entry of index.entries) {
     if (entry.kind !== "file") {
       continue;
     }
-    if (entry.path === normalized || entry.path.endsWith(suffix)) {
-      if (match !== null) {
-        return null;
-      }
-      match = entry.path;
+    if (matchesSuffixReference(entry.path, normalized, suffix)) {
+      matches.push(entry.path);
     }
   }
-  return match;
+  return classifySuffixMatches(matches);
 }
 
 export async function discoverProjectScripts(

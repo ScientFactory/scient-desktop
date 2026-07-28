@@ -18,13 +18,14 @@ import {
   GitReadWorkingTreeDiffInput,
   GitReadWorkingTreeDiffResult,
   GitResolvePullRequestResult,
-  GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStatusInput,
   GitStatusResult,
   GitSummarizeDiffInput,
   GitSummarizeDiffResult,
 } from "@synara/contracts";
+import type { AuthorizedGitRunStackedActionInput } from "@synara/shared/gitMutationRpc";
+import type { GitWorkingTreeDiffStatsResult } from "@synara/shared/gitDiffStatsRpc";
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 import type { GitManagerServiceError } from "../Errors.ts";
@@ -55,6 +56,11 @@ export interface GitManagerShape {
   readonly readWorkingTreeDiff: (
     input: GitReadWorkingTreeDiffInput,
   ) => Effect.Effect<GitReadWorkingTreeDiffResult, GitManagerServiceError>;
+
+  /** Count one working-tree diff scope without returning its patch text. */
+  readonly readWorkingTreeDiffStats: (
+    input: GitReadWorkingTreeDiffInput,
+  ) => Effect.Effect<GitWorkingTreeDiffStatsResult, GitManagerServiceError>;
 
   /**
    * Generate a read-only markdown summary for an existing diff patch.
@@ -96,7 +102,7 @@ export interface GitManagerShape {
    * When `featureBranch` is set, creates and checks out a feature branch first.
    */
   readonly runStackedAction: (
-    input: GitRunStackedActionInput,
+    input: AuthorizedGitRunStackedActionInput,
     options?: GitRunStackedActionOptions,
   ) => Effect.Effect<GitRunStackedActionResult, GitManagerServiceError>;
 }

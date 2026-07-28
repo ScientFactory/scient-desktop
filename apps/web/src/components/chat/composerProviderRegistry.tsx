@@ -150,7 +150,7 @@ function getProviderStateFromCapabilities(
     case "claudeAgent": {
       const providerOptions = modelOptions?.claudeAgent;
       rawEffort = trimOrNull(providerOptions?.effort);
-      normalizedOptions = normalizeClaudeModelOptions(model, providerOptions);
+      normalizedOptions = normalizeClaudeModelOptions(model, providerOptions, caps);
       break;
     }
     case "cursor": {

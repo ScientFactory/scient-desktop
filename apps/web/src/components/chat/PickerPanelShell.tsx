@@ -30,6 +30,7 @@ export function PickerPanelShell(props: {
   onQueryChange?: (query: string) => void;
   stopSearchKeyPropagation?: boolean;
   autoFocusSearch?: boolean;
+  searchControl?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
   widthClassName?: string;
@@ -42,6 +43,7 @@ export function PickerPanelShell(props: {
     onQueryChange,
     stopSearchKeyPropagation = false,
     autoFocusSearch = false,
+    searchControl,
     children,
     footer,
     widthClassName = "w-72",
@@ -72,7 +74,7 @@ export function PickerPanelShell(props: {
         bleedParentPadding ? cn("-m-1 overflow-clip", COMPOSER_PICKER_RADIUS_CLASS_NAME) : null,
       )}
     >
-      {onQueryChange ? (
+      {onQueryChange || searchControl ? (
         <div
           className={cn(
             bleedParentPadding
@@ -80,28 +82,30 @@ export function PickerPanelShell(props: {
               : "sticky top-0 z-20 shrink-0 border-b border-border bg-[var(--composer-surface)] p-1",
           )}
         >
-          <Input
-            className={cn(
-              "rounded-md border-border/60 shadow-none before:hidden has-focus-visible:border-neutral-500/15 has-focus-visible:ring-0 [&_input]:font-sans",
-              bleedParentPadding ? COMPOSER_PICKER_SEARCH_INPUT_CLASS_NAME : "bg-background",
-            )}
-            nativeInput
-            ref={searchInputRef}
-            size="sm"
-            type="search"
-            placeholder={searchPlaceholder}
-            value={query}
-            onChange={(event) => onQueryChange(event.target.value)}
-            onKeyDownCapture={
-              stopSearchKeyPropagation
-                ? (event) => {
-                    if (!MENU_NAVIGATION_KEYS.has(event.key)) {
-                      event.stopPropagation();
+          {searchControl ?? (
+            <Input
+              className={cn(
+                "rounded-md border-border/60 shadow-none before:hidden has-focus-visible:border-neutral-500/15 has-focus-visible:ring-0 [&_input]:font-sans",
+                bleedParentPadding ? COMPOSER_PICKER_SEARCH_INPUT_CLASS_NAME : "bg-background",
+              )}
+              nativeInput
+              ref={searchInputRef}
+              size="sm"
+              type="search"
+              placeholder={searchPlaceholder}
+              value={query}
+              onChange={(event) => onQueryChange?.(event.target.value)}
+              onKeyDownCapture={
+                stopSearchKeyPropagation
+                  ? (event) => {
+                      if (!MENU_NAVIGATION_KEYS.has(event.key)) {
+                        event.stopPropagation();
+                      }
                     }
-                  }
-                : undefined
-            }
-          />
+                  : undefined
+              }
+            />
+          )}
         </div>
       ) : null}
       <div

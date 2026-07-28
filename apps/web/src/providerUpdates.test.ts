@@ -8,7 +8,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   getVisibleProviderUpdateStatuses,
+  hasConfirmedProviderUpdate,
   isProviderUpdateActive,
+  providerUpdateSummaryStatus,
   providerUpdateNotificationKey,
   shouldOfferProviderUpdateAction,
   shouldShowProviderUpdateStatus,
@@ -57,6 +59,11 @@ function serverSettings(overrides: Partial<ServerSettings["providers"]> = {}): S
     defaultThreadEnvMode: "local",
     addProjectBaseDirectory: "",
     textGenerationModelSelection: { provider: "codex", model: "gpt-5.4-mini" },
+    sourceControlWriting: {
+      mode: "standard",
+      customInstructions: "",
+      followPullRequestTemplate: false,
+    },
     providers: {
       codex: { ...provider, binaryPath: "codex", homePath: "" },
       claudeAgent: { ...provider, binaryPath: "claude", launchArgs: "" },
@@ -252,7 +259,7 @@ describe("withProviderUpdateTimeout", () => {
 });
 
 describe("shouldOfferProviderUpdateAction", () => {
-  it("offers native AGY updates even when upstream latest-version metadata is unavailable", () => {
+  it("does not offer native updates when latest-version metadata is unavailable", () => {
     expect(
       shouldOfferProviderUpdateAction(
         providerStatus("antigravity", {
@@ -267,7 +274,7 @@ describe("shouldOfferProviderUpdateAction", () => {
           },
         }),
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("never offers an update action when the provider executable is unavailable", () => {
@@ -292,7 +299,7 @@ describe("shouldOfferProviderUpdateAction", () => {
     ).toBe(false);
   });
 
-  it("routes an available Scient-managed runtime through its managed update flow", () => {
+  it("does not route a Scient-managed runtime to Update without a confirmed newer version", () => {
     expect(
       shouldOfferProviderUpdateAction(
         providerStatus("antigravity", {
@@ -313,6 +320,24 @@ describe("shouldOfferProviderUpdateAction", () => {
             canUpdate: false,
             checkedAt: "2026-07-21T10:00:00.000Z",
             message: "Updates for this runtime are managed by Scient.",
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("routes a confirmed outdated Scient-managed Antigravity runtime through its managed flow", () => {
+    expect(
+      shouldOfferProviderUpdateAction(
+        providerStatus("antigravity", {
+          runtime: {
+            source: "managed",
+            managedVersion: "1.1.4",
+            canInstall: false,
+            canRepair: true,
+            canRollback: false,
+            canRemove: true,
+            message: null,
           },
         }),
       ),
@@ -344,5 +369,141 @@ describe("shouldOfferProviderUpdateAction", () => {
         }),
       ),
     ).toBe(false);
+  });
+});
+
+describe("hasConfirmedProviderUpdate", () => {
+  it("requires a successful comparison with both installed and latest versions", () => {
+    expect(hasConfirmedProviderUpdate(providerStatus("cursor"))).toBe(true);
+
+    for (const versionAdvisory of [
+      {
+        ...providerStatus("cursor").versionAdvisory!,
+        status: "current" as const,
+      },
+      {
+        ...providerStatus("cursor").versionAdvisory!,
+        status: "unknown" as const,
+        latestVersion: null,
+      },
+      {
+        ...providerStatus("cursor").versionAdvisory!,
+        currentVersion: null,
+      },
+      {
+        ...providerStatus("cursor").versionAdvisory!,
+        latestVersion: null,
+      },
+      {
+        ...providerStatus("cursor").versionAdvisory!,
+        checkedAt: null,
+      },
+    ]) {
+      expect(hasConfirmedProviderUpdate(providerStatus("cursor", { versionAdvisory }))).toBe(false);
+    }
+  });
+
+  it("rejects unavailable providers even if stale cached metadata says they are behind", () => {
+    expect(
+      hasConfirmedProviderUpdate(
+        providerStatus("cursor", {
+          available: false,
+          status: "error",
+          authStatus: "unknown",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps update capability separate from confirmed update availability", () => {
+    expect(
+      hasConfirmedProviderUpdate(
+        providerStatus("pi", {
+          versionAdvisory: {
+            ...providerStatus("pi").versionAdvisory!,
+            canUpdate: false,
+            updateCommand: null,
+          },
+        }),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("providerUpdateSummaryStatus", () => {
+  it("distinguishes pending, unconfirmed, current, available, manual-only, and active states", () => {
+    const settings = serverSettings();
+    expect(
+      providerUpdateSummaryStatus({ providers: [], serverSettings: null, loading: true }),
+    ).toBe("Checking provider updates…");
+    expect(
+      providerUpdateSummaryStatus({
+        providers: [
+          providerStatus("cursor", {
+            versionAdvisory: {
+              ...providerStatus("cursor").versionAdvisory!,
+              status: "unknown",
+              latestVersion: null,
+            },
+          }),
+        ],
+        serverSettings: settings,
+      }),
+    ).toBe("Update status not yet confirmed");
+    expect(
+      providerUpdateSummaryStatus({
+        providers: [
+          providerStatus("cursor", {
+            versionAdvisory: {
+              ...providerStatus("cursor").versionAdvisory!,
+              status: "current",
+              latestVersion: "1.0.0",
+            },
+          }),
+        ],
+        serverSettings: settings,
+      }),
+    ).toBe("Provider tools are current");
+    expect(
+      providerUpdateSummaryStatus({
+        providers: [providerStatus("cursor")],
+        serverSettings: settings,
+      }),
+    ).toBe("1 update available");
+    expect(
+      providerUpdateSummaryStatus({
+        providers: [
+          providerStatus("pi", {
+            versionAdvisory: {
+              ...providerStatus("pi").versionAdvisory!,
+              canUpdate: false,
+              updateCommand: null,
+            },
+          }),
+        ],
+        serverSettings: settings,
+      }),
+    ).toBe("1 update available");
+    expect(
+      providerUpdateSummaryStatus({
+        providers: [
+          providerStatus("antigravity", {
+            updateState: {
+              status: "running",
+              startedAt: "2026-07-26T09:01:00.000Z",
+              finishedAt: null,
+              message: "Updating provider.",
+              output: null,
+            },
+            versionAdvisory: {
+              ...providerStatus("antigravity").versionAdvisory!,
+              status: "unknown",
+              latestVersion: null,
+            },
+          }),
+        ],
+        serverSettings: settings,
+      }),
+    ).toBe("1 update in progress");
   });
 });
