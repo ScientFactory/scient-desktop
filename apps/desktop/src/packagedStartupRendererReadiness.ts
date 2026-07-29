@@ -27,20 +27,22 @@ async function evaluateRendererReadinessWithin(
       resolve("timed-out");
     }, timeoutMs);
 
-    void Promise.resolve().then(evaluate).then(
-      (value) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        resolve(value === true ? "ready" : "not-ready");
-      },
-      () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timeout);
-        resolve("not-ready");
-      },
-    );
+    void Promise.resolve()
+      .then(evaluate)
+      .then(
+        (value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          resolve(value === true ? "ready" : "not-ready");
+        },
+        () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          resolve("not-ready");
+        },
+      );
   });
 }
 
