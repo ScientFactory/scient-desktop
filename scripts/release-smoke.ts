@@ -524,6 +524,16 @@ function verifyReleaseWorkflowSafety(): void {
     "Expected renderer readiness to reject stale reconnect hydration generations.",
   );
   assertContains(
+    rendererReadiness,
+    "export async function waitForPackagedRendererReadiness",
+    "Expected packaged startup proof to poll the renderer-owned hydration marker.",
+  );
+  assertContains(
+    desktopMain,
+    "waitForPackagedRendererReadiness(() =>",
+    "Expected packaged startup proof to avoid a one-frame renderer readiness race.",
+  );
+  assertContains(
     webRootRoute,
     "disposePackagedStartupRendererReadiness(packagedStartupRendererReadiness)",
     "Expected router disposal to invalidate pending renderer readiness.",
