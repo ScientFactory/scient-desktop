@@ -28,9 +28,9 @@ import {
   isWindowsAuthenticodeSignatureDetails,
   WINDOWS_AUTHENTICODE_READER_FUNCTION_LINES,
   type WindowsAuthenticodeSignatureDetails,
-} from "./lib/windows-authenticode";
+} from "./lib/windows-authenticode.ts";
 
-export type { WindowsAuthenticodeSignatureDetails } from "./lib/windows-authenticode";
+export type { WindowsAuthenticodeSignatureDetails } from "./lib/windows-authenticode.ts";
 
 export const WHISPER_CPP_VERSION = "v1.9.1";
 
