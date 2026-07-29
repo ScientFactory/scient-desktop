@@ -12,6 +12,7 @@ import {
   CLAUDE_CONNECTION_METHOD_OPTIONS,
   describeProviderConnection,
   describeManagedProviderUpdate,
+  formatInstallProgress,
   providerConnectionMethod,
   providerInstallUrl,
 } from "~/lib/providerConnectionPresentation";
@@ -406,6 +407,7 @@ export function ProviderConnectionDialog() {
   };
 
   const busy = presentation.busy || actionPending;
+  const installProgress = formatInstallProgress(status?.installationState);
 
   return (
     <Dialog open={isOpen} onOpenChange={setOpen}>
@@ -433,10 +435,38 @@ export function ProviderConnectionDialog() {
                 <Spinner className="size-4" />
                 <span>
                   {presentation.busy
-                    ? "You can close this dialog; sign in continues in the background."
+                    ? "You can close this dialog; setup continues in the background."
                     : "Checking the current provider state."}
                 </span>
               </div>
+              {installProgress ? (
+                <div className="space-y-1 pt-1 pl-6">
+                  <div
+                    className="h-1.5 w-full overflow-hidden rounded-full bg-[color:var(--color-border)]"
+                    role="progressbar"
+                    aria-label="Provider download progress"
+                    aria-valuetext={installProgress.label}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={
+                      installProgress.fraction === null
+                        ? undefined
+                        : Math.round(installProgress.fraction * 100)
+                    }
+                  >
+                    <div
+                      className={cn(
+                        "h-full rounded-full bg-foreground/70 transition-[width] duration-500 ease-out",
+                        installProgress.fraction === null && "w-1/3 animate-pulse",
+                      )}
+                      {...(installProgress.fraction !== null
+                        ? { style: { width: `${Math.round(installProgress.fraction * 100)}%` } }
+                        : {})}
+                    />
+                  </div>
+                  <p className="text-xs">{installProgress.label}</p>
+                </div>
+              ) : null}
               {activeConnection && activeConnection.status !== "verifying" ? (
                 <p className="pl-6 text-xs">
                   Automatic timeout in{" "}

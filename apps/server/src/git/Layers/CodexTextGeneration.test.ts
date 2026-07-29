@@ -4,7 +4,11 @@ import { Effect, FileSystem, Layer, Path } from "effect";
 import { expect } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
-import { CodexTextGenerationLive } from "./CodexTextGeneration.ts";
+import {
+  CodexTextGenerationLive,
+  selectCodexApiAuthForTextGeneration,
+  sanitizeCodexConfigForTextGeneration,
+} from "./CodexTextGeneration.ts";
 import { TextGenerationError } from "../Errors.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
 
@@ -44,6 +48,13 @@ function makeFakeCodexBinary(dir: string) {
       [
         "#!/bin/sh",
         'output_path=""',
+        'seen_shell_disabled=""',
+        'seen_remote_plugin_disabled=""',
+        'seen_skill_install_disabled=""',
+        'seen_agents_disabled=""',
+        'seen_apps_disabled=""',
+        'seen_web_disabled=""',
+        'seen_update_check_disabled=""',
         "while [ $# -gt 0 ]; do",
         '  if [ "$1" = "--image" ]; then',
         "    shift",
@@ -60,6 +71,13 @@ function makeFakeCodexBinary(dir: string) {
         '    if [ "$1" = "approval_policy=\\"never\\"" ]; then',
         '      seen_approval_never="1"',
         "    fi",
+        '    [ "$1" = "features.shell_tool=false" ] && seen_shell_disabled="1"',
+        '    [ "$1" = "features.remote_plugin=false" ] && seen_remote_plugin_disabled="1"',
+        '    [ "$1" = "features.skill_mcp_dependency_install=false" ] && seen_skill_install_disabled="1"',
+        '    [ "$1" = "agents.enabled=false" ] && seen_agents_disabled="1"',
+        '    [ "$1" = "apps._default.enabled=false" ] && seen_apps_disabled="1"',
+        '    [ "$1" = "web_search=\\"disabled\\"" ] && seen_web_disabled="1"',
+        '    [ "$1" = "check_for_update_on_startup=false" ] && seen_update_check_disabled="1"',
         "    continue",
         "  fi",
         '  if [ "$1" = "--output-last-message" ]; then',
@@ -68,6 +86,15 @@ function makeFakeCodexBinary(dir: string) {
         "  fi",
         "  shift",
         "done",
+        'case "$PWD" in */synara-codex-runtime-*/workspace) ;; *) printf "%s\\n" "non-isolated cwd" >&2; exit 11 ;; esac',
+        'node -e \'const fs=require("node:fs"); if (process.platform !== "win32" && (fs.statSync(process.argv[1]).mode & 0o777) !== 0o700) process.exit(1)\' "$CODEX_HOME" || { printf "%s\\n" "insecure CODEX_HOME permissions" >&2; exit 13; }',
+        'if [ -f "$CODEX_HOME/auth.json" ]; then',
+        '  node -e \'const fs=require("node:fs"); if (process.platform !== "win32" && (fs.statSync(process.argv[1]).mode & 0o777) !== 0o600) process.exit(1)\' "$CODEX_HOME/auth.json" || { printf "%s\\n" "insecure auth.json permissions" >&2; exit 14; }',
+        "fi",
+        'if [ "$seen_shell_disabled$seen_remote_plugin_disabled$seen_skill_install_disabled$seen_agents_disabled$seen_apps_disabled$seen_web_disabled$seen_update_check_disabled" != "1111111" ]; then',
+        '  printf "%s\\n" "missing tool-isolation config" >&2',
+        "  exit 12",
+        "fi",
         'stdin_content="$(cat)"',
         'if [ "$SYNARA_FAKE_CODEX_REQUIRE_IMAGE" = "1" ] && [ "$seen_image" != "1" ]; then',
         '  printf "%s\\n" "missing --image input" >&2',
@@ -149,7 +176,9 @@ function withFakeCodexEnv<A, E, R>(
     Effect.gen(function* () {
       const releaseLock = yield* acquireCodexEnvLock();
       const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "synara-codex-text-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "synara-codex-text-",
+      });
       const binDir = yield* makeFakeCodexBinary(tempDir);
       const previousPath = process.env.PATH;
       const previousScientHome = process.env.SCIENT_HOME;
@@ -411,6 +440,34 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
     ),
   );
 
+  it.effect("formats conventional commits from schema-validated structured fields", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          subject: "Improve repository search.",
+          body: "",
+          conventionalType: "perf",
+          conventionalScope: "Search UI",
+          breaking: false,
+        }),
+        stdinMustContain: "Scient formats the final conventional-commit subject deterministically",
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/codex-effect",
+          stagedSummary: "M search.ts",
+          stagedPatch: "diff --git a/search.ts b/search.ts",
+          policy: { mode: "conventional_commits" },
+        });
+
+        expect(generated.subject).toBe("perf(search-ui): Improve repository search");
+      }),
+    ),
+  );
+
   it.effect("generates PR content and trims markdown body", () =>
     withFakeCodexEnv(
       {
@@ -434,6 +491,36 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         expect(generated.title).toBe("Improve orchestration flow");
         expect(generated.body.startsWith("## Summary")).toBe(true);
         expect(generated.body.endsWith("\n\n")).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect("passes a committed pull request template as a subordinate outline", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          title: "Improve orchestration flow",
+          body: "## User effect\n- Faster orchestration\n\n## Verification\n- Tests pass",
+        }),
+        stdinMustContain: "## User effect",
+      },
+      Effect.gen(function* () {
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generatePrContent({
+          cwd: process.cwd(),
+          baseBranch: "main",
+          headBranch: "feature/codex-effect",
+          commitSummary: "feat: improve orchestration flow",
+          diffSummary: "2 files changed",
+          diffPatch: "diff --git a/a.ts b/a.ts",
+          pullRequestTemplate: {
+            path: ".github/pull_request_template.md",
+            content: "## User effect\n\n## Verification",
+          },
+        });
+
+        expect(generated.body).toContain("## User effect");
       }),
     ),
   );
@@ -658,7 +745,10 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
             .pipe(
               Effect.match({
                 onFailure: (error) => ({ _tag: "Left" as const, left: error }),
-                onSuccess: (value) => ({ _tag: "Right" as const, right: value }),
+                onSuccess: (value) => ({
+                  _tag: "Right" as const,
+                  right: value,
+                }),
               }),
             );
 
@@ -704,6 +794,186 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
     ),
   );
 
+  it("preserves selected provider WebSocket transport without executable configuration", () => {
+    const sanitized = sanitizeCodexConfigForTextGeneration(
+      [
+        'model_provider = "azure"',
+        "supports_websockets = false",
+        "[model_providers.azure]",
+        'base_url = "https://example.invalid/v1"',
+        "supports_websockets = true",
+        "websocket_connect_timeout_ms = 4321",
+        "[profiles.unsafe.mcp_servers.repo]",
+        'command = "read-secrets"',
+      ].join("\n"),
+    );
+
+    expect(sanitized).toContain('model_provider = "azure"');
+    expect(sanitized).toContain("supports_websockets = true");
+    expect(sanitized).toContain("websocket_connect_timeout_ms = 4321");
+    expect(sanitized).not.toContain("profiles");
+    expect(sanitized).not.toContain("mcp_servers");
+    expect(sanitized).not.toContain("read-secrets");
+  });
+
+  it("does not let isolated providers dereference arbitrary server environment variables", () => {
+    const sanitized = sanitizeCodexConfigForTextGeneration(
+      [
+        'model_provider = "azure"',
+        "[model_providers.azure]",
+        'base_url = "https://example.invalid/v1"',
+        'env_key = "AZURE_OPENAI_API_KEY"',
+        'query_params = { api-version = "2025-04-01-preview" }',
+        'http_headers = { X-Static = "safe-value" }',
+        'env_http_headers = { X-Backup-Key = "UNRELATED_BACKUP_SECRET" }',
+      ].join("\n"),
+    );
+
+    expect(sanitized).toContain('env_key = "AZURE_OPENAI_API_KEY"');
+    expect(sanitized).toContain('api-version = "2025-04-01-preview"');
+    expect(sanitized).toContain('X-Static = "safe-value"');
+    expect(sanitized).not.toContain("env_http_headers");
+    expect(sanitized).not.toContain("UNRELATED_BACKUP_SECRET");
+  });
+
+  it("projects only non-rotating API auth into the isolated Codex runtime", () => {
+    expect(
+      selectCodexApiAuthForTextGeneration(
+        JSON.stringify({
+          OPENAI_API_KEY: "test-key",
+          tokens: { access_token: "access", refresh_token: "refresh" },
+          last_refresh: "2026-07-28T00:00:00Z",
+        }),
+      ),
+    ).toBe('{"OPENAI_API_KEY":"test-key"}');
+    expect(
+      selectCodexApiAuthForTextGeneration(
+        JSON.stringify({ tokens: { access_token: "access", refresh_token: "refresh" } }),
+      ),
+    ).toBeNull();
+  });
+
+  it.effect("rejects OAuth-only SCM writing before launching Codex", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const codexHome = yield* fs.makeTempDirectoryScoped({
+        prefix: "synara-codex-oauth-preflight-",
+      });
+      yield* fs.writeFileString(
+        path.join(codexHome, "auth.json"),
+        JSON.stringify({
+          auth_mode: "chatgpt",
+          tokens: { access_token: "access", refresh_token: "refresh" },
+        }),
+      );
+      const previousApiKey = process.env.OPENAI_API_KEY;
+      yield* Effect.sync(() => {
+        delete process.env.OPENAI_API_KEY;
+      });
+
+      const textGeneration = yield* TextGeneration;
+      const error = yield* textGeneration
+        .preflightSourceControlWriting({
+          cwd: process.cwd(),
+          operations: ["generateCommitMessage", "generatePrContent"],
+          codexHomePath: codexHome,
+          providerOptions: { codex: { binaryPath: "/must-not-launch/codex" } },
+        })
+        .pipe(
+          Effect.flip,
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousApiKey === undefined) delete process.env.OPENAI_API_KEY;
+              else process.env.OPENAI_API_KEY = previousApiKey;
+            }),
+          ),
+        );
+
+      expect(error.message).toContain("requires API-key authentication");
+      expect(error.message).toContain("ChatGPT OAuth");
+    }),
+  );
+
+  it.effect("rejects unrelated auth.json credentials for a custom Codex provider", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const codexHome = yield* fs.makeTempDirectoryScoped({
+        prefix: "synara-codex-custom-provider-preflight-",
+      });
+      yield* fs.writeFileString(
+        path.join(codexHome, "config.toml"),
+        [
+          'model_provider = "azure"',
+          "[model_providers.azure]",
+          'env_key = "AZURE_OPENAI_API_KEY"',
+        ].join("\n"),
+      );
+      yield* fs.writeFileString(
+        path.join(codexHome, "auth.json"),
+        JSON.stringify({ OPENAI_API_KEY: "unrelated-openai-key" }),
+      );
+      const previousAzureApiKey = process.env.AZURE_OPENAI_API_KEY;
+      yield* Effect.sync(() => {
+        delete process.env.AZURE_OPENAI_API_KEY;
+      });
+
+      const textGeneration = yield* TextGeneration;
+      const error = yield* textGeneration
+        .preflightSourceControlWriting({
+          cwd: process.cwd(),
+          operations: ["generateCommitMessage", "generatePrContent"],
+          codexHomePath: codexHome,
+        })
+        .pipe(
+          Effect.flip,
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousAzureApiKey === undefined) delete process.env.AZURE_OPENAI_API_KEY;
+              else process.env.AZURE_OPENAI_API_KEY = previousAzureApiKey;
+            }),
+          ),
+        );
+
+      expect(error.message).toContain("requires API-key authentication");
+      expect(error.message).toContain("AZURE_OPENAI_API_KEY");
+    }),
+  );
+
+  it.effect("preserves OAuth auth for non-SCM Codex generation", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "OAuth title" }),
+        requireCodexHome: true,
+        requireAuthJson: true,
+      },
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const codexHome = yield* fs.makeTempDirectoryScoped({
+          prefix: "synara-codex-oauth-title-",
+        });
+        yield* fs.writeFileString(
+          path.join(codexHome, "auth.json"),
+          JSON.stringify({
+            auth_mode: "chatgpt",
+            tokens: { access_token: "access", refresh_token: "refresh" },
+          }),
+        );
+        const textGeneration = yield* TextGeneration;
+
+        const generated = yield* textGeneration.generateThreadTitle({
+          cwd: process.cwd(),
+          message: "Keep OAuth title generation working.",
+          providerOptions: { codex: { homePath: codexHome } },
+        });
+
+        expect(generated.title).toBe("OAuth title");
+      }),
+    ),
+  );
+
   it.effect("uses the provided codexHomePath and strips local skills config", () =>
     withFakeCodexEnv(
       {
@@ -712,14 +982,15 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
           body: "",
         }),
         requireCodexHome: true,
-        requireAuthJson: true,
         codexHomeConfigMustContain: 'model_provider = "azure"',
-        codexHomeConfigMustNotContain: "[[skills.config]]",
+        codexHomeConfigMustNotContain: "unsafe_text_generation_capability",
       },
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const wrongCodexHome = yield* fs.makeTempDirectoryScoped({ prefix: "synara-wrong-codex-" });
+        const wrongCodexHome = yield* fs.makeTempDirectoryScoped({
+          prefix: "synara-wrong-codex-",
+        });
         const customCodexHome = yield* fs.makeTempDirectoryScoped({
           prefix: "synara-custom-codex-",
         });
@@ -729,14 +1000,28 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         yield* fs.writeFileString(
           path.join(customCodexHome, "config.toml"),
           [
+            'model_instructions_file = "/unsafe_text_generation_capability/instructions.md"',
+            'skills.config = [{ path = "/unsafe_text_generation_capability/dotted-skill.md", enabled = true }]',
             'model_provider = "azure"',
             "",
             "[model_providers.azure]",
             'env_key = "AZURE_OPENAI_API_KEY"',
             "",
-            "[[skills.config]]",
-            'path = "/broken/skill/SKILL.md"',
-            "enabled = true",
+            "[mcp_servers]",
+            'unsafe = { command = "unsafe_text_generation_capability" }',
+            "",
+            "[profiles.attacker.mcp_servers.untrusted]",
+            'command = "unsafe_text_generation_capability"',
+            "",
+            "[apps]",
+            'unsafe = { command = "unsafe_text_generation_capability" }',
+            "",
+            "[[plugins]]",
+            'path = "/unsafe_text_generation_capability/plugin"',
+            "",
+            "[hooks]",
+            'after_agent = ["publish-output"]',
+            "unsafe_text_generation_capability = true",
             "",
             "[features]",
             "fast_mode = true",
@@ -745,7 +1030,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         );
         yield* fs.writeFileString(
           path.join(customCodexHome, "auth.json"),
-          '{"access_token":"test"}',
+          '{"OPENAI_API_KEY":"test-key","tokens":{"refresh_token":"must-not-copy"}}',
         );
         yield* fs.writeFileString(path.join(wrongCodexHome, "config.toml"), 'model = "gpt-5.4"');
 

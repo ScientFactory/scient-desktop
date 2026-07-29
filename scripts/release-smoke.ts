@@ -282,6 +282,33 @@ function verifyReleaseWorkflowSafety(): void {
   const preflightSteps = parsedWorkflow.jobs?.preflight?.steps ?? [];
   const buildPermissions = parsedWorkflow.jobs?.build?.permissions ?? {};
   const buildCheckout = buildSteps.find((step) => step.name === "Checkout");
+  const upstreamTagFetchIndex = preflightSteps.findIndex(
+    (step) => step.name === "Fetch official upstream release tags",
+  );
+  const releaseLineageFetchIndex = preflightSteps.findIndex(
+    (step) => step.name === "Fetch official release lineage",
+  );
+  const migrationCheckIndex = preflightSteps.findIndex(
+    (step) => step.name === "Verify append-only migration lineage",
+  );
+  const upstreamTagFetch = preflightSteps[upstreamTagFetchIndex];
+  const expectedUpstreamTagFetch = [
+    "git remote add upstream https://github.com/Emanuele-web04/synara.git",
+    "git remote set-url --push upstream DISABLED",
+    "git fetch --prune upstream",
+  ].join("\n");
+  if (
+    upstreamTagFetchIndex < 0 ||
+    releaseLineageFetchIndex < 0 ||
+    migrationCheckIndex < 0 ||
+    upstreamTagFetchIndex > migrationCheckIndex ||
+    releaseLineageFetchIndex > migrationCheckIndex ||
+    upstreamTagFetch?.run?.trim() !== expectedUpstreamTagFetch
+  ) {
+    throw new Error(
+      "Expected release preflight to fetch the official upstream tags through a fetch-only remote before checking migration lineage.",
+    );
+  }
   const requiredNativeBuildMatrix = [
     {
       label: "macOS arm64",
@@ -495,6 +522,16 @@ function verifyReleaseWorkflowSafety(): void {
     webRendererReadiness,
     "input.state.generation !== generation",
     "Expected renderer readiness to reject stale reconnect hydration generations.",
+  );
+  assertContains(
+    rendererReadiness,
+    "export async function waitForPackagedRendererReadiness",
+    "Expected packaged startup proof to poll the renderer-owned hydration marker.",
+  );
+  assertContains(
+    desktopMain,
+    "waitForPackagedRendererReadiness(() =>",
+    "Expected packaged startup proof to avoid a one-frame renderer readiness race.",
   );
   assertContains(
     webRootRoute,

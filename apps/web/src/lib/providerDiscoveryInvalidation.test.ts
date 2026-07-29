@@ -5,7 +5,12 @@
 import type { ServerProviderStatus } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
-import { providerModelDiscoveryInvalidationFingerprint } from "./providerDiscoveryInvalidation";
+import {
+  AUTH_SENSITIVE_AGENT_DISCOVERY_PROVIDERS,
+  getProviderDiscoveryGeneration,
+  providerModelDiscoveryInvalidationFingerprint,
+  setProviderDiscoveryGeneration,
+} from "./providerDiscoveryInvalidation";
 
 const BASE_PROVIDER_STATUS = {
   provider: "cursor",
@@ -28,6 +33,29 @@ const BASE_PROVIDER_STATUS = {
 } satisfies ServerProviderStatus;
 
 describe("providerModelDiscoveryInvalidationFingerprint", () => {
+  it("refreshes Claude agent discovery with other auth-sensitive agent catalogs", () => {
+    expect(AUTH_SENSITIVE_AGENT_DISCOVERY_PROVIDERS).toContain("claudeAgent");
+  });
+
+  it("keeps repeated fingerprints stable while issuing opaque generations for A-B-A", () => {
+    const firstFingerprint = `${providerModelDiscoveryInvalidationFingerprint([
+      BASE_PROVIDER_STATUS,
+    ])}:first`;
+    const secondFingerprint = `${firstFingerprint}:second`;
+
+    const firstGeneration = setProviderDiscoveryGeneration(firstFingerprint);
+    expect(setProviderDiscoveryGeneration(firstFingerprint)).toBe(firstGeneration);
+
+    const secondGeneration = setProviderDiscoveryGeneration(secondFingerprint);
+    expect(secondGeneration).not.toBe(firstGeneration);
+
+    const returnedGeneration = setProviderDiscoveryGeneration(firstFingerprint);
+    expect(returnedGeneration).not.toBe(firstGeneration);
+    expect(returnedGeneration).not.toBe(secondGeneration);
+    expect(getProviderDiscoveryGeneration()).toBe(returnedGeneration);
+    expect(returnedGeneration).not.toContain(firstFingerprint);
+  });
+
   it("ignores provider checkedAt, message, and advisory metadata churn", () => {
     expect(
       providerModelDiscoveryInvalidationFingerprint([
@@ -78,5 +106,29 @@ describe("providerModelDiscoveryInvalidationFingerprint", () => {
     expect(providerModelDiscoveryInvalidationFingerprint([BASE_PROVIDER_STATUS, codexStatus])).toBe(
       providerModelDiscoveryInvalidationFingerprint([codexStatus, BASE_PROVIDER_STATUS]),
     );
+  });
+
+  it("keeps one provider's generation stable when another provider changes", () => {
+    const claudeStatus = {
+      ...BASE_PROVIDER_STATUS,
+      provider: "claudeAgent",
+      authStatus: "authenticated",
+    } satisfies ServerProviderStatus;
+    const codexStatus = {
+      ...BASE_PROVIDER_STATUS,
+      provider: "codex",
+      authStatus: "unauthenticated",
+    } satisfies ServerProviderStatus;
+
+    const previousClaude = providerModelDiscoveryInvalidationFingerprint(
+      [claudeStatus, codexStatus],
+      "claudeAgent",
+    );
+    const nextClaude = providerModelDiscoveryInvalidationFingerprint(
+      [{ ...codexStatus, authStatus: "authenticated" }, claudeStatus],
+      "claudeAgent",
+    );
+
+    expect(nextClaude).toBe(previousClaude);
   });
 });

@@ -5,6 +5,7 @@ import {
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamEvent,
   type OrchestrationThread,
+  type ProviderKind,
   type ServerConfig,
 } from "@synara/contracts";
 import { defaultTerminalTitleForCliKind } from "@synara/shared/terminalThreads";
@@ -87,7 +88,11 @@ import { hasLiveThreadsWithMissingProjects } from "../lib/desktopProjectRecovery
 import { useDiffRouteSearch } from "../hooks/useDiffRouteSearch";
 import { useProviderStatusRefresh } from "../hooks/useProviderStatusRefresh";
 import { resolveSplitViewThreadIds, selectSplitView, useSplitViewStore } from "../splitViewStore";
-import { providerModelDiscoveryInvalidationFingerprint } from "../lib/providerDiscoveryInvalidation";
+import {
+  AUTH_SENSITIVE_AGENT_DISCOVERY_PROVIDERS,
+  providerModelDiscoveryInvalidationFingerprint,
+  setProviderDiscoveryGeneration,
+} from "../lib/providerDiscoveryInvalidation";
 import { providerDiscoveryQueryKeys } from "../lib/providerDiscoveryReactQuery";
 import { useAppSettings } from "../appSettings";
 import {
@@ -680,7 +685,7 @@ function EventRouter() {
     let pendingStudioOutputInvalidationThreadIds = new Set<ThreadId>();
     let pendingDomainEvents: OrchestrationEvent[] = [];
     const immediatelyFlushedAssistantMessageIds = new Set<string>();
-    let providerDiscoveryInvalidationFingerprint: string | null = null;
+    const providerDiscoveryInvalidationFingerprints = new Map<ProviderKind, string>();
     let shellSnapshotSequence = -1;
     let pendingShellEvents: OrchestrationShellStreamEvent[] = [];
     const subscribedThreadIds = new Set<ThreadId>();
@@ -1229,43 +1234,53 @@ function EventRouter() {
       });
     });
     const unsubProviderStatusesUpdated = onServerProviderStatusesUpdated((payload) => {
-      const nextProviderDiscoveryFingerprint = providerModelDiscoveryInvalidationFingerprint(
-        payload.providers,
-      );
       const currentConfig = queryClient.getQueryData<ServerConfig>(serverQueryKeys.config());
-      const previousProviderDiscoveryFingerprint =
-        providerDiscoveryInvalidationFingerprint ??
-        (currentConfig
-          ? providerModelDiscoveryInvalidationFingerprint(currentConfig.providers)
-          : null);
-      const shouldInvalidateProviderDiscovery =
-        previousProviderDiscoveryFingerprint !== null &&
-        previousProviderDiscoveryFingerprint !== nextProviderDiscoveryFingerprint;
-      providerDiscoveryInvalidationFingerprint = nextProviderDiscoveryFingerprint;
+      const modelDiscoveryProviders = ["claudeAgent", "kilo", "opencode", "cursor"] as const;
+      const changedProviders = new Set<ProviderKind>();
+      for (const provider of modelDiscoveryProviders) {
+        const nextFingerprint = providerModelDiscoveryInvalidationFingerprint(
+          payload.providers,
+          provider,
+        );
+        const previousFingerprint =
+          providerDiscoveryInvalidationFingerprints.get(provider) ??
+          (currentConfig
+            ? providerModelDiscoveryInvalidationFingerprint(currentConfig.providers, provider)
+            : null);
+        providerDiscoveryInvalidationFingerprints.set(provider, nextFingerprint);
+        if (provider === "claudeAgent") {
+          setProviderDiscoveryGeneration(nextFingerprint);
+        }
+        if (previousFingerprint !== null && previousFingerprint !== nextFingerprint) {
+          changedProviders.add(provider);
+        }
+      }
 
       if (!currentConfig) {
         void queryClient.fetchQuery(serverConfigQueryOptions()).catch(() => undefined);
         return;
       }
       applyProviderStatusesToCache(queryClient, payload.providers);
-      if (shouldInvalidateProviderDiscovery) {
+      if (changedProviders.size > 0) {
         // Model and agent discovery can depend on auth, availability, and installed versions,
         // but not on every provider-status timestamp replay.
-        void queryClient.invalidateQueries({
-          queryKey: ["provider-discovery", "models", "kilo"],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: ["provider-discovery", "models", "opencode"],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: ["provider-discovery", "models", "cursor"],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: providerDiscoveryQueryKeys.agentsForProvider("kilo"),
-        });
-        void queryClient.invalidateQueries({
-          queryKey: providerDiscoveryQueryKeys.agentsForProvider("opencode"),
-        });
+        for (const provider of changedProviders) {
+          void queryClient.invalidateQueries({
+            queryKey: ["provider-discovery", "models", provider],
+          });
+        }
+        for (const provider of AUTH_SENSITIVE_AGENT_DISCOVERY_PROVIDERS) {
+          if (!changedProviders.has(provider)) continue;
+          // Agent and native slash-command discovery both depend on the provider's
+          // auth/runtime generation, so an auth or account change must drop their
+          // cached results together and refetch under the new generation.
+          void queryClient.invalidateQueries({
+            queryKey: providerDiscoveryQueryKeys.agentsForProvider(provider),
+          });
+          void queryClient.invalidateQueries({
+            queryKey: providerDiscoveryQueryKeys.commandsForProvider(provider),
+          });
+        }
       }
     });
     const unsubServerSettingsUpdated = onServerSettingsUpdated((payload) => {

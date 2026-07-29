@@ -12,9 +12,12 @@ const CLAUDE_DISCOVERY_SETTING_SOURCES = [
 
 /**
  * Applies the non-interactive safety boundary shared by temporary Claude
- * discovery processes. Filesystem settings remain available for command and
- * model metadata, but their MCP declarations (including Claude.ai connectors)
- * cannot start. Interactive Claude sessions must not use this helper.
+ * discovery processes. Filesystem settings remain available for command,
+ * model, and agent metadata, but their hooks, status line, and MCP declarations
+ * (including Claude.ai connectors) cannot execute. Enterprise-managed policy
+ * remains authoritative, including managed hooks that Claude intentionally does
+ * not let user/flag settings disable. Interactive Claude sessions must not use
+ * this helper.
  */
 export function buildIsolatedClaudeDiscoveryOptions(
   options: ClaudeQueryOptions & { readonly env: NodeJS.ProcessEnv },
@@ -35,6 +38,10 @@ export function buildIsolatedClaudeDiscoveryOptions(
       ...options.env,
       ENABLE_CLAUDEAI_MCP_SERVERS: "false",
     },
+    // Inline flag settings retain metadata loaded from user/project/local
+    // sources while overriding their executable hooks for this passive query.
+    // Claude continues to enforce administrator-managed policy by design.
+    settings: { disableAllHooks: true },
     settingSources: [...CLAUDE_DISCOVERY_SETTING_SOURCES],
     persistSession: false,
     mcpServers: {},

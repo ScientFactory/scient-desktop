@@ -12,6 +12,9 @@ import {
 import { ProviderTextGenerationLive } from "./ProviderTextGeneration.ts";
 
 function createTextGenerationDouble(label: string) {
+  const preflightSourceControlWriting = vi.fn<TextGenerationShape["preflightSourceControlWriting"]>(
+    () => Effect.void,
+  );
   const generateCommitMessage = vi.fn<TextGenerationShape["generateCommitMessage"]>(() =>
     Effect.succeed({
       subject: `${label} commit`,
@@ -70,6 +73,7 @@ function createTextGenerationDouble(label: string) {
 
   return {
     service: {
+      preflightSourceControlWriting,
       generateCommitMessage,
       generatePrContent,
       generateDiffSummary,
@@ -80,6 +84,7 @@ function createTextGenerationDouble(label: string) {
       evaluateAutomationCompletion,
     } satisfies TextGenerationShape,
     generateCommitMessage,
+    preflightSourceControlWriting,
     generatePrContent,
     generateDiffSummary,
     generateBranchName,

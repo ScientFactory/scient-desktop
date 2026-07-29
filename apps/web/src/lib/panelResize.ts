@@ -21,6 +21,12 @@ const COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX = 160;
 // name has a single source of truth across the chat route and BrowserPanel.
 export const PANEL_RESIZE_OVERLAY_SYNC_EVENT = "scient:panel-resize-overlay-sync";
 
+export function dispatchPanelResizeOverlaySync(
+  target: Pick<EventTarget, "dispatchEvent"> = window,
+): void {
+  target.dispatchEvent(new Event(PANEL_RESIZE_OVERLAY_SYNC_EVENT));
+}
+
 // Probe whether the composer can render at `nextWidth` without overflowing its
 // viewport or violating its minimum control width. Applies the width, measures,
 // then resets — callers own the real commit.
@@ -84,21 +90,32 @@ function findComposerForm(paneScopeId: string): HTMLElement | null {
   return null;
 }
 
-// Electron <webview> can swallow pointermove during drag; this keeps resizing in the React layer.
-export function createPanelResizeOverlay(): HTMLDivElement {
+export interface PanelResizeOverlayOptions {
+  cursor?: string;
+  occludeNativeBrowser?: boolean;
+}
+
+// Embedded browser surfaces can swallow pointermove during drag; this keeps resizing in React.
+export function createPanelResizeOverlay({
+  cursor = "col-resize",
+  occludeNativeBrowser = false,
+}: PanelResizeOverlayOptions = {}): HTMLDivElement {
   const overlay = document.createElement("div");
   overlay.setAttribute("data-panel-resize-overlay", "true");
+  if (occludeNativeBrowser) {
+    overlay.setAttribute("data-native-browser-overlay", "true");
+  }
   overlay.style.position = "fixed";
   overlay.style.inset = "0";
   overlay.style.zIndex = "2147483647";
-  overlay.style.cursor = "col-resize";
+  overlay.style.cursor = cursor;
   overlay.style.background = "transparent";
   document.body.append(overlay);
-  window.dispatchEvent(new Event(PANEL_RESIZE_OVERLAY_SYNC_EVENT));
+  dispatchPanelResizeOverlaySync();
   return overlay;
 }
 
 export function removePanelResizeOverlay(overlay: HTMLDivElement): void {
   overlay.remove();
-  window.dispatchEvent(new Event(PANEL_RESIZE_OVERLAY_SYNC_EVENT));
+  dispatchPanelResizeOverlaySync();
 }

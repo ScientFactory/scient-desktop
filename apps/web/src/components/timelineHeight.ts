@@ -64,6 +64,7 @@ interface TimelineMessageHeightInput {
   attachments?: ReadonlyArray<{ id: string; type?: "image" | "file" | "assistant-selection" }>;
   dispatchMode?: "queue" | "steer";
   dispatchOrigin?: "user" | "automation";
+  dispatchSource?: "agent";
   diffSummaryFiles?: ReadonlyArray<TurnDiffFileChange>;
   diffSummaryFileListExpanded?: boolean;
   inlineToolEntries?: ReadonlyArray<TimelineWorkEntryHeightInput>;

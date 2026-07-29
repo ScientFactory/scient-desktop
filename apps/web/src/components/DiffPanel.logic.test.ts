@@ -8,6 +8,7 @@ import {
   isDiffPanelPickerOptionSelected,
   isStaleDiffTurnSelection,
   resolveConversationCacheScope,
+  resolveDiffPanelCompactScopeCountQueryEnabled,
   resolveDiffPanelGitStatusQueriesEnabled,
   resolveDiffPanelQueriesEnabled,
   resolveDiffPanelRepoLiveRefresh,
@@ -160,6 +161,36 @@ describe("diff panel view source helpers", () => {
     expect(
       resolveDiffPanelScopeCountQueriesEnabled({ queriesEnabled: true, scopePickerOpen: true }),
     ).toBe(true);
+
+    const activeRepoSource = { kind: "repo", scope: "unstaged" } as const;
+    expect(
+      resolveDiffPanelCompactScopeCountQueryEnabled({
+        queriesEnabled: true,
+        scope: "unstaged",
+        viewSource: activeRepoSource,
+      }),
+    ).toBe(false);
+    expect(
+      resolveDiffPanelCompactScopeCountQueryEnabled({
+        queriesEnabled: true,
+        scope: "staged",
+        viewSource: activeRepoSource,
+      }),
+    ).toBe(true);
+    expect(
+      resolveDiffPanelCompactScopeCountQueryEnabled({
+        queriesEnabled: false,
+        scope: "staged",
+        viewSource: activeRepoSource,
+      }),
+    ).toBe(false);
+    expect(
+      resolveDiffPanelCompactScopeCountQueryEnabled({
+        queriesEnabled: true,
+        scope: "unstaged",
+        viewSource: { kind: "turn", turnId: null },
+      }),
+    ).toBe(true);
   });
 
   it("only enables git status work for repo diffs with a cwd", () => {
@@ -186,7 +217,7 @@ describe("diff panel view source helpers", () => {
     ).toBe(false);
   });
 
-  it("only surfaces scope file counts for the active scope until the picker opens", () => {
+  it("keeps the rendered active scope count authoritative over stale compact stats", () => {
     expect(
       resolveDiffPanelScopeFileCounts({
         viewSource: { kind: "repo", scope: "unstaged" },
@@ -200,9 +231,17 @@ describe("diff panel view source helpers", () => {
         viewSource: { kind: "repo", scope: "unstaged" },
         activeScopeFileCount: 3,
         scopePickerOpen: true,
-        pickerScopeCounts: { unstaged: 3, staged: 1 },
+        pickerScopeCounts: { unstaged: 99, staged: 1 },
       }),
     ).toEqual({ unstaged: 3, staged: 1 });
+    expect(
+      resolveDiffPanelScopeFileCounts({
+        viewSource: { kind: "repo", scope: "unstaged" },
+        activeScopeFileCount: undefined,
+        scopePickerOpen: true,
+        pickerScopeCounts: { unstaged: 99, staged: 1 },
+      }),
+    ).toEqual({ staged: 1 });
   });
 
   it("only polls repo diffs while a turn is live and the repo view is active", () => {

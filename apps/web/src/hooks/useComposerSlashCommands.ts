@@ -40,6 +40,7 @@ import { useRightDockStore } from "../rightDockStore";
 import { registerSidechatCreator } from "../lib/sidechatCreatorRegistry";
 import { downloadUrlAsBlob } from "../lib/browserDownload";
 import { resolveWsHttpUrl } from "../lib/wsHttpUrl";
+import { getProviderDiscoveryGeneration } from "../lib/providerDiscoveryInvalidation";
 import { useFeedbackDialogStore } from "../feedbackDialogStore";
 import {
   finishProjectOperation,
@@ -86,6 +87,7 @@ export function useComposerSlashCommands(input: {
   fastModeEnabled: boolean;
   providerNativeCommands: readonly ProviderNativeCommandDescriptor[];
   providerCommandDiscoveryCwd: string | null;
+  providerCommandDiscoveryBinaryPath: string | null;
   selectedProvider: ProviderKind;
   currentProviderModelOptions: ProviderModelOptions[ProviderKind] | undefined;
   selectedModelSelection: ModelSelection;
@@ -139,6 +141,7 @@ export function useComposerSlashCommands(input: {
     fastModeEnabled,
     providerNativeCommands,
     providerCommandDiscoveryCwd,
+    providerCommandDiscoveryBinaryPath,
     selectedProvider,
     currentProviderModelOptions,
     selectedModelSelection,
@@ -664,6 +667,10 @@ export function useComposerSlashCommands(input: {
         cwd: providerCommandDiscoveryCwd,
         threadId,
         forceReload: true,
+        ...(providerCommandDiscoveryBinaryPath
+          ? { binaryPath: providerCommandDiscoveryBinaryPath }
+          : {}),
+        discoveryGeneration: getProviderDiscoveryGeneration(),
       });
       if (
         hasProviderNativeSlashCommand(
@@ -691,7 +698,13 @@ export function useComposerSlashCommands(input: {
       description: "Claude did not expose /fast for this account or environment.",
     });
     return false;
-  }, [editorActions, providerCommandDiscoveryCwd, reportComposerFeedback, threadId]);
+  }, [
+    editorActions,
+    providerCommandDiscoveryCwd,
+    providerCommandDiscoveryBinaryPath,
+    reportComposerFeedback,
+    threadId,
+  ]);
 
   const runExportSlashCommand = useCallback(() => {
     // Re-validate at call time (mirrors /compact): menu selections and stale

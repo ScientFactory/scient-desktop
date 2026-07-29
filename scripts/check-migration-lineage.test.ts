@@ -229,9 +229,47 @@ describe("Scient migration lineage guard", () => {
     const currentContents = new Map([["001_CreateProjects.ts", "export default 'changed';\n"]]);
 
     assert.deepEqual(findReleasedContentViolations(released, currentContents, releasedContents), [
-      "Released migration 001_CreateProjects.ts was modified.",
+      `Released migration 001_CreateProjects.ts was modified without an exact audited content ` +
+        `allowance [allowance key: 1:${gitBlobOid("export default 'one';\n")}:${gitBlobOid(
+          "export default 'changed';\n",
+        )}].`,
       "Released migration 002_AddThreadState.ts was deleted.",
     ]);
+  });
+
+  it("suppresses a content difference blessed by an exact audited allowance", () => {
+    const released = catalogFor([[1, "CreateProjects"]]).entries;
+    const releasedContents = new Map([["001_CreateProjects.ts", "export default 'one';\n"]]);
+    const currentContents = new Map([["001_CreateProjects.ts", "export default 'changed';\n"]]);
+    const allowanceKey = `1:${gitBlobOid("export default 'one';\n")}:${gitBlobOid(
+      "export default 'changed';\n",
+    )}`;
+
+    // Without the allowance the edit is a violation; with the exact key it is blessed.
+    assert.lengthOf(
+      findReleasedContentViolations(released, currentContents, releasedContents, new Set()),
+      1,
+    );
+    assert.deepEqual(
+      findReleasedContentViolations(
+        released,
+        currentContents,
+        releasedContents,
+        new Set([allowanceKey]),
+      ),
+      [],
+    );
+    // A different blob is not blessed by the same-path allowance.
+    const tamperedContents = new Map([["001_CreateProjects.ts", "export default 'tampered';\n"]]);
+    assert.lengthOf(
+      findReleasedContentViolations(
+        released,
+        tamperedContents,
+        releasedContents,
+        new Set([allowanceKey]),
+      ),
+      1,
+    );
   });
 
   it("does not let the protected official tag manifest shrink or accept a stray old tag", () => {
@@ -654,10 +692,70 @@ describe("Scient migration lineage guard", () => {
     assert.deepEqual(released.problems, []);
     assert.deepEqual(current.problems, []);
     assert.deepEqual(findReleasedDependencyViolations(released.contents, current.contents), [
-      "Released migration dependency closure gained contracts/redirect.ts.",
+      `Released migration dependency closure gained contracts/redirect.ts without an exact ` +
+        `audited graph allowance [allowance key: added:contracts/redirect.ts:${gitBlobOid(
+          "export const MODEL_OPTIONS_BY_PROVIDER = {};\n",
+        )}].`,
       "Released migration dependency contracts/index.ts was modified.",
       "Released migration dependency contracts/package.json was modified.",
     ]);
+  });
+
+  it("suppresses only the exact removed/added graph delta blessed by audited allowances", () => {
+    const releasedContents = new Map([
+      ["a/keep.ts", "export const keep = 1;\n"],
+      ["a/leaves.ts", "export const leaves = 1;\n"],
+    ]);
+    const currentContents = new Map([
+      ["a/keep.ts", "export const keep = 1;\n"],
+      ["a/enters.ts", "export const enters = 1;\n"],
+    ]);
+    const removedKey = `removed:a/leaves.ts:${gitBlobOid("export const leaves = 1;\n")}`;
+    const addedKey = `added:a/enters.ts:${gitBlobOid("export const enters = 1;\n")}`;
+
+    // No allowances: both the removal and the addition are flagged.
+    assert.lengthOf(
+      findReleasedDependencyViolations(releasedContents, currentContents, new Set(), new Set()),
+      2,
+    );
+    // Exact removed + added keys bless precisely this graph delta.
+    assert.deepEqual(
+      findReleasedDependencyViolations(
+        releasedContents,
+        currentContents,
+        new Set(),
+        new Set([removedKey, addedKey]),
+      ),
+      [],
+    );
+    // A removed key does not bless an added file (and vice versa): still flagged.
+    assert.lengthOf(
+      findReleasedDependencyViolations(
+        releasedContents,
+        currentContents,
+        new Set(),
+        new Set([removedKey]),
+      ),
+      1,
+    );
+    // A modified (still-reachable) dependency is never blessed by graph allowances.
+    const modifiedCurrent = new Map([
+      ["a/keep.ts", "export const keep = 2;\n"],
+      ["a/leaves.ts", "export const leaves = 1;\n"],
+    ]);
+    assert.deepEqual(
+      findReleasedDependencyViolations(
+        releasedContents,
+        modifiedCurrent,
+        new Set(),
+        new Set([
+          removedKey,
+          addedKey,
+          `removed:a/keep.ts:${gitBlobOid("export const keep = 1;\n")}`,
+        ]),
+      ),
+      ["Released migration dependency a/keep.ts was modified."],
+    );
   });
 
   it("detects a same-module alias redirect of a pinned runtime export", () => {

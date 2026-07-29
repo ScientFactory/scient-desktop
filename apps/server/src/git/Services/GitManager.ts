@@ -25,6 +25,7 @@ import {
   GitSummarizeDiffResult,
 } from "@synara/contracts";
 import type { AuthorizedGitRunStackedActionInput } from "@synara/shared/gitMutationRpc";
+import type { GitWorkingTreeDiffStatsResult } from "@synara/shared/gitDiffStatsRpc";
 import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 import type { GitManagerServiceError } from "../Errors.ts";
@@ -55,6 +56,11 @@ export interface GitManagerShape {
   readonly readWorkingTreeDiff: (
     input: GitReadWorkingTreeDiffInput,
   ) => Effect.Effect<GitReadWorkingTreeDiffResult, GitManagerServiceError>;
+
+  /** Count one working-tree diff scope without returning its patch text. */
+  readonly readWorkingTreeDiffStats: (
+    input: GitReadWorkingTreeDiffInput,
+  ) => Effect.Effect<GitWorkingTreeDiffStatsResult, GitManagerServiceError>;
 
   /**
    * Generate a read-only markdown summary for an existing diff patch.
