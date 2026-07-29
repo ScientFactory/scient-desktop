@@ -110,7 +110,10 @@ import {
 import { collectMacUpdateDiagnostics } from "./macUpdateDiagnostics";
 import { openInitialBackendWindow } from "./initialBackendWindowOpen";
 import { shouldAllowMediaPermissionRequest } from "./mediaPermissions";
-import { PACKAGED_RENDERER_READINESS_EXPRESSION } from "./packagedStartupRendererReadiness";
+import {
+  PACKAGED_RENDERER_READINESS_EXPRESSION,
+  waitForPackagedRendererReadiness,
+} from "./packagedStartupRendererReadiness";
 import { attachPackagedStartupWindowLifecycleProof } from "./packagedStartupWindowLifecycle";
 import {
   installResumableUpdateDownloader,
@@ -3796,9 +3799,11 @@ function createWindow(): BrowserWindow {
       setTimeout(() => {
         const generation = getBackendSupervisor().currentGeneration;
         void Promise.all([
-          window.webContents.executeJavaScript(
-            `new Promise((resolve) => requestAnimationFrame(() => resolve(${PACKAGED_RENDERER_READINESS_EXPRESSION})))`,
-            true,
+          waitForPackagedRendererReadiness(() =>
+            window.webContents.executeJavaScript(
+              `new Promise((resolve) => requestAnimationFrame(() => resolve(${PACKAGED_RENDERER_READINESS_EXPRESSION})))`,
+              true,
+            ),
           ),
           waitForPackagedBackendResponsiveness(backendHttpUrl).then(() => true),
           packagedWindowVisibility,
@@ -3810,14 +3815,20 @@ function createWindow(): BrowserWindow {
               currentGeneration?.number === generation.number &&
               currentGeneration.child.exitCode === null &&
               currentGeneration.child.signalCode === null;
+            const windowIsVisible = window.isVisible();
             if (
               rendererReady !== true ||
               backendReady !== true ||
               !sameLiveGeneration ||
               windowVisible !== true ||
-              !window.isVisible()
+              !windowIsVisible
             ) {
-              throw new Error("renderer or backend failed the delayed responsiveness check");
+              throw new Error(
+                "renderer or backend failed the delayed responsiveness check " +
+                  `rendererReady=${rendererReady === true} backendReady=${backendReady === true} ` +
+                  `windowVisible=${windowVisible === true} windowIsVisible=${windowIsVisible} ` +
+                  `sameLiveGeneration=${sameLiveGeneration}`,
+              );
             }
             writeDesktopLogHeader(
               `packaged responsiveness confirmed generation=${generation.number}`,
