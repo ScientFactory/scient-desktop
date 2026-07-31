@@ -113,34 +113,21 @@ interface ReceiptActorInput {
   readonly receiptId?: string;
 }
 
-/**
- * A1 extends the central automation actor with these exact host-resolved
- * fields. Keep the structural check local until that independent lane lands;
- * old two-field automation actors must fail closed when composed here.
- */
-interface ExactAutomationActorBinding {
-  readonly kind: "automation-run";
-  readonly automationId: string;
-  readonly runId: string;
-  readonly grantVersion: 1;
-  readonly automationVersion: string;
-  readonly threadId: string;
-  readonly pendingMessageId: string;
-  readonly authorizingTurnId: string;
-}
+type AutomationActorBinding = Extract<
+  ScientOperationAuthority["actor"],
+  { readonly kind: "automation-run" }
+>;
 
 function exactAutomationActorBinding(
   actor: ScientOperationAuthority["actor"],
-): ExactAutomationActorBinding {
-  const candidate = actor as ScientOperationAuthority["actor"] &
-    Partial<ExactAutomationActorBinding>;
-  if (candidate.kind !== "automation-run") {
+): AutomationActorBinding {
+  if (actor.kind !== "automation-run") {
     throw new BrowserEvidenceContractError(
       "actor_scope_denied",
       "An exact automation actor binding is required.",
     );
   }
-  if (candidate.grantVersion !== 1) {
+  if (actor.grantVersion !== 1) {
     throw new BrowserEvidenceContractError(
       "actor_scope_denied",
       "An exact versioned automation actor binding is required.",
@@ -148,20 +135,20 @@ function exactAutomationActorBinding(
   }
   return Object.freeze({
     kind: "automation-run",
-    automationId: browserEvidenceStructuredIdentity(candidate.automationId, "actor.automationId"),
-    runId: browserEvidenceStructuredIdentity(candidate.runId, "actor.runId"),
+    automationId: browserEvidenceStructuredIdentity(actor.automationId, "actor.automationId"),
+    runId: browserEvidenceStructuredIdentity(actor.runId, "actor.runId"),
     grantVersion: 1,
     automationVersion: browserEvidenceStructuredIdentity(
-      candidate.automationVersion!,
+      actor.automationVersion,
       "actor.automationVersion",
     ),
-    threadId: browserEvidenceStructuredIdentity(candidate.threadId!, "actor.threadId"),
+    threadId: browserEvidenceStructuredIdentity(actor.threadId, "actor.threadId"),
     pendingMessageId: browserEvidenceStructuredIdentity(
-      candidate.pendingMessageId!,
+      actor.pendingMessageId,
       "actor.pendingMessageId",
     ),
     authorizingTurnId: browserEvidenceStructuredIdentity(
-      candidate.authorizingTurnId!,
+      actor.authorizingTurnId,
       "actor.authorizingTurnId",
     ),
   });
@@ -446,7 +433,7 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
     assertFreshEnvelope(envelope, currentTime);
     const authority = assertActiveAuthority(envelope.authority, projectId, currentTime);
     assertCapability(authority, capability);
-    let automationBinding: ExactAutomationActorBinding | null = null;
+    let automationBinding: AutomationActorBinding | null = null;
     if (authority.actor.kind === "provider-thread") {
       const turn = envelope.semanticRetryScope;
       if (

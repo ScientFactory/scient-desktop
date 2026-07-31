@@ -82,14 +82,12 @@ function automationAuthority(
       kind: "automation-run",
       automationId: "automation-1",
       runId: "run-1",
-      // A1 adds these fields to the central actor union. The structural cast
-      // keeps this independent branch composable without depending on A1.
       grantVersion: 1,
       automationVersion: `sha256:${"a".repeat(64)}`,
       threadId: THREAD_ID,
       pendingMessageId: "message-1",
       authorizingTurnId: TURN_ID,
-    } as ScientOperationAuthority["actor"],
+    },
     projectIds: [PROJECT_ID],
     capabilities: [
       "browser:read",
@@ -1265,7 +1263,7 @@ describe("BrowserEvidenceAuthorityKernel scientific evidence ledger", () => {
         kind: "automation-run",
         automationId: "automation-legacy",
         runId: "run-legacy",
-      },
+      } as never,
     });
     expect(() =>
       kernel.recordAutomationMemoryContext({
@@ -1277,7 +1275,7 @@ describe("BrowserEvidenceAuthorityKernel scientific evidence ledger", () => {
         receiptId: "legacy-automation-memory",
         provenance: provenance("automation-memory"),
       }),
-    ).toThrow(BrowserEvidenceContractError);
+    ).toThrowError(/grantVersion is unsupported/u);
 
     const otherThreadAutomation = automationAuthority({
       actor: {
@@ -1289,7 +1287,7 @@ describe("BrowserEvidenceAuthorityKernel scientific evidence ledger", () => {
         threadId: "thread-2",
         pendingMessageId: "message-2",
         authorizingTurnId: "turn-2",
-      } as ScientOperationAuthority["actor"],
+      },
     });
     expect(() =>
       kernel.recordProposal({
