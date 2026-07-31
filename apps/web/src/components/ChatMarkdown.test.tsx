@@ -128,6 +128,23 @@ describe("ChatMarkdown", () => {
     ).toBe(true);
   });
 
+  it.each(["javascript:alert(1)", "data:text/html,unsafe"])(
+    "keeps an image preview but omits a neutralized unsafe link destination %s",
+    async (destination) => {
+      const markup = await renderMarkdown(
+        `[![Safe preview](https://images.example/preview.png)](${destination})`,
+      );
+
+      expect(markup).toContain('aria-label="Preview Safe preview"');
+      expect(markup).not.toContain('href=""');
+      expect(markup).not.toContain("Open link for Safe preview");
+      expect(
+        markup.match(/<a\b[^>]*>[\s\S]*?<\/a>/g)?.every((anchor) => !anchor.includes("<button")) ??
+          true,
+      ).toBe(true);
+    },
+  );
+
   it("uses the same local image frame in sent user markdown", async () => {
     const markup = await renderUserMarkdown("![Attached](./capture.png)");
 

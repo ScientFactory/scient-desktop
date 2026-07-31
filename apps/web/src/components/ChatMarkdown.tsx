@@ -1371,7 +1371,7 @@ function ChatMarkdown({
           );
         };
         const linkedSegments = makeLinkedSegmentKeysUnique(splitLinkedImageContent(children));
-        if (restoredHref && linkedSegments.some((segment) => segment.kind === "image")) {
+        if (linkedSegments.some((segment) => segment.kind === "image")) {
           // An interactive image frame cannot be nested in an anchor. Split the
           // rendered inline tree at each image so text, emphasis, and image order
           // survive while every destination follows normal link policy.
@@ -1380,12 +1380,14 @@ function ChatMarkdown({
               {linkedSegments.map((segment) =>
                 segment.kind === "content" ? (
                   <React.Fragment key={segment.key}>
-                    {renderRegularLink(segment.node)}
+                    {restoredHref ? renderRegularLink(segment.node) : segment.node}
                   </React.Fragment>
                 ) : (
                   <React.Fragment key={segment.key}>
                     {segment.node}
-                    {renderRegularLink("Open link", `Open link for ${segment.label}`)}
+                    {restoredHref
+                      ? renderRegularLink("Open link", `Open link for ${segment.label}`)
+                      : null}
                   </React.Fragment>
                 ),
               )}
