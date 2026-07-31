@@ -239,6 +239,22 @@ layer("ProjectionThreadMessageRepository", (it) => {
         updatedAt: "2026-02-28T19:31:02.000Z",
       });
 
+      // A conflicting later projection must not relabel an automation message
+      // as an ordinary user dispatch. Terminal authority resolution relies on
+      // the first explicit origin being immutable.
+      yield* repository.upsert({
+        messageId,
+        threadId,
+        turnId: null,
+        role: "user",
+        text: "kick off the review now",
+        dispatchOrigin: "user",
+        isStreaming: false,
+        source: "native",
+        createdAt,
+        updatedAt: "2026-02-28T19:31:03.000Z",
+      });
+
       const rows = yield* repository.listByThreadId({ threadId });
       assert.equal(rows.length, 1);
       assert.equal(rows[0]?.dispatchOrigin, "automation");

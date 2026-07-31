@@ -8,7 +8,6 @@ import {
   DEFAULT_AUTOMATION_MINIMUM_INTERVAL_SECONDS,
   MessageId,
   ThreadId,
-  type AutomationAllowedCapability,
   type AutomationCompletionPolicy,
   type AutomationDefinition,
   type AutomationRun,
@@ -32,6 +31,11 @@ import { AutomationRepository } from "../../persistence/Services/AutomationRepos
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import type { ProjectionTurn } from "../../persistence/Services/ProjectionTurns.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import {
+  makeAutomationOperationGrantSnapshot,
+  automationAllowedCapabilitiesForDefinition,
+  SCIENT_AUTOMATION_OPERATION_RUNTIME_EPOCH_HASH,
+} from "../../scientOperations/automationAuthority.ts";
 import { AutomationServiceError } from "../Errors.ts";
 import { AutomationService, type AutomationServiceShape } from "../Services/AutomationService.ts";
 import {
@@ -249,18 +253,16 @@ function hasOwn<T extends object, K extends PropertyKey>(
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
-function allowedCapabilitiesFor(definition: AutomationDefinition): AutomationAllowedCapability[] {
-  const capabilities: AutomationAllowedCapability[] = ["send-turn"];
-  if (definition.worktreeMode !== "local") {
-    capabilities.push("create-worktree");
-  }
-  if (definition.runtimeMode === "full-access") {
-    capabilities.push("full-access");
-  }
-  return capabilities;
-}
-
-function makePermissionSnapshot(definition: AutomationDefinition, now: string) {
+function makePermissionSnapshot(
+  definition: AutomationDefinition,
+  now: string,
+  operationGrant: {
+    readonly runId: AutomationRun["id"];
+    readonly threadId: ThreadId;
+    readonly pendingMessageId: MessageId;
+  } | null,
+) {
+  const allowedCapabilities = automationAllowedCapabilitiesForDefinition(definition);
   return {
     provider: definition.modelSelection.provider,
     modelSelection: definition.modelSelection,
@@ -269,7 +271,18 @@ function makePermissionSnapshot(definition: AutomationDefinition, now: string) {
     runtimeMode: definition.runtimeMode,
     interactionMode: definition.interactionMode,
     worktreeMode: definition.worktreeMode,
-    allowedCapabilities: allowedCapabilitiesFor(definition),
+    allowedCapabilities,
+    operationGrant:
+      operationGrant === null
+        ? null
+        : makeAutomationOperationGrantSnapshot({
+            definition,
+            runId: operationGrant.runId,
+            threadId: operationGrant.threadId,
+            pendingMessageId: operationGrant.pendingMessageId,
+            allowedCapabilities,
+            issuedAt: now,
+          }),
     createdAt: now,
   };
 }
@@ -1146,7 +1159,17 @@ export const AutomationServiceLive = Layer.effect(
             turnStartCommandId: ids.turnStartCommandId,
             trigger,
             scheduledFor,
-            permissionSnapshot: makePermissionSnapshot(definition, now),
+            permissionSnapshot: makePermissionSnapshot(
+              definition,
+              now,
+              threadId === null
+                ? null
+                : {
+                    runId,
+                    threadId,
+                    pendingMessageId: ids.messageId,
+                  },
+            ),
             now,
           })
           .pipe(Effect.mapError(toServiceError("Failed to create automation run.")));
@@ -1834,6 +1857,28 @@ export const AutomationServiceLive = Layer.effect(
             runs,
             (run) => {
               const now = isoNow();
+              const operationGrant = run.permissionSnapshot.operationGrant;
+              if (
+                operationGrant === null ||
+                operationGrant === undefined ||
+                operationGrant.runtimeEpochHash !==
+                  SCIENT_AUTOMATION_OPERATION_RUNTIME_EPOCH_HASH ||
+                Date.parse(operationGrant.leaseExpiresAt) <= Date.parse(now)
+              ) {
+                return interruptRunForRecovery(run, now).pipe(
+                  Effect.mapError(
+                    toServiceError("Failed to retire an invalid automation operation grant."),
+                  ),
+                  Effect.asVoid,
+                  Effect.catch((error) =>
+                    Effect.logWarning("automation operation-grant recovery failed", {
+                      automationId: run.automationId,
+                      runId: run.id,
+                      error: recoveryErrorMessage(error),
+                    }),
+                  ),
+                );
+              }
               const threadId = run.threadId;
               if (!threadId) {
                 // Orphaned before any thread was created (crash between create and dispatch).
