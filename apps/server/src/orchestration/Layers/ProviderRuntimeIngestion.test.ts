@@ -119,7 +119,12 @@ function createProviderServiceHarness() {
   };
 
   const emit = (event: LegacyProviderRuntimeEvent): void => {
-    Effect.runSync(PubSub.publish(runtimeEventPubSub, event as unknown as ProviderRuntimeEvent));
+    Effect.runSync(
+      PubSub.publish(runtimeEventPubSub, {
+        providerRefs: { providerThreadId: String(event.threadId) },
+        ...event,
+      } as unknown as ProviderRuntimeEvent),
+    );
   };
 
   return {
@@ -345,6 +350,8 @@ describe("ProviderRuntimeIngestion", () => {
         }),
         provenanceKey: input.provenanceKey,
         sourcePath: input.sourcePath,
+        sourceKind: "codex",
+        sourceProviderThreadId: "thread-1",
         createdAt: input.createdAt,
       }),
     );
@@ -372,6 +379,8 @@ describe("ProviderRuntimeIngestion", () => {
         attachmentId,
         provenanceKey: input.provenanceKey,
         sourcePath: input.sourcePath,
+        sourceKind: "codex",
+        sourceProviderThreadId: "thread-1",
         createdAt: input.createdAt,
       }),
     );
@@ -2548,6 +2557,63 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.messages.filter((candidate) => candidate.turnId === turnId)).toHaveLength(1);
   });
 
+  it("preserves persisted message state when restart recovery adds an image", async () => {
+    const firstProcess = await createHarness({ dbPath: "file", startIngestion: false });
+    const turnId = asTurnId("turn-restart-preserve-message");
+    const seeded = await seedStartupCapacityTurn({
+      engine: firstProcess.engine,
+      generatedImagesRoot: firstProcess.generatedImagesRoot,
+      turnId,
+      prefix: "restart-preserve-message",
+      existingAttachmentCount: 1,
+      referenceCount: 1,
+      createdAt: "2026-07-31T10:59:30.000Z",
+    });
+    await materializeGeneratedImageAttachment({
+      threadId: "thread-1",
+      sourcePath: seeded.sourcePaths[0]!,
+      provenanceKey: "restart-preserve-message-0",
+      allowedSourceRoots: [firstProcess.generatedImagesRoot],
+      attachmentsDir: firstProcess.attachmentsDir,
+    });
+    fs.rmSync(seeded.sourcePaths[0]!);
+
+    await Effect.runPromise(Scope.close(scope!, Exit.void));
+    scope = null;
+    await runtime!.dispose();
+    runtime = null;
+    const restarted = await createHarness({
+      codexHomePath: firstProcess.codexHomePath,
+      dbPath: firstProcess.dbPath!,
+      seed: false,
+      serverBaseDir: firstProcess.serverBaseDir,
+      startIngestion: false,
+      workspaceRoot: firstProcess.workspaceRoot,
+    });
+
+    await restarted.startIngestion();
+    const recoveredAttachmentId = generatedImageAttachmentId({
+      threadId: "thread-1",
+      provenanceKey: "restart-preserve-message-0",
+    });
+    const thread = await waitForThread(restarted.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === seeded.messageId &&
+          message.attachments?.some((attachment) => attachment.id === recoveredAttachmentId),
+      ),
+    );
+    const message = thread.messages.find((candidate) => candidate.id === seeded.messageId);
+    expect(message).toMatchObject({
+      text: "Generated results",
+      streaming: false,
+    });
+    expect(message?.attachments?.map((attachment) => attachment.id)).toEqual([
+      "existing-restart-preserve-message-0",
+      recoveredAttachmentId,
+    ]);
+  });
+
   it("reports one omitted startup image when seven attachments leave one slot for two refs", async () => {
     const harness = await createHarness({ startIngestion: false });
     const turnId = asTurnId("turn-restart-capacity-seven-plus-two");
@@ -2825,11 +2891,13 @@ describe("ProviderRuntimeIngestion", () => {
     };
 
     await harness.startIngestion();
-    const thread = await waitForThread(
+    await waitForThread(
       harness.engine,
       (entry) => entry.messages.filter((message) => message.attachments?.length === 1).length === 8,
     );
-    expect(threadLookupCount).toBe(8);
+    // Each of the eight recovery groups loads its target once, and the
+    // attachment command hydrates that target again before merging state.
+    expect(threadLookupCount).toBe(16);
     expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(8);
     const unresolved = await Effect.runPromise(
       harness.snapshotQuery.listTurnlessGeneratedImageReferences(),
@@ -2883,7 +2951,9 @@ describe("ProviderRuntimeIngestion", () => {
         (message) => message.id === "assistant:image:prefix-a" && message.attachments?.length === 5,
       ),
     );
-    expect(lookupCount).toBe(2);
+    // The first group performs one recovery lookup plus command hydration; the
+    // second group is inspected before its work is deferred by the budget.
+    expect(lookupCount).toBe(3);
     expect(thread.messages.some((message) => message.id === "assistant:image:prefix-b")).toBe(
       false,
     );
@@ -3148,6 +3218,47 @@ describe("ProviderRuntimeIngestion", () => {
       thread.messages.find((message) => message.id === "assistant:image:configured-home-image")
         ?.attachments?.[0],
     ).toMatchObject({ type: "image", mimeType: "image/png" });
+  });
+
+  it("rejects a generated image from another provider thread directory", async () => {
+    const harness = await createHarness();
+    const otherThreadRoot = path.join(
+      harness.codexHomePath,
+      "generated_images",
+      "provider-thread-2",
+    );
+    fs.mkdirSync(otherThreadRoot, { recursive: true });
+    const imagePath = path.join(otherThreadRoot, "cross-thread.png");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-cross-thread-generated-image"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      providerRefs: { providerThreadId: "thread-1" },
+      itemId: asItemId("cross-thread"),
+      payload: {
+        itemType: "image_generation",
+        status: "completed",
+        data: {
+          kind: "codex.generated_image",
+          path: imagePath,
+          callId: "cross-thread",
+        },
+      },
+    });
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === "assistant:image:cross-thread" &&
+          message.text.includes("could not be displayed"),
+      ),
+    );
+
+    expect(thread.messages.flatMap((message) => message.attachments ?? [])).toEqual([]);
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(0);
   });
 
   it("shows a stable path-free warning when an image-only turn cannot be materialized", async () => {

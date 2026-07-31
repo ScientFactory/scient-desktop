@@ -15,6 +15,7 @@ import {
   resolveAttachmentPathById,
   toSafeThreadAttachmentSegment,
 } from "./attachmentStore.ts";
+import { syncDirectoryEntry } from "./privatePathPermissions.ts";
 
 const GENERATED_IMAGE_MIME_TYPES = {
   "image/gif": ".gif",
@@ -22,12 +23,39 @@ const GENERATED_IMAGE_MIME_TYPES = {
   "image/png": ".png",
   "image/webp": ".webp",
 } as const;
+const GENERATED_IMAGE_TEMP_MAX_AGE_MS = 24 * 60 * 60 * 1_000;
+const GENERATED_IMAGE_TEMP_FILE_PATTERN =
+  /^[a-z0-9_-]+-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:gif|jpg|png|webp)\.tmp-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
 type GeneratedImageMimeType = keyof typeof GENERATED_IMAGE_MIME_TYPES;
 
 function isPathInside(candidate: string, root: string): boolean {
   const relative = path.relative(root, candidate);
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function resolveAuthorizedSourceRoot(root: string): Promise<string | null> {
+  try {
+    const before = await fs.lstat(root);
+    if (!before.isDirectory() || before.isSymbolicLink()) return null;
+    const realRoot = await fs.realpath(root);
+    const [canonical, after] = await Promise.all([fs.stat(realRoot), fs.lstat(root)]);
+    if (
+      !canonical.isDirectory() ||
+      !after.isDirectory() ||
+      after.isSymbolicLink() ||
+      before.dev !== canonical.dev ||
+      before.ino !== canonical.ino ||
+      after.dev !== canonical.dev ||
+      after.ino !== canonical.ino
+    ) {
+      return null;
+    }
+    return realRoot;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 function detectGeneratedImageMimeType(bytes: Uint8Array): GeneratedImageMimeType | null {
@@ -96,7 +124,10 @@ async function readExistingAttachment(pathname: string): Promise<Buffer | null> 
   }
 }
 
-async function readValidatedGeneratedImage(pathname: string): Promise<{
+async function readValidatedGeneratedImage(
+  pathname: string,
+  authorizedRoots?: ReadonlyArray<string>,
+): Promise<{
   readonly bytes: Buffer;
   readonly mimeType: GeneratedImageMimeType;
 }> {
@@ -109,6 +140,18 @@ async function readValidatedGeneratedImage(pathname: string): Promise<{
     }
     if (stat.size <= 0 || stat.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
       throw new Error("Generated image is empty or exceeds the chat image size limit.");
+    }
+    if (authorizedRoots) {
+      const [postOpenRealPath, pathStat] = await Promise.all([
+        fs.realpath(pathname),
+        fs.stat(pathname),
+      ]);
+      if (!authorizedRoots.some((root) => isPathInside(postOpenRealPath, root))) {
+        throw new Error("Provider image escaped its authorized generated-image root.");
+      }
+      if (pathStat.dev !== stat.dev || pathStat.ino !== stat.ino) {
+        throw new Error("Generated image path identity changed while it was being opened.");
+      }
     }
     bytes = Buffer.allocUnsafe(stat.size);
     let offset = 0;
@@ -178,7 +221,8 @@ async function persistAtomically(input: {
   readonly destinationPath: string;
   readonly bytes: Buffer;
 }): Promise<void> {
-  await fs.mkdir(path.dirname(input.destinationPath), {
+  const destinationDirectory = path.dirname(input.destinationPath);
+  await fs.mkdir(destinationDirectory, {
     recursive: true,
     mode: 0o700,
   });
@@ -210,9 +254,33 @@ async function persistAtomically(input: {
         });
       }
     }
+    await syncDirectoryEntry(destinationDirectory);
   } finally {
     await fs.rm(temporaryPath, { force: true });
+    await syncDirectoryEntry(destinationDirectory);
   }
+}
+
+export async function cleanupStaleGeneratedImageAttachmentTemps(input: {
+  readonly attachmentsDir: string;
+  readonly now?: number;
+}): Promise<number> {
+  const entries = await fs.readdir(input.attachmentsDir, { withFileTypes: true }).catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  });
+  const cutoff = (input.now ?? Date.now()) - GENERATED_IMAGE_TEMP_MAX_AGE_MS;
+  let removed = 0;
+  for (const entry of entries) {
+    if (!entry.isFile() || !GENERATED_IMAGE_TEMP_FILE_PATTERN.test(entry.name)) continue;
+    const pathname = path.join(input.attachmentsDir, entry.name);
+    const stat = await fs.lstat(pathname).catch(() => null);
+    if (!stat?.isFile() || stat.isSymbolicLink() || stat.mtimeMs > cutoff) continue;
+    await fs.rm(pathname, { force: true });
+    removed += 1;
+  }
+  if (removed > 0) await syncDirectoryEntry(input.attachmentsDir);
+  return removed;
 }
 
 export async function materializeGeneratedImageAttachment(input: {
@@ -229,7 +297,7 @@ export async function materializeGeneratedImageAttachment(input: {
       (pathname) => ({ pathname, error: null }),
       (error: unknown) => ({ pathname: null, error }),
     ),
-    Promise.all(input.allowedSourceRoots.map((root) => fs.realpath(root).catch(() => null))),
+    Promise.all(input.allowedSourceRoots.map(resolveAuthorizedSourceRoot)),
   ]);
   if (!realSourceResult.pathname) {
     const sourceCode = (realSourceResult.error as NodeJS.ErrnoException).code;
@@ -250,7 +318,10 @@ export async function materializeGeneratedImageAttachment(input: {
   // Refuse a final-component symlink if the source is swapped between realpath
   // authorization and open. This closes the practical TOCTOU escape without
   // weakening the allowed-root policy.
-  const { bytes, mimeType } = await readValidatedGeneratedImage(realSourcePath);
+  const { bytes, mimeType } = await readValidatedGeneratedImage(
+    realSourcePath,
+    realRoots.filter((root): root is string => root !== null),
+  );
   if (
     durableAttachment &&
     (durableAttachment.attachment.mimeType !== mimeType || !durableAttachment.bytes.equals(bytes))

@@ -309,6 +309,158 @@ const lifecycleLayer = it.layer(
 );
 
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
+  it.effect("normalizes configuration warning text while preserving its range", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+      const range = {
+        start: { line: 4, column: 2 },
+        end: { line: 4, column: 17 },
+      };
+      const payload = {
+        summary: "  Invalid MCP configuration  ",
+        details: "\n URL é is not supported for stdio \t",
+        path: "  mcp_servers.scient  ",
+        range,
+      };
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-config-warning-normalized"),
+        kind: "notification",
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        method: "configWarning",
+        threadId: asThreadId("thread-1"),
+        payload,
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "config.warning") {
+        return;
+      }
+      assert.equal(firstEvent.value.payload.summary, "Invalid MCP configuration");
+      assert.equal(firstEvent.value.payload.details, "URL é is not supported for stdio");
+      assert.equal(firstEvent.value.payload.path, "mcp_servers.scient");
+      assert.deepStrictEqual(firstEvent.value.payload.range, range);
+      assert.deepStrictEqual(payload, {
+        summary: "  Invalid MCP configuration  ",
+        details: "\n URL é is not supported for stdio \t",
+        path: "  mcp_servers.scient  ",
+        range,
+      });
+    }),
+  );
+
+  it.effect("falls back and omits empty or non-string configuration warning fields", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+      const range = { start: { line: 1, column: 1 } };
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-config-warning-empty"),
+        kind: "notification",
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        method: "configWarning",
+        threadId: asThreadId("thread-1"),
+        payload: {
+          summary: " \n\t ",
+          details: "\u2003",
+          path: { value: "must not be coerced" },
+          range,
+        },
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "config.warning") {
+        return;
+      }
+      assert.deepStrictEqual(firstEvent.value.payload, {
+        summary: "Configuration warning",
+        range,
+      });
+    }),
+  );
+
+  it.effect("normalizes deprecation notices and keeps their fallback stable", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+        Effect.forkChild,
+      );
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-deprecation-normalized"),
+        kind: "notification",
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        method: "deprecationNotice",
+        threadId: asThreadId("thread-1"),
+        payload: {
+          summary: "  旧い設定  ",
+          details: "\n 代わりに new_option を使用 \n",
+        },
+      } satisfies ProviderEvent);
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-deprecation-empty"),
+        kind: "notification",
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        method: "deprecationNotice",
+        threadId: asThreadId("thread-1"),
+        payload: {
+          summary: 42,
+          details: " \t ",
+        },
+      } satisfies ProviderEvent);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      assert.equal(events[0]?.type, "deprecation.notice");
+      assert.equal(events[1]?.type, "deprecation.notice");
+      if (events[0]?.type === "deprecation.notice") {
+        assert.deepStrictEqual(events[0].payload, {
+          summary: "旧い設定",
+          details: "代わりに new_option を使用",
+        });
+      }
+      if (events[1]?.type === "deprecation.notice") {
+        assert.deepStrictEqual(events[1].payload, { summary: "Deprecation notice" });
+      }
+    }),
+  );
+
+  it.effect("does not normalize unrelated provider events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+      const payload = {
+        fromModel: "  gpt-old  ",
+        toModel: "  gpt-new  ",
+        reason: "  capacity  ",
+      };
+
+      lifecycleManager.emit("event", {
+        id: asEventId("evt-model-rerouted-unchanged"),
+        kind: "notification",
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        method: "model/rerouted",
+        threadId: asThreadId("thread-1"),
+        payload,
+      } satisfies ProviderEvent);
+
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      assert.equal(firstEvent._tag, "Some");
+      if (firstEvent._tag !== "Some" || firstEvent.value.type !== "model.rerouted") {
+        return;
+      }
+      assert.deepStrictEqual(firstEvent.value.payload, payload);
+    }),
+  );
+
   it.effect("maps Codex 0.144 reasoning summaries from canonical item arrays", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
@@ -678,6 +830,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       }
       assert.equal(firstEvent.value.turnId, "turn-1");
       assert.equal(firstEvent.value.itemId, "img_call_2");
+      assert.equal(firstEvent.value.providerRefs?.providerThreadId, "provider-thread-1");
       assert.equal(firstEvent.value.payload.itemType, "image_generation");
       assert.deepStrictEqual(firstEvent.value.payload.data, {
         kind: "codex.generated_image",

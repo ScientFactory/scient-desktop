@@ -1373,6 +1373,8 @@ const ThreadGeneratedImageReferenceRecordCommand = Schema.Struct({
   attachmentId: TrimmedNonEmptyString,
   provenanceKey: TrimmedNonEmptyString,
   sourcePath: TrimmedNonEmptyString,
+  sourceKind: Schema.optional(Schema.Literals(["codex", "studio"])),
+  sourceProviderThreadId: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 
@@ -1822,6 +1824,8 @@ export const ThreadGeneratedImageReferenceRecordedPayload = Schema.Struct({
   attachmentId: TrimmedNonEmptyString,
   provenanceKey: TrimmedNonEmptyString,
   sourcePath: TrimmedNonEmptyString,
+  sourceKind: Schema.optional(Schema.Literals(["codex", "studio"])),
+  sourceProviderThreadId: Schema.optional(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
 

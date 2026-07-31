@@ -1803,6 +1803,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           attachmentId: command.attachmentId,
           provenanceKey: command.provenanceKey,
           sourcePath: command.sourcePath,
+          ...(command.sourceKind ? { sourceKind: command.sourceKind } : {}),
+          ...(command.sourceProviderThreadId
+            ? { sourceProviderThreadId: command.sourceProviderThreadId }
+            : {}),
           createdAt: command.createdAt,
         },
       };

@@ -6,7 +6,10 @@ import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@synara/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { resolveAttachmentPath } from "./attachmentStore.ts";
-import { materializeGeneratedImageAttachment } from "./generatedImageAttachments.ts";
+import {
+  cleanupStaleGeneratedImageAttachmentTemps,
+  materializeGeneratedImageAttachment,
+} from "./generatedImageAttachments.ts";
 
 const PNG_BYTES = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00,
@@ -64,6 +67,33 @@ describe("generatedImageAttachments", () => {
     expect(fs.readdirSync(attachmentsDir).some((entry) => entry.includes(".tmp-"))).toBe(false);
   });
 
+  it("removes only stale generated-image temporary files", async () => {
+    const root = makeTempDir();
+    const attachmentsDir = path.join(root, "attachments");
+    fs.mkdirSync(attachmentsDir);
+    const stale =
+      "thread-1-11111111-1111-4111-8111-111111111111.png.tmp-22222222-2222-4222-8222-222222222222";
+    const recent =
+      "thread-1-33333333-3333-4333-8333-333333333333.png.tmp-44444444-4444-4444-8444-444444444444";
+    const unrelated = "keep.tmp-55555555-5555-4555-8555-555555555555";
+    for (const name of [stale, recent, unrelated]) {
+      fs.writeFileSync(path.join(attachmentsDir, name), PNG_BYTES);
+    }
+    const now = Date.now();
+    fs.utimesSync(
+      path.join(attachmentsDir, stale),
+      new Date(now - 48 * 60 * 60 * 1_000),
+      new Date(now - 48 * 60 * 60 * 1_000),
+    );
+
+    await expect(cleanupStaleGeneratedImageAttachmentTemps({ attachmentsDir, now })).resolves.toBe(
+      1,
+    );
+    expect(fs.existsSync(path.join(attachmentsDir, stale))).toBe(false);
+    expect(fs.existsSync(path.join(attachmentsDir, recent))).toBe(true);
+    expect(fs.existsSync(path.join(attachmentsDir, unrelated))).toBe(true);
+  });
+
   it("recovers validated durable bytes when a persisted-recovery source is gone", async () => {
     const root = makeTempDir();
     const attachmentsDir = path.join(root, "attachments");
@@ -112,6 +142,26 @@ describe("generatedImageAttachments", () => {
         provenanceKey: "call-1",
         allowedSourceRoots: [allowedRoot],
         attachmentsDir: path.join(allowedRoot, "attachments"),
+      }),
+    ).rejects.toThrow("outside the authorized");
+  });
+
+  it("rejects an authorized provider-thread root that is itself a symlink", async () => {
+    const generatedImagesRoot = makeTempDir();
+    const otherThreadRoot = path.join(generatedImagesRoot, "thread-2");
+    fs.mkdirSync(otherThreadRoot);
+    const sourcePath = path.join(otherThreadRoot, "other-thread.png");
+    fs.writeFileSync(sourcePath, PNG_BYTES);
+    const claimedThreadRoot = path.join(generatedImagesRoot, "thread-1");
+    fs.symlinkSync(otherThreadRoot, claimedThreadRoot);
+
+    await expect(
+      materializeGeneratedImageAttachment({
+        threadId: "scient-thread-1",
+        sourcePath,
+        provenanceKey: "cross-thread-root-symlink",
+        allowedSourceRoots: [claimedThreadRoot],
+        attachmentsDir: path.join(generatedImagesRoot, "attachments"),
       }),
     ).rejects.toThrow("outside the authorized");
   });

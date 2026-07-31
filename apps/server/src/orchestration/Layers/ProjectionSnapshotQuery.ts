@@ -145,6 +145,8 @@ const ProjectionFileChangeActivityPayloadDbRowSchema = Schema.Struct({
 const ProjectionGeneratedImageReferenceDbRowSchema = Schema.Struct({
   sourcePath: Schema.String,
   provenanceKey: Schema.String,
+  sourceKind: Schema.NullOr(Schema.Literals(["codex", "studio"])),
+  sourceProviderThreadId: Schema.NullOr(Schema.String),
 });
 const ProjectionTurnGeneratedImageStartupReferenceDbRowSchema = Schema.Struct({
   threadId: ThreadId,
@@ -153,6 +155,8 @@ const ProjectionTurnGeneratedImageStartupReferenceDbRowSchema = Schema.Struct({
   createdAt: IsoDateTime,
   sourcePath: Schema.String,
   provenanceKey: Schema.String,
+  sourceKind: Schema.NullOr(Schema.Literals(["codex", "studio"])),
+  sourceProviderThreadId: Schema.NullOr(Schema.String),
 });
 const ProjectionTurnlessGeneratedImageReferenceDbRowSchema = Schema.Struct({
   threadId: ThreadId,
@@ -161,6 +165,8 @@ const ProjectionTurnlessGeneratedImageReferenceDbRowSchema = Schema.Struct({
   createdAt: IsoDateTime,
   sourcePath: Schema.String,
   provenanceKey: Schema.String,
+  sourceKind: Schema.NullOr(Schema.Literals(["codex", "studio"])),
+  sourceProviderThreadId: Schema.NullOr(Schema.String),
 });
 const LatestAssistantMessageIdRowSchema = Schema.Struct({
   messageId: MessageId,
@@ -1618,7 +1624,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       sql`
         SELECT
           json_extract(payload_json, '$.sourcePath') AS "sourcePath",
-          json_extract(payload_json, '$.provenanceKey') AS "provenanceKey"
+          json_extract(payload_json, '$.provenanceKey') AS "provenanceKey",
+          json_extract(payload_json, '$.sourceKind') AS "sourceKind",
+          json_extract(payload_json, '$.sourceProviderThreadId') AS "sourceProviderThreadId"
         FROM orchestration_events
         WHERE aggregate_kind = 'thread'
           AND stream_id = ${threadId}
@@ -1642,8 +1650,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             json_extract(refs.payload_json, '$.createdAt') AS "createdAt",
             json_extract(refs.payload_json, '$.sourcePath') AS "sourcePath",
             json_extract(refs.payload_json, '$.provenanceKey') AS "provenanceKey",
+            json_extract(refs.payload_json, '$.sourceKind') AS "sourceKind",
+            json_extract(refs.payload_json, '$.sourceProviderThreadId') AS "sourceProviderThreadId",
             MIN(refs.sequence) AS "firstSequence"
           FROM orchestration_events AS refs
+          INNER JOIN projection_threads AS threads
+            ON threads.thread_id = refs.stream_id
+            AND threads.deleted_at IS NULL
           INNER JOIN projection_turns AS turns
             ON turns.thread_id = refs.stream_id
             AND turns.turn_id = json_extract(refs.payload_json, '$.turnId')
@@ -1660,6 +1673,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           refs."createdAt",
           refs."sourcePath",
           refs."provenanceKey",
+          refs."sourceKind",
+          refs."sourceProviderThreadId",
           MAX(refs."firstSequence") OVER (
             PARTITION BY refs."threadId", refs."turnId"
           ) AS "turnLatestSequence"
@@ -1699,7 +1714,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     json_extract(payload_json, '$.attachmentId') AS "attachmentId",
     json_extract(payload_json, '$.createdAt') AS "createdAt",
     json_extract(payload_json, '$.sourcePath') AS "sourcePath",
-    json_extract(payload_json, '$.provenanceKey') AS "provenanceKey"
+    json_extract(payload_json, '$.provenanceKey') AS "provenanceKey",
+    json_extract(payload_json, '$.sourceKind') AS "sourceKind",
+    json_extract(payload_json, '$.sourceProviderThreadId') AS "sourceProviderThreadId"
   `;
   const listTurnlessGeneratedImageReferenceRowsByTarget = SqlSchema.findAll({
     Request: ThreadMessageLookupInput,
@@ -1731,13 +1748,18 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             json_extract(payload_json, '$.createdAt') AS "createdAt",
             json_extract(payload_json, '$.sourcePath') AS "sourcePath",
             json_extract(payload_json, '$.provenanceKey') AS "provenanceKey",
+            json_extract(payload_json, '$.sourceKind') AS "sourceKind",
+            json_extract(payload_json, '$.sourceProviderThreadId') AS "sourceProviderThreadId",
             MIN(sequence) AS "firstSequence"
-          FROM orchestration_events
-          WHERE aggregate_kind = 'thread'
-            AND event_type = 'thread.generated-image-reference-recorded'
-            AND json_extract(payload_json, '$.turnId') IS NULL
-            AND json_extract(payload_json, '$.targetMessageId') IS NOT NULL
-          GROUP BY stream_id, json_extract(payload_json, '$.targetMessageId'), json_extract(payload_json, '$.provenanceKey')
+          FROM orchestration_events AS refs
+          INNER JOIN projection_threads AS threads
+            ON threads.thread_id = refs.stream_id
+            AND threads.deleted_at IS NULL
+          WHERE refs.aggregate_kind = 'thread'
+            AND refs.event_type = 'thread.generated-image-reference-recorded'
+            AND json_extract(refs.payload_json, '$.turnId') IS NULL
+            AND json_extract(refs.payload_json, '$.targetMessageId') IS NOT NULL
+          GROUP BY refs.stream_id, json_extract(refs.payload_json, '$.targetMessageId'), json_extract(refs.payload_json, '$.provenanceKey')
         )
         SELECT
           refs."threadId",
@@ -1746,6 +1768,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           refs."createdAt",
           refs."sourcePath",
           refs."provenanceKey",
+          refs."sourceKind",
+          refs."sourceProviderThreadId",
           MAX(refs."firstSequence") OVER (
             PARTITION BY refs."threadId", refs."targetMessageId"
           ) AS "targetLatestSequence"
