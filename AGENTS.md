@@ -19,6 +19,39 @@
   `bun run fmt:check` for verification and scope any formatting fix to the task.
 - NEVER run `bun test`. Always use `bun run test` (runs Vitest).
 
+## Stacked Pull Requests
+
+Follow the stacked-pull-request governance in `CONTRIBUTING.md`. Use a stack
+only for one linear dependency chain; unrelated changes belong in separate
+stacks or ordinary pull requests against `main`.
+
+- Read and follow the installed `gh-stack` skill before operating a stack.
+- Use one dedicated worktree and one coordinator for all structural stack
+  operations. Other agents may inspect exact heads read-only, but must not run
+  concurrent `init`, `add`, `sync`, `rebase`, `submit`, or merge operations on
+  the same stack.
+- Fetch `origin`, inspect overlapping branches, pull requests, and worktrees,
+  and verify `main` exactly equals `origin/main` before `gh stack init`. A stale
+  local trunk silently creates every layer from the wrong base.
+- Keep commands non-interactive: provide branch names to `init`, `add`, and
+  `checkout`; use `gh stack submit --auto`; and always use
+  `gh stack view --json`.
+- Set `rerere.enabled=true` and `remote.pushDefault=origin` in the owning
+  repository before initializing a stack.
+- Stage and commit paths deliberately with ordinary Git. Do not use a stack
+  shortcut that stages unrelated work.
+- If a lower layer changes, commit on that layer, cascade the update with
+  `gh stack rebase --upstack`, and re-run invalidated verification on every
+  affected exact head.
+- Only the stack coordinator may allow `gh stack` to force-with-lease its
+  owned stack branches. Never manually force-push, bypass a lease failure, or
+  rewrite a protected, donor, ordinary-PR, or actively owned branch.
+- Do not use `gh pr merge` for a stack. After exact-head checks and review are
+  complete, use `gh stack merge STACK_OR_PR_NUMBER --yes --squash`.
+- Keep release promotion separate. A feature stack may land on `main`; it must
+  never publish a release or bypass the protected `main` to `release/stable`
+  promotion and validation flow.
+
 ## Project Snapshot
 
 Scient is a local-first desktop workspace for using coding agents like Codex and Claude.
