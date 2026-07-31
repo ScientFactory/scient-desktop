@@ -27,6 +27,8 @@ import { GitCommandError } from "../../git/Errors.ts";
 import { CheckpointRef } from "@synara/contracts";
 import { ServerConfig } from "../../config.ts";
 
+const TEMP_INDEX_COMMAND_PREFIX = "-c core.splitIndex=false ";
+
 async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -82,6 +84,12 @@ function readSharedIndexes(gitDir: string): ReadonlyMap<string, Buffer> {
   );
 }
 
+function checkpointTempDirectories(): ReadonlyArray<string> {
+  return readdirSync(tmpdir())
+    .filter((name) => name.startsWith("scient-fs-checkpoint-"))
+    .toSorted();
+}
+
 describe("CheckpointStoreLive", () => {
   let runtime: ManagedRuntime.ManagedRuntime<CheckpointStore, unknown> | null = null;
 
@@ -102,23 +110,26 @@ describe("CheckpointStoreLive", () => {
     let capturedSeed = "";
     const execute = vi.fn<GitCoreShape["execute"]>((input) => {
       const args = input.args.join(" ");
+      if (args === "rev-parse --show-toplevel") {
+        return Effect.succeed({ code: 0, stdout: `${cwd}\n`, stderr: "" });
+      }
       if (args === "rev-parse --git-path index") {
         return Effect.succeed({ code: 0, stdout: ".git/index\n", stderr: "" });
       }
-      if (args === "update-index --no-split-index") {
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}update-index --no-split-index`) {
         return Effect.succeed({ code: 0, stdout: "", stderr: "" });
       }
-      if (args === "ls-files -v -z") {
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}ls-files -v -z`) {
         return Effect.succeed({ code: 0, stdout: "H tracked.txt\0", stderr: "" });
       }
-      if (args === "add -A -- .") {
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`) {
         capturedSeed = readFileSync(input.env?.GIT_INDEX_FILE ?? "", "utf8");
         return Effect.succeed({ code: 0, stdout: "", stderr: "" });
       }
-      if (args === "write-tree") {
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}write-tree`) {
         return Effect.succeed({ code: 0, stdout: "tree-oid\n", stderr: "" });
       }
-      if (args.startsWith("commit-tree ")) {
+      if (args.startsWith(`${TEMP_INDEX_COMMAND_PREFIX}commit-tree `)) {
         return Effect.succeed({ code: 0, stdout: "commit-oid\n", stderr: "" });
       }
       if (args.startsWith("update-ref ")) {
@@ -144,12 +155,23 @@ describe("CheckpointStoreLive", () => {
 
       expect(capturedSeed).toBe("working-index-stat-cache");
       expect(readFileSync(liveIndexPath, "utf8")).toBe("working-index-stat-cache");
+      const temporaryIndexCalls = execute.mock.calls
+        .map(([call]) => call)
+        .filter((call) => call.env?.GIT_INDEX_FILE !== undefined);
+      expect(temporaryIndexCalls.length).toBeGreaterThan(0);
+      expect(
+        temporaryIndexCalls.every(
+          (call) => call.args[0] === "-c" && call.args[1] === "core.splitIndex=false",
+        ),
+      ).toBe(true);
       expect(
         execute.mock.calls.some(([call]) => call.args.join(" ") === "rev-parse --verify HEAD"),
       ).toBe(false);
-      expect(execute.mock.calls.some(([call]) => call.args.join(" ") === "read-tree HEAD")).toBe(
-        false,
-      );
+      expect(
+        execute.mock.calls.some(
+          ([call]) => call.args.join(" ") === `${TEMP_INDEX_COMMAND_PREFIX}read-tree HEAD`,
+        ),
+      ).toBe(false);
     } finally {
       await runtime.dispose();
       runtime = null;
@@ -180,10 +202,13 @@ describe("CheckpointStoreLive", () => {
       const execute = vi.fn<GitCoreShape["execute"]>((input) => {
         const args = input.args.join(" ");
         commands.push(args);
+        if (args === "rev-parse --show-toplevel") {
+          return Effect.succeed({ code: 0, stdout: `${cwd}\n`, stderr: "" });
+        }
         if (args === "rev-parse --git-path index") {
           return Effect.succeed({ code: 0, stdout: `${indexPath}\n`, stderr: "" });
         }
-        if (args === "update-index --no-split-index") {
+        if (args === `${TEMP_INDEX_COMMAND_PREFIX}update-index --no-split-index`) {
           if (mode === "normalization-failure") {
             return Effect.fail(
               new GitCommandError({
@@ -199,13 +224,16 @@ describe("CheckpointStoreLive", () => {
         if (args === "rev-parse --verify HEAD") {
           return Effect.succeed({ code: 0, stdout: "head-oid\n", stderr: "" });
         }
-        if (args === "read-tree HEAD" || args === "add -A -- .") {
+        if (
+          args === `${TEMP_INDEX_COMMAND_PREFIX}read-tree HEAD` ||
+          args === `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`
+        ) {
           return Effect.succeed({ code: 0, stdout: "", stderr: "" });
         }
-        if (args === "write-tree") {
+        if (args === `${TEMP_INDEX_COMMAND_PREFIX}write-tree`) {
           return Effect.succeed({ code: 0, stdout: "tree-oid\n", stderr: "" });
         }
-        if (args.startsWith("commit-tree ")) {
+        if (args.startsWith(`${TEMP_INDEX_COMMAND_PREFIX}commit-tree `)) {
           return Effect.succeed({ code: 0, stdout: "commit-oid\n", stderr: "" });
         }
         if (args.startsWith("update-ref ")) {
@@ -230,8 +258,10 @@ describe("CheckpointStoreLive", () => {
             ),
           }),
         );
-        expect(commands).toContain("read-tree HEAD");
-        expect(commands.indexOf("read-tree HEAD")).toBeLessThan(commands.indexOf("add -A -- ."));
+        const readTree = `${TEMP_INDEX_COMMAND_PREFIX}read-tree HEAD`;
+        const add = `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`;
+        expect(commands).toContain(readTree);
+        expect(commands.indexOf(readTree)).toBeLessThan(commands.indexOf(add));
       } finally {
         await runtime.dispose();
         runtime = null;
@@ -308,6 +338,50 @@ describe("CheckpointStoreLive", () => {
     }
   });
 
+  it("falls back from a nested cwd without leaking staged content outside that workspace", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-nested-cwd-test-"));
+    const repo = join(tempRoot, "repo");
+    const nested = join(repo, "nested");
+    mkdirSync(nested, { recursive: true });
+    initializeRepository(repo);
+    writeFileSync(join(repo, "outside.txt"), "outside base\n");
+    writeFileSync(join(nested, "inside.txt"), "inside base\n");
+    runGit(repo, ["add", "outside.txt", "nested/inside.txt"]);
+    runGit(repo, ["commit", "--quiet", "-m", "base"]);
+
+    writeFileSync(join(repo, "outside.txt"), "outside staged secret\n");
+    runGit(repo, ["add", "outside.txt"]);
+    writeFileSync(join(nested, "inside.txt"), "inside workspace change\n");
+
+    const liveIndexPath = resolveWorkingIndexPath(repo);
+    const indexBefore = readFileSync(liveIndexPath);
+    const statusBefore = runGit(repo, ["status", "--porcelain=v1", "--untracked-files=all"]);
+    const tempDirectoriesBefore = checkpointTempDirectories();
+    runtime = ManagedRuntime.make(checkpointIntegrationLayer);
+
+    try {
+      const store = await runtime.runPromise(Effect.service(CheckpointStore));
+      const checkpointRef = CheckpointRef.makeUnsafe(
+        "refs/scient-checkpoints/thread/nested-cwd-boundary",
+      );
+      await runtime.runPromise(store.captureCheckpoint({ cwd: nested, checkpointRef }));
+
+      expect(runGit(repo, ["show", `${checkpointRef}:nested/inside.txt`])).toBe(
+        "inside workspace change",
+      );
+      expect(runGit(repo, ["show", `${checkpointRef}:outside.txt`])).toBe("outside base");
+      expect(readFileSync(liveIndexPath)).toEqual(indexBefore);
+      expect(runGit(repo, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe(
+        statusBefore,
+      );
+      expect(checkpointTempDirectories()).toEqual(tempDirectoriesBefore);
+    } finally {
+      await runtime.dispose();
+      runtime = null;
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it.each(["assume-unchanged", "skip-worktree"] as const)(
     "falls back without inheriting the live index's %s behavior",
     async (flag) => {
@@ -342,7 +416,7 @@ describe("CheckpointStoreLive", () => {
     },
   );
 
-  it("expands a split index only in temporary storage", async () => {
+  it("disables configured split-index writes for every temporary index command", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-split-index-test-"));
     const repo = join(tempRoot, "repo");
     mkdirSync(repo);
@@ -350,6 +424,7 @@ describe("CheckpointStoreLive", () => {
     writeFileSync(join(repo, "tracked.txt"), "base\n");
     runGit(repo, ["add", "tracked.txt"]);
     runGit(repo, ["commit", "--quiet", "-m", "base"]);
+    runGit(repo, ["config", "core.splitIndex", "true"]);
     runGit(repo, ["update-index", "--split-index"]);
     writeFileSync(join(repo, "tracked.txt"), "split-index content\n");
 
@@ -422,19 +497,19 @@ describe("CheckpointStoreLive", () => {
     });
     const execute = vi.fn<GitCoreShape["execute"]>((input) => {
       const args = input.args.join(" ");
-      if (args === "rev-parse --git-path index") {
+      if (args === "rev-parse --show-toplevel") {
         return Effect.succeed({ code: 1, stdout: "", stderr: "missing index" });
       }
       if (args === "rev-parse --verify HEAD") {
         return Effect.succeed({ code: 1, stdout: "", stderr: "" });
       }
-      if (args === "add -A -- .") {
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`) {
         return Effect.promise(() => addGate).pipe(Effect.as({ code: 0, stdout: "", stderr: "" }));
       }
-      if (args === "write-tree") {
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}write-tree`) {
         return Effect.succeed({ code: 0, stdout: "tree-oid\n", stderr: "" });
       }
-      if (args.startsWith("commit-tree ")) {
+      if (args.startsWith(`${TEMP_INDEX_COMMAND_PREFIX}commit-tree `)) {
         return Effect.succeed({ code: 0, stdout: "commit-oid\n", stderr: "" });
       }
       if (args.startsWith("update-ref ")) {
@@ -458,13 +533,19 @@ describe("CheckpointStoreLive", () => {
 
         const first = yield* store.captureCheckpoint(input).pipe(Effect.forkChild);
         yield* Effect.promise(() =>
-          waitFor(() => execute.mock.calls.some(([call]) => call.args.join(" ") === "add -A -- .")),
+          waitFor(() =>
+            execute.mock.calls.some(
+              ([call]) => call.args.join(" ") === `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`,
+            ),
+          ),
         );
         const second = yield* store.captureCheckpoint(input).pipe(Effect.forkChild);
         yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 25)));
 
         expect(
-          execute.mock.calls.filter(([call]) => call.args.join(" ") === "add -A -- ."),
+          execute.mock.calls.filter(
+            ([call]) => call.args.join(" ") === `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`,
+          ),
         ).toHaveLength(1);
 
         releaseAdd?.();
@@ -478,23 +559,23 @@ describe("CheckpointStoreLive", () => {
     let addCalls = 0;
     const execute = vi.fn<GitCoreShape["execute"]>((input) => {
       const args = input.args.join(" ");
-      if (args === "rev-parse --git-path index") {
+      if (args === "rev-parse --show-toplevel") {
         return Effect.succeed({ code: 1, stdout: "", stderr: "missing index" });
       }
       if (args === "rev-parse --verify HEAD") {
         return Effect.succeed({ code: 1, stdout: "", stderr: "" });
       }
-      if (args === "add -A -- .") {
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`) {
         addCalls += 1;
         if (addCalls === 1) {
           return Effect.never;
         }
         return Effect.succeed({ code: 0, stdout: "", stderr: "" });
       }
-      if (args === "write-tree") {
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}write-tree`) {
         return Effect.succeed({ code: 0, stdout: "tree-oid\n", stderr: "" });
       }
-      if (args.startsWith("commit-tree ")) {
+      if (args.startsWith(`${TEMP_INDEX_COMMAND_PREFIX}commit-tree `)) {
         return Effect.succeed({ code: 0, stdout: "commit-oid\n", stderr: "" });
       }
       if (args.startsWith("update-ref ")) {
@@ -551,19 +632,19 @@ describe("CheckpointStoreLive", () => {
       if (args === `rev-parse --verify --quiet ${missingRef}^{commit}`) {
         return Effect.succeed({ code: 1, stdout: "", stderr: "" });
       }
-      if (args === "rev-parse --git-path index") {
+      if (args === "rev-parse --show-toplevel") {
         return Effect.succeed({ code: 1, stdout: "", stderr: "missing index" });
       }
       if (args === "rev-parse --verify HEAD") {
         return Effect.succeed({ code: 1, stdout: "", stderr: "" });
       }
-      if (args === "add -A -- .") {
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`) {
         return Effect.succeed({ code: 0, stdout: "", stderr: "" });
       }
-      if (args === "write-tree") {
+      if (args === `${TEMP_INDEX_COMMAND_PREFIX}write-tree`) {
         return Effect.succeed({ code: 0, stdout: "tree-oid\n", stderr: "" });
       }
-      if (args.startsWith("commit-tree ")) {
+      if (args.startsWith(`${TEMP_INDEX_COMMAND_PREFIX}commit-tree `)) {
         return Effect.succeed({ code: 0, stdout: "commit-oid\n", stderr: "" });
       }
       if (args.startsWith("update-ref ")) {
@@ -588,14 +669,14 @@ describe("CheckpointStoreLive", () => {
           checkpointRef: CheckpointRef.makeUnsafe(existingRef),
           skipIfExists: true,
         });
-        expect(captureArgs("add -A -- .")).toHaveLength(0);
+        expect(captureArgs(`${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`)).toHaveLength(0);
 
         yield* store.captureCheckpoint({
           cwd: "/repo",
           checkpointRef: CheckpointRef.makeUnsafe(missingRef),
           skipIfExists: true,
         });
-        expect(captureArgs("add -A -- .")).toHaveLength(1);
+        expect(captureArgs(`${TEMP_INDEX_COMMAND_PREFIX}add -A -- .`)).toHaveLength(1);
         expect(captureArgs(`update-ref ${missingRef} commit-oid`)).toHaveLength(1);
       }),
     );

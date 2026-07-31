@@ -20,6 +20,7 @@ import { CheckpointStore, type CheckpointStoreShape } from "../Services/Checkpoi
 import { CheckpointRef } from "@synara/contracts";
 
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
+const TEMP_INDEX_GIT_CONFIG = ["-c", "core.splitIndex=false"] as const;
 
 // Individual git commands are already bounded by GitCore's default timeout;
 // this aggregate cap exists to unstick the shared in-flight capture slot if a
@@ -69,71 +70,86 @@ const makeCheckpointStore = Effect.gen(function* () {
       .pipe(Effect.map((result) => result.code === 0));
 
   const seedCheckpointIndex = (cwd: string, tempIndexPath: string): Effect.Effect<boolean> =>
-    git
-      .execute({
+    Effect.gen(function* () {
+      const topLevelResult = yield* git.execute({
+        operation: "CheckpointStore.resolveWorktreeTopLevel",
+        cwd,
+        args: ["rev-parse", "--show-toplevel"],
+        allowNonZeroExit: true,
+      });
+      const topLevelRaw = topLevelResult.stdout.trim();
+      if (topLevelResult.code !== 0 || topLevelRaw.length === 0) {
+        return false;
+      }
+
+      const [canonicalCwd, canonicalTopLevel] = yield* Effect.all([
+        fs.realPath(path.resolve(cwd)),
+        fs.realPath(path.resolve(cwd, topLevelRaw)),
+      ]);
+      if (canonicalCwd !== canonicalTopLevel) {
+        return false;
+      }
+
+      const indexPathResult = yield* git.execute({
         operation: "CheckpointStore.resolveWorkingIndex",
         cwd,
         args: ["rev-parse", "--git-path", "index"],
         allowNonZeroExit: true,
-      })
-      .pipe(
-        Effect.flatMap((result) => {
-          const indexPathRaw = result.stdout.trim();
-          if (result.code !== 0 || indexPathRaw.length === 0) {
-            return Effect.succeed(false);
-          }
+      });
+      const indexPathRaw = indexPathResult.stdout.trim();
+      if (indexPathResult.code !== 0 || indexPathRaw.length === 0) {
+        return false;
+      }
 
-          const indexPath = path.isAbsolute(indexPathRaw)
-            ? indexPathRaw
-            : path.resolve(cwd, indexPathRaw);
-          const tempIndexEnv: NodeJS.ProcessEnv = {
-            ...process.env,
-            GIT_INDEX_FILE: tempIndexPath,
-          };
-          const discardSeed = fs.remove(tempIndexPath, { force: true }).pipe(
-            Effect.catch(() => Effect.void),
-            Effect.as(false),
-          );
-
-          return Effect.gen(function* () {
-            // Git writes the live index through index.lock + rename, so copying
-            // the resolved file observes a complete old or new index without
-            // touching the user's staging area.
-            yield* fs.copyFile(indexPath, tempIndexPath);
-
-            // A split index refers to sharedindex.* in the repository. Expand
-            // only the temporary copy so later updates cannot create or rotate
-            // shared-index files beside the user's live index.
-            yield* git.execute({
-              operation: "CheckpointStore.normalizeCheckpointIndex",
-              cwd,
-              args: ["update-index", "--no-split-index"],
-              env: tempIndexEnv,
-            });
-
-            // assume-unchanged and skip-worktree entries make `git add -A`
-            // intentionally ignore worktree content. Keep the established
-            // capture semantics by using the HEAD/empty-index fallback for
-            // these uncommon indexes instead of copying their behavior flags.
-            const flagsResult = yield* git.execute({
-              operation: "CheckpointStore.inspectCheckpointIndexFlags",
-              cwd,
-              args: ["ls-files", "-v", "-z"],
-              env: tempIndexEnv,
-              maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
-            });
-            const hasProtectedEntryFlags = flagsResult.stdout
-              .split("\0")
-              .some((entry) => /^[a-zS] /.test(entry));
-            if (hasProtectedEntryFlags) {
-              return yield* discardSeed;
-            }
-
-            return true;
-          }).pipe(Effect.catch(() => discardSeed));
-        }),
-        Effect.catch(() => Effect.succeed(false)),
+      const indexPath = path.isAbsolute(indexPathRaw)
+        ? indexPathRaw
+        : path.resolve(cwd, indexPathRaw);
+      const tempIndexEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        GIT_INDEX_FILE: tempIndexPath,
+      };
+      const discardSeed = fs.remove(tempIndexPath, { force: true }).pipe(
+        Effect.catch(() => Effect.void),
+        Effect.as(false),
       );
+
+      // Git writes the live index through index.lock + rename, so copying the
+      // resolved file observes a complete old or new index without touching
+      // the user's staging area.
+      return yield* Effect.gen(function* () {
+        yield* fs.copyFile(indexPath, tempIndexPath);
+
+        // A split index refers to sharedindex.* in the repository. Expand only
+        // the temporary copy so no checkpoint command can create or rotate
+        // shared-index files beside the user's live index.
+        yield* git.execute({
+          operation: "CheckpointStore.normalizeCheckpointIndex",
+          cwd,
+          args: [...TEMP_INDEX_GIT_CONFIG, "update-index", "--no-split-index"],
+          env: tempIndexEnv,
+        });
+
+        // assume-unchanged and skip-worktree entries make `git add -A`
+        // intentionally ignore worktree content. Keep the established capture
+        // semantics by using the HEAD/empty-index fallback for these uncommon
+        // indexes instead of copying their behavior flags.
+        const flagsResult = yield* git.execute({
+          operation: "CheckpointStore.inspectCheckpointIndexFlags",
+          cwd,
+          args: [...TEMP_INDEX_GIT_CONFIG, "ls-files", "-v", "-z"],
+          env: tempIndexEnv,
+          maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+        });
+        const hasProtectedEntryFlags = flagsResult.stdout
+          .split("\0")
+          .some((entry) => /^[a-zS] /.test(entry));
+        if (hasProtectedEntryFlags) {
+          return yield* discardSeed;
+        }
+
+        return true;
+      }).pipe(Effect.catch(() => discardSeed));
+    }).pipe(Effect.catch(() => Effect.succeed(false)));
 
   const resolveCheckpointCommit = (
     cwd: string,
@@ -202,7 +218,7 @@ const makeCheckpointStore = Effect.gen(function* () {
               yield* git.execute({
                 operation,
                 cwd: input.cwd,
-                args: ["read-tree", "HEAD"],
+                args: [...TEMP_INDEX_GIT_CONFIG, "read-tree", "HEAD"],
                 env: commitEnv,
               });
             }
@@ -210,14 +226,14 @@ const makeCheckpointStore = Effect.gen(function* () {
             yield* git.execute({
               operation,
               cwd: input.cwd,
-              args: ["add", "-A", "--", "."],
+              args: [...TEMP_INDEX_GIT_CONFIG, "add", "-A", "--", "."],
               env: commitEnv,
             });
 
             const writeTreeResult = yield* git.execute({
               operation,
               cwd: input.cwd,
-              args: ["write-tree"],
+              args: [...TEMP_INDEX_GIT_CONFIG, "write-tree"],
               env: commitEnv,
             });
             const treeOid = writeTreeResult.stdout.trim();
@@ -234,7 +250,7 @@ const makeCheckpointStore = Effect.gen(function* () {
             const commitTreeResult = yield* git.execute({
               operation,
               cwd: input.cwd,
-              args: ["commit-tree", treeOid, "-m", message],
+              args: [...TEMP_INDEX_GIT_CONFIG, "commit-tree", treeOid, "-m", message],
               env: commitEnv,
             });
             const commitOid = commitTreeResult.stdout.trim();
