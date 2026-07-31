@@ -9,10 +9,7 @@ import {
   type OrchestrationShellSnapshot,
   type ThreadId,
 } from "@synara/contracts";
-import {
-  collectSubagentDescendants,
-  collectSubagentSubtreeRoots,
-} from "@synara/shared/threadHierarchy";
+import { buildThreadHierarchyIndex } from "@synara/shared/threadHierarchy";
 import { Effect } from "effect";
 import { randomUUID } from "node:crypto";
 
@@ -149,6 +146,7 @@ export function getInactiveThreadIdsForRetention(
   const liveThreads = readModel.threads.filter(
     (thread) => !("deletedAt" in thread) || thread.deletedAt === null,
   );
+  const hierarchy = buildThreadHierarchyIndex(liveThreads);
   const inactiveSubtreeRootIds: ThreadId[] = [];
 
   const isRetentionEligible = (thread: RetentionThread) => {
@@ -162,8 +160,8 @@ export function getInactiveThreadIdsForRetention(
   // A parent and its subagents are one reachability unit. Hide only roots whose
   // complete live subtree is inactive; otherwise an old parent could hide a
   // recent, busy, pinned, or automation-protected child.
-  for (const root of collectSubagentSubtreeRoots(liveThreads)) {
-    const subtree = [root, ...collectSubagentDescendants(liveThreads, root.id)];
+  for (const root of hierarchy.collectSubtreeRoots()) {
+    const subtree = [root, ...hierarchy.collectDescendants(root.id)];
     if (subtree.every(isRetentionEligible)) {
       inactiveSubtreeRootIds.push(root.id);
     }
@@ -191,10 +189,9 @@ export function getRetentionDeleteScope(
       (!("deletedAt" in thread) || thread.deletedAt === null) &&
       thread.projectId === root.projectId,
   );
+  const hierarchy = buildThreadHierarchyIndex(liveProjectThreads);
   return {
-    expectedDescendantThreadIds: collectSubagentDescendants(liveProjectThreads, threadId).map(
-      (thread) => thread.id,
-    ),
+    expectedDescendantThreadIds: hierarchy.collectDescendants(threadId).map((thread) => thread.id),
     expectedReadModelSequence: snapshot.snapshotSequence,
   };
 }

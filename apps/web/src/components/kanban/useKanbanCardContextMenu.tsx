@@ -19,6 +19,7 @@ import { reconcileDeletedThreadsFromClient } from "~/lib/deletedThreadClientReco
 import { gitRemoveWorktreeMutationOptions } from "~/lib/gitReactQuery";
 import { pinActionLabel } from "~/lib/pin";
 import { dispatchThreadRename } from "~/lib/threadRename";
+import { threadArchiveActionLabel, threadArchiveToastTitle } from "~/lib/threadArchivePresentation";
 import { newCommandId } from "~/lib/utils";
 import { activityManager } from "~/notifications/activityStore";
 import { useComposerDraftStore } from "../../composerDraftStore";
@@ -127,6 +128,7 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
       commandId: newCommandId(),
       threadId,
     });
+    setFeedback({ tone: "success", title: threadArchiveToastTitle(subtreeThreads.length) });
   }, []);
 
   const deleteCardThread = useCallback(
@@ -288,6 +290,10 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
       const deletesOnlyDraft = !isThreadBacked || isDraftOnlyCard;
       const isThreadActionCard = isThreadBacked && !isDraftOnlyCard;
       const workspacePath = resolveCardWorkspacePath(card);
+      const archiveConversationCount = isThreadActionCard
+        ? collectSubagentDescendants(getThreadsFromState(useStore.getState()), card.threadId)
+            .length + 1
+        : 1;
 
       void (async () => {
         const clicked = await api.contextMenu.show(
@@ -308,7 +314,13 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
             ...(isThreadActionCard
               ? card.thread?.parentThreadId
                 ? []
-                : [{ id: "archive", label: "Archive", separatorBefore: true }]
+                : [
+                    {
+                      id: "archive",
+                      label: threadArchiveActionLabel(archiveConversationCount),
+                      separatorBefore: true,
+                    },
+                  ]
               : []),
             {
               id: "delete",

@@ -16,6 +16,7 @@ import {
   orderPinnedProjectsForSidebar,
   pullRequestRepositoryConfigFingerprint,
   getPinnedThreadsForSidebar,
+  getPinnedThreadRowsForSidebar,
   getNextVisibleSidebarThreadId,
   getSidebarThreadIdForJumpCommand,
   getSidebarThreadIdsToPrewarm,
@@ -782,6 +783,32 @@ describe("pin helpers", () => {
     expect(
       getUnpinnedThreadsForSidebar(threads, ["thread-2" as ThreadId, "thread-3" as ThreadId]),
     ).toEqual([threads[0]]);
+  });
+
+  it("renders a complete family under its pinned root and removes that family from the project", () => {
+    const root = makeThread("thread-root");
+    const child = {
+      ...makeThread("thread-child"),
+      parentThreadId: root.id,
+    };
+    const grandchild = {
+      ...makeThread("thread-grandchild"),
+      parentThreadId: child.id,
+    };
+    const unrelated = makeThread("thread-unrelated");
+    const threads = [root, child, grandchild, unrelated];
+
+    expect(getPinnedThreadRowsForSidebar(threads, [root.id])).toEqual([
+      { thread: root, depth: 0, rootThreadId: root.id },
+      { thread: child, depth: 1, rootThreadId: root.id },
+      { thread: grandchild, depth: 2, rootThreadId: root.id },
+    ]);
+    expect(getPinnedThreadRowsForSidebar(threads, [child.id, root.id])).toEqual([
+      { thread: root, depth: 0, rootThreadId: root.id },
+      { thread: child, depth: 1, rootThreadId: root.id },
+      { thread: grandchild, depth: 2, rootThreadId: root.id },
+    ]);
+    expect(getUnpinnedThreadsForSidebar(threads, [root.id])).toEqual([unrelated]);
   });
 
   it("lets an optimistic unpin override server and persisted pinned state", () => {
@@ -1755,6 +1782,36 @@ describe("deriveSidebarProjectData", () => {
       allProjectThreadCount: 2,
       orderedProjectThreadIds: [unpinnedThread.id],
     });
+  });
+
+  it("keeps an active unpinned child visible under its pinned parent only", () => {
+    const project = makeProject();
+    const parent = makeSidebarThreadSummary({
+      id: ThreadId.makeUnsafe("thread-pinned-parent"),
+      title: "Pinned parent",
+    });
+    const activeChild = makeSidebarThreadSummary({
+      id: ThreadId.makeUnsafe("thread-active-child"),
+      parentThreadId: parent.id,
+      title: "Active child",
+    });
+    const allThreads = [parent, activeChild];
+
+    const pinnedRows = getPinnedThreadRowsForSidebar(allThreads, [parent.id]);
+    const projectData = deriveSidebarProjectData({
+      projects: [project],
+      sortedSidebarThreadsByProjectId: groupSidebarThreadsByProjectId(allThreads),
+      pinnedThreadIds: [parent.id],
+      expandedParentThreadIds: new Set(),
+      threadListExtraPagesByProjectCwd: new Map(),
+      normalizeProjectCwd: (cwd) => cwd,
+      activeSidebarThreadId: activeChild.id,
+      previewLimit: 5,
+      previewPageSize: 5,
+    });
+
+    expect(pinnedRows.map((row) => row.thread.id)).toEqual([parent.id, activeChild.id]);
+    expect(projectData.get(project.id)?.visibleEntries).toEqual([]);
   });
 
   it("shows split member threads as normal project rows", () => {

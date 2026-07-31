@@ -174,6 +174,11 @@ import {
   isThreadAlreadyUnarchivedError,
   unarchiveThreadFromClient,
 } from "../lib/threadArchive";
+import {
+  threadArchiveAccessibleLabel,
+  threadArchiveActionLabel,
+  threadArchiveToastTitle,
+} from "../lib/threadArchivePresentation";
 import { isHomeChatContainerProject, prewarmHomeChatProject } from "../lib/chatProjects";
 import {
   collectStudioProjectIds,
@@ -320,7 +325,7 @@ import {
   findWorkspaceRootMatch,
   getFallbackThreadIdAfterDelete,
   collectSelectedThreadSubtreeRoots,
-  getPinnedThreadsForSidebar,
+  getPinnedThreadRowsForSidebar,
   getUnpinnedThreadsForSidebar,
   orderPinnedProjectsForSidebar,
   pullRequestRepositoryConfigFingerprint,
@@ -1908,13 +1913,17 @@ export default function Sidebar() {
   // Only one segment's pinned threads are ever rendered at a time, so derive a single
   // memo from the already-partitioned active list instead of computing both segments'
   // pinned lists on every render (hooks can't be conditional, but the inputs can be).
-  const pinnedThreads = useMemo(
+  const pinnedThreadRows = useMemo(
     () =>
-      getPinnedThreadsForSidebar(
+      getPinnedThreadRowsForSidebar(
         isOnStudio ? studioSidebarDisplayThreads : nonStudioSidebarDisplayThreads,
         pinnedThreadIds,
       ),
     [isOnStudio, nonStudioSidebarDisplayThreads, pinnedThreadIds, studioSidebarDisplayThreads],
+  );
+  const pinnedThreads = useMemo(
+    () => pinnedThreadRows.map((row) => row.thread),
+    [pinnedThreadRows],
   );
   useEffect(() => {
     sidebarThreadSummaryByIdRef.current = sidebarThreadSummaryById;
@@ -3394,7 +3403,10 @@ export default function Sidebar() {
   const archiveThread = useCallback(
     async (
       threadId: ThreadId,
-    ): Promise<{ readonly archivedRouteThreadId: ThreadId | null } | null> => {
+    ): Promise<{
+      readonly archivedRouteThreadId: ThreadId | null;
+      readonly conversationCount: number;
+    } | null> => {
       const api = readNativeApi();
       if (!api) return null;
       const currentThreads = getThreadsFromState(useStore.getState());
@@ -3452,7 +3464,7 @@ export default function Sidebar() {
           }
         }
 
-        return { archivedRouteThreadId };
+        return { archivedRouteThreadId, conversationCount: subtreeThreads.length };
       } finally {
         pendingThreadIds.delete(threadId);
       }
@@ -3533,13 +3545,17 @@ export default function Sidebar() {
 
   // Archiving navigates away from its row, so the dedicated bottom snackbar owns Undo.
   const showArchiveUndoSnackbar = useCallback(
-    (threadId: ThreadId, options?: { returnToThreadIdOnUndo?: ThreadId | null }) => {
+    (
+      threadId: ThreadId,
+      conversationCount: number,
+      options?: { returnToThreadIdOnUndo?: ThreadId | null },
+    ) => {
       // Use a fresh instance id so Base UI never revives a closing toast with
       // stale local state such as a pending Undo button.
       const toastId = `archive-undo:${threadId}:${randomUUID()}`;
       showUndoSnackbar({
         id: toastId,
-        title: "Thread archived",
+        title: threadArchiveToastTitle(conversationCount),
         timeout: ARCHIVE_UNDO_SNACKBAR_DURATION_MS,
         onUndo: () =>
           restoreArchivedThreadFromSnackbar({
@@ -3558,7 +3574,7 @@ export default function Sidebar() {
       try {
         const result = await archiveThread(threadId);
         if (result) {
-          showArchiveUndoSnackbar(threadId, {
+          showArchiveUndoSnackbar(threadId, result.conversationCount, {
             returnToThreadIdOnUndo: result.archivedRouteThreadId,
           });
         }
@@ -3902,7 +3918,15 @@ export default function Sidebar() {
           ...(options?.extraItems ?? []),
           ...(thread.parentThreadId
             ? []
-            : [{ id: "archive", label: "Archive", separatorBefore: true }]),
+            : [
+                {
+                  id: "archive",
+                  label: threadArchiveActionLabel(
+                    collectSubagentDescendants(sidebarThreads, thread.id).length + 1,
+                  ),
+                  separatorBefore: true,
+                },
+              ]),
           {
             id: "delete",
             label: "Delete",
@@ -4114,6 +4138,7 @@ export default function Sidebar() {
       projectCwdById,
       resolveThreadStatusForSidebar,
       sidebarThreadSummaryById,
+      sidebarThreads,
       toggleThreadPinned,
     ],
   );
@@ -5579,12 +5604,14 @@ export default function Sidebar() {
     },
   ) {
     const compact = options?.compact === true;
+    const conversationCount = collectSubagentDescendants(sidebarThreads, threadId).length + 1;
+    const archiveLabel = threadArchiveAccessibleLabel(conversationCount);
 
     return (
       <SidebarIconButton
         icon={HiOutlineArchiveBox}
-        label="Archive thread"
-        title="Archive thread"
+        label={archiveLabel}
+        title={archiveLabel}
         data-testid={`thread-archive-${threadId}`}
         size={compact ? "sm" : "md"}
         // Match the pin and the right-side meta chips (shared trailing-icon size); subagent
@@ -5710,7 +5737,7 @@ export default function Sidebar() {
           <span className={SIDEBAR_SECTION_LABEL_CLASS_NAME}>Pinned</span>
         </div>
         <div className="flex flex-col gap-0.5">
-          {pinnedThreads.map((thread) => renderPinnedThreadRow(thread))}
+          {pinnedThreadRows.map((row) => renderPinnedThreadRow(row.thread, row.depth))}
         </div>
       </div>
     );
@@ -5772,7 +5799,7 @@ export default function Sidebar() {
     );
   }
 
-  function renderPinnedThreadRow(thread: SidebarThreadSummary) {
+  function renderPinnedThreadRow(thread: SidebarThreadSummary, depth = 0) {
     const threadTerminalState = selectThreadTerminalState(terminalStateByThreadId, thread.id);
     const threadEntryPoint = threadTerminalState.entryPoint;
     const terminalStatus = terminalStatusFromThreadState({
@@ -5793,6 +5820,7 @@ export default function Sidebar() {
     });
     const threadStatus = resolveThreadStatusForSidebar(thread);
     const isSubagentThread = Boolean(thread.parentThreadId);
+    const isPinned = pinnedThreadIdSet.has(thread.id);
     const prStatus = prStatusIndicator(prByThreadId.get(thread.id) ?? null);
     const leadingPrStatus =
       isSubagentThread || thread.forkSourceThreadId || thread.sidechatSourceThreadId
@@ -5851,6 +5879,14 @@ export default function Sidebar() {
                 ? SIDEBAR_ROW_ACTIVE_CLASS_NAME
                 : cn(SIDEBAR_ROW_IDLE_TEXT_CLASS_NAME, SIDEBAR_ROW_HOVER_CLASS_NAME),
             )}
+            style={
+              depth > 0
+                ? {
+                    marginLeft: `${Math.min(depth, 4) * 10}px`,
+                    width: `calc(100% - ${Math.min(depth, 4) * 10}px)`,
+                  }
+                : undefined
+            }
             onPointerDown={(event) => primeThreadActivation(event, thread.id)}
             onClick={() => activateThreadFromSidebarIntent(thread.id)}
             onDoubleClick={(event) => {
@@ -5942,7 +5978,7 @@ export default function Sidebar() {
                 hoverActions: renderThreadHoverActions({
                   threadId: thread.id,
                   toneClassName: "text-muted-foreground/42",
-                  isPinned: true,
+                  isPinned,
                   isSubagentThread,
                   compact: isSubagentThread,
                 }),

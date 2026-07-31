@@ -39,7 +39,10 @@ import {
   isLatestTurnSettled,
 } from "../session-logic";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
-import { collectSubagentDescendants } from "@synara/shared/threadHierarchy";
+import {
+  buildThreadHierarchyIndex,
+  collectSubagentDescendants,
+} from "@synara/shared/threadHierarchy";
 
 export {
   extractDuplicateProjectCreateProjectId,
@@ -1040,6 +1043,60 @@ export function getPinnedThreadsForSidebar<T extends Pick<Thread, "id">>(
   return getPinnedItems(threads, pinnedThreadIds);
 }
 
+export interface PinnedSidebarThreadRow<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+> {
+  readonly thread: T;
+  readonly depth: number;
+  readonly rootThreadId: T["id"];
+}
+
+// A pin owns the complete visible conversation family. Descendants stay under
+// the pinned root even when they are not independently pinned, so active work
+// cannot disappear between the pinned and project sections.
+export function getPinnedThreadRowsForSidebar<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+>(threads: readonly T[], pinnedThreadIds: readonly T["id"][]): PinnedSidebarThreadRow<T>[] {
+  const threadById = new Map(threads.map((thread) => [thread.id, thread] as const));
+  const childrenByParentId = new Map<T["id"], T[]>();
+  for (const thread of threads) {
+    const parentThreadId = thread.parentThreadId ?? null;
+    if (parentThreadId === null) continue;
+    const children = childrenByParentId.get(parentThreadId) ?? [];
+    children.push(thread);
+    childrenByParentId.set(parentThreadId, children);
+  }
+
+  const rows: PinnedSidebarThreadRow<T>[] = [];
+  const renderedThreadIds = new Set<T["id"]>();
+  const pinnedThreadIdSet = new Set(pinnedThreadIds);
+  const hasPinnedAncestor = (thread: T) => {
+    const visitedThreadIds = new Set<T["id"]>([thread.id]);
+    let parentThreadId = thread.parentThreadId ?? null;
+    while (parentThreadId !== null) {
+      if (pinnedThreadIdSet.has(parentThreadId)) return true;
+      if (visitedThreadIds.has(parentThreadId)) return false;
+      visitedThreadIds.add(parentThreadId);
+      parentThreadId = threadById.get(parentThreadId)?.parentThreadId ?? null;
+    }
+    return false;
+  };
+  const visit = (thread: T, depth: number, rootThreadId: T["id"]) => {
+    if (renderedThreadIds.has(thread.id)) return;
+    renderedThreadIds.add(thread.id);
+    rows.push({ thread, depth, rootThreadId });
+    for (const child of childrenByParentId.get(thread.id) ?? []) {
+      visit(child, depth + 1, rootThreadId);
+    }
+  };
+
+  for (const pinnedThreadId of pinnedThreadIds) {
+    const root = threadById.get(pinnedThreadId);
+    if (root && !hasPinnedAncestor(root)) visit(root, 0, root.id);
+  }
+  return rows;
+}
+
 // Resolve the visible pinned ids from server state, local legacy pins, and pending user clicks.
 export function derivePinnedThreadIdsForSidebar<T extends Pick<Thread, "id" | "isPinned">>(input: {
   readonly threads: readonly T[];
@@ -1101,16 +1158,22 @@ export function orderPinnedProjectsForSidebar<T extends Pick<Project, "id">>(
 }
 
 // Hide globally pinned rows from the per-project lists so the sidebar doesn't duplicate chats.
-export function getUnpinnedThreadsForSidebar<T extends Pick<Thread, "id">>(
-  threads: readonly T[],
-  pinnedThreadIds: readonly T["id"][],
-): T[] {
+export function getUnpinnedThreadsForSidebar<
+  T extends Pick<SidebarThreadSummary, "id" | "parentThreadId">,
+>(threads: readonly T[], pinnedThreadIds: readonly T["id"][]): T[] {
   if (pinnedThreadIds.length === 0) {
     return [...threads];
   }
 
-  const pinnedThreadIdSet = new Set(pinnedThreadIds);
-  return threads.filter((thread) => !pinnedThreadIdSet.has(thread.id));
+  const hierarchy = buildThreadHierarchyIndex(threads);
+  const pinnedFamilyThreadIds = new Set<T["id"]>();
+  for (const pinnedThreadId of pinnedThreadIds) {
+    pinnedFamilyThreadIds.add(pinnedThreadId);
+    for (const descendant of hierarchy.collectDescendants(pinnedThreadId)) {
+      pinnedFamilyThreadIds.add(descendant.id);
+    }
+  }
+  return threads.filter((thread) => !pinnedFamilyThreadIds.has(thread.id));
 }
 
 // Only prune persisted pins after the thread snapshot has hydrated.

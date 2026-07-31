@@ -16,7 +16,7 @@ function cleanupReadModel(
     readonly id: ThreadId;
     readonly parentThreadId?: ThreadId;
     readonly activeTurnId?: TurnId;
-    readonly status?: "running" | "interrupted";
+    readonly status?: "starting" | "running" | "ready" | "interrupted";
     readonly projectId?: ProjectId;
     readonly archivedAt?: string;
     readonly deletedAt?: string;
@@ -29,17 +29,18 @@ function cleanupReadModel(
       archivedAt: thread.archivedAt ?? null,
       deletedAt: thread.deletedAt ?? null,
       ...(thread.parentThreadId ? { parentThreadId: thread.parentThreadId } : {}),
-      session: thread.activeTurnId
-        ? {
-            threadId: thread.id,
-            status: thread.status ?? "running",
-            providerName: "codex",
-            runtimeMode: "approval-required",
-            activeTurnId: thread.activeTurnId,
-            lastError: null,
-            updatedAt: "2026-07-31T08:00:00.000Z",
-          }
-        : null,
+      session:
+        thread.activeTurnId || thread.status
+          ? {
+              threadId: thread.id,
+              status: thread.status ?? "running",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId: thread.activeTurnId,
+              lastError: null,
+              updatedAt: "2026-07-31T08:00:00.000Z",
+            }
+          : null,
     })) as unknown as OrchestrationReadModel["threads"],
   } as OrchestrationReadModel;
 }
@@ -219,6 +220,28 @@ describe("resolveDeletedThreadProviderCleanup", () => {
       providerThreadId: "provider-child",
     });
   });
+
+  it("keeps a child tombstone while its provider-owning parent can emit late events", () => {
+    const parentId = ThreadId.makeUnsafe("thread-parent");
+    const childId = ThreadId.makeUnsafe("subagent:thread-parent:provider-child");
+
+    expect(
+      resolveDeletedThreadProviderCleanup(
+        cleanupReadModel([
+          { id: parentId },
+          { id: childId, parentThreadId: parentId, status: "running" },
+        ]),
+        childId,
+      ),
+    ).toEqual({ kind: "defer-active-subagent", threadId: childId });
+
+    expect(
+      resolveDeletedThreadProviderCleanup(
+        cleanupReadModel([{ id: childId, parentThreadId: parentId, status: "ready" }]),
+        childId,
+      ),
+    ).toEqual({ kind: "stop-session", threadId: childId });
+  });
 });
 
 describe("providerCleanupCanPurgeImmediately", () => {
@@ -260,6 +283,22 @@ describe("hasUnsettledSameCascadeDescendants", () => {
       { id: childId, parentThreadId: rootId, deletedAt },
     ]);
     expect(hasUnsettledSameCascadeDescendants(settledReadModel, rootId)).toBe(false);
+  });
+
+  it("treats running without an active turn id as unsettled", () => {
+    const rootId = ThreadId.makeUnsafe("thread-root");
+    const childId = ThreadId.makeUnsafe("subagent:thread-root:provider-child");
+    const deletedAt = "2026-07-31T08:05:00.000Z";
+
+    expect(
+      hasUnsettledSameCascadeDescendants(
+        cleanupReadModel([
+          { id: rootId, deletedAt },
+          { id: childId, parentThreadId: rootId, deletedAt, status: "running" },
+        ]),
+        rootId,
+      ),
+    ).toBe(true);
   });
 
   it("does not let an unrelated deletion timestamp hold the owner", () => {
@@ -322,6 +361,36 @@ describe("waitForDeletedSubagentSettlement", () => {
       }),
     );
     expect(settled).toBe(false);
+  });
+
+  it("waits through running state before a delayed turn id arrives", async () => {
+    const threadId = ThreadId.makeUnsafe("subagent:parent:child");
+    let reads = 0;
+    const settled = await Effect.runPromise(
+      waitForDeletedSubagentSettlement({
+        threadId,
+        attempts: 3,
+        intervalMs: 0,
+        getReadModel: () => {
+          reads += 1;
+          return Effect.succeed(
+            cleanupReadModel([
+              reads === 1
+                ? { id: threadId, status: "running" }
+                : reads === 2
+                  ? {
+                      id: threadId,
+                      status: "running",
+                      activeTurnId: TurnId.makeUnsafe("turn-delayed"),
+                    }
+                  : { id: threadId, status: "ready" },
+            ]),
+          );
+        },
+      }),
+    );
+    expect(settled).toBe(true);
+    expect(reads).toBe(3);
   });
 });
 

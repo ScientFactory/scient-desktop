@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { collectSubagentDescendants, collectSubagentSubtreeRoots } from "./threadHierarchy";
+import {
+  buildThreadHierarchyIndex,
+  collectSubagentDescendants,
+  collectSubagentSubtreeRoots,
+} from "./threadHierarchy";
 
 interface Thread {
   readonly id: string;
@@ -51,5 +55,27 @@ describe("thread hierarchy", () => {
       "orphan",
       "cycle-a",
     ]);
+  });
+
+  it("reuses one parent-link index across repeated subtree traversals", () => {
+    const source: Thread[] = Array.from({ length: 100 }, (_, index) => ({
+      id: `root-${index}`,
+    }));
+    let iterations = 0;
+    const threads = new Proxy(source, {
+      get(target, property, receiver) {
+        if (property === Symbol.iterator) {
+          iterations += 1;
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    const hierarchy = buildThreadHierarchyIndex(threads);
+    expect(hierarchy.collectSubtreeRoots()).toHaveLength(100);
+    for (const root of source) {
+      expect(hierarchy.collectDescendants(root.id)).toEqual([]);
+    }
+    expect(iterations).toBe(1);
   });
 });

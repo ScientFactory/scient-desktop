@@ -49,6 +49,14 @@ export function providerCleanupCanPurgeImmediately(cleanup: DeletedThreadProvide
   return cleanup.kind === "stop-session";
 }
 
+function isProviderLifecycleUnsettled(thread: OrchestrationThread): boolean {
+  return (
+    thread.session?.status === "starting" ||
+    thread.session?.status === "running" ||
+    (thread.session?.activeTurnId ?? null) !== null
+  );
+}
+
 export function hasUnsettledSameCascadeDescendants(
   readModel: OrchestrationReadModel,
   threadId: ThreadId,
@@ -59,7 +67,7 @@ export function hasUnsettledSameCascadeDescendants(
     (thread) => thread.projectId === root.projectId && thread.deletedAt === root.deletedAt,
   );
   return collectSubagentDescendants(sameCascadeProjectThreads, threadId).some(
-    (thread) => (thread.session?.activeTurnId ?? null) !== null,
+    isProviderLifecycleUnsettled,
   );
 }
 
@@ -75,7 +83,7 @@ export const waitForDeletedSubagentSettlement = Effect.fn("waitForDeletedSubagen
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       const readModel = yield* input.getReadModel();
       const thread = readModel.threads.find((candidate) => candidate.id === input.threadId);
-      if (!thread || (thread.session?.activeTurnId ?? null) === null) return true;
+      if (!thread || !isProviderLifecycleUnsettled(thread)) return true;
       if (attempt + 1 < attempts) yield* Effect.sleep(intervalMs);
     }
     return false;
@@ -97,7 +105,7 @@ export function resolveDeletedThreadProviderCleanup(
   const thread = threadById.get(threadId);
   const directParentId = thread?.parentThreadId ?? null;
   const activeTurnId = thread?.session?.activeTurnId ?? null;
-  if (!thread || !directParentId || activeTurnId === null) {
+  if (!thread || !directParentId) {
     return { kind: "stop-session", threadId };
   }
 
@@ -109,11 +117,21 @@ export function resolveDeletedThreadProviderCleanup(
       (thread.deletedAt !== null && ancestor.deletedAt === thread.deletedAt));
   const providerThreadPrefix = `subagent:${directParentId}:`;
   const rawThreadId = String(thread.id);
-  if (
-    !directParent ||
-    !isEligibleProviderAncestor(directParent) ||
-    !rawThreadId.startsWith(providerThreadPrefix)
-  ) {
+  if (!directParent) {
+    return activeTurnId === null
+      ? { kind: "stop-session", threadId }
+      : { kind: "defer-active-subagent", threadId };
+  }
+  if (!isEligibleProviderAncestor(directParent) || !rawThreadId.startsWith(providerThreadPrefix)) {
+    return { kind: "defer-active-subagent", threadId };
+  }
+
+  // A provider-owned child can receive a distinct late event for as long as
+  // its owning ancestor exists. Keep this soft-delete row as the durable
+  // fail-closed tombstone even when no active turn id has arrived yet. Once the
+  // provider owner is purged, the startup sweep sees the missing lineage and
+  // can safely reclaim the child on a later pass.
+  if (activeTurnId === null) {
     return { kind: "defer-active-subagent", threadId };
   }
 

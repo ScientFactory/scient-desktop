@@ -227,4 +227,27 @@ describe("thread retention", () => {
     } as unknown as import("@synara/contracts").OrchestrationShellSnapshot;
     expect(getRetentionDeleteScope(changedSnapshot, root.id, nowMs, new Set())).toBeNull();
   });
+
+  it("indexes a wide forest once instead of rescanning it for every root", () => {
+    const nowMs = Date.parse("2026-04-20T00:00:00.000Z");
+    const oldActivityAt = new Date(nowMs - THREAD_RETENTION_UNUSED_MS - 1).toISOString();
+    let parentLinkReads = 0;
+    const threads = Array.from({ length: 1_000 }, (_, index) => {
+      const thread = makeReadModelThread({
+        id: ThreadId.makeUnsafe(`thread-wide-${index}`),
+        latestUserMessageAt: oldActivityAt,
+      });
+      return new Proxy(thread, {
+        get(target, property, receiver) {
+          if (property === "parentThreadId") {
+            parentLinkReads += 1;
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      });
+    });
+
+    expect(getInactiveThreadIdsForRetention(makeReadModel(threads), nowMs)).toHaveLength(1_000);
+    expect(parentLinkReads).toBeLessThan(5_000);
+  });
 });
