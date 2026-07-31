@@ -41,9 +41,8 @@ export type GetByCommandIdInput = typeof GetByCommandIdInput.Type;
  */
 export interface OrchestrationCommandReceiptRepositoryShape {
   /**
-   * Insert or replace a command receipt row.
-   *
-   * Upserts by `commandId` for idempotent command-result tracking.
+   * Insert an immutable command receipt row. An exact duplicate is idempotent;
+   * any conflicting result for the same command id fails closed.
    */
   readonly upsert: (
     receipt: OrchestrationCommandReceipt,

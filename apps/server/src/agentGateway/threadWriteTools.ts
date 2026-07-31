@@ -19,7 +19,7 @@
  *
  * @module agentGateway/threadWriteTools
  */
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 
 import {
   CommandId,
@@ -146,7 +146,6 @@ function mapProtectedDispatchError(
 export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArray<ToolEntry> {
   const { snapshotQuery, orchestrationEngine } = input;
   const now = input.now ?? (() => new Date().toISOString());
-  const randomId = input.randomId ?? randomUUID;
 
   const sendDedupBySession = new Map<string, Map<string, SendDedupEntry>>();
   const pendingBySession = new Map<string, { count: number; bytes: number }>();
@@ -274,6 +273,36 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
       },
       annotations: { title: "Send a Scient message", ...WRITE_TOOL_ANNOTATIONS },
     },
+    durableReplay: {
+      // Persist only the minimum non-secret result needed to reconstruct a
+      // retry. Message text and caller-controlled request IDs never enter the
+      // durable replay payload.
+      encode: (_result, canonicalInput) => ({
+        kind: "thread.message.send.v1",
+        threadId: String(canonicalInput.threadId),
+        dispatched: canonicalInput.mode === "steer" ? "steer" : "queue",
+      }),
+      decode: (replay, canonicalInput) =>
+        mcpToolResultJson({
+          threadId: replay.threadId,
+          dispatched: replay.dispatched,
+          requestId: typeof canonicalInput.requestId === "string" ? canonicalInput.requestId : null,
+          deduplicated: true,
+        }),
+    },
+    prepareDurableIntent: (canonicalInput, operationEnvelope) => ({
+      effect: {
+        kind: "orchestration-command",
+        identity: `scient-operation:v2:${operationEnvelope.idempotency.claimKey}:thread-send`,
+      },
+      expectedAggregateKind: "thread",
+      expectedAggregateId: String(canonicalInput.threadId),
+      replayResult: {
+        kind: "thread.message.send.v1",
+        threadId: String(canonicalInput.threadId),
+        dispatched: canonicalInput.mode === "steer" ? "steer" : "queue",
+      },
+    }),
     handler: (args, context) =>
       Effect.suspend(() => {
         const pendingBytes =
@@ -363,11 +392,10 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
               } satisfies PendingSendResolution;
             }
 
-            const commandSuffix =
-              requestId === undefined
-                ? randomId()
-                : idempotencyIdentity(context.callerSessionKey, requestId);
-            const commandId = CommandId.makeUnsafe(`agent:${commandSuffix}:send`);
+            const commandSuffix = context.operationEnvelope.idempotency.claimKey;
+            const commandId = CommandId.makeUnsafe(
+              `scient-operation:v2:${commandSuffix}:thread-send`,
+            );
             yield* orchestrationEngine
               .dispatchProtected(
                 {
@@ -375,7 +403,9 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
                   commandId,
                   threadId: target.id,
                   message: {
-                    messageId: MessageId.makeUnsafe(`agent:${commandSuffix}:message`),
+                    messageId: MessageId.makeUnsafe(
+                      `scient-operation:v2:${commandSuffix}:thread-message`,
+                    ),
                     role: "user",
                     text: message,
                     attachments: [],

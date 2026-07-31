@@ -12,8 +12,9 @@ import { Effect, Option } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import type { ScientOperationReceiptRepositoryShape } from "../persistence/Services/ScientOperationReceipts.ts";
 import type { ScientOperationResultReceipt } from "../scientOperations/authority.ts";
-import { makeScientOperationExecutor } from "../scientOperations/Layers/ScientOperationExecutor.ts";
+import { makeEphemeralScientOperationExecutor } from "../scientOperations/Layers/ScientOperationExecutor.ts";
 import { makeAgentGatewayMcpTransport } from "./mcpTransport.ts";
 import { mcpToolResultJson } from "./protocol.ts";
 import type { AgentGatewayCredentialsShape } from "./Services/AgentGatewayCredentials.ts";
@@ -183,6 +184,7 @@ function makeTransport(cfg?: {
   readonly tools?: ReadonlyArray<ToolEntry>;
   readonly randomId?: () => string;
   readonly recordOperationReceipt?: (receipt: ScientOperationResultReceipt) => void;
+  readonly receiptRepository?: ScientOperationReceiptRepositoryShape;
 }) {
   const requireShell = cfg?.requireShell ?? makeShell();
   return makeAgentGatewayMcpTransport({
@@ -194,11 +196,12 @@ function makeTransport(cfg?: {
     tools: cfg?.tools ?? [echoTool, writeTool],
     instructions: "TEST_INSTRUCTIONS",
     requireThreadShell: () => Effect.succeed(requireShell),
-    operationExecutor: makeScientOperationExecutor({
+    operationExecutor: makeEphemeralScientOperationExecutor({
       ...(cfg?.randomId === undefined ? {} : { randomId: cfg.randomId }),
       ...(cfg?.recordOperationReceipt === undefined
         ? {}
         : { recordReceipt: cfg.recordOperationReceipt }),
+      ...(cfg?.receiptRepository === undefined ? {} : { receiptRepository: cfg.receiptRepository }),
     }),
   });
 }
@@ -625,6 +628,105 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
       },
     );
     expect(toolResultJson(res.body)).toEqual({ wrote: true });
+  });
+
+  it("durably executes a unique send without a requestId", async () => {
+    const runningShell = makeShell({
+      latestTurn: { turnId: RUNNING_TURN, state: "running" },
+      session: { providerName: "claudeAgent", status: "running" },
+    });
+    let claimed: Parameters<ScientOperationReceiptRepositoryShape["claim"]>[0] | undefined;
+    let finished: Parameters<ScientOperationReceiptRepositoryShape["finish"]>[0] | undefined;
+    const receiptRepository: ScientOperationReceiptRepositoryShape = {
+      ownerId: "transport-test",
+      acquireOwner: () => Effect.void,
+      heartbeatOwner: () => Effect.void,
+      releaseOwner: () => Effect.void,
+      claim: (input) =>
+        Effect.sync(() => {
+          claimed = input;
+          return { kind: "acquired" } as const;
+        }),
+      finish: (input) =>
+        Effect.sync(() => {
+          finished = input;
+        }),
+      recoverInterrupted: () => Effect.succeed(0),
+      finalizeReplayAttempt: () => Effect.void,
+      listUncertainIntents: () => Effect.succeed([]),
+      reconcileIntent: () => Effect.die("unused"),
+      getByClaimKey: () => Effect.succeed(Option.none()),
+      pruneTerminal: () => Effect.succeed(0),
+    };
+    const durableUniqueSend: ToolEntry = {
+      ...writeTool,
+      definition: { ...writeTool.definition, name: "scient_unique_send" },
+      durableReplay: {
+        encode: () => ({
+          kind: "thread.message.send.v1",
+          threadId: "thread-target",
+          dispatched: "queue",
+        }),
+        decode: () => mcpToolResultJson({ threadId: "thread-target", dispatched: "queue" }),
+      },
+      prepareDurableIntent: (_input, envelope) => ({
+        effect: {
+          kind: "orchestration-command",
+          identity: `scient-operation:v2:${envelope.idempotency.claimKey}:thread-send`,
+        },
+        expectedAggregateKind: "thread",
+        expectedAggregateId: "thread-target",
+        replayResult: {
+          kind: "thread.message.send.v1",
+          threadId: "thread-target",
+          dispatched: "queue",
+        },
+      }),
+      handler: (_args, context) => {
+        context.recordOperationEffect({
+          kind: "orchestration-command",
+          identity: `scient-operation:v2:${context.operationEnvelope.idempotency.claimKey}:thread-send`,
+        });
+        return Effect.succeed(
+          mcpToolResultJson({ threadId: "thread-target", dispatched: "queue" }),
+        );
+      },
+    };
+    const res = await run(
+      makeTransport({
+        credentials: makeCredentials({
+          session: makeIdentity({ capabilities: ["thread:drive"] }),
+          writeAuthorityValid: true,
+        }),
+        callerShell: Option.some(runningShell),
+        requireShell: runningShell,
+        tools: [durableUniqueSend],
+        receiptRepository,
+      }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: 73,
+          method: "tools/call",
+          params: { name: "scient_unique_send", arguments: {} },
+        },
+      },
+    );
+
+    expect(toolResultJson(res.body)).toEqual({
+      threadId: "thread-target",
+      dispatched: "queue",
+    });
+    expect(claimed?.envelope.idempotency.mode).toBe("unique");
+    expect(claimed?.intent?.effect.identity).toBe(
+      `scient-operation:v2:${claimed?.envelope.idempotency.claimKey}:thread-send`,
+    );
+    expect(finished?.receipt).toMatchObject({
+      outcome: "succeeded",
+      effects: [claimed?.intent?.effect],
+    });
+    expect(finished?.replayResult).toEqual(claimed?.intent?.replayResult);
   });
 
   it("cancels a long read on exact revocation, returns no stale result, and unsubscribes", async () => {
