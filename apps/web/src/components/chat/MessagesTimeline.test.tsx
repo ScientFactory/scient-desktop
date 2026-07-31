@@ -171,6 +171,13 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Here is the image.");
   });
 
+  it("corrects a settled image only for the tail while the reader remains at the end", async () => {
+    const { shouldCorrectTimelineForSettledImage } = await import("./MessagesTimeline");
+    expect(shouldCorrectTimelineForSettledImage({ isTailRow: true, isAtEnd: true })).toBe(true);
+    expect(shouldCorrectTimelineForSettledImage({ isTailRow: false, isAtEnd: true })).toBe(false);
+    expect(shouldCorrectTimelineForSettledImage({ isTailRow: true, isAtEnd: false })).toBe(false);
+  });
+
   it("renders assistant math through the shared markdown renderer", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

@@ -34,7 +34,6 @@ import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { dedentCode, parseCodeFenceInfo, type CodeFenceInfo } from "../lib/codeFence";
 import { getFileIconName, pathLooksLikeKnownFile } from "../file-icons";
 import { CentralIcon } from "~/lib/central-icons";
-import { isLocalImageMarkdownSrc } from "../lib/localImageUrls";
 import { useTheme } from "../hooks/useTheme";
 import { useSmoothStreamedText } from "../hooks/useSmoothStreamedText";
 import { openWorkspaceFileReference, useWorkspaceFileOpener } from "../lib/workspaceFileOpener";
@@ -111,6 +110,7 @@ interface ChatMarkdownProps {
   /** Weak conversational direction used while a streamed block is still ambiguous. */
   directionHint?: ResolvedTextDirection | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+  onImageSettled?: (() => void) | undefined;
   markers?: readonly ThreadMarker[] | undefined;
   /**
    * "user" renders a sent prompt: GFM plus hard line breaks (single newlines
@@ -1176,6 +1176,7 @@ function ChatMarkdown({
   style,
   directionHint,
   onImageExpand,
+  onImageSettled,
   markers,
   onTaskToggle,
   variant = "assistant",
@@ -1256,8 +1257,30 @@ function ChatMarkdown({
   }, []);
   const markdownComponents = useMemo<Components>(
     () => ({
-      a({ node: _node, href, children, ...props }) {
+      a({ node, href, children, ...props }) {
         const restoredHref = href ? restoreLiteralDollarPlaceholders(href) : href;
+        const linkedImageNode =
+          node?.children.length === 1 &&
+          node.children[0]?.type === "element" &&
+          node.children[0].tagName === "img"
+            ? node.children[0]
+            : null;
+        const linkedImageSrc = linkedImageNode?.properties.src;
+        const linkedImageAlt = linkedImageNode?.properties.alt;
+        if (restoredHref && typeof linkedImageSrc === "string") {
+          // Markdown image links must not wrap the image's real button. Pass the
+          // href down so the frame renders it as a sibling action instead.
+          return (
+            <GeneratedMarkdownImage
+              src={restoreLiteralDollarPlaceholders(linkedImageSrc)}
+              alt={typeof linkedImageAlt === "string" ? linkedImageAlt : ""}
+              cwd={cwd}
+              linkedHref={restoredHref}
+              onImageExpand={onImageExpand}
+              onImageSettled={onImageSettled}
+            />
+          );
+        }
         const isExternalHttp = isExternalHttpHref(restoredHref);
         if (isUserVariant && isExternalHttp) {
           // GFM autolinks a pasted URL before the chips plugin can see it; when the
@@ -1369,19 +1392,17 @@ function ChatMarkdown({
           </code>
         );
       },
-      img({ node: _node, src, alt = "", ...props }) {
+      img({ node: _node, src, alt = "" }) {
         const restoredSrc = src ? restoreLiteralDollarPlaceholders(src) : "";
-        if (isLocalImageMarkdownSrc(restoredSrc)) {
-          return (
-            <GeneratedMarkdownImage
-              src={restoredSrc}
-              alt={alt}
-              cwd={cwd}
-              onImageExpand={onImageExpand}
-            />
-          );
-        }
-        return <img {...props} src={restoredSrc} alt={alt} loading="lazy" />;
+        return (
+          <GeneratedMarkdownImage
+            src={restoredSrc}
+            alt={alt}
+            cwd={cwd}
+            onImageExpand={onImageExpand}
+            onImageSettled={onImageSettled}
+          />
+        );
       },
       li({ node, children, ...props }) {
         // Task items carry their source line down to the checkbox via context.
@@ -1444,6 +1465,7 @@ function ChatMarkdown({
       isUserVariant,
       mentionReferences,
       onImageExpand,
+      onImageSettled,
       onTaskToggle,
       resolvedTheme,
       terminalContexts,

@@ -57,6 +57,62 @@ describe("ChatMarkdown", () => {
     expect(markup).not.toContain("text-neutral-900");
   });
 
+  it("renders remote chat images through the privacy-safe clickable frame", async () => {
+    const markup = await renderMarkdown("![Remote capture](https://images.example/capture.png)");
+
+    expect(markup).toContain('aria-label="Preview Remote capture"');
+    expect(markup).toContain('src="https://images.example/capture.png"');
+    expect(markup).toContain('referrerPolicy="no-referrer"');
+    expect(markup).toContain('aria-label="Open source for Remote capture"');
+  });
+
+  it("renders linked images with a sibling link action rather than nested controls", async () => {
+    const markup = await renderMarkdown(
+      "[![Diagram](https://images.example/diagram.png)](https://example.com/report)",
+    );
+
+    expect(markup).toContain('aria-label="Preview Diagram"');
+    expect(markup).toContain('aria-label="Open link for Diagram"');
+    const buttonMarkup = markup.match(/<button[\s\S]*?<\/button>/)?.[0];
+    expect(buttonMarkup).not.toContain("<a");
+  });
+
+  it("uses the same local image frame in sent user markdown", async () => {
+    const markup = await renderUserMarkdown("![Attached](./capture.png)");
+
+    expect(markup).toContain('data-source-kind="local"');
+    expect(markup).toContain("/api/local-image?path=.%2Fcapture.png");
+    expect(markup).toContain('aria-label="Preview Attached"');
+  });
+
+  it("does not expose unsupported image sources or proxy them as local files", async () => {
+    const markup = await renderMarkdown("![Unsafe](data:image/png;base64,secret-payload)");
+
+    expect(markup).toContain("This image source is not supported.");
+    expect(markup).not.toContain("secret-payload");
+    expect(markup).not.toContain("/api/local-image");
+  });
+
+  it("keeps partial streamed image syntax inert until the destination is complete", async () => {
+    const partial = await renderMarkdown(
+      "![Capture](https://images.example/capture",
+      undefined,
+      undefined,
+      {
+        isStreaming: true,
+      },
+    );
+    const complete = await renderMarkdown(
+      "![Capture](https://images.example/capture.png)",
+      undefined,
+      undefined,
+      { isStreaming: true },
+    );
+
+    expect(partial).not.toContain("chat-image-frame");
+    expect(complete).toContain('aria-label="Preview Capture"');
+  });
+
   it("resolves every natural-language markdown block independently", async () => {
     const markup = await renderMarkdown(
       [
