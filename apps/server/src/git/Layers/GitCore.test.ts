@@ -1748,7 +1748,14 @@ it.layer(TestLayer)("git integration", (it) => {
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         yield* initRepoWithoutCommit(tmp);
-        const core = yield* GitCore;
+        const realGitCore = yield* GitCore;
+        let trackedPatchArgs: readonly string[] | null = null;
+        const core = yield* makeIsolatedGitCore((input) => {
+          if (input.operation === "GitCore.readWorkingTreePatch.trackedPatch") {
+            trackedPatchArgs = [...input.args];
+          }
+          return realGitCore.execute(input);
+        });
 
         yield* writeTextFile(path.join(tmp, "draft.txt"), "alpha\n");
         yield* git(tmp, ["add", "draft.txt"]);
@@ -1759,6 +1766,14 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(patch).toContain("@@ -0,0 +1,2 @@");
         expect(patch).toContain("+alpha");
         expect(patch).toContain("+beta");
+        expect(trackedPatchArgs).toEqual([
+          "diff",
+          "--patch",
+          "--no-color",
+          "--no-ext-diff",
+          "--no-textconv",
+          "4b825dc642cb6eb9a060e54bf8d69288fbee4904",
+        ]);
       }),
     );
 
@@ -1808,6 +1823,98 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(unstagedPatch).toContain("diff --git a/README.md b/README.md");
         expect(unstagedPatch).toContain("diff --git a/untracked.txt b/untracked.txt");
         expect(unstagedPatch).not.toContain("staged.txt");
+      }),
+    );
+
+    it.effect("disables repository-configured diff helpers for every preview scope", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const realGitCore = yield* GitCore;
+
+        yield* writeTextFile(path.join(tmp, ".gitattributes"), "*.txt diff=scient-test\n");
+        yield* writeTextFile(path.join(tmp, "branch.txt"), "branch base bytes\n");
+        yield* writeTextFile(path.join(tmp, "unstaged.txt"), "unstaged base bytes\n");
+        yield* git(tmp, ["add", ".gitattributes", "branch.txt", "unstaged.txt"]);
+        yield* git(tmp, ["commit", "-m", "add diff fixtures"]);
+        yield* git(tmp, [
+          "config",
+          "diff.scient-test.textconv",
+          "git scient-textconv-must-not-run",
+        ]);
+        yield* git(tmp, ["config", "diff.external", "git scient-external-diff-must-not-run"]);
+
+        yield* realGitCore.createBranch({ cwd: tmp, branch: "feature/deterministic-diffs" });
+        yield* realGitCore.checkoutBranch({ cwd: tmp, branch: "feature/deterministic-diffs" });
+        yield* writeTextFile(path.join(tmp, "branch.txt"), "branch preview bytes\n");
+        yield* git(tmp, ["add", "branch.txt"]);
+        yield* git(tmp, ["commit", "-m", "change branch fixture"]);
+
+        yield* writeTextFile(path.join(tmp, "staged.txt"), "staged preview bytes\n");
+        yield* git(tmp, ["add", "staged.txt"]);
+        yield* writeTextFile(path.join(tmp, "unstaged.txt"), "unstaged preview bytes\n");
+        yield* writeTextFile(path.join(tmp, "untracked.txt"), "untracked preview bytes\n");
+
+        const textconvProbe = yield* realGitCore.execute({
+          operation: "GitCore.test.textconvProbe",
+          cwd: tmp,
+          args: ["diff", "--no-ext-diff", "--", "unstaged.txt"],
+          allowNonZeroExit: true,
+        });
+        expect(textconvProbe.code).not.toBe(0);
+        expect(textconvProbe.stderr).toContain("scient-textconv-must-not-run");
+
+        const externalDiffProbe = yield* realGitCore.execute({
+          operation: "GitCore.test.externalDiffProbe",
+          cwd: tmp,
+          args: ["diff", "--no-textconv", "--", "unstaged.txt"],
+          allowNonZeroExit: true,
+        });
+        expect(externalDiffProbe.code).not.toBe(0);
+        expect(externalDiffProbe.stderr).toContain("scient-external-diff-must-not-run");
+
+        const previewOperations = new Set([
+          "GitCore.readBranchPatch.diffPatch",
+          "GitCore.readStagedPatch",
+          "GitCore.readUnstagedPatch.trackedPatch",
+          "GitCore.readUnstagedPatch.untrackedPatch",
+          "GitCore.readWorkingTreePatch.trackedPatch",
+          "GitCore.readWorkingTreePatch.untrackedPatch",
+        ]);
+        const previewCommands: Array<{ operation: string; args: readonly string[] }> = [];
+        const core = yield* makeIsolatedGitCore((input) => {
+          if (previewOperations.has(input.operation)) {
+            previewCommands.push({ operation: input.operation, args: [...input.args] });
+          }
+          return realGitCore.execute(input);
+        });
+
+        const branchPatch = (yield* core.readBranchPatch(tmp)).patch;
+        const stagedPatch = (yield* core.readStagedPatch(tmp)).patch;
+        const unstagedPatch = (yield* core.readUnstagedPatch(tmp)).patch;
+        const workingTreePatch = (yield* core.readWorkingTreePatch(tmp)).patch;
+
+        expect(branchPatch).toContain("+branch preview bytes");
+        expect(stagedPatch).toContain("+staged preview bytes");
+        expect(unstagedPatch).toContain("+unstaged preview bytes");
+        expect(unstagedPatch).toContain("+untracked preview bytes");
+        expect(workingTreePatch).toContain("+staged preview bytes");
+        expect(workingTreePatch).toContain("+unstaged preview bytes");
+        expect(workingTreePatch).toContain("+untracked preview bytes");
+
+        expect(previewCommands.map(({ operation }) => operation)).toEqual([
+          "GitCore.readBranchPatch.diffPatch",
+          "GitCore.readStagedPatch",
+          "GitCore.readUnstagedPatch.trackedPatch",
+          "GitCore.readUnstagedPatch.untrackedPatch",
+          "GitCore.readWorkingTreePatch.trackedPatch",
+          "GitCore.readWorkingTreePatch.untrackedPatch",
+        ]);
+        for (const { args } of previewCommands) {
+          expect(args).toEqual(
+            expect.arrayContaining(["--no-color", "--no-ext-diff", "--no-textconv"]),
+          );
+        }
       }),
     );
 
