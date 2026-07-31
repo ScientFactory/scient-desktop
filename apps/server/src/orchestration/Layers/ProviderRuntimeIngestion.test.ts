@@ -20,14 +20,17 @@ import {
   ThreadId,
   TurnId,
 } from "@synara/contracts";
-import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
+import { Effect, Exit, Layer, ManagedRuntime, Option, PubSub, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
-import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import {
+  makeSqlitePersistenceLive,
+  SqlitePersistenceMemory,
+} from "../../persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import {
@@ -184,12 +187,23 @@ describe("ProviderRuntimeIngestion", () => {
     }
   });
 
-  async function createHarness(options: { codexHomePath?: string; startIngestion?: boolean } = {}) {
-    const workspaceRoot = makeTempDir("synara-provider-project-");
+  async function createHarness(
+    options: {
+      codexHomePath?: string;
+      dbPath?: string | "file";
+      seed?: boolean;
+      serverBaseDir?: string;
+      startIngestion?: boolean;
+      workspaceRoot?: string;
+    } = {},
+  ) {
+    const workspaceRoot = options.workspaceRoot ?? makeTempDir("synara-provider-project-");
     const codexHomePath = options.codexHomePath ?? makeTempDir("synara-provider-codex-home-");
     const generatedImagesRoot = path.join(codexHomePath, "generated_images", "thread-1");
-    const serverBaseDir = makeTempDir("synara-provider-server-");
-    fs.mkdirSync(path.join(workspaceRoot, ".git"));
+    const serverBaseDir = options.serverBaseDir ?? makeTempDir("synara-provider-server-");
+    const dbPath =
+      options.dbPath === "file" ? path.join(serverBaseDir, "restart.sqlite") : options.dbPath;
+    fs.mkdirSync(path.join(workspaceRoot, ".git"), { recursive: true });
     fs.mkdirSync(generatedImagesRoot, { recursive: true });
     const provider = createProviderServiceHarness();
     const orchestrationLayer = OrchestrationEngineLive.pipe(
@@ -202,7 +216,7 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(ProjectionTurnRepositoryLive),
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
-      Layer.provideMerge(SqlitePersistenceMemory),
+      Layer.provideMerge(dbPath ? makeSqlitePersistenceLive(dbPath) : SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), serverBaseDir)),
       Layer.provideMerge(
@@ -234,63 +248,65 @@ describe("ProviderRuntimeIngestion", () => {
     }
 
     const createdAt = new Date().toISOString();
-    await Effect.runPromise(
-      engine.dispatch({
-        type: "project.create",
-        commandId: CommandId.makeUnsafe("cmd-provider-project-create"),
-        projectId: asProjectId("project-1"),
-        title: "Provider Project",
-        workspaceRoot,
-        defaultModelSelection: {
-          provider: "codex",
-          model: "gpt-5-codex",
-        },
-        createdAt,
-      }),
-    );
-    await Effect.runPromise(
-      engine.dispatch({
-        type: "thread.create",
-        commandId: CommandId.makeUnsafe("cmd-thread-create"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        projectId: asProjectId("project-1"),
-        title: "Thread",
-        modelSelection: {
-          provider: "codex",
-          model: "gpt-5-codex",
-        },
-        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: "approval-required",
-        branch: null,
-        worktreePath: null,
-        createdAt,
-      }),
-    );
-    await Effect.runPromise(
-      engine.dispatch({
-        type: "thread.session.set",
-        commandId: CommandId.makeUnsafe("cmd-session-seed"),
-        threadId: ThreadId.makeUnsafe("thread-1"),
-        session: {
+    if (options.seed !== false) {
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe("cmd-provider-project-create"),
+          projectId: asProjectId("project-1"),
+          title: "Provider Project",
+          workspaceRoot,
+          defaultModelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          createdAt,
+        }),
+      );
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.makeUnsafe("cmd-thread-create"),
           threadId: ThreadId.makeUnsafe("thread-1"),
-          status: "ready",
-          providerName: "codex",
+          projectId: asProjectId("project-1"),
+          title: "Thread",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "approval-required",
-          activeTurnId: null,
-          updatedAt: createdAt,
-          lastError: null,
-        },
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        }),
+      );
+      await Effect.runPromise(
+        engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.makeUnsafe("cmd-session-seed"),
+          threadId: ThreadId.makeUnsafe("thread-1"),
+          session: {
+            threadId: ThreadId.makeUnsafe("thread-1"),
+            status: "ready",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            updatedAt: createdAt,
+            lastError: null,
+          },
+          createdAt,
+        }),
+      );
+      provider.setSession({
+        provider: "codex",
+        status: "ready",
+        runtimeMode: "approval-required",
+        threadId: ThreadId.makeUnsafe("thread-1"),
         createdAt,
-      }),
-    );
-    provider.setSession({
-      provider: "codex",
-      status: "ready",
-      runtimeMode: "approval-required",
-      threadId: ThreadId.makeUnsafe("thread-1"),
-      createdAt,
-      updatedAt: createdAt,
-    });
+        updatedAt: createdAt,
+      });
+    }
     return {
       engine,
       eventStore,
@@ -302,6 +318,9 @@ describe("ProviderRuntimeIngestion", () => {
       drain,
       startIngestion,
       workspaceRoot,
+      codexHomePath,
+      dbPath,
+      serverBaseDir,
       generatedImagesRoot,
       attachmentsDir: path.join(serverBaseDir, "userdata", "attachments"),
     };
@@ -356,6 +375,112 @@ describe("ProviderRuntimeIngestion", () => {
         createdAt: input.createdAt,
       }),
     );
+  }
+
+  async function setTestTurnSession(input: {
+    readonly engine: OrchestrationEngineShape;
+    readonly commandId: string;
+    readonly turnId: TurnId | null;
+    readonly status: "running" | "interrupted";
+    readonly createdAt: string;
+  }) {
+    await Effect.runPromise(
+      input.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe(input.commandId),
+        threadId: asThreadId("thread-1"),
+        session: {
+          threadId: asThreadId("thread-1"),
+          status: input.status,
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: input.turnId,
+          lastError: null,
+          updatedAt: input.createdAt,
+        },
+        createdAt: input.createdAt,
+      }),
+    );
+  }
+
+  async function seedStartupCapacityTurn(input: {
+    readonly engine: OrchestrationEngineShape;
+    readonly generatedImagesRoot: string;
+    readonly turnId: TurnId;
+    readonly prefix: string;
+    readonly existingAttachmentCount: number;
+    readonly referenceCount: number;
+    readonly createdAt: string;
+  }) {
+    await setTestTurnSession({
+      engine: input.engine,
+      commandId: `cmd-${input.prefix}-running`,
+      turnId: input.turnId,
+      status: "running",
+      createdAt: input.createdAt,
+    });
+    const messageId = asMessageId(`assistant:${input.prefix}`);
+    await Effect.runPromise(
+      input.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.makeUnsafe(`cmd-${input.prefix}-delta`),
+        threadId: asThreadId("thread-1"),
+        messageId,
+        turnId: input.turnId,
+        delta: "Generated results",
+        createdAt: input.createdAt,
+      }),
+    );
+    await Effect.runPromise(
+      input.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.makeUnsafe(`cmd-${input.prefix}-complete`),
+        threadId: asThreadId("thread-1"),
+        messageId,
+        turnId: input.turnId,
+        createdAt: input.createdAt,
+      }),
+    );
+    if (input.existingAttachmentCount > 0) {
+      await Effect.runPromise(
+        input.engine.dispatch({
+          type: "thread.message.assistant.attachments.add",
+          commandId: CommandId.makeUnsafe(`cmd-${input.prefix}-existing-attachments`),
+          threadId: asThreadId("thread-1"),
+          messageId,
+          turnId: input.turnId,
+          attachments: Array.from({ length: input.existingAttachmentCount }, (_, index) => ({
+            type: "image" as const,
+            id: `existing-${input.prefix}-${index}`,
+            name: `existing-${index}.png`,
+            mimeType: "image/png",
+            sizeBytes: GENERATED_PNG_BYTES.length,
+          })),
+          createdAt: input.createdAt,
+        }),
+      );
+    }
+    const sourcePaths: string[] = [];
+    for (let index = 0; index < input.referenceCount; index += 1) {
+      const sourcePath = path.join(input.generatedImagesRoot, `${input.prefix}-${index}.png`);
+      fs.writeFileSync(sourcePath, Buffer.concat([GENERATED_PNG_BYTES, Buffer.from([index])]));
+      sourcePaths.push(sourcePath);
+      await recordGeneratedImageReference({
+        engine: input.engine,
+        turnId: input.turnId,
+        provenanceKey: `${input.prefix}-${index}`,
+        sourcePath,
+        createdAt: input.createdAt,
+      });
+    }
+    await setTestTurnSession({
+      engine: input.engine,
+      commandId: `cmd-${input.prefix}-interrupted`,
+      turnId: null,
+      status: "interrupted",
+      createdAt: input.createdAt,
+    });
+    return { messageId, sourcePaths };
   }
 
   it("maps turn started/completed events into thread session updates", async () => {
@@ -2321,6 +2446,147 @@ describe("ProviderRuntimeIngestion", () => {
     ).toEqual([]);
   });
 
+  it("settles a persisted streaming assistant target before restart image recovery", async () => {
+    const firstProcess = await createHarness({ dbPath: "file", startIngestion: false });
+    const turnId = asTurnId("turn-restart-streaming-target");
+    const createdAt = "2026-07-31T10:57:00.000Z";
+    await setTestTurnSession({
+      engine: firstProcess.engine,
+      commandId: "cmd-restart-streaming-running",
+      turnId,
+      status: "running",
+      createdAt,
+    });
+    const messageId = asMessageId("assistant:restart-streaming-target");
+    await Effect.runPromise(
+      firstProcess.engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.makeUnsafe("cmd-restart-streaming-stale-row"),
+        threadId: asThreadId("thread-1"),
+        messageId,
+        turnId,
+        delta: "Here is the image.",
+        createdAt: "2026-07-31T10:58:30.000Z",
+      }),
+    );
+    const beforeRestart = await Effect.runPromise(firstProcess.engine.getReadModel());
+    expect(
+      beforeRestart.threads[0]?.messages.find((message) => message.id === messageId)?.streaming,
+    ).toBe(true);
+    const sourcePath = path.join(firstProcess.generatedImagesRoot, "restart-streaming.png");
+    fs.writeFileSync(sourcePath, GENERATED_PNG_BYTES);
+    await recordGeneratedImageReference({
+      engine: firstProcess.engine,
+      turnId,
+      provenanceKey: "restart-streaming-target",
+      sourcePath,
+      createdAt: "2026-07-31T10:59:00.000Z",
+    });
+    await materializeGeneratedImageAttachment({
+      threadId: "thread-1",
+      sourcePath,
+      provenanceKey: "restart-streaming-target",
+      allowedSourceRoots: [firstProcess.generatedImagesRoot],
+      attachmentsDir: firstProcess.attachmentsDir,
+    });
+    fs.rmSync(sourcePath);
+
+    await Effect.runPromise(Scope.close(scope!, Exit.void));
+    scope = null;
+    await runtime!.dispose();
+    runtime = null;
+    const restarted = await createHarness({
+      codexHomePath: firstProcess.codexHomePath,
+      dbPath: firstProcess.dbPath!,
+      seed: false,
+      serverBaseDir: firstProcess.serverBaseDir,
+      startIngestion: false,
+      workspaceRoot: firstProcess.workspaceRoot,
+    });
+    const persisted = Option.getOrThrow(
+      await Effect.runPromise(restarted.snapshotQuery.getThreadDetailById(asThreadId("thread-1"))),
+    );
+    expect(persisted.messages.find((message) => message.id === messageId)?.streaming).toBe(true);
+    await setTestTurnSession({
+      engine: restarted.engine,
+      commandId: "cmd-restart-streaming-interrupted",
+      turnId: null,
+      status: "interrupted",
+      createdAt: "2026-07-31T10:58:00.000Z",
+    });
+
+    await restarted.startIngestion();
+    const thread = await waitForThread(restarted.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === messageId && !message.streaming && message.attachments?.length === 1,
+      ),
+    );
+    const message = thread.messages.find((candidate) => candidate.id === messageId);
+    expect(message).toMatchObject({ text: "Here is the image.", streaming: false });
+    // Settlement keeps the persisted message time; the later reference outcome
+    // then advances updatedAt normally instead of moving it backwards.
+    expect(message?.updatedAt).toBe("2026-07-31T10:59:00.000Z");
+    expect(thread.messages.filter((candidate) => candidate.turnId === turnId)).toHaveLength(1);
+  });
+
+  it("reports one omitted startup image when seven attachments leave one slot for two refs", async () => {
+    const harness = await createHarness({ startIngestion: false });
+    const turnId = asTurnId("turn-restart-capacity-seven-plus-two");
+    const seeded = await seedStartupCapacityTurn({
+      engine: harness.engine,
+      generatedImagesRoot: harness.generatedImagesRoot,
+      turnId,
+      prefix: "restart-capacity-seven-plus-two",
+      existingAttachmentCount: 7,
+      referenceCount: 2,
+      createdAt: "2026-07-31T11:00:00.000Z",
+    });
+
+    await harness.startIngestion();
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === seeded.messageId &&
+          message.attachments?.length === 8 &&
+          message.text.includes("Additional generated image was omitted"),
+      ),
+    );
+    expect(
+      thread.messages.find((message) => message.id === seeded.messageId)?.attachments,
+    ).toHaveLength(8);
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(1);
+  });
+
+  it("reports a startup omission without I/O when eight attachments leave no capacity", async () => {
+    const harness = await createHarness({ startIngestion: false });
+    const turnId = asTurnId("turn-restart-capacity-eight-plus-one");
+    const seeded = await seedStartupCapacityTurn({
+      engine: harness.engine,
+      generatedImagesRoot: harness.generatedImagesRoot,
+      turnId,
+      prefix: "restart-capacity-eight-plus-one",
+      existingAttachmentCount: 8,
+      referenceCount: 1,
+      createdAt: "2026-07-31T11:01:00.000Z",
+    });
+
+    await harness.startIngestion();
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === seeded.messageId &&
+          message.attachments?.length === 8 &&
+          message.text.includes("Additional generated image was omitted"),
+      ),
+    );
+    expect(
+      thread.messages.find((message) => message.id === seeded.messageId)?.attachments,
+    ).toHaveLength(8);
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(0);
+    expect(fs.existsSync(seeded.sourcePaths[0]!)).toBe(true);
+  });
+
   it("recovers a reference-only turnless image when ingestion starts", async () => {
     const harness = await createHarness({ startIngestion: false });
     const createdAt = "2026-07-31T11:00:00.000Z";
@@ -2380,9 +2646,10 @@ describe("ProviderRuntimeIngestion", () => {
     expect(fs.existsSync(path.join(harness.generatedImagesRoot, "turnless-cap-8.png"))).toBe(true);
   });
 
-  it("shares one global startup budget across turn and turnless targets", async () => {
+  it("prioritizes newer turnless work and defers an older turn when the global budget is spent", async () => {
     const harness = await createHarness({ startIngestion: false });
     const createdAt = "2026-07-31T11:07:00.000Z";
+    const turnCreatedAt = "2026-07-31T11:06:00.000Z";
     const turnId = asTurnId("turn-global-startup-budget");
     const turnSourcePath = path.join(harness.generatedImagesRoot, "turn-global-budget.png");
     fs.writeFileSync(turnSourcePath, GENERATED_PNG_BYTES);
@@ -2398,9 +2665,9 @@ describe("ProviderRuntimeIngestion", () => {
           runtimeMode: "approval-required",
           activeTurnId: turnId,
           lastError: null,
-          updatedAt: createdAt,
+          updatedAt: turnCreatedAt,
         },
-        createdAt,
+        createdAt: turnCreatedAt,
       }),
     );
     await recordGeneratedImageReference({
@@ -2408,7 +2675,7 @@ describe("ProviderRuntimeIngestion", () => {
       turnId,
       provenanceKey: "turn-global-budget",
       sourcePath: turnSourcePath,
-      createdAt,
+      createdAt: turnCreatedAt,
     });
     await Effect.runPromise(
       harness.engine.dispatch({
@@ -2422,16 +2689,14 @@ describe("ProviderRuntimeIngestion", () => {
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,
-          updatedAt: createdAt,
+          updatedAt: turnCreatedAt,
         },
-        createdAt,
+        createdAt: turnCreatedAt,
       }),
     );
-    const targetMessageIds: MessageId[] = [];
     for (let index = 0; index < 8; index += 1) {
       const targetMessageId = asMessageId(`assistant:image:turnless-global-${index}`);
       const sourcePath = path.join(harness.generatedImagesRoot, `turnless-global-${index}.png`);
-      targetMessageIds.push(targetMessageId);
       fs.writeFileSync(sourcePath, Buffer.concat([GENERATED_PNG_BYTES, Buffer.from([index])]));
       await recordTurnlessGeneratedImageReference({
         engine: harness.engine,
@@ -2457,13 +2722,18 @@ describe("ProviderRuntimeIngestion", () => {
       harness.engine,
       (entry) => entry.messages.filter((message) => message.attachments?.length === 1).length === 8,
     );
-    expect(threadLookupCount).toBe(8);
+    expect(threadLookupCount).toBe(9);
     expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(8);
     const unresolved = await Effect.runPromise(
       harness.snapshotQuery.listTurnlessGeneratedImageReferences(),
     );
-    expect(unresolved).toHaveLength(1);
-    expect(unresolved[0]?.targetMessageId).toBe(targetMessageIds[0]);
+    expect(unresolved).toHaveLength(0);
+    const deferredTurns = await Effect.runPromise(
+      harness.snapshotQuery.listTurnGeneratedImageReferencesForStartup(),
+    );
+    expect(deferredTurns).toHaveLength(1);
+    expect(deferredTurns[0]?.turnId).toBe(turnId);
+    expect(fs.existsSync(turnSourcePath)).toBe(true);
   });
 
   it("shows a path-free failure for a missing reference-only turnless image", async () => {
