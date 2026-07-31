@@ -39,7 +39,7 @@ export interface AgentGatewayCredentialsShape {
   readonly bindWriteAuthority: (token: string, turnId: string) => AgentGatewayWriteAuthority | null;
   /** Recheck that a previously bound authority still belongs to a live session. */
   readonly verifyWriteAuthority: (authority: AgentGatewayWriteAuthority) => boolean;
-  /** Acquire the revocation-linearized lease for one bounded authoritative write. */
+  /** Acquire ingress admission and lifetime bookkeeping for one bounded write. */
   readonly acquireWriteLease: (
     authority: AgentGatewayWriteAuthority,
   ) => AgentGatewayWriteLease | null;

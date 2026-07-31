@@ -52,9 +52,11 @@ export interface AgentGatewaySessionRegistryShape {
   readonly bindWriteAuthority: (token: string, turnId: string) => AgentGatewayWriteAuthority | null;
   readonly verifyWriteAuthority: (authority: AgentGatewayWriteAuthority) => boolean;
   /**
-   * Atomically orders a write against revocation. A lease acquired first may
-   * finish; revocation first prevents acquisition. New work is always denied
-   * immediately after revocation.
+   * Performs ingress admission and lifetime bookkeeping for one write. It
+   * prevents new work after revocation and shields lease cleanup from caller
+   * interruption, but it does not authorize an effect to finish after
+   * revocation. Transactional tools must also carry the exact-session
+   * revocation fence into their commit boundary.
    */
   readonly acquireWriteLease: (
     authority: AgentGatewayWriteAuthority,
