@@ -141,6 +141,7 @@ import {
 import {
   derivePendingApprovals,
   derivePendingUserInputs,
+  isSessionBusyForArchive,
   isThreadRunningTurn,
 } from "../session-logic";
 import {
@@ -3414,9 +3415,8 @@ export default function Sidebar() {
       if (!thread) return null;
 
       const subtreeThreads = [thread, ...collectSubagentDescendants(currentThreads, threadId)];
-      const runningCount = subtreeThreads.filter(
-        (candidate) =>
-          candidate.session?.orchestrationStatus === "starting" || isThreadRunningTurn(candidate),
+      const runningCount = subtreeThreads.filter((candidate) =>
+        isSessionBusyForArchive(candidate.session),
       ).length;
       if (runningCount > 0) {
         showSidebarTransientError({

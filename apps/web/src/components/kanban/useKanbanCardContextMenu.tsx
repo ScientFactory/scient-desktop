@@ -27,7 +27,7 @@ import { useKanbanUiStore } from "../../kanbanUiStore";
 import { readNativeApi } from "../../nativeApi";
 import { useStore } from "../../store";
 import { useTerminalStateStore } from "../../terminalStateStore";
-import { isThreadRunningTurn } from "../../session-logic";
+import { isSessionBusyForArchive } from "../../session-logic";
 import { getThreadFromState, getThreadsFromState } from "../../threadDerivation";
 import {
   formatWorktreePathForDisplay,
@@ -103,9 +103,8 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
     const thread = currentThreads.find((candidate) => candidate.id === threadId);
     if (!thread) return;
     const subtreeThreads = [thread, ...collectSubagentDescendants(currentThreads, threadId)];
-    const runningCount = subtreeThreads.filter(
-      (candidate) =>
-        candidate.session?.orchestrationStatus === "starting" || isThreadRunningTurn(candidate),
+    const runningCount = subtreeThreads.filter((candidate) =>
+      isSessionBusyForArchive(candidate.session),
     ).length;
     if (runningCount > 0) {
       setFeedback({

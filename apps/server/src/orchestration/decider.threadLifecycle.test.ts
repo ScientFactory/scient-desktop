@@ -150,6 +150,24 @@ describe("thread subtree lifecycle decisions", () => {
     ).rejects.toThrow("has 1 active session; stop them before command 'thread.archive'");
   });
 
+  it("refuses to archive while a running descendant awaits its active turn id", async () => {
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.archive",
+            commandId: CommandId.makeUnsafe("cmd-archive-running-child-before-turn-id"),
+            threadId: PARENT,
+          },
+          readModel: makeReadModel([
+            makeThread({ id: PARENT }),
+            makeThread({ id: CHILD, parentThreadId: PARENT, sessionStatus: "running" }),
+          ]),
+        }),
+      ),
+    ).rejects.toThrow("has 1 active session; stop them before command 'thread.archive'");
+  });
+
   it("refuses to archive or delete while a descendant provider session is starting", async () => {
     const readModel = makeReadModel([
       makeThread({ id: PARENT }),

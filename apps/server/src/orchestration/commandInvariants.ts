@@ -232,8 +232,7 @@ export function requireThreadSubtreeIdle(input: {
   const busyThreads = subtree.filter(
     (thread) =>
       thread.deletedAt === null &&
-      (thread.session?.status === "starting" ||
-        (thread.session?.status === "running" && thread.session.activeTurnId !== null)),
+      (thread.session?.status === "starting" || thread.session?.status === "running"),
   );
   if (busyThreads.length === 0) {
     return Effect.void;
