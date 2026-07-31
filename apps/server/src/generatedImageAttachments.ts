@@ -10,7 +10,11 @@ import path from "node:path";
 
 import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES, type ChatImageAttachment } from "@synara/contracts";
 
-import { resolveAttachmentPath, toSafeThreadAttachmentSegment } from "./attachmentStore.ts";
+import {
+  resolveAttachmentPath,
+  resolveAttachmentPathById,
+  toSafeThreadAttachmentSegment,
+} from "./attachmentStore.ts";
 
 const GENERATED_IMAGE_MIME_TYPES = {
   "image/gif": ".gif",
@@ -92,6 +96,84 @@ async function readExistingAttachment(pathname: string): Promise<Buffer | null> 
   }
 }
 
+async function readValidatedGeneratedImage(pathname: string): Promise<{
+  readonly bytes: Buffer;
+  readonly mimeType: GeneratedImageMimeType;
+}> {
+  const handle = await fs.open(pathname, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  let bytes: Buffer;
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) {
+      throw new Error("Generated image is not a regular file.");
+    }
+    if (stat.size <= 0 || stat.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+      throw new Error("Generated image is empty or exceeds the chat image size limit.");
+    }
+    bytes = Buffer.allocUnsafe(stat.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const result = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (result.bytesRead === 0) break;
+      offset += result.bytesRead;
+    }
+    const finalStat = await handle.stat();
+    if (
+      offset !== bytes.length ||
+      finalStat.size !== stat.size ||
+      finalStat.mtimeMs !== stat.mtimeMs ||
+      finalStat.ino !== stat.ino
+    ) {
+      throw new Error("Generated image changed while it was being read.");
+    }
+  } finally {
+    await handle.close();
+  }
+
+  const mimeType = detectGeneratedImageMimeType(bytes);
+  if (!mimeType) {
+    throw new Error("Generated image format is unsupported or does not match its file contents.");
+  }
+  return { bytes, mimeType };
+}
+
+async function recoverDurableGeneratedImageAttachment(input: {
+  readonly threadId: string;
+  readonly provenanceKey: string;
+  readonly attachmentsDir: string;
+}): Promise<{
+  readonly attachment: ChatImageAttachment;
+  readonly bytes: Buffer;
+} | null> {
+  const id = generatedImageAttachmentId(input);
+  const pathname = resolveAttachmentPathById({
+    attachmentsDir: input.attachmentsDir,
+    attachmentId: id,
+  });
+  if (!pathname) return null;
+
+  const validated = await readValidatedGeneratedImage(pathname).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  });
+  if (!validated) return null;
+  const { bytes, mimeType } = validated;
+  const extension = GENERATED_IMAGE_MIME_TYPES[mimeType];
+  if (path.extname(pathname).toLowerCase() !== extension) {
+    throw new Error("Persisted generated image extension does not match its file contents.");
+  }
+  return {
+    attachment: {
+      type: "image",
+      id,
+      name: `generated-image${extension}`,
+      mimeType,
+      sizeBytes: bytes.byteLength,
+    },
+    bytes,
+  };
+}
+
 async function persistAtomically(input: {
   readonly destinationPath: string;
   readonly bytes: Buffer;
@@ -139,11 +221,28 @@ export async function materializeGeneratedImageAttachment(input: {
   readonly provenanceKey: string;
   readonly allowedSourceRoots: ReadonlyArray<string>;
   readonly attachmentsDir: string;
+  readonly allowDurableFallbackWhenSourceUnavailable?: boolean;
 }): Promise<ChatImageAttachment> {
-  const [realSourcePath, realRoots] = await Promise.all([
-    fs.realpath(input.sourcePath),
+  const durableAttachment = await recoverDurableGeneratedImageAttachment(input);
+  const [realSourceResult, realRoots] = await Promise.all([
+    fs.realpath(input.sourcePath).then(
+      (pathname) => ({ pathname, error: null }),
+      (error: unknown) => ({ pathname: null, error }),
+    ),
     Promise.all(input.allowedSourceRoots.map((root) => fs.realpath(root).catch(() => null))),
   ]);
+  if (!realSourceResult.pathname) {
+    const sourceCode = (realSourceResult.error as NodeJS.ErrnoException).code;
+    if (
+      durableAttachment &&
+      input.allowDurableFallbackWhenSourceUnavailable === true &&
+      (sourceCode === "ENOENT" || sourceCode === "ENOTDIR")
+    ) {
+      return durableAttachment.attachment;
+    }
+    throw realSourceResult.error;
+  }
+  const realSourcePath = realSourceResult.pathname;
   if (!realRoots.some((root) => root !== null && isPathInside(realSourcePath, root))) {
     throw new Error("Provider image is outside the authorized generated-image roots.");
   }
@@ -151,41 +250,15 @@ export async function materializeGeneratedImageAttachment(input: {
   // Refuse a final-component symlink if the source is swapped between realpath
   // authorization and open. This closes the practical TOCTOU escape without
   // weakening the allowed-root policy.
-  const sourceHandle = await fs.open(realSourcePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-  let bytes: Buffer;
-  try {
-    const stat = await sourceHandle.stat();
-    if (!stat.isFile()) {
-      throw new Error("Provider image source is not a regular file.");
-    }
-    if (stat.size <= 0 || stat.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-      throw new Error("Provider image is empty or exceeds the chat image size limit.");
-    }
-    bytes = Buffer.allocUnsafe(stat.size);
-    let offset = 0;
-    while (offset < bytes.length) {
-      const result = await sourceHandle.read(bytes, offset, bytes.length - offset, offset);
-      if (result.bytesRead === 0) break;
-      offset += result.bytesRead;
-    }
-    if (offset !== bytes.length) {
-      throw new Error("Provider image changed while it was being materialized.");
-    }
-    const finalStat = await sourceHandle.stat();
-    if (
-      finalStat.size !== stat.size ||
-      finalStat.mtimeMs !== stat.mtimeMs ||
-      finalStat.ino !== stat.ino
-    ) {
-      throw new Error("Provider image changed while it was being materialized.");
-    }
-  } finally {
-    await sourceHandle.close();
+  const { bytes, mimeType } = await readValidatedGeneratedImage(realSourcePath);
+  if (
+    durableAttachment &&
+    (durableAttachment.attachment.mimeType !== mimeType || !durableAttachment.bytes.equals(bytes))
+  ) {
+    throw new Error("A generated-image replay resolved to different persisted bytes or format.");
   }
-
-  const mimeType = detectGeneratedImageMimeType(bytes);
-  if (!mimeType) {
-    throw new Error("Provider image format is unsupported or does not match its file contents.");
+  if (durableAttachment) {
+    return durableAttachment.attachment;
   }
   const extension = GENERATED_IMAGE_MIME_TYPES[mimeType];
   const attachmentId = generatedImageAttachmentId(input);

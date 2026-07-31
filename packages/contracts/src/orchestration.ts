@@ -1364,6 +1364,16 @@ const ThreadMessageAssistantAttachmentsAddCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadGeneratedImageReferenceRecordCommand = Schema.Struct({
+  type: Schema.Literal("thread.generated-image.reference.record"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  turnId: TurnId,
+  provenanceKey: TrimmedNonEmptyString,
+  sourcePath: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+
 const ThreadProposedPlanUpsertCommand = Schema.Struct({
   type: Schema.Literal("thread.proposed-plan.upsert"),
   commandId: CommandId,
@@ -1412,6 +1422,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
   ThreadMessageAssistantAttachmentsAddCommand,
+  ThreadGeneratedImageReferenceRecordCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
@@ -1464,6 +1475,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
   "thread.activity-appended",
+  "thread.generated-image-reference-recorded",
 ]);
 export type OrchestrationEventType = typeof OrchestrationEventType.Type;
 
@@ -1801,6 +1813,14 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
   activity: OrchestrationThreadActivity,
 });
 
+export const ThreadGeneratedImageReferenceRecordedPayload = Schema.Struct({
+  threadId: ThreadId,
+  turnId: TurnId,
+  provenanceKey: TrimmedNonEmptyString,
+  sourcePath: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+
 export const OrchestrationEventMetadata = Schema.Struct({
   providerTurnId: Schema.optional(TrimmedNonEmptyString),
   providerItemId: Schema.optional(ProviderItemId),
@@ -1992,6 +2012,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.activity-appended"),
     payload: ThreadActivityAppendedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.generated-image-reference-recorded"),
+    payload: ThreadGeneratedImageReferenceRecordedPayload,
   }),
 ]);
 export type OrchestrationEvent = typeof OrchestrationEvent.Type;

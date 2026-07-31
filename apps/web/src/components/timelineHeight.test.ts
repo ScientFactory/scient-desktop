@@ -19,8 +19,11 @@ describe("estimateTimelineMessageHeight", () => {
     ).toBe(126.75);
   });
 
-  it("includes assistant image attachment rows in the initial estimate", () => {
-    const withoutImages = estimateTimelineMessageHeight({ role: "assistant", text: "answer" });
+  it("wraps the exact fourth assistant image in the initial estimate", () => {
+    const withoutImages = estimateTimelineMessageHeight({
+      role: "assistant",
+      text: "answer",
+    });
     const withOneRow = estimateTimelineMessageHeight({
       role: "assistant",
       text: "answer",
@@ -29,7 +32,7 @@ describe("estimateTimelineMessageHeight", () => {
     const withTwoRows = estimateTimelineMessageHeight({
       role: "assistant",
       text: "answer",
-      attachments: Array.from({ length: 5 }, (_, index) => ({
+      attachments: Array.from({ length: 4 }, (_, index) => ({
         id: String(index),
         type: "image" as const,
       })),
@@ -69,7 +72,7 @@ describe("estimateTimelineMessageHeight", () => {
     ).toBe(185.375);
   });
 
-  it("keeps up to four user image attachments on one row", () => {
+  it("wraps the exact fourth user image onto a second row", () => {
     expect(
       estimateTimelineMessageHeight({
         role: "user",
@@ -93,7 +96,7 @@ describe("estimateTimelineMessageHeight", () => {
           { id: "4", type: "image" },
         ],
       }),
-    ).toBe(185.375);
+    ).toBe(253.375);
   });
 
   it("adds a second attachment row for five user image attachments", () => {
@@ -142,7 +145,10 @@ describe("estimateTimelineMessageHeight", () => {
   it("reserves the same marker geometry for agent and automation provenance", () => {
     const base = { role: "user" as const, text: "continue" };
     const unmarked = estimateTimelineMessageHeight(base);
-    const agent = estimateTimelineMessageHeight({ ...base, dispatchSource: "agent" });
+    const agent = estimateTimelineMessageHeight({
+      ...base,
+      dispatchSource: "agent",
+    });
     const automation = estimateTimelineMessageHeight({
       ...base,
       dispatchOrigin: "automation",
@@ -269,7 +275,11 @@ describe("estimateChangedFilesSummaryHeight", () => {
   it("estimates the flat changed-files list and collapsed overflow toggle", () => {
     const files = [
       { path: "apps/web/src/index.ts", additions: 1, deletions: 0 },
-      { path: "apps/web/src/components/Button.tsx", additions: 2, deletions: 1 },
+      {
+        path: "apps/web/src/components/Button.tsx",
+        additions: 2,
+        deletions: 1,
+      },
       { path: "apps/server/src/index.ts", additions: 4, deletions: 0 },
       { path: "packages/shared/src/path.ts", additions: 0, deletions: 2 },
       { path: "README.md", additions: 1, deletions: 1 },

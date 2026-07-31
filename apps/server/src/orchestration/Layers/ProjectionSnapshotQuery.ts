@@ -61,7 +61,7 @@ import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import {
   ProjectionSnapshotQuery,
   type ProjectionFullThreadDiffContext,
-  type ProjectionGeneratedImageActivityRecord,
+  type ProjectionGeneratedImageReferenceRecord,
   type ProjectionSnapshotCounts,
   type ProjectionSnapshotSequence,
   type ProjectionThreadCheckpointContext,
@@ -139,9 +139,12 @@ const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
 const ProjectionFileChangeActivityPayloadDbRowSchema = Schema.Struct({
   payload: Schema.fromJsonString(Schema.Unknown),
 });
-const ProjectionGeneratedImageActivityDbRowSchema = Schema.Struct({
-  kind: Schema.String,
-  payload: Schema.fromJsonString(Schema.Unknown),
+const ProjectionGeneratedImageReferenceDbRowSchema = Schema.Struct({
+  sourcePath: Schema.String,
+  provenanceKey: Schema.String,
+});
+const LatestAssistantMessageIdRowSchema = Schema.Struct({
+  messageId: MessageId,
 });
 const ProjectionLatestTurnDbRowSchema = Schema.Struct({
   threadId: ProjectionThread.fields.threadId,
@@ -1565,29 +1568,41 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       `,
   });
 
-  // Generated-image references are recovered at turn settlement. Keep this query
-  // independent of the 500-row thread-detail activity window: a long-running turn
-  // can emit far more tool activities before its terminal event arrives.
-  const listGeneratedImageActivityRowsByTurn = SqlSchema.findAll({
+  const getLatestAssistantMessageIdRowByTurn = SqlSchema.findOneOption({
     Request: ThreadTurnLookupInput,
-    Result: ProjectionGeneratedImageActivityDbRowSchema,
+    Result: LatestAssistantMessageIdRowSchema,
     execute: ({ threadId, turnId }) =>
       sql`
-        SELECT kind, payload_json AS "payload"
-        FROM projection_thread_activities
-        WHERE thread_id = ${threadId}
-          AND turn_id = ${turnId}
-          AND (
-            (kind = 'tool.completed' AND json_extract(payload_json, '$.itemType') = 'image_generation')
-            OR (
-              kind = ${STUDIO_OUTPUTS_ACTIVITY_KIND}
-              AND json_type(payload_json, '$.data.generatedImage') = 'object'
-            )
-          )
-        -- Provider replay can project the same completion more than once. Collapse
-        -- exact payload duplicates before applying the two-records-per-image cap.
-        GROUP BY kind, payload_json
-        ORDER BY MIN(created_at) ASC, MIN(activity_id) ASC
+        SELECT json_extract(payload_json, '$.messageId') AS "messageId"
+        FROM orchestration_events
+        WHERE aggregate_kind = 'thread'
+          AND stream_id = ${threadId}
+          AND event_type = 'thread.message-sent'
+          AND json_extract(payload_json, '$.turnId') = ${turnId}
+          AND json_extract(payload_json, '$.role') = 'assistant'
+        GROUP BY json_extract(payload_json, '$.messageId')
+        -- Updates to an earlier commentary message may arrive late. Terminal
+        -- ownership follows message creation order, not the latest update.
+        ORDER BY MIN(sequence) DESC
+        LIMIT 1
+      `,
+  });
+
+  const listGeneratedImageReferenceRowsByTurn = SqlSchema.findAll({
+    Request: ThreadTurnLookupInput,
+    Result: ProjectionGeneratedImageReferenceDbRowSchema,
+    execute: ({ threadId, turnId }) =>
+      sql`
+        SELECT
+          json_extract(payload_json, '$.sourcePath') AS "sourcePath",
+          json_extract(payload_json, '$.provenanceKey') AS "provenanceKey"
+        FROM orchestration_events
+        WHERE aggregate_kind = 'thread'
+          AND stream_id = ${threadId}
+          AND event_type = 'thread.generated-image-reference-recorded'
+          AND json_extract(payload_json, '$.turnId') = ${turnId}
+        GROUP BY json_extract(payload_json, '$.provenanceKey')
+        ORDER BY MIN(sequence) ASC
         LIMIT ${MAX_TURN_GENERATED_IMAGE_ACTIVITY_RECORDS}
       `,
   });
@@ -1745,7 +1760,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const latestTurns = collectProjectedLatestTurns(latestTurnRows);
           const sessions = collectProjectedSessions(sessionRows);
 
-          let updatedAt = collectBaseUpdatedAt({ projectRows, threadRows, stateRows });
+          let updatedAt = collectBaseUpdatedAt({
+            projectRows,
+            threadRows,
+            stateRows,
+          });
           updatedAt = maxOptionalIso(updatedAt, messages.updatedAt);
           updatedAt = maxOptionalIso(updatedAt, proposedPlans.updatedAt);
           updatedAt = maxOptionalIso(updatedAt, activities.updatedAt);
@@ -1868,7 +1887,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const sessions = collectProjectedSessions(sessionRows);
           const latestTurns = collectProjectedLatestTurns(latestTurnRows);
 
-          let updatedAt = collectBaseUpdatedAt({ projectRows, threadRows, stateRows });
+          let updatedAt = collectBaseUpdatedAt({
+            projectRows,
+            threadRows,
+            stateRows,
+          });
           updatedAt = maxOptionalIso(updatedAt, proposedPlans.updatedAt);
           updatedAt = maxOptionalIso(updatedAt, sessions.updatedAt);
           updatedAt = maxOptionalIso(updatedAt, latestTurns.updatedAt);
@@ -1973,7 +1996,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const latestTurns = collectProjectedLatestTurns(latestTurnRows);
           const sessions = collectProjectedSessions(sessionRows);
 
-          let updatedAt = collectBaseUpdatedAt({ projectRows, threadRows, stateRows });
+          let updatedAt = collectBaseUpdatedAt({
+            projectRows,
+            threadRows,
+            stateRows,
+          });
           updatedAt = maxOptionalIso(updatedAt, latestTurns.updatedAt);
           updatedAt = maxOptionalIso(updatedAt, sessions.updatedAt);
 
@@ -2136,7 +2163,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     options,
   ) =>
     Effect.gen(function* () {
-      const threadRow = yield* getThreadCheckpointContextThreadRow({ threadId }).pipe(
+      const threadRow = yield* getThreadCheckpointContextThreadRow({
+        threadId,
+      }).pipe(
         Effect.mapError(
           toPersistenceSqlOrDecodeError(
             "ProjectionSnapshotQuery.getThreadCheckpointContext:getThread:query",
@@ -2148,7 +2177,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         return Option.none<ProjectionThreadCheckpointContext>();
       }
 
-      const checkpointRows = yield* listCheckpointRowsByThread({ threadId }).pipe(
+      const checkpointRows = yield* listCheckpointRowsByThread({
+        threadId,
+      }).pipe(
         Effect.mapError(
           toPersistenceSqlOrDecodeError(
             "ProjectionSnapshotQuery.getThreadCheckpointContext:listCheckpoints:query",
@@ -2190,19 +2221,28 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       });
     });
 
-  const listGeneratedImageActivitiesByTurn: ProjectionSnapshotQueryShape["listGeneratedImageActivitiesByTurn"] =
+  const getLatestAssistantMessageIdByTurn: ProjectionSnapshotQueryShape["getLatestAssistantMessageIdByTurn"] =
     (threadId, turnId) =>
-      listGeneratedImageActivityRowsByTurn({ threadId, turnId }).pipe(
+      getLatestAssistantMessageIdRowByTurn({ threadId, turnId }).pipe(
         Effect.mapError(
           toPersistenceSqlOrDecodeError(
-            "ProjectionSnapshotQuery.listGeneratedImageActivitiesByTurn:query",
-            "ProjectionSnapshotQuery.listGeneratedImageActivitiesByTurn:decodeRows",
+            "ProjectionSnapshotQuery.getLatestAssistantMessageIdByTurn:query",
+            "ProjectionSnapshotQuery.getLatestAssistantMessageIdByTurn:decodeRow",
           ),
         ),
-        Effect.map(
-          (rows): ReadonlyArray<ProjectionGeneratedImageActivityRecord> =>
-            rows.map((row) => ({ kind: row.kind, payload: row.payload })),
+        Effect.map(Option.map((row) => row.messageId)),
+      );
+
+  const listGeneratedImageReferencesByTurn: ProjectionSnapshotQueryShape["listGeneratedImageReferencesByTurn"] =
+    (threadId, turnId) =>
+      listGeneratedImageReferenceRowsByTurn({ threadId, turnId }).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProjectionSnapshotQuery.listGeneratedImageReferencesByTurn:query",
+            "ProjectionSnapshotQuery.listGeneratedImageReferencesByTurn:decodeRows",
+          ),
         ),
+        Effect.map((rows): ReadonlyArray<ProjectionGeneratedImageReferenceRecord> => rows),
       );
 
   const getFullThreadDiffContext: ProjectionSnapshotQueryShape["getFullThreadDiffContext"] = (
@@ -2308,7 +2348,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       sql
         .withTransaction(
           Effect.gen(function* () {
-            const parentRow = yield* getSyntheticSubagentParentThreadRow({ threadId }).pipe(
+            const parentRow = yield* getSyntheticSubagentParentThreadRow({
+              threadId,
+            }).pipe(
               Effect.mapError(
                 toPersistenceSqlOrDecodeError(
                   "ProjectionSnapshotQuery.findSyntheticSubagentParentThread:getThread:query",
@@ -2342,7 +2384,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
   // Hydrate a full thread detail projection without opening its own transaction.
   const loadThreadDetail = (
     threadId: ThreadId,
-    options: { readonly messageLimit: number | null; readonly tracePrefix: string } = {
+    options: {
+      readonly messageLimit: number | null;
+      readonly tracePrefix: string;
+    } = {
       messageLimit: MAX_THREAD_MESSAGES,
       tracePrefix: "ProjectionSnapshotQuery.getThreadDetailById",
     },
@@ -2374,7 +2419,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         latestTurnRow,
         sessionRow,
       ] = yield* Effect.all([
-        listThreadMessageRowsByThread({ threadId, maxMessages: options.messageLimit }).pipe(
+        listThreadMessageRowsByThread({
+          threadId,
+          maxMessages: options.messageLimit,
+        }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
               `${options.tracePrefix}:listMessages:query`,
@@ -2534,7 +2582,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     getProjectShellById,
     getFirstActiveThreadIdByProjectId,
     getThreadCheckpointContext,
-    listGeneratedImageActivitiesByTurn,
+    listGeneratedImageReferencesByTurn,
+    getLatestAssistantMessageIdByTurn,
     getFullThreadDiffContext,
     getThreadShellById,
     findSyntheticSubagentParentThread,

@@ -299,6 +299,26 @@ it.effect("keeps generic conversation rollback internal-only", () =>
   }),
 );
 
+it.effect("keeps generated-image recovery references internal-only", () =>
+  Effect.gen(function* () {
+    const referenceCommand = {
+      type: "thread.generated-image.reference.record",
+      commandId: "cmd-image-reference",
+      threadId: "thread-1",
+      turnId: "turn-1",
+      provenanceKey: "call-1",
+      sourcePath: "/trusted/generated.png",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+
+    const clientResult = yield* Effect.exit(decodeClientOrchestrationCommand(referenceCommand));
+    assert.strictEqual(clientResult._tag, "Failure");
+
+    const parsedInternal = yield* decodeOrchestrationCommand(referenceCommand);
+    assert.strictEqual(parsedInternal.type, "thread.generated-image.reference.record");
+  }),
+);
+
 it.effect("trims branded ids and command string fields at decode boundaries", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeProjectCreateCommand({

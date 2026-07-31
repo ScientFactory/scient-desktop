@@ -52,6 +52,37 @@ const STUDIO_PROJECT_KIND_SET = new Set<ProjectKind>(["studio"]);
 // Kinds that claim exclusive ownership of a workspace root. Chat containers are excluded: they
 // use placeholder roots (e.g. the home dir) that legitimately coexist with real projects.
 const WORKSPACE_OWNING_PROJECT_KIND_SET = new Set<ProjectKind>(["project", "studio"]);
+const GENERATED_IMAGE_WARNING_PARAGRAPH =
+  /^(?:A|One) generated image could not be displayed because Scient could not safely store it\.$|^\d+ generated images could not be displayed because Scient could not safely store them\.$|^Additional generated (?:image was|images were) omitted because chat messages support at most \d+ attachments\.$|^Additional \d+ generated images were omitted because chat messages support at most \d+ attachments\.$/u;
+
+export function reconcileGeneratedImageWarningText(
+  text: string,
+  omittedImageCount: number,
+  failedImageCount: number,
+): string {
+  const paragraphs = text
+    .split("\n\n")
+    .filter((paragraph) => !GENERATED_IMAGE_WARNING_PARAGRAPH.test(paragraph.trim()));
+  if (omittedImageCount === 1) {
+    paragraphs.push(
+      `Additional generated image was omitted because chat messages support at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+    );
+  } else if (omittedImageCount > 1) {
+    paragraphs.push(
+      `Additional ${omittedImageCount} generated images were omitted because chat messages support at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`,
+    );
+  }
+  if (failedImageCount === 1) {
+    paragraphs.push(
+      "One generated image could not be displayed because Scient could not safely store it.",
+    );
+  } else if (failedImageCount > 1) {
+    paragraphs.push(
+      `${failedImageCount} generated images could not be displayed because Scient could not safely store them.`,
+    );
+  }
+  return paragraphs.filter((paragraph) => paragraph.length > 0).join("\n\n");
+}
 
 function collectExistingMessageIds(readModel: OrchestrationReadModel) {
   return new Set(
@@ -154,7 +185,9 @@ function validateProjectPinLimit(input: {
   }
 
   const excludeProjectIds = new Set<string>([input.projectId, ...(input.staleProjectIds ?? [])]);
-  const pinnedProjectCount = countPinnedProjects(input.readModel, { excludeProjectIds });
+  const pinnedProjectCount = countPinnedProjects(input.readModel, {
+    excludeProjectIds,
+  });
   if (pinnedProjectCount < MAX_PINNED_PROJECTS) {
     return Effect.void;
   }
@@ -1714,23 +1747,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         additions.length -
         attachments.length +
         (command.omittedImageCount ?? 0);
-      const warning =
-        omittedCount > 0
-          ? `Additional generated ${omittedCount === 1 ? "image was" : "images were"} omitted because chat messages support at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`
-          : null;
-      const failureWarning =
-        (command.failedImageCount ?? 0) > 0
-          ? "A generated image could not be displayed because Scient could not safely store it."
-          : null;
       const existingText = existingMessage?.text ?? "";
-      const missingWarnings = [warning, failureWarning].filter(
-        (entry): entry is string => entry !== null && !existingText.includes(entry),
+      const text = reconcileGeneratedImageWarningText(
+        existingText,
+        omittedCount,
+        command.failedImageCount ?? 0,
       );
-      const text = `${existingText}${
-        missingWarnings.length > 0
-          ? `${existingText.trim().length > 0 ? "\n\n" : ""}${missingWarnings.join("\n\n")}`
-          : ""
-      }`;
       return {
         ...withEventBase({
           aggregateKind: "thread",
@@ -1754,6 +1776,26 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           source: existingMessage?.source ?? "native",
           createdAt: existingMessage?.createdAt ?? command.createdAt,
           updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.generated-image.reference.record": {
+      yield* requireThread({ readModel, command, threadId: command.threadId });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.generated-image-reference-recorded",
+        payload: {
+          threadId: command.threadId,
+          turnId: command.turnId,
+          provenanceKey: command.provenanceKey,
+          sourcePath: command.sourcePath,
+          createdAt: command.createdAt,
         },
       };
     }
