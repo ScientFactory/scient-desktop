@@ -2514,6 +2514,24 @@ describe("ProviderRuntimeIngestion", () => {
       status: "interrupted",
       createdAt: "2026-07-31T10:58:00.000Z",
     });
+    // Simulate a second crash after startup settled the stale row but before it
+    // materialized or attached the image. The settle-only command namespace
+    // must not satisfy the unresolved-reference SQL predicate.
+    await Effect.runPromise(
+      restarted.engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.makeUnsafe(
+          `provider:turn-generated-image-settle:thread-1:${turnId}:${messageId}`,
+        ),
+        threadId: asThreadId("thread-1"),
+        messageId,
+        turnId,
+        createdAt: "2026-07-31T10:58:30.000Z",
+      }),
+    );
+    expect(
+      await Effect.runPromise(restarted.snapshotQuery.listTurnGeneratedImageReferencesForStartup()),
+    ).toHaveLength(1);
 
     await restarted.startIngestion();
     const thread = await waitForThread(restarted.engine, (entry) =>
@@ -2587,6 +2605,54 @@ describe("ProviderRuntimeIngestion", () => {
     expect(fs.existsSync(seeded.sourcePaths[0]!)).toBe(true);
   });
 
+  it("recovers a newer turn reference while preserving an earlier failure warning", async () => {
+    const harness = await createHarness({ startIngestion: false });
+    const turnId = asTurnId("turn-restart-warning-then-new-ref");
+    const seeded = await seedStartupCapacityTurn({
+      engine: harness.engine,
+      generatedImagesRoot: harness.generatedImagesRoot,
+      turnId,
+      prefix: "restart-warning-then-new-ref",
+      existingAttachmentCount: 0,
+      referenceCount: 0,
+      createdAt: "2026-07-31T11:02:00.000Z",
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.attachments.add",
+        commandId: CommandId.makeUnsafe("test:restart-warning-prior-outcome"),
+        threadId: asThreadId("thread-1"),
+        messageId: seeded.messageId,
+        attachments: [],
+        failedImageCount: 1,
+        turnId,
+        createdAt: "2026-07-31T11:03:00.000Z",
+      }),
+    );
+    const sourcePath = path.join(harness.generatedImagesRoot, "restart-warning-new-ref.png");
+    fs.writeFileSync(sourcePath, GENERATED_PNG_BYTES);
+    await recordGeneratedImageReference({
+      engine: harness.engine,
+      turnId,
+      provenanceKey: "restart-warning-new-ref",
+      sourcePath,
+      createdAt: "2026-07-31T11:04:00.000Z",
+    });
+
+    await harness.startIngestion();
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === seeded.messageId &&
+          message.attachments?.length === 1 &&
+          message.text.includes("One generated image could not be displayed"),
+      ),
+    );
+    const message = thread.messages.find((candidate) => candidate.id === seeded.messageId);
+    expect(message?.attachments).toHaveLength(1);
+    expect(message?.text.match(/could not be displayed/g)).toHaveLength(1);
+  });
+
   it("recovers a reference-only turnless image when ingestion starts", async () => {
     const harness = await createHarness({ startIngestion: false });
     const createdAt = "2026-07-31T11:00:00.000Z";
@@ -2612,6 +2678,47 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
     expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(1);
     expect(thread.activities).toHaveLength(0);
+  });
+
+  it("recovers a newer turnless reference while preserving an earlier failure warning", async () => {
+    const harness = await createHarness({ startIngestion: false });
+    const targetMessageId = asMessageId("assistant:image:turnless-warning-then-new-ref");
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.attachments.add",
+        commandId: CommandId.makeUnsafe("test:turnless-restart-warning-prior-outcome"),
+        threadId: asThreadId("thread-1"),
+        messageId: targetMessageId,
+        attachments: [],
+        failedImageCount: 2,
+        createdAt: "2026-07-31T11:03:00.000Z",
+      }),
+    );
+    const sourcePath = path.join(
+      harness.generatedImagesRoot,
+      "turnless-restart-warning-new-ref.png",
+    );
+    fs.writeFileSync(sourcePath, GENERATED_PNG_BYTES);
+    await recordTurnlessGeneratedImageReference({
+      engine: harness.engine,
+      targetMessageId,
+      provenanceKey: "turnless-restart-warning-new-ref",
+      sourcePath,
+      createdAt: "2026-07-31T11:04:00.000Z",
+    });
+
+    await harness.startIngestion();
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === targetMessageId &&
+          message.attachments?.length === 1 &&
+          message.text.includes("2 generated images could not be displayed"),
+      ),
+    );
+    const message = thread.messages.find((candidate) => candidate.id === targetMessageId);
+    expect(message?.attachments).toHaveLength(1);
+    expect(message?.text.match(/could not be displayed/g)).toHaveLength(1);
   });
 
   it("bounds reference-only turnless startup recovery to eight images", async () => {
@@ -2722,7 +2829,7 @@ describe("ProviderRuntimeIngestion", () => {
       harness.engine,
       (entry) => entry.messages.filter((message) => message.attachments?.length === 1).length === 8,
     );
-    expect(threadLookupCount).toBe(9);
+    expect(threadLookupCount).toBe(8);
     expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(8);
     const unresolved = await Effect.runPromise(
       harness.snapshotQuery.listTurnlessGeneratedImageReferences(),
@@ -2734,6 +2841,63 @@ describe("ProviderRuntimeIngestion", () => {
     expect(deferredTurns).toHaveLength(1);
     expect(deferredTurns[0]?.turnId).toBe(turnId);
     expect(fs.existsSync(turnSourcePath)).toBe(true);
+  });
+
+  it("stops the newest-first startup prefix at the first group that cannot fit", async () => {
+    const harness = await createHarness({ startIngestion: false });
+    const groups = [
+      { suffix: "a", count: 5, createdAt: "2026-07-31T11:09:00.000Z" },
+      { suffix: "b", count: 4, createdAt: "2026-07-31T11:08:00.000Z" },
+      { suffix: "c", count: 3, createdAt: "2026-07-31T11:07:00.000Z" },
+    ] as const;
+    for (const group of groups) {
+      const targetMessageId = asMessageId(`assistant:image:prefix-${group.suffix}`);
+      for (let index = 0; index < group.count; index += 1) {
+        const sourcePath = path.join(
+          harness.generatedImagesRoot,
+          `prefix-${group.suffix}-${index}.png`,
+        );
+        fs.writeFileSync(sourcePath, Buffer.concat([GENERATED_PNG_BYTES, Buffer.from([index])]));
+        await recordTurnlessGeneratedImageReference({
+          engine: harness.engine,
+          targetMessageId,
+          provenanceKey: `prefix-${group.suffix}-${index}`,
+          sourcePath,
+          createdAt: group.createdAt,
+        });
+      }
+    }
+    const mutableSnapshotQuery = harness.snapshotQuery as {
+      getThreadDetailById: typeof harness.snapshotQuery.getThreadDetailById;
+    };
+    const originalGetThreadDetailById = mutableSnapshotQuery.getThreadDetailById;
+    let lookupCount = 0;
+    mutableSnapshotQuery.getThreadDetailById = (threadId) => {
+      lookupCount += 1;
+      return originalGetThreadDetailById(threadId);
+    };
+
+    await harness.startIngestion();
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) => message.id === "assistant:image:prefix-a" && message.attachments?.length === 5,
+      ),
+    );
+    expect(lookupCount).toBe(2);
+    expect(thread.messages.some((message) => message.id === "assistant:image:prefix-b")).toBe(
+      false,
+    );
+    expect(thread.messages.some((message) => message.id === "assistant:image:prefix-c")).toBe(
+      false,
+    );
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(5);
+    const unresolved = await Effect.runPromise(
+      harness.snapshotQuery.listTurnlessGeneratedImageReferences(),
+    );
+    expect(unresolved).toHaveLength(7);
+    expect(new Set(unresolved.map((reference) => reference.targetMessageId))).toEqual(
+      new Set(["assistant:image:prefix-b", "assistant:image:prefix-c"]),
+    );
   });
 
   it("shows a path-free failure for a missing reference-only turnless image", async () => {

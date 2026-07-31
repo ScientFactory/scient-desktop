@@ -71,6 +71,34 @@ const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${t
 const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
   CommandId.makeUnsafe(`provider:${event.eventId}:${tag}:${crypto.randomUUID()}`);
 
+function persistedGeneratedImageWarningCounts(text: string): {
+  readonly omitted: number;
+  readonly failed: number;
+} {
+  const omittedPlural = text.match(
+    /Additional (\d+) generated images were omitted because chat messages support at most 8 attachments\./u,
+  );
+  const failedPlural = text.match(
+    /(\d+) generated images could not be displayed because Scient could not safely store them\./u,
+  );
+  return {
+    omitted: omittedPlural
+      ? Number(omittedPlural[1])
+      : text.includes(
+            "Additional generated image was omitted because chat messages support at most 8 attachments.",
+          )
+        ? 1
+        : 0,
+    failed: failedPlural
+      ? Number(failedPlural[1])
+      : text.includes(
+            "One generated image could not be displayed because Scient could not safely store it.",
+          )
+        ? 1
+        : 0,
+  };
+}
+
 const DEFAULT_ASSISTANT_DELIVERY_MODE: AssistantDeliveryMode = "buffered";
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 2_048;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(60);
@@ -3996,7 +4024,7 @@ const make = Effect.gen(function* () {
         yield* orchestrationEngine.dispatch({
           type: "thread.message.assistant.complete",
           commandId: CommandId.makeUnsafe(
-            `provider:turn-generated-image-recovery-settle:${first.threadId}:${first.turnId}:${targetMessageId}`,
+            `provider:turn-generated-image-settle:${first.threadId}:${first.turnId}:${targetMessageId}`,
           ),
           threadId: first.threadId,
           messageId: targetMessageId,
@@ -4005,14 +4033,7 @@ const make = Effect.gen(function* () {
         });
         targetMessage = { ...targetMessage, streaming: false };
       }
-      // A prior path-free failure/omission warning is an authoritative
-      // startup outcome. Do not reopen provider storage on every boot.
-      if (
-        targetMessage &&
-        reconcileGeneratedImageWarningText(targetMessage.text, 0, 0) !== targetMessage.text
-      ) {
-        return;
-      }
+      const priorWarningCounts = persistedGeneratedImageWarningCounts(targetMessage?.text ?? "");
       const existingAttachmentIds = new Set(
         (targetMessage?.attachments ?? []).map((attachment) => attachment.id),
       );
@@ -4035,7 +4056,7 @@ const make = Effect.gen(function* () {
         PROVIDER_SEND_TURN_MAX_ATTACHMENTS - (targetMessage?.attachments?.length ?? 0),
       );
       const permittedAttemptCount = remainingCapacity > 0 ? unsatisfiedReferences.length : 0;
-      if (permittedAttemptCount > startupBudget.remaining) return;
+      if (permittedAttemptCount > startupBudget.remaining) return false;
       const recoveredAttachments: ChatImageAttachment[] = [];
       let failedImageCount = 0;
       let attemptedCount = 0;
@@ -4066,8 +4087,8 @@ const make = Effect.gen(function* () {
       }
       const outcomeKey = [
         ...recoveredAttachments.map((attachment) => attachment.id),
-        `omitted-${omittedImageCount}`,
-        `failed-${failedImageCount}`,
+        `omitted-${priorWarningCounts.omitted + omittedImageCount}`,
+        `failed-${priorWarningCounts.failed + failedImageCount}`,
       ].join(":");
       yield* orchestrationEngine.dispatch({
         type: "thread.message.assistant.attachments.add",
@@ -4077,8 +4098,8 @@ const make = Effect.gen(function* () {
         threadId: first.threadId,
         messageId: targetMessageId,
         attachments: recoveredAttachments,
-        omittedImageCount,
-        failedImageCount,
+        omittedImageCount: priorWarningCounts.omitted + omittedImageCount,
+        failedImageCount: priorWarningCounts.failed + failedImageCount,
         turnId: first.turnId,
         createdAt: first.createdAt,
       });
@@ -4103,6 +4124,7 @@ const make = Effect.gen(function* () {
       const thread = threadOption.value;
       const targetMessage = thread.messages.find((message) => message.id === first.targetMessageId);
       if (targetMessage && targetMessage.role !== "assistant") return;
+      const priorWarningCounts = persistedGeneratedImageWarningCounts(targetMessage?.text ?? "");
       const existingAttachmentIds = new Set(
         (targetMessage?.attachments ?? []).map((attachment) => attachment.id),
       );
@@ -4129,7 +4151,7 @@ const make = Effect.gen(function* () {
         PROVIDER_SEND_TURN_MAX_ATTACHMENTS - (targetMessage?.attachments?.length ?? 0),
       );
       const permittedAttemptCount = remainingCapacity > 0 ? unsatisfiedReferences.length : 0;
-      if (permittedAttemptCount > startupBudget.remaining) return;
+      if (permittedAttemptCount > startupBudget.remaining) return false;
       const recoveredAttachments: ChatImageAttachment[] = [];
       let failedImageCount = 0;
       let attemptedCount = 0;
@@ -4160,8 +4182,8 @@ const make = Effect.gen(function* () {
       }
       const outcomeKey = [
         ...recoveredAttachments.map((attachment) => attachment.id),
-        `omitted-${omittedImageCount}`,
-        `failed-${failedImageCount}`,
+        `omitted-${priorWarningCounts.omitted + omittedImageCount}`,
+        `failed-${priorWarningCounts.failed + failedImageCount}`,
       ].join(":");
       yield* orchestrationEngine.dispatch({
         type: "thread.message.assistant.attachments.add",
@@ -4171,8 +4193,8 @@ const make = Effect.gen(function* () {
         threadId: first.threadId,
         messageId: first.targetMessageId,
         attachments: recoveredAttachments,
-        omittedImageCount,
-        failedImageCount,
+        omittedImageCount: priorWarningCounts.omitted + omittedImageCount,
+        failedImageCount: priorWarningCounts.failed + failedImageCount,
         createdAt: first.createdAt ?? new Date().toISOString(),
       });
     });
@@ -4247,17 +4269,17 @@ const make = Effect.gen(function* () {
         })),
       ];
       const startupBudget = { remaining: MAX_STARTUP_GENERATED_IMAGE_IO_ATTEMPTS };
-      yield* Effect.forEach(
-        groups.toSorted(
-          (left, right) =>
-            right.createdAt.localeCompare(left.createdAt) || left.key.localeCompare(right.key),
-        ),
-        (group) =>
-          group.kind === "turn"
-            ? recoverTurnGeneratedImagesAtStartup(startupBudget, group.references)
-            : recoverTurnlessGeneratedImagesAtStartup(startupBudget, group.references),
-        { concurrency: 1 },
+      const orderedGroups = groups.toSorted(
+        (left, right) =>
+          right.createdAt.localeCompare(left.createdAt) || left.key.localeCompare(right.key),
       );
+      for (const group of orderedGroups) {
+        if (startupBudget.remaining <= 0) break;
+        const result = yield* group.kind === "turn"
+          ? recoverTurnGeneratedImagesAtStartup(startupBudget, group.references)
+          : recoverTurnlessGeneratedImagesAtStartup(startupBudget, group.references);
+        if (result === false) break;
+      }
     }).pipe(
       Effect.catch((cause) =>
         Effect.logWarning("generated-image startup recovery failed", {
