@@ -66,18 +66,6 @@ export class OrchestrationCommandTimeoutError extends Schema.TaggedErrorClass<Or
   }
 }
 
-export class OrchestrationCommandCancelledError extends Schema.TaggedErrorClass<OrchestrationCommandCancelledError>()(
-  "OrchestrationCommandCancelledError",
-  {
-    commandId: Schema.String,
-    commandType: Schema.String,
-  },
-) {
-  override get message(): string {
-    return `Orchestration command cancelled before commit (${this.commandType}, ${this.commandId})`;
-  }
-}
-
 export class OrchestrationCommandInternalError extends Schema.TaggedErrorClass<OrchestrationCommandInternalError>()(
   "OrchestrationCommandInternalError",
   {
@@ -121,7 +109,6 @@ export class OrchestrationListenerCallbackError extends Schema.TaggedErrorClass<
 export type OrchestrationDispatchError =
   | ProjectionRepositoryError
   | OrchestrationCommandInvariantError
-  | OrchestrationCommandCancelledError
   | OrchestrationCommandInternalError
   | OrchestrationCommandPreviouslyRejectedError
   | OrchestrationCommandTimeoutError

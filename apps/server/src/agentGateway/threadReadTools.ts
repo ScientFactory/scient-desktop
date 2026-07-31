@@ -20,7 +20,6 @@ import { ThreadId, type OrchestrationThreadShell } from "@synara/contracts";
 import { Effect, Option } from "effect";
 
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { defineScientOperation } from "../scientOperations/authority.ts";
 import { authorizeThreadRead } from "./authorization.ts";
 import { SYNARA_GATEWAY_MAX_THREADS_PER_OPERATION } from "./contract.ts";
 import { SYNARA_HARNESS_POLICY_VERSION } from "./harnessPolicy.ts";
@@ -50,33 +49,6 @@ import {
 
 const LIST_THREADS_DEFAULT_LIMIT = 50;
 const LIST_THREADS_MAX_LIMIT = 200;
-const PROVIDER_THREAD_ACTOR = ["provider-thread"] as const;
-const CONTEXT_OPERATION = defineScientOperation({
-  id: "project.context.read",
-  capability: "project:context:read",
-  allowedActorKinds: PROVIDER_THREAD_ACTOR,
-});
-const LIST_PROJECTS_OPERATION = defineScientOperation({
-  id: "project.list",
-  capability: "project:context:read",
-  allowedActorKinds: PROVIDER_THREAD_ACTOR,
-});
-const LIST_THREADS_OPERATION = defineScientOperation({
-  id: "thread.list",
-  capability: "thread:list",
-  allowedActorKinds: PROVIDER_THREAD_ACTOR,
-});
-const READ_THREAD_OPERATION = defineScientOperation({
-  id: "thread.read",
-  capability: "thread:read",
-  allowedActorKinds: PROVIDER_THREAD_ACTOR,
-});
-const WAIT_THREADS_OPERATION = defineScientOperation({
-  id: "thread.wait",
-  capability: "thread:read",
-  allowedActorKinds: PROVIDER_THREAD_ACTOR,
-});
-
 type WaitThreadState = "idle" | "pending" | "running" | "completed" | "error" | "interrupted";
 
 export interface ThreadReadToolsInput {
@@ -90,7 +62,8 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
   const { snapshotQuery, requireThreadShell } = input;
 
   const contextTool: ToolEntry = {
-    operation: CONTEXT_OPERATION,
+    operation: "project.context.read",
+    canonicalizeInput: () => ({}),
     definition: {
       name: "scient_context",
       description:
@@ -132,7 +105,8 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
   };
 
   const listProjects: ToolEntry = {
-    operation: LIST_PROJECTS_OPERATION,
+    operation: "project.list",
+    canonicalizeInput: () => ({}),
     definition: {
       name: "scient_list_projects",
       description:
@@ -159,7 +133,20 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
   };
 
   const listThreads: ToolEntry = {
-    operation: LIST_THREADS_OPERATION,
+    operation: "thread.list",
+    canonicalizeInput: (args) => ({
+      ...(readStringArg(args, "parentThreadId") === undefined
+        ? {}
+        : { parentThreadId: readStringArg(args, "parentThreadId") }),
+      includeArchived: readBooleanArg(args, "includeArchived") ?? false,
+      limit: Math.max(
+        1,
+        Math.min(
+          readNumberArg(args, "limit") ?? LIST_THREADS_DEFAULT_LIMIT,
+          LIST_THREADS_MAX_LIMIT,
+        ),
+      ),
+    }),
     definition: {
       name: "scient_list_threads",
       description:
@@ -211,7 +198,19 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
   };
 
   const readThread: ToolEntry = {
-    operation: READ_THREAD_OPERATION,
+    operation: "thread.read",
+    canonicalizeInput: (args) => ({
+      threadId: readStringArg(args, "threadId", { required: true })!,
+      ...(readStringArg(args, "cursor") === undefined
+        ? {}
+        : { cursor: readStringArg(args, "cursor") }),
+      ...(readNumberArg(args, "messageLimit") === undefined
+        ? {}
+        : { messageLimit: readNumberArg(args, "messageLimit") }),
+      ...(readNumberArg(args, "maxMessageChars") === undefined
+        ? {}
+        : { maxMessageChars: readNumberArg(args, "maxMessageChars") }),
+    }),
     definition: {
       name: "scient_read_thread",
       description:
@@ -278,7 +277,18 @@ export function makeThreadReadTools(input: ThreadReadToolsInput): ReadonlyArray<
   };
 
   const waitForThreads: ToolEntry = {
-    operation: WAIT_THREADS_OPERATION,
+    operation: "thread.wait",
+    canonicalizeInput: (args) => {
+      const waitInput = decodeWaitForThreadsInput(args);
+      if (waitInput.runIds && waitInput.runIds.length !== waitInput.threadIds.length) {
+        throw new ToolInputError('Argument "runIds" must have the same length as "threadIds".');
+      }
+      return {
+        threadIds: [...waitInput.threadIds],
+        ...(waitInput.runIds === undefined ? {} : { runIds: [...waitInput.runIds] }),
+        timeoutMs: waitInput.timeoutMs ?? 30_000,
+      };
+    },
     definition: {
       name: "scient_wait_for_threads",
       description: `Wait for the pinned turns of 1–20 Scient threads in your project and return every outcome in input order. Assistant summaries are capped at ${WAIT_THREAD_SUMMARY_MAX_CHARS} characters; use each result's readThread call to page the full transcript. Timeouts only report progress; they never retry, replace, cancel, or create work. Only threads in your own project can be waited on.`,

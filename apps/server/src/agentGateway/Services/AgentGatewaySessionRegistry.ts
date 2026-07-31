@@ -41,11 +41,24 @@ export interface AgentGatewayWriteAuthority {
   readonly turnId: string;
 }
 
+export interface AgentGatewayWriteLease {
+  readonly sessionKey: string;
+  readonly release: () => void;
+}
+
 export interface AgentGatewaySessionRegistryShape {
   readonly issue: (threadId: ThreadId, provider: ProviderKind) => AgentGatewayIssuedSession;
   readonly verify: (token: string) => AgentGatewaySessionIdentity | null;
   readonly bindWriteAuthority: (token: string, turnId: string) => AgentGatewayWriteAuthority | null;
   readonly verifyWriteAuthority: (authority: AgentGatewayWriteAuthority) => boolean;
+  /**
+   * Atomically orders a write against revocation. A lease acquired first may
+   * finish; revocation first prevents acquisition. New work is always denied
+   * immediately after revocation.
+   */
+  readonly acquireWriteLease: (
+    authority: AgentGatewayWriteAuthority,
+  ) => AgentGatewayWriteLease | null;
   readonly subscribeRevocations: (
     listener: (identity: AgentGatewaySessionIdentity) => void,
   ) => () => void;

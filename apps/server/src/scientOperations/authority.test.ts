@@ -3,17 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   beginScientOperation,
   completeScientOperation,
-  defineScientOperation,
   makeScientOperationAuthority,
+  SCIENT_OPERATION_DEFINITIONS,
   type ScientOperationAuthority,
 } from "./authority.ts";
 
 const NOW = 1_000;
-const readThread = defineScientOperation({
-  id: "thread.read",
-  capability: "thread:read",
-  allowedActorKinds: ["provider-thread"],
-});
+const readThread = SCIENT_OPERATION_DEFINITIONS["thread.read"];
 
 function authority(overrides?: Partial<ScientOperationAuthority>): ScientOperationAuthority {
   return makeScientOperationAuthority({
@@ -64,7 +60,6 @@ describe("beginScientOperation", () => {
       parentOperationId: "operation-parent",
       idempotency: {
         mode: "semantic",
-        identity: "logical-request-7",
         payloadFingerprint: "payload-sha256",
       },
       authority: {
@@ -78,6 +73,8 @@ describe("beginScientOperation", () => {
       },
     });
     expect(result.envelope.idempotency.claimKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.envelope.idempotency.identity).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(result.envelope)).not.toContain("logical-request-7");
     expect(result.envelope.authority.grantHash).toMatch(/^[a-f0-9]{64}$/);
     expect(Object.isFrozen(result.envelope)).toBe(true);
     expect(Object.isFrozen(result.envelope.authority)).toBe(true);
@@ -95,6 +92,7 @@ describe("beginScientOperation", () => {
         authority: authority({
           actor: { kind: "external-integration", integrationId: "integration-1" },
         }),
+        definition: SCIENT_OPERATION_DEFINITIONS["scientific-record.accept"],
       },
       "actor_kind_denied",
     ],

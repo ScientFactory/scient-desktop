@@ -15,7 +15,7 @@ import type { OrchestrationEngineShape } from "../orchestration/Services/Orchest
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   beginScientOperation,
-  defineScientOperation,
+  SCIENT_OPERATION_DEFINITIONS,
   type ScientOperationAuthority,
 } from "../scientOperations/authority.ts";
 import { makeAgentGatewayMcpTransport } from "./mcpTransport.ts";
@@ -29,12 +29,7 @@ const TARGET_THREAD = "thread-target";
 const CALLER_PROJECT = "project-1";
 const OTHER_PROJECT = "project-2";
 const ISO = "2026-01-01T00:00:00.000Z";
-const TEST_WRITE_OPERATION = defineScientOperation({
-  id: "thread.message.send",
-  capability: "thread:drive",
-  allowedActorKinds: ["provider-thread"],
-  idempotencyInputField: "requestId",
-});
+const TEST_WRITE_OPERATION = SCIENT_OPERATION_DEFINITIONS["thread.message.send"];
 
 // Captured dispatch commands are asserted structurally; `any` keeps the test
 // focused on the runtime shape the gateway emits and, unlike an object type,
@@ -124,6 +119,7 @@ function makeContext(overrides?: Partial<ToolContext>): ToolContext {
     callerProvider: "claudeAgent",
     operationAuthority,
     operationEnvelope: started.envelope,
+    admittedCaller: shell(CALLER_THREAD),
     callerTurnId: "turn-caller",
     requireCurrentOperationCaller: () => Effect.succeed(shell(CALLER_THREAD)),
     requireCurrentCallerTurn: () => Effect.succeed(shell(CALLER_THREAD)),
@@ -184,6 +180,7 @@ function setup(options?: {
     },
   });
   const defaultContext = makeContext({
+    admittedCaller: caller,
     requireCurrentOperationCaller: () => Effect.succeed(caller),
     requireCurrentCallerTurn: () => Effect.succeed(caller),
   });
@@ -289,13 +286,13 @@ describe("scient_send_message", () => {
     expect(commands[0].dispatchMode).toBe("steer");
   });
 
-  it("revalidates operation authority immediately before dispatch", async () => {
+  it("uses the transport-admitted caller without a duplicate projection read", async () => {
     const { call, commands } = setup({
       threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
     });
     const result = await call(
       "scient_send_message",
-      { threadId: TARGET_THREAD, message: "must not dispatch" },
+      { threadId: TARGET_THREAD, message: "dispatch once" },
       makeContext({
         requireCurrentCallerTurn: () =>
           Effect.fail(
@@ -307,8 +304,8 @@ describe("scient_send_message", () => {
       }),
     );
 
-    expect(jsonBody(result)).toMatchObject({ error: { code: "caller_session_inactive" } });
-    expect(commands).toHaveLength(0);
+    expect(jsonBody(result)).toMatchObject({ threadId: TARGET_THREAD, dispatched: "queue" });
+    expect(commands).toHaveLength(1);
   });
 
   it("rejects an invalid mode", async () => {
@@ -440,6 +437,10 @@ describe("scient_send_message", () => {
         turnId: "turn-caller",
       }),
       verifyWriteAuthority: () => true,
+      acquireWriteLease: () => ({
+        sessionKey: "gateway-session:test",
+        release: () => undefined,
+      }),
       subscribeSessionRevocations: () => () => undefined,
     } as unknown as AgentGatewayCredentialsShape;
     const transport = makeAgentGatewayMcpTransport({
@@ -845,7 +846,7 @@ describe("scient_interrupt_thread", () => {
     expect(commands[0].createdAt).toBe(ISO);
   });
 
-  it("revalidates the pinned caller turn before interrupt dispatch", async () => {
+  it("uses the transport-admitted caller for interrupt without a duplicate projection read", async () => {
     const { call, commands } = setup({
       threadShells: {
         [TARGET_THREAD]: shell(TARGET_THREAD, {
@@ -864,8 +865,8 @@ describe("scient_interrupt_thread", () => {
       }),
     );
 
-    expect(jsonBody(result)).toMatchObject({ error: { code: "caller_turn_inactive" } });
-    expect(commands).toHaveLength(0);
+    expect(jsonBody(result)).toMatchObject({ threadId: TARGET_THREAD, interrupted: true });
+    expect(commands).toHaveLength(1);
   });
 
   it("is a no-op when the target has no running turn", async () => {
@@ -944,10 +945,20 @@ describe("makeThreadWriteTools", () => {
       "scient_send_message",
       "scient_interrupt_thread",
     ]);
-    expect(tools.every((tool) => tool.requiresActiveTurn === true)).toBe(true);
-    expect(tools.every((tool) => tool.operation.capability === "thread:drive")).toBe(true);
     expect(
-      tools.every((tool) => tool.operation.allowedActorKinds.includes("provider-thread")),
+      tools.every(
+        (tool) => SCIENT_OPERATION_DEFINITIONS[tool.operation].admission === "write-authority",
+      ),
+    ).toBe(true);
+    expect(
+      tools.every(
+        (tool) => SCIENT_OPERATION_DEFINITIONS[tool.operation].capability === "thread:drive",
+      ),
+    ).toBe(true);
+    expect(
+      tools.every((tool) =>
+        SCIENT_OPERATION_DEFINITIONS[tool.operation].allowedActorKinds.includes("provider-thread"),
+      ),
     ).toBe(true);
     // Drive tools must carry write annotations (not read-only).
     expect(tools.every((tool) => tool.definition.annotations?.readOnlyHint === false)).toBe(true);

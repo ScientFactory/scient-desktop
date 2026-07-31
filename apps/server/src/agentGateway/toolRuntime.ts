@@ -13,8 +13,8 @@ import type { Effect } from "effect";
 import { createLogger } from "../logger.ts";
 import type {
   ScientOperationAuthority,
-  ScientOperationDefinition,
   ScientOperationEffectIdentity,
+  ScientOperationId,
   ScientOperationRequestEnvelope,
 } from "../scientOperations/authority.ts";
 import {
@@ -55,6 +55,7 @@ export interface ToolContext {
   readonly callerProvider: ProviderKind;
   readonly operationAuthority: ScientOperationAuthority;
   readonly operationEnvelope: ScientOperationRequestEnvelope;
+  readonly admittedCaller: OrchestrationThreadShell;
   readonly callerTurnId: string | null;
   readonly requireCurrentOperationCaller: () => Effect.Effect<
     OrchestrationThreadShell,
@@ -75,9 +76,10 @@ export type ToolHandler = (
 
 export interface ToolEntry {
   readonly definition: McpToolDefinition;
-  readonly operation: ScientOperationDefinition;
+  readonly operation: ScientOperationId;
+  /** Validate and normalize once; the envelope and handler consume the same value. */
+  readonly canonicalizeInput: (args: Record<string, unknown>) => Record<string, unknown>;
   readonly handler: ToolHandler;
-  readonly requiresActiveTurn?: boolean;
 }
 
 export class GatewayToolError extends Error {

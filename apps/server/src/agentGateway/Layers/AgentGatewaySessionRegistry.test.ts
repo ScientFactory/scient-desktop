@@ -114,6 +114,36 @@ describe("makeAgentGatewaySessionRegistry", () => {
     });
   });
 
+  describe("acquireWriteLease", () => {
+    it("orders acquisition before revocation and makes release idempotent", () => {
+      const registry = makeRegistry();
+      const issued = registry.issue(THREAD, "claudeAgent");
+      const authority = registry.bindWriteAuthority(issued.token, "turn-1");
+      expect(authority).not.toBeNull();
+
+      const lease = registry.acquireWriteLease(authority!);
+      expect(lease?.sessionKey).toBe(issued.sessionKey);
+      registry.revoke(issued.token);
+
+      expect(registry.acquireWriteLease(authority!)).toBeNull();
+      expect(() => {
+        lease?.release();
+        lease?.release();
+      }).not.toThrow();
+    });
+
+    it("denies acquisition when revocation wins the ordering", () => {
+      const registry = makeRegistry();
+      const issued = registry.issue(THREAD, "claudeAgent");
+      const authority = registry.bindWriteAuthority(issued.token, "turn-1");
+      expect(authority).not.toBeNull();
+
+      registry.revoke(issued.token);
+
+      expect(registry.acquireWriteLease(authority!)).toBeNull();
+    });
+  });
+
   describe("revoke", () => {
     it("notifies lifecycle subscribers exactly once with the revoked session", () => {
       const registry = makeRegistry();

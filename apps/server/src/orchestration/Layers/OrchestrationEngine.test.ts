@@ -960,24 +960,20 @@ describe("OrchestrationEngine", () => {
     await runtime.dispose();
   });
 
-  it("rolls back an in-flight command when its dispatch caller is interrupted", async () => {
+  it("does not change non-gateway dispatch semantics when its caller is interrupted", async () => {
     let enteredTransaction = false;
-    let transactionInterrupted = false;
-    const cancelledCommandId = CommandId.makeUnsafe("cmd-cancelled-in-flight");
-    const cancellableProjectionPipeline: OrchestrationProjectionPipelineShape = {
+    let releaseTransaction!: () => void;
+    const transactionGate = new Promise<void>((resolve) => {
+      releaseTransaction = resolve;
+    });
+    const firstCommandId = CommandId.makeUnsafe("cmd-interrupted-caller");
+    const projectionPipeline: OrchestrationProjectionPipelineShape = {
       bootstrap: Effect.void,
       projectMetadataEvent: (event) =>
-        event.commandId === cancelledCommandId
+        event.commandId === firstCommandId
           ? Effect.sync(() => {
               enteredTransaction = true;
-            }).pipe(
-              Effect.andThen(Effect.never),
-              Effect.ensuring(
-                Effect.sync(() => {
-                  transactionInterrupted = true;
-                }),
-              ),
-            )
+            }).pipe(Effect.andThen(Effect.promise(() => transactionGate)))
           : Effect.void,
       projectEvent: () => Effect.void,
       projectHotEventInCurrentTransaction: () => Effect.void,
@@ -985,9 +981,7 @@ describe("OrchestrationEngine", () => {
     };
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
-        Layer.provide(
-          Layer.succeed(OrchestrationProjectionPipeline, cancellableProjectionPipeline),
-        ),
+        Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, projectionPipeline)),
         Layer.provide(OrchestrationProjectionSnapshotQueryLive),
         Layer.provide(OrchestrationEventStoreLive),
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
@@ -996,41 +990,40 @@ describe("OrchestrationEngine", () => {
     );
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const createdAt = now();
-    const cancelledFiber = runtime.runFork(
+    const interruptedCaller = runtime.runFork(
       engine.dispatch({
         type: "project.create",
-        commandId: cancelledCommandId,
-        projectId: asProjectId("project-cancelled-in-flight"),
-        title: "Cancelled",
-        workspaceRoot: "/tmp/project-cancelled-in-flight",
+        commandId: firstCommandId,
+        projectId: asProjectId("project-interrupted-caller"),
+        title: "Interrupted caller",
+        workspaceRoot: "/tmp/project-interrupted-caller",
         createdAt,
       }),
     );
 
     await expect.poll(() => enteredTransaction).toBe(true);
-    await Effect.runPromise(Fiber.interrupt(cancelledFiber));
-    await expect.poll(() => transactionInterrupted).toBe(true);
-
-    const accepted = await runtime.runPromise(
+    await Effect.runPromise(Fiber.interrupt(interruptedCaller));
+    releaseTransaction();
+    await runtime.runPromise(
       engine.dispatch({
         type: "project.create",
-        commandId: CommandId.makeUnsafe("cmd-after-cancelled-in-flight"),
-        projectId: asProjectId("project-after-cancelled-in-flight"),
-        title: "Accepted",
-        workspaceRoot: "/tmp/project-after-cancelled-in-flight",
+        commandId: CommandId.makeUnsafe("cmd-after-interrupted-caller"),
+        projectId: asProjectId("project-after-interrupted-caller"),
+        title: "After interrupted caller",
+        workspaceRoot: "/tmp/project-after-interrupted-caller",
         createdAt,
       }),
     );
-    expect(accepted.sequence).toBe(1);
+
     const events = await runtime.runPromise(
       Stream.runCollect(engine.readEvents(0)).pipe(
         Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
       ),
     );
     expect(events.map((event) => event.commandId)).toEqual([
-      CommandId.makeUnsafe("cmd-after-cancelled-in-flight"),
+      firstCommandId,
+      CommandId.makeUnsafe("cmd-after-interrupted-caller"),
     ]);
-    expect((await runtime.runPromise(engine.getReadModel())).snapshotSequence).toBe(1);
     await runtime.dispose();
   });
 

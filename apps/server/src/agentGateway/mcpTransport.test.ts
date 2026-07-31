@@ -12,15 +12,20 @@ import { Effect, Option } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import {
-  defineScientOperation,
-  type ScientOperationResultReceipt,
-} from "../scientOperations/authority.ts";
+import type { ScientOperationResultReceipt } from "../scientOperations/authority.ts";
 import { makeAgentGatewayMcpTransport } from "./mcpTransport.ts";
 import { mcpToolResultJson } from "./protocol.ts";
 import type { AgentGatewayCredentialsShape } from "./Services/AgentGatewayCredentials.ts";
-import type { AgentGatewaySessionIdentity } from "./Services/AgentGatewaySessionRegistry.ts";
-import { type ToolEntry, UNEXPECTED_GATEWAY_TOOL_ERROR_MESSAGE } from "./toolRuntime.ts";
+import type {
+  AgentGatewaySessionIdentity,
+  AgentGatewayWriteAuthority,
+} from "./Services/AgentGatewaySessionRegistry.ts";
+import {
+  gatewayToolErrorResult,
+  GatewayToolError,
+  type ToolEntry,
+  UNEXPECTED_GATEWAY_TOOL_ERROR_MESSAGE,
+} from "./toolRuntime.ts";
 
 const CALLER_THREAD = "thread-caller";
 const CALLER_PROJECT = "project-1";
@@ -54,6 +59,7 @@ function makeShell(overrides?: Partial<Record<string, unknown>>): OrchestrationT
 function makeCredentials(cfg?: {
   readonly session?: AgentGatewaySessionIdentity | null;
   readonly writeAuthorityValid?: boolean;
+  readonly acquireWriteLease?: AgentGatewayCredentialsShape["acquireWriteLease"];
   readonly verifySession?: (token: string) => AgentGatewaySessionIdentity | null;
   readonly subscribeSessionRevocations?: AgentGatewayCredentialsShape["subscribeSessionRevocations"];
 }): AgentGatewayCredentialsShape {
@@ -71,6 +77,12 @@ function makeCredentials(cfg?: {
           }
         : null,
     verifyWriteAuthority: () => cfg?.writeAuthorityValid ?? true,
+    acquireWriteLease:
+      cfg?.acquireWriteLease ??
+      ((authority: AgentGatewayWriteAuthority) =>
+        cfg?.writeAuthorityValid === false
+          ? null
+          : { sessionKey: authority.sessionKey, release: () => undefined }),
     subscribeSessionRevocations: cfg?.subscribeSessionRevocations ?? (() => () => undefined),
   } as unknown as AgentGatewayCredentialsShape;
 }
@@ -84,11 +96,8 @@ function makeSnapshotQuery(
 }
 
 const echoTool: ToolEntry = {
-  operation: defineScientOperation({
-    id: "thread.read",
-    capability: "thread:read",
-    allowedActorKinds: ["provider-thread"],
-  }),
+  operation: "thread.read",
+  canonicalizeInput: (args) => ({ ...args }),
   definition: {
     name: "scient_echo",
     description: "Echo the arguments back.",
@@ -98,26 +107,19 @@ const echoTool: ToolEntry = {
 };
 
 const writeTool: ToolEntry = {
-  operation: defineScientOperation({
-    id: "thread.message.send",
-    capability: "thread:drive",
-    allowedActorKinds: ["provider-thread"],
-  }),
+  operation: "thread.message.send",
+  canonicalizeInput: (args) => ({ ...args }),
   definition: {
     name: "scient_write_thing",
     description: "A write tool that requires an active turn.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   handler: () => Effect.succeed(mcpToolResultJson({ wrote: true })),
-  requiresActiveTurn: true,
 };
 
 const defectTool: ToolEntry = {
-  operation: defineScientOperation({
-    id: "thread.read",
-    capability: "thread:read",
-    allowedActorKinds: ["provider-thread"],
-  }),
+  operation: "thread.read",
+  canonicalizeInput: (args) => ({ ...args }),
   definition: {
     name: "scient_defect",
     description: "Throw an unexpected internal error.",
@@ -127,11 +129,8 @@ const defectTool: ToolEntry = {
 };
 
 const envelopeTool: ToolEntry = {
-  operation: defineScientOperation({
-    id: "thread.read",
-    capability: "thread:read",
-    allowedActorKinds: ["provider-thread"],
-  }),
+  operation: "thread.read",
+  canonicalizeInput: (args) => ({ ...args }),
   definition: {
     name: "scient_envelope",
     description: "Return non-secret operation-envelope fields for testing.",
@@ -147,6 +146,29 @@ const envelopeTool: ToolEntry = {
         actorKind: context.operationEnvelope.authority.actor.kind,
         authorityGeneration: context.operationEnvelope.authority.generation,
         ingress: context.operationEnvelope.ingress,
+        payloadFingerprint: context.operationEnvelope.idempotency.payloadFingerprint,
+      }),
+    ),
+};
+
+const normalizedWriteEnvelopeTool: ToolEntry = {
+  operation: "thread.message.send",
+  canonicalizeInput: (args) => ({
+    message: String(args.message).trim(),
+    mode: args.mode ?? "queue",
+    requestId: String(args.requestId).trim(),
+  }),
+  definition: {
+    name: "scient_normalized_write_envelope",
+    description: "Expose normalized operation evidence for testing.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: true },
+  },
+  handler: (args, context) =>
+    Effect.succeed(
+      mcpToolResultJson({
+        args: { message: args.message, mode: args.mode },
+        identity: context.operationEnvelope.idempotency.identity,
+        claimKey: context.operationEnvelope.idempotency.claimKey,
         payloadFingerprint: context.operationEnvelope.idempotency.payloadFingerprint,
       }),
     ),
@@ -328,6 +350,50 @@ describe("makeAgentGatewayMcpTransport JSON-RPC handling", () => {
       ingress: "provider-gateway",
     });
     expect(String(toolResultJson(res.body).payloadFingerprint)).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("fingerprints canonical operation input and never retains the raw semantic request id", async () => {
+    const runningShell = makeShell({
+      latestTurn: { turnId: RUNNING_TURN, state: "running" },
+      session: { providerName: "claudeAgent", status: "running" },
+    });
+    const transport = makeTransport({
+      credentials: makeCredentials({
+        session: makeIdentity({ capabilities: ["thread:drive"] }),
+      }),
+      callerShell: Option.some(runningShell),
+      requireShell: runningShell,
+      tools: [normalizedWriteEnvelopeTool],
+    });
+    let requestNumber = 0;
+    const call = (message: string, mode?: "queue") =>
+      run(transport, {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: ++requestNumber,
+          method: "tools/call",
+          params: {
+            name: "scient_normalized_write_envelope",
+            arguments: {
+              message,
+              ...(mode === undefined ? {} : { mode }),
+              requestId: "  secret/path/retry-id  ",
+            },
+          },
+        },
+      });
+    const first = toolResultJson((await call("  hello  ")).body);
+    const retry = toolResultJson((await call("hello", "queue")).body);
+
+    expect(first.args).toEqual({
+      message: "hello",
+      mode: "queue",
+    });
+    expect(first.payloadFingerprint).toBe(retry.payloadFingerprint);
+    expect(first.claimKey).toBe(retry.claimKey);
+    expect(first.identity).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(first)).not.toContain("secret/path/retry-id");
   });
 
   it("does not reflect unexpected handler diagnostics to the provider", async () => {
@@ -554,10 +620,155 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
     expect(toolResultJson(res.body)).toEqual({ wrote: true });
   });
 
-  it("interrupts an in-flight write on exact session revocation and records uncertainty after an observed effect", async () => {
+  it("cancels a long read on exact revocation, returns no stale result, and unsubscribes", async () => {
     let revocationListener: ((identity: AgentGatewaySessionIdentity) => void) | undefined;
+    let activeListeners = 0;
     let handlerStarted = false;
     let handlerInterrupted = false;
+    const longRead: ToolEntry = {
+      ...echoTool,
+      definition: { ...echoTool.definition, name: "scient_long_read" },
+      handler: () =>
+        Effect.sync(() => {
+          handlerStarted = true;
+        }).pipe(
+          Effect.andThen(Effect.never),
+          Effect.ensuring(
+            Effect.sync(() => {
+              handlerInterrupted = true;
+            }),
+          ),
+        ),
+    };
+    const session = makeIdentity();
+    const response = run(
+      makeTransport({
+        credentials: makeCredentials({
+          session,
+          subscribeSessionRevocations: (listener) => {
+            activeListeners += 1;
+            revocationListener = listener;
+            return () => {
+              activeListeners -= 1;
+              revocationListener = undefined;
+            };
+          },
+        }),
+        tools: [longRead],
+      }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: 54,
+          method: "tools/call",
+          params: { name: "scient_long_read", arguments: {} },
+        },
+      },
+    );
+
+    await vi.waitFor(() => {
+      expect(handlerStarted).toBe(true);
+      expect(activeListeners).toBe(1);
+    });
+    revocationListener!(session);
+
+    const result = await response;
+    expect(handlerInterrupted).toBe(true);
+    expect(activeListeners).toBe(0);
+    expect(toolResultJson(result.body)).toMatchObject({
+      error: { code: "caller_session_inactive" },
+    });
+    expect(JSON.stringify(result.body)).not.toContain("echoed");
+  });
+
+  it("denies a transactional write when revocation wins before lease acquisition", async () => {
+    const runningShell = makeShell({
+      latestTurn: { turnId: RUNNING_TURN, state: "running" },
+      session: { providerName: "claudeAgent", status: "running" },
+    });
+    const receipts: ScientOperationResultReceipt[] = [];
+    const result = await run(
+      makeTransport({
+        credentials: makeCredentials({
+          session: makeIdentity({ capabilities: ["thread:drive"] }),
+          writeAuthorityValid: true,
+          acquireWriteLease: () => null,
+        }),
+        callerShell: Option.some(runningShell),
+        requireShell: runningShell,
+        tools: [writeTool],
+        recordOperationReceipt: (receipt) => receipts.push(receipt),
+      }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: 53,
+          method: "tools/call",
+          params: { name: "scient_write_thing", arguments: {} },
+        },
+      },
+    );
+
+    expect(toolResultJson(result.body)).toMatchObject({
+      error: { code: "caller_session_inactive" },
+    });
+    expect(receipts[0]).toMatchObject({
+      outcome: "failed",
+      errorCode: "caller_session_inactive",
+      effects: [],
+    });
+  });
+
+  it("preserves a typed handler error code in the operation receipt", async () => {
+    const runningShell = makeShell({
+      latestTurn: { turnId: RUNNING_TURN, state: "running" },
+      session: { providerName: "claudeAgent", status: "running" },
+    });
+    const receipts: ScientOperationResultReceipt[] = [];
+    const deniedWrite: ToolEntry = {
+      ...writeTool,
+      handler: () =>
+        Effect.succeed(
+          gatewayToolErrorResult(new GatewayToolError("policy_denied", "Policy denied.")),
+        ),
+    };
+    await run(
+      makeTransport({
+        credentials: makeCredentials({
+          session: makeIdentity({ capabilities: ["thread:drive"] }),
+        }),
+        callerShell: Option.some(runningShell),
+        requireShell: runningShell,
+        tools: [deniedWrite],
+        recordOperationReceipt: (receipt) => receipts.push(receipt),
+      }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: 52,
+          method: "tools/call",
+          params: { name: "scient_write_thing", arguments: {} },
+        },
+      },
+    );
+
+    expect(receipts[0]).toMatchObject({
+      outcome: "failed",
+      errorCode: "policy_denied",
+      effects: [],
+    });
+  });
+
+  it("lets a write lease acquired before revocation finish with a truthful success receipt", async () => {
+    let revoked = false;
+    let handlerStarted = false;
+    let finishHandler!: () => void;
+    const handlerCanFinish = new Promise<void>((resolve) => {
+      finishHandler = resolve;
+    });
     const receipts: ScientOperationResultReceipt[] = [];
     const fencedWriteTool: ToolEntry = {
       ...writeTool,
@@ -566,15 +777,11 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
           handlerStarted = true;
           context.recordOperationEffect({
             kind: "orchestration-command",
-            identity: "command-may-have-committed",
+            identity: "command-committed-before-revoke",
           });
         }).pipe(
-          Effect.andThen(Effect.never),
-          Effect.ensuring(
-            Effect.sync(() => {
-              handlerInterrupted = true;
-            }),
-          ),
+          Effect.andThen(Effect.promise(() => handlerCanFinish)),
+          Effect.andThen(Effect.succeed(mcpToolResultJson({ wrote: true }))),
         ),
     };
     const runningShell = makeShell({
@@ -587,12 +794,7 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
         credentials: makeCredentials({
           session,
           writeAuthorityValid: true,
-          subscribeSessionRevocations: (listener) => {
-            revocationListener = listener;
-            return () => {
-              revocationListener = undefined;
-            };
-          },
+          verifySession: (token) => (token === VALID_TOKEN && !revoked ? session : null),
         }),
         callerShell: Option.some(runningShell),
         requireShell: runningShell,
@@ -612,21 +814,40 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
 
     await vi.waitFor(() => {
       expect(handlerStarted).toBe(true);
-      expect(revocationListener).toBeTypeOf("function");
     });
-    revocationListener!(session);
+    revoked = true;
+    finishHandler();
 
     const result = await response;
-    expect(handlerInterrupted).toBe(true);
-    expect(toolResultJson(result.body)).toMatchObject({
-      error: { code: "caller_session_inactive" },
-    });
+    expect(toolResultJson(result.body)).toEqual({ wrote: true });
     expect(receipts).toHaveLength(1);
     expect(receipts[0]).toMatchObject({
-      outcome: "uncertain/reconciliation-required",
-      errorCode: "caller_session_inactive",
-      effects: [{ identity: "command-may-have-committed" }],
+      outcome: "succeeded",
+      errorCode: null,
+      effects: [{ identity: "command-committed-before-revoke" }],
     });
+
+    const denied = await run(
+      makeTransport({
+        credentials: makeCredentials({
+          session,
+          verifySession: (token) => (token === VALID_TOKEN && !revoked ? session : null),
+        }),
+        callerShell: Option.some(runningShell),
+        requireShell: runningShell,
+        tools: [fencedWriteTool],
+      }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: 56,
+          method: "tools/call",
+          params: { name: "scient_write_thing", arguments: {} },
+        },
+      },
+    );
+    expect(denied.status).toBe(401);
   });
 
   it("rejects a write tool when the pinned turn has been superseded", async () => {

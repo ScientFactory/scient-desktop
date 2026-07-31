@@ -70,22 +70,171 @@ export interface ScientOperationDefinition {
   readonly id: ScientOperationId;
   readonly capability: ScientOperationCapability;
   readonly allowedActorKinds: ReadonlyArray<ScientOperationActorKind>;
+  /** Host admission required before an adapter may execute the operation. */
+  readonly admission: "current-authority" | "write-authority";
+  /** Effect boundary controls revocation and receipt handling. */
+  readonly effectClass: "read" | "transactional-write" | "irreversible-external";
   /** Optional validated logical retry identity field exposed by an adapter. */
   readonly idempotencyInputField: string | null;
 }
 
-export function defineScientOperation(
-  input: Omit<ScientOperationDefinition, "allowedActorKinds" | "idempotencyInputField"> & {
-    readonly allowedActorKinds: ReadonlyArray<ScientOperationActorKind>;
-    readonly idempotencyInputField?: string | null;
-  },
-): ScientOperationDefinition {
+function defineScientOperation(input: ScientOperationDefinition): ScientOperationDefinition {
   return Object.freeze({
     ...input,
     allowedActorKinds: Object.freeze([...new Set(input.allowedActorKinds)]),
-    idempotencyInputField: input.idempotencyInputField ?? null,
   });
 }
+
+const ALL_ACTORS: ReadonlyArray<ScientOperationActorKind> = Object.freeze([
+  "manual-user",
+  "provider-thread",
+  "external-integration",
+  "automation-run",
+]);
+const EXECUTION_ACTORS: ReadonlyArray<ScientOperationActorKind> = Object.freeze([
+  "manual-user",
+  "provider-thread",
+  "external-integration",
+  "automation-run",
+]);
+
+/**
+ * Canonical Scient-owned operation policy. Adapters reference these immutable
+ * entries; they cannot redefine an operation's capability, actor set,
+ * admission rule, or effect class locally.
+ */
+export const SCIENT_OPERATION_DEFINITIONS: Readonly<
+  Record<ScientOperationId, ScientOperationDefinition>
+> = Object.freeze({
+  "project.context.read": defineScientOperation({
+    id: "project.context.read",
+    capability: "project:context:read",
+    allowedActorKinds: ALL_ACTORS,
+    admission: "current-authority",
+    effectClass: "read",
+    idempotencyInputField: null,
+  }),
+  "project.list": defineScientOperation({
+    id: "project.list",
+    capability: "project:context:read",
+    allowedActorKinds: ALL_ACTORS,
+    admission: "current-authority",
+    effectClass: "read",
+    idempotencyInputField: null,
+  }),
+  "thread.list": defineScientOperation({
+    id: "thread.list",
+    capability: "thread:list",
+    allowedActorKinds: ALL_ACTORS,
+    admission: "current-authority",
+    effectClass: "read",
+    idempotencyInputField: null,
+  }),
+  "thread.read": defineScientOperation({
+    id: "thread.read",
+    capability: "thread:read",
+    allowedActorKinds: ALL_ACTORS,
+    admission: "current-authority",
+    effectClass: "read",
+    idempotencyInputField: null,
+  }),
+  "thread.wait": defineScientOperation({
+    id: "thread.wait",
+    capability: "thread:read",
+    allowedActorKinds: ALL_ACTORS,
+    admission: "current-authority",
+    effectClass: "read",
+    idempotencyInputField: null,
+  }),
+  "thread.message.send": defineScientOperation({
+    id: "thread.message.send",
+    capability: "thread:drive",
+    allowedActorKinds: EXECUTION_ACTORS,
+    admission: "write-authority",
+    effectClass: "transactional-write",
+    idempotencyInputField: "requestId",
+  }),
+  "thread.interrupt": defineScientOperation({
+    id: "thread.interrupt",
+    capability: "thread:drive",
+    allowedActorKinds: EXECUTION_ACTORS,
+    admission: "write-authority",
+    effectClass: "transactional-write",
+    idempotencyInputField: null,
+  }),
+  "automation.run": defineScientOperation({
+    id: "automation.run",
+    capability: "automation:run",
+    allowedActorKinds: EXECUTION_ACTORS,
+    admission: "write-authority",
+    effectClass: "transactional-write",
+    idempotencyInputField: "requestId",
+  }),
+  "browser.read": defineScientOperation({
+    id: "browser.read",
+    capability: "browser:read",
+    allowedActorKinds: ALL_ACTORS,
+    admission: "current-authority",
+    effectClass: "read",
+    idempotencyInputField: null,
+  }),
+  "browser.capture": defineScientOperation({
+    id: "browser.capture",
+    capability: "browser:capture",
+    allowedActorKinds: EXECUTION_ACTORS,
+    admission: "write-authority",
+    effectClass: "irreversible-external",
+    idempotencyInputField: "requestId",
+  }),
+  "browser.action": defineScientOperation({
+    id: "browser.action",
+    capability: "browser:action",
+    allowedActorKinds: EXECUTION_ACTORS,
+    admission: "write-authority",
+    effectClass: "irreversible-external",
+    idempotencyInputField: "requestId",
+  }),
+  "scientific-record.propose": defineScientOperation({
+    id: "scientific-record.propose",
+    capability: "scientific-record:propose",
+    allowedActorKinds: EXECUTION_ACTORS,
+    admission: "write-authority",
+    effectClass: "transactional-write",
+    idempotencyInputField: "requestId",
+  }),
+  "scientific-record.accept": defineScientOperation({
+    id: "scientific-record.accept",
+    capability: "scientific-record:accept",
+    allowedActorKinds: ["manual-user"],
+    admission: "write-authority",
+    effectClass: "transactional-write",
+    idempotencyInputField: "requestId",
+  }),
+  "project-file.read": defineScientOperation({
+    id: "project-file.read",
+    capability: "project-file:read",
+    allowedActorKinds: ALL_ACTORS,
+    admission: "current-authority",
+    effectClass: "read",
+    idempotencyInputField: null,
+  }),
+  "project-file.write": defineScientOperation({
+    id: "project-file.write",
+    capability: "project-file:write",
+    allowedActorKinds: EXECUTION_ACTORS,
+    admission: "write-authority",
+    effectClass: "irreversible-external",
+    idempotencyInputField: "requestId",
+  }),
+  "export.run": defineScientOperation({
+    id: "export.run",
+    capability: "export:run",
+    allowedActorKinds: EXECUTION_ACTORS,
+    admission: "write-authority",
+    effectClass: "irreversible-external",
+    idempotencyInputField: "requestId",
+  }),
+});
 
 export interface ScientOperationAuthority {
   readonly authorityId: string;
@@ -258,7 +407,13 @@ export function beginScientOperation(input: {
 
   const authority = grantSnapshot(resolvedAuthority);
   const semanticIdentity = input.semanticIdempotencyIdentity?.trim() || null;
-  const identity = semanticIdentity ?? input.operationId;
+  // Never retain caller/model-controlled retry text in an authoritative
+  // envelope. A one-way digest preserves stable retry identity without turning
+  // receipts or audit adapters into a secret/path disclosure channel.
+  const identity =
+    semanticIdentity === null
+      ? input.operationId
+      : sha256Canonical(["semantic-idempotency", semanticIdentity]);
   const claimKey = sha256Canonical([
     authority.authorityId,
     authority.generation,

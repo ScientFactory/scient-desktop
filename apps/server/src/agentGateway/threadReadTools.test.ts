@@ -17,7 +17,7 @@ import { describe, expect, it } from "vitest";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   beginScientOperation,
-  defineScientOperation,
+  SCIENT_OPERATION_DEFINITIONS,
   type ScientOperationAuthority,
   type ScientOperationCapability,
 } from "../scientOperations/authority.ts";
@@ -29,11 +29,7 @@ const CALLER_THREAD = "thread-caller";
 const CALLER_PROJECT = "project-1";
 const OTHER_PROJECT = "project-2";
 const ISO = "2026-01-01T00:00:00.000Z";
-const TEST_READ_OPERATION = defineScientOperation({
-  id: "thread.read",
-  capability: "thread:read",
-  allowedActorKinds: ["provider-thread"],
-});
+const TEST_READ_OPERATION = SCIENT_OPERATION_DEFINITIONS["thread.read"];
 
 interface Fakes {
   readonly projects?: ReadonlyArray<Record<string, unknown>>;
@@ -156,6 +152,7 @@ function makeContext(overrides?: Partial<ToolContext>): ToolContext {
     callerProvider: "claudeAgent",
     operationAuthority,
     operationEnvelope: started.envelope,
+    admittedCaller: shell(CALLER_THREAD),
     callerTurnId: null,
     requireCurrentOperationCaller: () => Effect.succeed(shell(CALLER_THREAD)),
     requireCurrentCallerTurn: () => Effect.succeed(shell(CALLER_THREAD)),

@@ -5,8 +5,8 @@
  * in its own project: `scient_send_message` (queue or steer a turn) and
  * `scient_interrupt_thread` (stop the running turn). Both funnel through the
  * central {@link authorizeThreadDrive} policy (project scope + privilege and
- * worktree caps) and both are flagged `requiresActiveTurn`, so the transport
- * only admits them while the caller's own turn is live (see
+ * worktree caps). Their canonical Scient operation definitions require an
+ * active turn, so the transport only admits them while the caller's own turn is live (see
  * {@link makeAgentGatewayMcpTransport}). Cross-project and higher-privilege
  * drives are denied.
  *
@@ -32,7 +32,6 @@ import { Cause, Effect, Option } from "effect";
 
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { defineScientOperation } from "../scientOperations/authority.ts";
 import { authorizeThreadDrive } from "./authorization.ts";
 import { mcpToolResultJson, type McpToolCallResult } from "./protocol.ts";
 import { readStringArg, ToolInputError } from "./toolInput.ts";
@@ -57,18 +56,6 @@ const SEND_MAX_PENDING_PER_SESSION = 16;
 const SEND_MAX_PENDING_BYTES_PER_SESSION = 4 * 1024 * 1024;
 const SEND_REQUEST_ID_MAX_UTF8_BYTES = 256;
 const SEND_MESSAGE_MAX_UTF8_BYTES = 512 * 1024;
-const PROVIDER_THREAD_ACTOR = ["provider-thread"] as const;
-const SEND_MESSAGE_OPERATION = defineScientOperation({
-  id: "thread.message.send",
-  capability: "thread:drive",
-  allowedActorKinds: PROVIDER_THREAD_ACTOR,
-  idempotencyInputField: "requestId",
-});
-const INTERRUPT_THREAD_OPERATION = defineScientOperation({
-  id: "thread.interrupt",
-  capability: "thread:drive",
-  allowedActorKinds: PROVIDER_THREAD_ACTOR,
-});
 
 interface SendResultPayload {
   readonly threadId: string;
@@ -215,8 +202,27 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
   });
 
   const sendMessage: ToolEntry = {
-    operation: SEND_MESSAGE_OPERATION,
-    requiresActiveTurn: true,
+    operation: "thread.message.send",
+    canonicalizeInput: (args) => {
+      const threadId = readStringArg(args, "threadId", { required: true })!;
+      const message = readStringArg(args, "message", {
+        required: true,
+        maxUtf8Bytes: SEND_MESSAGE_MAX_UTF8_BYTES,
+      })!;
+      const mode = readStringArg(args, "mode") ?? "queue";
+      if (mode !== "queue" && mode !== "steer") {
+        throw new ToolInputError('Argument "mode" must be "queue" or "steer".');
+      }
+      const requestId = readStringArg(args, "requestId", {
+        maxUtf8Bytes: SEND_REQUEST_ID_MAX_UTF8_BYTES,
+      });
+      return {
+        threadId,
+        message,
+        mode,
+        ...(requestId === undefined ? {} : { requestId }),
+      };
+    },
     definition: {
       name: "scient_send_message",
       description:
@@ -319,7 +325,7 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
           }
 
           const attempt = yield* Effect.gen(function* () {
-            const caller = yield* context.requireCurrentCallerTurn();
+            const caller = context.admittedCaller;
             const target = yield* resolveTarget(threadId);
             const decision = authorizeDrive(context, caller, target, threadId);
             if (!decision.allow) {
@@ -410,8 +416,10 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
   };
 
   const interruptThread: ToolEntry = {
-    operation: INTERRUPT_THREAD_OPERATION,
-    requiresActiveTurn: true,
+    operation: "thread.interrupt",
+    canonicalizeInput: (args) => ({
+      threadId: readStringArg(args, "threadId", { required: true })!,
+    }),
     definition: {
       name: "scient_interrupt_thread",
       description:
@@ -429,7 +437,7 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
     handler: (args, context) =>
       Effect.gen(function* () {
         const threadId = readStringArg(args, "threadId", { required: true })!;
-        const caller = yield* context.requireCurrentCallerTurn();
+        const caller = context.admittedCaller;
         const target = yield* resolveTarget(threadId);
         const decision = authorizeDrive(context, caller, target, threadId);
         if (!decision.allow) {
