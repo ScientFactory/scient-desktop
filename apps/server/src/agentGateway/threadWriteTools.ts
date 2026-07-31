@@ -354,26 +354,28 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
             yield* orchestrationEngine
               .dispatchProtected(
                 {
-                type: "thread.turn.start",
-                commandId,
-                threadId: target.id,
-                message: {
-                  messageId: MessageId.makeUnsafe(`agent:${commandSuffix}:message`),
-                  role: "user",
-                  text: message,
-                  attachments: [],
-                },
-                dispatchMode,
-                dispatchSource: "agent",
-                runtimeMode: target.runtimeMode,
-                interactionMode: target.interactionMode,
-                operationPrecondition: operationPrecondition(caller, target),
-                createdAt: now(),
+                  type: "thread.turn.start",
+                  commandId,
+                  threadId: target.id,
+                  message: {
+                    messageId: MessageId.makeUnsafe(`agent:${commandSuffix}:message`),
+                    role: "user",
+                    text: message,
+                    attachments: [],
+                  },
+                  dispatchMode,
+                  dispatchSource: "agent",
+                  runtimeMode: target.runtimeMode,
+                  interactionMode: target.interactionMode,
+                  operationPrecondition: operationPrecondition(caller, target),
+                  createdAt: now(),
                 },
                 context.operationRevocationFence,
               )
               .pipe(
-                Effect.mapError((error) => mapProtectedDispatchError(error, "send_message_dispatch")),
+                Effect.mapError((error) =>
+                  mapProtectedDispatchError(error, "send_message_dispatch"),
+                ),
               );
             context.recordOperationEffect({
               kind: "orchestration-command",
@@ -470,15 +472,15 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
         yield* orchestrationEngine
           .dispatchProtected(
             {
-            type: "thread.turn.interrupt",
-            // Pin to the observed turn so a retry (or a turn that ends first) can
-            // never interrupt a different, later turn; the id is deterministic so
-            // the receipt layer collapses duplicate interrupts of the same turn.
-            commandId,
-            threadId: target.id,
-            turnId: runningTurnId,
-            operationPrecondition: operationPrecondition(caller, target),
-            createdAt: now(),
+              type: "thread.turn.interrupt",
+              // Pin to the observed turn so a retry (or a turn that ends first) can
+              // never interrupt a different, later turn; the id is deterministic so
+              // the receipt layer collapses duplicate interrupts of the same turn.
+              commandId,
+              threadId: target.id,
+              turnId: runningTurnId,
+              operationPrecondition: operationPrecondition(caller, target),
+              createdAt: now(),
             },
             context.operationRevocationFence,
           )

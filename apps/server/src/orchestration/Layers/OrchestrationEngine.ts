@@ -52,10 +52,7 @@ type DispatchTimeoutDecision = { kind: "abandon" } | { kind: "wait" };
 interface CommandEnvelope {
   command: OrchestrationCommand;
   result: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError>;
-  protectedCommitResult: Deferred.Deferred<
-    { sequence: number },
-    OrchestrationDispatchError
-  > | null;
+  protectedCommitResult: Deferred.Deferred<{ sequence: number }, OrchestrationDispatchError> | null;
   revocation: Effect.Effect<unknown, unknown, never> | null;
   executionState: Ref.Ref<CommandExecutionState>;
   deadlineAtMs: number;
@@ -543,7 +540,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             ),
           ),
         );
-      const committedCommand = yield* (envelope.revocation === null
+      const committedCommand = yield* envelope.revocation === null
         ? transaction
         : Effect.raceFirst(
             transaction,
@@ -554,7 +551,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               }),
               Effect.andThen(Effect.fail(makeCommandCancelledError(envelope.command))),
             ),
-          ));
+          );
 
       if (envelope.protectedCommitResult !== null) {
         // This is the protected operation's durable effect boundary. Complete
@@ -815,10 +812,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const dispatch: OrchestrationEngineShape["dispatch"] = (command) =>
     enqueueDispatch(command, null);
 
-  const dispatchProtected: OrchestrationEngineShape["dispatchProtected"] = (
-    command,
-    revocation,
-  ) => enqueueDispatch(command, revocation);
+  const dispatchProtected: OrchestrationEngineShape["dispatchProtected"] = (command, revocation) =>
+    enqueueDispatch(command, revocation);
 
   // Used by the settings screen to rebuild local indexes without deleting chats.
   const repairState: OrchestrationEngineShape["repairState"] = () =>
