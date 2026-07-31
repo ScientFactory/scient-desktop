@@ -10,6 +10,7 @@
  * @module CheckpointStoreLive
  */
 import { randomUUID } from "node:crypto";
+import { statSync, utimesSync } from "node:fs";
 
 import { Cause, Deferred, Effect, Exit, Layer, FileSystem, Option, Path, Semaphore } from "effect";
 
@@ -117,6 +118,13 @@ const makeCheckpointStore = Effect.gen(function* () {
       // resolved file observes a complete old or new index without touching
       // the user's staging area.
       return yield* Effect.gen(function* () {
+        const sourceIndexTimes = yield* Effect.try({
+          try: () => {
+            const stats = statSync(indexPath);
+            return { atime: stats.atime, mtime: stats.mtime };
+          },
+          catch: (cause) => cause,
+        });
         yield* fs.copyFile(indexPath, tempIndexPath);
 
         // A split index refers to sharedindex.* in the repository. Expand only
@@ -146,6 +154,15 @@ const makeCheckpointStore = Effect.gen(function* () {
         if (hasProtectedEntryFlags) {
           return yield* discardSeed;
         }
+
+        // Preserve the copied index's original write time after normalization.
+        // Git's racy-clean protection compares worktree entry timestamps with
+        // the index timestamp; leaving the temporary copy timestamped "now"
+        // can make a rapid same-size edit look clean and snapshot stale bytes.
+        yield* Effect.try({
+          try: () => utimesSync(tempIndexPath, sourceIndexTimes.atime, sourceIndexTimes.mtime),
+          catch: (cause) => cause,
+        });
 
         return true;
       }).pipe(Effect.catch(() => discardSeed));

@@ -10,6 +10,8 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -331,6 +333,41 @@ describe("CheckpointStoreLive", () => {
       expect(runGit(repo, ["status", "--porcelain=v1", "--untracked-files=all"])).toBe(
         statusBefore,
       );
+    } finally {
+      await runtime.dispose();
+      runtime = null;
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rehashes rapid same-size edits even when Git's index stat cache appears unchanged", async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "scient-checkpoint-racy-clean-test-"));
+    const repo = join(tempRoot, "repo");
+    mkdirSync(repo);
+    initializeRepository(repo);
+    const trackedPath = join(repo, "tracked.txt");
+    writeFileSync(trackedPath, "v1\n");
+    runGit(repo, ["add", "tracked.txt"]);
+    runGit(repo, ["commit", "--quiet", "-m", "base"]);
+    runGit(repo, ["config", "core.trustctime", "false"]);
+    runGit(repo, ["config", "core.checkStat", "minimal"]);
+    const indexedStat = statSync(trackedPath);
+
+    runtime = ManagedRuntime.make(checkpointIntegrationLayer);
+    try {
+      const store = await runtime.runPromise(Effect.service(CheckpointStore));
+      const capture = async (value: string, suffix: string) => {
+        writeFileSync(trackedPath, `${value}\n`);
+        utimesSync(trackedPath, indexedStat.atime, indexedStat.mtime);
+        const checkpointRef = CheckpointRef.makeUnsafe(
+          `refs/scient-checkpoints/thread/racy-clean-${suffix}`,
+        );
+        await runtime!.runPromise(store.captureCheckpoint({ cwd: repo, checkpointRef }));
+        return runGit(repo, ["show", `${checkpointRef}:tracked.txt`]);
+      };
+
+      expect(await capture("v2", "one")).toBe("v2");
+      expect(await capture("v3", "two")).toBe("v3");
     } finally {
       await runtime.dispose();
       runtime = null;
