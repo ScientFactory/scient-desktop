@@ -128,10 +128,11 @@ function mapProtectedDispatchError(error: unknown, operation: string): GatewayTo
     );
   }
   if (error instanceof OrchestrationCommandOutcomeUncertainError) {
-    return new GatewayToolError(
-      "operation_outcome_uncertain",
-      "Scient could not confirm whether this write committed. Reconcile the target thread before retrying; if a retry is necessary, reuse the same requestId.",
-    );
+    const message =
+      operation === "send_message_dispatch"
+        ? "Scient could not confirm whether this message committed. Reconcile the target thread before retrying; if a retry is necessary, reuse the same requestId."
+        : "Scient could not confirm whether this interrupt committed. Reread the target thread and reconcile its active turn before deciding what to do next; do not retry this interrupt blindly.";
+    return new GatewayToolError("operation_outcome_uncertain", message);
   }
   return unexpectedGatewayToolError(error, { operation });
 }

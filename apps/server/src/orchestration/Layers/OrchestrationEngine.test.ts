@@ -102,7 +102,7 @@ function now() {
 const makeCommitFinalizerGatePersistence = (
   enteredFinalizer: Deferred.Deferred<void>,
   releaseFinalizer: Deferred.Deferred<void>,
-  control: { armed: boolean },
+  control: { armed: boolean; defectAfterCommit?: boolean },
 ) =>
   Layer.effect(
     SqlClient.SqlClient,
@@ -115,7 +115,13 @@ const makeCommitFinalizerGatePersistence = (
           Effect.flatMap((value) =>
             Deferred.succeed(enteredFinalizer, undefined).pipe(
               Effect.andThen(Deferred.await(releaseFinalizer)),
-              Effect.as(value),
+              Effect.andThen(
+                Effect.suspend(() => {
+                  if (!control.defectAfterCommit) return Effect.succeed(value);
+                  control.defectAfterCommit = false;
+                  return Effect.die("Injected post-commit finalizer defect");
+                }),
+              ),
             ),
           ),
           // Model Effect SQL's uninterruptible COMMIT finalizer while holding
@@ -1367,6 +1373,72 @@ describe("OrchestrationEngine", () => {
           projectId: asProjectId("project-after-event-reconciliation-failure"),
           title: "After recovery",
           workspaceRoot: "/tmp/project-after-event-reconciliation-failure",
+          createdAt: now(),
+        }),
+      ),
+    ).resolves.toEqual({ sequence: 2 });
+    await runtime.dispose();
+  });
+
+  it("recovers committed state after a post-commit defect and failed event replay", async () => {
+    const enteredFinalizer = await Effect.runPromise(Deferred.make<void>());
+    const releaseFinalizer = await Effect.runPromise(Deferred.make<void>());
+    const finalizerGate = { armed: false, defectAfterCommit: true };
+    const eventControl = { failNextRead: false };
+    const persistence = makeCommitFinalizerGatePersistence(
+      enteredFinalizer,
+      releaseFinalizer,
+      finalizerGate,
+    );
+    const eventStore = makeControllableEventStore(eventControl);
+    const serverConfig = ServerConfig.layerTest(process.cwd(), {
+      prefix: "scient-orchestration-post-commit-defect-test-",
+    });
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(OrchestrationProjectionPipelineLive),
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(eventStore),
+        Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(persistence),
+        Layer.provideMerge(serverConfig),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    finalizerGate.armed = true;
+    const protectedCommandId = CommandId.makeUnsafe("cmd-protected-post-commit-defect");
+    const protectedOutcome = runtime.runPromise(
+      engine.dispatchProtected(
+        {
+          type: "project.create",
+          commandId: protectedCommandId,
+          projectId: asProjectId("project-protected-post-commit-defect"),
+          title: "Protected post-commit defect",
+          workspaceRoot: "/tmp/project-protected-post-commit-defect",
+          createdAt: now(),
+        },
+        Effect.never,
+      ),
+    );
+
+    await Effect.runPromise(Deferred.await(enteredFinalizer));
+    eventControl.failNextRead = true;
+    await Effect.runPromise(Deferred.succeed(releaseFinalizer, undefined));
+
+    await expect(protectedOutcome).resolves.toEqual({ sequence: 1 });
+    await expect
+      .poll(async () => (await runtime.runPromise(engine.getReadModel())).snapshotSequence)
+      .toBe(1);
+    finalizerGate.defectAfterCommit = false;
+    await expect(
+      runtime.runPromise(
+        engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.makeUnsafe("cmd-after-post-commit-defect"),
+          projectId: asProjectId("project-after-post-commit-defect"),
+          title: "After post-commit recovery",
+          workspaceRoot: "/tmp/project-after-post-commit-defect",
           createdAt: now(),
         }),
       ),

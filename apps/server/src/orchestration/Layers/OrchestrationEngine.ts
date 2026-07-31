@@ -754,19 +754,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           return Effect.interrupt;
         }
         return Effect.gen(function* () {
-          yield* reconcileCommandReadModelAfterDispatchFailure.pipe(
-            Effect.catch(() =>
-              Effect.logWarning(
-                "failed to reconcile orchestration read model after unexpected worker failure",
-              ).pipe(
-                Effect.annotateLogs({
-                  commandId: envelope.command.commandId,
-                  snapshotSequence: commandReadModel.snapshotSequence,
-                }),
-              ),
-            ),
-          );
-
           yield* Effect.logError("orchestration worker crashed while processing command").pipe(
             Effect.annotateLogs({
               commandId: envelope.command.commandId,
@@ -786,6 +773,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             if (envelope.protectedCommitResult !== null) {
               yield* Deferred.succeed(envelope.protectedCommitResult, resolvedCrashOutcome.right);
             }
+            yield* recoverCommittedState(resolvedCrashOutcome.right.sequence);
             yield* Deferred.succeed(envelope.result, resolvedCrashOutcome.right);
             return;
           }
@@ -796,6 +784,22 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             : resolvedError;
           if (envelope.protectedCommitResult !== null) {
             yield* Deferred.fail(envelope.protectedCommitResult, reportedError);
+          }
+          if (Schema.is(OrchestrationCommandOutcomeUncertainError)(reportedError)) {
+            yield* recoverCommittedState(dispatchStartSequence);
+          } else {
+            yield* reconcileCommandReadModelAfterDispatchFailure.pipe(
+              Effect.catch(() =>
+                Effect.logWarning(
+                  "failed to reconcile orchestration read model after unexpected worker failure",
+                ).pipe(
+                  Effect.annotateLogs({
+                    commandId: envelope.command.commandId,
+                    snapshotSequence: commandReadModel.snapshotSequence,
+                  }),
+                ),
+              ),
+            );
           }
           yield* Deferred.fail(envelope.result, reportedError);
         });

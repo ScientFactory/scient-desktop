@@ -839,6 +839,43 @@ describe("scient_send_message", () => {
 });
 
 describe("scient_interrupt_thread", () => {
+  it("requires turn reconciliation when an interrupt outcome is uncertain", async () => {
+    const effects: Array<{ readonly kind: string; readonly identity: string }> = [];
+    const { call } = setup({
+      threadShells: {
+        [TARGET_THREAD]: shell(TARGET_THREAD, {
+          latestTurn: { turnId: "turn-x", state: "running" },
+        }),
+      },
+      dispatch: (command) =>
+        Effect.fail(
+          new OrchestrationCommandOutcomeUncertainError({
+            commandId: command.commandId,
+            commandType: command.type,
+            detail: "Injected reconciliation failure.",
+          }),
+        ),
+    });
+    const result = await call(
+      "scient_interrupt_thread",
+      { threadId: TARGET_THREAD },
+      makeContext({
+        recordOperationEffect: (effect) => effects.push(effect),
+      }),
+    );
+    const error = jsonBody(result).error as { code: string; message: string };
+    expect(error.code).toBe("operation_outcome_uncertain");
+    expect(error.message).toContain("Reread the target thread");
+    expect(error.message).toContain("do not retry this interrupt blindly");
+    expect(error.message).not.toContain("requestId");
+    expect(effects).toEqual([
+      {
+        kind: "orchestration-command",
+        identity: `agent:${TARGET_THREAD}:turn-x:interrupt`,
+      },
+    ]);
+  });
+
   it("interrupts a running turn, pinned to the observed turn id", async () => {
     const { call, commands } = setup({
       threadShells: {
