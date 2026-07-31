@@ -2654,9 +2654,14 @@ const make = Effect.gen(function* () {
       // shell so high-frequency streaming events don't re-decode the whole
       // transcript. See eventNeedsHeavyThreadDetail for the safety rationale.
       const needsHeavyThreadDetail = eventNeedsHeavyThreadDetail(event);
-      const parentThread = needsHeavyThreadDetail
+      const projectedParentThread = needsHeavyThreadDetail
         ? yield* getThreadDetail(event.threadId)
         : yield* getThreadShellDetail(event.threadId);
+      const parentThread =
+        projectedParentThread ??
+        (yield* orchestrationEngine.getReadModel()).threads.find(
+          (thread) => thread.id === event.threadId,
+        );
       if (!parentThread) return;
 
       const ensureSubagentThread = (
@@ -2687,6 +2692,12 @@ const make = Effect.gen(function* () {
               : undefined;
 
           if (Option.isNone(existingThread)) {
+            const deletedThread = (yield* orchestrationEngine.getReadModel()).threads.find(
+              (thread) => thread.id === childThreadId && thread.deletedAt !== null,
+            );
+            if (deletedThread) {
+              return { threadId: childThreadId, thread: deletedThread };
+            }
             yield* orchestrationEngine.dispatch({
               type: "thread.create",
               commandId: providerCommandId(event, "subagent-thread-create"),
@@ -2786,7 +2797,7 @@ const make = Effect.gen(function* () {
           event.type === "item.completed") &&
         event.payload.itemType === "collab_agent_tool_call" &&
         collabItem !== undefined;
-      if (isCollabToolEvent && collabItem) {
+      if (parentThread.deletedAt === null && isCollabToolEvent && collabItem) {
         const receiverThreadIds = collectSubagentProviderThreadIds(collabItem);
         const identityDirectory = buildSubagentIdentityDirectory(
           extractSubagentIdentityHints(collabItem),
@@ -2809,14 +2820,86 @@ const make = Effect.gen(function* () {
         providerThreadId !== undefined &&
         providerParentThreadId !== undefined &&
         providerThreadId !== providerParentThreadId;
-      const targetThreadResolution =
-        isChildThreadEvent && providerThreadId
-          ? yield* ensureSubagentThread(
-              providerThreadId,
-              extractSubagentIdentity(event, providerThreadId),
-            )
-          : { threadId: parentThread.id, thread: parentThread };
+      let targetThreadResolution: {
+        readonly threadId: ThreadId;
+        readonly thread: OrchestrationThread;
+      } | null;
+      if (isChildThreadEvent && providerThreadId) {
+        if (parentThread.deletedAt !== null) {
+          const childThreadId = subagentThreadId(parentThread.id, providerThreadId);
+          const child = (yield* orchestrationEngine.getReadModel()).threads.find(
+            (thread) => thread.id === childThreadId && thread.deletedAt !== null,
+          );
+          targetThreadResolution = child ? { threadId: childThreadId, thread: child } : null;
+        } else {
+          targetThreadResolution = yield* ensureSubagentThread(
+            providerThreadId,
+            extractSubagentIdentity(event, providerThreadId),
+          );
+        }
+      } else {
+        targetThreadResolution = { threadId: parentThread.id, thread: parentThread };
+      }
+      if (targetThreadResolution === null) return;
       const thread = targetThreadResolution.thread;
+      if (thread.deletedAt !== null) {
+        const deletedThreadActiveTurnId = thread.session?.activeTurnId ?? null;
+        const deletedThreadEventTurnId = resolveTerminalTurnId(event, deletedThreadActiveTurnId);
+        if (
+          (event.type === "turn.completed" || event.type === "turn.aborted") &&
+          deletedThreadActiveTurnId !== null &&
+          (deletedThreadEventTurnId === undefined ||
+            !sameId(deletedThreadActiveTurnId, deletedThreadEventTurnId))
+        ) {
+          return;
+        }
+        const terminalStatus = (() => {
+          switch (event.type) {
+            case "turn.completed":
+              return runtimeTurnState(event) === "failed" ? ("error" as const) : ("ready" as const);
+            case "turn.aborted":
+              return "interrupted" as const;
+            case "session.exited":
+              return "stopped" as const;
+            case "session.state.changed": {
+              const status = orchestrationSessionStatusFromRuntimeState(event.payload.state);
+              return status === "ready" || status === "stopped" || status === "error"
+                ? status
+                : null;
+            }
+            default:
+              return null;
+          }
+        })();
+        if (terminalStatus !== null) {
+          const lastError =
+            event.type === "session.state.changed" && event.payload.state === "error"
+              ? (event.payload.reason ?? thread.session?.lastError ?? "Provider session error")
+              : event.type === "turn.completed" && runtimeTurnState(event) === "failed"
+                ? (runtimeTurnErrorMessage(event) ?? thread.session?.lastError ?? "Turn failed")
+                : terminalStatus === "ready" || terminalStatus === "interrupted"
+                  ? null
+                  : (thread.session?.lastError ?? null);
+          yield* orchestrationEngine.dispatch({
+            type: "thread.session.set",
+            commandId: providerCommandId(event, "deleted-thread-terminal-session-set"),
+            threadId: thread.id,
+            session: {
+              threadId: thread.id,
+              status: terminalStatus,
+              providerName: event.provider,
+              runtimeMode: thread.session?.runtimeMode ?? "full-access",
+              activeTurnId: null,
+              lastError,
+              updatedAt: now,
+            },
+            createdAt: now,
+          });
+        }
+        // A soft-deleted thread may only settle its active lifecycle. Content,
+        // metadata, and child-creation events must never resurrect it.
+        return;
+      }
       const codexAuthenticationErrorEventId =
         event.type === "session.exited" &&
         event.provider === "codex" &&

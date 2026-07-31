@@ -105,6 +105,7 @@ import {
 } from "../appSettings";
 import { isElectron } from "../env";
 import { showConfirmDialogFallback } from "../confirmDialogFallback";
+import { useKanbanUiStore } from "../kanbanUiStore";
 import { formatRelativeTime } from "../lib/relativeTime";
 import { isMacPlatform, newCommandId, newThreadId, randomUUID } from "../lib/utils";
 import {
@@ -3128,6 +3129,7 @@ export default function Sidebar() {
       threadId: ThreadId,
       opts: {
         deletedThreadIds?: ReadonlySet<ThreadId>;
+        expectedDescendantThreadIds?: readonly ThreadId[];
         reconcileDeletedThread?: boolean;
         worktreeCleanupMode?: "prompt" | "skip";
       } = {},
@@ -3138,8 +3140,18 @@ export default function Sidebar() {
       const thread = getThreadFromState(state, threadId);
       if (!thread) return;
       const allThreads = getThreadsFromState(state);
-      const subtreeThreads = [thread, ...collectSubagentDescendants(allThreads, threadId)];
-      const subtreeThreadIds = new Set(subtreeThreads.map((candidate) => candidate.id));
+      const threadById = new Map(allThreads.map((candidate) => [candidate.id, candidate] as const));
+      const expectedDescendantThreadIds =
+        opts.expectedDescendantThreadIds ??
+        collectSubagentDescendants(allThreads, threadId).map((candidate) => candidate.id);
+      const subtreeThreadIds = new Set<ThreadId>([threadId, ...expectedDescendantThreadIds]);
+      const subtreeThreads = [
+        thread,
+        ...expectedDescendantThreadIds.flatMap((descendantId) => {
+          const descendant = threadById.get(descendantId);
+          return descendant ? [descendant] : [];
+        }),
+      ];
       const threadProject = projectById.get(thread.projectId);
       // When bulk-deleting, exclude the other threads being deleted so
       // getOrphanedWorktreePathForThread correctly detects that no surviving
@@ -3167,23 +3179,6 @@ export default function Sidebar() {
           ].join("\n"),
         ));
 
-      if (thread.session && thread.session.status !== "closed") {
-        await api.orchestration
-          .dispatchCommand({
-            type: "thread.session.stop",
-            commandId: newCommandId(),
-            threadId,
-            createdAt: new Date().toISOString(),
-          })
-          .catch(() => undefined);
-      }
-
-      try {
-        await api.terminal.close({ threadId, deleteHistory: true });
-      } catch {
-        // Terminal may already be closed
-      }
-
       const allDeletedIds = deletedIds;
       const routeThreadIsDeleted = routeThreadId ? allDeletedIds.has(routeThreadId) : false;
       const deletedRouteThreadId = routeThreadIsDeleted && routeThreadId ? routeThreadId : threadId;
@@ -3203,8 +3198,13 @@ export default function Sidebar() {
         commandId: newCommandId(),
         threadId,
         cascadeDescendants: true,
-        expectedDescendantThreadIds: subtreeThreads.slice(1).map((candidate) => candidate.id),
+        expectedDescendantThreadIds,
       });
+      try {
+        await api.terminal.close({ threadId, deleteHistory: true });
+      } catch {
+        // Terminal may already be closed.
+      }
       if (opts.reconcileDeletedThread ?? true) {
         await reconcileDeletedThreadsFromClient({
           api,
@@ -3220,6 +3220,7 @@ export default function Sidebar() {
         }
       }
       for (const deletedThread of subtreeThreads) {
+        useKanbanUiStore.getState().clearOptimisticDispatch(deletedThread.id);
         terminalRuntimeRegistry.disposeThread(deletedThread.id);
         unpinThread(deletedThread.id);
         clearComposerDraftForThread(deletedThread.id);
@@ -3353,7 +3354,10 @@ export default function Sidebar() {
     async (threadId: ThreadId) => {
       const thread = sidebarThreadSummaryById[threadId];
       if (!thread) return;
-      const conversationCount = collectSubagentDescendants(sidebarThreads, threadId).length + 1;
+      const confirmedDescendantThreadIds = collectSubagentDescendants(sidebarThreads, threadId).map(
+        (candidate) => candidate.id,
+      );
+      const conversationCount = confirmedDescendantThreadIds.length + 1;
 
       if (appSettings.confirmThreadDelete) {
         const api = readNativeApi();
@@ -3373,7 +3377,11 @@ export default function Sidebar() {
         if (!confirmed) return;
       }
 
-      await deleteThread(threadId);
+      await deleteThread(threadId, {
+        ...(appSettings.confirmThreadDelete
+          ? { expectedDescendantThreadIds: confirmedDescendantThreadIds }
+          : {}),
+      });
     },
     [appSettings.confirmThreadDelete, deleteThread, sidebarThreadSummaryById, sidebarThreads],
   );
@@ -3414,6 +3422,9 @@ export default function Sidebar() {
       pendingThreadIds.add(threadId);
       try {
         await archiveThreadFromClient(api.orchestration, threadId);
+        for (const subtreeThread of subtreeThreads) {
+          useKanbanUiStore.getState().clearOptimisticDispatch(subtreeThread.id);
+        }
         const archivedRouteThreadId = resolveSubtreeRouteThreadId({
           threads: currentThreads,
           rootThreadId: threadId,
@@ -3763,6 +3774,7 @@ export default function Sidebar() {
         try {
           await deleteThread(root.id, {
             deletedThreadIds: deletedIds,
+            expectedDescendantThreadIds: subtree.slice(1).map((thread) => thread.id),
             reconcileDeletedThread: false,
             ...(options?.worktreeCleanupMode
               ? { worktreeCleanupMode: options.worktreeCleanupMode }
@@ -4186,6 +4198,7 @@ export default function Sidebar() {
           if (!root) continue;
           await deleteThread(root.id, {
             deletedThreadIds: deletedIds,
+            expectedDescendantThreadIds: subtree.slice(1).map((thread) => thread.id),
             reconcileDeletedThread: false,
           });
           successfullyDeletedIds.push(...subtree.map((thread) => thread.id));

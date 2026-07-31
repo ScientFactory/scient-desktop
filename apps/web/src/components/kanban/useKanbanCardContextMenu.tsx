@@ -130,17 +130,19 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
   }, []);
 
   const deleteCardThread = useCallback(
-    async (card: KanbanCard) => {
-      // A deleted thread can never reconcile its optimistic dispatch — drop the
-      // entry first so no phantom In Progress card survives the deletion.
-      useKanbanUiStore.getState().clearOptimisticDispatch(card.threadId);
+    async (
+      card: KanbanCard,
+      options?: { readonly expectedDescendantThreadIds?: readonly ThreadId[] },
+    ) => {
       // Local-only draft (never promoted): just drop it from the draft store.
       if (card.thread === null) {
+        useKanbanUiStore.getState().clearOptimisticDispatch(card.threadId);
         clearDraftThread(card.threadId);
         return;
       }
       // A settled thread can have a separate draft card for its unsent composer prompt.
       if (isKanbanDraftOnlyCard(card)) {
+        useKanbanUiStore.getState().clearOptimisticDispatch(card.threadId);
         clearComposerContent(card.threadId);
         return;
       }
@@ -157,10 +159,17 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
       const thread = getThreadFromState(state, card.threadId);
       if (!thread) return;
       const allThreads = getThreadsFromState(state);
-      const subtreeThreads = [thread, ...collectSubagentDescendants(allThreads, card.threadId)];
-      for (const subtreeThread of subtreeThreads) {
-        useKanbanUiStore.getState().clearOptimisticDispatch(subtreeThread.id);
-      }
+      const threadById = new Map(allThreads.map((candidate) => [candidate.id, candidate] as const));
+      const expectedDescendantThreadIds =
+        options?.expectedDescendantThreadIds ??
+        collectSubagentDescendants(allThreads, card.threadId).map((candidate) => candidate.id);
+      const subtreeThreads = [
+        thread,
+        ...expectedDescendantThreadIds.flatMap((descendantId) => {
+          const descendant = threadById.get(descendantId);
+          return descendant ? [descendant] : [];
+        }),
+      ];
       const project = state.projects.find((candidate) => candidate.id === thread.projectId) ?? null;
       const orphanedWorktreePath = getOrphanedWorktreePathForThread(
         allThreads.filter(
@@ -185,34 +194,25 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
           ].join("\n"),
         ));
 
-      if (thread.session && thread.session.status !== "closed") {
-        await api.orchestration
-          .dispatchCommand({
-            type: "thread.session.stop",
-            commandId: newCommandId(),
-            threadId: card.threadId,
-            createdAt: new Date().toISOString(),
-          })
-          .catch(() => undefined);
-      }
-      try {
-        await api.terminal.close({ threadId: card.threadId, deleteHistory: true });
-      } catch {
-        // Terminal may already be closed.
-      }
       await api.orchestration.dispatchCommand({
         type: "thread.delete",
         commandId: newCommandId(),
         threadId: card.threadId,
         cascadeDescendants: true,
-        expectedDescendantThreadIds: subtreeThreads.slice(1).map((candidate) => candidate.id),
+        expectedDescendantThreadIds,
       });
+      try {
+        await api.terminal.close({ threadId: card.threadId, deleteHistory: true });
+      } catch {
+        // Terminal may already be closed.
+      }
       await reconcileDeletedThreadsFromClient({
         api,
         threadIds: subtreeThreads.map((candidate) => candidate.id),
         removeDeletedThreadFromClientState: useStore.getState().removeDeletedThreadFromClientState,
       });
       for (const deletedThread of subtreeThreads) {
+        useKanbanUiStore.getState().clearOptimisticDispatch(deletedThread.id);
         terminalRuntimeRegistry.disposeThread(deletedThread.id);
         clearDraftThread(deletedThread.id);
         clearProjectDraftThreadById(deletedThread.projectId, deletedThread.id);
@@ -363,12 +363,16 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
           return;
         }
         if (clicked !== "delete") return;
+        let confirmedDescendantThreadIds: readonly ThreadId[] | undefined;
         if (settings.confirmThreadDelete) {
           const storedThread = getThreadFromState(useStore.getState(), card.threadId);
-          const conversationCount = storedThread
-            ? collectSubagentDescendants(getThreadsFromState(useStore.getState()), card.threadId)
-                .length + 1
-            : 1;
+          confirmedDescendantThreadIds = storedThread
+            ? collectSubagentDescendants(
+                getThreadsFromState(useStore.getState()),
+                card.threadId,
+              ).map((thread) => thread.id)
+            : [];
+          const conversationCount = confirmedDescendantThreadIds.length + 1;
           const confirmed = await api.dialogs.confirm(
             deletesOnlyDraft
               ? `Delete this draft? This removes its unsent prompt.`
@@ -384,7 +388,11 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
           );
           if (!confirmed) return;
         }
-        await deleteCardThread(card);
+        await deleteCardThread(card, {
+          ...(confirmedDescendantThreadIds
+            ? { expectedDescendantThreadIds: confirmedDescendantThreadIds }
+            : {}),
+        });
       })().catch((error: unknown) => {
         setFeedback({
           tone: "error",

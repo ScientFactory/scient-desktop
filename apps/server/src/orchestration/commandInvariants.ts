@@ -284,11 +284,16 @@ export function requireValidThreadParent(input: {
     return Effect.fail(invariantError(input.command.type, "A thread cannot be its own parent."));
   }
   const parent = findThreadById(input.readModel, input.parentThreadId);
-  if (!parent || parent.deletedAt !== null || parent.projectId !== input.projectId) {
+  if (
+    !parent ||
+    parent.deletedAt !== null ||
+    parent.archivedAt !== null ||
+    parent.projectId !== input.projectId
+  ) {
     return Effect.fail(
       invariantError(
         input.command.type,
-        `Parent thread '${input.parentThreadId}' must be a live thread in project '${input.projectId}'.`,
+        `Parent thread '${input.parentThreadId}' must be an active thread in project '${input.projectId}'.`,
       ),
     );
   }
@@ -297,13 +302,35 @@ export function requireValidThreadParent(input: {
   const visited = new Set<ThreadId>();
   let current: OrchestrationThread | undefined = parent;
   while (current) {
+    if (
+      current.deletedAt !== null ||
+      current.archivedAt !== null ||
+      current.projectId !== input.projectId
+    ) {
+      return Effect.fail(
+        invariantError(
+          input.command.type,
+          `Every parent ancestor must be active in project '${input.projectId}'.`,
+        ),
+      );
+    }
     if (current.id === input.threadId || visited.has(current.id)) {
       return Effect.fail(
         invariantError(input.command.type, "Thread parent assignment would create a cycle."),
       );
     }
     visited.add(current.id);
-    current = current.parentThreadId ? threadById.get(current.parentThreadId) : undefined;
+    if (!current.parentThreadId) break;
+    const nextParent = threadById.get(current.parentThreadId);
+    if (!nextParent) {
+      return Effect.fail(
+        invariantError(
+          input.command.type,
+          `Parent ancestry is incomplete at '${current.parentThreadId}'.`,
+        ),
+      );
+    }
+    current = nextParent;
   }
   return Effect.void;
 }

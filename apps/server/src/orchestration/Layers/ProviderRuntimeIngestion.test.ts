@@ -309,6 +309,71 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBe("turn failed");
   });
 
+  it("settles a soft-deleted active thread without ingesting new content", async () => {
+    const harness = await createHarness();
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-deleted");
+    const now = new Date().toISOString();
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-deleted-thread-running"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.makeUnsafe("cmd-soft-delete-active-thread"),
+        threadId,
+      }),
+    );
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-deleted-stale-turn-aborted"),
+      provider: "codex",
+      threadId,
+      createdAt: new Date().toISOString(),
+      turnId: asTurnId("turn-stale"),
+      payload: {},
+    });
+    await harness.drain();
+    const stillActive = await Effect.runPromise(harness.engine.getReadModel());
+    expect(
+      stillActive.threads.find((thread) => thread.id === threadId)?.session?.activeTurnId,
+    ).toBe(turnId);
+
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-deleted-turn-aborted"),
+      provider: "codex",
+      threadId,
+      createdAt: new Date().toISOString(),
+      turnId,
+      payload: {},
+    });
+
+    const settled = await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.deletedAt !== null &&
+        thread.session?.status === "interrupted" &&
+        thread.session.activeTurnId === null,
+    );
+    expect(settled.messages).toEqual([]);
+  });
+
   it("applies provider session.state.changed transitions directly", async () => {
     const harness = await createHarness();
     const waitingAt = new Date().toISOString();

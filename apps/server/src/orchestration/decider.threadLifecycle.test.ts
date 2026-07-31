@@ -58,8 +58,8 @@ function makeThread(input: {
     proposedPlans: [],
     checkpoints: [],
     deletedAt: input.deletedAt ?? null,
+    archivedAt: input.archivedAt ?? null,
     ...(input.parentThreadId !== undefined ? { parentThreadId: input.parentThreadId } : {}),
-    ...(input.archivedAt !== undefined ? { archivedAt: input.archivedAt } : {}),
   } as OrchestrationReadModel["threads"][number];
 }
 
@@ -328,7 +328,7 @@ describe("thread subtree lifecycle decisions", () => {
           readModel,
         }),
       ),
-    ).rejects.toThrow("must be a live thread in project");
+    ).rejects.toThrow("must be an active thread in project");
     await expect(
       Effect.runPromise(
         decideOrchestrationCommand({
@@ -342,5 +342,96 @@ describe("thread subtree lifecycle decisions", () => {
         }),
       ),
     ).rejects.toThrow("would create a cycle");
+  });
+
+  it("rejects archived or invalid ancestor chains for new subagents", async () => {
+    const archivedParent = ThreadId.makeUnsafe("thread-archived-parent");
+    const orphanParent = ThreadId.makeUnsafe("thread-orphan-parent");
+    const missingAncestor = ThreadId.makeUnsafe("thread-missing-ancestor");
+    const makeCommand = (parentThreadId: ThreadId) => ({
+      type: "thread.meta.update" as const,
+      commandId: CommandId.makeUnsafe(`cmd-parent-${parentThreadId}`),
+      threadId: CHILD,
+      parentThreadId,
+    });
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: makeCommand(archivedParent),
+          readModel: makeReadModel([
+            makeThread({ id: CHILD }),
+            makeThread({ id: archivedParent, archivedAt: NOW }),
+          ]),
+        }),
+      ),
+    ).rejects.toThrow("must be an active thread");
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: makeCommand(orphanParent),
+          readModel: makeReadModel([
+            makeThread({ id: CHILD }),
+            makeThread({ id: orphanParent, parentThreadId: missingAncestor }),
+          ]),
+        }),
+      ),
+    ).rejects.toThrow("Parent ancestry is incomplete");
+  });
+
+  it("allows only terminal lifecycle settlement on a soft-deleted thread", async () => {
+    const activeTurnId = TurnId.makeUnsafe("turn-deleted-child");
+    const deletedChild = makeThread({
+      id: CHILD,
+      parentThreadId: PARENT,
+      deletedAt: NOW,
+      activeTurnId,
+    });
+    const terminalResult = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.session.set",
+          commandId: CommandId.makeUnsafe("cmd-settle-deleted-child"),
+          threadId: CHILD,
+          session: {
+            threadId: CHILD,
+            status: "interrupted",
+            providerName: "codex",
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: NOW,
+          },
+          createdAt: NOW,
+        },
+        readModel: makeReadModel([makeThread({ id: PARENT }), deletedChild]),
+      }),
+    );
+    if (!("type" in terminalResult)) throw new Error("expected one terminal settlement event");
+    expect(terminalResult.type).toBe("thread.session-set");
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "thread.session.set",
+            commandId: CommandId.makeUnsafe("cmd-restart-deleted-child"),
+            threadId: CHILD,
+            session: {
+              threadId: CHILD,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "approval-required",
+              activeTurnId,
+              lastError: null,
+              updatedAt: NOW,
+            },
+            createdAt: NOW,
+          },
+          readModel: makeReadModel([makeThread({ id: PARENT }), deletedChild]),
+        }),
+      ),
+    ).rejects.toThrow("only accepts terminal session settlement");
   });
 });

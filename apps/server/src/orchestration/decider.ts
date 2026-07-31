@@ -1636,11 +1636,26 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.session.set": {
-      const thread = yield* requireThread({
-        readModel,
-        command,
-        threadId: command.threadId,
-      });
+      const thread = findThreadById(readModel, command.threadId);
+      if (!thread) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' does not exist for command '${command.type}'.`,
+        });
+      }
+      const isDeletedThreadTerminalSettlement =
+        thread.deletedAt !== null &&
+        command.session.activeTurnId === null &&
+        (command.session.status === "ready" ||
+          command.session.status === "interrupted" ||
+          command.session.status === "stopped" ||
+          command.session.status === "error");
+      if (thread.deletedAt !== null && !isDeletedThreadTerminalSettlement) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Deleted thread '${command.threadId}' only accepts terminal session settlement.`,
+        });
+      }
       const sessionEvent: Omit<OrchestrationEvent, "sequence"> = {
         ...withEventBase({
           aggregateKind: "thread",
@@ -1655,6 +1670,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           session: command.session,
         },
       };
+      if (isDeletedThreadTerminalSettlement) return sessionEvent;
       const settlement = collectAssistantMessagesToSettle({
         thread,
         nextSession: command.session,

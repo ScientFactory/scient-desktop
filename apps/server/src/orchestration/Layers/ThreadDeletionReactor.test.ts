@@ -1,4 +1,4 @@
-import { ThreadId, TurnId, type OrchestrationReadModel } from "@synara/contracts";
+import { ProjectId, ThreadId, TurnId, type OrchestrationReadModel } from "@synara/contracts";
 import { Cause, Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -7,6 +7,7 @@ import {
   logCleanupCauseUnlessInterrupted,
   providerCleanupCanPurgeImmediately,
   resolveDeletedThreadProviderCleanup,
+  waitForDeletedSubagentSettlement,
 } from "./ThreadDeletionReactor";
 
 function cleanupReadModel(
@@ -15,11 +16,17 @@ function cleanupReadModel(
     readonly parentThreadId?: ThreadId;
     readonly activeTurnId?: TurnId;
     readonly status?: "running" | "interrupted";
+    readonly projectId?: ProjectId;
+    readonly archivedAt?: string;
+    readonly deletedAt?: string;
   }>,
 ): OrchestrationReadModel {
   return {
     threads: threads.map((thread) => ({
       id: thread.id,
+      projectId: thread.projectId ?? ProjectId.makeUnsafe("project-lifecycle"),
+      archivedAt: thread.archivedAt ?? null,
+      deletedAt: thread.deletedAt ?? null,
       ...(thread.parentThreadId ? { parentThreadId: thread.parentThreadId } : {}),
       session: thread.activeTurnId
         ? {
@@ -119,6 +126,35 @@ describe("resolveDeletedThreadProviderCleanup", () => {
     ).toEqual({ kind: "defer-active-subagent", threadId: childId });
   });
 
+  it("defers cleanup when any provider-owner ancestor crosses a lifecycle boundary", () => {
+    const rootId = ThreadId.makeUnsafe("thread-root");
+    const childId = ThreadId.makeUnsafe("subagent:thread-root:provider-child");
+    const grandchildId = ThreadId.makeUnsafe(
+      "subagent:subagent:thread-root:provider-child:provider-grandchild",
+    );
+    const turnId = TurnId.makeUnsafe("turn-grandchild");
+    expect(
+      resolveDeletedThreadProviderCleanup(
+        cleanupReadModel([
+          { id: rootId, projectId: ProjectId.makeUnsafe("project-other") },
+          { id: childId, parentThreadId: rootId },
+          { id: grandchildId, parentThreadId: childId, activeTurnId: turnId },
+        ]),
+        grandchildId,
+      ),
+    ).toEqual({ kind: "defer-active-subagent", threadId: grandchildId });
+
+    expect(
+      resolveDeletedThreadProviderCleanup(
+        cleanupReadModel([
+          { id: rootId, archivedAt: "2026-07-31T08:00:00.000Z" },
+          { id: childId, parentThreadId: rootId, activeTurnId: turnId },
+        ]),
+        childId,
+      ),
+    ).toEqual({ kind: "defer-active-subagent", threadId: childId });
+  });
+
   it("keeps routing interrupted subagents with an unsettled active turn through their owner", () => {
     const parentId = ThreadId.makeUnsafe("thread-parent");
     const childId = ThreadId.makeUnsafe("subagent:thread-parent:provider-child");
@@ -157,6 +193,49 @@ describe("providerCleanupCanPurgeImmediately", () => {
       false,
     );
     expect(providerCleanupCanPurgeImmediately({ kind: "stop-session", threadId })).toBe(true);
+  });
+});
+
+describe("waitForDeletedSubagentSettlement", () => {
+  it("observes terminal settlement in-process before allowing purge", async () => {
+    const threadId = ThreadId.makeUnsafe("subagent:parent:child");
+    const turnId = TurnId.makeUnsafe("turn-child");
+    let reads = 0;
+    const settled = await Effect.runPromise(
+      waitForDeletedSubagentSettlement({
+        threadId,
+        attempts: 3,
+        intervalMs: 0,
+        getReadModel: () => {
+          reads += 1;
+          return Effect.succeed(
+            cleanupReadModel([
+              {
+                id: threadId,
+                ...(reads < 2 ? { activeTurnId: turnId } : {}),
+              },
+            ]),
+          );
+        },
+      }),
+    );
+    expect(settled).toBe(true);
+    expect(reads).toBe(2);
+  });
+
+  it("times out safely when no terminal settlement arrives", async () => {
+    const threadId = ThreadId.makeUnsafe("subagent:parent:child");
+    const turnId = TurnId.makeUnsafe("turn-child");
+    const settled = await Effect.runPromise(
+      waitForDeletedSubagentSettlement({
+        threadId,
+        attempts: 2,
+        intervalMs: 0,
+        getReadModel: () =>
+          Effect.succeed(cleanupReadModel([{ id: threadId, activeTurnId: turnId }])),
+      }),
+    );
+    expect(settled).toBe(false);
   });
 });
 

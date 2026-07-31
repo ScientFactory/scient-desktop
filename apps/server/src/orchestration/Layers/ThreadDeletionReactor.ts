@@ -24,6 +24,8 @@ type ThreadDeletedEvent = Extract<OrchestrationEvent, { type: "thread.deleted" }
 const PURGE_STARTUP_SWEEP_DELAY_MS = 60 * 1000;
 
 const MISSING_PROVIDER_BINDING_DETAIL = "no persisted provider binding exists";
+const SUBAGENT_SETTLEMENT_POLL_ATTEMPTS = 50;
+const SUBAGENT_SETTLEMENT_POLL_INTERVAL_MS = 100;
 
 export type DeletedThreadProviderCleanup =
   | {
@@ -44,6 +46,25 @@ export type DeletedThreadProviderCleanup =
 export function providerCleanupCanPurgeImmediately(cleanup: DeletedThreadProviderCleanup): boolean {
   return cleanup.kind === "stop-session";
 }
+
+export const waitForDeletedSubagentSettlement = Effect.fn("waitForDeletedSubagentSettlement")(
+  function* (input: {
+    readonly getReadModel: () => Effect.Effect<OrchestrationReadModel, unknown>;
+    readonly threadId: ThreadId;
+    readonly attempts?: number;
+    readonly intervalMs?: number;
+  }) {
+    const attempts = Math.max(1, input.attempts ?? SUBAGENT_SETTLEMENT_POLL_ATTEMPTS);
+    const intervalMs = Math.max(0, input.intervalMs ?? SUBAGENT_SETTLEMENT_POLL_INTERVAL_MS);
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const readModel = yield* input.getReadModel();
+      const thread = readModel.threads.find((candidate) => candidate.id === input.threadId);
+      if (!thread || (thread.session?.activeTurnId ?? null) === null) return true;
+      if (attempt + 1 < attempts) yield* Effect.sleep(intervalMs);
+    }
+    return false;
+  },
+);
 
 /**
  * Resolves provider cleanup before a deleted thread is hard-purged. Subagents
@@ -67,7 +88,13 @@ export function resolveDeletedThreadProviderCleanup(
   const directParent = threadById.get(directParentId);
   const providerThreadPrefix = `subagent:${directParentId}:`;
   const rawThreadId = String(thread.id);
-  if (!directParent || !rawThreadId.startsWith(providerThreadPrefix)) {
+  if (
+    !directParent ||
+    directParent.deletedAt !== null ||
+    directParent.archivedAt !== null ||
+    directParent.projectId !== thread.projectId ||
+    !rawThreadId.startsWith(providerThreadPrefix)
+  ) {
     return { kind: "defer-active-subagent", threadId };
   }
 
@@ -83,8 +110,19 @@ export function resolveDeletedThreadProviderCleanup(
       return { kind: "defer-active-subagent", threadId };
     }
     visitedThreadIds.add(providerOwner.id);
+    const expectedOwnerPrefix = `subagent:${providerOwner.parentThreadId}:`;
+    if (!String(providerOwner.id).startsWith(expectedOwnerPrefix)) {
+      return { kind: "defer-active-subagent", threadId };
+    }
     const parent = threadById.get(providerOwner.parentThreadId);
-    if (!parent) break;
+    if (
+      !parent ||
+      parent.deletedAt !== null ||
+      parent.archivedAt !== null ||
+      parent.projectId !== thread.projectId
+    ) {
+      return { kind: "defer-active-subagent", threadId };
+    }
     providerOwner = parent;
   }
 
@@ -206,8 +244,16 @@ const make = Effect.gen(function* () {
           }),
         );
       if (interruptAcknowledged) {
-        yield* Effect.logDebug(
-          "thread deletion cleanup deferred purge until subagent terminal settlement",
+        yield* Effect.logDebug("thread deletion cleanup waiting for subagent terminal settlement", {
+          threadId,
+        });
+        const settled = yield* waitForDeletedSubagentSettlement({
+          getReadModel: orchestrationEngine.getReadModel,
+          threadId,
+        });
+        if (settled) return true;
+        yield* Effect.logWarning(
+          "thread deletion cleanup timed out waiting for subagent terminal settlement",
           { threadId },
         );
       }
