@@ -321,6 +321,20 @@ layer("AgentGateway automation provenance", (it) => {
             finishedAt: new Date().toISOString(),
           });
         }
+        // A conflicting later projection cannot erase the original automation
+        // provenance and unlock ordinary provider authority.
+        yield* projectionThreadMessageRepository.upsert({
+          messageId: seeded.grantedMessageId,
+          threadId: seeded.threadId,
+          turnId,
+          role: "user",
+          text: "Run the automation task.",
+          dispatchOrigin: "user",
+          isStreaming: false,
+          source: "native",
+          createdAt: new Date(Date.now() - 1_000).toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
         const shell = {
           id: seeded.threadId,
           projectId: seeded.projectId,
@@ -369,6 +383,63 @@ layer("AgentGateway automation provenance", (it) => {
         shell,
         resolveAutomationAuthority: makeAutomationAuthorityResolver({
           automationRepository: seeded.automationRepository,
+          projectionTurnRepository,
+          projectionThreadMessageRepository,
+        }),
+      });
+    }),
+  );
+
+  it.effect("denies terminal provider fallback when pending-message origin is unknown", () =>
+    Effect.gen(function* () {
+      yield* runMigrations();
+      const automationRepository = yield* AutomationRepository;
+      const projectionTurnRepository = yield* ProjectionTurnRepository;
+      const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.makeUnsafe("thread:terminal-unknown-origin");
+      const projectId = ProjectId.makeUnsafe("project:terminal-unknown-origin");
+      const turnId = TurnId.makeUnsafe("turn:terminal-unknown-origin");
+      const messageId = MessageId.makeUnsafe("message:terminal-unknown-origin");
+      const createdAt = new Date(Date.now() - 1_000).toISOString();
+      yield* projectionTurnRepository.upsertByTurnId({
+        threadId,
+        turnId,
+        pendingMessageId: messageId,
+        sourceProposedPlanThreadId: null,
+        sourceProposedPlanId: null,
+        assistantMessageId: null,
+        state: "running",
+        requestedAt: createdAt,
+        startedAt: createdAt,
+        completedAt: null,
+        checkpointTurnCount: null,
+        checkpointRef: null,
+        checkpointStatus: null,
+        checkpointFiles: [],
+      });
+      yield* projectionThreadMessageRepository.upsert({
+        messageId,
+        threadId,
+        turnId,
+        role: "user",
+        text: "A legacy message with ambiguous provenance.",
+        isStreaming: false,
+        source: "native",
+        createdAt,
+        updatedAt: createdAt,
+      });
+      const shell = {
+        id: threadId,
+        projectId,
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        session: { providerName: "codex", status: "running" },
+        latestTurn: { turnId, state: "running" },
+      } as unknown as OrchestrationThreadShell;
+
+      yield* assertReadAndWriteDenied({
+        shell,
+        resolveAutomationAuthority: makeAutomationAuthorityResolver({
+          automationRepository,
           projectionTurnRepository,
           projectionThreadMessageRepository,
         }),

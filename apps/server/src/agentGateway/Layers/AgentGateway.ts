@@ -134,10 +134,10 @@ export function makeAutomationAuthorityResolver(input: {
             ),
           );
         }
-        if (message.dispatchOrigin === "automation") {
+        if (message.dispatchOrigin !== "user") {
           return yield* Effect.fail(
             automationAuthorityFailure(
-              "This provider turn retains terminal automation provenance and cannot use ordinary provider authority.",
+              "This provider turn does not have explicit ordinary-user provenance and cannot use provider authority.",
             ),
           );
         }

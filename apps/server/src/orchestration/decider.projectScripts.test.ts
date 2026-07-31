@@ -479,7 +479,7 @@ describe("decider project scripts", () => {
     expect(events[0]?.type).toBe("thread.message-sent");
     if (events[0]?.type === "thread.message-sent") {
       expect(events[0].payload.dispatchSource).toBe("agent");
-      expect(events[0].payload.dispatchOrigin).toBeUndefined();
+      expect(events[0].payload.dispatchOrigin).toBe("user");
     }
     const turnStartEvent = events[1];
     expect(turnStartEvent?.type).toBe("thread.turn-start-requested");
