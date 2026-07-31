@@ -24,9 +24,14 @@ import {
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 import {
+  OrchestrationCommandReceiptRepository,
+  type OrchestrationCommandReceiptRepositoryShape,
+} from "../../persistence/Services/OrchestrationCommandReceipts.ts";
+import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
 } from "../../persistence/Services/OrchestrationEventStore.ts";
+import { OrchestrationCommandInternalError } from "../Errors.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
@@ -126,6 +131,26 @@ const makeCommitFinalizerGatePersistence = (
       });
     }),
   ).pipe(Layer.provide(SqlitePersistenceMemory));
+
+const makeControllableReceiptRepository = (control: { failReads: boolean }) =>
+  Layer.effect(
+    OrchestrationCommandReceiptRepository,
+    Effect.gen(function* () {
+      const delegate = yield* OrchestrationCommandReceiptRepository;
+      return {
+        ...delegate,
+        getByCommandId: (input) =>
+          control.failReads
+            ? Effect.fail(
+                new PersistenceSqlError({
+                  operation: "test.receipt-reconciliation",
+                  detail: "Injected receipt read failure",
+                }),
+              )
+            : delegate.getByCommandId(input),
+      } satisfies OrchestrationCommandReceiptRepositoryShape;
+    }),
+  ).pipe(Layer.provide(OrchestrationCommandReceiptRepositoryLive));
 
 describe("OrchestrationEngine", () => {
   it("returns deterministic read models for repeated reads", async () => {
@@ -1140,12 +1165,16 @@ describe("OrchestrationEngine", () => {
       releaseFinalizer,
       finalizerGate,
     );
+    const deferredSequences: number[] = [];
     const projectionPipeline: OrchestrationProjectionPipelineShape = {
       bootstrap: Effect.void,
       projectMetadataEvent: () => Effect.void,
       projectEvent: () => Effect.void,
       projectHotEventInCurrentTransaction: () => Effect.void,
-      projectDeferredEvent: () => Effect.void,
+      projectDeferredEvent: (event) =>
+        Effect.sync(() => {
+          deferredSequences.push(event.sequence);
+        }),
     };
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
@@ -1185,6 +1214,73 @@ describe("OrchestrationEngine", () => {
       ),
     );
     expect(events.map((event) => event.commandId)).toEqual([protectedCommandId]);
+    expect(deferredSequences).toEqual([1]);
+    await runtime.dispose();
+  });
+
+  it("reports an uncertain protected outcome when committed receipt reconciliation fails", async () => {
+    const enteredFinalizer = await Effect.runPromise(Deferred.make<void>());
+    const releaseFinalizer = await Effect.runPromise(Deferred.make<void>());
+    const finalizerGate = { armed: false };
+    const receiptControl = { failReads: false };
+    const persistence = makeCommitFinalizerGatePersistence(
+      enteredFinalizer,
+      releaseFinalizer,
+      finalizerGate,
+    );
+    const receiptRepository = makeControllableReceiptRepository(receiptControl);
+    const deferredSequences: number[] = [];
+    const projectionPipeline: OrchestrationProjectionPipelineShape = {
+      bootstrap: Effect.void,
+      projectMetadataEvent: () => Effect.void,
+      projectEvent: () => Effect.void,
+      projectHotEventInCurrentTransaction: () => Effect.void,
+      projectDeferredEvent: (event) =>
+        Effect.sync(() => {
+          deferredSequences.push(event.sequence);
+        }),
+    };
+    const runtime = ManagedRuntime.make(
+      OrchestrationEngineLive.pipe(
+        Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, projectionPipeline)),
+        Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+        Layer.provide(OrchestrationEventStoreLive),
+        Layer.provide(receiptRepository),
+        Layer.provide(persistence),
+      ),
+    );
+    const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    finalizerGate.armed = true;
+    const revocation = await Effect.runPromise(Deferred.make<void>());
+    const protectedCommandId = CommandId.makeUnsafe("cmd-protected-receipt-read-failure");
+    const protectedOutcome = runtime.runPromise(
+      engine.dispatchProtected(
+        {
+          type: "project.create",
+          commandId: protectedCommandId,
+          projectId: asProjectId("project-protected-receipt-read-failure"),
+          title: "Protected uncertain result",
+          workspaceRoot: "/tmp/project-protected-receipt-read-failure",
+          createdAt: now(),
+        },
+        Deferred.await(revocation),
+      ),
+    );
+
+    await Effect.runPromise(Deferred.await(enteredFinalizer));
+    receiptControl.failReads = true;
+    await Effect.runPromise(Deferred.succeed(revocation, undefined));
+    await Effect.runPromise(Deferred.succeed(releaseFinalizer, undefined));
+
+    await expect(protectedOutcome).rejects.toBeInstanceOf(OrchestrationCommandInternalError);
+    await expect(protectedOutcome).rejects.toThrow("outcome is uncertain");
+    const events = await runtime.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(events.map((event) => event.commandId)).toEqual([protectedCommandId]);
+    expect(deferredSequences).toEqual([1]);
     await runtime.dispose();
   });
 

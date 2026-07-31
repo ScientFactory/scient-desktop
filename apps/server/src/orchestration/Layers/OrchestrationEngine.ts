@@ -176,7 +176,16 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           commandId: command.commandId,
         }),
       );
-      const existingReceipt = receiptExit._tag === "Success" ? receiptExit.value : Option.none();
+      if (receiptExit._tag === "Failure") {
+        return yield* new OrchestrationCommandInternalError({
+          commandId: command.commandId,
+          commandType: command.type,
+          detail:
+            "Command outcome is uncertain because its durable receipt could not be reconciled. Reconcile local state before retrying.",
+          cause: Cause.squash(receiptExit.cause),
+        });
+      }
+      const existingReceipt = receiptExit.value;
       if (Option.isNone(existingReceipt)) {
         return yield* makeCommandTimeoutError(command);
       }
@@ -237,6 +246,47 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       )
       .pipe(Effect.forkIn(deferredProjectionScope), Effect.asVoid);
   });
+
+  const projectDeferredCommittedEvents = (events: ReadonlyArray<OrchestrationEvent>) =>
+    Effect.forEach(
+      events,
+      (event) =>
+        Effect.gen(function* () {
+          const isDeferredProjectionDirty = yield* Ref.get(deferredProjectionDirty);
+          if (isDeferredProjectionDirty) {
+            yield* scheduleDeferredProjectionCatchUp({
+              eventType: event.type,
+              sequence: event.sequence,
+            });
+            return;
+          }
+
+          const deferredProjectionOutcome = yield* projectionPipeline
+            .projectDeferredEvent(event)
+            .pipe(
+              Effect.matchCause({
+                onFailure: (cause) => ({ _tag: "failure" as const, cause }),
+                onSuccess: () => ({ _tag: "success" as const }),
+              }),
+            );
+
+          if (deferredProjectionOutcome._tag === "success") {
+            return;
+          }
+
+          yield* Ref.set(deferredProjectionDirty, true);
+          yield* Effect.logWarning("deferred orchestration projector failed", {
+            sequence: event.sequence,
+            eventType: event.type,
+            cause: Cause.pretty(deferredProjectionOutcome.cause),
+          });
+          yield* scheduleDeferredProjectionCatchUp({
+            eventType: event.type,
+            sequence: event.sequence,
+          });
+        }),
+      { concurrency: 1 },
+    );
 
   const refreshCommandReadModelFromProjectionState = Effect.gen(function* () {
     const nextCommandReadModel = yield* projectionSnapshotQuery.getCommandReadModel();
@@ -412,6 +462,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       }
       commandReadModel = nextCommandReadModel;
 
+      yield* projectDeferredCommittedEvents(persistedEvents);
       for (const persistedEvent of persistedEvents) {
         yield* PubSub.publish(eventPubSub, persistedEvent);
       }
@@ -563,45 +614,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       }
 
       commandReadModel = committedCommand.nextCommandReadModel;
-      yield* Effect.forEach(
-        committedCommand.committedEvents,
-        (event) =>
-          Effect.gen(function* () {
-            const isDeferredProjectionDirty = yield* Ref.get(deferredProjectionDirty);
-            if (isDeferredProjectionDirty) {
-              yield* scheduleDeferredProjectionCatchUp({
-                eventType: event.type,
-                sequence: event.sequence,
-              });
-              return;
-            }
-
-            const deferredProjectionOutcome = yield* projectionPipeline
-              .projectDeferredEvent(event)
-              .pipe(
-                Effect.matchCause({
-                  onFailure: (cause) => ({ _tag: "failure" as const, cause }),
-                  onSuccess: () => ({ _tag: "success" as const }),
-                }),
-              );
-
-            if (deferredProjectionOutcome._tag === "success") {
-              return;
-            }
-
-            yield* Ref.set(deferredProjectionDirty, true);
-            yield* Effect.logWarning("deferred orchestration projector failed", {
-              sequence: event.sequence,
-              eventType: event.type,
-              cause: Cause.pretty(deferredProjectionOutcome.cause),
-            });
-            yield* scheduleDeferredProjectionCatchUp({
-              eventType: event.type,
-              sequence: event.sequence,
-            });
-          }),
-        { concurrency: 1 },
-      );
+      yield* projectDeferredCommittedEvents(committedCommand.committedEvents);
       for (const event of committedCommand.committedEvents) {
         yield* PubSub.publish(eventPubSub, event);
       }
@@ -654,7 +667,10 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             // exists, so preserve the resolver's established timeout/rejection
             // result. Revocation is different: without an accepted durable
             // receipt, the exact-session cancellation remains authoritative.
-            if (timedOut) {
+            if (
+              timedOut ||
+              !Schema.is(OrchestrationCommandTimeoutError)(resolvedAmbiguousOutcome.left)
+            ) {
               error = resolvedAmbiguousOutcome.left;
             }
           }
