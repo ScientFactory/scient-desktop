@@ -16,6 +16,7 @@ import {
 } from "../scientOperations/authority.ts";
 import {
   BROWSER_EVIDENCE_CAPABILITY_BY_OPERATION,
+  MAX_AUTOMATION_CONTEXT_RECEIPTS_PER_PROPOSAL,
   MAX_BROWSER_EVIDENCE_ENVELOPE_AGE_MS,
   MAX_BROWSER_EVIDENCE_LEASE_TTL_MS,
   MAX_BROWSER_EVIDENCE_REUSE_COUNT,
@@ -77,6 +78,60 @@ interface ReceiptActorInput {
   /** Exact host-minted propose/accept/export operation for this append. */
   readonly authorizedOperation: ScientOperationRequestEnvelope;
   readonly receiptId?: string;
+}
+
+/**
+ * A1 extends the central automation actor with these exact host-resolved
+ * fields. Keep the structural check local until that independent lane lands;
+ * old two-field automation actors must fail closed when composed here.
+ */
+interface ExactAutomationActorBinding {
+  readonly kind: "automation-run";
+  readonly automationId: string;
+  readonly runId: string;
+  readonly grantVersion: 1;
+  readonly automationVersion: string;
+  readonly threadId: string;
+  readonly pendingMessageId: string;
+  readonly authorizingTurnId: string;
+}
+
+function exactAutomationActorBinding(
+  actor: ScientOperationAuthority["actor"],
+): ExactAutomationActorBinding {
+  const candidate = actor as ScientOperationAuthority["actor"] &
+    Partial<ExactAutomationActorBinding>;
+  if (candidate.kind !== "automation-run") {
+    throw new BrowserEvidenceContractError(
+      "actor_scope_denied",
+      "An exact automation actor binding is required.",
+    );
+  }
+  if (candidate.grantVersion !== 1) {
+    throw new BrowserEvidenceContractError(
+      "actor_scope_denied",
+      "An exact versioned automation actor binding is required.",
+    );
+  }
+  return Object.freeze({
+    kind: "automation-run",
+    automationId: browserEvidenceStructuredIdentity(candidate.automationId, "actor.automationId"),
+    runId: browserEvidenceStructuredIdentity(candidate.runId, "actor.runId"),
+    grantVersion: 1,
+    automationVersion: browserEvidenceStructuredIdentity(
+      candidate.automationVersion!,
+      "actor.automationVersion",
+    ),
+    threadId: browserEvidenceStructuredIdentity(candidate.threadId!, "actor.threadId"),
+    pendingMessageId: browserEvidenceStructuredIdentity(
+      candidate.pendingMessageId!,
+      "actor.pendingMessageId",
+    ),
+    authorizingTurnId: browserEvidenceStructuredIdentity(
+      candidate.authorizingTurnId!,
+      "actor.authorizingTurnId",
+    ),
+  });
 }
 
 export interface RecordScientificSourceInput extends ReceiptActorInput {
@@ -296,6 +351,7 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
     assertFreshEnvelope(envelope, currentTime);
     const authority = assertActiveAuthority(envelope.authority, projectId, currentTime);
     assertCapability(authority, capability);
+    let automationBinding: ExactAutomationActorBinding | null = null;
     if (authority.actor.kind === "provider-thread") {
       const turn = envelope.semanticRetryScope;
       if (
@@ -313,11 +369,18 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       }
     } else if (authority.actor.kind === "automation-run") {
       const run = envelope.semanticRetryScope;
+      const envelopeBinding = exactAutomationActorBinding(envelope.authority.actor);
+      automationBinding = exactAutomationActorBinding(authority.actor);
       if (
         envelope.ingress !== "automation" ||
         run?.kind !== "automation-run" ||
         run.automationId !== authority.actor.automationId ||
-        run.runId !== authority.actor.runId
+        run.runId !== authority.actor.runId ||
+        envelopeBinding.grantVersion !== automationBinding.grantVersion ||
+        envelopeBinding.automationVersion !== automationBinding.automationVersion ||
+        envelopeBinding.threadId !== automationBinding.threadId ||
+        envelopeBinding.pendingMessageId !== automationBinding.pendingMessageId ||
+        envelopeBinding.authorizingTurnId !== automationBinding.authorizingTurnId
       ) {
         throw new BrowserEvidenceContractError(
           "actor_scope_denied",
@@ -336,6 +399,7 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       projectId,
       createdAt: currentTime,
       actorBindingHash: browserEvidenceActorBindingHash(authority),
+      automationBinding,
     };
   };
 
@@ -415,6 +479,28 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
       throw new BrowserEvidenceContractError(
         "receipt_scope_mismatch",
         "Evidence receipt is outside the requested scope.",
+      );
+    }
+    return receipt;
+  };
+
+  const automationContextReference = (id: string, projectId: string) => {
+    const receipt = receiptByKind(id, "source");
+    if (receipt.projectId !== projectId) {
+      throw new BrowserEvidenceContractError(
+        "receipt_scope_mismatch",
+        "Automation context receipt is outside the proposal project.",
+      );
+    }
+    if (
+      receipt.actorKind !== "automation-run" ||
+      receipt.leaseUseReceiptId !== null ||
+      receipt.provenance.sourceClass !== "automation-memory" ||
+      receipt.provenance.scientificRole !== "context-only-never-scientific-evidence"
+    ) {
+      throw new BrowserEvidenceContractError(
+        "evidence_role_denied",
+        "Proposal context accepts context-only automation-memory source receipts only.",
       );
     }
     return receipt;
@@ -707,20 +793,21 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
     actor: ReturnType<typeof actorForReceipt>,
     threadId: string,
   ) => {
-    if (
-      actor.authority.actor.kind === "provider-thread" &&
-      actor.authority.actor.threadId !== threadId
-    ) {
+    const owningThreadId =
+      actor.authority.actor.kind === "provider-thread"
+        ? actor.authority.actor.threadId
+        : actor.automationBinding?.threadId;
+    if (owningThreadId !== undefined && owningThreadId !== threadId) {
       throw new BrowserEvidenceContractError(
         "receipt_scope_mismatch",
-        "Provider operation cannot append outside its exact thread.",
+        "Provider or automation operation cannot append outside its exact thread.",
       );
     }
   };
 
   const automationMemoryThread = (actor: ReturnType<typeof actorForReceipt>): string => {
-    const authorityActor = actor.authority.actor;
-    if (authorityActor.kind !== "automation-run") {
+    const authorityActor = actor.automationBinding;
+    if (authorityActor === null) {
       throw new BrowserEvidenceContractError(
         "actor_scope_denied",
         "Only an exact automation run may append automation-memory context.",
@@ -826,6 +913,12 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
     browserEvidenceDigest(input.claimDigest, "claimDigest");
     const evidenceReceiptIds = freezeIds(input.evidenceReceiptIds, "evidenceReceiptId");
     const contextReceiptIds = freezeIds(input.contextReceiptIds ?? [], "contextReceiptId");
+    if (contextReceiptIds.length > MAX_AUTOMATION_CONTEXT_RECEIPTS_PER_PROPOSAL) {
+      throw new BrowserEvidenceContractError(
+        "evidence_role_denied",
+        `A proposal may reference at most ${MAX_AUTOMATION_CONTEXT_RECEIPTS_PER_PROPOSAL} automation context receipts.`,
+      );
+    }
     if (evidenceReceiptIds.length === 0) {
       throw new BrowserEvidenceContractError(
         "evidence_role_denied",
@@ -841,7 +934,6 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
         "Proposal evidence is outside the authorized project.",
       );
     }
-    assertActorMayAppendToThread(actor, threadId);
     for (const id of evidenceReceiptIds) {
       if (!isEligibleEvidence(evidenceReference(id, projectId, threadId))) {
         throw new BrowserEvidenceContractError(
@@ -850,8 +942,9 @@ export function makeBrowserEvidenceAuthorityKernel(options?: {
         );
       }
     }
+    assertActorMayAppendToThread(actor, threadId);
     for (const id of contextReceiptIds) {
-      evidenceReference(id, projectId, threadId);
+      automationContextReference(id, projectId);
     }
     const receiptId = nextId("scientific-proposal-receipt", input.receiptId);
     return appendReceipt<ScientificProposalReceipt>({

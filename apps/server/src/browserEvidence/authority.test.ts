@@ -9,6 +9,7 @@ import { makeBrowserEvidenceAuthorityKernel } from "./authority.ts";
 import {
   MAX_BROWSER_EVIDENCE_ENVELOPE_AGE_MS,
   MAX_BROWSER_EVIDENCE_LEASE_TTL_MS,
+  MAX_AUTOMATION_CONTEXT_RECEIPTS_PER_PROPOSAL,
   BrowserEvidenceContractError,
   type BrowserDocumentIdentity,
   type BrowserEvidenceLeaseUseDecision,
@@ -73,7 +74,18 @@ function automationAuthority(
   return {
     authorityId: "automation-authority-1",
     generation: "generation-1",
-    actor: { kind: "automation-run", automationId: "automation-1", runId: "run-1" },
+    actor: {
+      kind: "automation-run",
+      automationId: "automation-1",
+      runId: "run-1",
+      // A1 adds these fields to the central actor union. The structural cast
+      // keeps this independent branch composable without depending on A1.
+      grantVersion: 1,
+      automationVersion: `sha256:${"a".repeat(64)}`,
+      threadId: THREAD_ID,
+      pendingMessageId: "message-1",
+      authorizingTurnId: TURN_ID,
+    } as ScientOperationAuthority["actor"],
     projectIds: [PROJECT_ID],
     capabilities: [
       "browser:read",
@@ -768,6 +780,174 @@ describe("BrowserEvidenceAuthorityKernel scientific evidence ledger", () => {
         evidenceReceiptIds: [memory.receiptId],
       }),
     ).toThrowError(/Automation memory is context only/u);
+  });
+
+  it("attaches bounded automation memory as project context without promoting it", () => {
+    const kernel = makeKernel();
+    const { provider, source } = buildEligibleProposal(kernel);
+    const automation = automationAuthority();
+    const memory = kernel.recordAutomationMemoryContext({
+      authorizedOperation: trustedOperation({
+        authority: automation,
+        operation: "scientific-record.propose",
+        operationId: "context-memory-operation",
+      }),
+      receiptId: "context-memory",
+      provenance: provenance("automation-memory"),
+    });
+
+    const proposal = kernel.recordProposal({
+      authorizedOperation: trustedOperation({
+        authority: provider,
+        operation: "scientific-record.propose",
+        operationId: "proposal-with-context-operation",
+      }),
+      receiptId: "proposal-with-context",
+      claimDigest: DIGEST_B,
+      evidenceReceiptIds: [source.receiptId],
+      contextReceiptIds: [memory.receiptId],
+    });
+
+    expect(memory.threadId).toMatch(/^automation-run:/u);
+    expect(memory.threadId).not.toBe(proposal.threadId);
+    expect(proposal.contextReceiptIds).toEqual([memory.receiptId]);
+    expect(proposal.evidenceReceiptIds).toEqual([source.receiptId]);
+  });
+
+  it("rejects cross-project, cross-kind, and oversized context references", () => {
+    const kernel = makeKernel();
+    const { provider, source, proposal } = buildEligibleProposal(kernel);
+    const automation = automationAuthority({ projectIds: [PROJECT_ID, "project-2"] });
+    const projectTwoMemory = kernel.recordAutomationMemoryContext({
+      authorizedOperation: trustedOperation({
+        authority: automation,
+        operation: "scientific-record.propose",
+        operationId: "project-two-memory-operation",
+        projectId: "project-2",
+      }),
+      receiptId: "project-two-memory",
+      provenance: provenance("automation-memory"),
+    });
+
+    expect(() =>
+      kernel.recordProposal({
+        authorizedOperation: trustedOperation({
+          authority: provider,
+          operation: "scientific-record.propose",
+          operationId: "cross-project-context-operation",
+        }),
+        receiptId: "cross-project-context",
+        claimDigest: DIGEST_B,
+        evidenceReceiptIds: [source.receiptId],
+        contextReceiptIds: [projectTwoMemory.receiptId],
+      }),
+    ).toThrowError(/outside the proposal project/u);
+
+    expect(() =>
+      kernel.recordProposal({
+        authorizedOperation: trustedOperation({
+          authority: provider,
+          operation: "scientific-record.propose",
+          operationId: "non-memory-context-operation",
+        }),
+        receiptId: "non-memory-context",
+        claimDigest: DIGEST_C,
+        evidenceReceiptIds: [source.receiptId],
+        contextReceiptIds: [source.receiptId],
+      }),
+    ).toThrowError(/context-only automation-memory source receipts only/u);
+
+    expect(() =>
+      kernel.recordProposal({
+        authorizedOperation: trustedOperation({
+          authority: provider,
+          operation: "scientific-record.propose",
+          operationId: "cross-kind-context-operation",
+        }),
+        receiptId: "cross-kind-context",
+        claimDigest: DIGEST_C,
+        evidenceReceiptIds: [source.receiptId],
+        contextReceiptIds: [proposal.receiptId],
+      }),
+    ).toThrowError(/Referenced source receipt does not exist/u);
+
+    expect(() =>
+      kernel.recordProposal({
+        authorizedOperation: trustedOperation({
+          authority: provider,
+          operation: "scientific-record.propose",
+          operationId: "oversized-context-operation",
+        }),
+        receiptId: "oversized-context",
+        claimDigest: DIGEST_D,
+        evidenceReceiptIds: [source.receiptId],
+        contextReceiptIds: Array.from(
+          { length: MAX_AUTOMATION_CONTEXT_RECEIPTS_PER_PROPOSAL + 1 },
+          (_, index) => `not-resolved-context-${index}`,
+        ),
+      }),
+    ).toThrowError(/may reference at most/u);
+  });
+
+  it("requires A1 automation turn binding and prevents cross-thread append", () => {
+    const kernel = makeKernel();
+    const { source, proposal } = buildEligibleProposal(kernel);
+    const legacyAutomation = automationAuthority({
+      actor: {
+        kind: "automation-run",
+        automationId: "automation-legacy",
+        runId: "run-legacy",
+      },
+    });
+    expect(() =>
+      kernel.recordAutomationMemoryContext({
+        authorizedOperation: trustedOperation({
+          authority: legacyAutomation,
+          operation: "scientific-record.propose",
+          operationId: "legacy-automation-operation",
+        }),
+        receiptId: "legacy-automation-memory",
+        provenance: provenance("automation-memory"),
+      }),
+    ).toThrow(BrowserEvidenceContractError);
+
+    const otherThreadAutomation = automationAuthority({
+      actor: {
+        kind: "automation-run",
+        automationId: "automation-1",
+        runId: "run-1",
+        grantVersion: 1,
+        automationVersion: `sha256:${"a".repeat(64)}`,
+        threadId: "thread-2",
+        pendingMessageId: "message-2",
+        authorizingTurnId: "turn-2",
+      } as ScientOperationAuthority["actor"],
+    });
+    expect(() =>
+      kernel.recordProposal({
+        authorizedOperation: trustedOperation({
+          authority: otherThreadAutomation,
+          operation: "scientific-record.propose",
+          operationId: "cross-thread-proposal-operation",
+        }),
+        receiptId: "cross-thread-proposal",
+        claimDigest: DIGEST_A,
+        evidenceReceiptIds: [source.receiptId],
+      }),
+    ).toThrowError(/outside its exact thread/u);
+    expect(() =>
+      kernel.recordVerification({
+        authorizedOperation: trustedOperation({
+          authority: otherThreadAutomation,
+          operation: "scientific-record.propose",
+          operationId: "cross-thread-verification-operation",
+        }),
+        receiptId: "cross-thread-verification",
+        proposalReceiptId: proposal.receiptId,
+        evidenceReceiptIds: [source.receiptId],
+        outcome: "supports",
+      }),
+    ).toThrowError(/outside its exact thread/u);
   });
 
   it("rejects raw mutation claims and delayed host envelopes", () => {
