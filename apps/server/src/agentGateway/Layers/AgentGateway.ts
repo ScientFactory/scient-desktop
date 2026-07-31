@@ -100,7 +100,13 @@ export function makeAutomationAuthorityResolver(input: {
       }
       if (Option.isNone(runOption)) {
         const pendingMessageId = turnOption.value.pendingMessageId;
-        if (pendingMessageId === null) return null;
+        if (pendingMessageId === null) {
+          return yield* Effect.fail(
+            automationAuthorityFailure(
+              "Scient could not prove that this provider turn has no automation message origin.",
+            ),
+          );
+        }
         const messageOption = yield* input.projectionThreadMessageRepository
           .getByMessageId({ messageId: pendingMessageId })
           .pipe(

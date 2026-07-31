@@ -341,6 +341,116 @@ layer("AgentGateway automation provenance", (it) => {
     }),
   );
 
+  it.effect("denies terminal provenance when the projected pending message was cleared", () =>
+    Effect.gen(function* () {
+      yield* runMigrations();
+      const key = "terminal-null-pending-provenance";
+      const turnId = TurnId.makeUnsafe(`turn:${key}`);
+      const seeded = yield* seedActiveRun({
+        key,
+        projectedTurnId: turnId,
+        projectedPendingMessageId: null,
+      });
+      yield* seeded.automationRepository.cancelRun({
+        runId: seeded.runId,
+        now: new Date().toISOString(),
+      });
+      const projectionTurnRepository = yield* ProjectionTurnRepository;
+      const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
+      const shell = {
+        id: seeded.threadId,
+        projectId: seeded.projectId,
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        session: { providerName: "codex", status: "running" },
+        latestTurn: { turnId, state: "running" },
+      } as unknown as OrchestrationThreadShell;
+
+      yield* assertReadAndWriteDenied({
+        shell,
+        resolveAutomationAuthority: makeAutomationAuthorityResolver({
+          automationRepository: seeded.automationRepository,
+          projectionTurnRepository,
+          projectionThreadMessageRepository,
+        }),
+      });
+    }),
+  );
+
+  it.effect("keeps verified ordinary provider messages on provider fallback", () =>
+    Effect.gen(function* () {
+      yield* runMigrations();
+      const automationRepository = yield* AutomationRepository;
+      const projectionTurnRepository = yield* ProjectionTurnRepository;
+      const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
+      const threadId = ThreadId.makeUnsafe("thread:ordinary-provider-origin");
+      const projectId = ProjectId.makeUnsafe("project:ordinary-provider-origin");
+      const turnId = TurnId.makeUnsafe("turn:ordinary-provider-origin");
+      const messageId = MessageId.makeUnsafe("message:ordinary-provider-origin");
+      const createdAt = new Date(Date.now() - 1_000).toISOString();
+      yield* projectionTurnRepository.upsertByTurnId({
+        threadId,
+        turnId,
+        pendingMessageId: messageId,
+        sourceProposedPlanThreadId: null,
+        sourceProposedPlanId: null,
+        assistantMessageId: null,
+        state: "running",
+        requestedAt: createdAt,
+        startedAt: createdAt,
+        completedAt: null,
+        checkpointTurnCount: null,
+        checkpointRef: null,
+        checkpointStatus: null,
+        checkpointFiles: [],
+      });
+      yield* projectionThreadMessageRepository.upsert({
+        messageId,
+        threadId,
+        turnId,
+        role: "user",
+        text: "An ordinary provider request.",
+        dispatchOrigin: "user",
+        isStreaming: false,
+        source: "native",
+        createdAt,
+        updatedAt: createdAt,
+      });
+      const shell = {
+        id: threadId,
+        projectId,
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        session: { providerName: "codex", status: "running" },
+        latestTurn: { turnId, state: "running" },
+      } as unknown as OrchestrationThreadShell;
+      const receipts: ScientOperationResultReceipt[] = [];
+      const transport = deniedTransport({
+        shell,
+        receipts,
+        resolveAutomationAuthority: makeAutomationAuthorityResolver({
+          automationRepository,
+          projectionTurnRepository,
+          projectionThreadMessageRepository,
+        }),
+      });
+
+      const response = yield* transport({
+        authorizationHeader: "Bearer valid-token",
+        body: {
+          jsonrpc: "2.0",
+          id: "ordinary-provider-read",
+          method: "tools/call",
+          params: { name: "scient_test_read", arguments: {} },
+        },
+      });
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(receipts.length, 1);
+      assert.strictEqual(
+        receipts[0]?.authorityGeneration,
+        "gateway-session:production-resolver-test",
+      );
+    }),
+  );
+
   it.effect("keeps a due one-shot grant valid after scheduler disablement only", () =>
     Effect.gen(function* () {
       yield* runMigrations();
