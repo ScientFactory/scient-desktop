@@ -16,9 +16,11 @@ import type { ProjectionSnapshotQueryShape } from "../../orchestration/Services/
 import { runMigrations } from "../../persistence/Migrations.ts";
 import { AutomationRepositoryLive } from "../../persistence/Layers/AutomationRepository.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
+import { ProjectionThreadMessageRepositoryLive } from "../../persistence/Layers/ProjectionThreadMessages.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { AutomationRepository } from "../../persistence/Services/AutomationRepository.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
+import { ProjectionThreadMessageRepository } from "../../persistence/Services/ProjectionThreadMessages.ts";
 import {
   automationAllowedCapabilitiesForDefinition,
   makeAutomationOperationGrantSnapshot,
@@ -34,6 +36,7 @@ import { makeAutomationAuthorityResolver } from "./AgentGateway.ts";
 const layer = it.layer(
   AutomationRepositoryLive.pipe(
     Layer.provideMerge(ProjectionTurnRepositoryLive),
+    Layer.provideMerge(ProjectionThreadMessageRepositoryLive),
     Layer.provideMerge(SqlitePersistenceMemory),
   ),
 );
@@ -146,7 +149,7 @@ function seedActiveRun(input: {
       checkpointStatus: null,
       checkpointFiles: [],
     });
-    return { definition, projectId, threadId, grantedMessageId, automationRepository };
+    return { definition, runId, projectId, threadId, grantedMessageId, automationRepository };
   });
 }
 
@@ -225,6 +228,7 @@ layer("AgentGateway automation provenance", (it) => {
         projectedPendingMessageId: MessageId.makeUnsafe("message:replacement-provenance:other"),
       });
       const projectionTurnRepository = yield* ProjectionTurnRepository;
+      const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
       const shell = {
         id: seeded.threadId,
         projectId: seeded.projectId,
@@ -238,6 +242,7 @@ layer("AgentGateway automation provenance", (it) => {
         resolveAutomationAuthority: makeAutomationAuthorityResolver({
           automationRepository: seeded.automationRepository,
           projectionTurnRepository,
+          projectionThreadMessageRepository,
         }),
       });
     }),
@@ -257,6 +262,7 @@ layer("AgentGateway automation provenance", (it) => {
               : MessageId.makeUnsafe(`message:${scenario}`),
         });
         const projectionTurnRepository = yield* ProjectionTurnRepository;
+        const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
         const shell = {
           id: seeded.threadId,
           projectId: seeded.projectId,
@@ -271,6 +277,64 @@ layer("AgentGateway automation provenance", (it) => {
           resolveAutomationAuthority: makeAutomationAuthorityResolver({
             automationRepository: seeded.automationRepository,
             projectionTurnRepository,
+            projectionThreadMessageRepository,
+          }),
+        });
+      }
+    }),
+  );
+
+  it.effect("never downgrades terminal automation turns to ordinary provider authority", () =>
+    Effect.gen(function* () {
+      yield* runMigrations();
+      for (const terminalStatus of ["cancelled", "interrupted"] as const) {
+        const key = `terminal-${terminalStatus}-provenance`;
+        const turnId = TurnId.makeUnsafe(`turn:${key}`);
+        const seeded = yield* seedActiveRun({
+          key,
+          projectedTurnId: turnId,
+          projectedPendingMessageId: MessageId.makeUnsafe(`message:${key}:granted`),
+        });
+        const projectionTurnRepository = yield* ProjectionTurnRepository;
+        const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
+        yield* projectionThreadMessageRepository.upsert({
+          messageId: seeded.grantedMessageId,
+          threadId: seeded.threadId,
+          turnId,
+          role: "user",
+          text: "Run the automation task.",
+          dispatchOrigin: "automation",
+          isStreaming: false,
+          source: "native",
+          createdAt: new Date(Date.now() - 1_000).toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+        if (terminalStatus === "cancelled") {
+          yield* seeded.automationRepository.cancelRun({
+            runId: seeded.runId,
+            now: new Date().toISOString(),
+          });
+        } else {
+          yield* seeded.automationRepository.markRunInterrupted({
+            id: seeded.runId,
+            turnId,
+            finishedAt: new Date().toISOString(),
+          });
+        }
+        const shell = {
+          id: seeded.threadId,
+          projectId: seeded.projectId,
+          modelSelection: { provider: "codex", model: "gpt-5-codex" },
+          session: { providerName: "codex", status: "running" },
+          latestTurn: { turnId, state: "running" },
+        } as unknown as OrchestrationThreadShell;
+
+        yield* assertReadAndWriteDenied({
+          shell,
+          resolveAutomationAuthority: makeAutomationAuthorityResolver({
+            automationRepository: seeded.automationRepository,
+            projectionTurnRepository,
+            projectionThreadMessageRepository,
           }),
         });
       }
@@ -289,9 +353,11 @@ layer("AgentGateway automation provenance", (it) => {
         projectedPendingMessageId: MessageId.makeUnsafe("message:one-shot-policy:granted"),
       });
       const projectionTurnRepository = yield* ProjectionTurnRepository;
+      const projectionThreadMessageRepository = yield* ProjectionThreadMessageRepository;
       const resolver = makeAutomationAuthorityResolver({
         automationRepository: seeded.automationRepository,
         projectionTurnRepository,
+        projectionThreadMessageRepository,
       });
 
       yield* seeded.automationRepository.disableDefinition({
