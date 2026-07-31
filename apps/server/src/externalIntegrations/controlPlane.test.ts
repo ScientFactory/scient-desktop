@@ -263,6 +263,7 @@ sqlite("ExternalIntegrationControlPlane", (it) => {
 
   it.effect("survives service reconstruction and revocation invalidates stale reads", () =>
     Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
       trustedNow = NOW;
       const first = yield* pair("restart");
       const admission = yield* first.control.admitRead({
@@ -294,6 +295,39 @@ sqlite("ExternalIntegrationControlPlane", (it) => {
       );
       assert.isFalse(revoked.ok);
       if (!revoked.ok) assert.strictEqual(controlCode(revoked.error), "integration_revoked");
+
+      const revokedState = (yield* sql<{
+        readonly pairingState: string;
+        readonly authorityGeneration: number;
+        readonly revokedAt: number | null;
+      }>`
+          SELECT pairing_state AS "pairingState",
+                 authority_generation AS "authorityGeneration",
+                 revoked_at AS "revokedAt"
+          FROM scient_external_integrations
+          WHERE integration_hash = ${admission.integrationHash}
+        `)[0]!;
+      const recovery = yield* capture(
+        restarted.beginRecoveryPairing({
+          externalIdentity: "restart",
+          credentialReference: "keychain-ref:restart",
+          peerIdentity: "unix-uid:501",
+        }),
+      );
+      assert.isFalse(recovery.ok);
+      if (!recovery.ok) assert.strictEqual(controlCode(recovery.error), "integration_revoked");
+      const afterRecoveryAttempt = (yield* sql<{
+        readonly pairingState: string;
+        readonly authorityGeneration: number;
+        readonly revokedAt: number | null;
+      }>`
+          SELECT pairing_state AS "pairingState",
+                 authority_generation AS "authorityGeneration",
+                 revoked_at AS "revokedAt"
+          FROM scient_external_integrations
+          WHERE integration_hash = ${admission.integrationHash}
+        `)[0]!;
+      assert.deepEqual(afterRecoveryAttempt, revokedState);
     }),
   );
 

@@ -611,6 +611,12 @@ export function makeExternalIntegrationControlPlane(options?: { readonly now?: (
               ) {
                 return yield* controlError("pairing_denied", "Owner recovery proof was rejected.");
               }
+              if (row.pairingState === "revoked") {
+                return yield* controlError(
+                  "integration_revoked",
+                  "A revoked integration cannot be recovered or re-paired.",
+                );
+              }
               const authorityGeneration = row.authorityGeneration + 1;
               yield* sql`
                 UPDATE scient_external_integrations
