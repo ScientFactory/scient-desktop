@@ -91,6 +91,7 @@ describe("deleteArchivedThreadFromClient", () => {
       commandId: expect.any(String),
       threadId,
       cascadeDescendants: true,
+      expectedDescendantThreadIds: [grandchildId, childId],
     });
     expect(dispatchCommand).toHaveBeenCalledOnce();
     expect(removeDeletedThreadFromClientState.mock.calls).toEqual([

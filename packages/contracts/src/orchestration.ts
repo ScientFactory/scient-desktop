@@ -977,6 +977,8 @@ const ThreadDeleteCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   cascadeDescendants: Schema.optional(Schema.Boolean),
+  expectedDescendantThreadIds: Schema.optional(Schema.Array(ThreadId)),
+  expectedReadModelSequence: Schema.optional(NonNegativeInt),
 });
 
 const ThreadArchiveCommand = Schema.Struct({

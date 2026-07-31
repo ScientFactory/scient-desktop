@@ -34,6 +34,7 @@ import { resolveNextForkTitle } from "./forkTitle.ts";
 import { validateImportedMessageIds, validateMessageForkImport } from "./messageFork.ts";
 import { resolveStableMessageTurnId } from "./messageTurnId.ts";
 import {
+  findThreadById,
   listActiveProjectsByWorkspaceRoot,
   listThreadsByProjectId,
   requireProject,
@@ -45,6 +46,8 @@ import {
   requireThreadArchived,
   requireThreadNotArchived,
   requireThreadSubtreeIdle,
+  requireThreadSubtreeNotStarting,
+  requireValidThreadParent,
 } from "./commandInvariants.ts";
 
 const nowIso = () => new Date().toISOString();
@@ -440,6 +443,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      yield* requireValidThreadParent({
+        readModel,
+        command,
+        threadId: command.threadId,
+        projectId: command.projectId,
+        parentThreadId: command.parentThreadId ?? null,
+      });
       return {
         ...withEventBase({
           aggregateKind: "thread",
@@ -761,17 +771,43 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.delete": {
-      yield* requireThread({
+      const rootThread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
       if (command.cascadeDescendants === true) {
-        const descendantThreadIds = collectSubagentDescendants(readModel.threads, command.threadId)
-          .filter((thread) => thread.deletedAt === null)
+        yield* requireThreadSubtreeNotStarting({
+          readModel,
+          command,
+          threadId: command.threadId,
+        });
+        const liveProjectThreads = readModel.threads.filter(
+          (thread) => thread.deletedAt === null && thread.projectId === rootThread.projectId,
+        );
+        const descendantThreadIds = collectSubagentDescendants(liveProjectThreads, command.threadId)
           .map((thread) => thread.id)
           .toReversed();
+        const expectedThreadIds = command.expectedDescendantThreadIds;
+        const expectedSet = new Set(expectedThreadIds ?? []);
+        const actualSet = new Set(descendantThreadIds);
+        if (
+          (command.expectedReadModelSequence !== undefined &&
+            command.expectedReadModelSequence !== readModel.snapshotSequence) ||
+          expectedThreadIds === undefined ||
+          expectedSet.size !== expectedThreadIds.length ||
+          expectedSet.size !== actualSet.size ||
+          descendantThreadIds.some((threadId) => !expectedSet.has(threadId))
+        ) {
+          return yield* Effect.fail(
+            new OrchestrationCommandInvariantError({
+              commandType: command.type,
+              detail:
+                "The conversation subtree changed before deletion. Refresh it and confirm the updated scope.",
+            }),
+          );
+        }
         return [...descendantThreadIds, command.threadId].map(
           (threadId): Omit<OrchestrationEvent, "sequence"> => ({
             ...withEventBase({
@@ -815,7 +851,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
-      const descendantThreadIds = collectSubagentDescendants(readModel.threads, command.threadId)
+      const rootThread = findThreadById(readModel, command.threadId);
+      const descendantThreadIds = collectSubagentDescendants(
+        readModel.threads.filter(
+          (thread) =>
+            thread.deletedAt === null &&
+            rootThread !== undefined &&
+            thread.projectId === rootThread.projectId,
+        ),
+        command.threadId,
+      )
         .filter((thread) => thread.deletedAt === null && (thread.archivedAt ?? null) === null)
         .map((thread) => thread.id);
       return [...descendantThreadIds, command.threadId].map(
@@ -837,13 +882,18 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.unarchive": {
-      yield* requireThreadArchived({
+      const rootThread = yield* requireThreadArchived({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = nowIso();
-      const descendantThreadIds = collectSubagentDescendants(readModel.threads, command.threadId)
+      const descendantThreadIds = collectSubagentDescendants(
+        readModel.threads.filter(
+          (thread) => thread.deletedAt === null && thread.projectId === rootThread.projectId,
+        ),
+        command.threadId,
+      )
         .filter((thread) => thread.deletedAt === null && (thread.archivedAt ?? null) !== null)
         .map((thread) => thread.id);
       return [...descendantThreadIds, command.threadId].map(
@@ -864,11 +914,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.meta.update": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      if (command.parentThreadId !== undefined) {
+        yield* requireValidThreadParent({
+          readModel,
+          command,
+          threadId: command.threadId,
+          projectId: thread.projectId,
+          parentThreadId: command.parentThreadId,
+        });
+      }
       const occurredAt = nowIso();
       return {
         ...withEventBase({

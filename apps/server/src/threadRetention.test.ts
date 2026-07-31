@@ -6,7 +6,11 @@
 import { ProjectId, ThreadId, type OrchestrationReadModel } from "@synara/contracts";
 import { describe, expect, it } from "vitest";
 
-import { getInactiveThreadIdsForRetention, THREAD_RETENTION_UNUSED_MS } from "./threadRetention";
+import {
+  getInactiveThreadIdsForRetention,
+  getRetentionDeleteScope,
+  THREAD_RETENTION_UNUSED_MS,
+} from "./threadRetention";
 
 function makeReadModelThread(
   overrides: Partial<OrchestrationReadModel["threads"][number]> = {},
@@ -187,5 +191,40 @@ describe("thread retention", () => {
     });
 
     expect(getInactiveThreadIdsForRetention(makeReadModel([orphan]), nowMs)).toEqual([orphan.id]);
+  });
+
+  it("binds retention deletion to a fresh exact subtree revision", () => {
+    const nowMs = Date.parse("2026-04-20T00:00:00.000Z");
+    const oldActivityAt = new Date(nowMs - THREAD_RETENTION_UNUSED_MS - 1).toISOString();
+    const root = makeReadModelThread({
+      id: ThreadId.makeUnsafe("thread-retention-root"),
+      latestUserMessageAt: oldActivityAt,
+    });
+    const child = makeReadModelThread({
+      id: ThreadId.makeUnsafe("thread-retention-child"),
+      parentThreadId: root.id,
+      latestUserMessageAt: oldActivityAt,
+    });
+    const snapshot = {
+      ...makeReadModel([root, child]),
+      snapshotSequence: 41,
+    } as unknown as import("@synara/contracts").OrchestrationShellSnapshot;
+
+    expect(getRetentionDeleteScope(snapshot, root.id, nowMs, new Set())).toEqual({
+      expectedDescendantThreadIds: [child.id],
+      expectedReadModelSequence: 41,
+    });
+
+    const recentChild = {
+      ...child,
+      latestUserMessageAt: new Date(nowMs).toISOString(),
+      updatedAt: new Date(nowMs).toISOString(),
+    };
+    const changedSnapshot = {
+      ...snapshot,
+      snapshotSequence: 42,
+      threads: [root, recentChild],
+    } as unknown as import("@synara/contracts").OrchestrationShellSnapshot;
+    expect(getRetentionDeleteScope(changedSnapshot, root.id, nowMs, new Set())).toBeNull();
   });
 });

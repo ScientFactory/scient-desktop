@@ -109,7 +109,6 @@ import { formatRelativeTime } from "../lib/relativeTime";
 import { isMacPlatform, newCommandId, newThreadId, randomUUID } from "../lib/utils";
 import {
   cleanupDeletedThreadBrowserState,
-  reconcileDeletedThreadFromClient,
   reconcileDeletedThreadsFromClient,
   removeDeletedThreadsFromClientState,
 } from "../lib/deletedThreadClientReconciliation";
@@ -319,6 +318,7 @@ import {
   findDeepestWorkspaceRootMatch,
   findWorkspaceRootMatch,
   getFallbackThreadIdAfterDelete,
+  collectSelectedThreadSubtreeRoots,
   getPinnedThreadsForSidebar,
   getUnpinnedThreadsForSidebar,
   orderPinnedProjectsForSidebar,
@@ -333,6 +333,8 @@ import {
   pruneProjectThreadListPagingForCollapsedProjects,
   recoverExistingAddProjectTarget,
   resolveNewThreadInWorkspaceAction,
+  resolveArchiveSelection,
+  resolveSubtreeRouteThreadId,
   resolvePullRequestReviewBadge,
   resolveSidebarThreadListPaging,
   DEBUG_FEATURE_FLAGS_MENU_STORAGE_KEY,
@@ -3177,7 +3179,6 @@ export default function Sidebar() {
       }
 
       try {
-        terminalRuntimeRegistry.disposeThread(threadId);
         await api.terminal.close({ threadId, deleteHistory: true });
       } catch {
         // Terminal may already be closed
@@ -3202,6 +3203,7 @@ export default function Sidebar() {
         commandId: newCommandId(),
         threadId,
         cascadeDescendants: true,
+        expectedDescendantThreadIds: subtreeThreads.slice(1).map((candidate) => candidate.id),
       });
       if (opts.reconcileDeletedThread ?? true) {
         await reconcileDeletedThreadsFromClient({
@@ -3218,6 +3220,7 @@ export default function Sidebar() {
         }
       }
       for (const deletedThread of subtreeThreads) {
+        terminalRuntimeRegistry.disposeThread(deletedThread.id);
         unpinThread(deletedThread.id);
         clearComposerDraftForThread(deletedThread.id);
         clearProjectDraftThreadById(deletedThread.projectId, deletedThread.id);
@@ -3380,40 +3383,50 @@ export default function Sidebar() {
    * Archived threads are hidden from the sidebar but can be restored later.
    */
   const archiveThread = useCallback(
-    async (threadId: ThreadId): Promise<boolean> => {
+    async (
+      threadId: ThreadId,
+    ): Promise<{ readonly archivedRouteThreadId: ThreadId | null } | null> => {
       const api = readNativeApi();
-      if (!api) return false;
+      if (!api) return null;
       const currentThreads = getThreadsFromState(useStore.getState());
       const thread = currentThreads.find((candidate) => candidate.id === threadId);
-      if (!thread) return false;
+      if (!thread) return null;
 
       const subtreeThreads = [thread, ...collectSubagentDescendants(currentThreads, threadId)];
-      const runningCount = subtreeThreads.filter(isThreadRunningTurn).length;
+      const runningCount = subtreeThreads.filter(
+        (candidate) =>
+          candidate.session?.orchestrationStatus === "starting" || isThreadRunningTurn(candidate),
+      ).length;
       if (runningCount > 0) {
         showSidebarTransientError({
           title: "Cannot archive",
           description:
             runningCount === 1
-              ? "Stop the running turn in this conversation subtree before archiving it."
-              : `Stop the ${runningCount} running turns in this conversation subtree before archiving it.`,
+              ? "Wait for startup or stop the active turn in this conversation subtree before archiving it."
+              : `Wait for startup or stop the ${runningCount} active sessions in this conversation subtree before archiving it.`,
         });
-        return false;
+        return null;
       }
 
       const pendingThreadIds = archivePendingThreadIdsRef.current;
-      if (pendingThreadIds.has(threadId)) return false;
+      if (pendingThreadIds.has(threadId)) return null;
 
       pendingThreadIds.add(threadId);
       try {
         await archiveThreadFromClient(api.orchestration, threadId);
+        const archivedRouteThreadId = resolveSubtreeRouteThreadId({
+          threads: currentThreads,
+          rootThreadId: threadId,
+          routeThreadId,
+        });
 
         // Navigate away before surfacing Undo so a quick restore cannot be
         // overwritten by the fallback route change for the archived thread.
-        if (routeThreadId === threadId) {
+        if (archivedRouteThreadId !== null) {
           const fallbackThreadId = getFallbackThreadIdAfterDelete({
             threads: sidebarThreads,
-            deletedThreadId: threadId,
-            deletedThreadIds: new Set<ThreadId>(),
+            deletedThreadId: archivedRouteThreadId,
+            deletedThreadIds: new Set(subtreeThreads.map((candidate) => candidate.id)),
             sortOrder: appSettings.sidebarThreadSortOrder,
           });
           if (fallbackThreadId) {
@@ -3427,7 +3440,7 @@ export default function Sidebar() {
           }
         }
 
-        return true;
+        return { archivedRouteThreadId };
       } finally {
         pendingThreadIds.delete(threadId);
       }
@@ -3447,7 +3460,10 @@ export default function Sidebar() {
   // Serializes restore attempts per thread so repeated Undo clicks do not race
   // into duplicate unarchive commands.
   const restoreArchivedThreadFromSnackbar = useCallback(
-    async (input: { threadId: ThreadId; returnToThreadOnUndo: boolean }): Promise<boolean> => {
+    async (input: {
+      threadId: ThreadId;
+      returnToThreadIdOnUndo: ThreadId | null;
+    }): Promise<boolean> => {
       const activityKey = `sidebar:archive-restore:thread:${input.threadId}`;
       const pendingThreadIds = archiveUndoPendingThreadIdsRef.current;
       if (pendingThreadIds.has(input.threadId)) return false;
@@ -3477,10 +3493,10 @@ export default function Sidebar() {
           }
         }
         activityManager.remove(activityKey);
-        if (input.returnToThreadOnUndo) {
+        if (input.returnToThreadIdOnUndo !== null) {
           void navigate({
             to: "/$threadId",
-            params: { threadId: input.threadId },
+            params: { threadId: input.returnToThreadIdOnUndo },
             replace: true,
           });
         }
@@ -3505,7 +3521,7 @@ export default function Sidebar() {
 
   // Archiving navigates away from its row, so the dedicated bottom snackbar owns Undo.
   const showArchiveUndoSnackbar = useCallback(
-    (threadId: ThreadId, options?: { returnToThreadOnUndo?: boolean }) => {
+    (threadId: ThreadId, options?: { returnToThreadIdOnUndo?: ThreadId | null }) => {
       // Use a fresh instance id so Base UI never revives a closing toast with
       // stale local state such as a pending Undo button.
       const toastId = `archive-undo:${threadId}:${randomUUID()}`;
@@ -3516,7 +3532,7 @@ export default function Sidebar() {
         onUndo: () =>
           restoreArchivedThreadFromSnackbar({
             threadId,
-            returnToThreadOnUndo: options?.returnToThreadOnUndo === true,
+            returnToThreadIdOnUndo: options?.returnToThreadIdOnUndo ?? null,
           }),
       });
     },
@@ -3528,10 +3544,11 @@ export default function Sidebar() {
   const archiveThreadWithUndo = useCallback(
     async (threadId: ThreadId) => {
       try {
-        const returnToThreadOnUndo = routeThreadId === threadId;
-        const archived = await archiveThread(threadId);
-        if (archived) {
-          showArchiveUndoSnackbar(threadId, { returnToThreadOnUndo });
+        const result = await archiveThread(threadId);
+        if (result) {
+          showArchiveUndoSnackbar(threadId, {
+            returnToThreadIdOnUndo: result.archivedRouteThreadId,
+          });
         }
       } catch (error) {
         showSidebarTransientError({
@@ -3540,7 +3557,7 @@ export default function Sidebar() {
         });
       }
     },
-    [archiveThread, routeThreadId, showArchiveUndoSnackbar],
+    [archiveThread, showArchiveUndoSnackbar],
   );
 
   // Context-menu archive still honors the opt-in `confirmThreadArchive` dialog
@@ -4094,11 +4111,19 @@ export default function Sidebar() {
       const ids = [...selectedThreadIds];
       if (ids.length === 0) return;
       const count = ids.length;
+      const archiveSelection = resolveArchiveSelection(sidebarThreads, new Set(ids));
 
       const clicked = await api.contextMenu.show(
         [
           { id: "mark-unread", label: `Mark unread (${count})` },
-          { id: "archive", label: `Archive (${count})` },
+          ...(archiveSelection.rootThreadIds.length > 0
+            ? [
+                {
+                  id: "archive" as const,
+                  label: `Archive (${archiveSelection.subtreeThreadIds.length})`,
+                },
+              ]
+            : []),
           { id: "delete", label: `Delete (${count})`, destructive: true },
         ],
         position,
@@ -4114,17 +4139,7 @@ export default function Sidebar() {
       }
 
       if (clicked === "archive") {
-        const archiveIds = ids.filter(
-          (id) => (sidebarThreadSummaryById[id]?.parentThreadId ?? null) === null,
-        );
-        if (archiveIds.length === 0) {
-          removeFromSelection(ids);
-          return;
-        }
-        const archiveCount = archiveIds.reduce(
-          (total, id) => total + collectSubagentDescendants(sidebarThreads, id).length + 1,
-          0,
-        );
+        const archiveCount = archiveSelection.subtreeThreadIds.length;
         if (appSettings.confirmThreadArchive) {
           const confirmed = await api.dialogs.confirm(
             [
@@ -4135,20 +4150,16 @@ export default function Sidebar() {
           if (!confirmed) return;
         }
 
-        for (const id of archiveIds) {
+        for (const id of archiveSelection.rootThreadIds) {
           await archiveThread(id);
         }
-        removeFromSelection(ids);
+        removeFromSelection(archiveSelection.subtreeThreadIds);
         return;
       }
 
       if (clicked !== "delete") return;
 
-      const selectedThreads = ids.flatMap((id) => {
-        const thread = sidebarThreadSummaryById[id];
-        return thread ? [thread] : [];
-      });
-      const deletionRoots = collectSubagentSubtreeRoots(selectedThreads);
+      const deletionRoots = collectSelectedThreadSubtreeRoots(sidebarThreads, new Set(ids));
       const deletionTargets = deletionRoots.map((root) => [
         root,
         ...collectSubagentDescendants(sidebarThreads, root.id),
@@ -4198,7 +4209,7 @@ export default function Sidebar() {
       deleteThread,
       markThreadUnread,
       removeFromSelection,
-      sidebarThreadSummaryById,
+      sidebarThreads,
       selectedThreadIds,
     ],
   );
@@ -5583,6 +5594,7 @@ export default function Sidebar() {
     threadId: ThreadId;
     toneClassName: string;
     isPinned: boolean;
+    isSubagentThread: boolean;
     includePinToggle?: boolean;
     compact?: boolean;
   }) {
@@ -5604,9 +5616,11 @@ export default function Sidebar() {
               }}
             />
           ) : null}
-          {renderThreadArchiveAction(input.threadId, input.toneClassName, {
-            compact,
-          })}
+          {input.isSubagentThread
+            ? null
+            : renderThreadArchiveAction(input.threadId, input.toneClassName, {
+                compact,
+              })}
         </div>
       </SidebarRowHoverActions>
     );
@@ -5915,6 +5929,7 @@ export default function Sidebar() {
                   threadId: thread.id,
                   toneClassName: "text-muted-foreground/42",
                   isPinned: true,
+                  isSubagentThread,
                   compact: isSubagentThread,
                 }),
               })}
@@ -6209,6 +6224,7 @@ export default function Sidebar() {
                   threadId: thread.id,
                   toneClassName: secondaryMetaClass,
                   isPinned,
+                  isSubagentThread,
                   compact: isSubagentThread,
                 }),
               })}

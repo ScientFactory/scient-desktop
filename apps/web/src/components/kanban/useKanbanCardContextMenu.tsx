@@ -102,21 +102,26 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
     const thread = currentThreads.find((candidate) => candidate.id === threadId);
     if (!thread) return;
     const subtreeThreads = [thread, ...collectSubagentDescendants(currentThreads, threadId)];
-    const runningCount = subtreeThreads.filter(isThreadRunningTurn).length;
+    const runningCount = subtreeThreads.filter(
+      (candidate) =>
+        candidate.session?.orchestrationStatus === "starting" || isThreadRunningTurn(candidate),
+    ).length;
     if (runningCount > 0) {
       setFeedback({
         tone: "error",
         title: "Cannot archive",
         description:
           runningCount === 1
-            ? "Stop the running turn in this conversation subtree before archiving it."
-            : `Stop the ${runningCount} running turns in this conversation subtree before archiving it.`,
+            ? "Wait for startup or stop the active turn in this conversation subtree before archiving it."
+            : `Wait for startup or stop the ${runningCount} active sessions in this conversation subtree before archiving it.`,
       });
       return;
     }
     // Archived threads leave the board's thread feed, so a live optimistic
     // dispatch entry could never reconcile — drop it with the card.
-    useKanbanUiStore.getState().clearOptimisticDispatch(threadId);
+    for (const subtreeThread of subtreeThreads) {
+      useKanbanUiStore.getState().clearOptimisticDispatch(subtreeThread.id);
+    }
     await api.orchestration.dispatchCommand({
       type: "thread.archive",
       commandId: newCommandId(),
@@ -153,6 +158,9 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
       if (!thread) return;
       const allThreads = getThreadsFromState(state);
       const subtreeThreads = [thread, ...collectSubagentDescendants(allThreads, card.threadId)];
+      for (const subtreeThread of subtreeThreads) {
+        useKanbanUiStore.getState().clearOptimisticDispatch(subtreeThread.id);
+      }
       const project = state.projects.find((candidate) => candidate.id === thread.projectId) ?? null;
       const orphanedWorktreePath = getOrphanedWorktreePathForThread(
         allThreads.filter(
@@ -188,7 +196,6 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
           .catch(() => undefined);
       }
       try {
-        terminalRuntimeRegistry.disposeThread(card.threadId);
         await api.terminal.close({ threadId: card.threadId, deleteHistory: true });
       } catch {
         // Terminal may already be closed.
@@ -198,6 +205,7 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
         commandId: newCommandId(),
         threadId: card.threadId,
         cascadeDescendants: true,
+        expectedDescendantThreadIds: subtreeThreads.slice(1).map((candidate) => candidate.id),
       });
       await reconcileDeletedThreadsFromClient({
         api,
@@ -205,6 +213,7 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
         removeDeletedThreadFromClientState: useStore.getState().removeDeletedThreadFromClientState,
       });
       for (const deletedThread of subtreeThreads) {
+        terminalRuntimeRegistry.disposeThread(deletedThread.id);
         clearDraftThread(deletedThread.id);
         clearProjectDraftThreadById(deletedThread.projectId, deletedThread.id);
         clearTerminalState(deletedThread.id);

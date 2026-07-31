@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   cleanupSucceededUnlessInterrupted,
   logCleanupCauseUnlessInterrupted,
+  providerCleanupCanPurgeImmediately,
   resolveDeletedThreadProviderCleanup,
 } from "./ThreadDeletionReactor";
 
@@ -13,6 +14,7 @@ function cleanupReadModel(
     readonly id: ThreadId;
     readonly parentThreadId?: ThreadId;
     readonly activeTurnId?: TurnId;
+    readonly status?: "running" | "interrupted";
   }>,
 ): OrchestrationReadModel {
   return {
@@ -22,7 +24,7 @@ function cleanupReadModel(
       session: thread.activeTurnId
         ? {
             threadId: thread.id,
-            status: "running",
+            status: thread.status ?? "running",
             providerName: "codex",
             runtimeMode: "approval-required",
             activeTurnId: thread.activeTurnId,
@@ -89,7 +91,7 @@ describe("resolveDeletedThreadProviderCleanup", () => {
     });
   });
 
-  it("falls back to direct session cleanup for missing or corrupt lineage", () => {
+  it("defers active subagent purge for missing or corrupt lineage", () => {
     const childId = ThreadId.makeUnsafe("subagent:missing:provider-child");
     const cycleId = ThreadId.makeUnsafe("subagent:child:cycle");
     const turnId = TurnId.makeUnsafe("turn-child");
@@ -105,7 +107,7 @@ describe("resolveDeletedThreadProviderCleanup", () => {
         ]),
         childId,
       ),
-    ).toEqual({ kind: "stop-session", threadId: childId });
+    ).toEqual({ kind: "defer-active-subagent", threadId: childId });
     expect(
       resolveDeletedThreadProviderCleanup(
         cleanupReadModel([
@@ -114,7 +116,47 @@ describe("resolveDeletedThreadProviderCleanup", () => {
         ]),
         childId,
       ),
-    ).toEqual({ kind: "stop-session", threadId: childId });
+    ).toEqual({ kind: "defer-active-subagent", threadId: childId });
+  });
+
+  it("keeps routing interrupted subagents with an unsettled active turn through their owner", () => {
+    const parentId = ThreadId.makeUnsafe("thread-parent");
+    const childId = ThreadId.makeUnsafe("subagent:thread-parent:provider-child");
+    const turnId = TurnId.makeUnsafe("turn-child");
+    const readModel = cleanupReadModel([
+      { id: parentId },
+      {
+        id: childId,
+        parentThreadId: parentId,
+        activeTurnId: turnId,
+        status: "interrupted",
+      },
+    ]);
+
+    expect(resolveDeletedThreadProviderCleanup(readModel, childId)).toEqual({
+      kind: "interrupt-subagent-turn",
+      threadId: parentId,
+      turnId,
+      providerThreadId: "provider-child",
+    });
+  });
+});
+
+describe("providerCleanupCanPurgeImmediately", () => {
+  it("keeps active subagent tombstones through interrupt acknowledgement or uncertain lineage", () => {
+    const threadId = ThreadId.makeUnsafe("subagent:parent:child");
+    expect(
+      providerCleanupCanPurgeImmediately({
+        kind: "interrupt-subagent-turn",
+        threadId: ThreadId.makeUnsafe("parent"),
+        turnId: TurnId.makeUnsafe("turn-child"),
+        providerThreadId: "child",
+      }),
+    ).toBe(false);
+    expect(providerCleanupCanPurgeImmediately({ kind: "defer-active-subagent", threadId })).toBe(
+      false,
+    );
+    expect(providerCleanupCanPurgeImmediately({ kind: "stop-session", threadId })).toBe(true);
   });
 });
 

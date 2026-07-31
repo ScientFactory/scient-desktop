@@ -473,12 +473,14 @@ it.effect("decodes explicit descendant cascading for thread deletion", () =>
       commandId: "cmd-delete-subtree",
       threadId: "thread-1",
       cascadeDescendants: true,
+      expectedDescendantThreadIds: ["thread-child"],
     });
 
     assert.strictEqual(single.type, "thread.delete");
     assert.strictEqual(single.cascadeDescendants, undefined);
     assert.strictEqual(subtree.type, "thread.delete");
     assert.strictEqual(subtree.cascadeDescendants, true);
+    assert.deepStrictEqual(subtree.expectedDescendantThreadIds, ["thread-child"]);
   }),
 );
 

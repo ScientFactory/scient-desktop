@@ -43,6 +43,7 @@ export async function deleteArchivedThreadFromClient(
     commandId: newCommandId(),
     threadId: input.threadId,
     cascadeDescendants: true,
+    expectedDescendantThreadIds: [...(input.descendantThreadIds ?? [])],
   });
   await reconcileDeletedThreadsFromClient({
     api: input.api,

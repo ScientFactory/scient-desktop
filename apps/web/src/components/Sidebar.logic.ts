@@ -39,6 +39,7 @@ import {
   isLatestTurnSettled,
 } from "../session-logic";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
+import { collectSubagentDescendants } from "@synara/shared/threadHierarchy";
 
 export {
   extractDuplicateProjectCreateProjectId,
@@ -1408,6 +1409,63 @@ export function getFallbackThreadIdAfterDelete<
       sortOrder,
     )[0]?.id ?? null
   );
+}
+
+interface ParentLinkedThread {
+  readonly id: ThreadId;
+  readonly parentThreadId?: ThreadId | null | undefined;
+}
+
+export function resolveSubtreeRouteThreadId<T extends ParentLinkedThread>(input: {
+  readonly threads: readonly T[];
+  readonly rootThreadId: ThreadId;
+  readonly routeThreadId: ThreadId | null;
+}): ThreadId | null {
+  if (input.routeThreadId === null) return null;
+  const subtreeIds = new Set<ThreadId>([
+    input.rootThreadId,
+    ...collectSubagentDescendants(input.threads, input.rootThreadId).map((thread) => thread.id),
+  ]);
+  return subtreeIds.has(input.routeThreadId) ? input.routeThreadId : null;
+}
+
+export function resolveArchiveSelection<T extends ParentLinkedThread>(
+  threads: readonly T[],
+  selectedThreadIds: ReadonlySet<ThreadId>,
+): { readonly rootThreadIds: ThreadId[]; readonly subtreeThreadIds: ThreadId[] } {
+  const rootThreadIds = threads
+    .filter(
+      (thread) => selectedThreadIds.has(thread.id) && (thread.parentThreadId ?? null) === null,
+    )
+    .map((thread) => thread.id);
+  const subtreeThreadIds = [
+    ...new Set<ThreadId>(
+      rootThreadIds.flatMap((rootThreadId) => [
+        rootThreadId,
+        ...collectSubagentDescendants(threads, rootThreadId).map((thread) => thread.id),
+      ]),
+    ),
+  ];
+  return { rootThreadIds, subtreeThreadIds };
+}
+
+export function collectSelectedThreadSubtreeRoots<T extends ParentLinkedThread>(
+  threads: readonly T[],
+  selectedThreadIds: ReadonlySet<ThreadId>,
+): T[] {
+  const threadById = new Map(threads.map((thread) => [thread.id, thread] as const));
+  return threads.filter((thread) => {
+    if (!selectedThreadIds.has(thread.id)) return false;
+    const visited = new Set<ThreadId>([thread.id]);
+    let parentThreadId = thread.parentThreadId ?? null;
+    while (parentThreadId !== null) {
+      if (selectedThreadIds.has(parentThreadId)) return false;
+      if (visited.has(parentThreadId)) break;
+      visited.add(parentThreadId);
+      parentThreadId = threadById.get(parentThreadId)?.parentThreadId ?? null;
+    }
+    return true;
+  });
 }
 
 export function getProjectSortTimestamp(

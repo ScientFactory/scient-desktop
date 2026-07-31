@@ -791,6 +791,7 @@ describe("OrchestrationEngine", () => {
         commandId: CommandId.makeUnsafe("cmd-subtree-delete"),
         threadId: parentId,
         cascadeDescendants: true,
+        expectedDescendantThreadIds: [childId, grandchildId],
       }),
     );
     const events = await system.run(

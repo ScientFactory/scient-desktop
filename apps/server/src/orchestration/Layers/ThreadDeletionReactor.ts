@@ -35,7 +35,15 @@ export type DeletedThreadProviderCleanup =
       readonly threadId: ThreadId;
       readonly turnId: TurnId;
       readonly providerThreadId: string;
+    }
+  | {
+      readonly kind: "defer-active-subagent";
+      readonly threadId: ThreadId;
     };
+
+export function providerCleanupCanPurgeImmediately(cleanup: DeletedThreadProviderCleanup): boolean {
+  return cleanup.kind === "stop-session";
+}
 
 /**
  * Resolves provider cleanup before a deleted thread is hard-purged. Subagents
@@ -52,7 +60,7 @@ export function resolveDeletedThreadProviderCleanup(
   const thread = threadById.get(threadId);
   const directParentId = thread?.parentThreadId ?? null;
   const activeTurnId = thread?.session?.activeTurnId ?? null;
-  if (!thread || !directParentId || thread.session?.status !== "running" || activeTurnId === null) {
+  if (!thread || !directParentId || activeTurnId === null) {
     return { kind: "stop-session", threadId };
   }
 
@@ -60,19 +68,19 @@ export function resolveDeletedThreadProviderCleanup(
   const providerThreadPrefix = `subagent:${directParentId}:`;
   const rawThreadId = String(thread.id);
   if (!directParent || !rawThreadId.startsWith(providerThreadPrefix)) {
-    return { kind: "stop-session", threadId };
+    return { kind: "defer-active-subagent", threadId };
   }
 
   const providerThreadId = rawThreadId.slice(providerThreadPrefix.length);
   if (providerThreadId.length === 0) {
-    return { kind: "stop-session", threadId };
+    return { kind: "defer-active-subagent", threadId };
   }
 
   let providerOwner = directParent;
   const visitedThreadIds = new Set<ThreadId>([thread.id]);
   while (providerOwner.parentThreadId) {
     if (visitedThreadIds.has(providerOwner.id)) {
-      return { kind: "stop-session", threadId };
+      return { kind: "defer-active-subagent", threadId };
     }
     visitedThreadIds.add(providerOwner.id);
     const parent = threadById.get(providerOwner.parentThreadId);
@@ -165,8 +173,14 @@ const make = Effect.gen(function* () {
   ) {
     const readModel = yield* orchestrationEngine.getReadModel();
     const cleanup = resolveDeletedThreadProviderCleanup(readModel, threadId);
+    if (cleanup.kind === "defer-active-subagent") {
+      yield* Effect.logWarning("thread deletion cleanup deferred active subagent purge", {
+        threadId,
+      });
+      return providerCleanupCanPurgeImmediately(cleanup);
+    }
     if (cleanup.kind === "interrupt-subagent-turn") {
-      return yield* providerService
+      const interruptAcknowledged = yield* providerService
         .interruptTurn({
           threadId: cleanup.threadId,
           turnId: cleanup.turnId,
@@ -179,7 +193,10 @@ const make = Effect.gen(function* () {
               return Effect.failCause(cause);
             }
             if (Cause.pretty(cause).includes(MISSING_PROVIDER_BINDING_DETAIL)) {
-              return stopProviderSessionWithoutBinding(threadId, cause);
+              return Effect.logWarning(
+                "thread deletion cleanup could not prove active subagent interruption",
+                { threadId, cause: Cause.pretty(cause) },
+              ).pipe(Effect.as(false));
             }
             return Effect.logDebug("thread deletion cleanup skipped subagent turn interrupt", {
               threadId,
@@ -188,6 +205,16 @@ const make = Effect.gen(function* () {
             }).pipe(Effect.as(false));
           }),
         );
+      if (interruptAcknowledged) {
+        yield* Effect.logDebug(
+          "thread deletion cleanup deferred purge until subagent terminal settlement",
+          { threadId },
+        );
+      }
+      // Provider interruption is asynchronous. Keep the soft-delete tombstone
+      // until the terminal event clears activeTurnId; the startup sweep safely
+      // retries the hard purge after settlement.
+      return providerCleanupCanPurgeImmediately(cleanup);
     }
     return yield* providerService.stopSession({ threadId }).pipe(
       Effect.as(true),

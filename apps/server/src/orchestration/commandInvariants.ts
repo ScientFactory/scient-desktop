@@ -220,23 +220,92 @@ export function requireThreadSubtreeIdle(input: {
   const root = findThreadById(input.readModel, input.threadId);
   const subtree = [
     ...(root ? [root] : []),
-    ...collectSubagentDescendants(input.readModel.threads, input.threadId),
+    ...collectSubagentDescendants(
+      root
+        ? input.readModel.threads.filter(
+            (thread) => thread.deletedAt === null && thread.projectId === root.projectId,
+          )
+        : [],
+      input.threadId,
+    ),
   ];
-  const runningThreads = subtree.filter(
+  const busyThreads = subtree.filter(
     (thread) =>
       thread.deletedAt === null &&
-      thread.session?.status === "running" &&
-      thread.session.activeTurnId !== null,
+      (thread.session?.status === "starting" ||
+        (thread.session?.status === "running" && thread.session.activeTurnId !== null)),
   );
-  if (runningThreads.length === 0) {
+  if (busyThreads.length === 0) {
     return Effect.void;
   }
   return Effect.fail(
     invariantError(
       input.command.type,
-      `Thread subtree '${input.threadId}' has ${runningThreads.length} running turn${runningThreads.length === 1 ? "" : "s"}; stop them before command '${input.command.type}'.`,
+      `Thread subtree '${input.threadId}' has ${busyThreads.length} active session${busyThreads.length === 1 ? "" : "s"}; stop them before command '${input.command.type}'.`,
     ),
   );
+}
+
+export function requireThreadSubtreeNotStarting(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly threadId: ThreadId;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const root = findThreadById(input.readModel, input.threadId);
+  const liveProjectThreads = root
+    ? input.readModel.threads.filter(
+        (thread) => thread.deletedAt === null && thread.projectId === root.projectId,
+      )
+    : [];
+  const subtree = [
+    ...(root ? [root] : []),
+    ...collectSubagentDescendants(liveProjectThreads, input.threadId),
+  ];
+  const startingThreads = subtree.filter((thread) => thread.session?.status === "starting");
+  return startingThreads.length === 0
+    ? Effect.void
+    : Effect.fail(
+        invariantError(
+          input.command.type,
+          `Thread subtree '${input.threadId}' has ${startingThreads.length} starting session${startingThreads.length === 1 ? "" : "s"}; wait for startup to settle before command '${input.command.type}'.`,
+        ),
+      );
+}
+
+export function requireValidThreadParent(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: OrchestrationCommand;
+  readonly threadId: ThreadId;
+  readonly projectId: ProjectId;
+  readonly parentThreadId: ThreadId | null;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (input.parentThreadId === null) return Effect.void;
+  if (input.parentThreadId === input.threadId) {
+    return Effect.fail(invariantError(input.command.type, "A thread cannot be its own parent."));
+  }
+  const parent = findThreadById(input.readModel, input.parentThreadId);
+  if (!parent || parent.deletedAt !== null || parent.projectId !== input.projectId) {
+    return Effect.fail(
+      invariantError(
+        input.command.type,
+        `Parent thread '${input.parentThreadId}' must be a live thread in project '${input.projectId}'.`,
+      ),
+    );
+  }
+
+  const threadById = new Map(input.readModel.threads.map((thread) => [thread.id, thread] as const));
+  const visited = new Set<ThreadId>();
+  let current: OrchestrationThread | undefined = parent;
+  while (current) {
+    if (current.id === input.threadId || visited.has(current.id)) {
+      return Effect.fail(
+        invariantError(input.command.type, "Thread parent assignment would create a cycle."),
+      );
+    }
+    visited.add(current.id);
+    current = current.parentThreadId ? threadById.get(current.parentThreadId) : undefined;
+  }
+  return Effect.void;
 }
 
 export function requireNonNegativeInteger(input: {

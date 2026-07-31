@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildProjectThreadTree,
+  collectSelectedThreadSubtreeRoots,
   createSidebarThreadHoverAnchorId,
   derivePinnedProjectIdsForSidebar,
   derivePinnedThreadIdsForSidebar,
@@ -36,10 +37,12 @@ import {
   resolveSidebarThreadListPaging,
   resolveProjectEmptyState,
   resolvePendingSidebarViewSelection,
+  resolveArchiveSelection,
   resolveNewThreadInWorkspaceAction,
   resolveSettingsBackTarget,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
+  resolveSubtreeRouteThreadId,
   resolveThreadHoverCardMetadata,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
@@ -2107,6 +2110,60 @@ describe("getFallbackThreadIdAfterDelete", () => {
     });
 
     expect(fallbackThreadId).toBe(ThreadId.makeUnsafe("thread-next"));
+  });
+});
+
+describe("subtree lifecycle sidebar helpers", () => {
+  const rootId = ThreadId.makeUnsafe("thread-root");
+  const childId = ThreadId.makeUnsafe("thread-child");
+  const grandchildId = ThreadId.makeUnsafe("thread-grandchild");
+  const otherId = ThreadId.makeUnsafe("thread-other");
+  const threads = [
+    makeThread({ id: rootId, parentThreadId: null }),
+    makeThread({ id: childId, parentThreadId: rootId }),
+    makeThread({ id: grandchildId, parentThreadId: childId }),
+    makeThread({ id: otherId, parentThreadId: null }),
+  ];
+
+  it("recognizes an active descendant as part of an archived route subtree", () => {
+    expect(
+      resolveSubtreeRouteThreadId({
+        threads,
+        rootThreadId: rootId,
+        routeThreadId: grandchildId,
+      }),
+    ).toBe(grandchildId);
+    expect(
+      resolveSubtreeRouteThreadId({
+        threads,
+        rootThreadId: rootId,
+        routeThreadId: otherId,
+      }),
+    ).toBeNull();
+  });
+
+  it("offers bulk archive only for selected family roots and reports the full scope", () => {
+    expect(resolveArchiveSelection(threads, new Set([childId]))).toEqual({
+      rootThreadIds: [],
+      subtreeThreadIds: [],
+    });
+    expect(resolveArchiveSelection(threads, new Set([rootId, otherId]))).toEqual({
+      rootThreadIds: [rootId, otherId],
+      subtreeThreadIds: [rootId, childId, grandchildId, otherId],
+    });
+  });
+
+  it("removes selected descendant roots already covered through full ancestry", () => {
+    expect(
+      collectSelectedThreadSubtreeRoots(threads, new Set([rootId, grandchildId])).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual([rootId]);
+    expect(
+      collectSelectedThreadSubtreeRoots(threads, new Set([childId, otherId])).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual([childId, otherId]);
   });
 });
 
