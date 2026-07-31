@@ -77,6 +77,7 @@ import Migration0058 from "./Migrations/058_ClearRenamedForkTitleLineage.ts";
 import Migration0059 from "./Migrations/059_ProjectionThreadsForkTitleFamilyRoot.ts";
 import Migration0060 from "./Migrations/060_ProjectionThreadMessagesDispatchSource.ts";
 import Migration0061 from "./Migrations/061_ScientOperationReceipts.ts";
+import Migration0062 from "./Migrations/062_ExternalIntegrationControlPlane.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -150,6 +151,7 @@ export const migrationEntries = [
   [59, "ProjectionThreadsForkTitleFamilyRoot", Migration0059],
   [60, "ProjectionThreadMessagesDispatchSource", Migration0060],
   [61, "ScientOperationReceipts", Migration0061],
+  [62, "ExternalIntegrationControlPlane", Migration0062],
 ] as const;
 
 for (const migrationEntry of migrationEntries) {
