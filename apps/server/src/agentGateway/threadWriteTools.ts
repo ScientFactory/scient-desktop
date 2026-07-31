@@ -120,7 +120,11 @@ function protectedThreadOperationState(thread: OrchestrationThreadShell) {
   };
 }
 
-function mapProtectedDispatchError(error: unknown, operation: string): GatewayToolError {
+function mapProtectedDispatchError(
+  error: unknown,
+  operation: string,
+  stableRequestIdSupplied = false,
+): GatewayToolError {
   if (error instanceof OrchestrationCommandCancelledError) {
     return new GatewayToolError(
       "caller_session_inactive",
@@ -130,7 +134,9 @@ function mapProtectedDispatchError(error: unknown, operation: string): GatewayTo
   if (error instanceof OrchestrationCommandOutcomeUncertainError) {
     const message =
       operation === "send_message_dispatch"
-        ? "Scient could not confirm whether this message committed. Reconcile the target thread before retrying; if a retry is necessary, reuse the same requestId."
+        ? stableRequestIdSupplied
+          ? "Scient could not confirm whether this message committed. Reconcile the target thread before retrying; if a retry is necessary, reuse the exact original requestId."
+          : "Scient could not confirm whether this message committed. No requestId was supplied. Do not retry automatically; first reconcile the target thread and confirm the message is absent before deliberately creating a new send."
         : "Scient could not confirm whether this interrupt committed. Reread the target thread and reconcile its active turn before deciding what to do next; do not retry this interrupt blindly.";
     return new GatewayToolError("operation_outcome_uncertain", message);
   }
@@ -391,7 +397,11 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
                       identity: commandId,
                     });
                   }
-                  return mapProtectedDispatchError(error, "send_message_dispatch");
+                  return mapProtectedDispatchError(
+                    error,
+                    "send_message_dispatch",
+                    requestId !== undefined,
+                  );
                 }),
               );
             context.recordOperationEffect({
