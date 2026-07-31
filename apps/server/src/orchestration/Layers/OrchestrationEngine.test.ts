@@ -33,7 +33,7 @@ import {
   type OrchestrationEventStoreShape,
 } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandOutcomeUncertainError } from "../Errors.ts";
-import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
+import { OrchestrationEngineLive, publishThenAdvanceCursor } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
@@ -183,6 +183,52 @@ const makeControllableEventStore = (control: { failNextRead: boolean }) =>
   ).pipe(Layer.provide(OrchestrationEventStoreLive));
 
 describe("OrchestrationEngine", () => {
+  it("cannot mark a reactor event delivered before an interrupted publication enqueues it", async () => {
+    const enteredPublication = await Effect.runPromise(Deferred.make<void>());
+    const releasePublication = await Effect.runPromise(Deferred.make<void>());
+    let published = false;
+    let cursor = 0;
+    const publication = publishThenAdvanceCursor(
+      Deferred.succeed(enteredPublication, undefined).pipe(
+        Effect.andThen(Deferred.await(releasePublication)),
+        Effect.andThen(
+          Effect.sync(() => {
+            published = true;
+          }),
+        ),
+      ),
+      () => {
+        cursor = 1;
+      },
+    );
+    const fiber = Effect.runFork(publication);
+
+    await Effect.runPromise(Deferred.await(enteredPublication));
+    let interruptionSettled = false;
+    const interrupted = Effect.runPromise(Fiber.interrupt(fiber)).finally(() => {
+      interruptionSettled = true;
+    });
+    await Promise.resolve();
+    expect(interruptionSettled).toBe(false);
+    expect(published).toBe(false);
+    expect(cursor).toBe(0);
+
+    await Effect.runPromise(Deferred.succeed(releasePublication, undefined));
+    await interrupted;
+    expect(published).toBe(true);
+    expect(cursor).toBe(1);
+
+    const defect = await Effect.runPromise(
+      Effect.exit(
+        publishThenAdvanceCursor(Effect.die("Injected publication defect"), () => {
+          cursor = 2;
+        }),
+      ),
+    );
+    expect(defect._tag).toBe("Failure");
+    expect(cursor).toBe(1);
+  });
+
   it("returns deterministic read models for repeated reads", async () => {
     const createdAt = now();
     const system = await createOrchestrationSystem();

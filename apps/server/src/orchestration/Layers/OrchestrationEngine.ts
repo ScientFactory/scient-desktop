@@ -95,6 +95,12 @@ function isProjectMetadataEvent(
   );
 }
 
+export const publishThenAdvanceCursor = <E, R>(
+  publish: Effect.Effect<unknown, E, R>,
+  advanceCursor: () => void,
+): Effect.Effect<void, E, R> =>
+  Effect.uninterruptible(publish.pipe(Effect.andThen(Effect.sync(advanceCursor)), Effect.asVoid));
+
 const makeOrchestrationEngine = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const eventStore = yield* OrchestrationEventStore;
@@ -295,12 +301,13 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       events,
       (event) => {
         if (event.sequence <= lastPublishedEventSequence) return Effect.void;
-        // Advance before publishing: recovery is explicitly at-most-once. An
-        // interrupted publication may omit a transient live notification, but
-        // can never redeliver a domain event whose durable state is available
-        // through snapshots/event replay.
-        lastPublishedEventSequence = event.sequence;
-        return PubSub.publish(eventPubSub, event).pipe(Effect.asVoid);
+        // Reactor delivery is operationally significant (for example, it can
+        // start a provider turn). Enqueue first and advance the cursor only
+        // after success, within one uninterruptible region. A defect leaves the
+        // cursor eligible for durable recovery.
+        return publishThenAdvanceCursor(PubSub.publish(eventPubSub, event), () => {
+          lastPublishedEventSequence = event.sequence;
+        });
       },
       { concurrency: 1 },
     );
