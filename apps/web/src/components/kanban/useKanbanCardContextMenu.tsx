@@ -388,11 +388,12 @@ export function useKanbanCardContextMenu(): KanbanCardContextMenuController {
           );
           if (!confirmed) return;
         }
-        await deleteCardThread(card, {
-          ...(confirmedDescendantThreadIds
+        await deleteCardThread(
+          card,
+          confirmedDescendantThreadIds
             ? { expectedDescendantThreadIds: confirmedDescendantThreadIds }
-            : {}),
-        });
+            : undefined,
+        );
       })().catch((error: unknown) => {
         setFeedback({
           tone: "error",

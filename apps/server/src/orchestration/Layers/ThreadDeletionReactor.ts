@@ -2,9 +2,11 @@ import {
   ThreadId,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  type OrchestrationThread,
   type TurnId,
 } from "@synara/contracts";
 import { makeDrainableWorker } from "@synara/shared/DrainableWorker";
+import { collectSubagentDescendants } from "@synara/shared/threadHierarchy";
 import { Cause, Effect, Layer, Stream } from "effect";
 
 import { ProfileStatsArchive } from "../../profileStatsArchive";
@@ -47,6 +49,20 @@ export function providerCleanupCanPurgeImmediately(cleanup: DeletedThreadProvide
   return cleanup.kind === "stop-session";
 }
 
+export function hasUnsettledSameCascadeDescendants(
+  readModel: OrchestrationReadModel,
+  threadId: ThreadId,
+): boolean {
+  const root = readModel.threads.find((thread) => thread.id === threadId);
+  if (!root || root.deletedAt === null) return false;
+  const sameCascadeProjectThreads = readModel.threads.filter(
+    (thread) => thread.projectId === root.projectId && thread.deletedAt === root.deletedAt,
+  );
+  return collectSubagentDescendants(sameCascadeProjectThreads, threadId).some(
+    (thread) => (thread.session?.activeTurnId ?? null) !== null,
+  );
+}
+
 export const waitForDeletedSubagentSettlement = Effect.fn("waitForDeletedSubagentSettlement")(
   function* (input: {
     readonly getReadModel: () => Effect.Effect<OrchestrationReadModel, unknown>;
@@ -86,13 +102,16 @@ export function resolveDeletedThreadProviderCleanup(
   }
 
   const directParent = threadById.get(directParentId);
+  const isEligibleProviderAncestor = (ancestor: OrchestrationThread): boolean =>
+    ancestor.projectId === thread.projectId &&
+    ancestor.archivedAt === null &&
+    (ancestor.deletedAt === null ||
+      (thread.deletedAt !== null && ancestor.deletedAt === thread.deletedAt));
   const providerThreadPrefix = `subagent:${directParentId}:`;
   const rawThreadId = String(thread.id);
   if (
     !directParent ||
-    directParent.deletedAt !== null ||
-    directParent.archivedAt !== null ||
-    directParent.projectId !== thread.projectId ||
+    !isEligibleProviderAncestor(directParent) ||
     !rawThreadId.startsWith(providerThreadPrefix)
   ) {
     return { kind: "defer-active-subagent", threadId };
@@ -115,12 +134,7 @@ export function resolveDeletedThreadProviderCleanup(
       return { kind: "defer-active-subagent", threadId };
     }
     const parent = threadById.get(providerOwner.parentThreadId);
-    if (
-      !parent ||
-      parent.deletedAt !== null ||
-      parent.archivedAt !== null ||
-      parent.projectId !== thread.projectId
-    ) {
+    if (!parent || !isEligibleProviderAncestor(parent)) {
       return { kind: "defer-active-subagent", threadId };
     }
     providerOwner = parent;
@@ -210,6 +224,13 @@ const make = Effect.gen(function* () {
     threadId: ThreadDeletedEvent["payload"]["threadId"],
   ) {
     const readModel = yield* orchestrationEngine.getReadModel();
+    if (hasUnsettledSameCascadeDescendants(readModel, threadId)) {
+      yield* Effect.logWarning(
+        "thread deletion cleanup retained provider owner for unsettled subagent descendants",
+        { threadId },
+      );
+      return false;
+    }
     const cleanup = resolveDeletedThreadProviderCleanup(readModel, threadId);
     if (cleanup.kind === "defer-active-subagent") {
       yield* Effect.logWarning("thread deletion cleanup deferred active subagent purge", {

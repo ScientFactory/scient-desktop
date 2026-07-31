@@ -3377,11 +3377,12 @@ export default function Sidebar() {
         if (!confirmed) return;
       }
 
-      await deleteThread(threadId, {
-        ...(appSettings.confirmThreadDelete
+      await deleteThread(
+        threadId,
+        appSettings.confirmThreadDelete
           ? { expectedDescendantThreadIds: confirmedDescendantThreadIds }
-          : {}),
-      });
+          : {},
+      );
     },
     [appSettings.confirmThreadDelete, deleteThread, sidebarThreadSummaryById, sidebarThreads],
   );

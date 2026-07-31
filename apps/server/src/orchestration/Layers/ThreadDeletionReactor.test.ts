@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   cleanupSucceededUnlessInterrupted,
+  hasUnsettledSameCascadeDescendants,
   logCleanupCauseUnlessInterrupted,
   providerCleanupCanPurgeImmediately,
   resolveDeletedThreadProviderCleanup,
@@ -96,6 +97,48 @@ describe("resolveDeletedThreadProviderCleanup", () => {
       turnId,
       providerThreadId: "provider-grandchild",
     });
+  });
+
+  it("routes through ancestors atomically soft-deleted by the same cascade", () => {
+    const rootId = ThreadId.makeUnsafe("thread-root");
+    const childId = ThreadId.makeUnsafe("subagent:thread-root:provider-child");
+    const turnId = TurnId.makeUnsafe("turn-child");
+    const deletedAt = "2026-07-31T08:05:00.000Z";
+
+    expect(
+      resolveDeletedThreadProviderCleanup(
+        cleanupReadModel([
+          { id: rootId, deletedAt },
+          { id: childId, parentThreadId: rootId, activeTurnId: turnId, deletedAt },
+        ]),
+        childId,
+      ),
+    ).toEqual({
+      kind: "interrupt-subagent-turn",
+      threadId: rootId,
+      turnId,
+      providerThreadId: "provider-child",
+    });
+  });
+
+  it("defers through an older unrelated ancestor tombstone", () => {
+    const rootId = ThreadId.makeUnsafe("thread-root");
+    const childId = ThreadId.makeUnsafe("subagent:thread-root:provider-child");
+    const turnId = TurnId.makeUnsafe("turn-child");
+    expect(
+      resolveDeletedThreadProviderCleanup(
+        cleanupReadModel([
+          { id: rootId, deletedAt: "2026-07-31T08:04:00.000Z" },
+          {
+            id: childId,
+            parentThreadId: rootId,
+            activeTurnId: turnId,
+            deletedAt: "2026-07-31T08:05:00.000Z",
+          },
+        ]),
+        childId,
+      ),
+    ).toEqual({ kind: "defer-active-subagent", threadId: childId });
   });
 
   it("defers active subagent purge for missing or corrupt lineage", () => {
@@ -193,6 +236,49 @@ describe("providerCleanupCanPurgeImmediately", () => {
       false,
     );
     expect(providerCleanupCanPurgeImmediately({ kind: "stop-session", threadId })).toBe(true);
+  });
+});
+
+describe("hasUnsettledSameCascadeDescendants", () => {
+  it("holds the provider owner until its atomically deleted active child settles", () => {
+    const rootId = ThreadId.makeUnsafe("thread-root");
+    const childId = ThreadId.makeUnsafe("subagent:thread-root:provider-child");
+    const deletedAt = "2026-07-31T08:05:00.000Z";
+    const activeReadModel = cleanupReadModel([
+      { id: rootId, deletedAt },
+      {
+        id: childId,
+        parentThreadId: rootId,
+        activeTurnId: TurnId.makeUnsafe("turn-child"),
+        deletedAt,
+      },
+    ]);
+    expect(hasUnsettledSameCascadeDescendants(activeReadModel, rootId)).toBe(true);
+
+    const settledReadModel = cleanupReadModel([
+      { id: rootId, deletedAt },
+      { id: childId, parentThreadId: rootId, deletedAt },
+    ]);
+    expect(hasUnsettledSameCascadeDescendants(settledReadModel, rootId)).toBe(false);
+  });
+
+  it("does not let an unrelated deletion timestamp hold the owner", () => {
+    const rootId = ThreadId.makeUnsafe("thread-root");
+    const childId = ThreadId.makeUnsafe("subagent:thread-root:provider-child");
+    expect(
+      hasUnsettledSameCascadeDescendants(
+        cleanupReadModel([
+          { id: rootId, deletedAt: "2026-07-31T08:05:00.000Z" },
+          {
+            id: childId,
+            parentThreadId: rootId,
+            activeTurnId: TurnId.makeUnsafe("turn-child"),
+            deletedAt: "2026-07-31T08:04:00.000Z",
+          },
+        ]),
+        rootId,
+      ),
+    ).toBe(false);
   });
 });
 
