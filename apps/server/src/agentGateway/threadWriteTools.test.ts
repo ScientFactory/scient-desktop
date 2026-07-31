@@ -12,6 +12,7 @@ import { Effect, Fiber, Option } from "effect";
 import { describe, expect, it, vi } from "vitest";
 
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
+import { OrchestrationCommandOutcomeUncertainError } from "../orchestration/Errors.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   beginScientOperation,
@@ -795,6 +796,34 @@ describe("scient_send_message", () => {
     expect(error.code).toBe("operation_failed");
     expect(error.message).toBe("The gateway tool failed unexpectedly.");
     expect(result.content[0]!.text).not.toContain("engine boom");
+  });
+
+  it("surfaces an uncertain dispatch without inviting an unsafe retry and records its possible effect", async () => {
+    const effects: Array<{ readonly kind: string; readonly identity: string }> = [];
+    const { call } = setup({
+      threadShells: { [TARGET_THREAD]: shell(TARGET_THREAD) },
+      dispatch: (command) =>
+        Effect.fail(
+          new OrchestrationCommandOutcomeUncertainError({
+            commandId: command.commandId,
+            commandType: command.type,
+            detail: "Injected reconciliation failure.",
+          }),
+        ),
+    });
+    const result = await call(
+      "scient_send_message",
+      { threadId: TARGET_THREAD, message: "x" },
+      makeContext({
+        recordOperationEffect: (effect) => effects.push(effect),
+      }),
+    );
+    expect(result.isError).toBe(true);
+    const error = jsonBody(result).error as { code: string; message: string };
+    expect(error.code).toBe("operation_outcome_uncertain");
+    expect(error.message).toContain("Reconcile the target thread before retrying");
+    expect(error.message).toContain("reuse the same requestId");
+    expect(effects).toEqual([{ kind: "orchestration-command", identity: "agent:rand-id:send" }]);
   });
 
   it("does not remember a failed dispatch for later replay", async () => {

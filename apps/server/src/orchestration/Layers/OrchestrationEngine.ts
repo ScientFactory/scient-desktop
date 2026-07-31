@@ -27,6 +27,7 @@ import { OrchestrationEventStore } from "../../persistence/Services/Orchestratio
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import {
   OrchestrationCommandCancelledError,
+  OrchestrationCommandOutcomeUncertainError,
   OrchestrationCommandInvariantError,
   OrchestrationCommandInternalError,
   OrchestrationCommandPreviouslyRejectedError,
@@ -177,7 +178,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         }),
       );
       if (receiptExit._tag === "Failure") {
-        return yield* new OrchestrationCommandInternalError({
+        return yield* new OrchestrationCommandOutcomeUncertainError({
           commandId: command.commandId,
           commandType: command.type,
           detail:
@@ -462,11 +463,55 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       }
       commandReadModel = nextCommandReadModel;
 
-      yield* projectDeferredCommittedEvents(persistedEvents);
+      // The protected commit result must never wait on deferred projection.
+      // Mark the cursor dirty and let the existing bounded-lifecycle bootstrap
+      // catch-up replay the committed sequence after this worker releases the
+      // maintenance lock.
+      yield* Ref.set(deferredProjectionDirty, true);
+      const lastPersistedEvent = persistedEvents.at(-1)!;
+      yield* scheduleDeferredProjectionCatchUp({
+        eventType: lastPersistedEvent.type,
+        sequence: lastPersistedEvent.sequence,
+      });
       for (const persistedEvent of persistedEvents) {
         yield* PubSub.publish(eventPubSub, persistedEvent);
       }
     });
+
+    const recoverCommittedState = (sequence: number) =>
+      reconcileCommandReadModelAfterDispatchFailure.pipe(
+        Effect.catchCause((eventReadCause) =>
+          Effect.logWarning(
+            "event reconciliation failed after a durable orchestration outcome; refreshing committed projections",
+          ).pipe(
+            Effect.annotateLogs({
+              commandId: envelope.command.commandId,
+              sequence,
+              cause: Cause.pretty(eventReadCause),
+            }),
+            // The event replay read failed, so rebuild every persisted
+            // projection before refreshing the command model. This runs only
+            // after protected commit certainty has already been reported; if
+            // rebuilding also fails, the worker fail-stops below instead of
+            // processing another command against stale authority state.
+            Effect.andThen(projectionPipeline.bootstrap),
+            Effect.andThen(refreshCommandReadModelFromProjectionState),
+            Effect.andThen(Ref.set(deferredProjectionDirty, false)),
+            Effect.catchCause((refreshCause) =>
+              Effect.logError(
+                "orchestration state recovery failed after a durable command; stopping the worker until restart",
+              ).pipe(
+                Effect.annotateLogs({
+                  commandId: envelope.command.commandId,
+                  sequence,
+                  cause: Cause.pretty(refreshCause),
+                }),
+                Effect.andThen(Effect.never),
+              ),
+            ),
+          ),
+        ),
+      );
 
     const runCommand = Effect.gen(function* () {
       const shouldSkip = yield* Ref.modify(envelope.executionState, (state) => {
@@ -629,19 +674,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       ),
       Effect.catch((error: OrchestrationDispatchError) =>
         Effect.gen(function* () {
-          yield* reconcileCommandReadModelAfterDispatchFailure.pipe(
-            Effect.catch(() =>
-              Effect.logWarning(
-                "failed to reconcile orchestration read model after dispatch failure",
-              ).pipe(
-                Effect.annotateLogs({
-                  commandId: envelope.command.commandId,
-                  snapshotSequence: commandReadModel.snapshotSequence,
-                }),
-              ),
-            ),
-          );
-
           const timedOut = Schema.is(OrchestrationCommandTimeoutError)(error);
           const cancelled = Schema.is(OrchestrationCommandCancelledError)(error);
           if (timedOut || cancelled) {
@@ -660,6 +692,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
                   resolvedAmbiguousOutcome.right,
                 );
               }
+              yield* recoverCommittedState(resolvedAmbiguousOutcome.right.sequence);
               yield* Deferred.succeed(envelope.result, resolvedAmbiguousOutcome.right);
               return;
             }
@@ -673,7 +706,28 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             ) {
               error = resolvedAmbiguousOutcome.left;
             }
+            if (Schema.is(OrchestrationCommandOutcomeUncertainError)(error)) {
+              if (envelope.protectedCommitResult !== null) {
+                yield* Deferred.fail(envelope.protectedCommitResult, error);
+              }
+              yield* recoverCommittedState(dispatchStartSequence);
+              yield* Deferred.fail(envelope.result, error);
+              return;
+            }
           }
+
+          yield* reconcileCommandReadModelAfterDispatchFailure.pipe(
+            Effect.catch(() =>
+              Effect.logWarning(
+                "failed to reconcile orchestration read model after dispatch failure",
+              ).pipe(
+                Effect.annotateLogs({
+                  commandId: envelope.command.commandId,
+                  snapshotSequence: commandReadModel.snapshotSequence,
+                }),
+              ),
+            ),
+          );
 
           if (Schema.is(OrchestrationCommandInvariantError)(error)) {
             const aggregateRef = commandToAggregateRef(envelope.command);

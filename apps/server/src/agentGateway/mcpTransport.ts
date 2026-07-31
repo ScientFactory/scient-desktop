@@ -284,7 +284,8 @@ export function makeAgentGatewayMcpTransport(input: {
             receiptId: `scient-receipt:${randomId()}`,
             finishedAt: now(),
             outcome:
-              receiptErrorCode !== null && operationEffects.length > 0
+              receiptErrorCode === "operation_outcome_uncertain" ||
+              (receiptErrorCode !== null && operationEffects.length > 0)
                 ? "uncertain/reconciliation-required"
                 : result.isError
                   ? "failed"

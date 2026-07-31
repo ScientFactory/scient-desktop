@@ -766,6 +766,52 @@ describe("makeAgentGatewayMcpTransport capability + turn gates", () => {
     });
   });
 
+  it("records a typed uncertain handler outcome even when no effect identity was recovered", async () => {
+    const runningShell = makeShell({
+      latestTurn: { turnId: RUNNING_TURN, state: "running" },
+      session: { providerName: "claudeAgent", status: "running" },
+    });
+    const receipts: ScientOperationResultReceipt[] = [];
+    const uncertainWrite: ToolEntry = {
+      ...writeTool,
+      handler: () =>
+        Effect.succeed(
+          gatewayToolErrorResult(
+            new GatewayToolError(
+              "operation_outcome_uncertain",
+              "Reconcile the target before retrying.",
+            ),
+          ),
+        ),
+    };
+    await run(
+      makeTransport({
+        credentials: makeCredentials({
+          session: makeIdentity({ capabilities: ["thread:drive"] }),
+        }),
+        callerShell: Option.some(runningShell),
+        requireShell: runningShell,
+        tools: [uncertainWrite],
+        recordOperationReceipt: (receipt) => receipts.push(receipt),
+      }),
+      {
+        authorizationHeader: auth(VALID_TOKEN),
+        body: {
+          jsonrpc: "2.0",
+          id: 57,
+          method: "tools/call",
+          params: { name: "scient_write_thing", arguments: {} },
+        },
+      },
+    );
+
+    expect(receipts[0]).toMatchObject({
+      outcome: "uncertain/reconciliation-required",
+      errorCode: "operation_outcome_uncertain",
+      effects: [],
+    });
+  });
+
   it("lets a write lease acquired before revocation finish with a truthful success receipt", async () => {
     let revoked = false;
     let handlerStarted = false;

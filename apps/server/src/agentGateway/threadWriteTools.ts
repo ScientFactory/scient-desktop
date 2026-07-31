@@ -31,7 +31,10 @@ import {
 import { Cause, Effect, Option } from "effect";
 
 import type { OrchestrationEngineShape } from "../orchestration/Services/OrchestrationEngine.ts";
-import { OrchestrationCommandCancelledError } from "../orchestration/Errors.ts";
+import {
+  OrchestrationCommandCancelledError,
+  OrchestrationCommandOutcomeUncertainError,
+} from "../orchestration/Errors.ts";
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { authorizeThreadDrive } from "./authorization.ts";
 import { mcpToolResultJson, type McpToolCallResult } from "./protocol.ts";
@@ -118,12 +121,19 @@ function protectedThreadOperationState(thread: OrchestrationThreadShell) {
 }
 
 function mapProtectedDispatchError(error: unknown, operation: string): GatewayToolError {
-  return error instanceof OrchestrationCommandCancelledError
-    ? new GatewayToolError(
-        "caller_session_inactive",
-        "This Scient write was revoked before its protected effect committed.",
-      )
-    : unexpectedGatewayToolError(error, { operation });
+  if (error instanceof OrchestrationCommandCancelledError) {
+    return new GatewayToolError(
+      "caller_session_inactive",
+      "This Scient write was revoked before its protected effect committed.",
+    );
+  }
+  if (error instanceof OrchestrationCommandOutcomeUncertainError) {
+    return new GatewayToolError(
+      "operation_outcome_uncertain",
+      "Scient could not confirm whether this write committed. Reconcile the target thread before retrying; if a retry is necessary, reuse the same requestId.",
+    );
+  }
+  return unexpectedGatewayToolError(error, { operation });
 }
 
 export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArray<ToolEntry> {
@@ -373,9 +383,15 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
                 context.operationRevocationFence,
               )
               .pipe(
-                Effect.mapError((error) =>
-                  mapProtectedDispatchError(error, "send_message_dispatch"),
-                ),
+                Effect.mapError((error) => {
+                  if (error instanceof OrchestrationCommandOutcomeUncertainError) {
+                    context.recordOperationEffect({
+                      kind: "orchestration-command",
+                      identity: commandId,
+                    });
+                  }
+                  return mapProtectedDispatchError(error, "send_message_dispatch");
+                }),
               );
             context.recordOperationEffect({
               kind: "orchestration-command",
@@ -485,9 +501,15 @@ export function makeThreadWriteTools(input: ThreadWriteToolsInput): ReadonlyArra
             context.operationRevocationFence,
           )
           .pipe(
-            Effect.mapError((error) =>
-              mapProtectedDispatchError(error, "interrupt_thread_dispatch"),
-            ),
+            Effect.mapError((error) => {
+              if (error instanceof OrchestrationCommandOutcomeUncertainError) {
+                context.recordOperationEffect({
+                  kind: "orchestration-command",
+                  identity: commandId,
+                });
+              }
+              return mapProtectedDispatchError(error, "interrupt_thread_dispatch");
+            }),
           );
         context.recordOperationEffect({ kind: "orchestration-command", identity: commandId });
         return mcpToolResultJson({
