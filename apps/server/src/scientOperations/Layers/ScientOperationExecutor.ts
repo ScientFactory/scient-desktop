@@ -6,6 +6,7 @@ import { Effect, Layer } from "effect";
 import {
   beginScientOperation,
   completeScientOperation,
+  SCIENT_OPERATION_DEFINITIONS,
   ScientOperationInputError,
   type ScientOperationEffectIdentity,
 } from "../authority.ts";
@@ -40,7 +41,20 @@ export function makeScientOperationExecutor(options?: {
   return {
     execute: (input) =>
       Effect.gen(function* () {
-        const canonicalize = input.definition.canonicalizeInput;
+        const definition = SCIENT_OPERATION_DEFINITIONS[input.operation];
+        // A cancellation race alone cannot make an external side effect safe:
+        // revocation may win after the side effect but before the adapter can
+        // report its identity. F1 therefore fails this class closed. F2 may
+        // enable it only after a durable pre-effect intent exists.
+        if (definition.effectClass === "irreversible-external") {
+          return {
+            kind: "execution-rejected",
+            code: "operation_not_available",
+            message:
+              "This irreversible Scient operation is unavailable until durable effect intent is active.",
+          } as const;
+        }
+        const canonicalize = definition.canonicalizeInput;
         if (canonicalize === null) {
           return {
             kind: "input-rejected",
@@ -64,14 +78,14 @@ export function makeScientOperationExecutor(options?: {
         }
 
         const semanticIdempotencyIdentity =
-          input.definition.idempotencyInputField === null
+          definition.idempotencyInputField === null
             ? null
-            : typeof canonical.value[input.definition.idempotencyInputField] === "string"
-              ? (canonical.value[input.definition.idempotencyInputField] as string)
+            : typeof canonical.value[definition.idempotencyInputField] === "string"
+              ? (canonical.value[definition.idempotencyInputField] as string)
               : null;
         const started = beginScientOperation({
           authority: input.authority,
-          definition: input.definition,
+          definition,
           projectId: input.projectId,
           ingress: input.ingress,
           operationId: `scient-operation:${randomId()}`,
@@ -102,7 +116,7 @@ export function makeScientOperationExecutor(options?: {
           }),
         );
         const execution = yield* (
-          input.definition.effectClass === "transactional-write"
+          definition.effectClass === "transactional-write"
             ? input.runTransactionalWrite(handler)
             : Effect.raceFirst(handler, input.revocationFence)
         ).pipe(
@@ -144,7 +158,7 @@ export function makeScientOperationExecutor(options?: {
           } satisfies ScientOperationExecutionOutcome<never, typeof execution.error>;
         }
 
-        if (input.definition.effectClass === "read") {
+        if (definition.effectClass === "read") {
           const released = yield* input.releaseRead(admission.value).pipe(
             Effect.match({
               onFailure: (error) => ({ ok: false as const, error }),

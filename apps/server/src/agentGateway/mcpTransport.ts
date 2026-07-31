@@ -18,9 +18,7 @@ import {
   SCIENT_OPERATION_DEFINITIONS,
   ScientOperationInputError,
   type ScientOperationAuthority,
-  type ScientOperationResultReceipt,
 } from "../scientOperations/authority.ts";
-import { makeScientOperationExecutor } from "../scientOperations/Layers/ScientOperationExecutor.ts";
 import type { ScientOperationExecutorShape } from "../scientOperations/Services/ScientOperationExecutor.ts";
 import type { AgentGatewayShape } from "./Services/AgentGateway.ts";
 import type { AgentGatewayCredentialsShape } from "./Services/AgentGatewayCredentials.ts";
@@ -86,20 +84,9 @@ export function makeAgentGatewayMcpTransport(input: {
   readonly requireThreadShell: (
     threadId: string,
   ) => Effect.Effect<OrchestrationThreadShell, unknown>;
-  readonly now?: () => number;
-  readonly randomId?: () => string;
-  readonly recordOperationReceipt?: (receipt: ScientOperationResultReceipt) => void;
-  readonly operationExecutor?: ScientOperationExecutorShape;
+  readonly operationExecutor: ScientOperationExecutorShape;
 }): AgentGatewayShape["handleMcpPost"] {
-  const operationExecutor =
-    input.operationExecutor ??
-    makeScientOperationExecutor({
-      ...(input.now === undefined ? {} : { now: input.now }),
-      ...(input.randomId === undefined ? {} : { randomId: input.randomId }),
-      ...(input.recordOperationReceipt === undefined
-        ? {}
-        : { recordReceipt: input.recordOperationReceipt }),
-    });
+  const operationExecutor = input.operationExecutor;
   const toolsByName = new Map(input.tools.map((tool) => [tool.definition.name, tool]));
 
   const handleRequest = (request: JsonRpcRequest, context: ToolRequestBaseContext) =>
@@ -175,7 +162,7 @@ export function makeAgentGatewayMcpTransport(input: {
             GatewayToolError
           >({
             authority: context.operationAuthority,
-            definition: operation,
+            operation: tool.operation,
             projectId: context.callerProjectId,
             ingress: "provider-gateway",
             domainInput: decoded.value,
@@ -230,6 +217,11 @@ export function makeAgentGatewayMcpTransport(input: {
               );
             case "admission-rejected":
               return jsonRpcResult(request.id, gatewayToolErrorResult(outcome.error));
+            case "execution-rejected":
+              return jsonRpcResult(
+                request.id,
+                gatewayToolErrorResult(new GatewayToolError(outcome.code, outcome.message)),
+              );
             case "finished":
               return jsonRpcResult(
                 request.id,

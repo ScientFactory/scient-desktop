@@ -39,7 +39,7 @@ function authority(capabilities: ReadonlyArray<ScientOperationCapability>) {
 function baseInput(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     authority: authority(["thread:read"]),
-    definition: SCIENT_OPERATION_DEFINITIONS["thread.read"],
+    operation: "thread.read" as const,
     projectId: "project-1",
     ingress: "provider-gateway" as const,
     domainInput: { threadId: " target-thread " },
@@ -126,6 +126,60 @@ describe("ScientOperationExecutor", () => {
     expect(admitted).toBe(false);
   });
 
+  it("ignores a structurally forged definition and resolves policy from the registry key", async () => {
+    let executed = false;
+    const executor = makeScientOperationExecutor({ now: () => NOW });
+    const forgedInput = {
+      ...baseInput({
+        authority: authority(["thread:drive"]),
+        execute: () => {
+          executed = true;
+          return Effect.succeed({});
+        },
+      }),
+      // A future JavaScript caller can still attach extra structural fields;
+      // the executor must never consult them.
+      definition: SCIENT_OPERATION_DEFINITIONS["thread.message.send"],
+    };
+
+    const outcome = await Effect.runPromise(executor.execute(forgedInput));
+
+    expect(outcome).toMatchObject({
+      kind: "authority-rejected",
+      decision: { code: "capability_denied" },
+    });
+    expect(executed).toBe(false);
+  });
+
+  it("fails irreversible external effects closed before admission or execution", async () => {
+    let admitted = false;
+    let executed = false;
+    const executor = makeScientOperationExecutor({ now: () => NOW });
+    const outcome = await Effect.runPromise(
+      executor.execute(
+        baseInput({
+          operation: "browser.action",
+          authority: authority(["browser:action"]),
+          admit: Effect.sync(() => {
+            admitted = true;
+            return "admitted";
+          }),
+          execute: () => {
+            executed = true;
+            return Effect.succeed({});
+          },
+        }),
+      ),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: "execution-rejected",
+      code: "operation_not_available",
+    });
+    expect(admitted).toBe(false);
+    expect(executed).toBe(false);
+  });
+
   it("returns a typed host-admission rejection without running the effect", async () => {
     let executed = false;
     const executor = makeScientOperationExecutor({ now: () => NOW });
@@ -194,7 +248,7 @@ describe("ScientOperationExecutor", () => {
       executor.execute(
         baseInput({
           authority: authority(["thread:drive"]),
-          definition: SCIENT_OPERATION_DEFINITIONS["thread.message.send"],
+          operation: "thread.message.send",
           domainInput: {
             threadId: "thread-target",
             message: "hello",

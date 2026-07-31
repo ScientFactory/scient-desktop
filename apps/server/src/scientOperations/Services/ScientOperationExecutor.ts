@@ -14,8 +14,8 @@ import { ServiceMap, type Effect } from "effect";
 import type {
   ScientOperationAuthority,
   ScientOperationAuthorizationDecision,
-  ScientOperationDefinition,
   ScientOperationEffectIdentity,
+  ScientOperationId,
   ScientOperationRequestEnvelope,
   ScientOperationResultReceipt,
 } from "../authority.ts";
@@ -28,7 +28,8 @@ export interface ScientOperationExecutionContext<Admission> {
 
 export interface ScientOperationExecutionInput<Result, Admission, AdapterError> {
   readonly authority: ScientOperationAuthority;
-  readonly definition: ScientOperationDefinition;
+  /** Registry key only; callers cannot supply or redefine operation policy. */
+  readonly operation: ScientOperationId;
   readonly projectId: string;
   readonly ingress: ScientOperationRequestEnvelope["ingress"];
   readonly domainInput: Readonly<Record<string, unknown>>;
@@ -41,7 +42,7 @@ export interface ScientOperationExecutionInput<Result, Admission, AdapterError> 
   readonly releaseRead: (admission: Admission) => Effect.Effect<void, AdapterError>;
   /** Exact host transaction/lease boundary for governed writes. */
   readonly runTransactionalWrite: <A>(effect: Effect.Effect<A>) => Effect.Effect<A, AdapterError>;
-  /** Revocation signal raced with reads and irreversible external effects. */
+  /** Revocation signal raced with reads; irreversible effects stay unavailable in F1. */
   readonly revocationFence: Effect.Effect<never, AdapterError>;
   /** Extract a stable authored error code from a successful adapter result. */
   readonly resultErrorCode: (result: Result) => string | null;
@@ -59,6 +60,11 @@ export type ScientOperationExecutionOutcome<Result, AdapterError> =
   | {
       readonly kind: "admission-rejected";
       readonly error: AdapterError;
+    }
+  | {
+      readonly kind: "execution-rejected";
+      readonly code: "operation_not_available";
+      readonly message: string;
     }
   | {
       readonly kind: "finished";
