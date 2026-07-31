@@ -306,6 +306,7 @@ it.effect("keeps generated-image recovery references internal-only", () =>
       commandId: "cmd-image-reference",
       threadId: "thread-1",
       turnId: "turn-1",
+      attachmentId: "thread-1-attachment-1",
       provenanceKey: "call-1",
       sourcePath: "/trusted/generated.png",
       createdAt: "2026-01-01T00:00:00.000Z",

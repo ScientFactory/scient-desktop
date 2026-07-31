@@ -26,8 +26,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
+import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
+import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
@@ -45,7 +47,10 @@ import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeInge
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { materializeGeneratedImageAttachment } from "../../generatedImageAttachments.ts";
+import {
+  generatedImageAttachmentId,
+  materializeGeneratedImageAttachment,
+} from "../../generatedImageAttachments.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
@@ -179,7 +184,7 @@ describe("ProviderRuntimeIngestion", () => {
     }
   });
 
-  async function createHarness(options: { codexHomePath?: string } = {}) {
+  async function createHarness(options: { codexHomePath?: string; startIngestion?: boolean } = {}) {
     const workspaceRoot = makeTempDir("synara-provider-project-");
     const codexHomePath = options.codexHomePath ?? makeTempDir("synara-provider-codex-home-");
     const generatedImagesRoot = path.join(codexHomePath, "generated_images", "thread-1");
@@ -194,6 +199,7 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     );
     const layer = ProviderRuntimeIngestionLive.pipe(
+      Layer.provideMerge(ProjectionTurnRepositoryLive),
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
       Layer.provideMerge(SqlitePersistenceMemory),
@@ -212,9 +218,17 @@ describe("ProviderRuntimeIngestion", () => {
     const ingestion = await testRuntime.runPromise(Effect.service(ProviderRuntimeIngestionService));
     const eventStore = await testRuntime.runPromise(Effect.service(OrchestrationEventStore));
     const snapshotQuery = await testRuntime.runPromise(Effect.service(ProjectionSnapshotQuery));
+    const projectionTurnRepository = await testRuntime.runPromise(
+      Effect.service(ProjectionTurnRepository),
+    );
     scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(ingestion.start.pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(ingestion.drain);
+    const startIngestion = () => Effect.runPromise(ingestion.start.pipe(Scope.provide(scope!)));
+    if (options.startIngestion !== false) {
+      // Preserve the production lifecycle exercised by the existing harness:
+      // subscriptions start before the seeded thread/session state is written.
+      await startIngestion();
+    }
 
     const createdAt = new Date().toISOString();
     await Effect.runPromise(
@@ -274,15 +288,16 @@ describe("ProviderRuntimeIngestion", () => {
       createdAt,
       updatedAt: createdAt,
     });
-
     return {
       engine,
       eventStore,
       snapshotQuery,
+      projectionTurnRepository,
       emit: provider.emit,
       setProviderSession: provider.setSession,
       stopRuntimeSession: provider.stopRuntimeSession,
       drain,
+      startIngestion,
       workspaceRoot,
       generatedImagesRoot,
       attachmentsDir: path.join(serverBaseDir, "userdata", "attachments"),
@@ -302,6 +317,35 @@ describe("ProviderRuntimeIngestion", () => {
         commandId: CommandId.makeUnsafe(`test:image-reference:${input.provenanceKey}`),
         threadId: asThreadId("thread-1"),
         turnId: input.turnId,
+        attachmentId: generatedImageAttachmentId({
+          threadId: "thread-1",
+          provenanceKey: input.provenanceKey,
+        }),
+        provenanceKey: input.provenanceKey,
+        sourcePath: input.sourcePath,
+        createdAt: input.createdAt,
+      }),
+    );
+  }
+
+  async function recordTurnlessGeneratedImageReference(input: {
+    readonly engine: OrchestrationEngineShape;
+    readonly targetMessageId: MessageId;
+    readonly provenanceKey: string;
+    readonly sourcePath: string;
+    readonly createdAt: string;
+  }) {
+    const attachmentId = generatedImageAttachmentId({
+      threadId: "thread-1",
+      provenanceKey: input.provenanceKey,
+    });
+    await Effect.runPromise(
+      input.engine.dispatch({
+        type: "thread.generated-image.reference.record",
+        commandId: CommandId.makeUnsafe(`test:turnless-image-reference:${attachmentId}`),
+        threadId: asThreadId("thread-1"),
+        targetMessageId: input.targetMessageId,
+        attachmentId,
         provenanceKey: input.provenanceKey,
         sourcePath: input.sourcePath,
         createdAt: input.createdAt,
@@ -1126,7 +1170,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.text).not.toContain("omitted because");
   });
 
-  it("continues ordered recovery after a failure until successful images fill capacity", async () => {
+  it("limits recovery I/O to the first eight provenances even when one fails", async () => {
     const harness = await createHarness();
     const turnId = asTurnId("turn-image-recovery-after-failure");
     const createdAt = new Date().toISOString();
@@ -1177,8 +1221,9 @@ describe("ProviderRuntimeIngestion", () => {
     const missingPath = path.join(harness.generatedImagesRoot, "ordered-a-missing.png");
     const validPath = path.join(harness.generatedImagesRoot, "ordered-b-valid.png");
     fs.writeFileSync(validPath, GENERATED_PNG_BYTES);
-    // Sequence is intentional: the missing reference must be attempted first,
-    // then the valid reference must still consume the one remaining success slot.
+    // Sequence is intentional: the missing reference is the eighth and final
+    // I/O-eligible provenance. The valid ninth reference must be accounted for
+    // without being opened merely because the eighth failed.
     for (const [suffix, imagePath] of [
       ["a-missing", missingPath],
       ["b-valid", validPath],
@@ -1200,23 +1245,25 @@ describe("ProviderRuntimeIngestion", () => {
       threadId: asThreadId("thread-1"),
       turnId,
       status: "completed",
+      payload: {},
     });
 
     const thread = await waitForThread(harness.engine, (entry) =>
       entry.messages.some(
         (message) =>
           message.id === "assistant:recovery-after-failure-answer" &&
-          message.attachments?.length === 8 &&
-          message.text.includes("could not be displayed"),
+          message.attachments?.length === 7 &&
+          message.text.includes("could not be displayed") &&
+          message.text.includes("omitted"),
       ),
     );
     const message = thread.messages.find(
       (entry) => entry.id === "assistant:recovery-after-failure-answer",
     );
-    expect(message?.attachments).toHaveLength(8);
+    expect(message?.attachments).toHaveLength(7);
     expect(message?.text).toContain("could not be displayed");
-    expect(message?.text).not.toContain("at most 8 attachments");
-    expect(message?.text).not.toContain("omitted because");
+    expect(message?.text).toContain("omitted");
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(7);
   });
 
   it("clears an eager failure when the same provenance recovers at settlement", async () => {
@@ -1379,7 +1426,7 @@ describe("ProviderRuntimeIngestion", () => {
     ).toHaveLength(1);
   });
 
-  it("reconciles the current late image when its trusted ledger query fails", async () => {
+  it("preserves pending warnings when the trusted ledger query fails, then retries", async () => {
     const harness = await createHarness();
     const turnId = asTurnId("turn-late-query-fallback");
     const createdAt = "2026-07-31T09:55:00.000Z";
@@ -1416,6 +1463,24 @@ describe("ProviderRuntimeIngestion", () => {
       harness.engine,
       (thread) => thread.session?.status === "ready" && thread.session.activeTurnId === null,
     );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.message.assistant.attachments.add",
+        commandId: CommandId.makeUnsafe("test:late-query-existing-warning"),
+        threadId: asThreadId("thread-1"),
+        messageId: asMessageId("assistant:late-query-answer"),
+        attachments: [],
+        failedImageCount: 2,
+        turnId,
+        createdAt,
+      }),
+    );
+    const warnedThread = await waitForThread(harness.engine, (thread) =>
+      thread.messages.some((message) => message.text.includes("2 generated images could not")),
+    );
+    const warningText = warnedThread.messages.find(
+      (message) => message.id === "assistant:late-query-answer",
+    )?.text;
 
     const mutableSnapshotQuery = harness.snapshotQuery as {
       listGeneratedImageReferencesByTurn: typeof harness.snapshotQuery.listGeneratedImageReferencesByTurn;
@@ -1446,13 +1511,40 @@ describe("ProviderRuntimeIngestion", () => {
         },
       },
     });
+    await harness.drain();
+    const failedReadModel = await Effect.runPromise(harness.engine.getReadModel());
+    const unchangedMessage = failedReadModel.threads[0]?.messages.find(
+      (message) => message.id === "assistant:late-query-answer",
+    );
+    expect(unchangedMessage?.attachments ?? []).toEqual([]);
+    expect(unchangedMessage?.text).toBe(warningText);
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(0);
+
+    mutableSnapshotQuery.listGeneratedImageReferencesByTurn = originalQuery;
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-late-query-image-retry"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("late-query-image"),
+      payload: {
+        itemType: "image_generation",
+        status: "completed",
+        data: {
+          kind: "codex.generated_image",
+          path: imagePath,
+          callId: "late-query-image",
+        },
+      },
+    });
     const thread = await waitForThread(harness.engine, (entry) =>
       entry.messages.some(
         (message) =>
           message.id === "assistant:late-query-answer" && message.attachments?.length === 1,
       ),
     );
-    mutableSnapshotQuery.listGeneratedImageReferencesByTurn = originalQuery;
     expect(
       thread.messages.find((message) => message.id === "assistant:late-query-answer")?.attachments,
     ).toHaveLength(1);
@@ -1731,6 +1823,295 @@ describe("ProviderRuntimeIngestion", () => {
     expect(turnMessages[0]?.text).toBe("Here is the generated image.");
   });
 
+  it("preserves buffered image recovery when the terminal thread refresh fails", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-image-refresh-retry");
+    const createdAt = "2026-07-31T10:12:00.000Z";
+    const imagePath = path.join(harness.generatedImagesRoot, "refresh-retry.png");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-refresh-retry-start"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-refresh-retry-delta"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("refresh-retry-final"),
+      payload: { streamKind: "assistant_text", delta: "Final answer" },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-refresh-retry-image"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("refresh-retry-image"),
+      payload: {
+        itemType: "image_generation",
+        status: "completed",
+        data: { kind: "codex.generated_image", path: imagePath, callId: "refresh-retry" },
+      },
+    });
+    await harness.drain();
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(1);
+
+    const mutableSnapshotQuery = harness.snapshotQuery as {
+      getThreadDetailById: typeof harness.snapshotQuery.getThreadDetailById;
+    };
+    const originalGetThreadDetailById = mutableSnapshotQuery.getThreadDetailById;
+    let threadDetailCallCount = 0;
+    mutableSnapshotQuery.getThreadDetailById = (threadId) => {
+      threadDetailCallCount += 1;
+      // Initial event loading plus finalization command validation succeed;
+      // the dedicated generated-image refresh and all of its retries fail.
+      return threadDetailCallCount <= 2
+        ? originalGetThreadDetailById(threadId)
+        : Effect.fail(
+            new PersistenceSqlError({
+              operation: "test.generatedImageThreadRefresh",
+              detail: "transient test failure",
+            }),
+          );
+    };
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-refresh-retry-complete-failed"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      status: "completed",
+      payload: {},
+    });
+    await harness.drain();
+    const afterFailure = await Effect.runPromise(harness.engine.getReadModel());
+    const failedTurnMessages = afterFailure.threads[0]?.messages.filter(
+      (message) => message.turnId === turnId,
+    );
+    expect(failedTurnMessages).toHaveLength(1);
+    expect(failedTurnMessages?.[0]?.id).toBe("assistant:refresh-retry-final");
+    expect(failedTurnMessages?.[0]?.attachments ?? []).toEqual([]);
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(1);
+
+    mutableSnapshotQuery.getThreadDetailById = originalGetThreadDetailById;
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-refresh-retry-complete-replay"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      status: "completed",
+      payload: {},
+    });
+    const recovered = await waitForThread(harness.engine, (thread) =>
+      thread.messages.some(
+        (message) =>
+          message.id === "assistant:refresh-retry-final" && message.attachments?.length === 1,
+      ),
+    );
+    expect(recovered.messages.filter((message) => message.turnId === turnId)).toHaveLength(1);
+  });
+
+  it("does not guess the terminal message when its sequence lookup fails", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-image-terminal-sequence-retry");
+    const createdAt = "2026-07-31T10:14:00.000Z";
+    const imagePath = path.join(harness.generatedImagesRoot, "terminal-sequence-retry.png");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-terminal-sequence-start"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    for (const itemId of ["sequence-retry-commentary", "sequence-retry-final"] as const) {
+      harness.emit({
+        type: "item.completed",
+        eventId: asEventId(`evt-${itemId}`),
+        provider: "codex",
+        createdAt,
+        threadId: asThreadId("thread-1"),
+        turnId,
+        itemId: asItemId(itemId),
+        payload: { itemType: "assistant_message", status: "completed" },
+      });
+    }
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-terminal-sequence-image"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("terminal-sequence-image"),
+      payload: {
+        itemType: "image_generation",
+        status: "completed",
+        data: { kind: "codex.generated_image", path: imagePath, callId: "terminal-sequence" },
+      },
+    });
+    await harness.drain();
+
+    const mutableSnapshotQuery = harness.snapshotQuery as {
+      getLatestAssistantMessageIdByTurn: typeof harness.snapshotQuery.getLatestAssistantMessageIdByTurn;
+    };
+    const originalTerminalQuery = mutableSnapshotQuery.getLatestAssistantMessageIdByTurn;
+    mutableSnapshotQuery.getLatestAssistantMessageIdByTurn = () =>
+      Effect.fail(
+        new PersistenceSqlError({
+          operation: "test.generatedImageTerminalSequence",
+          detail: "transient test failure",
+        }),
+      );
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-terminal-sequence-complete-failed"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      status: "completed",
+      payload: {},
+    });
+    await harness.drain();
+    const afterFailure = await Effect.runPromise(harness.engine.getReadModel());
+    expect(
+      afterFailure.threads[0]?.messages.filter((message) => message.attachments?.length),
+    ).toEqual([]);
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(1);
+
+    mutableSnapshotQuery.getLatestAssistantMessageIdByTurn = originalTerminalQuery;
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-terminal-sequence-complete-replay"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      status: "completed",
+      payload: {},
+    });
+    const recovered = await waitForThread(harness.engine, (thread) =>
+      thread.messages.some(
+        (message) =>
+          message.id === "assistant:sequence-retry-final" && message.attachments?.length === 1,
+      ),
+    );
+    expect(
+      recovered.messages
+        .filter((message) => message.attachments?.length)
+        .map((message) => message.id),
+    ).toEqual(["assistant:sequence-retry-final"]);
+  });
+
+  it("reconciles a historical terminal turn after its state lookup recovers", async () => {
+    const harness = await createHarness();
+    const historicalTurnId = asTurnId("turn-image-historical-state");
+    const activeTurnId = asTurnId("turn-image-newer-active");
+    const createdAt = "2026-07-31T10:16:00.000Z";
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-historical-state-start"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId: historicalTurnId,
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-historical-state-answer"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId: historicalTurnId,
+      itemId: asItemId("historical-state-answer"),
+      payload: { itemType: "assistant_message", status: "completed" },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-historical-state-complete"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId: historicalTurnId,
+      status: "completed",
+      payload: {},
+    });
+    await waitForThread(harness.engine, (thread) => thread.latestTurn?.state === "completed");
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-newer-active-start"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId: activeTurnId,
+    });
+    await waitForThread(harness.engine, (thread) => thread.latestTurn?.turnId === activeTurnId);
+
+    const mutableTurnRepository = harness.projectionTurnRepository as {
+      getByTurnId: typeof harness.projectionTurnRepository.getByTurnId;
+    };
+    const originalGetByTurnId = mutableTurnRepository.getByTurnId;
+    mutableTurnRepository.getByTurnId = () =>
+      Effect.fail(
+        new PersistenceSqlError({
+          operation: "test.generatedImageHistoricalTurnState",
+          detail: "transient test failure",
+        }),
+      );
+    const imagePath = path.join(harness.generatedImagesRoot, "historical-state.png");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
+    const lateImageEvent = {
+      type: "item.completed" as const,
+      eventId: asEventId("evt-historical-state-image-failed"),
+      provider: "codex" as const,
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId: historicalTurnId,
+      itemId: asItemId("historical-state-image"),
+      payload: {
+        itemType: "image_generation",
+        status: "completed",
+        data: { kind: "codex.generated_image", path: imagePath, callId: "historical-state" },
+      },
+    };
+    harness.emit(lateImageEvent);
+    await harness.drain();
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(0);
+    const afterFailure = await Effect.runPromise(harness.engine.getReadModel());
+    expect(
+      afterFailure.threads[0]?.messages.find(
+        (message) => message.id === "assistant:historical-state-answer",
+      )?.attachments ?? [],
+    ).toEqual([]);
+
+    mutableTurnRepository.getByTurnId = originalGetByTurnId;
+    harness.emit({ ...lateImageEvent, eventId: asEventId("evt-historical-state-image-replay") });
+    const recovered = await waitForThread(harness.engine, (thread) =>
+      thread.messages.some(
+        (message) =>
+          message.id === "assistant:historical-state-answer" && message.attachments?.length === 1,
+      ),
+    );
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(1);
+    expect(
+      recovered.messages.find((message) => message.id === "assistant:historical-state-answer")
+        ?.attachments,
+    ).toHaveLength(1);
+  });
+
   it("does not re-emit message-sent events when the same image_generation completion replays", async () => {
     const harness = await createHarness();
     const turnId = asTurnId("turn-image-replay");
@@ -1860,6 +2241,134 @@ describe("ProviderRuntimeIngestion", () => {
     expect(fs.statSync(durableAttachmentPath).mtimeMs).toBe(durableStatBeforeReplay.mtimeMs);
   });
 
+  it("recovers a reference-only turnless image when ingestion starts", async () => {
+    const harness = await createHarness({ startIngestion: false });
+    const createdAt = "2026-07-31T11:00:00.000Z";
+    const imagePath = path.join(harness.generatedImagesRoot, "turnless-restart.png");
+    const targetMessageId = asMessageId("assistant:image:turnless-restart");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
+    await recordTurnlessGeneratedImageReference({
+      engine: harness.engine,
+      targetMessageId,
+      provenanceKey: "turnless-restart",
+      sourcePath: imagePath,
+      createdAt,
+    });
+
+    await harness.startIngestion();
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) => message.id === targetMessageId && message.attachments?.length === 1,
+      ),
+    );
+    const message = thread.messages.find((candidate) => candidate.id === targetMessageId);
+    expect(message?.text).toBe("");
+    expect(message?.streaming).toBe(false);
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(1);
+    expect(thread.activities).toHaveLength(0);
+  });
+
+  it("bounds reference-only turnless startup recovery to eight images", async () => {
+    const harness = await createHarness({ startIngestion: false });
+    const createdAt = "2026-07-31T11:05:00.000Z";
+    const targetMessageId = asMessageId("assistant:image:turnless-cap");
+    for (let index = 0; index < 9; index += 1) {
+      const sourcePath = path.join(harness.generatedImagesRoot, `turnless-cap-${index}.png`);
+      fs.writeFileSync(sourcePath, Buffer.concat([GENERATED_PNG_BYTES, Buffer.from([index])]));
+      await recordTurnlessGeneratedImageReference({
+        engine: harness.engine,
+        targetMessageId,
+        provenanceKey: `turnless-cap-${index}`,
+        sourcePath,
+        createdAt,
+      });
+    }
+
+    await harness.startIngestion();
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === targetMessageId &&
+          message.attachments?.length === 8 &&
+          message.text.includes("Additional generated image was omitted"),
+      ),
+    );
+    expect(
+      thread.messages.find((message) => message.id === targetMessageId)?.attachments,
+    ).toHaveLength(8);
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(8);
+    expect(fs.existsSync(path.join(harness.generatedImagesRoot, "turnless-cap-8.png"))).toBe(true);
+  });
+
+  it("spends one global startup budget across distinct turnless targets", async () => {
+    const harness = await createHarness({ startIngestion: false });
+    const createdAt = "2026-07-31T11:07:00.000Z";
+    const targetMessageIds: MessageId[] = [];
+    for (let index = 0; index < 9; index += 1) {
+      const targetMessageId = asMessageId(`assistant:image:turnless-global-${index}`);
+      const sourcePath = path.join(harness.generatedImagesRoot, `turnless-global-${index}.png`);
+      targetMessageIds.push(targetMessageId);
+      fs.writeFileSync(sourcePath, Buffer.concat([GENERATED_PNG_BYTES, Buffer.from([index])]));
+      await recordTurnlessGeneratedImageReference({
+        engine: harness.engine,
+        targetMessageId,
+        provenanceKey: `turnless-global-${index}`,
+        sourcePath,
+        createdAt,
+      });
+    }
+
+    const mutableSnapshotQuery = harness.snapshotQuery as {
+      getThreadDetailById: typeof harness.snapshotQuery.getThreadDetailById;
+    };
+    const originalGetThreadDetailById = mutableSnapshotQuery.getThreadDetailById;
+    let threadLookupCount = 0;
+    mutableSnapshotQuery.getThreadDetailById = (threadId) => {
+      threadLookupCount += 1;
+      return originalGetThreadDetailById(threadId);
+    };
+
+    await harness.startIngestion();
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.messages.filter((message) => message.attachments?.length === 1).length === 8,
+    );
+    expect(threadLookupCount).toBe(8);
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(8);
+    const unresolved = await Effect.runPromise(
+      harness.snapshotQuery.listTurnlessGeneratedImageReferences(),
+    );
+    expect(unresolved).toHaveLength(1);
+    expect(unresolved[0]?.targetMessageId).toBe(targetMessageIds[0]);
+  });
+
+  it("shows a path-free failure for a missing reference-only turnless image", async () => {
+    const harness = await createHarness({ startIngestion: false });
+    const createdAt = "2026-07-31T11:10:00.000Z";
+    const targetMessageId = asMessageId("assistant:image:turnless-missing");
+    const missingPath = path.join(harness.generatedImagesRoot, "private-turnless-missing.png");
+    await recordTurnlessGeneratedImageReference({
+      engine: harness.engine,
+      targetMessageId,
+      provenanceKey: "turnless-missing",
+      sourcePath: missingPath,
+      createdAt,
+    });
+
+    await harness.startIngestion();
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === targetMessageId && message.text.includes("could not be displayed"),
+      ),
+    );
+    const message = thread.messages.find((candidate) => candidate.id === targetMessageId);
+    expect(message?.attachments ?? []).toEqual([]);
+    expect(message?.text).not.toContain(missingPath);
+    expect(message?.text).not.toContain("private-turnless-missing.png");
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(0);
+  });
+
   it("creates a settled image-only assistant message when no turn can be correlated", async () => {
     const harness = await createHarness();
     const imagePath = path.join(harness.generatedImagesRoot, "turnless.png");
@@ -1897,6 +2406,62 @@ describe("ProviderRuntimeIngestion", () => {
       type: "image",
       mimeType: "image/png",
     });
+  });
+
+  it("attaches a turnless image to the existing assistant item with the same id", async () => {
+    const harness = await createHarness();
+    const createdAt = "2026-07-31T11:15:00.000Z";
+    const itemId = asItemId("turnless-shared-item");
+    const targetMessageId = asMessageId("assistant:turnless-shared-item");
+    const syntheticMessageId = asMessageId("assistant:image:turnless-shared-item");
+    const imagePath = path.join(harness.generatedImagesRoot, "turnless-shared-item.png");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-turnless-shared-answer"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      itemId,
+      payload: { itemType: "assistant_message", status: "completed", text: "Here it is." },
+    });
+    await waitForThread(harness.engine, (thread) =>
+      thread.messages.some((message) => message.id === targetMessageId),
+    );
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-turnless-shared-image"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      itemId,
+      payload: {
+        itemType: "image_generation",
+        status: "completed",
+        data: {
+          kind: "codex.generated_image",
+          path: imagePath,
+          callId: "turnless-shared-image",
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) => message.id === targetMessageId && message.attachments?.length === 1,
+      ),
+    );
+    expect(thread.messages.some((message) => message.id === syntheticMessageId)).toBe(false);
+    const references = await Effect.runPromise(
+      harness.snapshotQuery.listTurnlessGeneratedImageReferencesByTarget(
+        asThreadId("thread-1"),
+        targetMessageId,
+      ),
+    );
+    expect(references).toHaveLength(1);
+    expect(references[0]?.targetMessageId).toBe(targetMessageId);
   });
 
   it("rejects an arbitrary non-Studio workspace image", async () => {

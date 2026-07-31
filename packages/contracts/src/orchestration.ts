@@ -1368,7 +1368,9 @@ const ThreadGeneratedImageReferenceRecordCommand = Schema.Struct({
   type: Schema.Literal("thread.generated-image.reference.record"),
   commandId: CommandId,
   threadId: ThreadId,
-  turnId: TurnId,
+  turnId: Schema.optional(TurnId),
+  targetMessageId: Schema.optional(MessageId),
+  attachmentId: TrimmedNonEmptyString,
   provenanceKey: TrimmedNonEmptyString,
   sourcePath: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
@@ -1815,7 +1817,9 @@ export const ThreadActivityAppendedPayload = Schema.Struct({
 
 export const ThreadGeneratedImageReferenceRecordedPayload = Schema.Struct({
   threadId: ThreadId,
-  turnId: TurnId,
+  turnId: Schema.optional(TurnId),
+  targetMessageId: Schema.optional(MessageId),
+  attachmentId: TrimmedNonEmptyString,
   provenanceKey: TrimmedNonEmptyString,
   sourcePath: TrimmedNonEmptyString,
   createdAt: IsoDateTime,

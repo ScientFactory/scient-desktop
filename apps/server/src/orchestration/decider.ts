@@ -1782,6 +1782,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
 
     case "thread.generated-image.reference.record": {
       yield* requireThread({ readModel, command, threadId: command.threadId });
+      if ((command.turnId === undefined) === (command.targetMessageId === undefined)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Generated-image references must target exactly one turn or assistant message.",
+        });
+      }
       return {
         ...withEventBase({
           aggregateKind: "thread",
@@ -1792,7 +1798,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.generated-image-reference-recorded",
         payload: {
           threadId: command.threadId,
-          turnId: command.turnId,
+          ...(command.turnId ? { turnId: command.turnId } : {}),
+          ...(command.targetMessageId ? { targetMessageId: command.targetMessageId } : {}),
+          attachmentId: command.attachmentId,
           provenanceKey: command.provenanceKey,
           sourcePath: command.sourcePath,
           createdAt: command.createdAt,

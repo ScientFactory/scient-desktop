@@ -59,6 +59,13 @@ export interface ProjectionGeneratedImageReferenceRecord {
   readonly provenanceKey: string;
 }
 
+export interface ProjectionTurnlessGeneratedImageReferenceRecord extends ProjectionGeneratedImageReferenceRecord {
+  readonly threadId: ThreadId;
+  readonly targetMessageId: MessageId;
+  readonly attachmentId: string;
+  readonly createdAt: string;
+}
+
 export interface ProjectionFullThreadDiffContext {
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
@@ -157,6 +164,21 @@ export interface ProjectionSnapshotQueryShape {
     turnId: TurnId,
   ) => Effect.Effect<
     ReadonlyArray<ProjectionGeneratedImageReferenceRecord>,
+    ProjectionRepositoryError
+  >;
+
+  /** Read trusted turnless references for one deterministic assistant-message target. */
+  readonly listTurnlessGeneratedImageReferencesByTarget: (
+    threadId: ThreadId,
+    targetMessageId: MessageId,
+  ) => Effect.Effect<
+    ReadonlyArray<ProjectionTurnlessGeneratedImageReferenceRecord>,
+    ProjectionRepositoryError
+  >;
+
+  /** Read the bounded trusted turnless-reference startup recovery ledger. */
+  readonly listTurnlessGeneratedImageReferences: () => Effect.Effect<
+    ReadonlyArray<ProjectionTurnlessGeneratedImageReferenceRecord>,
     ProjectionRepositoryError
   >;
 

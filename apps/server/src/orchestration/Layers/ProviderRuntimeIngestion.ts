@@ -20,7 +20,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type RuntimeMode,
 } from "@synara/contracts";
-import { Cache, Cause, Duration, Effect, Layer, Option, Ref, Stream } from "effect";
+import { Cache, Cause, Duration, Effect, Layer, Option, Ref, Schedule, Stream } from "effect";
 import { makeDrainableWorker } from "@synara/shared/DrainableWorker";
 import {
   buildSubagentIdentityDirectory,
@@ -84,10 +84,17 @@ const PENDING_GENERATED_IMAGES_CACHE_CAPACITY = 512;
 const PENDING_GENERATED_IMAGES_TTL = Duration.minutes(60);
 const ACTIVITY_UPDATE_FINGERPRINT_CACHE_CAPACITY = 4_096;
 const ACTIVITY_UPDATE_FINGERPRINT_TTL = Duration.minutes(360);
+const GENERATED_IMAGE_ATTEMPT_CACHE_CAPACITY = 4_096;
+const GENERATED_IMAGE_ATTEMPT_TTL = Duration.minutes(360);
 // One turn realistically produces a handful of images; the cap only bounds a
 // pathological provider replaying image completions in a loop.
 const MAX_PENDING_GENERATED_IMAGES_PER_TURN = PROVIDER_SEND_TURN_MAX_ATTACHMENTS;
+// Startup recovery stays synchronous to preserve serialized message ownership,
+// but it may perform at most one chat message's normal image budget before the
+// provider subscriptions start.
+const MAX_STARTUP_GENERATED_IMAGE_IO_ATTEMPTS = PROVIDER_SEND_TURN_MAX_ATTACHMENTS;
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
+const GENERATED_IMAGE_AUTHORITATIVE_QUERY_RETRY_SCHEDULE = Schedule.recurs(2);
 const MAX_BUFFERED_PROPOSED_PLAN_CHARS = 64_000;
 const MAX_BUFFERED_TOOL_OUTPUT_CHARS = 24_000;
 const MAX_BUFFERED_REASONING_SUMMARY_CHARS = 8_000;
@@ -1659,6 +1666,11 @@ const make = Effect.gen(function* () {
     timeToLive: ACTIVITY_UPDATE_FINGERPRINT_TTL,
     lookup: () => Effect.succeed(undefined),
   });
+  const generatedImageAttemptCountByReference = yield* Cache.make<string, number>({
+    capacity: GENERATED_IMAGE_ATTEMPT_CACHE_CAPACITY,
+    timeToLive: GENERATED_IMAGE_ATTEMPT_TTL,
+    lookup: () => Effect.succeed(0),
+  });
   const providerDiffPlaceholdersRef = yield* Ref.make(new Map<string, ProviderDiffPlaceholder>());
   const codexAuthenticationRecoveryStopsRef = yield* Ref.make<
     ReadonlyMap<
@@ -2433,6 +2445,22 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const reserveGeneratedImageAttempt = (
+    threadId: ThreadId,
+    provenanceKey: string,
+    maximumAttempts: number,
+  ) =>
+    Effect.gen(function* () {
+      const key = `${threadId}\0${provenanceKey}`;
+      const existing = Option.getOrElse(
+        yield* Cache.getOption(generatedImageAttemptCountByReference, key),
+        () => 0,
+      );
+      if (existing >= maximumAttempts) return false;
+      yield* Cache.set(generatedImageAttemptCountByReference, key, existing + 1);
+      return true;
+    });
+
   /**
    * Codex emits generated images as artifacts, so the turn's final assistant item is
    * often intentionally empty: the image IS the answer. Attaching images eagerly to
@@ -2446,24 +2474,20 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const terminalMessageId = yield* projectionSnapshotQuery
         .getLatestAssistantMessageIdByTurn(thread.id, turnId)
-        .pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("failed to query terminal assistant message for generated images", {
-              threadId: thread.id,
-              turnId,
-              causeName: cause instanceof Error ? cause.name : "UnknownError",
-            }).pipe(Effect.as(Option.none<MessageId>())),
-          ),
-        );
+        .pipe(Effect.retry(GENERATED_IMAGE_AUTHORITATIVE_QUERY_RETRY_SCHEDULE));
       const assistantMessagesForTurn = thread.messages.filter(
         (message) => message.role === "assistant" && message.turnId === turnId,
       );
-      return Option.match(terminalMessageId, {
-        onNone: () => assistantMessagesForTurn.at(-1),
-        onSome: (messageId) =>
-          assistantMessagesForTurn.find((message) => message.id === messageId) ??
-          assistantMessagesForTurn.at(-1),
-      });
+      if (Option.isNone(terminalMessageId)) return assistantMessagesForTurn.at(-1);
+      const terminalMessage = assistantMessagesForTurn.find(
+        (message) => message.id === terminalMessageId.value,
+      );
+      if (!terminalMessage) {
+        return yield* Effect.fail(
+          new Error("Terminal assistant message is not present in the refreshed thread snapshot."),
+        );
+      }
+      return terminalMessage;
     });
 
   const flushPendingGeneratedImagesForTurn = (input: {
@@ -2476,20 +2500,38 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const refreshedThreadResult = yield* projectionSnapshotQuery
         .getThreadDetailById(input.thread.id)
-        .pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("failed to refresh thread before generated-image settlement", {
-              threadId: input.thread.id,
-              turnId: input.turnId,
-              causeName: cause instanceof Error ? cause.name : "UnknownError",
-            }).pipe(Effect.as(Option.some(input.thread))),
-          ),
-        );
-      const refreshedThread = Option.getOrElse(refreshedThreadResult, () => input.thread);
+        .pipe(Effect.retry(GENERATED_IMAGE_AUTHORITATIVE_QUERY_RETRY_SCHEDULE));
+      if (Option.isNone(refreshedThreadResult)) return;
+      const refreshedThread = refreshedThreadResult.value;
       // Resolve ownership before recovery. On turn-completion replay the terminal
       // message may already own the deterministic image, in which case reopening a
       // cleaned-up provider source would manufacture a false failure.
       const terminalMessage = yield* resolveTerminalAssistantMessage(refreshedThread, input.turnId);
+      const trustedReferenceRecords = yield* projectionSnapshotQuery
+        .listGeneratedImageReferencesByTurn(refreshedThread.id, input.turnId)
+        .pipe(Effect.retry(GENERATED_IMAGE_AUTHORITATIVE_QUERY_RETRY_SCHEDULE));
+      const persistedImageReferences = trustedReferenceRecords.map(
+        (reference): PersistedGeneratedImageReference => ({
+          path: reference.sourcePath,
+          provenanceKey: reference.provenanceKey,
+        }),
+      );
+      if (
+        input.currentReference &&
+        !persistedImageReferences.some(
+          (reference) => reference.provenanceKey === input.currentReference?.provenanceKey,
+        )
+      ) {
+        persistedImageReferences.push(input.currentReference);
+      }
+      const ioEligibleReferences = persistedImageReferences.slice(
+        0,
+        PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+      );
+      const ledgerOmittedImageCount = Math.max(
+        0,
+        persistedImageReferences.length - ioEligibleReferences.length,
+      );
       const terminalAttachmentIds = new Set(
         (terminalMessage?.attachments ?? []).map((attachment) => attachment.id),
       );
@@ -2529,33 +2571,6 @@ const make = Effect.gen(function* () {
         },
         { concurrency: 1 },
       );
-      const trustedReferenceRecords = yield* projectionSnapshotQuery
-        .listGeneratedImageReferencesByTurn(refreshedThread.id, input.turnId)
-        .pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("failed to query trusted generated-image references", {
-              threadId: refreshedThread.id,
-              turnId: input.turnId,
-              causeName: cause instanceof Error ? cause.name : "UnknownError",
-            }).pipe(Effect.as([])),
-          ),
-        );
-      const persistedImageReferences = trustedReferenceRecords.map(
-        (reference): PersistedGeneratedImageReference => ({
-          path: reference.sourcePath,
-          provenanceKey: reference.provenanceKey,
-        }),
-      );
-      if (
-        input.currentReference &&
-        !persistedImageReferences.some(
-          (reference) => reference.provenanceKey === input.currentReference?.provenanceKey,
-        )
-      ) {
-        // The internal command was already persisted before this flush. Preserve
-        // the current late image even when the follow-up ledger query fails or lags.
-        persistedImageReferences.push(input.currentReference);
-      }
       const satisfiedAttachmentIds = new Set([
         ...terminalAttachmentIds,
         ...cached.attachments.map((attachment) => attachment.id),
@@ -2563,7 +2578,7 @@ const make = Effect.gen(function* () {
       // Hot ingestion already made these files durable. Do not reopen the provider
       // source during settlement: it may legitimately have been cleaned up, and an
       // exact replay must not produce a false storage-failure warning.
-      const referencesNeedingRecovery = persistedImageReferences.filter(
+      const referencesNeedingRecovery = ioEligibleReferences.filter(
         (reference) =>
           !satisfiedAttachmentIds.has(
             generatedImageAttachmentId({
@@ -2583,12 +2598,19 @@ const make = Effect.gen(function* () {
       let recoveredSuccessCount = 0;
       for (const reference of referencesNeedingRecovery) {
         if (recoveredSuccessCount >= remainingCapacity) break;
-        const attachment = yield* materializeGeneratedImage({
-          thread: refreshedThread,
-          sourcePath: reference.path,
-          provenanceKey: reference.provenanceKey,
-          allowDurableFallbackWhenSourceUnavailable: true,
-        });
+        const reserved = yield* reserveGeneratedImageAttempt(
+          refreshedThread.id,
+          reference.provenanceKey,
+          2,
+        );
+        const attachment = reserved
+          ? yield* materializeGeneratedImage({
+              thread: refreshedThread,
+              sourcePath: reference.path,
+              provenanceKey: reference.provenanceKey,
+              allowDurableFallbackWhenSourceUnavailable: true,
+            })
+          : null;
         recoveredResults.push({ reference, attachment });
         if (attachment) recoveredSuccessCount += 1;
       }
@@ -2621,7 +2643,8 @@ const make = Effect.gen(function* () {
       const failedImageCount = failedProvenanceKeys.size;
       const omittedImageCount = Math.max(
         0,
-        cachedAttachmentsOmitted.length +
+        ledgerOmittedImageCount +
+          cachedAttachmentsOmitted.length +
           Math.max(
             cached.omittedImageCount,
             referencesNeedingRecovery.length - recoveredResults.length,
@@ -3382,30 +3405,58 @@ const make = Effect.gen(function* () {
           threadId: thread.id,
           provenanceKey,
         });
-        let trustedReferenceOrdinal: number | null = null;
-        if (generatedImageTurnId) {
-          yield* orchestrationEngine.dispatch({
-            type: "thread.generated-image.reference.record",
-            commandId: CommandId.makeUnsafe(
-              `provider:generated-image-reference:${expectedAttachmentId}`,
-            ),
-            threadId: thread.id,
-            turnId: generatedImageTurnId,
-            provenanceKey,
-            sourcePath: generatedImagePath,
-            createdAt: now,
-          });
-          const trustedReferences = yield* projectionSnapshotQuery
-            .listGeneratedImageReferencesByTurn(thread.id, generatedImageTurnId)
-            .pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("failed to query generated-image reference ordinal", {
-                  threadId: thread.id,
-                  turnId: generatedImageTurnId,
-                  causeName: cause instanceof Error ? cause.name : "UnknownError",
-                }).pipe(Effect.as([])),
-              ),
+        const turnlessSameItemMessageId = event.itemId
+          ? MessageId.makeUnsafe(`assistant:${event.itemId}`)
+          : undefined;
+        const existingTurnlessTargetMessage = generatedImageTurnId
+          ? undefined
+          : thread.messages.find(
+              (message) =>
+                message.role === "assistant" &&
+                (message.id === turnlessSameItemMessageId ||
+                  message.attachments?.some(
+                    (attachment) => attachment.id === expectedAttachmentId,
+                  )),
             );
+        const turnlessTargetMessageId = generatedImageTurnId
+          ? undefined
+          : (existingTurnlessTargetMessage?.id ??
+            MessageId.makeUnsafe(`assistant:image:${event.itemId ?? event.eventId}`));
+        let trustedReferenceOrdinal: number | null = null;
+        yield* orchestrationEngine.dispatch({
+          type: "thread.generated-image.reference.record",
+          commandId: CommandId.makeUnsafe(
+            `provider:generated-image-reference:${expectedAttachmentId}`,
+          ),
+          threadId: thread.id,
+          ...(generatedImageTurnId
+            ? { turnId: generatedImageTurnId }
+            : { targetMessageId: turnlessTargetMessageId! }),
+          attachmentId: expectedAttachmentId,
+          provenanceKey,
+          sourcePath: generatedImagePath,
+          createdAt: now,
+        });
+        {
+          const trustedReferences = yield* (
+            generatedImageTurnId
+              ? projectionSnapshotQuery.listGeneratedImageReferencesByTurn(
+                  thread.id,
+                  generatedImageTurnId,
+                )
+              : projectionSnapshotQuery.listTurnlessGeneratedImageReferencesByTarget(
+                  thread.id,
+                  turnlessTargetMessageId!,
+                )
+          ).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("failed to query generated-image reference ordinal", {
+                threadId: thread.id,
+                turnId: generatedImageTurnId,
+                causeName: cause instanceof Error ? cause.name : "UnknownError",
+              }).pipe(Effect.as([])),
+            ),
+          );
           const foundOrdinal = trustedReferences.findIndex(
             (reference) => reference.provenanceKey === provenanceKey,
           );
@@ -3434,28 +3485,19 @@ const make = Effect.gen(function* () {
               ),
             )
           : null;
-        const persistedGeneratedImageTurn = generatedImageTurnId
-          ? yield* projectionTurnRepository
-              .getByTurnId({
-                threadId: thread.id,
-                turnId: generatedImageTurnId,
-              })
-              .pipe(
-                Effect.catch((cause) =>
-                  Effect.logWarning("failed to query generated-image turn state", {
-                    threadId: thread.id,
-                    turnId: generatedImageTurnId,
-                    causeName: cause instanceof Error ? cause.name : "UnknownError",
-                  }).pipe(Effect.as(Option.none())),
-                ),
-              )
-          : Option.none();
-        const generatedImageTurnIsTerminal =
-          isAssistantTurnTerminal(thread, generatedImageTurnId) ||
-          Option.match(persistedGeneratedImageTurn, {
+        let generatedImageTurnIsTerminal = isAssistantTurnTerminal(thread, generatedImageTurnId);
+        if (generatedImageTurnId && !generatedImageTurnIsTerminal) {
+          const persistedGeneratedImageTurn = yield* projectionTurnRepository
+            .getByTurnId({
+              threadId: thread.id,
+              turnId: generatedImageTurnId,
+            })
+            .pipe(Effect.retry(GENERATED_IMAGE_AUTHORITATIVE_QUERY_RETRY_SCHEDULE));
+          generatedImageTurnIsTerminal = Option.match(persistedGeneratedImageTurn, {
             onNone: () => false,
             onSome: (turn) => turn.state !== "pending" && turn.state !== "running",
           });
+        }
         if (generatedImageTurnId && generatedImageTurnIsTerminal) {
           // Late completions reconcile the whole trusted turn ledger immediately.
           // This prechecks terminal capacity before any Studio copy or image I/O.
@@ -3470,9 +3512,8 @@ const make = Effect.gen(function* () {
             },
           });
         } else if (
-          generatedImageTurnId &&
-          (trustedReferenceOrdinal === null ||
-            trustedReferenceOrdinal >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS)
+          trustedReferenceOrdinal === null ||
+          trustedReferenceOrdinal >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS
         ) {
           // Live eager work is bounded to the first eight known distinct references.
           // Unknown ordinals fail closed for I/O and rely on trusted settlement.
@@ -3484,6 +3525,8 @@ const make = Effect.gen(function* () {
             referencedAttachment ??
             pendingAttachment ??
             (yield* Effect.gen(function* () {
+              const reserved = yield* reserveGeneratedImageAttempt(thread.id, provenanceKey, 1);
+              if (!reserved) return null;
               const copied = yield* materializeStudioGeneratedImage({
                 event,
                 thread,
@@ -3550,9 +3593,7 @@ const make = Effect.gen(function* () {
               event,
               threadId: thread.id,
               targetMessage,
-              newMessageId: MessageId.makeUnsafe(
-                `assistant:image:${event.itemId ?? event.eventId}`,
-              ),
+              newMessageId: turnlessTargetMessageId!,
               attachments: [generatedImageAttachment],
               createdAt: now,
             });
@@ -3566,9 +3607,7 @@ const make = Effect.gen(function* () {
             const sameItemMessageId = event.itemId
               ? MessageId.makeUnsafe(`assistant:${event.itemId}`)
               : undefined;
-            const failureMessageId = MessageId.makeUnsafe(
-              `assistant:image:${event.itemId ?? event.eventId}`,
-            );
+            const failureMessageId = turnlessTargetMessageId!;
             const targetMessage = thread.messages.find(
               (message) =>
                 message.role === "assistant" &&
@@ -3899,7 +3938,141 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processInputSafely);
 
+  const reconcileTurnlessGeneratedImagesAtStartup = Effect.gen(function* () {
+    const references = yield* projectionSnapshotQuery.listTurnlessGeneratedImageReferences().pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("failed to read turnless generated-image recovery ledger", {
+          causeName: cause instanceof Error ? cause.name : "UnknownError",
+        }).pipe(Effect.as([])),
+      ),
+    );
+    const referencesByTarget = new Map<string, typeof references>();
+    for (const reference of references) {
+      const key = `${reference.threadId}\0${reference.targetMessageId}`;
+      referencesByTarget.set(key, [...(referencesByTarget.get(key) ?? []), reference]);
+    }
+    let remainingStartupAttempts = MAX_STARTUP_GENERATED_IMAGE_IO_ATTEMPTS;
+    yield* Effect.forEach(
+      referencesByTarget.values(),
+      (targetReferences) =>
+        Effect.gen(function* () {
+          if (remainingStartupAttempts <= 0) return;
+          const first = targetReferences[0];
+          if (!first) return;
+          const threadOption = yield* projectionSnapshotQuery
+            .getThreadDetailById(first.threadId)
+            .pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("failed to load thread for turnless image recovery", {
+                  threadId: first.threadId,
+                  causeName: cause instanceof Error ? cause.name : "UnknownError",
+                }).pipe(Effect.as(Option.none<OrchestrationThread>())),
+              ),
+            );
+          if (Option.isNone(threadOption)) return;
+          const thread = threadOption.value;
+          const targetMessage = thread.messages.find(
+            (message) => message.id === first.targetMessageId,
+          );
+          if (targetMessage && targetMessage.role !== "assistant") return;
+          const existingAttachmentIds = new Set(
+            (targetMessage?.attachments ?? []).map((attachment) => attachment.id),
+          );
+          const distinctReferences = targetReferences.filter(
+            (reference, index, all) =>
+              all.findIndex((candidate) => candidate.provenanceKey === reference.provenanceKey) ===
+                index &&
+              reference.attachmentId ===
+                generatedImageAttachmentId({
+                  threadId: reference.threadId,
+                  provenanceKey: reference.provenanceKey,
+                }),
+          );
+          const ioEligibleReferences = distinctReferences.slice(
+            0,
+            PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+          );
+          const ledgerOmittedImageCount = Math.max(
+            0,
+            distinctReferences.length - ioEligibleReferences.length,
+          );
+          const unsatisfiedReferences = ioEligibleReferences.filter(
+            (reference) => !existingAttachmentIds.has(reference.attachmentId),
+          );
+          const remainingCapacity = Math.max(
+            0,
+            PROVIDER_SEND_TURN_MAX_ATTACHMENTS - (targetMessage?.attachments?.length ?? 0),
+          );
+          const targetAttemptBudget = remainingCapacity > 0 ? unsatisfiedReferences.length : 0;
+          if (targetAttemptBudget > remainingStartupAttempts) {
+            // Leave the entire target unresolved. A partial outcome would hide
+            // its unattempted references from the next bounded startup pass.
+            return;
+          }
+          remainingStartupAttempts -= targetAttemptBudget;
+          const recoveredAttachments: ChatImageAttachment[] = [];
+          let failedImageCount = 0;
+          let attemptedCount = 0;
+          for (const reference of unsatisfiedReferences) {
+            if (recoveredAttachments.length >= remainingCapacity) break;
+            attemptedCount += 1;
+            const reserved = yield* reserveGeneratedImageAttempt(
+              thread.id,
+              reference.provenanceKey,
+              1,
+            );
+            const attachment = reserved
+              ? yield* materializeGeneratedImage({
+                  thread,
+                  sourcePath: reference.sourcePath,
+                  provenanceKey: reference.provenanceKey,
+                  allowDurableFallbackWhenSourceUnavailable: true,
+                })
+              : null;
+            if (attachment) recoveredAttachments.push(attachment);
+            else failedImageCount += 1;
+          }
+          const omittedImageCount = Math.max(
+            0,
+            ledgerOmittedImageCount + unsatisfiedReferences.length - attemptedCount,
+          );
+          if (
+            recoveredAttachments.length === 0 &&
+            failedImageCount === 0 &&
+            omittedImageCount === 0
+          ) {
+            return;
+          }
+          const outcomeKey = [
+            ...recoveredAttachments.map((attachment) => attachment.id),
+            `omitted-${omittedImageCount}`,
+            `failed-${failedImageCount}`,
+          ].join(":");
+          yield* orchestrationEngine.dispatch({
+            type: "thread.message.assistant.attachments.add",
+            commandId: CommandId.makeUnsafe(
+              `provider:turnless-generated-image-recovery:${first.targetMessageId}:${outcomeKey}`,
+            ),
+            threadId: first.threadId,
+            messageId: first.targetMessageId,
+            attachments: recoveredAttachments,
+            omittedImageCount,
+            failedImageCount,
+            createdAt: first.createdAt ?? new Date().toISOString(),
+          });
+        }),
+      { concurrency: 1 },
+    );
+  });
+
   const start: ProviderRuntimeIngestionShape["start"] = Effect.gen(function* () {
+    yield* reconcileTurnlessGeneratedImagesAtStartup.pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("turnless generated-image startup recovery failed", {
+          causeName: cause instanceof Error ? cause.name : "UnknownError",
+        }),
+      ),
+    );
     yield* Effect.forkScoped(
       Stream.runForEach(providerService.streamEvents, (event) =>
         worker.enqueue({ source: "runtime", event }),
