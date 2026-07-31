@@ -155,6 +155,47 @@ sqlite("ExternalIntegrationControlPlane", (it) => {
     }),
   );
 
+  it.effect("rejects pairing and recovery when the trusted host clock moves backward", () =>
+    Effect.gen(function* () {
+      trustedNow = NOW;
+      const control = yield* makeExternalIntegrationControlPlane({ now: () => trustedNow });
+      const created = yield* control.createPending(config("clock-rollback"));
+      trustedNow = NOW - 1;
+      const rolledBackPairing = yield* capture(
+        control.completePairing({
+          externalIdentity: "clock-rollback",
+          pairingToken: created.pairingToken,
+          credentialReference: "keychain-ref:clock-rollback",
+          peerIdentity: "unix-uid:501",
+        }),
+      );
+      assert.isFalse(rolledBackPairing.ok);
+      if (!rolledBackPairing.ok) {
+        assert.strictEqual(controlCode(rolledBackPairing.error), "pairing_denied");
+      }
+
+      trustedNow = NOW + 1;
+      yield* control.completePairing({
+        externalIdentity: "clock-rollback",
+        pairingToken: created.pairingToken,
+        credentialReference: "keychain-ref:clock-rollback",
+        peerIdentity: "unix-uid:501",
+      });
+      trustedNow = NOW - 1;
+      const rolledBackRecovery = yield* capture(
+        control.beginRecoveryPairing({
+          externalIdentity: "clock-rollback",
+          credentialReference: "keychain-ref:clock-rollback",
+          peerIdentity: "unix-uid:501",
+        }),
+      );
+      assert.isFalse(rolledBackRecovery.ok);
+      if (!rolledBackRecovery.ok) {
+        assert.strictEqual(controlCode(rolledBackRecovery.error), "pairing_denied");
+      }
+    }),
+  );
+
   it.effect("denies wrong peer, project, thread, capability and unpaired state", () =>
     Effect.gen(function* () {
       trustedNow = NOW;

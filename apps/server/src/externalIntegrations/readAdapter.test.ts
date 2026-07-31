@@ -216,20 +216,31 @@ sqlite("ExternalIntegrationReadAdapter", (it) => {
 
   it.effect("delegates bounded thread reads and truncates only returned message text", () =>
     Effect.gen(function* () {
+      let delegatedMaxMessageChars: number | undefined;
       const backend = makeProjectionExternalIntegrationReadBackend(
         {} as ProjectionSnapshotQueryShape,
         {
-          readPage: (input) =>
-            Effect.succeed({
+          readPage: (input) => {
+            delegatedMaxMessageChars = input.maxMessageChars;
+            return Effect.succeed({
               threadId: input.threadId,
               projectId: input.projectId,
               title: "Thread",
               status: "idle",
               archived: false,
-              messages: [{ index: 2_104, role: "assistant", text: "abcdef", createdAt: "now" }],
+              messages: [
+                {
+                  index: 2_104,
+                  role: "assistant",
+                  text: "abc",
+                  truncated: true,
+                  createdAt: "now",
+                },
+              ],
               totalMessages: 2_105,
-              nextCursor: "2104",
-            }),
+              nextCursor: "opaque-keyset-cursor",
+            });
+          },
         },
       );
       const result = (yield* backend.readThread({
@@ -249,8 +260,9 @@ sqlite("ExternalIntegrationReadAdapter", (it) => {
           readonly createdAt: string;
         }>;
       };
+      assert.strictEqual(delegatedMaxMessageChars, 3);
       assert.strictEqual(result.totalMessages, 2_105);
-      assert.strictEqual(result.nextCursor, "2104");
+      assert.strictEqual(result.nextCursor, "opaque-keyset-cursor");
       assert.deepEqual(result.messages, [
         {
           index: 2_104,

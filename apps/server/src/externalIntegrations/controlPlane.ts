@@ -248,6 +248,7 @@ interface IntegrationRow {
   readonly credentialReferenceHash: string;
   readonly pairingTokenHash: string | null;
   readonly accessTokenHash: string | null;
+  readonly pairingIssuedAt: number;
   readonly pairingExpiresAt: number;
   readonly peerIdentityHash: string;
   readonly pairingState: ExternalIntegrationPairingState;
@@ -270,6 +271,7 @@ const integrationSelect = (
     credential_reference_hash AS "credentialReferenceHash",
     pairing_token_hash AS "pairingTokenHash",
     integration_access_token_hash AS "accessTokenHash",
+    pairing_issued_at AS "pairingIssuedAt",
     pairing_expires_at AS "pairingExpiresAt",
     peer_identity_hash AS "peerIdentityHash",
     pairing_state AS "pairingState",
@@ -546,6 +548,7 @@ export function makeExternalIntegrationControlPlane(options?: { readonly now?: (
               if (
                 row === undefined ||
                 row.pairingState !== "pending" ||
+                pairedAt < row.pairingIssuedAt ||
                 pairedAt >= row.pairingExpiresAt ||
                 !constantTimeDigestEqual(row.pairingTokenHash, tokenHash) ||
                 row.credentialReferenceHash !== credentialHash ||
@@ -615,6 +618,12 @@ export function makeExternalIntegrationControlPlane(options?: { readonly now?: (
                 return yield* controlError(
                   "integration_revoked",
                   "A revoked integration cannot be recovered or re-paired.",
+                );
+              }
+              if (issuedAt < row.pairingIssuedAt) {
+                return yield* controlError(
+                  "pairing_denied",
+                  "Owner recovery cannot move the trusted pairing clock backward.",
                 );
               }
               const authorityGeneration = row.authorityGeneration + 1;

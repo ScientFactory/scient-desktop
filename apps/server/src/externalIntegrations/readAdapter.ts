@@ -311,10 +311,10 @@ export function makeProjectionExternalIntegrationReadBackend(
           threadId,
           ...(cursor === undefined ? {} : { cursor }),
           ...(messageLimit === undefined ? {} : { messageLimit }),
+          ...(maxMessageChars === undefined ? {} : { maxMessageChars }),
         })
         .pipe(
           Effect.map((thread) => {
-            const chars = boundedPage(maxMessageChars, 1500, 20_000);
             return {
               threadId: thread.threadId,
               projectId: thread.projectId,
@@ -324,8 +324,8 @@ export function makeProjectionExternalIntegrationReadBackend(
               messages: thread.messages.map((message) => ({
                 index: message.index,
                 role: message.role,
-                text: message.text.slice(0, chars),
-                truncated: message.text.length > chars,
+                text: message.text,
+                truncated: message.truncated,
                 createdAt: message.createdAt,
               })),
               totalMessages: thread.totalMessages,

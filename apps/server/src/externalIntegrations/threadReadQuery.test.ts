@@ -64,7 +64,7 @@ sqlite("ExternalIntegrationThreadReadQuery", (it) => {
     }),
   );
 
-  it.effect("rejects malformed and out-of-range cursors and handles exact boundaries", () =>
+  it.effect("uses opaque scoped cursors, validates anchors, and truncates in SQL", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`
@@ -82,28 +82,49 @@ sqlite("ExternalIntegrationThreadReadQuery", (it) => {
           message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
         ) VALUES
           ('boundary-0', 'thread-boundary', NULL, 'user', 'zero', 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
-          ('boundary-1', 'thread-boundary', NULL, 'assistant', 'one', 0, '2026-01-01T00:00:01.000Z', '2026-01-01T00:00:01.000Z')
+          ('boundary-1', 'thread-boundary', NULL, 'assistant', 'one-long', 0, '2026-01-01T00:00:01.000Z', '2026-01-01T00:00:01.000Z')
       `;
       const query = yield* makeExternalIntegrationThreadReadQuery;
-      const atStart = yield* query.readPage({
+      const newest = yield* query.readPage({
         projectId: "project-1",
         threadId: "thread-boundary",
-        cursor: "0",
+        messageLimit: 1,
+        maxMessageChars: 3,
       });
-      assert.deepEqual(atStart.messages, []);
-      assert.isNull(atStart.nextCursor);
-      const atEnd = yield* query.readPage({
+      assert.deepEqual(newest.messages, [
+        {
+          index: 1,
+          role: "assistant",
+          text: "one",
+          truncated: true,
+          createdAt: "2026-01-01T00:00:01.000Z",
+        },
+      ]);
+      assert.isNotNull(newest.nextCursor);
+      const oldest = yield* query.readPage({
         projectId: "project-1",
         threadId: "thread-boundary",
-        cursor: "2",
-        messageLimit: 1000,
+        cursor: newest.nextCursor!,
+        messageLimit: 1,
       });
       assert.deepEqual(
-        atEnd.messages.map(({ index }) => index),
-        [0, 1],
+        oldest.messages.map(({ index, text }) => [index, text]),
+        [[0, "zero"]],
       );
+      assert.isNull(oldest.nextCursor);
 
-      for (const cursor of ["", "01", "-1", "1x", "3", "9007199254740992"]) {
+      const decoded = JSON.parse(Buffer.from(newest.nextCursor!, "base64url").toString("utf8")) as [
+        number,
+        string,
+        string,
+        string,
+      ];
+      const missingAnchor = Buffer.from(
+        JSON.stringify([decoded[0], decoded[1], decoded[2], "missing-message"]),
+        "utf8",
+      ).toString("base64url");
+
+      for (const cursor of ["", "not-base64!", `${newest.nextCursor!}A`, missingAnchor]) {
         const result = yield* query
           .readPage({ projectId: "project-1", threadId: "thread-boundary", cursor })
           .pipe(Effect.match({ onFailure: (error) => error, onSuccess: () => null }));
@@ -113,6 +134,18 @@ sqlite("ExternalIntegrationThreadReadQuery", (it) => {
         }
       }
 
+      const wrongScope = yield* query
+        .readPage({
+          projectId: "project-1",
+          threadId: "another-thread",
+          cursor: newest.nextCursor!,
+        })
+        .pipe(Effect.match({ onFailure: (error) => error, onSuccess: () => null }));
+      assert.instanceOf(wrongScope, ExternalIntegrationThreadReadError);
+      if (wrongScope instanceof ExternalIntegrationThreadReadError) {
+        assert.strictEqual(wrongScope.code, "invalid_cursor");
+      }
+
       const crossProject = yield* query
         .readPage({ projectId: "project-other", threadId: "thread-boundary" })
         .pipe(Effect.match({ onFailure: (error) => error, onSuccess: () => null }));
@@ -120,6 +153,73 @@ sqlite("ExternalIntegrationThreadReadQuery", (it) => {
       if (crossProject instanceof ExternalIntegrationThreadReadError) {
         assert.strictEqual(crossProject.code, "thread_not_found");
       }
+    }),
+  );
+
+  it.effect("does not skip or duplicate original messages after a late earlier import", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id, project_id, title, model_selection_json, branch,
+          worktree_path, latest_turn_id, created_at, updated_at, deleted_at
+        ) VALUES (
+          'thread-late-import', 'project-1', 'Late import',
+          '{"provider":"codex","model":"gpt-5-codex"}', NULL,
+          NULL, NULL, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z', NULL
+        )
+      `;
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+        ) VALUES
+          ('original-0', 'thread-late-import', NULL, 'assistant', 'original-0', 0, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'),
+          ('original-1', 'thread-late-import', NULL, 'assistant', 'original-1', 0, '2026-01-01T00:00:01.000Z', '2026-01-01T00:00:01.000Z'),
+          ('original-2', 'thread-late-import', NULL, 'assistant', 'original-2', 0, '2026-01-01T00:00:02.000Z', '2026-01-01T00:00:02.000Z'),
+          ('original-3', 'thread-late-import', NULL, 'assistant', 'original-3', 0, '2026-01-01T00:00:03.000Z', '2026-01-01T00:00:03.000Z'),
+          ('original-4', 'thread-late-import', NULL, 'assistant', 'original-4', 0, '2026-01-01T00:00:04.000Z', '2026-01-01T00:00:04.000Z')
+      `;
+      const query = yield* makeExternalIntegrationThreadReadQuery;
+      const first = yield* query.readPage({
+        projectId: "project-1",
+        threadId: "thread-late-import",
+        messageLimit: 2,
+      });
+      assert.strictEqual(first.totalMessages, 5);
+      assert.deepEqual(
+        first.messages.map(({ text }) => text),
+        ["original-3", "original-4"],
+      );
+
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id, thread_id, turn_id, role, text, is_streaming, created_at, updated_at
+        ) VALUES (
+          'late-import', 'thread-late-import', NULL, 'assistant', 'late-import', 0,
+          '2026-01-01T00:00:00.500Z', '2026-01-01T00:00:00.500Z'
+        )
+      `;
+
+      let cursor = first.nextCursor;
+      const pages = [first.messages.map(({ text }) => text)];
+      while (cursor !== null) {
+        const page = yield* query.readPage({
+          projectId: "project-1",
+          threadId: "thread-late-import",
+          cursor,
+          messageLimit: 2,
+        });
+        assert.strictEqual(page.totalMessages, 6);
+        pages.unshift(page.messages.map(({ text }) => text));
+        cursor = page.nextCursor;
+      }
+      const traversed = pages.flat();
+      assert.deepEqual(
+        traversed.filter((text) => text.startsWith("original-")),
+        ["original-0", "original-1", "original-2", "original-3", "original-4"],
+      );
+      assert.strictEqual(new Set(traversed).size, traversed.length);
+      assert.include(traversed, "late-import");
     }),
   );
 });
