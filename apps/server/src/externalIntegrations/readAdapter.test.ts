@@ -6,7 +6,7 @@ import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/Pro
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { makeEphemeralScientOperationExecutor } from "../scientOperations/Layers/ScientOperationExecutor.ts";
 import { makeExternalIntegrationControlPlane } from "./controlPlane.ts";
-import { ExternalIntegrationControlError } from "./controlPlane.ts";
+import { ExternalIntegrationControlError, externalIntegrationThreadHash } from "./controlPlane.ts";
 import {
   makeExternalIntegrationReadAdapter,
   makeProjectionExternalIntegrationReadBackend,
@@ -96,8 +96,8 @@ sqlite("ExternalIntegrationReadAdapter", (it) => {
       }
       assert.strictEqual(projectReads, 1);
       const events = yield* control.listSecurityEvents("integration-1");
-      assert.isFalse(events.some(({ occurredAt }) => occurredAt === forgedCallerTime));
-      assert.isTrue(events.every(({ occurredAt }) => occurredAt <= trustedNow));
+      assert.isFalse(events.events.some(({ occurredAt }) => occurredAt === forgedCallerTime));
+      assert.isTrue(events.events.every(({ occurredAt }) => occurredAt <= trustedNow));
     }),
   );
 
@@ -143,18 +143,23 @@ sqlite("ExternalIntegrationReadAdapter", (it) => {
 
   it.effect("production projection shaping returns one project without workspaceRoot", () =>
     Effect.gen(function* () {
-      const backend = makeProjectionExternalIntegrationReadBackend({
-        getProjectShellById: () =>
-          Effect.succeed(
-            Option.some({
-              id: "project-1",
-              title: "Scoped",
-              kind: "project",
-              isPinned: false,
-              workspaceRoot: "/secret/workspace",
-            }),
-          ),
-      } as unknown as ProjectionSnapshotQueryShape);
+      const backend = makeProjectionExternalIntegrationReadBackend(
+        {
+          getProjectShellById: () =>
+            Effect.succeed(
+              Option.some({
+                id: "project-1",
+                title: "Scoped",
+                kind: "project",
+                isPinned: false,
+                workspaceRoot: "/secret/workspace",
+              }),
+            ),
+        } as unknown as ProjectionSnapshotQueryShape,
+        {
+          readPage: () => Effect.die("not used"),
+        },
+      );
       const result = yield* backend.project("project-1");
       assert.deepEqual(result, {
         projectId: "project-1",
@@ -164,6 +169,97 @@ sqlite("ExternalIntegrationReadAdapter", (it) => {
       });
       assert.notInclude(JSON.stringify(result), "workspaceRoot");
       assert.notInclude(JSON.stringify(result), "/secret/workspace");
+    }),
+  );
+
+  it.effect("withholds a parent thread that is outside the granted thread set", () =>
+    Effect.gen(function* () {
+      const snapshot = {
+        threads: [
+          {
+            id: "child-thread",
+            projectId: "project-1",
+            title: "Child",
+            parentThreadId: "parent-thread",
+            archivedAt: null,
+            updatedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+      };
+      const backend = makeProjectionExternalIntegrationReadBackend(
+        {
+          getShellSnapshot: () => Effect.succeed(snapshot),
+        } as unknown as ProjectionSnapshotQueryShape,
+        { readPage: () => Effect.die("not used") },
+      );
+
+      const childOnly = (yield* backend.listThreads({
+        projectId: "project-1",
+        scopedThreadHashes: [externalIntegrationThreadHash("child-thread")],
+        includeArchived: false,
+        limit: 20,
+      })) as { readonly threads: ReadonlyArray<{ readonly parentThreadId: string | null }> };
+      assert.strictEqual(childOnly.threads[0]?.parentThreadId, null);
+
+      const parentAndChild = (yield* backend.listThreads({
+        projectId: "project-1",
+        scopedThreadHashes: [
+          externalIntegrationThreadHash("child-thread"),
+          externalIntegrationThreadHash("parent-thread"),
+        ],
+        includeArchived: false,
+        limit: 20,
+      })) as { readonly threads: ReadonlyArray<{ readonly parentThreadId: string | null }> };
+      assert.strictEqual(parentAndChild.threads[0]?.parentThreadId, "parent-thread");
+    }),
+  );
+
+  it.effect("delegates bounded thread reads and truncates only returned message text", () =>
+    Effect.gen(function* () {
+      const backend = makeProjectionExternalIntegrationReadBackend(
+        {} as ProjectionSnapshotQueryShape,
+        {
+          readPage: (input) =>
+            Effect.succeed({
+              threadId: input.threadId,
+              projectId: input.projectId,
+              title: "Thread",
+              status: "idle",
+              archived: false,
+              messages: [{ index: 2_104, role: "assistant", text: "abcdef", createdAt: "now" }],
+              totalMessages: 2_105,
+              nextCursor: "2104",
+            }),
+        },
+      );
+      const result = (yield* backend.readThread({
+        projectId: "project-1",
+        threadId: "thread-1",
+        cursor: "2105",
+        messageLimit: 1,
+        maxMessageChars: 3,
+      })) as {
+        readonly totalMessages: number;
+        readonly nextCursor: string | null;
+        readonly messages: ReadonlyArray<{
+          readonly index: number;
+          readonly role: string;
+          readonly text: string;
+          readonly truncated: boolean;
+          readonly createdAt: string;
+        }>;
+      };
+      assert.strictEqual(result.totalMessages, 2_105);
+      assert.strictEqual(result.nextCursor, "2104");
+      assert.deepEqual(result.messages, [
+        {
+          index: 2_104,
+          role: "assistant",
+          text: "abc",
+          truncated: true,
+          createdAt: "now",
+        },
+      ]);
     }),
   );
 });

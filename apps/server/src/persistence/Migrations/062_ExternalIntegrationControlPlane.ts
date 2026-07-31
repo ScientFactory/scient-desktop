@@ -11,6 +11,7 @@ export default Effect.gen(function* () {
       credential_reference_hash TEXT NOT NULL,
       pairing_token_hash TEXT,
       integration_access_token_hash TEXT,
+      pairing_issued_at INTEGER NOT NULL,
       pairing_expires_at INTEGER NOT NULL,
       peer_identity_hash TEXT NOT NULL,
       pairing_state TEXT NOT NULL CHECK (pairing_state IN ('pending', 'paired', 'revoked')),
@@ -19,6 +20,8 @@ export default Effect.gen(function* () {
       rate_limit_window_ms INTEGER NOT NULL CHECK (rate_limit_window_ms BETWEEN 1000 AND 86400000),
       rate_window_started_at INTEGER NOT NULL,
       rate_window_count INTEGER NOT NULL DEFAULT 0 CHECK (rate_window_count >= 0),
+      security_events_compacted_count INTEGER NOT NULL DEFAULT 0 CHECK (security_events_compacted_count >= 0),
+      security_events_compacted_through INTEGER,
       created_at INTEGER NOT NULL,
       paired_at INTEGER,
       revoked_at INTEGER,
@@ -44,7 +47,7 @@ export default Effect.gen(function* () {
         OR (pairing_state = 'paired' AND pairing_token_hash IS NULL AND integration_access_token_hash IS NOT NULL AND paired_at IS NOT NULL AND revoked_at IS NULL)
         OR (pairing_state = 'revoked' AND pairing_token_hash IS NULL AND integration_access_token_hash IS NULL AND revoked_at IS NOT NULL)
       ),
-      CHECK (pairing_expires_at > created_at AND pairing_expires_at <= created_at + 600000)
+      CHECK (pairing_expires_at > pairing_issued_at AND pairing_expires_at <= pairing_issued_at + 600000)
     )
   `;
 
@@ -83,7 +86,7 @@ export default Effect.gen(function* () {
     CREATE TABLE IF NOT EXISTS scient_external_integration_security_events (
       event_id TEXT PRIMARY KEY,
       integration_hash TEXT NOT NULL,
-      event_type TEXT NOT NULL CHECK (event_type IN ('created', 'paired', 'admission', 'release', 'revoked')),
+      event_type TEXT NOT NULL CHECK (event_type IN ('created', 'paired', 'recovery', 'admission', 'release', 'revoked')),
       outcome TEXT NOT NULL CHECK (outcome IN ('allowed', 'denied', 'recorded')),
       reason_code TEXT NOT NULL,
       operation TEXT,

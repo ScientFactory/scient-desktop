@@ -75,6 +75,13 @@ export interface CompleteExternalIntegrationPairingInput {
   readonly peerIdentity: string;
 }
 
+export interface RecoverExternalIntegrationPairingInput {
+  readonly externalIdentity: string;
+  /** Owner-controlled durable reference; plaintext secret material is never accepted. */
+  readonly credentialReference: string;
+  readonly peerIdentity: string;
+}
+
 export interface ExternalIntegrationReadAdmissionInput {
   readonly externalIdentity: string;
   readonly credentialReference: string;
@@ -104,13 +111,24 @@ export interface ExternalIntegrationReadAdmission {
 
 export interface ExternalIntegrationSecurityEvent {
   readonly eventId: string;
-  readonly eventType: "created" | "paired" | "admission" | "release" | "revoked";
+  readonly eventType: "created" | "paired" | "recovery" | "admission" | "release" | "revoked";
   readonly outcome: "allowed" | "denied" | "recorded";
   readonly reasonCode: string;
   readonly operation: string | null;
   readonly projectHash: string | null;
   readonly threadHash: string | null;
   readonly occurredAt: number;
+}
+
+export interface ExternalIntegrationSecurityEventPage {
+  readonly events: ReadonlyArray<ExternalIntegrationSecurityEvent>;
+  readonly nextCursor: string | null;
+  /** Durable evidence that older repetitive events were compacted, not silently lost. */
+  readonly retention: {
+    readonly retainedLimit: number;
+    readonly compactedCount: number;
+    readonly compactedThrough: number | null;
+  };
 }
 
 export interface ExternalIntegrationControlPlane {
@@ -124,6 +142,13 @@ export interface ExternalIntegrationControlPlane {
     input: CompleteExternalIntegrationPairingInput,
   ) => Effect.Effect<
     { readonly accessToken: string },
+    ExternalIntegrationControlError | PersistenceSqlError
+  >;
+  /** Owner-only recovery seam. It is deliberately not exposed by the read adapter. */
+  readonly beginRecoveryPairing: (
+    input: RecoverExternalIntegrationPairingInput,
+  ) => Effect.Effect<
+    { readonly pairingToken: string; readonly authorityGeneration: number },
     ExternalIntegrationControlError | PersistenceSqlError
   >;
   readonly admitRead: (
@@ -140,8 +165,9 @@ export interface ExternalIntegrationControlPlane {
   ) => Effect.Effect<void, ExternalIntegrationControlError | PersistenceSqlError>;
   readonly listSecurityEvents: (
     externalIdentity: string,
+    options?: { readonly cursor?: string; readonly limit?: number },
   ) => Effect.Effect<
-    ReadonlyArray<ExternalIntegrationSecurityEvent>,
+    ExternalIntegrationSecurityEventPage,
     ExternalIntegrationControlError | PersistenceSqlError | PersistenceDecodeError
   >;
 }
@@ -231,6 +257,8 @@ interface IntegrationRow {
   readonly rateWindowStartedAt: number;
   readonly rateWindowCount: number;
   readonly pairedAt: number | null;
+  readonly securityEventsCompactedCount: number;
+  readonly securityEventsCompactedThrough: number | null;
 }
 
 const integrationSelect = (
@@ -250,7 +278,9 @@ const integrationSelect = (
     rate_limit_window_ms AS "rateLimitWindowMs",
     rate_window_started_at AS "rateWindowStartedAt",
     rate_window_count AS "rateWindowCount",
-    paired_at AS "pairedAt"
+    paired_at AS "pairedAt",
+    security_events_compacted_count AS "securityEventsCompactedCount",
+    security_events_compacted_through AS "securityEventsCompactedThrough"
   FROM scient_external_integrations
   WHERE integration_hash = ${integrationHash}
 `;
@@ -298,12 +328,127 @@ function validateCreate(input: CreateExternalIntegrationInput) {
 }
 
 const PAIRING_TOKEN_TTL_MS = 5 * 60 * 1_000;
+export const EXTERNAL_INTEGRATION_SECURITY_EVENT_RETAINED_LIMIT = 1_024;
+const EXTERNAL_INTEGRATION_SECURITY_EVENT_COMPACTION_TRIGGER = 1_152;
+const EXTERNAL_INTEGRATION_SECURITY_EVENT_PAGE_MAX = 100;
+
+function securityEventCursor(
+  event: Pick<ExternalIntegrationSecurityEvent, "occurredAt" | "eventId">,
+) {
+  return Buffer.from(JSON.stringify([event.occurredAt, event.eventId]), "utf8").toString(
+    "base64url",
+  );
+}
+
+function parseSecurityEventCursor(cursor: string | undefined): {
+  readonly occurredAt: number;
+  readonly eventId: string;
+} | null {
+  if (cursor === undefined) return null;
+  const boundedCursor = bounded(cursor, "cursor", 512);
+  try {
+    const decoded: unknown = JSON.parse(Buffer.from(boundedCursor, "base64url").toString("utf8"));
+    if (
+      !Array.isArray(decoded) ||
+      decoded.length !== 2 ||
+      !Number.isSafeInteger(decoded[0]) ||
+      (decoded[0] as number) < 0 ||
+      typeof decoded[1] !== "string" ||
+      decoded[1].length < 1 ||
+      Buffer.byteLength(decoded[1], "utf8") > 128
+    ) {
+      throw new Error("invalid cursor shape");
+    }
+    return { occurredAt: decoded[0] as number, eventId: decoded[1] };
+  } catch {
+    throw controlError("invalid_configuration", "Security event cursor is invalid.");
+  }
+}
 
 export function makeExternalIntegrationControlPlane(options?: { readonly now?: () => number }) {
   const now = options?.now ?? Date.now;
   const randomToken = () => randomBytes(32).toString("base64url");
   return Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+
+    /**
+     * Append and compact in the caller's transaction. Compaction preserves the
+     * creation receipt, the newest pairing/recovery/revocation receipts, and the
+     * newest remaining events. Durable counters retain evidence of the removed
+     * repetitive history without allowing an unbounded local database.
+     */
+    const recordSecurityEvent = (event: {
+      readonly integrationHash: string;
+      readonly eventType: ExternalIntegrationSecurityEvent["eventType"];
+      readonly outcome: ExternalIntegrationSecurityEvent["outcome"];
+      readonly reasonCode: string;
+      readonly operation?: string | null;
+      readonly projectHash?: string | null;
+      readonly threadHash?: string | null;
+      readonly occurredAt: number;
+    }) =>
+      Effect.gen(function* () {
+        yield* sql`
+          INSERT INTO scient_external_integration_security_events (
+            event_id, integration_hash, event_type, outcome, reason_code,
+            operation, project_hash, thread_hash, occurred_at
+          ) VALUES (
+            ${randomUUID()}, ${event.integrationHash}, ${event.eventType}, ${event.outcome},
+            ${event.reasonCode}, ${event.operation ?? null}, ${event.projectHash ?? null},
+            ${event.threadHash ?? null}, ${event.occurredAt}
+          )
+        `;
+        const count = Number(
+          (yield* sql<{ readonly count: number }>`
+              SELECT COUNT(*) AS count
+              FROM scient_external_integration_security_events
+              WHERE integration_hash = ${event.integrationHash}
+            `)[0]?.count ?? 0,
+        );
+        if (count <= EXTERNAL_INTEGRATION_SECURITY_EVENT_COMPACTION_TRIGGER) return;
+        const compacted = yield* sql<{ readonly occurredAt: number }>`
+          WITH retained AS (
+            SELECT candidate.event_id
+            FROM scient_external_integration_security_events AS candidate
+            WHERE candidate.integration_hash = ${event.integrationHash}
+            ORDER BY
+              CASE
+                WHEN candidate.event_type = 'created' THEN 0
+                WHEN candidate.event_type IN ('paired', 'recovery', 'revoked')
+                  AND candidate.event_id = (
+                    SELECT lifecycle.event_id
+                    FROM scient_external_integration_security_events AS lifecycle
+                    WHERE lifecycle.integration_hash = candidate.integration_hash
+                      AND lifecycle.event_type = candidate.event_type
+                    ORDER BY lifecycle.occurred_at DESC, lifecycle.event_id DESC
+                    LIMIT 1
+                  ) THEN 0
+                ELSE 1
+              END,
+              candidate.occurred_at DESC,
+              candidate.event_id DESC
+            LIMIT ${EXTERNAL_INTEGRATION_SECURITY_EVENT_RETAINED_LIMIT}
+          )
+          DELETE FROM scient_external_integration_security_events
+          WHERE integration_hash = ${event.integrationHash}
+            AND event_id NOT IN (SELECT event_id FROM retained)
+          RETURNING occurred_at AS "occurredAt"
+        `;
+        if (compacted.length > 0) {
+          const compactedThrough = Math.max(...compacted.map(({ occurredAt }) => occurredAt));
+          yield* sql`
+            UPDATE scient_external_integrations
+            SET security_events_compacted_count = security_events_compacted_count + ${compacted.length},
+                security_events_compacted_through = CASE
+                  WHEN security_events_compacted_through IS NULL
+                    OR security_events_compacted_through < ${compactedThrough}
+                  THEN ${compactedThrough}
+                  ELSE security_events_compacted_through
+                END
+            WHERE integration_hash = ${event.integrationHash}
+          `;
+        }
+      });
 
     const createPending: ExternalIntegrationControlPlane["createPending"] = (input) =>
       Effect.try({
@@ -332,13 +477,13 @@ export function makeExternalIntegrationControlPlane(options?: { readonly now?: (
                 yield* sql`
                 INSERT INTO scient_external_integrations (
                   integration_hash, credential_reference_hash, pairing_token_hash,
-                  integration_access_token_hash, pairing_expires_at,
+                  integration_access_token_hash, pairing_issued_at, pairing_expires_at,
                   peer_identity_hash, pairing_state, authority_generation,
                   rate_limit_max, rate_limit_window_ms, rate_window_started_at,
                   rate_window_count, created_at, updated_at
                 ) VALUES (
                   ${integrationHash}, ${credentialReferenceHash}, ${pairingTokenHash},
-                  NULL, ${createdAt + PAIRING_TOKEN_TTL_MS},
+                  NULL, ${createdAt}, ${createdAt + PAIRING_TOKEN_TTL_MS},
                   ${peerIdentityHash}, 'pending', 1,
                   ${input.rateLimit.maxRequests}, ${input.rateLimit.windowMs}, ${createdAt},
                   0, ${createdAt}, ${createdAt}
@@ -366,11 +511,13 @@ export function makeExternalIntegrationControlPlane(options?: { readonly now?: (
                   VALUES (${integrationHash}, ${capability})
                 `;
                 }
-                yield* sql`
-                INSERT INTO scient_external_integration_security_events (
-                  event_id, integration_hash, event_type, outcome, reason_code, occurred_at
-                ) VALUES (${randomUUID()}, ${integrationHash}, 'created', 'recorded', 'pending_pairing', ${createdAt})
-              `;
+                yield* recordSecurityEvent({
+                  integrationHash,
+                  eventType: "created",
+                  outcome: "recorded",
+                  reasonCode: "pending_pairing",
+                  occurredAt: createdAt,
+                });
                 return { integrationHash, pairingToken } as const;
               }),
             )
@@ -418,11 +565,13 @@ export function makeExternalIntegrationControlPlane(options?: { readonly now?: (
                 paired_at = ${pairedAt}, updated_at = ${pairedAt}
             WHERE integration_hash = ${integrationHash} AND pairing_state = 'pending'
           `;
-              yield* sql`
-            INSERT INTO scient_external_integration_security_events (
-              event_id, integration_hash, event_type, outcome, reason_code, occurred_at
-            ) VALUES (${randomUUID()}, ${integrationHash}, 'paired', 'recorded', 'owner_pairing_completed', ${pairedAt})
-          `;
+              yield* recordSecurityEvent({
+                integrationHash,
+                eventType: "paired",
+                outcome: "recorded",
+                reasonCode: "owner_pairing_completed",
+                occurredAt: pairedAt,
+              });
               return { accessToken } as const;
             }),
           )
@@ -431,6 +580,64 @@ export function makeExternalIntegrationControlPlane(options?: { readonly now?: (
               cause instanceof ExternalIntegrationControlError
                 ? cause
                 : sqlError("ExternalIntegration.completePairing", cause),
+            ),
+          );
+      });
+
+    const beginRecoveryPairing: ExternalIntegrationControlPlane["beginRecoveryPairing"] = (input) =>
+      validatedEffect(() => {
+        const integrationHash = externalIntegrationIdentityHash(
+          bounded(input.externalIdentity, "externalIdentity"),
+        );
+        const credentialReferenceHash = hashField(
+          "credential-reference",
+          bounded(input.credentialReference, "credentialReference", 1024),
+        );
+        const peerIdentityHash = hashField(
+          "peer",
+          bounded(input.peerIdentity, "peerIdentity", 1024),
+        );
+        const pairingToken = randomToken();
+        const pairingTokenHash = hashField("pairing-token", pairingToken);
+        const issuedAt = now();
+        return sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const row = (yield* integrationSelect(sql, integrationHash))[0];
+              if (
+                row === undefined ||
+                row.credentialReferenceHash !== credentialReferenceHash ||
+                row.peerIdentityHash !== peerIdentityHash
+              ) {
+                return yield* controlError("pairing_denied", "Owner recovery proof was rejected.");
+              }
+              const authorityGeneration = row.authorityGeneration + 1;
+              yield* sql`
+                UPDATE scient_external_integrations
+                SET pairing_state = 'pending', pairing_token_hash = ${pairingTokenHash},
+                    integration_access_token_hash = NULL,
+                    pairing_issued_at = ${issuedAt},
+                    pairing_expires_at = ${issuedAt + PAIRING_TOKEN_TTL_MS},
+                    authority_generation = ${authorityGeneration},
+                    rate_window_started_at = ${issuedAt}, rate_window_count = 0,
+                    paired_at = NULL, revoked_at = NULL, updated_at = ${issuedAt}
+                WHERE integration_hash = ${integrationHash}
+              `;
+              yield* recordSecurityEvent({
+                integrationHash,
+                eventType: "recovery",
+                outcome: "recorded",
+                reasonCode: "owner_recovery_started",
+                occurredAt: issuedAt,
+              });
+              return { pairingToken, authorityGeneration } as const;
+            }),
+          )
+          .pipe(
+            Effect.mapError((cause) =>
+              cause instanceof ExternalIntegrationControlError
+                ? cause
+                : sqlError("ExternalIntegration.beginRecoveryPairing", cause),
             ),
           );
       });
@@ -565,17 +772,16 @@ export function makeExternalIntegrationControlPlane(options?: { readonly now?: (
             `;
               }
               if (row !== undefined) {
-                yield* sql`
-              INSERT INTO scient_external_integration_security_events (
-                event_id, integration_hash, event_type, outcome, reason_code,
-                operation, project_hash, thread_hash, occurred_at
-              ) VALUES (
-                ${randomUUID()}, ${integrationHash}, 'admission',
-                ${denial === null ? "allowed" : "denied"},
-                ${denial?.code ?? "authority_current"}, ${input.operation},
-                ${projectHash}, ${threadHash}, ${admittedAt}
-              )
-            `;
+                yield* recordSecurityEvent({
+                  integrationHash,
+                  eventType: "admission",
+                  outcome: denial === null ? "allowed" : "denied",
+                  reasonCode: denial?.code ?? "authority_current",
+                  operation: input.operation,
+                  projectHash,
+                  threadHash,
+                  occurredAt: admittedAt,
+                });
               }
               if (denial !== null || row === undefined) return { denial } as const;
               const authority = makeScientOperationAuthority({
@@ -631,17 +837,15 @@ export function makeExternalIntegrationControlPlane(options?: { readonly now?: (
               constantTimeDigestEqual(row.accessTokenHash, admission.accessTokenHash) &&
               row.peerIdentityHash === admission.peerIdentityHash;
             if (row !== undefined) {
-              yield* sql`
-              INSERT INTO scient_external_integration_security_events (
-                event_id, integration_hash, event_type, outcome, reason_code,
-                project_hash, thread_hash, occurred_at
-              ) VALUES (
-                ${randomUUID()}, ${admission.integrationHash}, 'release',
-                ${current ? "allowed" : "denied"},
-                ${current ? "authority_current" : "stale_authority"},
-                ${admission.projectHash}, ${admission.threadHash}, ${releasedAt}
-              )
-            `;
+              yield* recordSecurityEvent({
+                integrationHash: admission.integrationHash,
+                eventType: "release",
+                outcome: current ? "allowed" : "denied",
+                reasonCode: current ? "authority_current" : "stale_authority",
+                projectHash: admission.projectHash,
+                threadHash: admission.threadHash,
+                occurredAt: releasedAt,
+              });
             }
             return current;
           }),
@@ -686,11 +890,13 @@ export function makeExternalIntegrationControlPlane(options?: { readonly now?: (
                   revoked_at = ${revokedAt}, updated_at = ${revokedAt}
               WHERE integration_hash = ${integrationHash}
             `;
-                yield* sql`
-              INSERT INTO scient_external_integration_security_events (
-                event_id, integration_hash, event_type, outcome, reason_code, occurred_at
-              ) VALUES (${randomUUID()}, ${integrationHash}, 'revoked', 'recorded', 'owner_revoked', ${revokedAt})
-            `;
+                yield* recordSecurityEvent({
+                  integrationHash,
+                  eventType: "revoked",
+                  outcome: "recorded",
+                  reasonCode: "owner_revoked",
+                  occurredAt: revokedAt,
+                });
               }
             }),
           )
@@ -705,26 +911,87 @@ export function makeExternalIntegrationControlPlane(options?: { readonly now?: (
 
     const listSecurityEvents: ExternalIntegrationControlPlane["listSecurityEvents"] = (
       externalIdentity,
+      options,
     ) =>
       validatedEffect(() => {
         const integrationHash = externalIntegrationIdentityHash(
           bounded(externalIdentity, "externalIdentity"),
         );
-        return sql<ExternalIntegrationSecurityEvent>`
-      SELECT
-        event_id AS "eventId", event_type AS "eventType", outcome,
-        reason_code AS "reasonCode", operation,
-        project_hash AS "projectHash", thread_hash AS "threadHash",
-        occurred_at AS "occurredAt"
-      FROM scient_external_integration_security_events
-      WHERE integration_hash = ${integrationHash}
-      ORDER BY occurred_at, event_id
-    `.pipe(Effect.mapError((cause) => sqlError("ExternalIntegration.listSecurityEvents", cause)));
+        if (
+          options?.limit !== undefined &&
+          (!Number.isInteger(options.limit) ||
+            options.limit < 1 ||
+            options.limit > EXTERNAL_INTEGRATION_SECURITY_EVENT_PAGE_MAX)
+        ) {
+          throw controlError(
+            "invalid_configuration",
+            `Security event limit must be between 1 and ${EXTERNAL_INTEGRATION_SECURITY_EVENT_PAGE_MAX}.`,
+          );
+        }
+        const limit = options?.limit ?? 50;
+        const cursor = parseSecurityEventCursor(options?.cursor);
+        return Effect.gen(function* () {
+          const integration = (yield* integrationSelect(sql, integrationHash))[0];
+          if (integration === undefined) {
+            return yield* controlError(
+              "integration_not_found",
+              "External integration was not found.",
+            );
+          }
+          const rows =
+            cursor === null
+              ? yield* sql<ExternalIntegrationSecurityEvent>`
+                  SELECT
+                    event_id AS "eventId", event_type AS "eventType", outcome,
+                    reason_code AS "reasonCode", operation,
+                    project_hash AS "projectHash", thread_hash AS "threadHash",
+                    occurred_at AS "occurredAt"
+                  FROM scient_external_integration_security_events
+                  WHERE integration_hash = ${integrationHash}
+                  ORDER BY occurred_at, event_id
+                  LIMIT ${limit + 1}
+                `
+              : yield* sql<ExternalIntegrationSecurityEvent>`
+                  SELECT
+                    event_id AS "eventId", event_type AS "eventType", outcome,
+                    reason_code AS "reasonCode", operation,
+                    project_hash AS "projectHash", thread_hash AS "threadHash",
+                    occurred_at AS "occurredAt"
+                  FROM scient_external_integration_security_events
+                  WHERE integration_hash = ${integrationHash}
+                    AND (
+                      occurred_at > ${cursor.occurredAt}
+                      OR (occurred_at = ${cursor.occurredAt} AND event_id > ${cursor.eventId})
+                    )
+                  ORDER BY occurred_at, event_id
+                  LIMIT ${limit + 1}
+                `;
+          const events = rows.slice(0, limit);
+          return {
+            events,
+            nextCursor:
+              rows.length > limit && events.length > 0
+                ? securityEventCursor(events[events.length - 1]!)
+                : null,
+            retention: {
+              retainedLimit: EXTERNAL_INTEGRATION_SECURITY_EVENT_RETAINED_LIMIT,
+              compactedCount: integration.securityEventsCompactedCount,
+              compactedThrough: integration.securityEventsCompactedThrough,
+            },
+          } satisfies ExternalIntegrationSecurityEventPage;
+        }).pipe(
+          Effect.mapError((cause) =>
+            cause instanceof ExternalIntegrationControlError
+              ? cause
+              : sqlError("ExternalIntegration.listSecurityEvents", cause),
+          ),
+        );
       });
 
     return {
       createPending,
       completePairing,
+      beginRecoveryPairing,
       admitRead,
       releaseRead,
       revoke,

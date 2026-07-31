@@ -1,5 +1,5 @@
 /** Governed, transport-dark read adapter for explicitly paired integrations. */
-import { ProjectId, ThreadId } from "@synara/contracts";
+import { ProjectId } from "@synara/contracts";
 import { Effect, Option } from "effect";
 
 import type { ProjectionSnapshotQueryShape } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -15,6 +15,7 @@ import {
   type ExternalIntegrationControlPlane,
   type ExternalIntegrationReadAdmission,
 } from "./controlPlane.ts";
+import type { ExternalIntegrationThreadReadQueryShape } from "./threadReadQuery.ts";
 
 export type LocalPeerProof =
   | {
@@ -259,6 +260,7 @@ export function makeExternalIntegrationReadAdapter(input: {
 /** Projection-backed implementation with paths, attachments and raw diagnostics withheld. */
 export function makeProjectionExternalIntegrationReadBackend(
   snapshotQuery: ProjectionSnapshotQueryShape,
+  threadReadQuery: ExternalIntegrationThreadReadQueryShape,
 ): ExternalIntegrationReadBackend {
   return {
     project: (projectId) =>
@@ -291,51 +293,46 @@ export function makeProjectionExternalIntegrationReadBackend(
               threadId: thread.id,
               title: thread.title,
               status: thread.latestTurn?.state ?? thread.session?.status ?? "idle",
-              parentThreadId: thread.parentThreadId ?? null,
+              parentThreadId:
+                thread.parentThreadId !== undefined &&
+                thread.parentThreadId !== null &&
+                scopedThreadHashes.includes(externalIntegrationThreadHash(thread.parentThreadId))
+                  ? thread.parentThreadId
+                  : null,
               archived: (thread.archivedAt ?? null) !== null,
               updatedAt: thread.updatedAt,
             })),
         })),
       ),
     readThread: ({ projectId, threadId, cursor, messageLimit, maxMessageChars }) =>
-      snapshotQuery.getThreadDetailById(ThreadId.makeUnsafe(threadId)).pipe(
-        Effect.flatMap(
-          Option.match({
-            // The same generic failure covers missing and cross-project rows.
-            onNone: () => Effect.fail("thread_not_found"),
-            onSome: (thread) =>
-              thread.projectId !== projectId
-                ? Effect.fail("thread_not_found")
-                : Effect.succeed(thread),
+      threadReadQuery
+        .readPage({
+          projectId,
+          threadId,
+          ...(cursor === undefined ? {} : { cursor }),
+          ...(messageLimit === undefined ? {} : { messageLimit }),
+        })
+        .pipe(
+          Effect.map((thread) => {
+            const chars = boundedPage(maxMessageChars, 1500, 20_000);
+            return {
+              threadId: thread.threadId,
+              projectId: thread.projectId,
+              title: thread.title,
+              status: thread.status,
+              archived: thread.archived,
+              messages: thread.messages.map((message) => ({
+                index: message.index,
+                role: message.role,
+                text: message.text.slice(0, chars),
+                truncated: message.text.length > chars,
+                createdAt: message.createdAt,
+              })),
+              totalMessages: thread.totalMessages,
+              nextCursor: thread.nextCursor,
+            };
           }),
         ),
-        Effect.map((thread) => {
-          const total = thread.messages.length;
-          const end =
-            cursor === undefined
-              ? total
-              : Math.max(0, Math.min(Number.parseInt(cursor, 10) || 0, total));
-          const limit = boundedPage(messageLimit, 20, 100);
-          const start = Math.max(0, end - limit);
-          const chars = boundedPage(maxMessageChars, 1500, 20_000);
-          return {
-            threadId: thread.id,
-            projectId: thread.projectId,
-            title: thread.title,
-            status: thread.latestTurn?.state ?? thread.session?.status ?? "idle",
-            archived: (thread.archivedAt ?? null) !== null,
-            messages: thread.messages.slice(start, end).map((message, index) => ({
-              index: start + index,
-              role: message.role,
-              text: message.text.slice(0, chars),
-              truncated: message.text.length > chars,
-              createdAt: message.createdAt,
-            })),
-            totalMessages: total,
-            nextCursor: start > 0 ? String(start) : null,
-          };
-        }),
-      ),
   };
 }
 
