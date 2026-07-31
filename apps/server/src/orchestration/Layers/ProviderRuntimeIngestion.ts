@@ -3938,141 +3938,303 @@ const make = Effect.gen(function* () {
 
   const worker = yield* makeDrainableWorker(processInputSafely);
 
-  const reconcileTurnlessGeneratedImagesAtStartup = Effect.gen(function* () {
-    const references = yield* projectionSnapshotQuery.listTurnlessGeneratedImageReferences().pipe(
+  const reconcileTurnGeneratedImagesAtStartup = (startupBudget: { remaining: number }) =>
+    Effect.gen(function* () {
+      const references = yield* projectionSnapshotQuery
+        .listTurnGeneratedImageReferencesForStartup()
+        .pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("failed to read turn generated-image recovery ledger", {
+              causeName: cause instanceof Error ? cause.name : "UnknownError",
+            }).pipe(Effect.as([])),
+          ),
+        );
+      const referencesByTurn = new Map<string, typeof references>();
+      for (const reference of references) {
+        const key = `${reference.threadId}\0${reference.turnId}`;
+        referencesByTurn.set(key, [...(referencesByTurn.get(key) ?? []), reference]);
+      }
+      yield* Effect.forEach(
+        referencesByTurn.values(),
+        (turnReferences) =>
+          Effect.gen(function* () {
+            if (startupBudget.remaining <= 0) return;
+            const first = turnReferences[0];
+            if (!first) return;
+            const terminalMessageId = yield* projectionSnapshotQuery
+              .getLatestAssistantMessageIdByTurn(first.threadId, first.turnId)
+              .pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("failed to resolve turn image recovery target", {
+                    threadId: first.threadId,
+                    turnId: first.turnId,
+                    causeName: cause instanceof Error ? cause.name : "UnknownError",
+                  }).pipe(Effect.as(Option.none<MessageId>())),
+                ),
+              );
+            const threadOption = yield* projectionSnapshotQuery
+              .getThreadDetailById(first.threadId)
+              .pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("failed to load thread for turn image recovery", {
+                    threadId: first.threadId,
+                    turnId: first.turnId,
+                    causeName: cause instanceof Error ? cause.name : "UnknownError",
+                  }).pipe(Effect.as(Option.none<OrchestrationThread>())),
+                ),
+              );
+            if (Option.isNone(threadOption)) return;
+            const thread = threadOption.value;
+            const targetMessageId = Option.getOrElse(terminalMessageId, () =>
+              MessageId.makeUnsafe(`assistant:image:${first.turnId}`),
+            );
+            const existingTarget = thread.messages.find(
+              (message) => message.id === targetMessageId,
+            );
+            if (
+              existingTarget &&
+              (existingTarget.role !== "assistant" ||
+                existingTarget.turnId !== first.turnId ||
+                existingTarget.streaming)
+            ) {
+              return;
+            }
+            const targetMessage = existingTarget;
+            // An absent authoritative message is valid only when the turn has no
+            // assistant rows at all; normal settlement uses this same synthetic id.
+            if (
+              Option.isNone(terminalMessageId) &&
+              thread.messages.some(
+                (message) => message.role === "assistant" && message.turnId === first.turnId,
+              )
+            ) {
+              return;
+            }
+            // A prior path-free failure/omission warning is an authoritative
+            // startup outcome. Do not reopen provider storage on every boot.
+            if (
+              targetMessage &&
+              reconcileGeneratedImageWarningText(targetMessage.text, 0, 0) !== targetMessage.text
+            ) {
+              return;
+            }
+            const existingAttachmentIds = new Set(
+              (targetMessage?.attachments ?? []).map((attachment) => attachment.id),
+            );
+            const distinctReferences = turnReferences.filter(
+              (reference, index, all) =>
+                all.findIndex(
+                  (candidate) => candidate.provenanceKey === reference.provenanceKey,
+                ) === index &&
+                reference.attachmentId ===
+                  generatedImageAttachmentId({
+                    threadId: reference.threadId,
+                    provenanceKey: reference.provenanceKey,
+                  }),
+            );
+            const ioEligibleReferences = distinctReferences.slice(
+              0,
+              PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+            );
+            const unsatisfiedReferences = ioEligibleReferences.filter(
+              (reference) => !existingAttachmentIds.has(reference.attachmentId),
+            );
+            const remainingCapacity = Math.max(
+              0,
+              PROVIDER_SEND_TURN_MAX_ATTACHMENTS - (targetMessage?.attachments?.length ?? 0),
+            );
+            const targetAttemptBudget = remainingCapacity > 0 ? unsatisfiedReferences.length : 0;
+            if (targetAttemptBudget > startupBudget.remaining) return;
+            startupBudget.remaining -= targetAttemptBudget;
+            const recoveredAttachments: ChatImageAttachment[] = [];
+            let failedImageCount = 0;
+            for (const reference of unsatisfiedReferences) {
+              if (recoveredAttachments.length >= remainingCapacity) break;
+              const attachment = yield* materializeGeneratedImage({
+                thread,
+                sourcePath: reference.sourcePath,
+                provenanceKey: reference.provenanceKey,
+                allowDurableFallbackWhenSourceUnavailable: true,
+              });
+              if (attachment) recoveredAttachments.push(attachment);
+              else failedImageCount += 1;
+            }
+            const omittedImageCount = Math.max(
+              0,
+              distinctReferences.length - ioEligibleReferences.length,
+            );
+            if (
+              recoveredAttachments.length === 0 &&
+              failedImageCount === 0 &&
+              omittedImageCount === 0
+            ) {
+              return;
+            }
+            const outcomeKey = [
+              ...recoveredAttachments.map((attachment) => attachment.id),
+              `omitted-${omittedImageCount}`,
+              `failed-${failedImageCount}`,
+            ].join(":");
+            yield* orchestrationEngine.dispatch({
+              type: "thread.message.assistant.attachments.add",
+              commandId: CommandId.makeUnsafe(
+                `provider:turn-generated-image-recovery:${first.threadId}:${first.turnId}:${targetMessageId}:${outcomeKey}`,
+              ),
+              threadId: first.threadId,
+              messageId: targetMessageId,
+              attachments: recoveredAttachments,
+              omittedImageCount,
+              failedImageCount,
+              turnId: first.turnId,
+              createdAt: first.createdAt,
+            });
+          }),
+        { concurrency: 1 },
+      );
+    });
+
+  const reconcileTurnlessGeneratedImagesAtStartup = (startupBudget: { remaining: number }) =>
+    Effect.gen(function* () {
+      const references = yield* projectionSnapshotQuery.listTurnlessGeneratedImageReferences().pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("failed to read turnless generated-image recovery ledger", {
+            causeName: cause instanceof Error ? cause.name : "UnknownError",
+          }).pipe(Effect.as([])),
+        ),
+      );
+      const referencesByTarget = new Map<string, typeof references>();
+      for (const reference of references) {
+        const key = `${reference.threadId}\0${reference.targetMessageId}`;
+        referencesByTarget.set(key, [...(referencesByTarget.get(key) ?? []), reference]);
+      }
+      yield* Effect.forEach(
+        referencesByTarget.values(),
+        (targetReferences) =>
+          Effect.gen(function* () {
+            if (startupBudget.remaining <= 0) return;
+            const first = targetReferences[0];
+            if (!first) return;
+            const threadOption = yield* projectionSnapshotQuery
+              .getThreadDetailById(first.threadId)
+              .pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("failed to load thread for turnless image recovery", {
+                    threadId: first.threadId,
+                    causeName: cause instanceof Error ? cause.name : "UnknownError",
+                  }).pipe(Effect.as(Option.none<OrchestrationThread>())),
+                ),
+              );
+            if (Option.isNone(threadOption)) return;
+            const thread = threadOption.value;
+            const targetMessage = thread.messages.find(
+              (message) => message.id === first.targetMessageId,
+            );
+            if (targetMessage && targetMessage.role !== "assistant") return;
+            const existingAttachmentIds = new Set(
+              (targetMessage?.attachments ?? []).map((attachment) => attachment.id),
+            );
+            const distinctReferences = targetReferences.filter(
+              (reference, index, all) =>
+                all.findIndex(
+                  (candidate) => candidate.provenanceKey === reference.provenanceKey,
+                ) === index &&
+                reference.attachmentId ===
+                  generatedImageAttachmentId({
+                    threadId: reference.threadId,
+                    provenanceKey: reference.provenanceKey,
+                  }),
+            );
+            const ioEligibleReferences = distinctReferences.slice(
+              0,
+              PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+            );
+            const ledgerOmittedImageCount = Math.max(
+              0,
+              distinctReferences.length - ioEligibleReferences.length,
+            );
+            const unsatisfiedReferences = ioEligibleReferences.filter(
+              (reference) => !existingAttachmentIds.has(reference.attachmentId),
+            );
+            const remainingCapacity = Math.max(
+              0,
+              PROVIDER_SEND_TURN_MAX_ATTACHMENTS - (targetMessage?.attachments?.length ?? 0),
+            );
+            const targetAttemptBudget = remainingCapacity > 0 ? unsatisfiedReferences.length : 0;
+            if (targetAttemptBudget > startupBudget.remaining) {
+              // Leave the entire target unresolved. A partial outcome would hide
+              // its unattempted references from the next bounded startup pass.
+              return;
+            }
+            startupBudget.remaining -= targetAttemptBudget;
+            const recoveredAttachments: ChatImageAttachment[] = [];
+            let failedImageCount = 0;
+            let attemptedCount = 0;
+            for (const reference of unsatisfiedReferences) {
+              if (recoveredAttachments.length >= remainingCapacity) break;
+              attemptedCount += 1;
+              const reserved = yield* reserveGeneratedImageAttempt(
+                thread.id,
+                reference.provenanceKey,
+                1,
+              );
+              const attachment = reserved
+                ? yield* materializeGeneratedImage({
+                    thread,
+                    sourcePath: reference.sourcePath,
+                    provenanceKey: reference.provenanceKey,
+                    allowDurableFallbackWhenSourceUnavailable: true,
+                  })
+                : null;
+              if (attachment) recoveredAttachments.push(attachment);
+              else failedImageCount += 1;
+            }
+            const omittedImageCount = Math.max(
+              0,
+              ledgerOmittedImageCount + unsatisfiedReferences.length - attemptedCount,
+            );
+            if (
+              recoveredAttachments.length === 0 &&
+              failedImageCount === 0 &&
+              omittedImageCount === 0
+            ) {
+              return;
+            }
+            const outcomeKey = [
+              ...recoveredAttachments.map((attachment) => attachment.id),
+              `omitted-${omittedImageCount}`,
+              `failed-${failedImageCount}`,
+            ].join(":");
+            yield* orchestrationEngine.dispatch({
+              type: "thread.message.assistant.attachments.add",
+              commandId: CommandId.makeUnsafe(
+                `provider:turnless-generated-image-recovery:${first.threadId}:${first.targetMessageId}:${outcomeKey}`,
+              ),
+              threadId: first.threadId,
+              messageId: first.targetMessageId,
+              attachments: recoveredAttachments,
+              omittedImageCount,
+              failedImageCount,
+              createdAt: first.createdAt ?? new Date().toISOString(),
+            });
+          }),
+        { concurrency: 1 },
+      );
+    });
+
+  const reconcileGeneratedImagesAtStartup: ProviderRuntimeIngestionShape["reconcileGeneratedImagesAtStartup"] =
+    Effect.gen(function* () {
+      const startupBudget = { remaining: MAX_STARTUP_GENERATED_IMAGE_IO_ATTEMPTS };
+      yield* reconcileTurnGeneratedImagesAtStartup(startupBudget);
+      yield* reconcileTurnlessGeneratedImagesAtStartup(startupBudget);
+    }).pipe(
       Effect.catch((cause) =>
-        Effect.logWarning("failed to read turnless generated-image recovery ledger", {
+        Effect.logWarning("generated-image startup recovery failed", {
           causeName: cause instanceof Error ? cause.name : "UnknownError",
-        }).pipe(Effect.as([])),
+        }),
       ),
     );
-    const referencesByTarget = new Map<string, typeof references>();
-    for (const reference of references) {
-      const key = `${reference.threadId}\0${reference.targetMessageId}`;
-      referencesByTarget.set(key, [...(referencesByTarget.get(key) ?? []), reference]);
-    }
-    let remainingStartupAttempts = MAX_STARTUP_GENERATED_IMAGE_IO_ATTEMPTS;
-    yield* Effect.forEach(
-      referencesByTarget.values(),
-      (targetReferences) =>
-        Effect.gen(function* () {
-          if (remainingStartupAttempts <= 0) return;
-          const first = targetReferences[0];
-          if (!first) return;
-          const threadOption = yield* projectionSnapshotQuery
-            .getThreadDetailById(first.threadId)
-            .pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("failed to load thread for turnless image recovery", {
-                  threadId: first.threadId,
-                  causeName: cause instanceof Error ? cause.name : "UnknownError",
-                }).pipe(Effect.as(Option.none<OrchestrationThread>())),
-              ),
-            );
-          if (Option.isNone(threadOption)) return;
-          const thread = threadOption.value;
-          const targetMessage = thread.messages.find(
-            (message) => message.id === first.targetMessageId,
-          );
-          if (targetMessage && targetMessage.role !== "assistant") return;
-          const existingAttachmentIds = new Set(
-            (targetMessage?.attachments ?? []).map((attachment) => attachment.id),
-          );
-          const distinctReferences = targetReferences.filter(
-            (reference, index, all) =>
-              all.findIndex((candidate) => candidate.provenanceKey === reference.provenanceKey) ===
-                index &&
-              reference.attachmentId ===
-                generatedImageAttachmentId({
-                  threadId: reference.threadId,
-                  provenanceKey: reference.provenanceKey,
-                }),
-          );
-          const ioEligibleReferences = distinctReferences.slice(
-            0,
-            PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
-          );
-          const ledgerOmittedImageCount = Math.max(
-            0,
-            distinctReferences.length - ioEligibleReferences.length,
-          );
-          const unsatisfiedReferences = ioEligibleReferences.filter(
-            (reference) => !existingAttachmentIds.has(reference.attachmentId),
-          );
-          const remainingCapacity = Math.max(
-            0,
-            PROVIDER_SEND_TURN_MAX_ATTACHMENTS - (targetMessage?.attachments?.length ?? 0),
-          );
-          const targetAttemptBudget = remainingCapacity > 0 ? unsatisfiedReferences.length : 0;
-          if (targetAttemptBudget > remainingStartupAttempts) {
-            // Leave the entire target unresolved. A partial outcome would hide
-            // its unattempted references from the next bounded startup pass.
-            return;
-          }
-          remainingStartupAttempts -= targetAttemptBudget;
-          const recoveredAttachments: ChatImageAttachment[] = [];
-          let failedImageCount = 0;
-          let attemptedCount = 0;
-          for (const reference of unsatisfiedReferences) {
-            if (recoveredAttachments.length >= remainingCapacity) break;
-            attemptedCount += 1;
-            const reserved = yield* reserveGeneratedImageAttempt(
-              thread.id,
-              reference.provenanceKey,
-              1,
-            );
-            const attachment = reserved
-              ? yield* materializeGeneratedImage({
-                  thread,
-                  sourcePath: reference.sourcePath,
-                  provenanceKey: reference.provenanceKey,
-                  allowDurableFallbackWhenSourceUnavailable: true,
-                })
-              : null;
-            if (attachment) recoveredAttachments.push(attachment);
-            else failedImageCount += 1;
-          }
-          const omittedImageCount = Math.max(
-            0,
-            ledgerOmittedImageCount + unsatisfiedReferences.length - attemptedCount,
-          );
-          if (
-            recoveredAttachments.length === 0 &&
-            failedImageCount === 0 &&
-            omittedImageCount === 0
-          ) {
-            return;
-          }
-          const outcomeKey = [
-            ...recoveredAttachments.map((attachment) => attachment.id),
-            `omitted-${omittedImageCount}`,
-            `failed-${failedImageCount}`,
-          ].join(":");
-          yield* orchestrationEngine.dispatch({
-            type: "thread.message.assistant.attachments.add",
-            commandId: CommandId.makeUnsafe(
-              `provider:turnless-generated-image-recovery:${first.targetMessageId}:${outcomeKey}`,
-            ),
-            threadId: first.threadId,
-            messageId: first.targetMessageId,
-            attachments: recoveredAttachments,
-            omittedImageCount,
-            failedImageCount,
-            createdAt: first.createdAt ?? new Date().toISOString(),
-          });
-        }),
-      { concurrency: 1 },
-    );
-  });
 
   const start: ProviderRuntimeIngestionShape["start"] = Effect.gen(function* () {
-    yield* reconcileTurnlessGeneratedImagesAtStartup.pipe(
-      Effect.catch((cause) =>
-        Effect.logWarning("turnless generated-image startup recovery failed", {
-          causeName: cause instanceof Error ? cause.name : "UnknownError",
-        }),
-      ),
-    );
     yield* Effect.forkScoped(
       Stream.runForEach(providerService.streamEvents, (event) =>
         worker.enqueue({ source: "runtime", event }),
@@ -4094,6 +4256,7 @@ const make = Effect.gen(function* () {
 
   return {
     start,
+    reconcileGeneratedImagesAtStartup,
     drain: worker.drain,
   } satisfies ProviderRuntimeIngestionShape;
 });

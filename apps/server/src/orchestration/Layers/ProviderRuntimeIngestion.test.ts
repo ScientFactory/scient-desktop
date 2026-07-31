@@ -223,7 +223,10 @@ describe("ProviderRuntimeIngestion", () => {
     );
     scope = await Effect.runPromise(Scope.make("sequential"));
     const drain = () => Effect.runPromise(ingestion.drain);
-    const startIngestion = () => Effect.runPromise(ingestion.start.pipe(Scope.provide(scope!)));
+    const startIngestion = async () => {
+      await Effect.runPromise(ingestion.start.pipe(Scope.provide(scope!)));
+      await Effect.runPromise(ingestion.reconcileGeneratedImagesAtStartup);
+    };
     if (options.startIngestion !== false) {
       // Preserve the production lifecycle exercised by the existing harness:
       // subscriptions start before the seeded thread/session state is written.
@@ -330,20 +333,22 @@ describe("ProviderRuntimeIngestion", () => {
 
   async function recordTurnlessGeneratedImageReference(input: {
     readonly engine: OrchestrationEngineShape;
+    readonly threadId?: ThreadId;
     readonly targetMessageId: MessageId;
     readonly provenanceKey: string;
     readonly sourcePath: string;
     readonly createdAt: string;
   }) {
+    const threadId = input.threadId ?? asThreadId("thread-1");
     const attachmentId = generatedImageAttachmentId({
-      threadId: "thread-1",
+      threadId,
       provenanceKey: input.provenanceKey,
     });
     await Effect.runPromise(
       input.engine.dispatch({
         type: "thread.generated-image.reference.record",
         commandId: CommandId.makeUnsafe(`test:turnless-image-reference:${attachmentId}`),
-        threadId: asThreadId("thread-1"),
+        threadId,
         targetMessageId: input.targetMessageId,
         attachmentId,
         provenanceKey: input.provenanceKey,
@@ -2241,6 +2246,81 @@ describe("ProviderRuntimeIngestion", () => {
     expect(fs.statSync(durableAttachmentPath).mtimeMs).toBe(durableStatBeforeReplay.mtimeMs);
   });
 
+  it("recovers an interrupted image-only turn from persisted reference and durable bytes", async () => {
+    const harness = await createHarness({ startIngestion: false });
+    const turnId = asTurnId("turn-restart-image-only");
+    const createdAt = "2026-07-31T10:55:00.000Z";
+    const sourcePath = path.join(harness.generatedImagesRoot, "restart-image-only.png");
+    fs.writeFileSync(sourcePath, GENERATED_PNG_BYTES);
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-restart-image-only-running"),
+        threadId: asThreadId("thread-1"),
+        session: {
+          threadId: asThreadId("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+    await recordGeneratedImageReference({
+      engine: harness.engine,
+      turnId,
+      provenanceKey: "restart-image-only",
+      sourcePath,
+      createdAt,
+    });
+    await materializeGeneratedImageAttachment({
+      threadId: "thread-1",
+      sourcePath,
+      provenanceKey: "restart-image-only",
+      allowedSourceRoots: [harness.generatedImagesRoot],
+      attachmentsDir: harness.attachmentsDir,
+    });
+    fs.rmSync(sourcePath);
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-restart-image-only-interrupted"),
+        threadId: asThreadId("thread-1"),
+        session: {
+          threadId: asThreadId("thread-1"),
+          status: "interrupted",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: "2026-07-31T10:56:00.000Z",
+        },
+        createdAt: "2026-07-31T10:56:00.000Z",
+      }),
+    );
+
+    await harness.startIngestion();
+    const targetMessageId = asMessageId(`assistant:image:${turnId}`);
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) => message.id === targetMessageId && message.attachments?.length === 1,
+      ),
+    );
+    expect(thread.messages.filter((message) => message.turnId === turnId)).toHaveLength(1);
+    expect(thread.messages.find((message) => message.id === targetMessageId)).toMatchObject({
+      role: "assistant",
+      streaming: false,
+      text: "",
+    });
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(1);
+    expect(
+      await Effect.runPromise(harness.snapshotQuery.listTurnGeneratedImageReferencesForStartup()),
+    ).toEqual([]);
+  });
+
   it("recovers a reference-only turnless image when ingestion starts", async () => {
     const harness = await createHarness({ startIngestion: false });
     const createdAt = "2026-07-31T11:00:00.000Z";
@@ -2300,11 +2380,55 @@ describe("ProviderRuntimeIngestion", () => {
     expect(fs.existsSync(path.join(harness.generatedImagesRoot, "turnless-cap-8.png"))).toBe(true);
   });
 
-  it("spends one global startup budget across distinct turnless targets", async () => {
+  it("shares one global startup budget across turn and turnless targets", async () => {
     const harness = await createHarness({ startIngestion: false });
     const createdAt = "2026-07-31T11:07:00.000Z";
+    const turnId = asTurnId("turn-global-startup-budget");
+    const turnSourcePath = path.join(harness.generatedImagesRoot, "turn-global-budget.png");
+    fs.writeFileSync(turnSourcePath, GENERATED_PNG_BYTES);
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-global-budget-running"),
+        threadId: asThreadId("thread-1"),
+        session: {
+          threadId: asThreadId("thread-1"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: turnId,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+    await recordGeneratedImageReference({
+      engine: harness.engine,
+      turnId,
+      provenanceKey: "turn-global-budget",
+      sourcePath: turnSourcePath,
+      createdAt,
+    });
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-global-budget-interrupted"),
+        threadId: asThreadId("thread-1"),
+        session: {
+          threadId: asThreadId("thread-1"),
+          status: "interrupted",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
     const targetMessageIds: MessageId[] = [];
-    for (let index = 0; index < 9; index += 1) {
+    for (let index = 0; index < 8; index += 1) {
       const targetMessageId = asMessageId(`assistant:image:turnless-global-${index}`);
       const sourcePath = path.join(harness.generatedImagesRoot, `turnless-global-${index}.png`);
       targetMessageIds.push(targetMessageId);
@@ -2367,6 +2491,58 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.text).not.toContain(missingPath);
     expect(message?.text).not.toContain("private-turnless-missing.png");
     expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(0);
+  });
+
+  it("records same-target turnless startup failures independently across threads", async () => {
+    const harness = await createHarness({ startIngestion: false });
+    const secondThreadId = asThreadId("thread-2");
+    const targetMessageId = asMessageId("assistant:image:shared-restart-target");
+    const createdAt = "2026-07-31T11:12:00.000Z";
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-shared-restart-thread-2"),
+        threadId: secondThreadId,
+        projectId: asProjectId("project-1"),
+        title: "Second Thread",
+        modelSelection: { provider: "codex", model: "gpt-5-codex" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    for (const [threadId, suffix] of [
+      [asThreadId("thread-1"), "one"],
+      [secondThreadId, "two"],
+    ] as const) {
+      await recordTurnlessGeneratedImageReference({
+        engine: harness.engine,
+        threadId,
+        targetMessageId,
+        provenanceKey: `shared-restart-${suffix}`,
+        sourcePath: path.join(harness.generatedImagesRoot, `missing-${suffix}.png`),
+        createdAt,
+      });
+    }
+
+    await harness.startIngestion();
+    for (const threadId of [asThreadId("thread-1"), secondThreadId]) {
+      const thread = await waitForThread(
+        harness.engine,
+        (entry) =>
+          entry.messages.some(
+            (message) =>
+              message.id === targetMessageId && message.text.includes("could not be displayed"),
+          ),
+        2_000,
+        threadId,
+      );
+      expect(
+        thread.messages.find((message) => message.id === targetMessageId)?.attachments ?? [],
+      ).toEqual([]);
+    }
   });
 
   it("creates a settled image-only assistant message when no turn can be correlated", async () => {

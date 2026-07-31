@@ -380,6 +380,7 @@ it.layer(testLayer)("server CLI command", (it) => {
           getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
           getThreadCheckpointContext: () => Effect.die("unused"),
           listGeneratedImageReferencesByTurn: () => Effect.die("unused"),
+          listTurnGeneratedImageReferencesForStartup: () => Effect.die("unused"),
           listTurnlessGeneratedImageReferencesByTarget: () => Effect.die("unused"),
           listTurnlessGeneratedImageReferences: () => Effect.die("unused"),
           getLatestAssistantMessageIdByTurn: () => Effect.die("unused"),

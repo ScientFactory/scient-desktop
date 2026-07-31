@@ -59,6 +59,7 @@ function makeLayer(input: {
         getFirstActiveThreadIdByProjectId: () => unsupported(),
         getThreadCheckpointContext: () => unsupported(),
         listGeneratedImageReferencesByTurn: () => unsupported(),
+        listTurnGeneratedImageReferencesForStartup: () => unsupported(),
         listTurnlessGeneratedImageReferencesByTarget: () => unsupported(),
         listTurnlessGeneratedImageReferences: () => unsupported(),
         getLatestAssistantMessageIdByTurn: () => unsupported(),

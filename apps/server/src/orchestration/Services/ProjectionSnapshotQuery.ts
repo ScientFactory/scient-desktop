@@ -59,6 +59,13 @@ export interface ProjectionGeneratedImageReferenceRecord {
   readonly provenanceKey: string;
 }
 
+export interface ProjectionTurnGeneratedImageStartupReferenceRecord extends ProjectionGeneratedImageReferenceRecord {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly attachmentId: string;
+  readonly createdAt: string;
+}
+
 export interface ProjectionTurnlessGeneratedImageReferenceRecord extends ProjectionGeneratedImageReferenceRecord {
   readonly threadId: ThreadId;
   readonly targetMessageId: MessageId;
@@ -164,6 +171,12 @@ export interface ProjectionSnapshotQueryShape {
     turnId: TurnId,
   ) => Effect.Effect<
     ReadonlyArray<ProjectionGeneratedImageReferenceRecord>,
+    ProjectionRepositoryError
+  >;
+
+  /** Read the bounded unresolved terminal-turn reference startup ledger. */
+  readonly listTurnGeneratedImageReferencesForStartup: () => Effect.Effect<
+    ReadonlyArray<ProjectionTurnGeneratedImageStartupReferenceRecord>,
     ProjectionRepositoryError
   >;
 
