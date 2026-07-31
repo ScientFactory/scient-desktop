@@ -6,6 +6,7 @@ import type {
   ThreadMarker,
 } from "@synara/contracts";
 import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   MAX_PINNED_PROJECTS,
   PINNED_MESSAGES_MAX_COUNT,
   THREAD_MARKERS_MAX_COUNT,
@@ -1683,6 +1684,75 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           }),
           streaming: false,
           createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.message.assistant.attachments.add": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const existingMessage = thread.messages.find((message) => message.id === command.messageId);
+      if (existingMessage && existingMessage.role !== "assistant") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Cannot add assistant attachments to non-assistant message '${command.messageId}'.`,
+        });
+      }
+      const existingAttachments = existingMessage?.attachments ?? [];
+      const existingIds = new Set(existingAttachments.map((attachment) => attachment.id));
+      const additions = command.attachments.filter((attachment) => !existingIds.has(attachment.id));
+      const attachments = [...existingAttachments, ...additions].slice(
+        0,
+        PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+      );
+      const omittedCount =
+        existingAttachments.length +
+        additions.length -
+        attachments.length +
+        (command.omittedImageCount ?? 0);
+      const warning =
+        omittedCount > 0
+          ? `Additional generated ${omittedCount === 1 ? "image was" : "images were"} omitted because chat messages support at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments.`
+          : null;
+      const failureWarning =
+        (command.failedImageCount ?? 0) > 0
+          ? "A generated image could not be displayed because Scient could not safely store it."
+          : null;
+      const existingText = existingMessage?.text ?? "";
+      const missingWarnings = [warning, failureWarning].filter(
+        (entry): entry is string => entry !== null && !existingText.includes(entry),
+      );
+      const text = `${existingText}${
+        missingWarnings.length > 0
+          ? `${existingText.trim().length > 0 ? "\n\n" : ""}${missingWarnings.join("\n\n")}`
+          : ""
+      }`;
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.message-sent",
+        payload: {
+          threadId: command.threadId,
+          messageId: command.messageId,
+          role: "assistant",
+          text,
+          attachments,
+          turnId: resolveStableMessageTurnId({
+            existingTurnId: existingMessage?.turnId,
+            incomingTurnId: command.turnId,
+          }),
+          // Adding an attachment must never reopen a message that already settled.
+          streaming: existingMessage?.streaming ?? false,
+          source: existingMessage?.source ?? "native",
+          createdAt: existingMessage?.createdAt ?? command.createdAt,
           updatedAt: command.createdAt,
         },
       };

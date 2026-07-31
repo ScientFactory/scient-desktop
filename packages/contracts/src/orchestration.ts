@@ -1350,6 +1350,20 @@ const ThreadMessageAssistantCompleteCommand = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+const ThreadMessageAssistantAttachmentsAddCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.assistant.attachments.add"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  attachments: Schema.Array(ChatImageAttachment).check(
+    Schema.isMaxLength(PROVIDER_SEND_TURN_MAX_ATTACHMENTS),
+  ),
+  omittedImageCount: Schema.optional(NonNegativeInt),
+  failedImageCount: Schema.optional(NonNegativeInt),
+  turnId: Schema.optional(TurnId),
+  createdAt: IsoDateTime,
+});
+
 const ThreadProposedPlanUpsertCommand = Schema.Struct({
   type: Schema.Literal("thread.proposed-plan.upsert"),
   commandId: CommandId,
@@ -1397,6 +1411,7 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadMessagesImportCommand,
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
+  ThreadMessageAssistantAttachmentsAddCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,

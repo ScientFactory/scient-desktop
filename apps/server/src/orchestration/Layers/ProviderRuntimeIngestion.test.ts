@@ -35,7 +35,7 @@ import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import {
-  collectPersistedGeneratedImagePaths,
+  collectPersistedGeneratedImageReferences,
   ProviderRuntimeIngestionLive,
 } from "./ProviderRuntimeIngestion.ts";
 import {
@@ -44,6 +44,7 @@ import {
 } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ServerConfig } from "../../config.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
@@ -52,6 +53,9 @@ const asEventId = (value: string): EventId => EventId.makeUnsafe(value);
 const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
 const asThreadId = (value: string): ThreadId => ThreadId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
+const GENERATED_PNG_BYTES = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x00,
+]);
 
 type LegacyProviderRuntimeEvent = {
   readonly type: string;
@@ -174,9 +178,13 @@ describe("ProviderRuntimeIngestion", () => {
     }
   });
 
-  async function createHarness() {
+  async function createHarness(options: { codexHomePath?: string } = {}) {
     const workspaceRoot = makeTempDir("synara-provider-project-");
+    const codexHomePath = options.codexHomePath ?? makeTempDir("synara-provider-codex-home-");
+    const generatedImagesRoot = path.join(codexHomePath, "generated_images", "thread-1");
+    const serverBaseDir = makeTempDir("synara-provider-server-");
     fs.mkdirSync(path.join(workspaceRoot, ".git"));
+    fs.mkdirSync(generatedImagesRoot, { recursive: true });
     const provider = createProviderServiceHarness();
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionPipelineLive),
@@ -189,7 +197,12 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(OrchestrationProjectionSnapshotQueryLive),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), serverBaseDir)),
+      Layer.provideMerge(
+        ServerSettingsService.layerTest({
+          providers: { codex: { enabled: true, homePath: codexHomePath } },
+        }),
+      ),
       Layer.provideMerge(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
@@ -264,6 +277,9 @@ describe("ProviderRuntimeIngestion", () => {
       setProviderSession: provider.setSession,
       stopRuntimeSession: provider.stopRuntimeSession,
       drain,
+      workspaceRoot,
+      generatedImagesRoot,
+      attachmentsDir: path.join(serverBaseDir, "userdata", "attachments"),
     };
   }
 
@@ -733,10 +749,11 @@ describe("ProviderRuntimeIngestion", () => {
     );
   });
 
-  it("appends generated-image markdown to the turn's assistant message when the turn settles", async () => {
+  it("attaches a durable generated image to the turn's assistant message when it settles", async () => {
     const harness = await createHarness();
     const turnId = asTurnId("turn-image");
-    const imagePath = "/tmp/provider-thread/call.png";
+    const imagePath = path.join(harness.generatedImagesRoot, "call.png");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
 
     harness.emit({
       type: "turn.started",
@@ -817,7 +834,7 @@ describe("ProviderRuntimeIngestion", () => {
         (message) =>
           message.id === "assistant:answer-image" &&
           message.text.includes("Here is the generated result.") &&
-          message.text.includes(`![Generated image](${imagePath})`) &&
+          message.attachments?.some((attachment) => attachment.type === "image") &&
           message.streaming === false,
       ),
     );
@@ -825,11 +842,113 @@ describe("ProviderRuntimeIngestion", () => {
       (message) => message.id === "assistant:answer-image",
     );
     expect(assistantMessage?.streaming).toBe(false);
+    expect(assistantMessage?.text).toBe("Here is the generated result.");
+    expect(assistantMessage?.attachments).toHaveLength(1);
+    expect(assistantMessage?.attachments?.[0]).toMatchObject({
+      type: "image",
+      name: "generated-image.png",
+      mimeType: "image/png",
+      sizeBytes: GENERATED_PNG_BYTES.length,
+    });
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(1);
+  });
+
+  it("uses the eager durable copy when the provider source disappears before settlement", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-image-source-cleanup");
+    const imagePath = path.join(harness.generatedImagesRoot, "source-cleanup.png");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
+    const createdAt = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-source-cleanup-turn-started"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-source-cleanup-answer-complete"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("source-cleanup-answer"),
+      payload: { itemType: "assistant_message", status: "completed" },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-source-cleanup-image-complete"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("source-cleanup-image"),
+      payload: {
+        itemType: "image_generation",
+        status: "completed",
+        data: {
+          kind: "codex.generated_image",
+          path: imagePath,
+          callId: "source-cleanup-image",
+        },
+      },
+    });
+
+    await harness.drain();
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(1);
+    fs.rmSync(imagePath);
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-source-cleanup-turn-completed"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      status: "completed",
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === "assistant:source-cleanup-answer" && message.attachments?.length === 1,
+      ),
+    );
+    const message = thread.messages.find((entry) => entry.id === "assistant:source-cleanup-answer");
+    expect(message?.attachments).toHaveLength(1);
+    expect(message?.text).not.toContain("could not be displayed");
+
+    const durableAttachmentPath = path.join(
+      harness.attachmentsDir,
+      fs.readdirSync(harness.attachmentsDir)[0]!,
+    );
+    const durableStatBeforeReplay = fs.statSync(durableAttachmentPath);
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-source-cleanup-turn-completed-replay"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      status: "completed",
+    });
+    await harness.drain();
+
+    const replayedReadModel = await Effect.runPromise(harness.engine.getReadModel());
+    const replayedMessage = replayedReadModel.threads
+      .find((entry) => entry.id === asThreadId("thread-1"))
+      ?.messages.find((entry) => entry.id === "assistant:source-cleanup-answer");
+    expect(replayedMessage).toEqual(message);
+    expect(replayedMessage?.text).not.toContain("could not be displayed");
+    expect(fs.statSync(durableAttachmentPath).mtimeMs).toBe(durableStatBeforeReplay.mtimeMs);
   });
 
   it("prefers a persisted Studio copy over its provider-home image source", () => {
     expect(
-      collectPersistedGeneratedImagePaths([
+      collectPersistedGeneratedImageReferences([
         {
           kind: "studio.outputs.captured",
           payload: {
@@ -852,7 +971,46 @@ describe("ProviderRuntimeIngestion", () => {
           },
         },
       ]),
-    ).toEqual(["/studio/Outbox/Images/generated.png"]);
+    ).toEqual([
+      {
+        path: "/studio/Outbox/Images/generated.png",
+        provenanceKey: "generated-image-path:/codex/generated.png",
+      },
+    ]);
+  });
+
+  it("preserves distinct persisted call provenance when a provider path is reused", () => {
+    expect(
+      collectPersistedGeneratedImageReferences([
+        {
+          kind: "tool.completed",
+          payload: {
+            itemType: "image_generation",
+            generatedImageProvenanceKey: "call-1",
+            data: {
+              kind: "codex.generated_image",
+              path: "/codex/reused.png",
+              callId: "call-1",
+            },
+          },
+        },
+        {
+          kind: "tool.completed",
+          payload: {
+            itemType: "image_generation",
+            generatedImageProvenanceKey: "call-2",
+            data: {
+              kind: "codex.generated_image",
+              path: "/codex/reused.png",
+              callId: "call-2",
+            },
+          },
+        },
+      ]),
+    ).toEqual([
+      { path: "/codex/reused.png", provenanceKey: "call-1" },
+      { path: "/codex/reused.png", provenanceKey: "call-2" },
+    ]);
   });
 
   it("recovers generated-image references from persisted turn activities", async () => {
@@ -860,7 +1018,8 @@ describe("ProviderRuntimeIngestion", () => {
     // ingestion instance has no matching entry in its in-memory pending cache.
     const harness = await createHarness();
     const turnId = asTurnId("turn-image-persisted-recovery");
-    const imagePath = "/tmp/provider-thread/persisted-recovery.png";
+    const imagePath = path.join(harness.generatedImagesRoot, "persisted-recovery.png");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
     const createdAt = new Date().toISOString();
 
     harness.emit({
@@ -928,12 +1087,282 @@ describe("ProviderRuntimeIngestion", () => {
       entry.messages.some(
         (message) =>
           message.id === "assistant:persisted-recovery-answer" &&
-          message.text.includes(`![Generated image](${imagePath})`),
+          message.attachments?.some((attachment) => attachment.type === "image"),
       ),
     );
-    expect(
-      thread.messages.find((message) => message.id === "assistant:persisted-recovery-answer")?.text,
-    ).toContain(`![Generated image](${imagePath})`);
+    const recovered = thread.messages.find(
+      (message) => message.id === "assistant:persisted-recovery-answer",
+    );
+    expect(recovered?.text).toBe("");
+    expect(recovered?.attachments).toHaveLength(1);
+  });
+
+  it("separates a below-capacity recovery failure from capacity omissions", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-image-partial-recovery");
+    const validPath = path.join(harness.generatedImagesRoot, "partial-valid.png");
+    const missingPath = path.join(harness.generatedImagesRoot, "partial-missing.png");
+    fs.writeFileSync(validPath, GENERATED_PNG_BYTES);
+    const createdAt = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-partial-recovery-turn-started"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-partial-recovery-answer-complete"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("partial-recovery-answer"),
+      payload: { itemType: "assistant_message", status: "completed" },
+    });
+    await waitForThread(harness.engine, (thread) =>
+      thread.messages.some((message) => message.id === "assistant:partial-recovery-answer"),
+    );
+
+    for (const [suffix, imagePath] of [
+      ["valid", validPath],
+      ["missing", missingPath],
+    ] as const) {
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.makeUnsafe(`cmd-partial-recovery-${suffix}`),
+          threadId: asThreadId("thread-1"),
+          activity: {
+            id: asEventId(`activity-partial-recovery-${suffix}`),
+            tone: "tool",
+            kind: "tool.completed",
+            summary: "Generated image",
+            payload: {
+              itemType: "image_generation",
+              status: "completed",
+              generatedImageProvenanceKey: `partial-recovery-${suffix}`,
+              data: {
+                kind: "codex.generated_image",
+                path: imagePath,
+                callId: `partial-recovery-${suffix}`,
+              },
+            },
+            turnId,
+            createdAt,
+          },
+          createdAt,
+        }),
+      );
+    }
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-partial-recovery-turn-completed"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      status: "completed",
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === "assistant:partial-recovery-answer" &&
+          message.attachments?.length === 1 &&
+          message.text.includes("could not be displayed"),
+      ),
+    );
+    const message = thread.messages.find(
+      (entry) => entry.id === "assistant:partial-recovery-answer",
+    );
+    expect(message?.attachments).toHaveLength(1);
+    expect(message?.text).toContain("could not be displayed");
+    expect(message?.text).not.toContain("at most 8 attachments");
+    expect(message?.text).not.toContain("omitted because");
+  });
+
+  it("continues ordered recovery after a failure until successful images fill capacity", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-image-recovery-after-failure");
+    const createdAt = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-recovery-after-failure-turn-started"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-recovery-after-failure-answer-complete"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("recovery-after-failure-answer"),
+      payload: { itemType: "assistant_message", status: "completed" },
+    });
+    for (let index = 1; index <= 7; index += 1) {
+      const imagePath = path.join(harness.generatedImagesRoot, `cached-${index}.png`);
+      fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
+      harness.emit({
+        type: "item.completed",
+        eventId: asEventId(`evt-recovery-after-failure-cached-${index}`),
+        provider: "codex",
+        createdAt,
+        threadId: asThreadId("thread-1"),
+        turnId,
+        itemId: asItemId(`cached-${index}`),
+        payload: {
+          itemType: "image_generation",
+          status: "completed",
+          data: {
+            kind: "codex.generated_image",
+            path: imagePath,
+            callId: `cached-${index}`,
+          },
+        },
+      });
+    }
+    await harness.drain();
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(7);
+
+    const missingPath = path.join(harness.generatedImagesRoot, "ordered-a-missing.png");
+    const validPath = path.join(harness.generatedImagesRoot, "ordered-b-valid.png");
+    fs.writeFileSync(validPath, GENERATED_PNG_BYTES);
+    // Sequence is intentional: the missing reference must be attempted first,
+    // then the valid reference must still consume the one remaining success slot.
+    for (const [suffix, imagePath] of [
+      ["a-missing", missingPath],
+      ["b-valid", validPath],
+    ] as const) {
+      await Effect.runPromise(
+        harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.makeUnsafe(`cmd-ordered-recovery-${suffix}`),
+          threadId: asThreadId("thread-1"),
+          activity: {
+            id: asEventId(`activity-ordered-recovery-${suffix}`),
+            tone: "tool",
+            kind: "tool.completed",
+            summary: "Generated image",
+            payload: {
+              itemType: "image_generation",
+              status: "completed",
+              generatedImageProvenanceKey: `ordered-recovery-${suffix}`,
+              data: {
+                kind: "codex.generated_image",
+                path: imagePath,
+                callId: `ordered-recovery-${suffix}`,
+              },
+            },
+            turnId,
+            createdAt,
+          },
+          createdAt,
+        }),
+      );
+    }
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-recovery-after-failure-turn-completed"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      status: "completed",
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === "assistant:recovery-after-failure-answer" &&
+          message.attachments?.length === 8 &&
+          message.text.includes("could not be displayed"),
+      ),
+    );
+    const message = thread.messages.find(
+      (entry) => entry.id === "assistant:recovery-after-failure-answer",
+    );
+    expect(message?.attachments).toHaveLength(8);
+    expect(message?.text).toContain("could not be displayed");
+    expect(message?.text).not.toContain("at most 8 attachments");
+    expect(message?.text).not.toContain("omitted because");
+  });
+
+  it("clears an eager failure when the same provenance recovers at settlement", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-image-transient-failure");
+    const imagePath = path.join(harness.generatedImagesRoot, "transient.png");
+    const createdAt = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-transient-turn-started"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-transient-answer-complete"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("transient-answer"),
+      payload: { itemType: "assistant_message", status: "completed" },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-transient-image-complete"),
+      provider: "codex",
+      createdAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("transient-image"),
+      payload: {
+        itemType: "image_generation",
+        status: "completed",
+        data: {
+          kind: "codex.generated_image",
+          path: imagePath,
+          callId: "transient-image",
+        },
+      },
+    });
+    await harness.drain();
+    expect(fs.existsSync(imagePath)).toBe(false);
+
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-transient-turn-completed"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      status: "completed",
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === "assistant:transient-answer" && message.attachments?.length === 1,
+      ),
+    );
+    const message = thread.messages.find((entry) => entry.id === "assistant:transient-answer");
+    expect(message?.attachments).toHaveLength(1);
+    expect(message?.text).not.toContain("could not be displayed");
   });
 
   it("attaches generated images to the empty terminal assistant message, not collapsed commentary", async () => {
@@ -944,7 +1373,8 @@ describe("ProviderRuntimeIngestion", () => {
     // the visible row renders "(empty response)".
     const harness = await createHarness();
     const turnId = asTurnId("turn-image-empty-final");
-    const imagePath = "/tmp/provider-thread/empty-final.png";
+    const imagePath = path.join(harness.generatedImagesRoot, "empty-final.png");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
 
     harness.emit({
       type: "turn.started",
@@ -1025,7 +1455,7 @@ describe("ProviderRuntimeIngestion", () => {
       entry.messages.some(
         (message) =>
           message.id === "assistant:final-answer" &&
-          message.text.includes(`![Generated image](${imagePath})`) &&
+          message.attachments?.some((attachment) => attachment.type === "image") &&
           message.streaming === false,
       ),
     );
@@ -1035,15 +1465,17 @@ describe("ProviderRuntimeIngestion", () => {
     const commentary = thread.messages.find((message) => message.id === "assistant:commentary");
     expect(commentary?.text).toBe("Generating the image now…");
     const messagesWithImage = thread.messages.filter((message) =>
-      message.text.includes(`![Generated image](${imagePath})`),
+      message.attachments?.some((attachment) => attachment.type === "image"),
     );
     expect(messagesWithImage.map((message) => message.id)).toEqual(["assistant:final-answer"]);
+    expect(messagesWithImage[0]?.text).toBe("");
   });
 
   it("does not re-emit message-sent events when the same image_generation completion replays", async () => {
     const harness = await createHarness();
     const turnId = asTurnId("turn-image-replay");
-    const imagePath = "/tmp/provider-thread/replay.png";
+    const imagePath = path.join(harness.generatedImagesRoot, "replay.png");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
 
     harness.emit({
       type: "turn.started",
@@ -1115,23 +1547,29 @@ describe("ProviderRuntimeIngestion", () => {
       entry.messages.some(
         (message) =>
           message.id === "assistant:answer-replay" &&
-          message.text.includes(`![Generated image](${imagePath})`),
+          message.attachments?.some((attachment) => attachment.type === "image"),
       ),
     );
 
-    const eventCountBeforeReplay = await Effect.runPromise(
+    const messageBeforeReplay = await Effect.runPromise(
       harness.engine.getReadModel().pipe(
         Effect.map((readModel) => {
           const thread = readModel.threads.find((entry) => entry.id === asThreadId("thread-1"));
           const message = thread?.messages.find((entry) => entry.id === "assistant:answer-replay");
-          return message?.text ?? "";
+          return message ?? null;
         }),
       ),
     );
+    const durableAttachmentPath = path.join(
+      harness.attachmentsDir,
+      fs.readdirSync(harness.attachmentsDir)[0]!,
+    );
+    const durableStatBeforeReplay = fs.statSync(durableAttachmentPath);
+    fs.rmSync(imagePath);
 
     // Replay the same image_generation_end event with a fresh eventId (provider would use a
-    // new id even for an idempotent replay). The dedup guard should prevent any further
-    // delta or complete dispatches because the target message already references the image.
+    // new id even for an idempotent replay). The dedup guard must not reopen the now-missing
+    // provider source, rewrite the durable file, or dispatch another message event.
     harness.emit({
       ...imageEvent,
       eventId: asEventId("evt-replay-image-complete-2"),
@@ -1140,20 +1578,320 @@ describe("ProviderRuntimeIngestion", () => {
     // Give the ingestion worker a beat to process the replay.
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    const finalText = await Effect.runPromise(
+    const messageAfterReplay = await Effect.runPromise(
       harness.engine.getReadModel().pipe(
         Effect.map((readModel) => {
           const thread = readModel.threads.find((entry) => entry.id === asThreadId("thread-1"));
           const message = thread?.messages.find((entry) => entry.id === "assistant:answer-replay");
-          return message?.text ?? "";
+          return message ?? null;
         }),
       ),
     );
 
-    // Same text, still finalized, and the image markdown is not duplicated.
-    expect(finalText).toBe(eventCountBeforeReplay);
-    const occurrences = finalText.split(`![Generated image](${imagePath})`).length - 1;
-    expect(occurrences).toBe(1);
+    // Same text, still finalized, and the durable image attachment is not duplicated.
+    expect(messageAfterReplay?.text).toBe(messageBeforeReplay?.text);
+    expect(messageAfterReplay?.streaming).toBe(false);
+    expect(messageAfterReplay?.attachments).toEqual(messageBeforeReplay?.attachments);
+    expect(messageAfterReplay?.attachments).toHaveLength(1);
+    expect(fs.statSync(durableAttachmentPath).mtimeMs).toBe(durableStatBeforeReplay.mtimeMs);
+  });
+
+  it("creates a settled image-only assistant message when no turn can be correlated", async () => {
+    const harness = await createHarness();
+    const imagePath = path.join(harness.generatedImagesRoot, "turnless.png");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-turnless-image-complete"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      itemId: asItemId("turnless-image"),
+      payload: {
+        itemType: "image_generation",
+        status: "completed",
+        data: {
+          kind: "codex.generated_image",
+          path: imagePath,
+          callId: "turnless-image",
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === "assistant:image:turnless-image" &&
+          message.streaming === false &&
+          message.attachments?.length === 1,
+      ),
+    );
+    const message = thread.messages.find((entry) => entry.id === "assistant:image:turnless-image");
+    expect(message?.text).toBe("");
+    expect(message?.attachments?.[0]).toMatchObject({
+      type: "image",
+      mimeType: "image/png",
+    });
+  });
+
+  it("rejects an arbitrary non-Studio workspace image", async () => {
+    const harness = await createHarness();
+    const imagePath = path.join(harness.workspaceRoot, "untrusted-workspace.png");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-untrusted-workspace-image"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      itemId: asItemId("untrusted-workspace-image"),
+      payload: {
+        itemType: "image_generation",
+        status: "completed",
+        data: {
+          kind: "codex.generated_image",
+          path: imagePath,
+          callId: "untrusted-workspace-image",
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === "assistant:image:untrusted-workspace-image" &&
+          message.text.includes("could not be displayed"),
+      ),
+    );
+    const message = thread.messages.find(
+      (entry) => entry.id === "assistant:image:untrusted-workspace-image",
+    );
+    expect(message?.attachments ?? []).toEqual([]);
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(0);
+  });
+
+  it("materializes generated images from an enabled configured Codex home", async () => {
+    const configuredCodexHome = makeTempDir("scient-configured-codex-home-");
+    const generatedImagesRoot = path.join(configuredCodexHome, "generated_images", "thread-1");
+    fs.mkdirSync(generatedImagesRoot, { recursive: true });
+    const imagePath = path.join(generatedImagesRoot, "configured-call.png");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
+    const harness = await createHarness({ codexHomePath: configuredCodexHome });
+
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-configured-home-image"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      itemId: asItemId("configured-home-image"),
+      payload: {
+        itemType: "image_generation",
+        status: "completed",
+        data: {
+          kind: "codex.generated_image",
+          path: imagePath,
+          callId: "configured-call",
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.id === "assistant:image:configured-home-image" &&
+          message.attachments?.length === 1,
+      ),
+    );
+    expect(
+      thread.messages.find((message) => message.id === "assistant:image:configured-home-image")
+        ?.attachments?.[0],
+    ).toMatchObject({ type: "image", mimeType: "image/png" });
+  });
+
+  it("shows a stable path-free warning when an image-only turn cannot be materialized", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-invalid-image");
+    const imagePath = path.join(harness.generatedImagesRoot, "private-invalid-image.svg");
+    fs.writeFileSync(imagePath, "<svg><script/></svg>");
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-invalid-image-turn-started"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-invalid-image-complete"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("invalid-image"),
+      payload: {
+        itemType: "image_generation",
+        status: "completed",
+        data: { kind: "codex.generated_image", path: imagePath, callId: "invalid-image" },
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-invalid-image-turn-completed"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      status: "completed",
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some((message) => message.text.includes("could not safely store it")),
+    );
+    const warningMessage = thread.messages.find((message) =>
+      message.text.includes("could not safely store it"),
+    );
+    expect(warningMessage?.attachments ?? []).toEqual([]);
+    expect(warningMessage?.text).not.toContain(imagePath);
+    expect(warningMessage?.text).not.toContain("private-invalid-image.svg");
+  });
+
+  it("caps generated images at eight, cleans the omitted file, and shows a warning", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-image-capacity");
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-capacity-turn-started"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+
+    for (let index = 0; index < 9; index += 1) {
+      const imagePath = path.join(harness.generatedImagesRoot, `capacity-${index}.png`);
+      fs.writeFileSync(imagePath, Buffer.concat([GENERATED_PNG_BYTES, Buffer.from([index])]));
+      harness.emit({
+        type: "item.completed",
+        eventId: asEventId(`evt-capacity-image-${index}`),
+        provider: "codex",
+        createdAt: new Date().toISOString(),
+        threadId: asThreadId("thread-1"),
+        turnId,
+        itemId: asItemId(`capacity-image-${index}`),
+        payload: {
+          itemType: "image_generation",
+          status: "completed",
+          data: {
+            kind: "codex.generated_image",
+            path: imagePath,
+            callId: `capacity-image-${index}`,
+          },
+        },
+      });
+    }
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-capacity-turn-completed"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      status: "completed",
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.messages.some(
+        (message) =>
+          message.turnId === turnId &&
+          message.attachments?.length === 8 &&
+          message.text.includes("Additional generated image was omitted"),
+      ),
+    );
+    const message = thread.messages.find((entry) => entry.turnId === turnId);
+    expect(message?.attachments).toHaveLength(8);
+    expect(message?.text).toContain("chat messages support at most 8 attachments");
+    expect(fs.readdirSync(harness.attachmentsDir)).toHaveLength(8);
+
+    const messageUpdatedAt = message?.updatedAt;
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-capacity-turn-completed-replay"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      status: "completed",
+    });
+    await harness.drain();
+    const replayedThread = await Effect.runPromise(
+      harness.engine
+        .getReadModel()
+        .pipe(
+          Effect.map((readModel) => readModel.threads.find((entry) => entry.id === "thread-1")),
+        ),
+    );
+    const replayedMessage = replayedThread?.messages.find((entry) => entry.turnId === turnId);
+    expect(replayedMessage?.updatedAt).toBe(messageUpdatedAt);
+    expect(replayedMessage?.attachments).toHaveLength(8);
+    expect(replayedMessage?.text.match(/support at most 8 attachments/g)).toHaveLength(1);
+  });
+
+  it("flushes a generated image when its turn is aborted", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-image-aborted");
+    const imagePath = path.join(harness.generatedImagesRoot, "aborted.png");
+    fs.writeFileSync(imagePath, GENERATED_PNG_BYTES);
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-aborted-image-turn-started"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-aborted-image-complete"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("aborted-image"),
+      payload: {
+        itemType: "image_generation",
+        status: "completed",
+        data: { kind: "codex.generated_image", path: imagePath, callId: "aborted-image" },
+      },
+    });
+    harness.emit({
+      type: "turn.aborted",
+      eventId: asEventId("evt-aborted-image-turn-aborted"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: { state: "interrupted" },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "interrupted" &&
+        entry.messages.some(
+          (message) =>
+            message.turnId === turnId &&
+            message.streaming === false &&
+            message.attachments?.length === 1,
+        ),
+    );
+    expect(thread.messages.find((message) => message.turnId === turnId)?.attachments).toHaveLength(
+      1,
+    );
   });
 
   it("accepts claude turn lifecycle when seeded thread id is a synthetic placeholder", async () => {

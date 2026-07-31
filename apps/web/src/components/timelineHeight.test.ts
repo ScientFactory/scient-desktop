@@ -19,6 +19,26 @@ describe("estimateTimelineMessageHeight", () => {
     ).toBe(126.75);
   });
 
+  it("includes assistant image attachment rows in the initial estimate", () => {
+    const withoutImages = estimateTimelineMessageHeight({ role: "assistant", text: "answer" });
+    const withOneRow = estimateTimelineMessageHeight({
+      role: "assistant",
+      text: "answer",
+      attachments: [{ id: "1", type: "image" }],
+    });
+    const withTwoRows = estimateTimelineMessageHeight({
+      role: "assistant",
+      text: "answer",
+      attachments: Array.from({ length: 5 }, (_, index) => ({
+        id: String(index),
+        type: "image" as const,
+      })),
+    });
+
+    expect(withOneRow - withoutImages).toBe(68);
+    expect(withTwoRows - withoutImages).toBe(136);
+  });
+
   it("uses assistant sizing rules for system messages", () => {
     expect(
       estimateTimelineMessageHeight({

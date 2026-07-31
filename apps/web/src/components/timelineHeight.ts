@@ -19,6 +19,7 @@ import {
 const ASSISTANT_CHARS_PER_LINE_FALLBACK = 72;
 const USER_CHARS_PER_LINE_FALLBACK = 56;
 const ASSISTANT_BASE_HEIGHT_PX = 78;
+const ASSISTANT_ATTACHMENT_ROW_MARGIN_TOP_PX = 8;
 const USER_BASE_HEIGHT_PX = 97;
 const USER_ATTACHMENT_THUMBNAIL_SIZE_PX = 60;
 const USER_ATTACHMENT_THUMBNAIL_GAP_PX = 8;
@@ -267,11 +268,22 @@ export function estimateTimelineMessageHeight(
         maxVisibleEntries: 4,
       },
     );
+    const imageAttachmentCount =
+      message.attachments?.filter((attachment) => attachment.type === "image").length ?? 0;
+    const imageAttachmentHeight =
+      imageAttachmentCount > 0
+        ? Math.ceil(imageAttachmentCount / USER_ATTACHMENT_THUMBNAILS_PER_ROW) *
+            USER_ATTACHMENT_THUMBNAIL_SIZE_PX +
+          Math.max(Math.ceil(imageAttachmentCount / USER_ATTACHMENT_THUMBNAILS_PER_ROW) - 1, 0) *
+            USER_ATTACHMENT_THUMBNAIL_GAP_PX +
+          (message.text.length > 0 ? ASSISTANT_ATTACHMENT_ROW_MARGIN_TOP_PX : 0)
+        : 0;
     return (
       ASSISTANT_BASE_HEIGHT_PX +
       estimatedLines * lineHeightPx +
       changedFilesHeight +
-      inlineToolPreviewHeight
+      inlineToolPreviewHeight +
+      imageAttachmentHeight
     );
   }
 

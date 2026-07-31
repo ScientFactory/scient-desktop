@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  type ChatImageAttachment,
   type AssistantDeliveryMode,
   CommandId,
   EventId,
@@ -16,6 +17,7 @@ import {
   type OrchestrationThread,
   type OrchestrationThreadShell,
   type ProviderRuntimeEvent,
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   type RuntimeMode,
 } from "@synara/contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Ref, Stream } from "effect";
@@ -28,11 +30,18 @@ import {
 } from "@synara/shared/subagents";
 
 import {
-  generatedImageMarkdown,
   generatedImagePathFromRuntimeEvent,
   isCodexGeneratedImageArtifact,
+  resolveCodexGeneratedImagesRoots,
 } from "../../codexGeneratedImages.ts";
+import { ServerConfig } from "../../config.ts";
+import {
+  generatedImageAttachmentId,
+  materializeGeneratedImageAttachment,
+  removeMaterializedGeneratedImageAttachment,
+} from "../../generatedImageAttachments.ts";
 import { copyAndAttributeStudioGeneratedImage } from "../../studioGeneratedImages.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { parseCheckpointFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
@@ -78,7 +87,7 @@ const ACTIVITY_UPDATE_FINGERPRINT_CACHE_CAPACITY = 4_096;
 const ACTIVITY_UPDATE_FINGERPRINT_TTL = Duration.minutes(360);
 // One turn realistically produces a handful of images; the cap only bounds a
 // pathological provider replaying image completions in a loop.
-const MAX_PENDING_GENERATED_IMAGES_PER_TURN = 32;
+const MAX_PENDING_GENERATED_IMAGES_PER_TURN = PROVIDER_SEND_TURN_MAX_ATTACHMENTS;
 const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const MAX_BUFFERED_PROPOSED_PLAN_CHARS = 64_000;
 const MAX_BUFFERED_TOOL_OUTPUT_CHARS = 24_000;
@@ -128,6 +137,14 @@ type ProviderDiffPlaceholder = {
   // an OrchestrationThread without a defensive copy.
   readonly files: ReadonlyArray<ReturnType<typeof parseCheckpointFilesFromUnifiedDiff>[number]>;
 };
+type PendingGeneratedImages = {
+  readonly attachments: ReadonlyArray<ChatImageAttachment>;
+  readonly omittedImageCount: number;
+  readonly failedProvenanceKeys: ReadonlySet<string>;
+};
+const GENERATED_IMAGE_FAILURE_WARNING =
+  "A generated image could not be displayed because Scient could not safely store it.";
+const GENERATED_IMAGE_LIMIT_WARNING_SUFFIX = "chat messages support at most 8 attachments.";
 
 /**
  * Promote a cheap thread *shell* into a full {@link OrchestrationThread} by
@@ -545,7 +562,10 @@ function truncateJsonValue(
   const retainedEntries = entries.slice(0, options.objectKeys);
   const result: Record<string, unknown> = {};
   for (const [key, entry] of retainedEntries) {
-    result[key] = truncateJsonValue(entry, { ...options, depth: options.depth - 1 });
+    result[key] = truncateJsonValue(entry, {
+      ...options,
+      depth: options.depth - 1,
+    });
   }
   if (entries.length > options.objectKeys) {
     result[ACTIVITY_DATA_TRUNCATION_MARKER] = true;
@@ -664,9 +684,14 @@ function asObject(value: unknown): Record<string, unknown> | undefined {
  * provider artifact path. The query supplying these records is turn-scoped and
  * independent of the bounded thread-detail activity window.
  */
-export function collectPersistedGeneratedImagePaths(
+interface PersistedGeneratedImageReference {
+  readonly path: string;
+  readonly provenanceKey: string;
+}
+
+export function collectPersistedGeneratedImageReferences(
   records: ReadonlyArray<ProjectionGeneratedImageActivityRecord>,
-): string[] {
+): PersistedGeneratedImageReference[] {
   const studioDisplayPathBySourcePath = new Map<string, string>();
   for (const record of records) {
     if (record.kind !== STUDIO_OUTPUTS_ACTIVITY_KIND) {
@@ -682,13 +707,13 @@ export function collectPersistedGeneratedImagePaths(
     }
   }
 
-  const paths: string[] = [];
-  const seenPaths = new Set<string>();
+  const references: PersistedGeneratedImageReference[] = [];
+  const seenProvenanceKeys = new Set<string>();
   const representedSourcePaths = new Set<string>();
-  const addPath = (path: string) => {
-    if (!seenPaths.has(path)) {
-      seenPaths.add(path);
-      paths.push(path);
+  const addReference = (reference: PersistedGeneratedImageReference) => {
+    if (!seenProvenanceKeys.has(reference.provenanceKey)) {
+      seenProvenanceKeys.add(reference.provenanceKey);
+      references.push(reference);
     }
   };
 
@@ -705,18 +730,34 @@ export function collectPersistedGeneratedImagePaths(
       continue;
     }
     representedSourcePaths.add(artifact.path);
-    addPath(studioDisplayPathBySourcePath.get(artifact.path) ?? artifact.path);
+    const persistedProvenanceKey = asString(payload.generatedImageProvenanceKey)?.trim();
+    addReference({
+      path: studioDisplayPathBySourcePath.get(artifact.path) ?? artifact.path,
+      provenanceKey:
+        persistedProvenanceKey ?? artifact.callId ?? `generated-image-path:${artifact.path}`,
+    });
   }
 
   // A Studio marker can survive even if a provider's corresponding tool row was
   // pruned or malformed. It is image-specific, so retaining the copied path is safe.
   for (const [sourcePath, fullPath] of studioDisplayPathBySourcePath) {
     if (!representedSourcePaths.has(sourcePath)) {
-      addPath(fullPath);
+      addReference({
+        path: fullPath,
+        provenanceKey: `generated-image-path:${sourcePath}`,
+      });
     }
   }
 
-  return paths;
+  return references;
+}
+
+function generatedImageProvenanceKey(event: ProviderRuntimeEvent): string {
+  const artifact =
+    event.type === "item.completed" && isCodexGeneratedImageArtifact(event.payload.data)
+      ? event.payload.data
+      : undefined;
+  return String(artifact?.callId ?? event.itemId ?? event.eventId);
 }
 
 function normalizeIdentifier(value: string | undefined): string | undefined {
@@ -984,7 +1025,9 @@ function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
 ): ReadonlyArray<OrchestrationThreadActivity> {
   const maybeSequence = (() => {
-    const eventWithSequence = event as ProviderRuntimeEvent & { sessionSequence?: number };
+    const eventWithSequence = event as ProviderRuntimeEvent & {
+      sessionSequence?: number;
+    };
     return eventWithSequence.sessionSequence !== undefined
       ? { sequence: eventWithSequence.sessionSequence }
       : {};
@@ -1354,6 +1397,11 @@ function runtimeEventToActivities(
           summary: event.payload.title ?? "Tool updated",
           payload: toActivityPayload({
             itemType: event.payload.itemType,
+            ...(event.payload.itemType === "image_generation"
+              ? {
+                  generatedImageProvenanceKey: generatedImageProvenanceKey(event),
+                }
+              : {}),
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.title ? { title: event.payload.title } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
@@ -1401,6 +1449,11 @@ function runtimeEventToActivities(
           summary: event.payload.title ?? "Tool",
           payload: toActivityPayload({
             itemType: event.payload.itemType,
+            ...(event.payload.itemType === "image_generation"
+              ? {
+                  generatedImageProvenanceKey: generatedImageProvenanceKey(event),
+                }
+              : {}),
             ...(event.payload.status ? { status: event.payload.status } : {}),
             ...(event.payload.title ? { title: event.payload.title } : {}),
             ...(event.payload.detail ? { detail: truncateDetail(event.payload.detail) } : {}),
@@ -1623,6 +1676,8 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
+  const serverConfig = yield* ServerConfig;
+  const serverSettings = yield* ServerSettingsService;
 
   const assistantDeliveryModeRef = yield* Ref.make<AssistantDeliveryMode>(
     DEFAULT_ASSISTANT_DELIVERY_MODE,
@@ -1661,10 +1716,15 @@ const make = Effect.gen(function* () {
   // Display paths of generated images completed during a still-running turn, keyed by
   // providerTurnKey. Flushed into the turn's terminal assistant message when the turn
   // settles, so the visible final row owns the image instead of collapsed narration.
-  const pendingGeneratedImagesByTurnKey = yield* Cache.make<string, ReadonlyArray<string>>({
+  const pendingGeneratedImagesByTurnKey = yield* Cache.make<string, PendingGeneratedImages>({
     capacity: PENDING_GENERATED_IMAGES_CACHE_CAPACITY,
     timeToLive: PENDING_GENERATED_IMAGES_TTL,
-    lookup: () => Effect.succeed([]),
+    lookup: () =>
+      Effect.succeed({
+        attachments: [],
+        omittedImageCount: 0,
+        failedProvenanceKeys: new Set<string>(),
+      }),
   });
   const latestActivityUpdateFingerprintByKey = yield* Cache.make<string, string | undefined>({
     capacity: ACTIVITY_UPDATE_FINGERPRINT_CACHE_CAPACITY,
@@ -2261,93 +2321,178 @@ const make = Effect.gen(function* () {
       yield* clearAssistantMessageState(input.messageId);
     });
 
-  /**
-   * Appends generated-image markdown to one explicit assistant message (creating it
-   * when it does not exist yet) and finalizes it. Image markdown already present on
-   * the target is skipped, so provider replays never duplicate references or re-emit
-   * message-sent events for untouched, already-finalized targets.
-   */
+  /** Appends durable generated-image attachments without changing message lifecycle state. */
   const appendGeneratedImagesToAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
     targetMessage:
-      | Pick<OrchestrationThread["messages"][number], "id" | "text" | "streaming">
+      | Pick<OrchestrationThread["messages"][number], "id" | "text" | "streaming" | "attachments">
       | undefined;
     newMessageId: MessageId;
-    imagePaths: ReadonlyArray<string>;
+    attachments: ReadonlyArray<ChatImageAttachment>;
+    omittedImageCount?: number;
+    failedImageCount?: number;
     turnId?: TurnId;
     createdAt: string;
   }) =>
     Effect.gen(function* () {
       const targetMessageId = input.targetMessage?.id ?? input.newMessageId;
-      const targetMessageText = input.targetMessage?.text ?? "";
-      const targetIsStreaming = input.targetMessage?.streaming ?? false;
-
-      const missingMarkdown: string[] = [];
-      for (const imagePath of input.imagePaths) {
-        const markdown = generatedImageMarkdown(imagePath);
-        if (
-          targetMessageText.includes(imagePath) ||
-          targetMessageText.includes(markdown) ||
-          missingMarkdown.includes(markdown)
-        ) {
-          continue;
-        }
-        missingMarkdown.push(markdown);
-      }
-
-      let dispatchedDelta = false;
-      if (missingMarkdown.length > 0) {
-        const joined = missingMarkdown.join("\n\n");
-        yield* orchestrationEngine.dispatch({
-          type: "thread.message.assistant.delta",
-          commandId: providerCommandId(input.event, "generated-image-delta"),
-          threadId: input.threadId,
-          messageId: targetMessageId,
-          delta: targetMessageText.trim().length > 0 ? `\n\n${joined}` : joined,
-          ...(input.turnId ? { turnId: input.turnId } : {}),
-          createdAt: input.createdAt,
-        });
-        dispatchedDelta = true;
-      }
-
-      // Only finalize when we actually changed the message (delta dispatched, or we
-      // just created a brand-new image-only message), or when the existing target was
-      // still streaming. Skipping complete on already-finalized targets keeps replays
-      // and duplicate provider notifications from emitting redundant message-sent events.
-      const shouldComplete = dispatchedDelta || !input.targetMessage || targetIsStreaming;
-      if (shouldComplete) {
-        yield* orchestrationEngine.dispatch({
-          type: "thread.message.assistant.complete",
-          commandId: providerCommandId(input.event, "generated-image-complete"),
-          threadId: input.threadId,
-          messageId: targetMessageId,
-          ...(input.turnId ? { turnId: input.turnId } : {}),
-          createdAt: input.createdAt,
-        });
-      }
+      const existingIds = new Set(
+        (input.targetMessage?.attachments ?? []).map((attachment) => attachment.id),
+      );
+      const missingAttachments = input.attachments.filter(
+        (attachment) => !existingIds.has(attachment.id),
+      );
+      const targetText = input.targetMessage?.text ?? "";
+      const needsLimitWarning =
+        (input.omittedImageCount ?? 0) > 0 &&
+        !targetText.includes(GENERATED_IMAGE_LIMIT_WARNING_SUFFIX);
+      const needsFailureWarning =
+        (input.failedImageCount ?? 0) > 0 && !targetText.includes(GENERATED_IMAGE_FAILURE_WARNING);
+      if (missingAttachments.length === 0 && !needsLimitWarning && !needsFailureWarning) return;
+      yield* orchestrationEngine.dispatch({
+        type: "thread.message.assistant.attachments.add",
+        commandId: providerCommandId(input.event, "generated-image-attachments"),
+        threadId: input.threadId,
+        messageId: targetMessageId,
+        attachments: missingAttachments,
+        ...(needsLimitWarning ? { omittedImageCount: input.omittedImageCount } : {}),
+        ...(needsFailureWarning ? { failedImageCount: input.failedImageCount } : {}),
+        ...(input.turnId ? { turnId: input.turnId } : {}),
+        createdAt: input.createdAt,
+      });
     });
 
-  const rememberPendingGeneratedImage = (threadId: ThreadId, turnId: TurnId, imagePath: string) =>
+  const rememberPendingGeneratedImage = (
+    threadId: ThreadId,
+    turnId: TurnId,
+    attachment: ChatImageAttachment,
+  ) =>
     Cache.getOption(pendingGeneratedImagesByTurnKey, providerTurnKey(threadId, turnId)).pipe(
-      Effect.flatMap((existingPaths) => {
-        const paths = Option.getOrElse(existingPaths, (): ReadonlyArray<string> => []);
-        if (paths.includes(imagePath) || paths.length >= MAX_PENDING_GENERATED_IMAGES_PER_TURN) {
-          return Effect.void;
+      Effect.flatMap((existingState) => {
+        const state = Option.getOrElse(
+          existingState,
+          (): PendingGeneratedImages => ({
+            attachments: [],
+            omittedImageCount: 0,
+            failedProvenanceKeys: new Set<string>(),
+          }),
+        );
+        if (state.attachments.some((existing) => existing.id === attachment.id)) {
+          return Effect.succeed("duplicate" as const);
         }
-        return Cache.set(pendingGeneratedImagesByTurnKey, providerTurnKey(threadId, turnId), [
-          ...paths,
-          imagePath,
-        ]);
+        if (state.attachments.length >= MAX_PENDING_GENERATED_IMAGES_PER_TURN) {
+          return Cache.set(pendingGeneratedImagesByTurnKey, providerTurnKey(threadId, turnId), {
+            attachments: state.attachments,
+            omittedImageCount: state.omittedImageCount + 1,
+            failedProvenanceKeys: state.failedProvenanceKeys,
+          }).pipe(Effect.as("omitted" as const));
+        }
+        return Cache.set(pendingGeneratedImagesByTurnKey, providerTurnKey(threadId, turnId), {
+          attachments: [...state.attachments, attachment],
+          omittedImageCount: state.omittedImageCount,
+          failedProvenanceKeys: state.failedProvenanceKeys,
+        }).pipe(Effect.as("added" as const));
       }),
+    );
+
+  const findPendingGeneratedImage = (threadId: ThreadId, turnId: TurnId, attachmentId: string) =>
+    Cache.getOption(pendingGeneratedImagesByTurnKey, providerTurnKey(threadId, turnId)).pipe(
+      Effect.map((state) =>
+        Option.flatMap(state, (pending) => {
+          const attachment = pending.attachments.find((candidate) => candidate.id === attachmentId);
+          return attachment ? Option.some(attachment) : Option.none();
+        }),
+      ),
     );
 
   const takePendingGeneratedImages = (threadId: ThreadId, turnId: TurnId) =>
     Cache.getOption(pendingGeneratedImagesByTurnKey, providerTurnKey(threadId, turnId)).pipe(
-      Effect.flatMap((existingPaths) =>
+      Effect.flatMap((existingState) =>
         Cache.invalidate(pendingGeneratedImagesByTurnKey, providerTurnKey(threadId, turnId)).pipe(
-          Effect.as(Option.getOrElse(existingPaths, (): ReadonlyArray<string> => [])),
+          Effect.as(
+            Option.getOrElse(
+              existingState,
+              (): PendingGeneratedImages => ({
+                attachments: [],
+                omittedImageCount: 0,
+                failedProvenanceKeys: new Set<string>(),
+              }),
+            ),
+          ),
         ),
+      ),
+    );
+
+  const rememberPendingGeneratedImageFailure = (
+    threadId: ThreadId,
+    turnId: TurnId,
+    provenanceKey: string,
+  ) =>
+    Cache.getOption(pendingGeneratedImagesByTurnKey, providerTurnKey(threadId, turnId)).pipe(
+      Effect.flatMap((existingState) => {
+        const state = Option.getOrElse(
+          existingState,
+          (): PendingGeneratedImages => ({
+            attachments: [],
+            omittedImageCount: 0,
+            failedProvenanceKeys: new Set<string>(),
+          }),
+        );
+        return Cache.set(pendingGeneratedImagesByTurnKey, providerTurnKey(threadId, turnId), {
+          ...state,
+          failedProvenanceKeys: new Set([...state.failedProvenanceKeys, provenanceKey]),
+        });
+      }),
+    );
+
+  const materializeGeneratedImage = (input: {
+    thread: OrchestrationThread;
+    sourcePath: string;
+    provenanceKey: string;
+  }) =>
+    Effect.gen(function* () {
+      const project = yield* getProjectShell(input.thread);
+      const workspaceRoot =
+        project?.kind === "studio"
+          ? resolveThreadWorkspaceCwd({
+              thread: input.thread,
+              projects: [project],
+            })
+          : null;
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.catch(() =>
+          Effect.logWarning(
+            "failed to read server settings while authorizing a generated image",
+          ).pipe(Effect.as(null)),
+        ),
+      );
+      const configuredCodexHomePath =
+        settings?.providers.codex.enabled === true ? settings.providers.codex.homePath.trim() : "";
+      const allowedSourceRoots = [
+        ...resolveCodexGeneratedImagesRoots(),
+        ...(configuredCodexHomePath
+          ? resolveCodexGeneratedImagesRoots(configuredCodexHomePath)
+          : []),
+        ...(workspaceRoot ? [workspaceRoot] : []),
+      ];
+      return yield* Effect.tryPromise({
+        try: () =>
+          materializeGeneratedImageAttachment({
+            threadId: input.thread.id,
+            sourcePath: input.sourcePath,
+            provenanceKey: input.provenanceKey,
+            allowedSourceRoots: [...new Set(allowedSourceRoots)],
+            attachmentsDir: serverConfig.attachmentsDir,
+          }),
+        catch: (cause) => cause,
+      });
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("failed to materialize generated image attachment", {
+          threadId: input.thread.id,
+          causeName: cause instanceof Error ? cause.name : "UnknownError",
+        }).pipe(Effect.as(null)),
       ),
     );
 
@@ -2357,7 +2502,7 @@ const make = Effect.gen(function* () {
    * whatever narration exists mid-turn hands them to a message the settled-turn UI
    * collapses into the "Worked for…" disclosure, leaving the visible terminal row as
    * "(empty response)". Flushing at turn settle targets the actual terminal message
-   * — including an empty one, whose body becomes the image markdown. Persisted
+   * — including an empty one, which owns the durable image attachment. Persisted
    * activity recovery complements the hot cache for long turns and restarts.
    */
   const flushPendingGeneratedImagesForTurn = (input: {
@@ -2367,7 +2512,54 @@ const make = Effect.gen(function* () {
     createdAt: string;
   }) =>
     Effect.gen(function* () {
-      const cachedImagePaths = yield* takePendingGeneratedImages(input.thread.id, input.turnId);
+      // Resolve ownership before recovery. On turn-completion replay the terminal
+      // message may already own the deterministic image, in which case reopening a
+      // cleaned-up provider source would manufacture a false failure.
+      const terminalMessage = input.thread.messages
+        .filter((message) => message.role === "assistant" && message.turnId === input.turnId)
+        .toSorted(
+          (left, right) =>
+            right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
+        )[0];
+      const terminalAttachmentIds = new Set(
+        (terminalMessage?.attachments ?? []).map((attachment) => attachment.id),
+      );
+      const cached = yield* takePendingGeneratedImages(input.thread.id, input.turnId);
+      const cachedAttachmentsNotOwned = cached.attachments.filter(
+        (attachment) => !terminalAttachmentIds.has(attachment.id),
+      );
+      const capacityAfterTerminal = Math.max(
+        0,
+        PROVIDER_SEND_TURN_MAX_ATTACHMENTS - (terminalMessage?.attachments?.length ?? 0),
+      );
+      const cachedAttachmentsToAttach = cachedAttachmentsNotOwned.slice(0, capacityAfterTerminal);
+      const cachedAttachmentsOmitted = cachedAttachmentsNotOwned.slice(capacityAfterTerminal);
+      yield* Effect.forEach(
+        cachedAttachmentsOmitted,
+        (attachment) => {
+          const alreadyReferenced = input.thread.messages.some((message) =>
+            message.attachments?.some((candidate) => candidate.id === attachment.id),
+          );
+          if (alreadyReferenced) return Effect.void;
+          return Effect.tryPromise({
+            try: () =>
+              removeMaterializedGeneratedImageAttachment({
+                attachmentsDir: serverConfig.attachmentsDir,
+                attachment,
+              }),
+            catch: (cause) => cause,
+          }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("failed to clean up unattachable generated-image attachment", {
+                threadId: input.thread.id,
+                attachmentId: attachment.id,
+                causeName: cause instanceof Error ? cause.name : "UnknownError",
+              }),
+            ),
+          );
+        },
+        { concurrency: 1 },
+      );
       const persistedRecords = yield* projectionSnapshotQuery
         .listGeneratedImageActivitiesByTurn(input.thread.id, input.turnId)
         .pipe(
@@ -2379,27 +2571,89 @@ const make = Effect.gen(function* () {
             }).pipe(Effect.as<ReadonlyArray<ProjectionGeneratedImageActivityRecord>>([])),
           ),
         );
-      const imagePaths = [
-        ...new Set([...cachedImagePaths, ...collectPersistedGeneratedImagePaths(persistedRecords)]),
-      ];
-      if (imagePaths.length === 0) {
+      const persistedImageReferences = collectPersistedGeneratedImageReferences(persistedRecords);
+      const satisfiedAttachmentIds = new Set([
+        ...terminalAttachmentIds,
+        ...cached.attachments.map((attachment) => attachment.id),
+      ]);
+      // Hot ingestion already made these files durable. Do not reopen the provider
+      // source during settlement: it may legitimately have been cleaned up, and an
+      // exact replay must not produce a false storage-failure warning.
+      const referencesNeedingRecovery = persistedImageReferences.filter(
+        (reference) =>
+          !satisfiedAttachmentIds.has(
+            generatedImageAttachmentId({
+              threadId: input.thread.id,
+              provenanceKey: reference.provenanceKey,
+            }),
+          ),
+      );
+      const remainingCapacity = Math.max(
+        0,
+        capacityAfterTerminal - cachedAttachmentsToAttach.length,
+      );
+      const recoveredResults: Array<{
+        readonly reference: PersistedGeneratedImageReference;
+        readonly attachment: ChatImageAttachment | null;
+      }> = [];
+      let recoveredSuccessCount = 0;
+      for (const reference of referencesNeedingRecovery) {
+        if (recoveredSuccessCount >= remainingCapacity) break;
+        const attachment = yield* materializeGeneratedImage({
+          thread: input.thread,
+          sourcePath: reference.path,
+          provenanceKey: reference.provenanceKey,
+        });
+        recoveredResults.push({ reference, attachment });
+        if (attachment) recoveredSuccessCount += 1;
+      }
+      const recoveredAttachments = recoveredResults.map((result) => result.attachment);
+      const attachmentsById = new Map<string, ChatImageAttachment>();
+      for (const attachment of [...cachedAttachmentsToAttach, ...recoveredAttachments]) {
+        if (attachment) attachmentsById.set(attachment.id, attachment);
+      }
+      const allAttachments = [...attachmentsById.values()];
+      const failedProvenanceKeys = new Set(cached.failedProvenanceKeys);
+      for (const provenanceKey of failedProvenanceKeys) {
+        if (
+          satisfiedAttachmentIds.has(
+            generatedImageAttachmentId({
+              threadId: input.thread.id,
+              provenanceKey,
+            }),
+          )
+        ) {
+          failedProvenanceKeys.delete(provenanceKey);
+        }
+      }
+      for (const result of recoveredResults) {
+        if (result.attachment) {
+          failedProvenanceKeys.delete(result.reference.provenanceKey);
+        } else {
+          failedProvenanceKeys.add(result.reference.provenanceKey);
+        }
+      }
+      const failedImageCount = failedProvenanceKeys.size;
+      const omittedImageCount = Math.max(
+        0,
+        cachedAttachmentsOmitted.length +
+          Math.max(
+            cached.omittedImageCount,
+            referencesNeedingRecovery.length - recoveredResults.length,
+          ),
+      );
+      if (allAttachments.length === 0 && failedImageCount === 0 && omittedImageCount === 0) {
         return;
       }
-      // The terminal assistant message is the newest of the turn: the transcript UI
-      // gives the last assistant row ownership of the settled turn and folds every
-      // earlier assistant row, so this is the only row that stays visible.
-      const terminalMessage = input.thread.messages
-        .filter((message) => message.role === "assistant" && message.turnId === input.turnId)
-        .toSorted(
-          (left, right) =>
-            right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id),
-        )[0];
+      const attachments = allAttachments.slice(0, PROVIDER_SEND_TURN_MAX_ATTACHMENTS);
       yield* appendGeneratedImagesToAssistantMessage({
         event: input.event,
         threadId: input.thread.id,
         targetMessage: terminalMessage,
         newMessageId: MessageId.makeUnsafe(`assistant:image:${input.turnId}`),
-        imagePaths,
+        attachments,
+        omittedImageCount,
+        failedImageCount,
         turnId: input.turnId,
         createdAt: input.createdAt,
       });
@@ -3141,42 +3395,129 @@ const make = Effect.gen(function* () {
       const generatedImagePath = generatedImagePathFromRuntimeEvent(event);
       if (generatedImagePath) {
         const generatedImageTurnId = toTurnId(event.turnId) ?? activeTurnId ?? undefined;
+        const provenanceKey = generatedImageProvenanceKey(event);
+        const expectedAttachmentId = generatedImageAttachmentId({
+          threadId: thread.id,
+          provenanceKey,
+        });
+        const referencedAttachment = thread.messages
+          .flatMap((message) => message.attachments ?? [])
+          .find(
+            (attachment): attachment is ChatImageAttachment =>
+              attachment.type === "image" && attachment.id === expectedAttachmentId,
+          );
+        const pendingAttachment = generatedImageTurnId
+          ? Option.getOrNull(
+              yield* findPendingGeneratedImage(
+                thread.id,
+                generatedImageTurnId,
+                expectedAttachmentId,
+              ),
+            )
+          : null;
         // Studio threads get a durable in-workspace copy (plus direct Output panel
         // attribution); the transcript then references that copy so the image outlives
         // any Codex-home cleanup. Non-Studio threads keep the original path.
-        const copied = yield* materializeStudioGeneratedImage({
-          event,
-          thread,
-          imagePath: generatedImagePath,
-          turnId: generatedImageTurnId,
-          createdAt: now,
-        });
-        const displayPath = copied?.fullPath ?? generatedImagePath;
-        if (generatedImageTurnId) {
+        const generatedImageAttachment =
+          referencedAttachment ??
+          pendingAttachment ??
+          (yield* Effect.gen(function* () {
+            const copied = yield* materializeStudioGeneratedImage({
+              event,
+              thread,
+              imagePath: generatedImagePath,
+              turnId: generatedImageTurnId,
+              createdAt: now,
+            });
+            const displayPath = copied?.fullPath ?? generatedImagePath;
+            return yield* materializeGeneratedImage({
+              thread,
+              sourcePath: displayPath,
+              provenanceKey,
+            });
+          }));
+        if (referencedAttachment) {
+          // Exact replay after settlement: the durable attachment is already owned
+          // by the transcript, so do not repopulate pending state or redispatch it.
+        } else if (generatedImageAttachment && generatedImageTurnId) {
           // Defer the transcript reference to turn settle (see the flush helper); the
           // "Generated image" work row already surfaces progress mid-turn.
-          yield* rememberPendingGeneratedImage(thread.id, generatedImageTurnId, displayPath);
-        } else {
+          const pendingResult = yield* rememberPendingGeneratedImage(
+            thread.id,
+            generatedImageTurnId,
+            generatedImageAttachment,
+          );
+          const attachmentAlreadyReferenced = thread.messages.some((message) =>
+            message.attachments?.some(
+              (attachment) => attachment.id === generatedImageAttachment.id,
+            ),
+          );
+          if (pendingResult === "omitted" && !attachmentAlreadyReferenced) {
+            yield* Effect.tryPromise({
+              try: () =>
+                removeMaterializedGeneratedImageAttachment({
+                  attachmentsDir: serverConfig.attachmentsDir,
+                  attachment: generatedImageAttachment,
+                }),
+              catch: (cause) => cause,
+            }).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("failed to clean up omitted generated-image attachment", {
+                  threadId: thread.id,
+                  attachmentId: generatedImageAttachment.id,
+                  causeName: cause instanceof Error ? cause.name : "UnknownError",
+                }),
+              ),
+            );
+          }
+        } else if (generatedImageAttachment) {
           // No turn to correlate with: attach immediately to the same provider item
           // (replay) or an existing reference, else a standalone image-only message.
           const messages = thread.messages;
           const sameItemMessageId = event.itemId
             ? MessageId.makeUnsafe(`assistant:${event.itemId}`)
             : undefined;
-          const markdown = generatedImageMarkdown(displayPath);
           const targetMessage = messages.find(
             (message) =>
               message.role === "assistant" &&
               (message.id === sameItemMessageId ||
-                message.text.includes(displayPath) ||
-                message.text.includes(markdown)),
+                message.attachments?.some(
+                  (attachment) => attachment.id === generatedImageAttachment.id,
+                )),
           );
           yield* appendGeneratedImagesToAssistantMessage({
             event,
             threadId: thread.id,
             targetMessage,
             newMessageId: MessageId.makeUnsafe(`assistant:image:${event.itemId ?? event.eventId}`),
-            imagePaths: [displayPath],
+            attachments: [generatedImageAttachment],
+            createdAt: now,
+          });
+        } else if (generatedImageTurnId) {
+          yield* rememberPendingGeneratedImageFailure(
+            thread.id,
+            generatedImageTurnId,
+            provenanceKey,
+          );
+        } else {
+          const sameItemMessageId = event.itemId
+            ? MessageId.makeUnsafe(`assistant:${event.itemId}`)
+            : undefined;
+          const failureMessageId = MessageId.makeUnsafe(
+            `assistant:image:${event.itemId ?? event.eventId}`,
+          );
+          const targetMessage = thread.messages.find(
+            (message) =>
+              message.role === "assistant" &&
+              (message.id === sameItemMessageId || message.id === failureMessageId),
+          );
+          yield* appendGeneratedImagesToAssistantMessage({
+            event,
+            threadId: thread.id,
+            targetMessage,
+            newMessageId: failureMessageId,
+            attachments: [],
+            failedImageCount: 1,
             createdAt: now,
           });
         }
@@ -3207,7 +3548,7 @@ const make = Effect.gen(function* () {
 
           // After finalization the turn's terminal assistant message is settled;
           // hand it the images the turn produced (an artifact-only turn's final
-          // message is intentionally empty — the image markdown becomes its body).
+          // message intentionally remains text-empty and renders its attachments).
           yield* flushPendingGeneratedImagesForTurn({
             event,
             thread,
