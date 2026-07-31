@@ -12,15 +12,18 @@ import {
   makeProjectionExternalIntegrationReadBackend,
   verifyLocalPeerProof,
   type ExternalIntegrationReadBackend,
+  type ExternalIntegrationReadCall,
 } from "./readAdapter.ts";
 
 const sqlite = it.layer(SqlitePersistenceMemory);
 const NOW = 1_800_000_000_000;
+let trustedNow = NOW;
 
 const establish = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`DELETE FROM scient_external_integrations`;
-  const control = yield* makeExternalIntegrationControlPlane;
+  trustedNow = NOW;
+  const control = yield* makeExternalIntegrationControlPlane({ now: () => trustedNow });
   const created = yield* control.createPending({
     externalIdentity: "integration-1",
     credentialReference: "keychain-ref:integration-1",
@@ -28,16 +31,15 @@ const establish = Effect.gen(function* () {
     projects: [{ projectId: "project-1", threadIds: ["thread-1"] }],
     capabilities: ["project:context:read", "thread:list", "thread:read"],
     rateLimit: { maxRequests: 20, windowMs: 60_000 },
-    now: NOW,
   });
-  yield* control.completePairing({
+  trustedNow += 1;
+  const paired = yield* control.completePairing({
     externalIdentity: "integration-1",
     pairingToken: created.pairingToken,
     credentialReference: "keychain-ref:integration-1",
     peerIdentity: "unix-uid:501",
-    now: NOW + 1,
   });
-  return control;
+  return { control, accessToken: paired.accessToken } as const;
 });
 
 const call = {
@@ -50,13 +52,12 @@ const call = {
     socketOwnerUid: 501,
   },
   projectId: "project-1",
-  now: NOW + 2,
 };
 
 sqlite("ExternalIntegrationReadAdapter", (it) => {
   it.effect("routes exact scoped reads through the Scient executor", () =>
     Effect.gen(function* () {
-      const control = yield* establish;
+      const { control, accessToken } = yield* establish;
       let projectReads = 0;
       const backend: ExternalIntegrationReadBackend = {
         project: (projectId) => {
@@ -74,10 +75,17 @@ sqlite("ExternalIntegrationReadAdapter", (it) => {
         }),
         backend,
       });
-      const outcome = yield* adapter.execute({
+      assert.isFalse("listSecurityEvents" in adapter);
+      const forgedCallerTime = Number.MAX_SAFE_INTEGER;
+      const forgedCall = {
         ...call,
+        accessToken,
+        // Deliberately smuggled as an excess property: the adapter must ignore
+        // transport-owned time even when called from untyped JavaScript.
+        now: forgedCallerTime,
         request: { operation: "project.list" },
-      });
+      } as unknown as ExternalIntegrationReadCall;
+      const outcome = yield* adapter.execute(forgedCall);
       assert.strictEqual(outcome.kind, "finished");
       if (outcome.kind === "finished") {
         assert.isNull(outcome.error);
@@ -87,18 +95,21 @@ sqlite("ExternalIntegrationReadAdapter", (it) => {
         });
       }
       assert.strictEqual(projectReads, 1);
+      const events = yield* control.listSecurityEvents("integration-1");
+      assert.isFalse(events.some(({ occurredAt }) => occurredAt === forgedCallerTime));
+      assert.isTrue(events.every(({ occurredAt }) => occurredAt <= trustedNow));
     }),
   );
 
   it.effect("withholds an in-flight read when revocation wins before release", () =>
     Effect.gen(function* () {
-      const control = yield* establish;
+      const { control, accessToken } = yield* establish;
       const backend: ExternalIntegrationReadBackend = {
         project: () => Effect.succeed({}),
         listThreads: () => Effect.succeed({ threads: [] }),
         readThread: ({ threadId }) =>
           control
-            .revoke("integration-1", NOW + 3)
+            .revoke("integration-1")
             .pipe(
               Effect.as({ threadId, messages: [{ role: "assistant", text: "must not escape" }] }),
             ),
@@ -113,6 +124,7 @@ sqlite("ExternalIntegrationReadAdapter", (it) => {
       });
       const outcome = yield* adapter.execute({
         ...call,
+        accessToken,
         request: { operation: "thread.read", threadId: "thread-1" },
       });
       assert.strictEqual(outcome.kind, "finished");

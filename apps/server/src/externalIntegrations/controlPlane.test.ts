@@ -10,6 +10,7 @@ import {
 
 const sqlite = it.layer(SqlitePersistenceMemory);
 const NOW = 1_800_000_000_000;
+let trustedNow = NOW;
 const config = (identity: string, maxRequests = 10) => ({
   externalIdentity: identity,
   credentialReference: `keychain-ref:${identity}`,
@@ -17,7 +18,6 @@ const config = (identity: string, maxRequests = 10) => ({
   projects: [{ projectId: "project-1", threadIds: ["thread-1", "thread-2"] }],
   capabilities: ["project:context:read", "thread:list", "thread:read"] as const,
   rateLimit: { maxRequests, windowMs: 60_000 },
-  now: NOW,
 });
 
 const capture = <A, E>(effect: Effect.Effect<A, E>) =>
@@ -32,23 +32,24 @@ const controlCode = (error: unknown) =>
 
 const pair = (identity: string, maxRequests = 10) =>
   Effect.gen(function* () {
-    const control = yield* makeExternalIntegrationControlPlane;
+    const control = yield* makeExternalIntegrationControlPlane({ now: () => trustedNow });
     const created = yield* control.createPending(config(identity, maxRequests));
-    yield* control.completePairing({
+    trustedNow += 1;
+    const paired = yield* control.completePairing({
       externalIdentity: identity,
       pairingToken: created.pairingToken,
       credentialReference: `keychain-ref:${identity}`,
       peerIdentity: "unix-uid:501",
-      now: NOW + 1,
     });
-    return control;
+    return { control, accessToken: paired.accessToken } as const;
   });
 
 sqlite("ExternalIntegrationControlPlane", (it) => {
   it.effect("stores hashes only, pairs with exact proof, and emits security receipts", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const control = yield* makeExternalIntegrationControlPlane;
+      trustedNow = NOW;
+      const control = yield* makeExternalIntegrationControlPlane({ now: () => trustedNow });
       const created = yield* control.createPending(config("integration-sensitive"));
       const rows = yield* sql<{
         readonly integrationHash: string;
@@ -73,35 +74,59 @@ sqlite("ExternalIntegrationControlPlane", (it) => {
           pairingToken: "wrong-token",
           credentialReference: "keychain-ref:integration-sensitive",
           peerIdentity: "unix-uid:501",
-          now: NOW + 1,
         }),
       );
       assert.isFalse(denied.ok);
       if (!denied.ok) assert.strictEqual(controlCode(denied.error), "pairing_denied");
 
-      yield* control.completePairing({
+      trustedNow += 2;
+      const paired = yield* control.completePairing({
         externalIdentity: "integration-sensitive",
         pairingToken: created.pairingToken,
         credentialReference: "keychain-ref:integration-sensitive",
         peerIdentity: "unix-uid:501",
-        now: NOW + 2,
       });
+      const pairedRows = yield* sql<{ readonly accessTokenHash: string }>`
+        SELECT integration_access_token_hash AS "accessTokenHash"
+        FROM scient_external_integrations
+      `;
+      assert.notInclude(JSON.stringify(pairedRows), paired.accessToken);
+      assert.match(pairedRows[0]?.accessTokenHash ?? "", /^sha256:v1:[a-f0-9]{64}$/u);
+      trustedNow += 1;
+      const impersonation = yield* capture(
+        control.admitRead({
+          externalIdentity: "integration-sensitive",
+          credentialReference: "keychain-ref:integration-sensitive",
+          accessToken: "guessed-access-token",
+          verifiedPeerIdentity: "unix-uid:501",
+          operation: "thread.read",
+          projectId: "project-1",
+          threadId: "thread-1",
+        }),
+      );
+      assert.isFalse(impersonation.ok);
+      if (!impersonation.ok) {
+        assert.strictEqual(controlCode(impersonation.error), "integration_access_denied");
+      }
+      trustedNow += 1;
       const admission = yield* control.admitRead({
         externalIdentity: "integration-sensitive",
         credentialReference: "keychain-ref:integration-sensitive",
+        accessToken: paired.accessToken,
         verifiedPeerIdentity: "unix-uid:501",
         operation: "thread.read",
         projectId: "project-1",
         threadId: "thread-1",
-        now: NOW + 3,
       });
-      yield* control.releaseRead(admission, NOW + 4);
+      trustedNow += 1;
+      yield* control.releaseRead(admission);
       const events = yield* control.listSecurityEvents("integration-sensitive");
       assert.deepEqual(
         events.map(({ eventType, outcome }) => [eventType, outcome]),
         [
           ["created", "recorded"],
           ["paired", "recorded"],
+          ["admission", "denied"],
           ["admission", "allowed"],
           ["release", "allowed"],
         ],
@@ -109,18 +134,38 @@ sqlite("ExternalIntegrationControlPlane", (it) => {
     }),
   );
 
+  it.effect("expires pending pairing proof using only the trusted host clock", () =>
+    Effect.gen(function* () {
+      trustedNow = NOW;
+      const control = yield* makeExternalIntegrationControlPlane({ now: () => trustedNow });
+      const created = yield* control.createPending(config("expires"));
+      trustedNow += 5 * 60 * 1_000;
+      const expired = yield* capture(
+        control.completePairing({
+          externalIdentity: "expires",
+          pairingToken: created.pairingToken,
+          credentialReference: "keychain-ref:expires",
+          peerIdentity: "unix-uid:501",
+        }),
+      );
+      assert.isFalse(expired.ok);
+      if (!expired.ok) assert.strictEqual(controlCode(expired.error), "pairing_expired");
+    }),
+  );
+
   it.effect("denies wrong peer, project, thread, capability and unpaired state", () =>
     Effect.gen(function* () {
-      const control = yield* makeExternalIntegrationControlPlane;
+      trustedNow = NOW;
+      const control = yield* makeExternalIntegrationControlPlane({ now: () => trustedNow });
       yield* control.createPending(config("pending"));
       const base = {
         externalIdentity: "pending",
         credentialReference: "keychain-ref:pending",
+        accessToken: "unpaired-access-token",
         verifiedPeerIdentity: "unix-uid:501",
         operation: "thread.read" as const,
         projectId: "project-1",
         threadId: "thread-1",
-        now: NOW + 1,
       };
       const pending = yield* capture(control.admitRead(base));
       assert.isFalse(pending.ok);
@@ -132,24 +177,27 @@ sqlite("ExternalIntegrationControlPlane", (it) => {
           ...base,
           externalIdentity: "scoped",
           credentialReference: "keychain-ref:scoped",
+          accessToken: paired.accessToken,
           verifiedPeerIdentity: "unix-uid:502",
         },
         {
           ...base,
           externalIdentity: "scoped",
           credentialReference: "keychain-ref:scoped",
+          accessToken: paired.accessToken,
           projectId: "project-2",
         },
         {
           ...base,
           externalIdentity: "scoped",
           credentialReference: "keychain-ref:scoped",
+          accessToken: paired.accessToken,
           threadId: "thread-3",
         },
       ];
       const codes: string[] = [];
       for (const attempt of cases) {
-        const result = yield* capture(paired.admitRead(attempt));
+        const result = yield* capture(paired.control.admitRead(attempt));
         if (!result.ok && result.error instanceof ExternalIntegrationControlError) {
           codes.push(result.error.code);
         }
@@ -160,23 +208,23 @@ sqlite("ExternalIntegrationControlPlane", (it) => {
         "thread_scope_denied",
       ]);
 
-      const limited = yield* makeExternalIntegrationControlPlane;
+      const limited = yield* makeExternalIntegrationControlPlane({ now: () => trustedNow });
       const created = yield* limited.createPending({
         ...config("no-thread-read"),
         capabilities: ["thread:list"],
       });
-      yield* limited.completePairing({
+      const limitedPairing = yield* limited.completePairing({
         externalIdentity: "no-thread-read",
         pairingToken: created.pairingToken,
         credentialReference: "keychain-ref:no-thread-read",
         peerIdentity: "unix-uid:501",
-        now: NOW + 1,
       });
       const capability = yield* capture(
         limited.admitRead({
           ...base,
           externalIdentity: "no-thread-read",
           credentialReference: "keychain-ref:no-thread-read",
+          accessToken: limitedPairing.accessToken,
         }),
       );
       assert.isFalse(capability.ok);
@@ -186,16 +234,17 @@ sqlite("ExternalIntegrationControlPlane", (it) => {
 
   it.effect("rate limits concurrent admissions atomically", () =>
     Effect.gen(function* () {
-      const control = yield* pair("concurrent", 2);
+      trustedNow = NOW;
+      const { control, accessToken } = yield* pair("concurrent", 2);
       const attempt = () =>
         capture(
           control.admitRead({
             externalIdentity: "concurrent",
             credentialReference: "keychain-ref:concurrent",
+            accessToken,
             verifiedPeerIdentity: "unix-uid:501",
             operation: "thread.list",
             projectId: "project-1",
-            now: NOW + 10,
           }),
         );
       const results = yield* Effect.all([attempt(), attempt(), attempt()], {
@@ -212,30 +261,33 @@ sqlite("ExternalIntegrationControlPlane", (it) => {
 
   it.effect("survives service reconstruction and revocation invalidates stale reads", () =>
     Effect.gen(function* () {
+      trustedNow = NOW;
       const first = yield* pair("restart");
-      const admission = yield* first.admitRead({
+      const admission = yield* first.control.admitRead({
         externalIdentity: "restart",
         credentialReference: "keychain-ref:restart",
+        accessToken: first.accessToken,
         verifiedPeerIdentity: "unix-uid:501",
         operation: "thread.read",
         projectId: "project-1",
         threadId: "thread-1",
-        now: NOW + 2,
       });
       // A new service value over the same durable database models server restart.
-      const restarted = yield* makeExternalIntegrationControlPlane;
-      yield* restarted.revoke("restart", NOW + 3);
-      const stale = yield* capture(restarted.releaseRead(admission, NOW + 4));
+      const restarted = yield* makeExternalIntegrationControlPlane({ now: () => trustedNow });
+      trustedNow += 1;
+      yield* restarted.revoke("restart");
+      trustedNow += 1;
+      const stale = yield* capture(restarted.releaseRead(admission));
       assert.isFalse(stale.ok);
       if (!stale.ok) assert.strictEqual(controlCode(stale.error), "stale_authority");
       const revoked = yield* capture(
         restarted.admitRead({
           externalIdentity: "restart",
           credentialReference: "keychain-ref:restart",
+          accessToken: first.accessToken,
           verifiedPeerIdentity: "unix-uid:501",
           operation: "thread.list",
           projectId: "project-1",
-          now: NOW + 5,
         }),
       );
       assert.isFalse(revoked.ok);

@@ -10,6 +10,8 @@ export default Effect.gen(function* () {
       integration_hash TEXT PRIMARY KEY,
       credential_reference_hash TEXT NOT NULL,
       pairing_token_hash TEXT,
+      integration_access_token_hash TEXT,
+      pairing_expires_at INTEGER NOT NULL,
       peer_identity_hash TEXT NOT NULL,
       pairing_state TEXT NOT NULL CHECK (pairing_state IN ('pending', 'paired', 'revoked')),
       authority_generation INTEGER NOT NULL DEFAULT 1 CHECK (authority_generation > 0),
@@ -32,12 +34,17 @@ export default Effect.gen(function* () {
             length(pairing_token_hash) = 74 AND substr(pairing_token_hash, 1, 10) = 'sha256:v1:'
               AND substr(pairing_token_hash, 11) NOT GLOB '*[^0-9a-f]*'
           ))
+          AND (integration_access_token_hash IS NULL OR (
+            length(integration_access_token_hash) = 74 AND substr(integration_access_token_hash, 1, 10) = 'sha256:v1:'
+              AND substr(integration_access_token_hash, 11) NOT GLOB '*[^0-9a-f]*'
+          ))
       ),
       CHECK (
-        (pairing_state = 'pending' AND pairing_token_hash IS NOT NULL AND paired_at IS NULL AND revoked_at IS NULL)
-        OR (pairing_state = 'paired' AND pairing_token_hash IS NULL AND paired_at IS NOT NULL AND revoked_at IS NULL)
-        OR (pairing_state = 'revoked' AND pairing_token_hash IS NULL AND revoked_at IS NOT NULL)
-      )
+        (pairing_state = 'pending' AND pairing_token_hash IS NOT NULL AND integration_access_token_hash IS NULL AND paired_at IS NULL AND revoked_at IS NULL)
+        OR (pairing_state = 'paired' AND pairing_token_hash IS NULL AND integration_access_token_hash IS NOT NULL AND paired_at IS NOT NULL AND revoked_at IS NULL)
+        OR (pairing_state = 'revoked' AND pairing_token_hash IS NULL AND integration_access_token_hash IS NULL AND revoked_at IS NOT NULL)
+      ),
+      CHECK (pairing_expires_at > created_at AND pairing_expires_at <= created_at + 600000)
     )
   `;
 

@@ -84,10 +84,10 @@ export type ExternalIntegrationReadRequest =
 export interface ExternalIntegrationReadCall {
   readonly externalIdentity: string;
   readonly credentialReference: string;
+  readonly accessToken: string;
   readonly peerProof: LocalPeerProof;
   readonly projectId: string;
   readonly request: ExternalIntegrationReadRequest;
-  readonly now?: number;
 }
 
 export type ExternalIntegrationReadResult =
@@ -224,11 +224,11 @@ export function makeExternalIntegrationReadAdapter(input: {
         const admission = yield* input.controlPlane.admitRead({
           externalIdentity: call.externalIdentity,
           credentialReference: call.credentialReference,
+          accessToken: call.accessToken,
           verifiedPeerIdentity,
           operation: call.request.operation,
           projectId: call.projectId,
           ...(call.request.operation === "thread.read" ? { threadId: call.request.threadId } : {}),
-          ...(call.now === undefined ? {} : { now: call.now }),
         });
         const domainInput = canonicalInput(call.request);
         return yield* input.operationExecutor.execute<
@@ -243,10 +243,8 @@ export function makeExternalIntegrationReadAdapter(input: {
           domainInput,
           admit: Effect.succeed(admission),
           execute: (canonical) => readBackendEffect(input.backend, call, admission, canonical),
-          releaseRead: (currentAdmission) =>
-            input.controlPlane.releaseRead(currentAdmission, call.now),
-          releaseReplay: (currentAdmission) =>
-            input.controlPlane.releaseRead(currentAdmission, call.now),
+          releaseRead: (currentAdmission) => input.controlPlane.releaseRead(currentAdmission),
+          releaseReplay: (currentAdmission) => input.controlPlane.releaseRead(currentAdmission),
           runTransactionalWrite: () =>
             Effect.die("External integration adapter cannot execute writes."),
           // No transport is live yet. Release revalidation is the fail-closed
